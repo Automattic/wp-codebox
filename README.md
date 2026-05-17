@@ -63,7 +63,7 @@ Expected output:
 
 The Playground backend mounts the local plugin directory into WordPress Playground and boots lazily on the first `execute()` call. The CLI command runs PHP from `--arg code-file=...` through `server.playground.run()`, collects artifacts, and disposes the Playground server when the runtime is destroyed. Machine-readable JSON gives consumers such as Data Machine Code, Homeboy Extensions, Studio, and CI runners a stable integration seam.
 
-`wordpress.run-php` accepts either `--arg code-file=<path>` or `--arg code=<php>`.
+`wordpress.run-php` accepts either `--arg code-file=<path>` or `--arg code=<php>`. It loads `/wordpress/wp-load.php` before running the supplied PHP so WordPress functions are available by default. Use `--arg bootstrap=none` for raw PHP execution without WordPress bootstrap.
 
 The fixture plugin is documented in [`examples/simple-plugin/README.md`](examples/simple-plugin/README.md).
 
