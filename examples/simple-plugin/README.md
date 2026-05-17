@@ -12,7 +12,6 @@ Use it to verify the v0 runtime contract:
 
 ```bash
 npm run sandbox-runtime -- run \
-  --backend wordpress-playground \
   --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin \
   --command wordpress.run-php \
   --arg code-file=./examples/simple-plugin/probe.php \

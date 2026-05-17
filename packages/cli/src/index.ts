@@ -5,7 +5,6 @@ import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeI
 import { createPlaygroundRuntimeBackend } from "@chubes4/sandbox-runtime-playground"
 
 interface RunOptions {
-  backend: "wordpress-playground"
   mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite" }>
   command: string
   args: string[]
@@ -72,7 +71,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
   try {
     runtime = await createRuntime(
       {
-        backend: options.backend,
+        backend: "wordpress-playground",
         environment: {
           kind: "wordpress",
           name: "sandbox-runtime-cli",
@@ -128,7 +127,6 @@ async function run(options: RunOptions): Promise<RunOutput> {
 
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
   const options: RunOptions = {
-    backend: "wordpress-playground",
     mounts: [],
     command: "",
     args: [],
@@ -151,12 +149,6 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
     }
 
     switch (name) {
-      case "--backend":
-        if (value !== "wordpress-playground") {
-          throw new Error(`Unsupported backend: ${value}`)
-        }
-        options.backend = value
-        break
       case "--mount":
         options.mounts.push(parseMount(value))
         break
@@ -258,7 +250,6 @@ function printHelp(): void {
   sandbox-runtime run --mount <host>:<vfs> --command <id> [options]
 
 Options:
-  --backend <name>     Runtime backend. Currently: wordpress-playground
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
   --arg <key=value>    Command argument. Repeatable.
@@ -267,7 +258,7 @@ Options:
   --json               Emit machine-readable JSON.
 
 Example:
-  sandbox-runtime run --backend wordpress-playground --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
+  sandbox-runtime run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
 }
 
 main(process.argv.slice(2)).then(
