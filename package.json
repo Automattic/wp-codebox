@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -b packages/runtime-core packages/runtime-playground",
     "hello-runtime": "tsx scripts/hello-runtime.ts",
-    "check": "npm run build && npm run hello-runtime -- ./examples/simple-plugin"
+    "policy-validation-smoke": "tsx scripts/policy-validation-smoke.ts",
+    "check": "npm run build && npm run policy-validation-smoke && npm run hello-runtime -- ./examples/simple-plugin"
   },
   "workspaces": [
     "packages/*"
