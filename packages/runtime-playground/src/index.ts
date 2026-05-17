@@ -307,9 +307,19 @@ class PlaygroundRuntime implements Runtime {
   private async runPhp(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const code = await this.phpCodeFromArgs(spec.args ?? [])
-    const response = await server.playground.run({ code })
+    const response = await server.playground.run({ code: this.bootstrapPhpCode(code, spec.args ?? []) })
 
     return response.text
+  }
+
+  private bootstrapPhpCode(code: string, args: string[]): string {
+    if (argValue(args, "bootstrap") === "none") {
+      return code
+    }
+
+    return `<?php
+require_once '/wordpress/wp-load.php';
+${phpBody(code)}`
   }
 
   private async phpCodeFromArgs(args: string[]): Promise<string> {
@@ -408,4 +418,8 @@ function argValue(args: string[], name: string): string | undefined {
 
 function normalizePhpCode(code: string): string {
   return code.trimStart().startsWith("<?php") ? code : `<?php\n${code}`
+}
+
+function phpBody(code: string): string {
+  return code.trimStart().replace(/^<\?php\s*/, "")
 }
