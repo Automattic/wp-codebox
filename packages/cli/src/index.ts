@@ -8,6 +8,7 @@ interface RunOptions {
   mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite" }>
   command: string
   args: string[]
+  wpVersion?: string
   artifactsDirectory?: string
   policy?: RuntimePolicy
   json: boolean
@@ -75,7 +76,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
         environment: {
           kind: "wordpress",
           name: "sandbox-runtime-cli",
-          version: "latest",
+          version: options.wpVersion ?? "latest",
           blueprint: { steps: [] },
         },
         policy: options.policy ?? defaultPolicy,
@@ -157,6 +158,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
         break
       case "--arg":
         options.args.push(value)
+        break
+      case "--wp":
+        options.wpVersion = value
         break
       case "--artifacts":
         options.artifactsDirectory = value
@@ -253,6 +257,7 @@ Options:
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
   --arg <key=value>    Command argument. Repeatable.
+  --wp <version>       WordPress version for Playground, e.g. latest, trunk, nightly, 6.9.
   --artifacts <dir>    Artifact root directory.
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --json               Emit machine-readable JSON.

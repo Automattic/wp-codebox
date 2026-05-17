@@ -46,6 +46,7 @@ interface PlaygroundCliModule {
     skipBrowser: boolean
     mount: Array<{ hostPath: string; vfsPath: string }>
     blueprint?: unknown
+    wp?: string
   }): Promise<PlaygroundCliServer>
 }
 
@@ -381,6 +382,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
         hostPath: mount.source,
         vfsPath: mount.target,
       })),
+      wp: this.spec.environment.version,
       blueprint: this.spec.environment.blueprint,
     })
   }
