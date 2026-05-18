@@ -100,6 +100,56 @@ final class Sandbox_Runtime_Abilities {
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
+
+			wp_register_ability(
+				'sandbox-runtime/run-agent-task-batch',
+				array(
+					'label'               => 'Run Agent Sandbox Task Batch',
+					'description'         => 'Run multiple tasks in isolated Sandbox Runtime WordPress agent sandboxes and return artifacts for each run.',
+					'category'            => 'sandbox-runtime',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'tasks' ),
+						'properties' => array(
+							'tasks'                  => array(
+								'type'        => 'array',
+								'description' => 'Task descriptions. Each task runs in its own isolated sandbox.',
+								'items'       => array( 'type' => 'string' ),
+							),
+							'concurrency'            => array(
+								'type'        => 'integer',
+								'description' => 'Maximum number of concurrent sandbox runs. Defaults to 2.',
+							),
+							'agent'                  => array( 'type' => 'string' ),
+							'mode'                   => array( 'type' => 'string' ),
+							'max_turns'              => array( 'type' => 'integer' ),
+							'wp'                     => array( 'type' => 'string' ),
+							'artifacts_path'         => array( 'type' => 'string' ),
+							'sandbox_runtime_bin'    => array( 'type' => 'string' ),
+							'agents_api_path'        => array( 'type' => 'string' ),
+							'data_machine_path'      => array( 'type' => 'string' ),
+							'data_machine_code_path' => array( 'type' => 'string' ),
+							'openai_provider_path'   => array( 'type' => 'string' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'     => array( 'type' => 'boolean' ),
+							'schema'      => array( 'type' => 'string' ),
+							'tasks'       => array( 'type' => 'array' ),
+							'concurrency' => array( 'type' => 'integer' ),
+							'paths'       => array( 'type' => 'object' ),
+							'artifacts'   => array( 'type' => 'string' ),
+							'exit_code'   => array( 'type' => 'integer' ),
+							'run'         => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'run_agent_task_batch' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
 		};
 
 		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
@@ -113,6 +163,11 @@ final class Sandbox_Runtime_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function run_agent_task( array $input ): array|WP_Error {
 		return ( new Sandbox_Runtime_Agent_Sandbox_Runner() )->run( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function run_agent_task_batch( array $input ): array|WP_Error {
+		return ( new Sandbox_Runtime_Agent_Sandbox_Runner() )->run_batch( $input );
 	}
 
 	public static function can_run_agent_task(): bool {

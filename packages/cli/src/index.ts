@@ -47,6 +47,24 @@ interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   codeFile?: string
 }
 
+interface AgentSandboxBatchOptions extends AgentRuntimeProbeOptions {
+  tasks: string[]
+  agent?: string
+  mode?: string
+  maxTurns?: string
+  concurrency?: string
+}
+
+interface AgentSandboxBatchOutput {
+  success: boolean
+  schema: "sandbox-runtime/agent-sandbox-batch/v1"
+  concurrency: number
+  total: number
+  completed: number
+  failed: number
+  runs: Array<RunOutput & { index: number; task: string }>
+}
+
 const defaultPolicy: RuntimePolicy = {
   network: "deny",
   filesystem: "readwrite-mounts",
@@ -97,6 +115,22 @@ async function main(args: string[]): Promise<number> {
     return output.success ? 0 : 1
   }
 
+  if (command === "agent-sandbox-batch") {
+    const options = await parseAgentSandboxBatchOptions(args)
+    const execute = () => runAgentSandboxBatch(options)
+
+    if (!options.json) {
+      const output = await execute()
+      printBatchHumanOutput(output)
+      return output.success ? 0 : 1
+    }
+
+    const { result, logs } = await captureStdout(execute)
+    const output = logs.length > 0 ? { ...result, logs } : result
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    return output.success ? 0 : 1
+  }
+
   if (command !== "run") {
     console.error(`Unknown command: ${command}`)
     printHelp()
@@ -138,6 +172,44 @@ async function agentSandboxRunOptions(options: AgentSandboxRunOptions): Promise<
     artifactsDirectory: options.artifactsDirectory,
     json: options.json,
   }
+}
+
+async function runAgentSandboxBatch(options: AgentSandboxBatchOptions): Promise<AgentSandboxBatchOutput> {
+  const concurrency = positiveInteger(options.concurrency, 2)
+  const runs = await mapWithConcurrency(options.tasks, concurrency, async (task, index) => {
+    const runOptions = await agentSandboxRunOptions({
+      ...options,
+      task,
+    })
+    const output = await run(runOptions)
+    return { ...output, index, task }
+  })
+  const failed = runs.filter((run) => !run.success).length
+
+  return {
+    success: failed === 0,
+    schema: "sandbox-runtime/agent-sandbox-batch/v1",
+    concurrency,
+    total: runs.length,
+    completed: runs.length - failed,
+    failed,
+    runs,
+  }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, callback: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      results[index] = await callback(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
+  return results
 }
 
 function agentRuntimeMounts(options: AgentRuntimeProbeOptions): RunOptions["mounts"] {
@@ -250,6 +322,82 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
   }
 
   return options as AgentSandboxRunOptions
+}
+
+async function parseAgentSandboxBatchOptions(args: string[]): Promise<AgentSandboxBatchOptions> {
+  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--tasks-json", "--tasks-file", "--agent", "--mode", "--max-turns", "--concurrency"]) as Partial<AgentSandboxBatchOptions>
+  options.tasks = []
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[index + 1]
+
+    switch (name) {
+      case "--task":
+        if (value) {
+          options.tasks.push(value)
+        }
+        break
+      case "--tasks-json":
+        if (value) {
+          options.tasks.push(...parseTaskList(value))
+        }
+        break
+      case "--tasks-file":
+        if (value) {
+          options.tasks.push(...parseTaskList(await readFile(resolve(value), "utf8")))
+        }
+        break
+      case "--agent":
+        options.agent = value
+        break
+      case "--mode":
+        options.mode = value
+        break
+      case "--max-turns":
+        options.maxTurns = value
+        break
+      case "--concurrency":
+        options.concurrency = value
+        break
+    }
+  }
+
+  options.tasks = options.tasks.map((task) => task.trim()).filter(Boolean)
+  if (options.tasks.length === 0) {
+    throw new Error("Missing required option: --task, --tasks-json, or --tasks-file")
+  }
+
+  return options as AgentSandboxBatchOptions
+}
+
+function parseTaskList(raw: string): string[] {
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) {
+    throw new Error("Task list must be a JSON array")
+  }
+
+  return parsed.map((task) => {
+    if (typeof task === "string") {
+      return task
+    }
+
+    if (task && typeof task === "object" && "task" in task && typeof task.task === "string") {
+      return task.task
+    }
+
+    throw new Error("Task list entries must be strings or objects with a task string")
+  })
+}
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 async function run(options: RunOptions): Promise<RunOutput> {
@@ -437,11 +585,24 @@ function printHumanOutput(output: RunOutput): void {
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
 }
 
+function printBatchHumanOutput(output: AgentSandboxBatchOutput): void {
+  console.log("Sandbox Runtime batch")
+  console.log(`Runs: ${output.completed}/${output.total} completed`)
+  console.log(`Concurrency: ${output.concurrency}`)
+  for (const run of output.runs) {
+    console.log(`${run.success ? "ok" : "fail"} #${run.index + 1}: ${run.task}`)
+    if (run.artifacts?.directory) {
+      console.log(`  Artifacts: ${run.artifacts.directory}`)
+    }
+  }
+}
+
 function printHelp(): void {
   console.log(`Usage:
   sandbox-runtime run --mount <host>:<vfs> --command <id> [options]
   sandbox-runtime agent-runtime-probe --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> [options]
   sandbox-runtime agent-sandbox-run --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> --task <text> [options]
+  sandbox-runtime agent-sandbox-batch --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> --task <text> [--task <text> ...] [options]
 
 Options:
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
@@ -466,6 +627,12 @@ Agent sandbox run options:
   --max-turns <n>             Maximum agent loop turns for the sandbox task.
   --code <php>                Optional PHP body to run after the agent stack boots.
   --code-file <path>          Optional PHP file to run after the agent stack boots.
+
+Agent sandbox batch options:
+  --task <text>               Task to run in its own isolated sandbox. Repeatable.
+  --tasks-json <json>         JSON array of task strings or objects with a task string.
+  --tasks-file <path>         File containing a JSON task array.
+  --concurrency <n>           Maximum concurrent sandboxes. Defaults to 2.
 
 Example:
   sandbox-runtime run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
