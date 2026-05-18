@@ -33,6 +33,7 @@ interface AgentRuntimeProbeOptions {
   dataMachinePath: string
   dataMachineCodePath: string
   providerPluginPaths: string[]
+  mounts: RunOptions["mounts"]
   wpVersion?: string
   artifactsDirectory?: string
   secretEnvNames?: string[]
@@ -235,6 +236,7 @@ function agentRuntimeMounts(options: AgentRuntimeProbeOptions): RunOptions["moun
       target: `/wordpress/wp-content/plugins/${plugin.slug}`,
       mode: "readwrite" as const,
     })),
+    ...options.mounts,
   ]
 }
 
@@ -246,7 +248,7 @@ function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source
 }
 
 function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = []): AgentRuntimeProbeOptions {
-  const options: Partial<AgentRuntimeProbeOptions> = { json: false }
+  const options: Partial<AgentRuntimeProbeOptions> = { json: false, mounts: [] }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -276,6 +278,9 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
       case "--provider-plugin":
         options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
         break
+      case "--mount":
+        options.mounts = [...(options.mounts ?? []), parseMount(value)]
+        break
       case "--wp":
         options.wpVersion = value
         break
@@ -304,12 +309,13 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
   }
 
   options.providerPluginPaths = options.providerPluginPaths ?? []
+  options.mounts = options.mounts ?? []
 
   return options as AgentRuntimeProbeOptions
 }
 
 function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--code", "--code-file", "--secret-env"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -359,7 +365,7 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
 }
 
 async function parseAgentSandboxBatchOptions(args: string[]): Promise<AgentSandboxBatchOptions> {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--tasks-json", "--tasks-file", "--agent", "--mode", "--provider", "--model", "--max-turns", "--concurrency", "--secret-env"]) as Partial<AgentSandboxBatchOptions>
+  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--tasks-json", "--tasks-file", "--agent", "--mode", "--provider", "--model", "--max-turns", "--concurrency", "--secret-env", "--mount"]) as Partial<AgentSandboxBatchOptions>
   options.tasks = []
 
   for (let index = 0; index < args.length; index++) {
@@ -688,6 +694,7 @@ Agent runtime probe options:
   --data-machine <path>       Local Data Machine plugin checkout.
   --data-machine-code <path>  Local Data Machine Code plugin checkout.
   --provider-plugin <path>    Local AI provider plugin checkout. Repeatable.
+  --mount <host:vfs>          Extra host path to mount into the runtime. Repeatable.
 
 Agent sandbox run options:
   --task <text>               Task description recorded in the sandbox run.
