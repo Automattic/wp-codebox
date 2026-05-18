@@ -40,6 +40,22 @@ final class Sandbox_Runtime_Abilities {
 								'type'        => 'string',
 								'description' => 'Task description to run inside the isolated sandbox.',
 							),
+							'agent'                  => array(
+								'type'        => 'string',
+								'description' => 'Sandbox agent slug to invoke through agents/chat. Defaults through sandbox_runtime_default_agent.',
+							),
+							'mode'                   => array(
+								'type'        => 'string',
+								'description' => 'Agent execution mode. Defaults to sandbox.',
+							),
+							'session_id'             => array(
+								'type'        => 'string',
+								'description' => 'Existing sandbox conversation session id.',
+							),
+							'max_turns'              => array(
+								'type'        => 'integer',
+								'description' => 'Maximum agent loop turns for this sandbox task.',
+							),
 							'code'                   => array(
 								'type'        => 'string',
 								'description' => 'Optional PHP code body to execute after the sandbox agent stack boots.',

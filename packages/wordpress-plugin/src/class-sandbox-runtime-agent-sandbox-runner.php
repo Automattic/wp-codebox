@@ -60,16 +60,26 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 		}
 
 		$command = sprintf(
-			'%s agent-sandbox-run --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --task %s --wp %s --artifacts %s --json',
+			'%s agent-sandbox-run --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --task %s --agent %s --mode %s --wp %s --artifacts %s --json',
 			$this->command_prefix( $bin ),
 			escapeshellarg( $paths['agents_api'] ),
 			escapeshellarg( $paths['data_machine'] ),
 			escapeshellarg( $paths['data_machine_code'] ),
 			escapeshellarg( $paths['openai_provider'] ),
 			escapeshellarg( $task ),
+			escapeshellarg( $this->agent_slug( $input ) ),
+			escapeshellarg( $this->mode( $input ) ),
 			escapeshellarg( $wp_version ),
 			escapeshellarg( $artifacts )
 		);
+
+		if ( ! empty( $input['session_id'] ) ) {
+			$command .= ' --session-id ' . escapeshellarg( (string) $input['session_id'] );
+		}
+
+		if ( ! empty( $input['max_turns'] ) ) {
+			$command .= ' --max-turns ' . escapeshellarg( (string) max( 1, (int) $input['max_turns'] ) );
+		}
 
 		if ( '' !== $code ) {
 			$command .= ' --code ' . escapeshellarg( $code );
@@ -166,6 +176,25 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 		}
 
 		return function_exists( 'exec' ) && function_exists( 'shell_exec' );
+	}
+
+	private function agent_slug( array $input ): string {
+		$agent = trim( (string) ( $input['agent'] ?? '' ) );
+		if ( '' !== $agent ) {
+			return $agent;
+		}
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$agent = (string) apply_filters( 'sandbox_runtime_default_agent', '' );
+		}
+
+		return '' !== trim( $agent ) ? trim( $agent ) : 'sandbox-agent';
+	}
+
+	private function mode( array $input ): string {
+		$mode = trim( (string) ( $input['mode'] ?? '' ) );
+
+		return '' !== $mode ? $mode : 'sandbox';
 	}
 
 	private function default_artifacts_path(): string {

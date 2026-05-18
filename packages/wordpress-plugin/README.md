@@ -8,8 +8,9 @@ agent sandboxes from a parent site.
 - `sandbox-runtime/run-agent-task`
 
 The ability runs `sandbox-runtime agent-sandbox-run`, which boots a disposable
-WordPress Playground runtime, mounts the agent stack components, executes the
-task, and returns artifact metadata.
+WordPress Playground runtime, mounts the agent stack components, invokes the
+configured sandbox agent through the canonical `agents/chat` ability, and returns
+artifact metadata.
 
 ## Configuration
 

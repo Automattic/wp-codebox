@@ -39,6 +39,10 @@ interface AgentRuntimeProbeOptions {
 
 interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   task: string
+  agent?: string
+  mode?: string
+  sessionId?: string
+  maxTurns?: string
   code?: string
   codeFile?: string
 }
@@ -205,7 +209,7 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
 }
 
 function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--code", "--code-file"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--session-id", "--max-turns", "--code", "--code-file"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -215,6 +219,18 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
     switch (name) {
       case "--task":
         options.task = value
+        break
+      case "--agent":
+        options.agent = value
+        break
+      case "--mode":
+        options.mode = value
+        break
+      case "--session-id":
+        options.sessionId = value
+        break
+      case "--max-turns":
+        options.maxTurns = value
         break
       case "--code":
         options.code = value
@@ -444,6 +460,10 @@ Agent runtime probe options:
 
 Agent sandbox run options:
   --task <text>               Task description recorded in the sandbox run.
+  --agent <slug>              Agent slug to invoke through the canonical agents/chat ability.
+  --mode <slug>               Agent execution mode. Defaults to sandbox.
+  --session-id <id>           Existing sandbox conversation session id.
+  --max-turns <n>             Maximum agent loop turns for the sandbox task.
   --code <php>                Optional PHP body to run after the agent stack boots.
   --code-file <path>          Optional PHP file to run after the agent stack boots.
 
@@ -452,6 +472,10 @@ Example:
 }
 
 async function resolveSandboxTaskCode(options: AgentSandboxRunOptions): Promise<string> {
+  if (options.agent) {
+    return agentChatTaskCode(options)
+  }
+
   if (options.code) {
     return options.code
   }
@@ -463,9 +487,92 @@ async function resolveSandboxTaskCode(options: AgentSandboxRunOptions): Promise<
   return `echo json_encode(array('task_received' => true), JSON_PRETTY_PRINT);`
 }
 
+function agentChatTaskCode(options: AgentSandboxRunOptions): string {
+  const input: Record<string, unknown> = {
+    agent: options.agent,
+    message: options.task,
+    session_id: options.sessionId ?? null,
+    mode: options.mode ?? "sandbox",
+    client_context: {
+      source: "bridge",
+      client_name: "sandbox-runtime",
+      connector_id: "sandbox-runtime-cli",
+      mode: options.mode ?? "sandbox",
+      agent_modes: [options.mode ?? "sandbox"],
+    },
+  }
+
+  if (options.maxTurns) {
+    input.max_turns = Number.parseInt(options.maxTurns, 10)
+  }
+
+  return `
+if (function_exists('wp_set_current_user')) {
+    wp_set_current_user(1);
+}
+
+if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
+    $sandbox_agent_slug = sanitize_title((string) (${JSON.stringify(input.agent)}));
+    if ('' !== $sandbox_agent_slug) {
+        (new DataMachine\\Core\\Database\\Agents\\Agents())->create_if_missing(
+            $sandbox_agent_slug,
+            'Sandbox Agent',
+            1,
+            array()
+        );
+    }
+}
+
+add_filter('agents_chat_permission', static function () {
+    return true;
+}, 100, 2);
+
+$ability = function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
+if (!$ability || !method_exists($ability, 'execute')) {
+    $sandbox_agent_runtime = array(
+        'agent_runtime' => array(
+            'success' => false,
+            'error' => array(
+                'code' => 'agents_chat_unavailable',
+                'message' => 'The canonical agents/chat ability is not available inside the sandbox.',
+            ),
+        ),
+    );
+} else {
+    $agent_input = ${JSON.stringify(JSON.stringify(input))};
+    $agent_result = $ability->execute(json_decode($agent_input, true));
+    if (is_wp_error($agent_result)) {
+        $sandbox_agent_runtime = array(
+            'agent_runtime' => array(
+                'success' => false,
+                'input' => json_decode($agent_input, true),
+                'error' => array(
+                    'code' => $agent_result->get_error_code(),
+                    'message' => $agent_result->get_error_message(),
+                    'data' => $agent_result->get_error_data(),
+                ),
+            ),
+        );
+    } else {
+        $sandbox_agent_runtime = array(
+            'agent_runtime' => array(
+                'success' => true,
+                'input' => json_decode($agent_input, true),
+                'result' => $agent_result,
+            ),
+        );
+    }
+}
+
+echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
+`
+}
+
 function agentSandboxRunCode(task: string, code: string): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 
 $plugins = array(
     'agents-api/agents-api.php',
@@ -527,6 +634,8 @@ function phpBody(code: string): string {
 function agentRuntimeProbeCode(): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 
 $plugins = array(
     'agents-api/agents-api.php',
