@@ -1,22 +1,24 @@
 # WP Codebox
 
-Portable TypeScript substrate for isolated application runtimes. WordPress Playground is the first backend.
+Disposable sandboxes for agent-built artifacts, with replayable evidence and reviewable outputs. WordPress Playground is the first backend.
 
 ## Thesis
 
-WP Codebox is not an app, an agent framework, or a CI harness. It is a small runtime contract for app and agent platforms that need to create isolated environments, mount inputs, execute controlled actions, observe state, and export artifacts.
+WP Codebox is not an app, an agent framework, or a CI harness. It is a small runtime contract for platforms that need to create isolated environments, mount inputs, execute controlled actions, observe state, and export durable artifacts before the sandbox disappears.
 
 ```text
 App or agent platform
   -> WP Codebox contract
   -> Backend adapter
   -> Isolated environment
-  -> Artifact bundle
+  -> Replayable artifact bundle
 ```
 
-The flagship use case is real-time, sandboxed coding inside application environments. A product can let a user chat with an agent, run the work inside a disposable sandbox, stream observations, and apply only the resulting artifact to a real project or site.
+The flagship use case is real-time, sandboxed agent work. A product can let a user chat with an agent, run the work inside a disposable sandbox, stream observations, and apply only the resulting artifact to a real project or site.
 
 For WordPress, this means a control plane such as Studio, Data Machine, or WordPress.com can run agents against WordPress Playground sandboxes instead of granting broad access to production sites, local machines, or CI-only harnesses.
+
+The produced artifact does not have to be WordPress-specific. A WordPress Playground sandbox can still produce a static site, source bundle, dataset, patch, docs export, eval fixture, or any other reviewable output.
 
 ## Packages
 
@@ -54,20 +56,48 @@ Expected output:
   "artifacts": {
     "directory": "./artifacts/runtime-...",
     "manifestPath": "./artifacts/runtime-.../manifest.json",
+    "blueprintAfterPath": "./artifacts/runtime-.../blueprint.after.json",
+    "blueprintAfterNotesPath": "./artifacts/runtime-.../blueprint.after-notes.json",
     "eventsPath": "./artifacts/runtime-.../events.jsonl",
     "commandsPath": "./artifacts/runtime-.../commands.jsonl",
-    "observationsPath": "./artifacts/runtime-.../observations.jsonl"
+    "observationsPath": "./artifacts/runtime-.../observations.jsonl",
+    "capturedMountsPath": "./artifacts/runtime-.../files/mounted-files.json"
   }
 }
 ```
 
-WP Codebox mounts the local plugin directory into WordPress Playground and boots lazily on the first `execute()` call. The CLI command runs PHP from `--arg code-file=...` through `server.playground.run()`, collects artifacts, and disposes the Playground server when the runtime is destroyed. Machine-readable JSON gives consumers such as Data Machine Code, Homeboy Extensions, Studio, and CI runners a stable integration seam.
+WP Codebox mounts the local plugin directory into WordPress Playground and boots lazily on the first `execute()` call. The CLI command runs PHP from `--arg code-file=...` through `server.playground.run()`, collects artifacts, and disposes the Playground server when the runtime is destroyed. Machine-readable JSON gives consumers such as Data Machine Code, Homeboy Extensions, Studio, wp-gym, and CI runners a stable integration seam.
 
 `wordpress.run-php` accepts either `--arg code-file=<path>` or `--arg code=<php>`. It loads `/wordpress/wp-load.php` before running the supplied PHP so WordPress functions are available by default. Use `--arg bootstrap=none` for raw PHP execution without WordPress bootstrap.
 
 Use `--wp trunk`, `--wp nightly`, or a numeric WordPress version when a mounted plugin stack requires a version other than Playground's default.
 
 The fixture plugin is documented in [`examples/simple-plugin/README.md`](examples/simple-plugin/README.md).
+
+## Artifact Bundles
+
+Artifact capture is owned by WP Codebox because the runtime boundary knows what was mounted, what executed, and what must survive teardown. Agent frameworks and workspaces can mutate files inside the sandbox; WP Codebox captures the result from outside the sandbox before disposal.
+
+Current bundles include:
+
+- `manifest.json`: artifact index with content types.
+- `metadata.json`: runtime, policy, mounts, and collection metadata.
+- `blueprint.after.json`: replay-oriented Playground blueprint.
+- `blueprint.after-notes.json`: replay status, limitations, and next capture targets.
+- `events.jsonl`, `commands.jsonl`, `observations.jsonl`: runtime evidence streams.
+- `logs/runtime.log`, `logs/commands.log`: human-readable logs.
+- `files/mounts.json`: mounted input list.
+- `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
+- `files/mounts/<index>/...`: copied file contents from readwrite mounts.
+
+For text files from readwrite mounts, `blueprint.after.json` includes `writeFile` steps so the files can be replayed into a fresh Playground runtime. Binary files and oversized files are copied into the artifact bundle but are not embedded in the blueprint yet. Database exports, option diffs, uploads, active theme/plugin state, and screenshots are planned capture targets.
+
+```text
+Sandbox mutates files/content
+  -> WP Codebox captures readwrite mounts and evidence
+  -> Sandbox is destroyed
+  -> Artifact bundle remains for review/replay/apply-back
+```
 
 ## WordPress Ability Surface
 
@@ -81,6 +111,8 @@ This is the parent-site control-plane surface for frontend/chat integrations. A 
 For parallel cooking, `wp-codebox agent-sandbox-batch` and `wp-codebox/run-agent-task-batch` accept multiple tasks and run each task in its own isolated Playground sandbox with a bounded concurrency limit. This is the first coordinator primitive for issue fan-out: a parent can turn several GitHub issues into separate sandbox agent runs, and each sandbox agent is responsible for doing its own branch/test/PR work through the mounted coding tools.
 
 Parent control planes can pass `provider` and `model` to seed the disposable sandbox's Data Machine agent configuration for the requested execution mode. Provider plugins are mounted through generic `--provider-plugin` CLI arguments or `provider_plugin_paths` ability input; WP Codebox does not know about specific providers. Provider credentials still resolve through the mounted provider's normal scoped mechanism, so raw API keys do not need to appear in task payloads. Use `--secret-env <NAME>` or ability input `secret_env: ["NAME"]` to allow-list a parent process environment variable for injection into the sandbox PHP process; artifacts record the env name, not the value.
+
+Agent runtime commands also accept repeatable `--mount <host:vfs[:mode]>` values for additional task inputs. These mounts are generic WP Codebox inputs, not Homeboy/Data Machine concepts.
 
 Component paths come from ability input, the `wp_codebox_component_paths` option, or the `wp_codebox_component_paths` filter. Data Machine Code is the mounted coding-tools component for file-editing agent sandboxes; it provides the workspace/file/GitHub tools inside the sandbox, while WP Codebox owns the parent-site control plane and sandbox lifecycle.
 
@@ -119,6 +151,7 @@ Disallowed commands throw `RuntimeCommandPolicyViolationError`. The error includ
 - Replace WP AI Client.
 - Implement provider auth or Codex integration in v0.
 - Couple the top-level contract to WordPress-specific concepts.
+- Couple runtime or artifact capture to Homeboy, Data Machine, wp-gym, or any other consumer.
 
 ## Product Direction
 
@@ -133,7 +166,7 @@ User request
   -> user/app applies, exports, or discards the result
 ```
 
-The first backend is WordPress Playground. Future consumers can include Studio, Data Machine Code, wp-gym, world-of-wordpress, WordPress.com product surfaces, and CI/eval runners.
+The first backend is WordPress Playground. Future consumers can include Studio, Data Machine Code, wp-gym, world-of-wordpress, WordPress.com product surfaces, and CI/eval runners. Homeboy Extensions is one adapter that can invoke WP Codebox in CI; WP Codebox itself remains consumer-agnostic.
 
 ## Related Issues
 
