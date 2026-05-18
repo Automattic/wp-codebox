@@ -6,11 +6,17 @@ agent sandboxes from a parent site.
 ## Ability
 
 - `sandbox-runtime/run-agent-task`
+- `sandbox-runtime/run-agent-task-batch`
 
 The ability runs `sandbox-runtime agent-sandbox-run`, which boots a disposable
 WordPress Playground runtime, mounts the agent stack components, invokes the
 configured sandbox agent through the canonical `agents/chat` ability, and returns
 artifact metadata.
+
+The batch ability runs `sandbox-runtime agent-sandbox-batch`, accepts a list of
+task descriptions, and launches one isolated sandbox per task with bounded
+concurrency. This is the parent-site primitive for fan-out workflows such as
+assigning several GitHub issues to separate sandbox coding agents.
 
 ## Configuration
 
