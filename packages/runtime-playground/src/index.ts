@@ -1,5 +1,6 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
-import { join, relative, resolve } from "node:path"
+import { createHash } from "node:crypto"
+import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { assertRuntimeCommandAllowed } from "@chubes4/wp-codebox-core"
 import type {
   ArtifactBundle,
@@ -49,6 +50,41 @@ interface PlaygroundCliModule {
     wp?: string
   }): Promise<PlaygroundCliServer>
 }
+
+interface CapturedMountFile {
+  mountIndex: number
+  source: string
+  target: string
+  relativePath: string
+  artifactPath: string
+  size: number
+  sha256: string
+  contentType: string
+  replayable: boolean
+  replayContents?: string
+}
+
+interface SkippedMountFile {
+  mountIndex: number
+  source: string
+  target: string
+  relativePath: string
+  reason: string
+}
+
+interface CapturedMountFiles {
+  files: CapturedMountFile[]
+  skipped: SkippedMountFile[]
+  limits: {
+    maxFiles: number
+    maxFileBytes: number
+    skippedDirectories: string[]
+  }
+}
+
+const MAX_CAPTURED_MOUNT_FILES = 200
+const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
+const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
 
 export class PlaygroundRuntimeBackend implements RuntimeBackend {
   readonly kind = "wordpress-playground" as const
@@ -186,12 +222,15 @@ class PlaygroundRuntime implements Runtime {
     const createdAt = now()
     const manifestPath = join(this.artifactRoot, "manifest.json")
     const metadataPath = join(this.artifactRoot, "metadata.json")
+    const blueprintAfterPath = join(this.artifactRoot, "blueprint.after.json")
+    const blueprintAfterNotesPath = join(this.artifactRoot, "blueprint.after-notes.json")
     const eventsPath = join(this.artifactRoot, "events.jsonl")
     const commandsPath = join(this.artifactRoot, "commands.jsonl")
     const observationsPath = join(this.artifactRoot, "observations.jsonl")
     const runtimeLogPath = join(logsDirectory, "runtime.log")
     const commandsLogPath = join(logsDirectory, "commands.log")
     const mountsPath = join(filesDirectory, "mounts.json")
+    const capturedMountsPath = join(filesDirectory, "mounted-files.json")
 
     this.recordEvent("runtime.artifacts.collected", {
       id: bundleId,
@@ -209,16 +248,25 @@ class PlaygroundRuntime implements Runtime {
       policy: this.spec.policy,
       spec,
     }
+    const capturedMounts = await this.captureMountedFiles(filesDirectory)
+    const blueprintAfter = this.buildBlueprintAfter(capturedMounts)
+    const blueprintAfterNotes = this.buildBlueprintAfterNotes(createdAt, capturedMounts)
 
     const manifestFiles: ArtifactManifestFile[] = [
       fileEntry(manifestPath, "manifest", "application/json"),
       fileEntry(metadataPath, "metadata", "application/json"),
+      fileEntry(blueprintAfterPath, "blueprint-after", "application/json"),
+      fileEntry(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
       fileEntry(eventsPath, "events", "application/x-ndjson"),
       fileEntry(commandsPath, "commands", "application/x-ndjson"),
       fileEntry(observationsPath, "observations", "application/x-ndjson"),
       fileEntry(runtimeLogPath, "log", "text/plain"),
       fileEntry(commandsLogPath, "log", "text/plain"),
       fileEntry(mountsPath, "mounts", "application/json"),
+      fileEntry(capturedMountsPath, "mounted-files", "application/json"),
+      ...capturedMounts.files.map((file) =>
+        fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
+      ),
     ]
 
     const manifest: ArtifactManifest = {
@@ -236,26 +284,190 @@ class PlaygroundRuntime implements Runtime {
       metadataPath,
       `${JSON.stringify(metadata, null, 2)}\n`,
     )
+    await writeFile(blueprintAfterPath, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
+    await writeFile(blueprintAfterNotesPath, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
     await writeJsonLines(eventsPath, this.events)
     await writeJsonLines(commandsPath, this.commands)
     await writeJsonLines(observationsPath, this.observations)
     await writeFile(runtimeLogPath, this.formatRuntimeLog())
     await writeFile(commandsLogPath, this.formatCommandsLog())
     await writeFile(mountsPath, `${JSON.stringify(this.mounts, null, 2)}\n`)
+    await writeFile(capturedMountsPath, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
 
     return {
       id: bundleId,
       directory: this.artifactRoot,
       manifestPath,
       metadataPath,
+      blueprintAfterPath,
+      blueprintAfterNotesPath,
       eventsPath,
       commandsPath,
       observationsPath,
       runtimeLogPath,
       commandsLogPath,
       mountsPath,
+      capturedMountsPath,
       createdAt,
     }
+  }
+
+  private buildBlueprintAfter(capturedMounts: CapturedMountFiles): Record<string, unknown> {
+    const baseBlueprint = normalizeBlueprint(this.spec.environment.blueprint)
+    const preferredVersions = preferredVersionsForEnvironment(this.spec.environment.version, baseBlueprint)
+    const replaySteps = capturedMounts.files
+      .filter((file) => file.replayable && typeof file.replayContents === "string")
+      .map((file) => ({
+        step: "writeFile",
+        path: file.target,
+        data: {
+          resource: "literal",
+          name: basename(file.target),
+          contents: file.replayContents,
+        },
+      }))
+
+    return {
+      $schema: "https://playground.wordpress.net/blueprint-schema.json",
+      ...(preferredVersions ? { preferredVersions } : {}),
+      landingPage: baseBlueprint.landingPage ?? "/",
+      steps: [...baseBlueprint.steps, ...replaySteps],
+    }
+  }
+
+  private buildBlueprintAfterNotes(createdAt: string, capturedMounts: CapturedMountFiles): Record<string, unknown> {
+    const replayableFileCount = capturedMounts.files.filter((file) => file.replayable).length
+
+    return {
+      createdAt,
+      runtime: {
+        id: this.runtimeId,
+        backend: "wordpress-playground",
+        environment: this.spec.environment,
+      },
+      replayStatus: "partial",
+      blueprintPath: "blueprint.after.json",
+      mounts: this.mounts,
+      capturedFilesPath: "files/mounted-files.json",
+      capturedFileCount: capturedMounts.files.length,
+      replayableFileCount,
+      skippedFileCount: capturedMounts.skipped.length,
+      limitations: [
+        "Text files from readwrite mounts are embedded in blueprint.after.json as writeFile steps; binary files are copied into artifacts but not replayed yet.",
+        "Database exports, option diffs, uploaded media, active theme/plugin state, and screenshots are not captured yet.",
+      ],
+      nextCaptureTargets: ["database-export", "active-theme", "active-plugins", "uploads", "binary-file-replay"],
+    }
+  }
+
+  private async captureMountedFiles(filesDirectory: string): Promise<CapturedMountFiles> {
+    const captured: CapturedMountFiles = {
+      files: [],
+      skipped: [],
+      limits: {
+        maxFiles: MAX_CAPTURED_MOUNT_FILES,
+        maxFileBytes: MAX_CAPTURED_MOUNT_FILE_BYTES,
+        skippedDirectories: [...SKIPPED_CAPTURE_DIRECTORIES].sort(),
+      },
+    }
+
+    for (const [mountIndex, mount] of this.mounts.entries()) {
+      if (mount.mode !== "readwrite") {
+        continue
+      }
+
+      const mountStats = await stat(mount.source)
+      if (mountStats.isDirectory()) {
+        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, mount.source, "")
+        continue
+      }
+
+      if (mountStats.isFile()) {
+        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, mount.source, basename(mount.source))
+      }
+    }
+
+    return captured
+  }
+
+  private async captureMountedDirectory(
+    filesDirectory: string,
+    captured: CapturedMountFiles,
+    mount: MountSpec,
+    mountIndex: number,
+    directory: string,
+    relativeDirectory: string,
+  ): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true })
+
+    for (const entry of entries) {
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+      const sourcePath = join(directory, entry.name)
+
+      if (entry.isDirectory()) {
+        if (SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
+          captured.skipped.push({
+            mountIndex,
+            source: sourcePath,
+            target: mountTargetPath(mount, relativePath),
+            relativePath,
+            reason: "directory-skipped",
+          })
+          continue
+        }
+
+        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath)
+        continue
+      }
+
+      if (entry.isFile()) {
+        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath)
+      }
+    }
+  }
+
+  private async captureMountedFile(
+    filesDirectory: string,
+    captured: CapturedMountFiles,
+    mount: MountSpec,
+    mountIndex: number,
+    sourcePath: string,
+    relativePath: string,
+  ): Promise<void> {
+    const target = mount.type === "file" ? mount.target : mountTargetPath(mount, relativePath)
+
+    if (captured.files.length >= MAX_CAPTURED_MOUNT_FILES) {
+      captured.skipped.push({ mountIndex, source: sourcePath, target, relativePath, reason: "max-files-exceeded" })
+      return
+    }
+
+    const fileStats = await stat(sourcePath)
+    if (fileStats.size > MAX_CAPTURED_MOUNT_FILE_BYTES) {
+      captured.skipped.push({ mountIndex, source: sourcePath, target, relativePath, reason: "max-file-bytes-exceeded" })
+      return
+    }
+
+    const artifactRelativePath = `mounts/${mountIndex}/${relativePath}`
+    const artifactPath = join(filesDirectory, artifactRelativePath)
+    await mkdir(dirname(artifactPath), { recursive: true })
+    await copyFile(sourcePath, artifactPath)
+
+    const buffer = await readFile(sourcePath)
+    const text = buffer.toString("utf8")
+    const replayable = isReplayableText(buffer, text)
+
+    captured.files.push({
+      mountIndex,
+      source: sourcePath,
+      target,
+      relativePath,
+      artifactPath: `files/${artifactRelativePath}`,
+      size: fileStats.size,
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+      contentType: replayable ? "text/plain; charset=utf-8" : "application/octet-stream",
+      replayable,
+      ...(replayable ? { replayContents: text } : {}),
+    })
   }
 
   async destroy(): Promise<void> {
@@ -418,6 +630,55 @@ export function createPlaygroundRuntimeBackend(): RuntimeBackend {
 
 function fileEntry(path: string, kind: ArtifactManifestFile["kind"], contentType: string): ArtifactManifestFile {
   return { path, kind, contentType }
+}
+
+function normalizeBlueprint(blueprint: unknown): { landingPage?: unknown; preferredVersions?: unknown; steps: unknown[] } {
+  if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {
+    return { steps: [] }
+  }
+
+  const candidate = blueprint as Record<string, unknown>
+  const steps = Array.isArray(candidate.steps) ? candidate.steps : []
+
+  return {
+    landingPage: candidate.landingPage,
+    preferredVersions: candidate.preferredVersions,
+    steps,
+  }
+}
+
+function preferredVersionsForEnvironment(
+  wpVersion: string | undefined,
+  baseBlueprint: { preferredVersions?: unknown },
+): unknown {
+  if (baseBlueprint.preferredVersions) {
+    return baseBlueprint.preferredVersions
+  }
+
+  if (!wpVersion) {
+    return undefined
+  }
+
+  return { wp: wpVersion }
+}
+
+function mountTargetPath(mount: MountSpec, relativePath: string): string {
+  return `${mount.target.replace(/\/+$/, "")}/${relativePath}`
+}
+
+function isReplayableText(buffer: Buffer, text: string): boolean {
+  if (buffer.includes(0)) {
+    return false
+  }
+
+  return !text.includes("\uFFFD")
+}
+
+function serializeCapturedMountFiles(captured: CapturedMountFiles): CapturedMountFiles {
+  return {
+    ...captured,
+    files: captured.files.map(({ replayContents, ...file }) => file),
+  }
 }
 
 async function writeJsonLines(path: string, records: unknown[]): Promise<void> {
