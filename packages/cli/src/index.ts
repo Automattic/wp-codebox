@@ -27,6 +27,16 @@ interface RunOutput {
   }
 }
 
+interface AgentRuntimeProbeOptions {
+  agentsApiPath: string
+  dataMachinePath: string
+  dataMachineCodePath: string
+  openaiProviderPath: string
+  wpVersion?: string
+  artifactsDirectory?: string
+  json: boolean
+}
+
 const defaultPolicy: RuntimePolicy = {
   network: "deny",
   filesystem: "readwrite-mounts",
@@ -41,6 +51,23 @@ async function main(args: string[]): Promise<number> {
   if (!command || command === "help" || command === "--help" || command === "-h") {
     printHelp()
     return command ? 0 : 1
+  }
+
+  if (command === "agent-runtime-probe") {
+    const options = parseAgentRuntimeProbeOptions(args)
+    const runOptions = agentRuntimeProbeRunOptions(options)
+    const execute = () => run(runOptions)
+
+    if (!options.json) {
+      const output = await execute()
+      printHumanOutput(output)
+      return output.success ? 0 : 1
+    }
+
+    const { result, logs } = await captureStdout(execute)
+    const output = logs.length > 0 ? { ...result, logs } : result
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    return output.success ? 0 : 1
   }
 
   if (command !== "run") {
@@ -62,6 +89,78 @@ async function main(args: string[]): Promise<number> {
   const output = logs.length > 0 ? { ...result, logs } : result
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   return output.success ? 0 : 1
+}
+
+function agentRuntimeProbeRunOptions(options: AgentRuntimeProbeOptions): RunOptions {
+  return {
+    mounts: [
+      { source: resolve(options.agentsApiPath), target: "/wordpress/wp-content/plugins/agents-api", mode: "readwrite" },
+      { source: resolve(options.dataMachinePath), target: "/wordpress/wp-content/plugins/data-machine", mode: "readwrite" },
+      { source: resolve(options.dataMachineCodePath), target: "/wordpress/wp-content/plugins/data-machine-code", mode: "readwrite" },
+      { source: resolve(options.openaiProviderPath), target: "/wordpress/wp-content/plugins/ai-provider-for-openai", mode: "readwrite" },
+    ],
+    command: "wordpress.run-php",
+    args: [`code=${agentRuntimeProbeCode()}`],
+    wpVersion: options.wpVersion ?? "trunk",
+    artifactsDirectory: options.artifactsDirectory,
+    json: options.json,
+  }
+}
+
+function parseAgentRuntimeProbeOptions(args: string[]): AgentRuntimeProbeOptions {
+  const options: Partial<AgentRuntimeProbeOptions> = { json: false }
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--agents-api":
+        options.agentsApiPath = value
+        break
+      case "--data-machine":
+        options.dataMachinePath = value
+        break
+      case "--data-machine-code":
+        options.dataMachineCodePath = value
+        break
+      case "--openai-provider":
+        options.openaiProviderPath = value
+        break
+      case "--wp":
+        options.wpVersion = value
+        break
+      case "--artifacts":
+        options.artifactsDirectory = value
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
+  }
+
+  for (const [key, option] of [
+    ["--agents-api", options.agentsApiPath],
+    ["--data-machine", options.dataMachinePath],
+    ["--data-machine-code", options.dataMachineCodePath],
+    ["--openai-provider", options.openaiProviderPath],
+  ] as const) {
+    if (!option) {
+      throw new Error(`Missing required option: ${key}`)
+    }
+  }
+
+  return options as AgentRuntimeProbeOptions
 }
 
 async function run(options: RunOptions): Promise<RunOutput> {
@@ -252,6 +351,7 @@ function printHumanOutput(output: RunOutput): void {
 function printHelp(): void {
   console.log(`Usage:
   sandbox-runtime run --mount <host>:<vfs> --command <id> [options]
+  sandbox-runtime agent-runtime-probe --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> [options]
 
 Options:
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
@@ -262,8 +362,60 @@ Options:
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --json               Emit machine-readable JSON.
 
+Agent runtime probe options:
+  --agents-api <path>         Local Agents API plugin checkout.
+  --data-machine <path>       Local Data Machine plugin checkout.
+  --data-machine-code <path>  Local Data Machine Code plugin checkout.
+  --openai-provider <path>    Local AI Provider for OpenAI plugin checkout.
+
 Example:
   sandbox-runtime run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
+}
+
+function agentRuntimeProbeCode(): string {
+  return `<?php
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+$plugins = array(
+    'agents-api/agents-api.php',
+    'data-machine/data-machine.php',
+    'data-machine-code/data-machine-code.php',
+    'ai-provider-for-openai/plugin.php',
+);
+
+$activation_results = array();
+
+foreach ($plugins as $plugin) {
+    $result = activate_plugin($plugin);
+    $activation_results[$plugin] = array(
+        'active' => is_plugin_active($plugin),
+        'error' => is_wp_error($result) ? $result->get_error_message() : null,
+    );
+}
+
+do_action('plugins_loaded');
+do_action('init');
+do_action('wp_abilities_api_categories_init');
+do_action('wp_abilities_api_init');
+
+echo json_encode(
+    array(
+        'command' => 'agent-runtime.probe',
+        'wp_loaded' => function_exists('wp_insert_post'),
+        'plugins' => $activation_results,
+        'signals' => array(
+            'agents_api_loaded' => defined('AGENTS_API_LOADED'),
+            'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'data_machine_version' => defined('DATAMACHINE_VERSION') ? DATAMACHINE_VERSION : null,
+            'data_machine_permission_helper' => class_exists('DataMachine\\\\Abilities\\\\PermissionHelper'),
+            'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
+            'data_machine_code_workspace' => class_exists('DataMachineCode\\\\Workspace\\\\Workspace'),
+            'openai_provider_plugin_loaded' => function_exists('WordPress\\\\OpenAiAiProvider\\\\register_provider'),
+        ),
+    ),
+    JSON_PRETTY_PRINT
+);
+`
 }
 
 main(process.argv.slice(2)).then(
