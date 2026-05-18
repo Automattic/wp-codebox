@@ -1,7 +1,9 @@
 # WP Codebox WordPress Plugin
 
 Registers the WordPress ability surface for launching isolated WP Codebox
-agent sandboxes from a parent site.
+agent sandboxes from a parent site. The sandbox may produce WordPress-specific
+or non-WordPress artifacts; the plugin returns the artifact bundle metadata to
+the parent control plane for review, replay, or apply-back.
 
 ## Ability
 
@@ -27,6 +29,11 @@ Pass `secret_env` as a list of environment variable names to expose selected
 parent process credentials inside the sandbox; values are read from the process
 environment and are not accepted in the ability payload.
 
+Returned artifact metadata includes the runtime manifest, replay blueprint,
+after-state notes, captured readwrite mount index, event streams, and logs. WP
+Codebox owns this capture boundary so the parent site can discard the disposable
+sandbox while keeping durable evidence and outputs.
+
 ## Configuration
 
 Component paths can be supplied by ability input, the
@@ -49,3 +56,6 @@ Data Machine Code is the mounted coding-tools component for file-editing agent
 sandboxes. It provides workspace/file/GitHub tools inside the isolated runtime.
 This plugin owns the parent-site ability surface and sandbox lifecycle boundary;
 DMC does not own that control plane.
+
+Data Machine, Data Machine Code, Homeboy Extensions, wp-gym, and other systems
+are consumers or mounted tools. They do not own WP Codebox's artifact contract.
