@@ -82,7 +82,7 @@ Current bundles include:
 
 - `manifest.json`: artifact index with content types.
 - `metadata.json`: runtime, policy, mounts, and collection metadata.
-- `blueprint.after.json`: replay-oriented Playground blueprint.
+- `blueprint.after.json`: WordPress Playground replay blueprint for WordPress-shaped runs.
 - `blueprint.after-notes.json`: replay status, limitations, and next capture targets.
 - `events.jsonl`, `commands.jsonl`, `observations.jsonl`: runtime evidence streams.
 - `logs/runtime.log`, `logs/commands.log`: human-readable logs.
@@ -90,7 +90,9 @@ Current bundles include:
 - `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
-For text files from readwrite mounts, `blueprint.after.json` includes `writeFile` steps so the files can be replayed into a fresh Playground runtime. Binary files and oversized files are copied into the artifact bundle but are not embedded in the blueprint yet. Database exports, option diffs, uploads, active theme/plugin state, and screenshots are planned capture targets.
+For text files from readwrite mounts, `blueprint.after.json` includes `writeFile` steps so the files can be replayed into a fresh WordPress Playground runtime. Binary files and oversized files are copied into the artifact bundle but are not embedded in the blueprint yet. Database exports, option diffs, uploads, active theme/plugin state, and screenshots are planned capture targets.
+
+`blueprint.after.json` is backend-specific. It matters when the output should replay in WordPress Playground. Non-WordPress outputs still use the generic artifact contract: manifest, metadata, copied files, hashes, event streams, command logs, observations, patches, and future generic replay recipes.
 
 ```text
 Sandbox mutates files/content
