@@ -142,12 +142,15 @@ export interface ArtifactBundle {
   directory: string
   manifestPath: string
   metadataPath: string
+  blueprintAfterPath: string
+  blueprintAfterNotesPath: string
   eventsPath: string
   commandsPath: string
   observationsPath: string
   runtimeLogPath: string
   commandsLogPath: string
   mountsPath: string
+  capturedMountsPath: string
   createdAt: string
 }
 
