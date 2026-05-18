@@ -10,6 +10,7 @@ defined( 'ABSPATH' ) || exit;
 final class Sandbox_Runtime_Agent_Sandbox_Runner {
 
 	private const SCHEMA = 'sandbox-runtime/agent-task-run/v1';
+	private const BATCH_SCHEMA = 'sandbox-runtime/agent-task-batch/v1';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -60,7 +61,7 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 		}
 
 		$command = sprintf(
-			'%s agent-sandbox-run --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --task %s --agent %s --mode %s --wp %s --artifacts %s --json',
+			'%s agent-sandbox-run --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --task %s --agent %s --mode %s --provider %s --model %s --wp %s --artifacts %s --json',
 			$this->command_prefix( $bin ),
 			escapeshellarg( $paths['agents_api'] ),
 			escapeshellarg( $paths['data_machine'] ),
@@ -69,6 +70,8 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 			escapeshellarg( $task ),
 			escapeshellarg( $this->agent_slug( $input ) ),
 			escapeshellarg( $this->mode( $input ) ),
+			escapeshellarg( $this->provider( $input ) ),
+			escapeshellarg( $this->model( $input ) ),
 			escapeshellarg( $wp_version ),
 			escapeshellarg( $artifacts )
 		);
@@ -128,6 +131,106 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 			'artifacts' => $artifacts,
 			'exit_code' => $exit_code,
 			'run'       => $decoded,
+		);
+	}
+
+	/**
+	 * Run multiple tasks, each in its own isolated Sandbox Runtime agent sandbox.
+	 *
+	 * @param array<string,mixed> $input Ability input.
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function run_batch( array $input ): array|WP_Error {
+		if ( ! $this->shell_available() ) {
+			return new WP_Error( 'sandbox_runtime_shell_unavailable', 'Shell execution is not available for Sandbox Runtime.', array( 'status' => 500 ) );
+		}
+
+		$tasks = $this->tasks( $input );
+		if ( empty( $tasks ) ) {
+			return new WP_Error( 'sandbox_runtime_tasks_missing', 'tasks must include at least one task.', array( 'status' => 400 ) );
+		}
+
+		$paths = $this->resolve_component_paths( $input );
+		if ( is_wp_error( $paths ) ) {
+			return $paths;
+		}
+
+		$artifacts  = $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) );
+		$wp_version = trim( (string) ( $input['wp'] ?? 'trunk' ) );
+		if ( '' === $wp_version ) {
+			$wp_version = 'trunk';
+		}
+
+		$bin = trim( (string) ( $input['sandbox_runtime_bin'] ?? $this->default_bin() ) );
+		if ( '' === $bin || ! preg_match( '#^[A-Za-z0-9_./:@+-]+$#', $bin ) ) {
+			return new WP_Error( 'sandbox_runtime_bin_invalid', 'sandbox_runtime_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
+		}
+
+		$concurrency = max( 1, (int) ( $input['concurrency'] ?? 2 ) );
+		$command     = sprintf(
+			'%s agent-sandbox-batch --agents-api %s --data-machine %s --data-machine-code %s --openai-provider %s --agent %s --mode %s --provider %s --model %s --concurrency %s --wp %s --artifacts %s --json',
+			$this->command_prefix( $bin ),
+			escapeshellarg( $paths['agents_api'] ),
+			escapeshellarg( $paths['data_machine'] ),
+			escapeshellarg( $paths['data_machine_code'] ),
+			escapeshellarg( $paths['openai_provider'] ),
+			escapeshellarg( $this->agent_slug( $input ) ),
+			escapeshellarg( $this->mode( $input ) ),
+			escapeshellarg( $this->provider( $input ) ),
+			escapeshellarg( $this->model( $input ) ),
+			escapeshellarg( (string) $concurrency ),
+			escapeshellarg( $wp_version ),
+			escapeshellarg( $artifacts )
+		);
+
+		if ( ! empty( $input['max_turns'] ) ) {
+			$command .= ' --max-turns ' . escapeshellarg( (string) max( 1, (int) $input['max_turns'] ) );
+		}
+
+		foreach ( $tasks as $task ) {
+			$command .= ' --task ' . escapeshellarg( $task );
+		}
+
+		$result    = $this->run_command( $command );
+		$exit_code = (int) ( $result['exit_code'] ?? 1 );
+		$output    = (string) ( $result['output'] ?? '' );
+		$decoded   = $this->decode_json_output( $output );
+
+		if ( is_wp_error( $decoded ) ) {
+			return new WP_Error(
+				'sandbox_runtime_json_invalid',
+				'Sandbox Runtime did not return valid JSON: ' . $decoded->get_error_message(),
+				array(
+					'status'    => 500,
+					'exit_code' => $exit_code,
+					'output'    => $this->bound_output( $output ),
+				)
+			);
+		}
+
+		if ( 0 !== $exit_code ) {
+			return new WP_Error(
+				'sandbox_runtime_batch_failed',
+				'Sandbox Runtime agent sandbox batch failed.',
+				array(
+					'status'    => 500,
+					'exit_code' => $exit_code,
+					'output'    => $this->bound_output( $output ),
+					'run'       => $decoded,
+				)
+			);
+		}
+
+		return array(
+			'success'     => true,
+			'schema'      => self::BATCH_SCHEMA,
+			'tasks'       => $tasks,
+			'concurrency' => $concurrency,
+			'wp'          => $wp_version,
+			'paths'       => $paths,
+			'artifacts'   => $artifacts,
+			'exit_code'   => $exit_code,
+			'run'         => $decoded,
 		);
 	}
 
@@ -195,6 +298,47 @@ final class Sandbox_Runtime_Agent_Sandbox_Runner {
 		$mode = trim( (string) ( $input['mode'] ?? '' ) );
 
 		return '' !== $mode ? $mode : 'sandbox';
+	}
+
+	private function provider( array $input ): string {
+		$provider = trim( (string) ( $input['provider'] ?? '' ) );
+		if ( '' !== $provider ) {
+			return $provider;
+		}
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$provider = (string) apply_filters( 'sandbox_runtime_default_provider', '' );
+		}
+
+		return trim( $provider );
+	}
+
+	private function model( array $input ): string {
+		$model = trim( (string) ( $input['model'] ?? '' ) );
+		if ( '' !== $model ) {
+			return $model;
+		}
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$model = (string) apply_filters( 'sandbox_runtime_default_model', '' );
+		}
+
+		return trim( $model );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return string[] */
+	private function tasks( array $input ): array {
+		$tasks = is_array( $input['tasks'] ?? null ) ? $input['tasks'] : array();
+
+		return array_values(
+			array_filter(
+				array_map(
+					static fn( $task ): string => trim( (string) $task ),
+					$tasks
+				),
+				static fn( string $task ): bool => '' !== $task
+			)
+		);
 	}
 
 	private function default_artifacts_path(): string {
