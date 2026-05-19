@@ -15,6 +15,32 @@ export interface RuntimePolicy {
   approvals: "never" | "on-write" | "on-command"
 }
 
+export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {})
+
+export interface TaskTarget {
+  kind: TaskTargetKind
+  ref?: string
+  path?: string
+  url?: string
+}
+
+export interface TaskInputPolicy {
+  approvals?: "never" | "on-write" | "on-command"
+  applyBack?: "disabled" | "reviewed"
+  sandbox?: "required" | "preferred"
+  [key: string]: unknown
+}
+
+export interface TaskInput {
+  schema?: "wp-codebox/task-input/v1"
+  goal: string
+  target?: TaskTarget
+  allowed_tools?: string[]
+  expected_artifacts?: string[]
+  policy?: TaskInputPolicy
+  context?: Record<string, unknown>
+}
+
 export type RuntimePolicyField = keyof RuntimePolicy
 
 export type RuntimePolicyValidationIssueCode =

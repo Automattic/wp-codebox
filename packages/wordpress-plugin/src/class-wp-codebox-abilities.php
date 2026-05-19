@@ -26,6 +26,7 @@ final class WP_Codebox_Abilities {
 
 	private function register(): void {
 		$register_callback = function (): void {
+			$task_input_schema  = self::task_input_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -45,12 +46,21 @@ final class WP_Codebox_Abilities {
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'required'   => array( 'task' ),
+						'anyOf'      => array(
+							array( 'required' => array( 'goal' ) ),
+							array( 'required' => array( 'task' ) ),
+						),
 						'properties' => array(
+							'goal'                   => $task_input_schema['properties']['goal'],
 							'task'                   => array(
 								'type'        => 'string',
-								'description' => 'Task description to run inside the isolated sandbox.',
+								'description' => 'Legacy task description. Prefer goal for new product callers.',
 							),
+							'target'                 => $task_input_schema['properties']['target'],
+							'allowed_tools'          => $task_input_schema['properties']['allowed_tools'],
+							'expected_artifacts'     => $task_input_schema['properties']['expected_artifacts'],
+							'policy'                 => $task_input_schema['properties']['policy'],
+							'context'                => $task_input_schema['properties']['context'],
 							'agent'                  => array(
 								'type'        => 'string',
 								'description' => 'Sandbox agent slug to invoke through agents/chat. Defaults through wp_codebox_default_agent.',
@@ -108,6 +118,7 @@ final class WP_Codebox_Abilities {
 							'success'   => array( 'type' => 'boolean' ),
 							'schema'    => array( 'type' => 'string' ),
 							'task'      => array( 'type' => 'string' ),
+							'task_input' => $task_input_schema,
 							'wp'        => array( 'type' => 'string' ),
 							'paths'     => array( 'type' => 'object' ),
 							'artifacts' => array( 'type' => 'string' ),
@@ -133,8 +144,13 @@ final class WP_Codebox_Abilities {
 						'properties' => array(
 							'tasks'                  => array(
 								'type'        => 'array',
-								'description' => 'Task descriptions. Each task runs in its own isolated sandbox.',
-								'items'       => array( 'type' => 'string' ),
+								'description' => 'Task descriptions or structured task inputs. Each task runs in its own isolated sandbox.',
+								'items'       => array(
+									'anyOf' => array(
+										array( 'type' => 'string' ),
+										$task_input_schema,
+									),
+								),
 							),
 							'concurrency'            => array(
 								'type'        => 'integer',
@@ -167,6 +183,10 @@ final class WP_Codebox_Abilities {
 							'success'     => array( 'type' => 'boolean' ),
 							'schema'      => array( 'type' => 'string' ),
 							'tasks'       => array( 'type' => 'array' ),
+							'task_inputs' => array(
+								'type'  => 'array',
+								'items' => $task_input_schema,
+							),
 							'concurrency' => array( 'type' => 'integer' ),
 							'paths'       => array( 'type' => 'object' ),
 							'artifacts'   => array( 'type' => 'string' ),
@@ -273,6 +293,52 @@ final class WP_Codebox_Abilities {
 		}
 
 		add_action( 'wp_abilities_api_init', $register_callback );
+	}
+
+	/** @return array<string,mixed> */
+	private static function task_input_schema(): array {
+		return array(
+			'type'       => 'object',
+			'required'   => array( 'goal' ),
+			'properties' => array(
+				'schema'             => array(
+					'type'        => 'string',
+					'description' => 'Task input contract version. Use wp-codebox/task-input/v1.',
+				),
+				'goal'               => array(
+					'type'        => 'string',
+					'description' => 'User-facing outcome the sandboxed coding agent should accomplish.',
+				),
+				'target'             => array(
+					'type'        => 'object',
+					'description' => 'Bounded target for the task, such as a repo, site, plugin, or theme.',
+					'properties'  => array(
+						'kind' => array( 'type' => 'string' ),
+						'ref'  => array( 'type' => 'string' ),
+						'path' => array( 'type' => 'string' ),
+						'url'  => array( 'type' => 'string' ),
+					),
+				),
+				'allowed_tools'      => array(
+					'type'        => 'array',
+					'description' => 'Tool names the product caller expects the sandboxed agent to stay within.',
+					'items'       => array( 'type' => 'string' ),
+				),
+				'expected_artifacts' => array(
+					'type'        => 'array',
+					'description' => 'Artifact kinds the caller wants back, such as patch, review, tests, preview, or package.',
+					'items'       => array( 'type' => 'string' ),
+				),
+				'policy'             => array(
+					'type'        => 'object',
+					'description' => 'Caller policy hints for approvals, apply-back, sandboxing, and risk controls.',
+				),
+				'context'            => array(
+					'type'        => 'object',
+					'description' => 'Additional non-secret caller context for the sandboxed task.',
+				),
+			),
+		);
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

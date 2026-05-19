@@ -11,6 +11,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	private const SCHEMA = 'wp-codebox/agent-task-run/v1';
 	private const BATCH_SCHEMA = 'wp-codebox/agent-task-batch/v1';
+	private const TASK_INPUT_SCHEMA = 'wp-codebox/task-input/v1';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -33,10 +34,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
-		$task = trim( (string) ( $input['task'] ?? '' ) );
-		if ( '' === $task ) {
-			return new WP_Error( 'wp_codebox_task_missing', 'task is required.', array( 'status' => 400 ) );
+		$task_input = $this->task_input( $input );
+		if ( is_wp_error( $task_input ) ) {
+			return $task_input;
 		}
+		$task        = (string) $task_input['goal'];
+		$task_prompt = $this->task_input_prompt( $task_input );
 
 		$raw_code_input = $this->reject_raw_code_input( $input );
 		if ( is_wp_error( $raw_code_input ) ) {
@@ -65,7 +68,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			escapeshellarg( $paths['agents_api'] ),
 			escapeshellarg( $paths['data_machine'] ),
 			escapeshellarg( $paths['data_machine_code'] ),
-			escapeshellarg( $task ),
+			escapeshellarg( $task_prompt ),
 			escapeshellarg( $this->agent_slug( $input ) ),
 			escapeshellarg( $this->mode( $input ) ),
 			escapeshellarg( $this->provider( $input ) ),
@@ -124,6 +127,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'success'   => true,
 			'schema'    => self::SCHEMA,
 			'task'      => $task,
+			'task_input' => $task_input,
 			'wp'        => $wp_version,
 			'paths'     => $paths,
 			'artifacts' => $artifacts,
@@ -143,10 +147,16 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
-		$tasks = $this->tasks( $input );
-		if ( empty( $tasks ) ) {
+		$task_inputs = $this->task_inputs( $input );
+		if ( is_wp_error( $task_inputs ) ) {
+			return $task_inputs;
+		}
+
+		if ( empty( $task_inputs ) ) {
 			return new WP_Error( 'wp_codebox_tasks_missing', 'tasks must include at least one task.', array( 'status' => 400 ) );
 		}
+		$tasks        = array_map( static fn( array $task_input ): string => (string) $task_input['goal'], $task_inputs );
+		$task_prompts = array_map( array( $this, 'task_input_prompt' ), $task_inputs );
 
 		$paths = $this->resolve_component_paths( $input );
 		if ( is_wp_error( $paths ) ) {
@@ -192,8 +202,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$command .= ' --secret-env ' . escapeshellarg( $secret_env );
 		}
 
-		foreach ( $tasks as $task ) {
-			$command .= ' --task ' . escapeshellarg( $task );
+		foreach ( $task_prompts as $task_prompt ) {
+			$command .= ' --task ' . escapeshellarg( $task_prompt );
 		}
 
 		$result    = $this->run_command( $command );
@@ -230,6 +240,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'success'     => true,
 			'schema'      => self::BATCH_SCHEMA,
 			'tasks'       => $tasks,
+			'task_inputs' => $task_inputs,
 			'concurrency' => $concurrency,
 			'wp'          => $wp_version,
 			'paths'       => $paths,
@@ -401,15 +412,81 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
 	private function tasks( array $input ): array {
+		$task_inputs = $this->task_inputs( $input );
+		if ( is_wp_error( $task_inputs ) ) {
+			return array();
+		}
+
+		return array_map( static fn( array $task_input ): string => (string) $task_input['goal'], $task_inputs );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function task_input( array $input ): array|WP_Error {
+		$goal = trim( (string) ( $input['goal'] ?? $input['task'] ?? '' ) );
+		if ( '' === $goal ) {
+			return new WP_Error( 'wp_codebox_task_missing', 'goal is required.', array( 'status' => 400 ) );
+		}
+
+		$task_input = array(
+			'schema' => self::TASK_INPUT_SCHEMA,
+			'goal'   => $goal,
+		);
+
+		foreach ( array( 'target', 'policy', 'context' ) as $field ) {
+			if ( isset( $input[ $field ] ) && is_array( $input[ $field ] ) ) {
+				$task_input[ $field ] = $input[ $field ];
+			}
+		}
+
+		foreach ( array( 'allowed_tools', 'expected_artifacts' ) as $field ) {
+			$values = $this->string_list( $input[ $field ] ?? array() );
+			if ( ! empty( $values ) ) {
+				$task_input[ $field ] = $values;
+			}
+		}
+
+		return $task_input;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
+	private function task_inputs( array $input ): array|WP_Error {
 		$tasks = is_array( $input['tasks'] ?? null ) ? $input['tasks'] : array();
 
+		$task_inputs = array();
+		foreach ( $tasks as $task ) {
+			$normalized = is_array( $task ) ? $this->task_input( $task ) : $this->task_input( array( 'task' => $task ) );
+			if ( is_wp_error( $normalized ) ) {
+				continue;
+			}
+
+			$task_inputs[] = $normalized;
+		}
+
+		return $task_inputs;
+	}
+
+	/** @param array<string,mixed> $task_input Normalized task input. */
+	private function task_input_prompt( array $task_input ): string {
+		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $task_input, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $task_input, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+
+		return is_string( $encoded ) ? $encoded : '';
+	}
+
+	/** @return string[] */
+	private function string_list( mixed $values ): array {
+		if ( ! is_array( $values ) ) {
+			return array();
+		}
+
 		return array_values(
-			array_filter(
-				array_map(
-					static fn( $task ): string => trim( (string) $task ),
-					$tasks
-				),
-				static fn( string $task ): bool => '' !== $task
+			array_unique(
+				array_filter(
+					array_map(
+						static fn( $value ): string => trim( (string) $value ),
+						$values
+					),
+					static fn( string $value ): bool => '' !== $value
+				)
 			)
 		);
 	}

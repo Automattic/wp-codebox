@@ -82,7 +82,11 @@ new WP_Codebox_Abilities();
 $ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task'] ?? null;
 $assert( 'run-agent-task ability registered', is_array( $ability ) );
 $assert( 'ability is REST visible', true === ( $ability['meta']['show_in_rest'] ?? false ) );
-$assert( 'ability requires task only', array( 'task' ) === ( $ability['input_schema']['required'] ?? array() ) );
+$assert( 'ability accepts goal or legacy task', array( 'goal' ) === ( $ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'ability exposes task target schema', isset( $ability['input_schema']['properties']['target']['properties']['kind'] ) );
+$assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_schema']['properties']['allowed_tools']['type'] ?? '' ) );
+$assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['input_schema']['properties']['expected_artifacts']['type'] ?? '' ) );
+$assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -143,6 +147,7 @@ $result = $runner->run(
 
 $assert( 'runner succeeds with filter-provided component paths', ! is_wp_error( $result ) && true === ( $result['success'] ?? false ) );
 $assert( 'runner schema is stable', ! is_wp_error( $result ) && 'wp-codebox/agent-task-run/v1' === ( $result['schema'] ?? '' ) );
+$assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $assert( 'runner invokes agent-sandbox-run', str_contains( $captured_command, 'agent-sandbox-run' ) );
 $assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node ' ) );
 $assert( 'runner passes task', str_contains( $captured_command, '--task' ) );
@@ -172,6 +177,26 @@ $raw_code_file = $runner->run(
 );
 $assert( 'raw code file input fails closed', is_wp_error( $raw_code_file ) && 'wp_codebox_raw_code_forbidden' === $raw_code_file->get_error_code() );
 
+$structured_result = $runner->run(
+	array(
+		'goal'               => 'Add a focused product feature.',
+		'target'             => array(
+			'kind' => 'plugin',
+			'path' => 'wp-content/plugins/simple-plugin',
+		),
+		'allowed_tools'      => array( 'workspace.read', 'workspace.write', '' ),
+		'expected_artifacts' => array( 'patch', 'tests', 'patch' ),
+		'policy'             => array( 'applyBack' => 'reviewed' ),
+		'context'            => array( 'issue' => 'https://github.com/chubes4/wp-codebox/issues/29' ),
+		'artifacts_path'     => $root . '/artifacts',
+	)
+);
+
+$assert( 'runner accepts structured task input', ! is_wp_error( $structured_result ) && 'Add a focused product feature.' === ( $structured_result['task_input']['goal'] ?? '' ) );
+$assert( 'runner preserves structured target', ! is_wp_error( $structured_result ) && 'plugin' === ( $structured_result['task_input']['target']['kind'] ?? '' ) );
+$assert( 'runner normalizes task input lists', ! is_wp_error( $structured_result ) && array( 'workspace.read', 'workspace.write' ) === ( $structured_result['task_input']['allowed_tools'] ?? array() ) && array( 'patch', 'tests' ) === ( $structured_result['task_input']['expected_artifacts'] ?? array() ) );
+$assert( 'runner passes structured task contract to CLI', str_contains( $captured_command, 'wp-codebox/task-input/v1' ) && str_contains( $captured_command, 'allowed_tools' ) );
+
 $batch_result = $runner->run_batch(
 	array(
 		'tasks'          => array( 'Fix issue one.', 'Fix issue two.' ),
@@ -182,6 +207,7 @@ $batch_result = $runner->run_batch(
 
 $assert( 'batch runner succeeds with filter-provided component paths', ! is_wp_error( $batch_result ) && true === ( $batch_result['success'] ?? false ) );
 $assert( 'batch runner schema is stable', ! is_wp_error( $batch_result ) && 'wp-codebox/agent-task-batch/v1' === ( $batch_result['schema'] ?? '' ) );
+$assert( 'batch runner returns normalized task inputs', ! is_wp_error( $batch_result ) && 2 === count( $batch_result['task_inputs'] ?? array() ) && 'Fix issue one.' === ( $batch_result['task_inputs'][0]['goal'] ?? '' ) );
 $assert( 'batch runner invokes agent-sandbox-batch', str_contains( $captured_command, 'agent-sandbox-batch' ) );
 $assert( 'batch runner passes repeated tasks', 2 === substr_count( $captured_command, '--task' ) );
 $assert( 'batch runner passes concurrency', str_contains( $captured_command, '--concurrency' ) && str_contains( $captured_command, '2' ) );

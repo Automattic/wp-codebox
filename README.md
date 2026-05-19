@@ -285,7 +285,28 @@ The WordPress plugin registers parent-site abilities:
 
 These abilities shell out to the local `wp-codebox` CLI, boot disposable Playground sandboxes, mount the configured agent stack, invoke the sandbox agent through `agents/chat`, and return artifact metadata.
 
-`wp-codebox/run-agent-task` accepts task-shaped inputs only. It rejects raw `code` and `code_file` fields so frontend/chat callers cannot pass arbitrary PHP through the product ability path. Operators can still use CLI debug commands directly when they need raw PHP probes.
+`wp-codebox/run-agent-task` accepts the stable task input contract below. Existing callers that still send `task` as a string are normalized to the same shape with `goal` populated from `task`. It rejects raw `code` and `code_file` fields so frontend/chat callers cannot pass arbitrary PHP through the product ability path. Operators can still use CLI debug commands directly when they need raw PHP probes.
+
+```json
+{
+  "schema": "wp-codebox/task-input/v1",
+  "goal": "Add a focused product feature and return a reviewable patch.",
+  "target": {
+    "kind": "plugin",
+    "path": "wp-content/plugins/example"
+  },
+  "allowed_tools": ["workspace.read", "workspace.write", "tests.run"],
+  "expected_artifacts": ["patch", "tests", "review"],
+  "policy": {
+    "applyBack": "reviewed"
+  },
+  "context": {
+    "issue": "https://github.com/chubes4/wp-codebox/issues/29"
+  }
+}
+```
+
+`target.kind` is caller-defined but should use `repo`, `site`, `plugin`, or `theme` when possible. `allowed_tools` and `expected_artifacts` are advisory contract fields for the product caller and sandboxed agent loop; the host runner still decides the private CLI invocation and returns the normalized `task_input` alongside the string `task` it passed into the current CLI bridge.
 
 Component paths can come from ability input, the `wp_codebox_component_paths` option, or the `wp_codebox_component_paths` filter.
 

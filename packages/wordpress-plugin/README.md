@@ -15,10 +15,29 @@ WordPress Playground runtime, mounts the agent stack components, invokes the
 configured sandbox agent through the canonical `agents/chat` ability, and returns
 artifact metadata.
 
-The batch ability runs `wp-codebox agent-sandbox-batch`, accepts a list of
-task descriptions, and launches one isolated sandbox per task with bounded
-concurrency. This is the parent-site primitive for fan-out workflows such as
-assigning several GitHub issues to separate sandbox coding agents.
+The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
+`allowed_tools`, `expected_artifacts`, `policy`, and `context`. Legacy callers
+may still pass `task` as a string; the runner normalizes it into `goal` and
+returns the normalized `task_input` in the ability response. Raw PHP `code` and
+`code_file` fields remain rejected on this product ability path.
+
+```json
+{
+  "schema": "wp-codebox/task-input/v1",
+  "goal": "Fix the failing settings save flow.",
+  "target": { "kind": "plugin", "path": "wp-content/plugins/example" },
+  "allowed_tools": ["workspace.read", "workspace.write", "tests.run"],
+  "expected_artifacts": ["patch", "tests", "review"],
+  "policy": { "applyBack": "reviewed" },
+  "context": { "issue": "https://github.com/chubes4/wp-codebox/issues/29" }
+}
+```
+
+The batch ability runs `wp-codebox agent-sandbox-batch`, accepts a list of task
+descriptions or structured task inputs, and launches one isolated sandbox per
+task with bounded concurrency. This is the parent-site primitive for fan-out
+workflows such as assigning several GitHub issues to separate sandbox coding
+agents.
 
 Both abilities accept optional `provider` and `model` fields. These seed the
 disposable sandbox's Data Machine agent configuration for the selected execution
