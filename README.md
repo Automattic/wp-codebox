@@ -226,7 +226,7 @@ Current bundles include:
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
-`metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
+`metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. It also includes `provenance` derived from data WP Codebox already has: task input/context where available, WP Codebox runtime version, WordPress version, mounted component/mount metadata, and agent/provider/model fields passed to the sandbox runner. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
 
 ### `files/test-results.json`
 
@@ -255,6 +255,24 @@ Artifact bundle ids are content-addressed for the apply-back contract. The runti
 {
   "schema": "wp-codebox/artifact-review/v1",
   "artifactId": "artifact-bundle-...",
+  "provenance": {
+    "task": { "kind": "agent-sandbox-run", "input": "Add a Dry Rub filter..." },
+    "runtime": {
+      "backend": "wordpress-playground",
+      "version": "0.0.0",
+      "wordpressVersion": "7.0"
+    },
+    "agent": { "agent": "sandbox-agent", "provider": "openai", "model": "gpt-5.5" },
+    "mounts": [
+      {
+        "type": "directory",
+        "source": "/path/to/data-machine-code",
+        "target": "/wordpress/wp-content/plugins/data-machine-code",
+        "mode": "readonly",
+        "metadata": { "kind": "component", "slug": "data-machine-code" }
+      }
+    ]
+  },
   "summary": "Sandbox produced changes in 1 file.",
   "stats": { "added": 1, "modified": 0, "deleted": 0, "total": 1 },
   "changedFiles": [

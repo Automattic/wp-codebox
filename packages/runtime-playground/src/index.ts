@@ -8,6 +8,7 @@ import type {
   ArtifactBundle,
   ArtifactManifest,
   ArtifactManifestFile,
+  ArtifactProvenance,
   ArtifactReview,
   ArtifactSpec,
   ArtifactTestResults,
@@ -298,11 +299,13 @@ class PlaygroundRuntime implements Runtime {
       inputs: ["files/changed-files.json", "files/patch.diff"],
       value: contentDigest,
     }
+    const provenance = this.buildArtifactProvenance(runtime)
     const metadata: Record<string, unknown> = {
       id: bundleId,
       contentDigest: contentDigestMetadata,
       createdAt,
       runtime,
+      provenance,
       mounts: this.mounts,
       policy: this.spec.policy,
       context: this.spec.metadata ?? {},
@@ -315,7 +318,7 @@ class PlaygroundRuntime implements Runtime {
       spec,
     })
     const testResults = this.buildTestResults()
-    const review = this.buildArtifactReview(bundleId, createdAt, changedFiles, patch, contentDigest)
+    const review = this.buildArtifactReview(bundleId, createdAt, provenance, changedFiles, patch, contentDigest)
     const reviewJson = `${JSON.stringify(review, null, 2)}\n`
     const artifactFiles = {
       changedFiles: relative(this.artifactRoot, changedFilesPath),
@@ -413,6 +416,7 @@ class PlaygroundRuntime implements Runtime {
   private buildArtifactReview(
     artifactId: string,
     createdAt: string,
+    provenance: ArtifactProvenance,
     changedFiles: CanonicalChangedFiles,
     patch: string,
     contentDigest: string,
@@ -430,6 +434,7 @@ class PlaygroundRuntime implements Runtime {
       schema: "wp-codebox/artifact-review/v1",
       artifactId,
       createdAt,
+      provenance,
       summary,
       stats,
       changedFiles: changedFiles.files.map((file) => ({
@@ -519,6 +524,26 @@ class PlaygroundRuntime implements Runtime {
         },
       ],
     }
+  }
+
+  private buildArtifactProvenance(runtime: RuntimeInfo): ArtifactProvenance {
+    const context = this.spec.metadata ?? {}
+    return stripUndefined({
+      task: provenanceContext(context, "task"),
+      runtime: stripUndefined({
+        backend: runtime.backend,
+        version: provenanceString(provenanceContext(context, "runtime"), "version"),
+        wordpressVersion: runtime.environment.version,
+      }),
+      agent: provenanceContext(context, "agent"),
+      mounts: this.mounts.map((mount) => stripUndefined({
+        type: mount.type,
+        source: mount.source,
+        target: mount.target,
+        mode: mount.mode,
+        metadata: mount.metadata,
+      })),
+    })
   }
 
   private buildBlueprintAfter(capturedMounts: CapturedMountFiles): Record<string, unknown> {
@@ -958,6 +983,28 @@ function serializeCapturedMountFiles(captured: CapturedMountFiles): CapturedMoun
     ...captured,
     files: captured.files.map(({ replayContents, ...file }) => file),
   }
+}
+
+function provenanceContext(context: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+  const value = context[key]
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    return undefined
+  }
+
+  return value
+}
+
+function provenanceString(context: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = context?.[key]
+  return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
 
 async function writeJsonLines(path: string, records: unknown[]): Promise<void> {

@@ -8,13 +8,14 @@ import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } fr
 import { captureStdout, printBatchHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 
 interface RunOptions {
-  mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite" }>
+  mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
   command: string
   args: string[]
   wpVersion?: string
   artifactsDirectory?: string
   policy?: RuntimePolicy
   secretEnv?: Record<string, string>
+  metadata?: Record<string, unknown>
   json: boolean
 }
 
@@ -140,6 +141,7 @@ const defaultPolicy: RuntimePolicy = {
   approvals: "never",
 }
 
+const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
 const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability"])
 
@@ -269,6 +271,7 @@ async function agentRuntimeProbeRunOptions(options: AgentRuntimeProbeOptions): P
     args: [`code=${agentRuntimeProbeCode(providerPluginMounts(options))}`],
     wpVersion: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
     artifactsDirectory: options.artifactsDirectory,
+    metadata: agentRuntimeMetadata(options),
     ...await runSecretEnvOptions(options),
     json: options.json,
   }
@@ -281,6 +284,7 @@ async function agentSandboxRunOptions(options: AgentSandboxRunOptions): Promise<
     args: [`code=${agentSandboxRunCode(options.task, await resolveSandboxTaskCode(options), providerPluginMounts(options))}`],
     wpVersion: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
     artifactsDirectory: options.artifactsDirectory,
+    metadata: agentSandboxRunMetadata(options),
     ...await runSecretEnvOptions(options),
     json: options.json,
   }
@@ -333,7 +337,10 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         policy: Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" } : policy,
         secretEnv,
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
-        metadata: recipeRunMetadata(recipe, recipePath, workspaceMounts),
+        metadata: {
+          ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts),
+        },
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -474,16 +481,32 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, callbac
 
 function agentRuntimeMounts(options: AgentRuntimeProbeOptions): RunOptions["mounts"] {
   return [
-    { source: resolve(options.agentsApiPath), target: "/wordpress/wp-content/plugins/agents-api", mode: "readonly" },
-    { source: resolve(options.dataMachinePath), target: "/wordpress/wp-content/plugins/data-machine", mode: "readonly" },
-    { source: resolve(options.dataMachineCodePath), target: "/wordpress/wp-content/plugins/data-machine-code", mode: "readonly" },
+    componentMount(options.agentsApiPath, "/wordpress/wp-content/plugins/agents-api", "agents-api"),
+    componentMount(options.dataMachinePath, "/wordpress/wp-content/plugins/data-machine", "data-machine"),
+    componentMount(options.dataMachineCodePath, "/wordpress/wp-content/plugins/data-machine-code", "data-machine-code"),
     ...providerPluginMounts(options).map((plugin) => ({
       source: plugin.source,
       target: `/wordpress/wp-content/plugins/${plugin.slug}`,
       mode: "readonly" as const,
+      metadata: {
+        kind: "provider-plugin",
+        slug: plugin.slug,
+      },
     })),
     ...options.mounts,
   ]
+}
+
+function componentMount(source: string, target: string, slug: string): RunOptions["mounts"][number] {
+  return {
+    source: resolve(source),
+    target,
+    mode: "readonly",
+    metadata: {
+      kind: "component",
+      slug,
+    },
+  }
 }
 
 function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source: string; slug: string }> {
@@ -491,6 +514,63 @@ function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source
     const source = resolve(pluginPath)
     return { source, slug: basename(source) }
   })
+}
+
+function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: string): Record<string, unknown> {
+  return {
+    runtime: {
+      version: WP_CODEBOX_RUNTIME_VERSION,
+      wordpressVersion: wpVersion,
+    },
+    task: {
+      artifactsDirectory,
+    },
+  }
+}
+
+function runMetadata(options: RunOptions): Record<string, unknown> {
+  return {
+    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
+    task: stripUndefined({
+      kind: "cli-run",
+      command: options.command,
+      args: options.args,
+      artifactsDirectory: options.artifactsDirectory,
+    }),
+  }
+}
+
+function agentRuntimeMetadata(options: AgentRuntimeProbeOptions): Record<string, unknown> {
+  const base = runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION)
+
+  return {
+    ...base,
+    task: {
+      ...(base.task as Record<string, unknown>),
+      kind: "agent-runtime-probe",
+      secretEnv: options.secretEnvNames ?? [],
+    },
+  }
+}
+
+function agentSandboxRunMetadata(options: AgentSandboxRunOptions): Record<string, unknown> {
+  return {
+    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
+    task: stripUndefined({
+      kind: "agent-sandbox-run",
+      input: options.task,
+      sessionId: options.sessionId,
+      maxTurns: options.maxTurns,
+      hasCodeOverride: Boolean(options.code || options.codeFile),
+      secretEnv: options.secretEnvNames ?? [],
+    }),
+    agent: stripUndefined({
+      agent: options.agent,
+      mode: options.mode,
+      provider: options.provider,
+      model: options.model,
+    }),
+  }
 }
 
 function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = []): AgentRuntimeProbeOptions {
@@ -739,12 +819,13 @@ async function run(options: RunOptions): Promise<RunOutput> {
         policy: options.policy ?? runPolicy(options.command),
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
+        metadata: options.metadata ?? runMetadata(options),
       },
       createPlaygroundRuntimeBackend(),
     )
 
     for (const mount of options.mounts) {
-      await runtime.mount({ type: "directory", source: mount.source, target: mount.target, mode: mount.mode })
+      await runtime.mount({ type: "directory", source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
     }
 
     execution = await runtime.execute({ command: options.command, args: options.args })
@@ -1168,6 +1249,19 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         secretEnv: recipe.inputs?.secretEnv ?? [],
       },
     },
+    task: {
+      kind: "recipe-run",
+      recipePath,
+      workflow: {
+        steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
+      },
+      inputs: {
+        workspaces: recipe.inputs?.workspaces ?? [],
+        mounts: recipe.inputs?.mounts ?? [],
+        extra_plugins: recipeExtraPlugins(recipe),
+        secretEnv: recipe.inputs?.secretEnv ?? [],
+      },
+    },
     preparedWorkspaces: workspaceMounts.map((workspace) => ({
       target: workspace.target,
       mode: workspace.mode,
@@ -1336,12 +1430,23 @@ function parseMount(value: string): RunOptions["mounts"][number] {
     throw new Error(`Invalid mount mode, expected readonly or readwrite: ${mode}`)
   }
 
-  return { source: resolve(source), target, mode }
+  return {
+    source: resolve(source),
+    target,
+    mode,
+    metadata: {
+      kind: "cli-mount",
+    },
+  }
 }
 
 async function parsePolicy(value: string): Promise<RuntimePolicy> {
   const raw = value.trim().startsWith("{") ? value : await readFile(resolve(value), "utf8")
   return JSON.parse(raw) as RuntimePolicy
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
 
 main(process.argv.slice(2)).then(

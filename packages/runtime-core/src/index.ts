@@ -238,6 +238,23 @@ export interface ArtifactContentDigest {
   value: string
 }
 
+export interface ArtifactProvenance {
+  task?: Record<string, unknown>
+  runtime: {
+    backend: RuntimeBackendKind
+    version?: string
+    wordpressVersion?: string
+  }
+  agent?: Record<string, unknown>
+  mounts: Array<{
+    type: MountSpec["type"]
+    source: string
+    target: string
+    mode: MountSpec["mode"]
+    metadata?: Record<string, unknown>
+  }>
+}
+
 export type ArtifactReviewProgressEventType =
   | "boot"
   | "mount"
@@ -275,6 +292,7 @@ export interface ArtifactReview {
   schema: "wp-codebox/artifact-review/v1"
   artifactId: string
   createdAt: string
+  provenance: ArtifactProvenance
   summary: string
   stats: {
     added: number
