@@ -216,6 +216,11 @@ file_put_contents(
 					'kind'        => 'patch',
 					'contentType' => 'text/x-diff',
 				),
+				array(
+					'path'        => 'files/review.json',
+					'kind'        => 'review',
+					'contentType' => 'application/json',
+				),
 			),
 		),
 		JSON_PRETTY_PRINT
@@ -242,6 +247,23 @@ file_put_contents(
 	) . "\n"
 );
 file_put_contents( $bundle_dir . '/files/patch.diff', "diff --git a/generated.txt b/generated.txt\n+cooked\n" );
+file_put_contents(
+	$bundle_dir . '/files/review.json',
+	json_encode(
+		array(
+			'schema'  => 'wp-codebox/artifact-review/v1',
+			'summary' => 'Sandbox produced changes in 1 file.',
+			'actions' => array(
+				array(
+					'kind'                  => 'approve',
+					'label'                 => 'Approve all changes',
+					'requiresApprovedFiles' => true,
+				),
+			),
+		),
+		JSON_PRETTY_PRINT
+	) . "\n"
+);
 
 $artifacts = new WP_Codebox_Artifacts();
 $listed    = $artifacts->list( array( 'artifacts_path' => $artifact_root ) );
@@ -254,6 +276,7 @@ $read_artifact = $artifacts->get(
 	)
 );
 $assert( 'artifact get returns canonical changed files', ! is_wp_error( $read_artifact ) && 'wp-codebox/changed-files/v1' === ( $read_artifact['artifact']['changed_files']['schema'] ?? '' ) );
+$assert( 'artifact get returns review payload', ! is_wp_error( $read_artifact ) && 'wp-codebox/artifact-review/v1' === ( $read_artifact['artifact']['review']['schema'] ?? '' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ): array {
 	return array(

@@ -195,6 +195,61 @@ export interface ArtifactManifest {
   files: ArtifactManifestFile[]
 }
 
+export type ArtifactReviewProgressEventType =
+  | "boot"
+  | "mount"
+  | "agent-start"
+  | "tool-activity"
+  | "artifact"
+  | "complete"
+  | (string & {})
+
+export interface ArtifactReviewProgressEvent {
+  type: ArtifactReviewProgressEventType
+  label: string
+  component?: string
+  action?: string
+  timestamp?: string
+}
+
+export type ArtifactReviewActionKind = "approve" | "approve-files" | "discard" | "iterate" | (string & {})
+
+export interface ArtifactReviewAction {
+  kind: ArtifactReviewActionKind
+  label: string
+  requiresApprovedFiles?: boolean
+}
+
+export interface ArtifactReviewChangedFile {
+  path: string
+  status: "added" | "modified" | "deleted"
+  label: string
+  mountTarget: string
+  relativePath: string
+}
+
+export interface ArtifactReview {
+  schema: "wp-codebox/artifact-review/v1"
+  artifactId: string
+  createdAt: string
+  summary: string
+  stats: {
+    added: number
+    modified: number
+    deleted: number
+    total: number
+  }
+  changedFiles: ArtifactReviewChangedFile[]
+  progress: ArtifactReviewProgressEvent[]
+  actions: ArtifactReviewAction[]
+  evidence: {
+    patch: string
+    patchSha256: string
+    changedFiles: string
+  }
+  riskFlags: string[]
+}
+
 export interface ArtifactBundle {
   id: string
   directory: string
@@ -212,6 +267,7 @@ export interface ArtifactBundle {
   diffsPath: string
   changedFilesPath: string
   patchPath: string
+  reviewPath: string
   createdAt: string
 }
 

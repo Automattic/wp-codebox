@@ -8,6 +8,7 @@ import type {
   ArtifactBundle,
   ArtifactManifest,
   ArtifactManifestFile,
+  ArtifactReview,
   ArtifactSpec,
   ExecutionResult,
   ExecutionSpec,
@@ -273,6 +274,7 @@ class PlaygroundRuntime implements Runtime {
     const diffsPath = join(filesDirectory, "diffs.json")
     const changedFilesPath = join(filesDirectory, "changed-files.json")
     const patchPath = join(filesDirectory, "patch.diff")
+    const reviewPath = join(filesDirectory, "review.json")
 
     this.recordEvent("runtime.artifacts.collected", {
       id: bundleId,
@@ -293,9 +295,11 @@ class PlaygroundRuntime implements Runtime {
     }
     const capturedMounts = await this.captureMountedFiles(filesDirectory)
     const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory)
+    const review = this.buildArtifactReview(bundleId, createdAt, changedFiles, patch)
     const artifactFiles = {
       changedFiles: relative(this.artifactRoot, changedFilesPath),
       patch: relative(this.artifactRoot, patchPath),
+      review: relative(this.artifactRoot, reviewPath),
       mountDiffs: relative(this.artifactRoot, diffsPath),
     }
     metadata.artifacts = artifactFiles
@@ -317,6 +321,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(diffsPath, "mount-diffs", "application/json"),
       fileEntry(changedFilesPath, "changed-files", "application/json"),
       fileEntry(patchPath, "patch", "text/x-diff"),
+      fileEntry(reviewPath, "review", "application/json"),
       ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -350,6 +355,7 @@ class PlaygroundRuntime implements Runtime {
     await writeFile(diffsPath, `${JSON.stringify(mountDiffs, null, 2)}\n`)
     await writeFile(changedFilesPath, `${JSON.stringify(changedFiles, null, 2)}\n`)
     await writeFile(patchPath, patch)
+    await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
     return {
       id: bundleId,
@@ -368,7 +374,91 @@ class PlaygroundRuntime implements Runtime {
       diffsPath,
       changedFilesPath,
       patchPath,
+      reviewPath,
       createdAt,
+    }
+  }
+
+  private buildArtifactReview(
+    artifactId: string,
+    createdAt: string,
+    changedFiles: CanonicalChangedFiles,
+    patch: string,
+  ): ArtifactReview {
+    const stats = {
+      added: changedFiles.files.filter((file) => file.status === "added").length,
+      modified: changedFiles.files.filter((file) => file.status === "modified").length,
+      deleted: changedFiles.files.filter((file) => file.status === "deleted").length,
+      total: changedFiles.files.length,
+    }
+    const changedFileLabel = stats.total === 1 ? "1 file" : `${stats.total} files`
+    const summary = stats.total > 0 ? `Sandbox produced changes in ${changedFileLabel}.` : "Sandbox produced no file changes."
+
+    return {
+      schema: "wp-codebox/artifact-review/v1",
+      artifactId,
+      createdAt,
+      summary,
+      stats,
+      changedFiles: changedFiles.files.map((file) => ({
+        path: file.path,
+        status: file.status,
+        label: `${file.status} ${file.relativePath}`,
+        mountTarget: file.mountTarget,
+        relativePath: file.relativePath,
+      })),
+      progress: [
+        {
+          type: "boot",
+          label: "Spinning up a test copy of your site...",
+          action: "boot",
+          timestamp: this.createdAt,
+        },
+        ...this.mounts.map((mount) => ({
+          type: "mount" as const,
+          label: `Loading ${basename(mount.target)}...`,
+          component: mount.target,
+          action: "mount",
+        })),
+        {
+          type: "artifact",
+          label: "Saving the result for review...",
+          action: "capture",
+          timestamp: createdAt,
+        },
+        {
+          type: "complete",
+          label: "Ready for your review.",
+          action: "complete",
+          timestamp: createdAt,
+        },
+      ],
+      actions: [
+        {
+          kind: "approve",
+          label: "Approve all changes",
+          requiresApprovedFiles: true,
+        },
+        {
+          kind: "approve-files",
+          label: "Approve selected files",
+          requiresApprovedFiles: true,
+        },
+        {
+          kind: "discard",
+          label: "Discard changes",
+        },
+        {
+          kind: "iterate",
+          label: "Request changes",
+        },
+      ],
+      evidence: {
+        patch: "files/patch.diff",
+        patchSha256: createHash("sha256").update(patch).digest("hex"),
+        changedFiles: "files/changed-files.json",
+      },
+      riskFlags: [],
     }
   }
 

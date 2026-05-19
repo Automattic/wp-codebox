@@ -217,11 +217,53 @@ Current bundles include:
 - `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
 - `files/changed-files.json`: canonical changed-files manifest for review and apply-back consumers.
 - `files/patch.diff`: canonical combined text patch for changed readwrite mounts that declare a baseline.
+- `files/review.json`: frontend-oriented review payload with summary, progress labels, changed file labels, evidence links, and approval actions.
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
-`metadata.json` points to the canonical changed-files, patch, and mount-diff artifact paths under `artifacts`. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
+`metadata.json` points to the canonical changed-files, patch, review, and mount-diff artifact paths under `artifacts`. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
+
+### `files/review.json`
+
+`files/review.json` is the frontend contract for chat and owner review flows. It is derived from canonical artifacts and should be safe for a generic frontend to render without parsing unified diffs.
+
+```json
+{
+  "schema": "wp-codebox/artifact-review/v1",
+  "artifactId": "artifact-bundle-...",
+  "summary": "Sandbox produced changes in 1 file.",
+  "stats": { "added": 1, "modified": 0, "deleted": 0, "total": 1 },
+  "changedFiles": [
+    {
+      "path": "/wordpress/wp-content/plugins/example/generated.txt",
+      "status": "added",
+      "label": "added generated.txt",
+      "mountTarget": "/wordpress/wp-content/plugins/example",
+      "relativePath": "generated.txt"
+    }
+  ],
+  "progress": [
+    { "type": "boot", "label": "Spinning up a test copy of your site..." },
+    { "type": "artifact", "label": "Saving the result for review..." },
+    { "type": "complete", "label": "Ready for your review." }
+  ],
+  "actions": [
+    { "kind": "approve", "label": "Approve all changes", "requiresApprovedFiles": true },
+    { "kind": "approve-files", "label": "Approve selected files", "requiresApprovedFiles": true },
+    { "kind": "discard", "label": "Discard changes" },
+    { "kind": "iterate", "label": "Request changes" }
+  ],
+  "evidence": {
+    "patch": "files/patch.diff",
+    "patchSha256": "...",
+    "changedFiles": "files/changed-files.json"
+  },
+  "riskFlags": []
+}
+```
+
+Review actions are declarative. Frontends call `wp-codebox/apply-approved-artifact` with `artifact_id` and an explicit `approved_files[]` list for approve actions, call `wp-codebox/discard-artifact` for discard, and start a new sandbox task for iterate/request-changes flows.
 
 Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, normalized test results, content-addressed artifact IDs, and redaction guarantees are still future artifact targets.
 
@@ -300,10 +342,9 @@ WP Codebox does not own:
 ## Near-Term Gaps
 
 - Define content-addressed artifact IDs and redaction guarantees.
-- Add list/get/discard/apply-approved artifact abilities to the WordPress plugin.
 - Define multi-user sandbox session lifecycle, retention, quotas, cancellation, and audit records.
 - Define reviewed apply-back adapters for bot-authored PRs, direct apply, and package export.
-- Add frontend progress/review payloads for non-technical site owners.
+- Add visual previews, normalized test results, and richer risk flags to frontend review payloads.
 
 ## Development Notes
 
