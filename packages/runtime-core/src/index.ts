@@ -310,7 +310,22 @@ export interface ArtifactReview {
     changedFiles: string
     testResults?: string
   }
+  redaction?: ArtifactRedactionSummary
   riskFlags: string[]
+}
+
+export interface ArtifactRedactionArtifactSummary {
+  path: string
+  count: number
+  kinds: string[]
+}
+
+export interface ArtifactRedactionSummary {
+  schema: "wp-codebox/artifact-redaction/v1"
+  status: "clean" | "redacted"
+  total: number
+  byKind: Record<string, number>
+  artifacts: ArtifactRedactionArtifactSummary[]
 }
 
 export interface ArtifactTestResultsRawLogReference {
