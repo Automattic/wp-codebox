@@ -150,6 +150,71 @@ try {
   ))
   await runtime.destroy()
 
+  const secretName = "WP_CODEBOX_SMOKE_SECRET"
+  const secretValue = "fixture-secret-value-64"
+  const commonToken = "sk-fixtureSecretTokenForRedaction123456"
+  const redactionBaseline = join(artifactsDirectory, "redaction-baseline")
+  const redactionMount = join(artifactsDirectory, "redaction-mounted-component")
+  await mkdir(redactionBaseline, { recursive: true })
+  await mkdir(redactionMount, { recursive: true })
+  await writeFile(join(redactionMount, "component.php"), "<?php // redaction fixture\n")
+  const redactionRuntime = await createRuntime(
+    {
+      backend: "wordpress-playground",
+      environment: { kind: "wordpress", name: "redaction-smoke", version: "7.0", blueprint: { steps: [] } },
+      policy: {
+        network: "deny",
+        filesystem: "readwrite-mounts",
+        commands: ["wordpress.run-php"],
+        secrets: "connector-scoped",
+        approvals: "never",
+      },
+      artifactsDirectory,
+      secretEnv: { [secretName]: secretValue },
+      metadata: {
+        runtime: { version: "0.0.0" },
+        task: { kind: "agent-sandbox-run", input: `Redact ${secretName}` },
+      },
+    },
+    createPlaygroundRuntimeBackend(),
+  )
+  await redactionRuntime.mount({
+    type: "directory",
+    source: redactionMount,
+    target: "/wordpress/wp-content/plugins/redaction-smoke",
+    mode: "readwrite",
+    metadata: { kind: "component", slug: "redaction-smoke", baselineSource: redactionBaseline },
+  })
+  await redactionRuntime.execute({
+    command: "wordpress.run-php",
+    args: [
+      `code=file_put_contents('/wordpress/wp-content/plugins/redaction-smoke/leak.txt', getenv('${secretName}') . "\\n${commonToken}\\n"); echo getenv('${secretName}') . " ${commonToken}";`,
+    ],
+  })
+  const redactionArtifacts = await redactionRuntime.collectArtifacts({ includeLogs: true })
+  const redactionMetadataText = await readFile(redactionArtifacts.metadataPath, "utf8")
+  const redactionPatch = await readFile(redactionArtifacts.patchPath, "utf8")
+  const redactionCommandsLog = await readFile(redactionArtifacts.commandsLogPath, "utf8")
+  const redactionReview = JSON.parse(await readFile(redactionArtifacts.reviewPath, "utf8"))
+  const redactionMountedFile = await readFile(join(redactionArtifacts.directory, "files/mounts/0/leak.txt"), "utf8")
+
+  for (const [artifactName, artifactText] of Object.entries({
+    metadata: redactionMetadataText,
+    patch: redactionPatch,
+    commandsLog: redactionCommandsLog,
+    mountedFile: redactionMountedFile,
+  })) {
+    assert.equal(artifactText.includes(secretName), false, `${artifactName} should redact configured secret names`)
+    assert.equal(artifactText.includes(secretValue), false, `${artifactName} should redact configured secret values`)
+    assert.equal(artifactText.includes(commonToken), false, `${artifactName} should redact common token patterns`)
+  }
+  assert.match(redactionPatch, /\[REDACTED:configured-secret-value\]/)
+  assert.match(redactionPatch, /\[REDACTED:openai-api-key\]/)
+  assert.equal(redactionReview.redaction.status, "redacted")
+  assert.ok(redactionReview.redaction.total >= 3)
+  assert.ok(redactionReview.riskFlags.includes("secrets-redacted"))
+  await redactionRuntime.destroy()
+
   console.log("Artifact contract smoke passed")
 } finally {
   await rm(artifactsDirectory, { recursive: true, force: true })

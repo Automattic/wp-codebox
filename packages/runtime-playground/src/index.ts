@@ -6,6 +6,7 @@ import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
   SKIPPED_CAPTURE_DIRECTORIES,
+  ArtifactRedactor,
   artifactContentDigest,
   buildArtifactProvenance,
   buildArtifactReview,
@@ -225,12 +226,14 @@ class PlaygroundRuntime implements Runtime {
     const patchPath = join(filesDirectory, "patch.diff")
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
+    const redactor = new ArtifactRedactor(this.spec.secretEnv)
 
     const runtime = await this.info()
-    const capturedMounts = await this.captureMountedFiles(filesDirectory)
-    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory)
-    const changedFilesJson = `${JSON.stringify(changedFiles, null, 2)}\n`
-    const contentDigest = artifactContentDigest(changedFilesJson, patch)
+    const capturedMounts = await this.captureMountedFiles(filesDirectory, redactor)
+    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory, redactor)
+    const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
+    const redactedPatch = redactor.redact("files/patch.diff", patch)
+    const contentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
     const bundleId = `artifact-bundle-sha256-${contentDigest}`
     const contentDigestMetadata = {
       algorithm: "sha256",
@@ -265,12 +268,11 @@ class PlaygroundRuntime implements Runtime {
       createdAt,
       provenance,
       changedFiles,
-      patch,
+      patch: redactedPatch,
       contentDigest,
       runtimeCreatedAt: this.createdAt,
       mounts: this.mounts,
     })
-    const reviewJson = `${JSON.stringify(review, null, 2)}\n`
     const artifactFiles = {
       changedFiles: relative(this.artifactRoot, changedFilesPath),
       patch: relative(this.artifactRoot, patchPath),
@@ -329,25 +331,28 @@ class PlaygroundRuntime implements Runtime {
       })),
     }
 
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-    await writeFile(
-      metadataPath,
-      `${JSON.stringify(metadata, null, 2)}\n`,
-    )
-    await writeFile(blueprintAfterPath, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
-    await writeFile(blueprintAfterNotesPath, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
-    await writeJsonLines(eventsPath, this.events)
-    await writeJsonLines(commandsPath, this.commands)
-    await writeJsonLines(observationsPath, this.observations)
-    await writeFile(runtimeLogPath, this.formatRuntimeLog())
-    await writeFile(commandsLogPath, this.formatCommandsLog())
-    await writeFile(mountsPath, `${JSON.stringify(this.mounts, null, 2)}\n`)
-    await writeFile(capturedMountsPath, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
-    await writeFile(diffsPath, `${JSON.stringify(mountDiffs, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, manifestPath, this.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, blueprintAfterPath, this.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, blueprintAfterNotesPath, this.artifactRoot, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
+    await writeJsonLines(eventsPath, this.events, redactor, this.artifactRoot)
+    await writeJsonLines(commandsPath, this.commands, redactor, this.artifactRoot)
+    await writeJsonLines(observationsPath, this.observations, redactor, this.artifactRoot)
+    await writeRedactedArtifact(redactor, runtimeLogPath, this.artifactRoot, this.formatRuntimeLog())
+    await writeRedactedArtifact(redactor, commandsLogPath, this.artifactRoot, this.formatCommandsLog())
+    await writeRedactedArtifact(redactor, mountsPath, this.artifactRoot, `${JSON.stringify(this.mounts, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, capturedMountsPath, this.artifactRoot, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
+    await writeRedactedArtifact(redactor, diffsPath, this.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
     await writeFile(changedFilesPath, changedFilesJson)
-    await writeFile(patchPath, patch)
-    await writeFile(testResultsPath, `${JSON.stringify(testResults, null, 2)}\n`)
-    await writeFile(reviewPath, reviewJson)
+    await writeFile(patchPath, redactedPatch)
+    await writeRedactedArtifact(redactor, testResultsPath, this.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
+    const redaction = redactor.summary()
+    if (redaction.total > 0) {
+      review.redaction = redaction
+      review.riskFlags.push("secrets-redacted")
+    }
+    await writeRedactedArtifact(redactor, reviewPath, this.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
+    metadata.redaction = redactor.summary()
+    await writeRedactedArtifact(redactor, metadataPath, this.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
 
     return {
       id: bundleId,
@@ -373,7 +378,7 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
-  private async captureMountedFiles(filesDirectory: string): Promise<CapturedMountFiles> {
+  private async captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles> {
     const captured: CapturedMountFiles = {
       files: [],
       skipped: [],
@@ -391,19 +396,19 @@ class PlaygroundRuntime implements Runtime {
 
       const mountStats = await stat(mount.source)
       if (mountStats.isDirectory()) {
-        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, mount.source, "")
+        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, mount.source, "", redactor)
         continue
       }
 
       if (mountStats.isFile()) {
-        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, mount.source, basename(mount.source))
+        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, mount.source, basename(mount.source), redactor)
       }
     }
 
     return captured
   }
 
-  private async captureMountDiffs(filesDirectory: string): Promise<MountDiffsResult> {
+  private async captureMountDiffs(filesDirectory: string, redactor: ArtifactRedactor): Promise<MountDiffsResult> {
     const diffsDirectory = join(filesDirectory, "diffs")
     await mkdir(diffsDirectory, { recursive: true })
     const diffs: MountDiff[] = []
@@ -418,7 +423,7 @@ class PlaygroundRuntime implements Runtime {
 
       const diff = await directoryDiff(baselineSource, mount.source, mount.target)
       const artifactPath = `files/diffs/mount-${mountIndex}.patch`
-      await writeFile(join(this.artifactRoot, artifactPath), diff.patch)
+      await writeFile(join(this.artifactRoot, artifactPath), redactor.redact(artifactPath, diff.patch))
       diffs.push({
         mountIndex,
         source: mount.source,
@@ -455,6 +460,7 @@ class PlaygroundRuntime implements Runtime {
     mountIndex: number,
     directory: string,
     relativeDirectory: string,
+    redactor: ArtifactRedactor,
   ): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true })
 
@@ -474,12 +480,12 @@ class PlaygroundRuntime implements Runtime {
           continue
         }
 
-        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath)
+        await this.captureMountedDirectory(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor)
         continue
       }
 
       if (entry.isFile()) {
-        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath)
+        await this.captureMountedFile(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor)
       }
     }
   }
@@ -491,6 +497,7 @@ class PlaygroundRuntime implements Runtime {
     mountIndex: number,
     sourcePath: string,
     relativePath: string,
+    redactor: ArtifactRedactor,
   ): Promise<void> {
     const target = mount.type === "file" ? mount.target : mountTargetPath(mount, relativePath)
 
@@ -508,23 +515,30 @@ class PlaygroundRuntime implements Runtime {
     const artifactRelativePath = `mounts/${mountIndex}/${relativePath}`
     const artifactPath = join(filesDirectory, artifactRelativePath)
     await mkdir(dirname(artifactPath), { recursive: true })
-    await copyFile(sourcePath, artifactPath)
 
     const buffer = await readFile(sourcePath)
     const text = buffer.toString("utf8")
     const replayable = isReplayableText(buffer, text)
+    const artifactBundlePath = `files/${artifactRelativePath}`
+    const artifactContents = replayable ? redactor.redact(artifactBundlePath, text) : buffer
+    if (typeof artifactContents === "string") {
+      await writeFile(artifactPath, artifactContents)
+    } else {
+      await copyFile(sourcePath, artifactPath)
+    }
+    const artifactBuffer = typeof artifactContents === "string" ? Buffer.from(artifactContents, "utf8") : buffer
 
     captured.files.push({
       mountIndex,
       source: sourcePath,
       target,
       relativePath,
-      artifactPath: `files/${artifactRelativePath}`,
-      size: fileStats.size,
-      sha256: createHash("sha256").update(buffer).digest("hex"),
+      artifactPath: artifactBundlePath,
+      size: artifactBuffer.byteLength,
+      sha256: createHash("sha256").update(artifactBuffer).digest("hex"),
       contentType: replayable ? "text/plain; charset=utf-8" : "application/octet-stream",
       replayable,
-      ...(replayable ? { replayContents: text } : {}),
+      ...(replayable ? { replayContents: artifactContents as string } : {}),
     })
   }
 
@@ -740,6 +754,10 @@ export function createPlaygroundRuntimeBackend(): RuntimeBackend {
   return new PlaygroundRuntimeBackend()
 }
 
-async function writeJsonLines(path: string, records: unknown[]): Promise<void> {
-  await writeFile(path, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
+async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
+  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
+}
+
+async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {
+  await writeFile(path, redactor.redact(relative(artifactRoot, path), contents))
 }

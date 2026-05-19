@@ -5,6 +5,7 @@ import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint
 import type {
   ArtifactManifestFile,
   ArtifactProvenance,
+  ArtifactRedactionSummary,
   ArtifactReview,
   ArtifactTestResults,
   MountSpec,
@@ -77,9 +78,97 @@ export interface MountDiffsResult {
   patch: string
 }
 
+interface RedactionResult {
+  contents: string
+  count: number
+  byKind: Map<string, number>
+}
+
 export const MAX_CAPTURED_MOUNT_FILES = 200
 export const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
 export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
+
+const COMMON_SECRET_PATTERNS: Array<{ kind: string; pattern: RegExp }> = [
+  { kind: "openai-api-key", pattern: /sk-[A-Za-z0-9_-]{20,}/g },
+  { kind: "github-token", pattern: /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}/g },
+  { kind: "github-token", pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
+  { kind: "slack-token", pattern: /xox(?:a|b|p|o|s|r)-[A-Za-z0-9-]{20,}/g },
+  { kind: "jwt", pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
+  { kind: "aws-access-key", pattern: /A(?:KIA|SIA)[A-Z0-9]{16}/g },
+]
+
+export class ArtifactRedactor {
+  private readonly replacements: Array<{ kind: string; pattern: RegExp }> = []
+  private readonly artifactCounts = new Map<string, { count: number; kinds: Set<string> }>()
+  private readonly byKind = new Map<string, number>()
+  private total = 0
+
+  constructor(secretEnv: Record<string, string> = {}) {
+    this.replacements.push(...COMMON_SECRET_PATTERNS)
+
+    for (const [name, value] of Object.entries(secretEnv)) {
+      if (name.length > 0) {
+        this.replacements.push({ kind: "configured-secret-name", pattern: new RegExp(escapeRegExp(name), "g") })
+      }
+
+      if (value.length >= 4) {
+        this.replacements.push({ kind: "configured-secret-value", pattern: new RegExp(escapeRegExp(value), "g") })
+      }
+    }
+  }
+
+  redact(path: string, contents: string): string {
+    const result = this.scan(contents)
+    if (result.count > 0) {
+      this.record(path, result)
+    }
+
+    return result.contents
+  }
+
+  summary(): ArtifactRedactionSummary {
+    return {
+      schema: "wp-codebox/artifact-redaction/v1",
+      status: this.total > 0 ? "redacted" : "clean",
+      total: this.total,
+      byKind: Object.fromEntries([...this.byKind.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      artifacts: [...this.artifactCounts.entries()]
+        .map(([path, artifact]) => ({ path, count: artifact.count, kinds: [...artifact.kinds].sort() }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    }
+  }
+
+  private scan(contents: string): RedactionResult {
+    let redacted = contents
+    let count = 0
+    const byKind = new Map<string, number>()
+
+    for (const replacement of this.replacements) {
+      redacted = redacted.replace(replacement.pattern, () => {
+        count++
+        byKind.set(replacement.kind, (byKind.get(replacement.kind) ?? 0) + 1)
+        return `[REDACTED:${replacement.kind}]`
+      })
+    }
+
+    return { contents: redacted, count, byKind }
+  }
+
+  private record(path: string, result: RedactionResult): void {
+    this.total += result.count
+    const artifact = this.artifactCounts.get(path) ?? { count: 0, kinds: new Set<string>() }
+    artifact.count += result.count
+    for (const [kind, count] of result.byKind) {
+      artifact.kinds.add(kind)
+      this.byKind.set(kind, (this.byKind.get(kind) ?? 0) + count)
+    }
+    this.artifactCounts.set(path, artifact)
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
 
 export function artifactContentDigest(changedFilesJson: string, patch: string): string {
   return createHash("sha256")
