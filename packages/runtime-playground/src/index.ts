@@ -96,6 +96,31 @@ interface MountDiff {
   changed: boolean
 }
 
+interface ChangedFile {
+  path: string
+  status: "added" | "modified" | "deleted"
+  mountIndex: number
+  mountTarget: string
+  relativePath: string
+  patchPath: string
+}
+
+interface CanonicalChangedFiles {
+  schema: "wp-codebox/changed-files/v1"
+  files: ChangedFile[]
+}
+
+interface DirectoryDiffResult {
+  patch: string
+  files: Omit<ChangedFile, "mountIndex" | "mountTarget" | "patchPath">[]
+}
+
+interface MountDiffsResult {
+  mountDiffs: MountDiff[]
+  changedFiles: CanonicalChangedFiles
+  patch: string
+}
+
 const MAX_CAPTURED_MOUNT_FILES = 200
 const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
 const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
@@ -246,6 +271,8 @@ class PlaygroundRuntime implements Runtime {
     const mountsPath = join(filesDirectory, "mounts.json")
     const capturedMountsPath = join(filesDirectory, "mounted-files.json")
     const diffsPath = join(filesDirectory, "diffs.json")
+    const changedFilesPath = join(filesDirectory, "changed-files.json")
+    const patchPath = join(filesDirectory, "patch.diff")
 
     this.recordEvent("runtime.artifacts.collected", {
       id: bundleId,
@@ -255,7 +282,7 @@ class PlaygroundRuntime implements Runtime {
     })
 
     const runtime = await this.info()
-    const metadata = {
+    const metadata: Record<string, unknown> = {
       id: bundleId,
       createdAt,
       runtime,
@@ -265,7 +292,13 @@ class PlaygroundRuntime implements Runtime {
       spec,
     }
     const capturedMounts = await this.captureMountedFiles(filesDirectory)
-    const mountDiffs = await this.captureMountDiffs(filesDirectory)
+    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory)
+    const artifactFiles = {
+      changedFiles: relative(this.artifactRoot, changedFilesPath),
+      patch: relative(this.artifactRoot, patchPath),
+      mountDiffs: relative(this.artifactRoot, diffsPath),
+    }
+    metadata.artifacts = artifactFiles
     const blueprintAfter = this.buildBlueprintAfter(capturedMounts)
     const blueprintAfterNotes = this.buildBlueprintAfterNotes(createdAt, capturedMounts)
 
@@ -282,6 +315,8 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(mountsPath, "mounts", "application/json"),
       fileEntry(capturedMountsPath, "mounted-files", "application/json"),
       fileEntry(diffsPath, "mount-diffs", "application/json"),
+      fileEntry(changedFilesPath, "changed-files", "application/json"),
+      fileEntry(patchPath, "patch", "text/x-diff"),
       ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -313,6 +348,8 @@ class PlaygroundRuntime implements Runtime {
     await writeFile(mountsPath, `${JSON.stringify(this.mounts, null, 2)}\n`)
     await writeFile(capturedMountsPath, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
     await writeFile(diffsPath, `${JSON.stringify(mountDiffs, null, 2)}\n`)
+    await writeFile(changedFilesPath, `${JSON.stringify(changedFiles, null, 2)}\n`)
+    await writeFile(patchPath, patch)
 
     return {
       id: bundleId,
@@ -329,6 +366,8 @@ class PlaygroundRuntime implements Runtime {
       mountsPath,
       capturedMountsPath,
       diffsPath,
+      changedFilesPath,
+      patchPath,
       createdAt,
     }
   }
@@ -412,10 +451,12 @@ class PlaygroundRuntime implements Runtime {
     return captured
   }
 
-  private async captureMountDiffs(filesDirectory: string): Promise<MountDiff[]> {
+  private async captureMountDiffs(filesDirectory: string): Promise<MountDiffsResult> {
     const diffsDirectory = join(filesDirectory, "diffs")
     await mkdir(diffsDirectory, { recursive: true })
     const diffs: MountDiff[] = []
+    const changedFiles: ChangedFile[] = []
+    const patches: string[] = []
 
     for (const [mountIndex, mount] of this.mounts.entries()) {
       const baselineSource = typeof mount.metadata?.baselineSource === "string" ? mount.metadata.baselineSource : ""
@@ -423,20 +464,36 @@ class PlaygroundRuntime implements Runtime {
         continue
       }
 
-      const patch = await directoryDiff(baselineSource, mount.source, mount.target)
+      const diff = await directoryDiff(baselineSource, mount.source, mount.target)
       const artifactPath = `files/diffs/mount-${mountIndex}.patch`
-      await writeFile(join(this.artifactRoot, artifactPath), patch)
+      await writeFile(join(this.artifactRoot, artifactPath), diff.patch)
       diffs.push({
         mountIndex,
         source: mount.source,
         target: mount.target,
         baselineSource,
         artifactPath,
-        changed: patch.trim().length > 0,
+        changed: diff.patch.trim().length > 0,
       })
+      patches.push(diff.patch)
+      changedFiles.push(
+        ...diff.files.map((file) => ({
+          ...file,
+          mountIndex,
+          mountTarget: mount.target,
+          patchPath: artifactPath,
+        })),
+      )
     }
 
-    return diffs
+    return {
+      mountDiffs: diffs,
+      changedFiles: {
+        schema: "wp-codebox/changed-files/v1",
+        files: changedFiles,
+      },
+      patch: patches.filter((patch) => patch.length > 0).join("\n"),
+    }
   }
 
   private async captureMountedDirectory(
@@ -758,13 +815,14 @@ async function writeJsonLines(path: string, records: unknown[]): Promise<void> {
   await writeFile(path, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
 }
 
-async function directoryDiff(baselineDirectory: string, currentDirectory: string, targetPrefix: string): Promise<string> {
+async function directoryDiff(baselineDirectory: string, currentDirectory: string, targetPrefix: string): Promise<DirectoryDiffResult> {
   const [baselineFiles, currentFiles] = await Promise.all([
     listTextFiles(baselineDirectory),
     listTextFiles(currentDirectory),
   ])
   const paths = [...new Set([...baselineFiles.keys(), ...currentFiles.keys()])].sort()
   const patches: string[] = []
+  const files: DirectoryDiffResult["files"] = []
 
   for (const relativePath of paths) {
     const before = baselineFiles.get(relativePath)
@@ -773,10 +831,19 @@ async function directoryDiff(baselineDirectory: string, currentDirectory: string
       continue
     }
 
-    patches.push(fileDiff(`${targetPrefix}/${relativePath}`, before ?? "", after ?? "", before === undefined, after === undefined))
+    const path = `${targetPrefix}/${relativePath}`
+    patches.push(fileDiff(path, before ?? "", after ?? "", before === undefined, after === undefined))
+    files.push({
+      path,
+      relativePath,
+      status: before === undefined ? "added" : after === undefined ? "deleted" : "modified",
+    })
   }
 
-  return patches.join("\n")
+  return {
+    patch: patches.join("\n"),
+    files,
+  }
 }
 
 async function listTextFiles(directory: string, prefix = ""): Promise<Map<string, string>> {

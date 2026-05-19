@@ -73,7 +73,9 @@ Expected shape:
     "manifestPath": "./artifacts/runtime-.../manifest.json",
     "blueprintAfterPath": "./artifacts/runtime-.../blueprint.after.json",
     "capturedMountsPath": "./artifacts/runtime-.../files/mounted-files.json",
-    "diffsPath": "./artifacts/runtime-.../files/diffs.json"
+    "diffsPath": "./artifacts/runtime-.../files/diffs.json",
+    "changedFilesPath": "./artifacts/runtime-.../files/changed-files.json",
+    "patchPath": "./artifacts/runtime-.../files/patch.diff"
   }
 }
 ```
@@ -213,11 +215,15 @@ Current bundles include:
 - `logs/runtime.log`, `logs/commands.log`: human-readable logs.
 - `files/mounts.json`: mounted input list.
 - `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
+- `files/changed-files.json`: canonical changed-files manifest for review and apply-back consumers.
+- `files/patch.diff`: canonical combined text patch for changed readwrite mounts that declare a baseline.
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
-Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, normalized test results, and canonical apply-back patch metadata are still future artifact targets.
+`metadata.json` points to the canonical changed-files, patch, and mount-diff artifact paths under `artifacts`. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
+
+Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, normalized test results, content-addressed artifact IDs, and redaction guarantees are still future artifact targets.
 
 ## WordPress Plugin
 
@@ -289,7 +295,7 @@ WP Codebox does not own:
 
 ## Near-Term Gaps
 
-- Define canonical `patch.diff`, `changed-files.json`, content-addressed artifact IDs, and redaction guarantees.
+- Define content-addressed artifact IDs and redaction guarantees.
 - Add list/get/discard/apply-approved artifact abilities to the WordPress plugin.
 - Define multi-user sandbox session lifecycle, retention, quotas, cancellation, and audit records.
 - Define reviewed apply-back adapters for bot-authored PRs, direct apply, and package export.

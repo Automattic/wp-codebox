@@ -210,6 +210,8 @@ export interface ArtifactBundle {
   mountsPath: string
   capturedMountsPath: string
   diffsPath: string
+  changedFilesPath: string
+  patchPath: string
   createdAt: string
 }
 
