@@ -68,6 +68,21 @@ export interface WorkspaceRecipeExtraPlugin {
   activate?: boolean
 }
 
+export type WorkspaceRecipeSeedType = "plugin_scaffold" | "theme_scaffold" | "directory"
+
+export interface WorkspaceRecipeWorkspaceSeed {
+  type: WorkspaceRecipeSeedType
+  slug?: string
+  name?: string
+  source?: string
+}
+
+export interface WorkspaceRecipeWorkspace {
+  target?: string
+  mode?: "readonly" | "readwrite"
+  seed: WorkspaceRecipeWorkspaceSeed
+}
+
 export interface WorkspaceRecipe {
   schema: "wp-codebox/workspace-recipe/v1"
   runtime?: {
@@ -77,6 +92,7 @@ export interface WorkspaceRecipe {
     blueprint?: unknown
   }
   inputs?: {
+    workspaces?: WorkspaceRecipeWorkspace[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     extraPlugins?: WorkspaceRecipeExtraPlugin[]

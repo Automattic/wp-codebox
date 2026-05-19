@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises"
-import { basename, dirname, resolve } from "node:path"
-import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin } from "@chubes4/wp-codebox-core"
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { basename, dirname, join, resolve } from "node:path"
+import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 
 interface RunOptions {
@@ -43,6 +44,12 @@ interface RecipeRunOutput {
   artifacts?: ArtifactBundle
   logs?: string[]
   error?: RunOutput["error"]
+}
+
+interface PreparedWorkspaceMount {
+  source: string
+  target: string
+  mode: "readonly" | "readwrite"
 }
 
 interface AgentRuntimeProbeOptions {
@@ -252,6 +259,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
   const policy = recipePolicy(recipe)
   const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
+  const workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: ExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
@@ -272,6 +280,15 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       },
       createPlaygroundRuntimeBackend(),
     )
+
+    for (const workspace of workspaceMounts) {
+      await runtime.mount({
+        type: "directory",
+        source: workspace.source,
+        target: workspace.target,
+        mode: workspace.mode,
+      })
+    }
 
     for (const plugin of recipeExtraPlugins(recipe)) {
       const slug = recipeExtraPluginSlug(plugin)
@@ -305,6 +322,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
     await runtime.destroy()
+    await cleanupRecipeWorkspaces(workspaceMounts)
 
     return {
       success: true,
@@ -328,6 +346,8 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         // Preserve the original failure as the CLI result.
       }
     }
+
+    await cleanupRecipeWorkspaces(workspaceMounts)
 
     return {
       success: false,
@@ -794,6 +814,33 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
     }
   }
 
+  const workspaces = recipe.inputs?.workspaces ?? []
+  if (!Array.isArray(workspaces)) {
+    throw new Error(`Recipe workspaces must be an array: ${recipePath}`)
+  }
+
+  for (const workspace of workspaces) {
+    if (!workspace.seed || typeof workspace.seed !== "object") {
+      throw new Error(`Recipe workspaces entries must include a seed object: ${recipePath}`)
+    }
+
+    if (!["plugin_scaffold", "theme_scaffold", "directory"].includes(workspace.seed.type)) {
+      throw new Error(`Recipe workspace seed type is unsupported: ${recipePath}`)
+    }
+
+    if ((workspace.seed.type === "plugin_scaffold" || workspace.seed.type === "theme_scaffold") && !workspace.seed.slug) {
+      throw new Error(`Recipe ${workspace.seed.type} workspace seeds require slug: ${recipePath}`)
+    }
+
+    if (workspace.seed.type === "directory" && !workspace.seed.source) {
+      throw new Error(`Recipe directory workspace seeds require source: ${recipePath}`)
+    }
+
+    if (workspace.mode && workspace.mode !== "readonly" && workspace.mode !== "readwrite") {
+      throw new Error(`Recipe workspace mode must be readonly or readwrite: ${recipePath}`)
+    }
+  }
+
   const rawExtraPlugins = recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins
   if (rawExtraPlugins && !Array.isArray(rawExtraPlugins)) {
     throw new Error(`Recipe extra_plugins must be an array: ${recipePath}`)
@@ -829,6 +876,100 @@ function runPolicy(command: string): RuntimePolicy {
     ...defaultPolicy,
     commands: [...new Set([...defaultPolicy.commands, command])],
   }
+}
+
+async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedWorkspaceMount[]> {
+  const workspaces = recipe.inputs?.workspaces ?? []
+  const mounts: PreparedWorkspaceMount[] = []
+  for (const [index, workspace] of workspaces.entries()) {
+    const slug = workspace.seed.slug ?? basename(resolve(recipeDirectory, workspace.seed.source ?? `workspace-${index}`))
+    const source = await prepareRecipeWorkspace(workspace, recipeDirectory, slug)
+    mounts.push({
+      source,
+      target: workspace.target ?? defaultWorkspaceTarget(workspace, slug),
+      mode: workspace.mode ?? "readwrite",
+    })
+  }
+
+  return mounts
+}
+
+async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Promise<void> {
+  await Promise.all(workspaces.map((workspace) => rm(workspace.source, { recursive: true, force: true })))
+}
+
+async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recipeDirectory: string, slug: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-`))
+  if (workspace.seed.type === "directory") {
+    await cp(resolve(recipeDirectory, workspace.seed.source ?? ""), directory, { recursive: true })
+    return directory
+  }
+
+  if (workspace.seed.type === "theme_scaffold") {
+    await writeThemeScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
+    return directory
+  }
+
+  await writePluginScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
+  return directory
+}
+
+function defaultWorkspaceTarget(workspace: WorkspaceRecipeWorkspace, slug: string): string {
+  if (workspace.seed.type === "theme_scaffold") {
+    return `/wordpress/wp-content/themes/${slug}`
+  }
+
+  if (workspace.seed.type === "plugin_scaffold") {
+    return `/wordpress/wp-content/plugins/${slug}`
+  }
+
+  if (workspace.target) {
+    return workspace.target
+  }
+
+  throw new Error("Directory workspace seeds require an explicit target")
+}
+
+async function writePluginScaffold(directory: string, slug: string, name: string): Promise<void> {
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, `${slug}.php`), `<?php
+/**
+ * Plugin Name: ${name}
+ * Description: WP Codebox seeded plugin workspace.
+ * Version: 0.1.0
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+add_action( 'init', static function (): void {
+	do_action( '${slug.replace(/-/g, "_")}_loaded' );
+} );
+`)
+  await writeFile(join(directory, "README.md"), `# ${name}
+
+Seeded by WP Codebox.
+`)
+}
+
+async function writeThemeScaffold(directory: string, slug: string, name: string): Promise<void> {
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, "style.css"), `/*
+Theme Name: ${name}
+Description: WP Codebox seeded theme workspace.
+Version: 0.1.0
+*/
+`)
+  await writeFile(join(directory, "index.php"), `<?php
+?><main id="site-content"><h1><?php bloginfo( 'name' ); ?></h1></main>
+`)
+  await writeFile(join(directory, "README.md"), `# ${name}
+
+Seeded by WP Codebox.
+`)
+}
+
+function titleFromSlug(slug: string): string {
+  return slug.split(/[-_]+/).filter(Boolean).map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`).join(" ")
 }
 
 function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtraPlugin[] {

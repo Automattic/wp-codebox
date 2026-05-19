@@ -97,6 +97,15 @@ Recipe shape:
     "wp": "7.0"
   },
   "inputs": {
+    "workspaces": [
+      {
+        "seed": {
+          "type": "plugin_scaffold",
+          "slug": "seeded-helper",
+          "name": "Seeded Helper"
+        }
+      }
+    ],
     "extra_plugins": [
       {
         "source": "../../../woocommerce",
@@ -131,7 +140,23 @@ Recipe shape:
 }
 ```
 
-The first recipe schema intentionally maps to existing runtime primitives: WordPress version, mounted inputs, extra WordPress plugins, allow-listed environment variable names, workflow steps, and artifact directory. Relative mount paths and `extra_plugins` sources resolve from the recipe file location. Workflow commands are used as the runtime command allow-list for that run.
+The first recipe schema intentionally maps to existing runtime primitives: WordPress version, seeded workspaces, mounted inputs, extra WordPress plugins, allow-listed environment variable names, workflow steps, and artifact directory. Relative mount paths, directory workspace seeds, and `extra_plugins` sources resolve from the recipe file location. Workflow commands are used as the runtime command allow-list for that run.
+
+`workspaces` create disposable readwrite directories before Playground boots and mount them into WordPress. Scaffold seeds start from a minimal plugin or theme; directory seeds copy an existing checkout or fixture into the disposable workspace. WP Codebox captures readwrite workspace files into the artifact bundle after workflow steps mutate them.
+
+Supported workspace seeds:
+
+- `plugin_scaffold`: creates `<slug>.php` and `README.md`, mounted by default at `/wordpress/wp-content/plugins/<slug>`.
+- `theme_scaffold`: creates `style.css`, `index.php`, and `README.md`, mounted by default at `/wordpress/wp-content/themes/<slug>`.
+- `directory`: copies `seed.source` into a disposable workspace and requires an explicit `target`.
+
+The seeded plugin example proves a scaffold can be activated, mutated, and captured as an artifact:
+
+```bash
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/seeded-plugin-workspace.json \
+  --json
+```
 
 The WP-CLI example proves command steps can mutate the same disposable WordPress runtime observed by later PHP steps:
 

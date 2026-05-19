@@ -1,0 +1,38 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "seeded-plugin-workspace-lab",
+    "wp": "latest"
+  },
+  "inputs": {
+    "workspaces": [
+      {
+        "seed": {
+          "type": "plugin_scaffold",
+          "slug": "seeded-helper",
+          "name": "Seeded Helper"
+        }
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.wp-cli",
+        "args": [
+          "command=wp plugin activate seeded-helper"
+        ]
+      },
+      {
+        "command": "wordpress.run-php",
+        "args": [
+          "code=require_once ABSPATH . 'wp-admin/includes/plugin.php'; file_put_contents(WP_PLUGIN_DIR . '/seeded-helper/generated.txt', 'cooked'); echo wp_json_encode(array('active' => is_plugin_active('seeded-helper/seeded-helper.php'), 'generated' => file_exists(WP_PLUGIN_DIR . '/seeded-helper/generated.txt')), JSON_PRETTY_PRINT);"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts"
+  }
+}
