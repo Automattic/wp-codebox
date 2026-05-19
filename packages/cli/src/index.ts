@@ -620,7 +620,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
           version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
           blueprint: { steps: [] },
         },
-        policy: options.policy ?? defaultPolicy,
+        policy: options.policy ?? runPolicy(options.command),
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
       },
@@ -821,6 +821,13 @@ function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   return {
     ...defaultPolicy,
     commands: [...new Set(commands)],
+  }
+}
+
+function runPolicy(command: string): RuntimePolicy {
+  return {
+    ...defaultPolicy,
+    commands: [...new Set([...defaultPolicy.commands, command])],
   }
 }
 

@@ -70,6 +70,8 @@ WP Codebox mounts the local plugin directory into WordPress Playground and boots
 
 `wordpress.run-php` accepts either `--arg code-file=<path>` or `--arg code=<php>`. It loads `/wordpress/wp-load.php` before running the supplied PHP so WordPress functions are available by default. Use `--arg bootstrap=none` for raw PHP execution without WordPress bootstrap.
 
+`wordpress.wp-cli` runs WP-CLI inside the same Playground runtime with `/tmp/wp-cli.phar` and `--path=/wordpress`. WP Codebox automatically enables Playground's `wp-cli` extra library when this command is allowed by the runtime policy. Pass commands with `--arg command='wp option get home'`; the leading `wp` is optional.
+
 WP Codebox defaults Playground to WordPress `7.0` because its agent and AI plugin stacks require the modern WordPress AI surface. Use `--wp trunk`, `--wp nightly`, or another numeric WordPress version when a mounted plugin stack needs a different runtime.
 
 The fixture plugin is documented in [`examples/simple-plugin/README.md`](examples/simple-plugin/README.md).
@@ -116,6 +118,10 @@ Recipe shape:
       {
         "command": "wordpress.run-php",
         "args": ["code-file=./examples/simple-plugin/probe.php"]
+      },
+      {
+        "command": "wordpress.wp-cli",
+        "args": ["command=wp option get home"]
       }
     ]
   },
@@ -126,6 +132,14 @@ Recipe shape:
 ```
 
 The first recipe schema intentionally maps to existing runtime primitives: WordPress version, mounted inputs, extra WordPress plugins, allow-listed environment variable names, workflow steps, and artifact directory. Relative mount paths and `extra_plugins` sources resolve from the recipe file location. Workflow commands are used as the runtime command allow-list for that run.
+
+The WP-CLI example proves command steps can mutate the same disposable WordPress runtime observed by later PHP steps:
+
+```bash
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/wp-cli.json \
+  --json
+```
 
 `extra_plugins` mounts local plugin checkouts into `/wordpress/wp-content/plugins/<slug>` and activates them before the workflow steps run. This lets recipes add WooCommerce, Data Machine, provider plugins, test helpers, or experimental runtime extensions without adding product-specific code to WP Codebox. `pluginFile` defaults to `<slug>/<slug>.php`; set it when the plugin entrypoint differs.
 
