@@ -1,0 +1,36 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "wp-cli-lab",
+    "wp": "latest"
+  },
+  "inputs": {
+    "mounts": [
+      {
+        "source": "../simple-plugin",
+        "target": "/wordpress/wp-content/plugins/simple-plugin",
+        "mode": "readwrite"
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.wp-cli",
+        "args": [
+          "command=wp option update wp_codebox_wp_cli_smoke ok"
+        ]
+      },
+      {
+        "command": "wordpress.run-php",
+        "args": [
+          "code=echo wp_json_encode(array('wp_cli_option' => get_option('wp_codebox_wp_cli_smoke')), JSON_PRETTY_PRINT);"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts"
+  }
+}

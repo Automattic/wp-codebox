@@ -29,12 +29,15 @@ function id(prefix: string): string {
 }
 
 interface PlaygroundRunResponse {
+  exitCode?: number
+  errors?: string
   text: string
 }
 
 interface PlaygroundCliServer {
   playground: {
-    run(options: { code: string }): Promise<PlaygroundRunResponse>
+    run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse>
+    writeFile?(path: string, contents: string): Promise<void>
   }
   [Symbol.asyncDispose](): Promise<void>
 }
@@ -329,6 +332,7 @@ class PlaygroundRuntime implements Runtime {
 
     return {
       $schema: "https://playground.wordpress.net/blueprint-schema.json",
+      ...(baseBlueprint.extraLibraries ? { extraLibraries: baseBlueprint.extraLibraries } : {}),
       ...(preferredVersions ? { preferredVersions } : {}),
       landingPage: baseBlueprint.landingPage ?? "/",
       steps: [...baseBlueprint.steps, ...replaySteps],
@@ -514,6 +518,10 @@ class PlaygroundRuntime implements Runtime {
       return this.runPhp(spec)
     }
 
+    if (spec.command === "wordpress.wp-cli") {
+      return this.runWpCli(spec)
+    }
+
     throw new Error(`No Playground command handler is registered for: ${spec.command}`)
   }
 
@@ -523,6 +531,32 @@ class PlaygroundRuntime implements Runtime {
     const response = await server.playground.run({ code: this.bootstrapPhpCode(code, spec.args ?? []) })
 
     return response.text
+  }
+
+  private async runWpCli(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const command = wpCliCommandFromArgs(spec.args ?? [])
+    const argv = shellArgv(command)
+    if (argv[0] === "wp") {
+      argv.shift()
+    }
+
+    if (argv.length === 0) {
+      throw new Error("wordpress.wp-cli requires a non-empty command")
+    }
+
+    if (!server.playground.writeFile) {
+      throw new Error("wordpress.wp-cli requires a Playground backend with writeFile support")
+    }
+
+    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}.php`
+    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
+    const response = await server.playground.run({ scriptPath })
+    if (typeof response.exitCode === "number" && response.exitCode !== 0) {
+      throw new Error(response.errors || `wordpress.wp-cli failed with exit code ${response.exitCode}`)
+    }
+
+    return cleanWpCliOutput(response.text)
   }
 
   private bootstrapPhpCode(code: string, args: string[]): string {
@@ -607,7 +641,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
         vfsPath: mount.target,
       })),
       wp: this.spec.environment.version,
-      blueprint: this.spec.environment.blueprint,
+      blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy),
     })
   }
 
@@ -632,7 +666,7 @@ function fileEntry(path: string, kind: ArtifactManifestFile["kind"], contentType
   return { path, kind, contentType }
 }
 
-function normalizeBlueprint(blueprint: unknown): { landingPage?: unknown; preferredVersions?: unknown; steps: unknown[] } {
+function normalizeBlueprint(blueprint: unknown): { extraLibraries?: unknown; landingPage?: unknown; preferredVersions?: unknown; steps: unknown[] } {
   if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {
     return { steps: [] }
   }
@@ -641,10 +675,94 @@ function normalizeBlueprint(blueprint: unknown): { landingPage?: unknown; prefer
   const steps = Array.isArray(candidate.steps) ? candidate.steps : []
 
   return {
+    extraLibraries: candidate.extraLibraries,
     landingPage: candidate.landingPage,
     preferredVersions: candidate.preferredVersions,
     steps,
   }
+}
+
+function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpec["policy"]): unknown {
+  if (!policy.commands.includes("wordpress.wp-cli")) {
+    return blueprint
+  }
+
+  const base = !blueprint || typeof blueprint !== "object" || Array.isArray(blueprint) ? {} : blueprint as Record<string, unknown>
+  const extraLibraries = Array.isArray(base.extraLibraries) ? base.extraLibraries : []
+
+  return {
+    ...base,
+    extraLibraries: [...new Set([...extraLibraries, "wp-cli"])],
+  }
+}
+
+function wpCliCommandFromArgs(args: string[]): string {
+  const explicit = argValue(args, "command")
+  if (explicit) {
+    return explicit.trim()
+  }
+
+  return args.join(" ").trim()
+}
+
+function shellArgv(command: string): string[] {
+  const args: string[] = []
+  let current = ""
+  let quote = ""
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]
+    if (!quote && /\s/.test(char)) {
+      if (current) {
+        args.push(current)
+        current = ""
+      }
+      continue
+    }
+
+    if ((char === "'" || char === '"') && (!quote || quote === char)) {
+      quote = quote ? "" : char
+      continue
+    }
+
+    if (char === "\\" && index + 1 < command.length) {
+      current += command[++index]
+      continue
+    }
+
+    current += char
+  }
+
+  if (quote) {
+    throw new Error("Unclosed quote in wordpress.wp-cli command")
+  }
+
+  if (current) {
+    args.push(current)
+  }
+
+  return args
+}
+
+function wpCliPhpScript(argv: string[]): string {
+  return `<?php
+putenv('SHELL_PIPE=0');
+$GLOBALS['argv'] = array_merge(array('/tmp/wp-cli.phar', '--path=/wordpress', '--no-color'), json_decode(${JSON.stringify(JSON.stringify(argv))}, true));
+if (!defined('STDIN')) {
+    define('STDIN', fopen('php://stdin', 'rb'));
+}
+if (!defined('STDOUT')) {
+    define('STDOUT', fopen('php://stdout', 'wb'));
+}
+if (!defined('STDERR')) {
+    define('STDERR', fopen('php://stderr', 'wb'));
+}
+require '/tmp/wp-cli.phar';
+`
+}
+
+function cleanWpCliOutput(output: string): string {
+  return output.replace(/^#!\/usr\/bin\/env php\r?\n/, "")
 }
 
 function preferredVersionsForEnvironment(
