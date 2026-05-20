@@ -20,8 +20,10 @@ define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
+require_once __DIR__ . '/src/class-wp-codebox-data-machine-pending-actions.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 
 add_action( 'plugins_loaded', static function (): void {
+	new WP_Codebox_Data_Machine_Pending_Actions();
 	new WP_Codebox_Abilities();
 }, 20 );

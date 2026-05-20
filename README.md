@@ -1,11 +1,11 @@
 # WP Codebox
 
-WP Codebox runs disposable WordPress Playground sandboxes, executes bounded work inside them, and saves replayable artifacts before the sandbox is destroyed.
+WP Codebox runs disposable WordPress Playground sandboxes, executes bounded work inside them, and saves replayable artifacts before the sandbox is destroyed. It runs WordPress inside the sandbox, but the host that calls it can be anything: a CLI script, CI job, Node app, WordPress plugin, Data Machine flow, Homeboy workflow, or another control plane.
 
-It is the runtime boundary for agent-built or workflow-built outputs. It is not the agent framework, the review UI, the deploy system, or the production site mutator.
+It is the runtime boundary for agent-built or workflow-built outputs. It is not the agent framework, the review UI, the deploy system, or the production site mutator. The WordPress plugin in this repo is an optional host adapter that exposes WP Codebox through WordPress abilities; the core CLI/runtime works without installing that plugin on a parent site.
 
 ```text
-Parent app, CI job, or WordPress control plane
+Any host: CLI, CI, Node app, WordPress plugin, Data Machine, Homeboy, Studio
   -> WP Codebox
     -> disposable WordPress Playground runtime
       -> mounted inputs, plugins, tools, and optional agent stack
@@ -22,6 +22,21 @@ Parent app, CI job, or WordPress control plane
 - Launch sandboxed Data Machine / Agents API coding-agent tasks from the CLI or WordPress ability surface.
 - Fan out several task descriptions into separate isolated sandboxes.
 - Produce artifact bundles that a parent product can review or consume later.
+
+## Why A WordPress Plugin?
+
+The WordPress plugin is useful when the host experience should live inside a
+WordPress site. It turns WP Codebox into a WordPress-native control plane for
+reviewed coding workflows without asking users to run a terminal.
+
+Good fits include:
+
+- Letting non-technical site owners request, review, and approve bounded coding changes from a WordPress UI or chat surface.
+- Running a managed coding community where users submit tasks and maintainers approve sandboxed artifacts before anything reaches real code.
+- Supporting WordPress contributors with disposable reproduction, patch, review, and test-result artifacts that can be shared before commit or PR creation.
+
+These are host-product use cases. The core runtime still works anywhere the CLI
+can run.
 
 ## Repo Components
 
@@ -354,6 +369,7 @@ The WordPress plugin registers parent-site abilities:
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
 - `wp-codebox/apply-approved-artifact`
+- `wp-codebox/stage-artifact-apply`
 
 These abilities shell out to the local `wp-codebox` CLI, boot disposable Playground sandboxes, mount the configured agent stack, invoke the sandbox agent through `agents/chat`, and return artifact metadata.
 
@@ -394,6 +410,8 @@ The CLI binary can come from ability input, the `wp_codebox_bin` option, or the 
 Data Machine Code is a mounted coding-tools component inside the sandbox. It provides workspace/file/GitHub tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, and delegates to the `wp_codebox_apply_approved_artifact` filter. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
+
+When Data Machine is present, `stage-artifact-apply` stages that same apply input as a Data Machine pending action with kind `wp_codebox_apply_back`. Its preview includes `files/review.json`, canonical changed files, normalized test results, and the explicit approved file list. Accepting the pending action resolves through Data Machine's generic resolver and calls the existing `apply-approved-artifact` path; rejecting it leaves the artifact untouched. This keeps approval lifecycle in Data Machine without making WP Codebox depend on Homeboy or any site-specific apply adapter.
 
 ## Runtime Policy
 

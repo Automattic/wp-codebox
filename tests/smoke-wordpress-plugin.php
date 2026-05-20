@@ -37,6 +37,7 @@ function wp_register_ability( string $name, array $definition ): void {
 
 function doing_action( string $hook ): bool { return 'wp_abilities_api_init' === $hook; }
 function add_action( string $hook, callable $callback, int $priority = 10 ): void {}
+function add_filter( string $hook, callable $callback, int $priority = 10 ): void { $GLOBALS['wp_codebox_filters'][ $hook ] = $callback; }
 function current_user_can( string $capability ): bool { return 'manage_options' === $capability; }
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	if ( ! array_key_exists( $hook, $GLOBALS['wp_codebox_filters'] ) ) {
@@ -54,6 +55,7 @@ function get_option( string $name, mixed $default = null ): mixed { return $defa
 
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-data-machine-pending-actions.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 $root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
@@ -77,6 +79,7 @@ $assert   = function ( string $label, bool $condition ) use ( &$failures, &$tota
 
 echo "WP Codebox WordPress plugin - smoke\n";
 
+new WP_Codebox_Data_Machine_Pending_Actions();
 new WP_Codebox_Abilities();
 
 $ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task'] ?? null;
@@ -100,6 +103,7 @@ $artifact_abilities = array(
 	'wp-codebox/get-artifact',
 	'wp-codebox/discard-artifact',
 	'wp-codebox/apply-approved-artifact',
+	'wp-codebox/stage-artifact-apply',
 );
 foreach ( $artifact_abilities as $artifact_ability_name ) {
 	$artifact_ability = $GLOBALS['wp_codebox_registered_abilities'][ $artifact_ability_name ] ?? null;
@@ -378,6 +382,48 @@ $applied = $artifacts->apply_approved(
 );
 $assert( 'approved artifact apply delegates exact patch', ! is_wp_error( $applied ) && true === ( $applied['result']['patch_contains'] ?? false ) && hash( 'sha256', $patch_diff ) === ( $applied['patch_sha256'] ?? '' ) && $content_digest === ( $applied['content_digest'] ?? '' ) );
 
+$captured_stage_args = array();
+$GLOBALS['wp_codebox_filters']['wp_codebox_stage_pending_apply_artifact'] = function ( mixed $value, array $stage_args ) use ( &$captured_stage_args ): array {
+	$captured_stage_args = $stage_args;
+	return array(
+		'staged'    => true,
+		'action_id' => 'act_test',
+		'payload'   => array(
+			'pending_action' => array(
+				'kind'        => $stage_args['kind'],
+				'apply_input' => $stage_args['apply_input'],
+				'preview'     => $stage_args['preview_data'],
+			),
+		),
+	);
+};
+$staged = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact(
+	array(
+		'artifacts_path'  => $artifact_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '' ),
+		'approver'        => 'site-user:1',
+		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+		'context'         => array( 'session_id' => 'chat-123' ),
+	)
+);
+$assert( 'pending artifact apply can be staged', ! is_wp_error( $staged ) && true === ( $staged['staged'] ?? false ) && WP_Codebox_Data_Machine_Pending_Actions::KIND === ( $captured_stage_args['kind'] ?? '' ) );
+$assert( 'pending artifact apply stores exact apply input', $artifact_id === ( $captured_stage_args['apply_input']['artifact_id'] ?? '' ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $captured_stage_args['apply_input']['approved_files'] ?? array() ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $captured_stage_args['apply_input']['apply_target'] ?? array() ) );
+$assert( 'pending artifact apply preview includes review and changed files', 'wp-codebox/pending-apply-preview/v1' === ( $captured_stage_args['preview_data']['schema'] ?? '' ) && 'wp-codebox/artifact-review/v1' === ( $captured_stage_args['preview_data']['review']['schema'] ?? '' ) && 'wp-codebox/changed-files/v1' === ( $captured_stage_args['preview_data']['changed_files']['schema'] ?? '' ) );
+
+$handlers = apply_filters( 'datamachine_pending_action_handlers', array() );
+$assert( 'pending artifact apply handler registers with Data Machine', isset( $handlers[ WP_Codebox_Data_Machine_Pending_Actions::KIND ]['apply'] ) && is_callable( $handlers[ WP_Codebox_Data_Machine_Pending_Actions::KIND ]['apply'] ) );
+$pending_handler_result = call_user_func(
+	$handlers[ WP_Codebox_Data_Machine_Pending_Actions::KIND ]['apply'],
+	array(
+		'artifacts_path'  => $artifact_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
+		'approver'        => 'site-user:1',
+	)
+);
+$assert( 'pending artifact apply handler delegates to approved artifact apply', ! is_wp_error( $pending_handler_result ) && true === ( $pending_handler_result['success'] ?? false ) && $artifact_id === ( $pending_handler_result['artifact_id'] ?? '' ) );
+
 $audit_path      = $artifact_root . '/apply-audit.jsonl';
 $audit_lines     = is_file( $audit_path ) ? array_values( array_filter( explode( "\n", trim( (string) file_get_contents( $audit_path ) ) ) ) ) : array();
 $success_audit   = isset( $audit_lines[0] ) ? json_decode( $audit_lines[0], true ) : array();
@@ -399,8 +445,8 @@ $failed_apply = $artifacts->apply_approved(
 	)
 );
 $audit_lines   = is_file( $audit_path ) ? array_values( array_filter( explode( "\n", trim( (string) file_get_contents( $audit_path ) ) ) ) ) : array();
-$failure_audit = isset( $audit_lines[1] ) ? json_decode( $audit_lines[1], true ) : array();
-$failure_encoded = isset( $audit_lines[1] ) ? $audit_lines[1] : '';
+$failure_audit = isset( $audit_lines[2] ) ? json_decode( $audit_lines[2], true ) : array();
+$failure_encoded = isset( $audit_lines[2] ) ? $audit_lines[2] : '';
 $assert( 'approved artifact apply writes adapter failure audit record', is_wp_error( $failed_apply ) && is_array( $failure_audit ) && 'failure' === ( $failure_audit['status'] ?? '' ) && 'test-adapter' === ( $failure_audit['adapter'] ?? '' ) && 'wp_codebox_adapter_failed' === ( $failure_audit['error']['code'] ?? '' ) );
 $assert( 'failure audit records approver and excludes raw patch body and secrets', 'site-user:2' === ( $failure_audit['approver'] ?? '' ) && ! str_contains( $failure_encoded, 'diff --git' ) && ! str_contains( $failure_encoded, 'secret-password-value' ) && '[redacted]' === ( $failure_audit['error']['data']['patch'] ?? '' ) && '[redacted]' === ( $failure_audit['error']['data']['password'] ?? '' ) );
 

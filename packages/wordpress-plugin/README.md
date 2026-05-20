@@ -9,6 +9,11 @@ the parent control plane for review, replay, or apply-back.
 
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
+- `wp-codebox/list-artifacts`
+- `wp-codebox/get-artifact`
+- `wp-codebox/discard-artifact`
+- `wp-codebox/apply-approved-artifact`
+- `wp-codebox/stage-artifact-apply`
 
 The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
 WordPress Playground runtime, mounts the agent stack components, invokes the
@@ -52,6 +57,26 @@ Returned artifact metadata includes the runtime manifest, replay blueprint,
 after-state notes, captured readwrite mount index, event streams, and logs. WP
 Codebox owns this capture boundary so the parent site can discard the disposable
 sandbox while keeping durable evidence and outputs.
+
+## Apply-Back Approval
+
+Apply-back is a reviewed artifact flow, not part of sandbox execution.
+`wp-codebox/apply-approved-artifact` validates the requested `artifact_id`, the
+explicit `approved_files[]` list, and the artifact content digest before handing
+the exact approved `files/patch.diff` to the `wp_codebox_apply_approved_artifact`
+adapter filter.
+
+When Data Machine is installed, `wp-codebox/stage-artifact-apply` stages the same
+apply input as a Data Machine pending action with kind `wp_codebox_apply_back`.
+The pending action preview includes `files/review.json`, canonical changed files,
+normalized test results, and the approved file list. Accepting the pending action
+calls the registered handler, which delegates back to
+`wp-codebox/apply-approved-artifact`; rejecting it leaves the artifact untouched.
+
+Without Data Machine pending actions, `stage-artifact-apply` fails closed with
+`wp_codebox_datamachine_pending_actions_missing`. Direct reviewed apply remains
+available through `apply-approved-artifact` for hosts that provide their own
+approval surface.
 
 ## Configuration
 

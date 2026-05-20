@@ -285,6 +285,48 @@ final class WP_Codebox_Abilities {
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
+
+			wp_register_ability(
+				'wp-codebox/stage-artifact-apply',
+				array(
+					'label'               => 'Stage WP Codebox Artifact Apply',
+					'description'         => 'Stage a reviewed WP Codebox artifact apply-back request through Data Machine pending actions.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'artifact_id', 'approved_files' ),
+						'properties' => array_merge(
+							$artifact_id_schema,
+							array(
+								'approved_files' => array(
+									'type'        => 'array',
+									'description' => 'Explicit sandbox file paths approved by the parent-site reviewer.',
+									'items'       => array( 'type' => 'string' ),
+								),
+								'approver'       => array(
+									'type'        => 'string',
+									'description' => 'Parent-site approver principal for audit records.',
+								),
+								'apply_target'   => array(
+									'type'        => 'object',
+									'description' => 'Optional parent-control-plane target metadata consumed by the apply adapter.',
+								),
+								'summary'        => array(
+									'type'        => 'string',
+									'description' => 'Optional human-readable pending-action summary.',
+								),
+								'agent_id'       => array( 'type' => 'integer' ),
+								'user_id'        => array( 'type' => 'integer' ),
+								'context'        => array( 'type' => 'object' ),
+							)
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'stage_artifact_apply' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
 		};
 
 		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
@@ -369,6 +411,11 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function apply_approved_artifact( array $input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->apply_approved( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function stage_artifact_apply( array $input ): array|WP_Error {
+		return WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact( $input );
 	}
 
 	public static function can_run_agent_task(): bool {
