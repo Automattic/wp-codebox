@@ -24,7 +24,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -674,7 +674,21 @@ class PlaygroundRuntime implements Runtime {
 
   private async runPhpunit(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const code = await this.phpCodeFromArgs(spec.args ?? [], "wordpress.phpunit")
+    const args = spec.args ?? []
+    const explicitCode = argValue(args, "code") || argValue(args, "code-file")
+    const code = explicitCode ? await this.phpCodeFromArgs(args, "wordpress.phpunit") : normalizePhpCode(phpunitRunCode({
+      pluginSlug: argValue(args, "plugin-slug")?.trim() || "",
+      bootstrapFile: argValue(args, "bootstrap-file")?.trim() || "/homeboy-extension/scripts/lib/playground-bootstrap.php",
+      phpunitXml: argValue(args, "phpunit-xml")?.trim() || "/homeboy-extension/phpunit.xml.dist",
+      selectedTestFile: argValue(args, "test-file")?.trim() || "",
+      changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
+      env: jsonObjectArg(args, "env-json"),
+      wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
+      dependencyMounts: commaListArg(args, "dependency-mounts"),
+    }))
+    if (!explicitCode && !argValue(args, "plugin-slug")?.trim()) {
+      throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
+    }
     const response = await server.playground.run({ code })
 
     return response.text

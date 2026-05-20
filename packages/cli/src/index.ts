@@ -1117,7 +1117,8 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit") {
     const code = recipeStepArgValue(step.args ?? [], "code")
     const codeFile = recipeStepArgValue(step.args ?? [], "code-file")
-    if (!code && !codeFile) {
+    const pluginSlug = recipeStepArgValue(step.args ?? [], "plugin-slug")
+    if (!code && !codeFile && (step.command !== "wordpress.phpunit" || !pluginSlug)) {
       addIssue("missing-code", `${path}.args`, `${step.command} requires code=<php> or code-file=<path>.`)
     }
     if (code && codeFile) {

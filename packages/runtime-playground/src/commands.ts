@@ -51,6 +51,338 @@ export interface BenchRunCodeOptions {
   workloads: unknown[]
 }
 
+export interface PhpunitRunCodeOptions {
+  pluginSlug: string
+  bootstrapFile: string
+  phpunitXml: string
+  selectedTestFile: string
+  changedTestFiles: unknown[]
+  env: Record<string, unknown>
+  wpConfigDefines: Record<string, unknown>
+  dependencyMounts: string[]
+}
+
+export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
+  return `error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+
+$plugin_slug = ${JSON.stringify(options.pluginSlug)};
+$plugin_path = '/wordpress/wp-content/plugins/' . $plugin_slug;
+$result_file = $plugin_path . '/.pg-test-result.txt';
+$current_stage = 'preboot';
+$tests_dir = '/homeboy-extension/vendor/wp-phpunit/wp-phpunit';
+$selected_test_file = ${JSON.stringify(options.selectedTestFile)};
+$changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
+$bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
+$wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
+$dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\\n"))};
+
+require_once ${JSON.stringify(options.bootstrapFile)};
+pg_install_diagnostics_handlers();
+
+if (is_array($bench_env)) {
+    foreach ($bench_env as $name => $value) {
+        if (is_string($name) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
+            $string_value = is_scalar($value) ? (string) $value : json_encode($value);
+            putenv($name . '=' . $string_value);
+            $_ENV[$name] = $string_value;
+        } else {
+            pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));
+        }
+    }
+}
+
+if (!is_array($wp_config_defines)) {
+    $wp_config_defines = array();
+}
+
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines));
+$pre_component_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
+$pre_component_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
+$pre_component_shutdown_callbacks = pg_snapshot_wordpress_hook_callbacks('shutdown');
+$deferred_install_plugins_loaded_callbacks = array();
+$deferred_install_init_callbacks = array();
+$loaded_dep_files = array();
+$loaded_component_file = null;
+
+require_once $tests_dir . '/includes/functions.php';
+tests_add_filter('muplugins_loaded', function () use ($plugin_path, $dep_mounts, $pre_component_plugins_loaded_callbacks, $pre_component_init_callbacks, &$deferred_install_plugins_loaded_callbacks, &$deferred_install_init_callbacks, &$loaded_dep_files, &$loaded_component_file) {
+    $loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
+    $loaded_component_file = pg_run_load_component_stage(array('plugin_path' => $plugin_path, 'activate' => false));
+    $deferred_install_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_component_plugins_loaded_callbacks);
+    $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
+});
+
+pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir));
+pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
+$activation_files = $loaded_dep_files;
+if ($loaded_component_file !== null) {
+    $activation_files[] = $loaded_component_file;
+}
+pg_run_activation_stage(array('plugin_files' => $activation_files));
+
+$pre_replayed_plugins_loaded_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
+$reopened_ability_categories_init = pg_reopen_wordpress_action('wp_abilities_api_categories_init');
+$reopened_ability_init = pg_reopen_wordpress_action('wp_abilities_api_init');
+pg_run_deferred_wordpress_hook_callbacks($deferred_install_plugins_loaded_callbacks, array(), 'plugins_loaded');
+$deferred_install_init_callbacks = array_merge($deferred_install_init_callbacks, pg_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
+usort($deferred_install_init_callbacks, static function (array $left, array $right): int {
+    return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
+});
+pg_run_deferred_wordpress_hook_callbacks($deferred_install_init_callbacks, array(), 'init');
+pg_fire_reopened_wordpress_action('wp_abilities_api_categories_init', $reopened_ability_categories_init);
+pg_fire_reopened_wordpress_action('wp_abilities_api_init', $reopened_ability_init);
+
+pg_stage_begin('load_fixtures');
+try {
+    global $phpmailer;
+    require_once $tests_dir . '/includes/mock-mailer.php';
+    $phpmailer = new MockPHPMailer(true);
+    require_once $tests_dir . '/includes/functions.php';
+    $GLOBALS['_wp_die_disabled'] = false;
+    tests_add_filter('wp_die_handler', '_wp_die_handler_filter');
+    tests_add_filter('wp_rest_server_class', '_wp_rest_server_class_filter');
+    tests_add_filter('async_update_translation', '__return_false');
+    tests_add_filter('automatic_updater_disabled', '__return_true');
+    foreach (array('phpunit6/compat.php', 'phpunit-adapter-testcase.php', 'abstract-testcase.php', 'testcase.php', 'testcase-rest-api.php', 'testcase-rest-controller.php', 'testcase-rest-post-type-controller.php', 'testcase-xmlrpc.php', 'testcase-ajax.php', 'testcase-canonical.php', 'testcase-xml.php', 'exceptions.php', 'utils.php', 'spy-rest-server.php', 'class-wp-rest-test-search-handler.php', 'class-wp-rest-test-configurable-controller.php', 'class-wp-fake-block-type.php', 'class-wp-fake-hasher.php', 'class-wp-sitemaps-test-provider.php', 'class-wp-sitemaps-empty-test-provider.php', 'class-wp-sitemaps-large-test-provider.php') as $file) {
+        require_once $tests_dir . '/includes/' . $file;
+    }
+    pg_stage_ok('load_fixtures');
+} catch (Throwable $e) {
+    pg_stage_fail('load_fixtures', $e);
+    exit(1);
+}
+
+function wp_codebox_phpunit_parse_config($xml_path, $test_dir_default) {
+    $directories = array($test_dir_default);
+    $suffixes = array('Test.php');
+    $prefixes = array('test-');
+    $excludes = array();
+    if (!is_readable($xml_path)) {
+        pg_log('NOTICE:phpunit.xml.dist not readable at ' . $xml_path . '; using defaults');
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $prev = libxml_use_internal_errors(true);
+    $xml = @simplexml_load_file($xml_path);
+    $errors = libxml_get_errors();
+    libxml_clear_errors();
+    libxml_use_internal_errors($prev);
+    if ($xml === false) {
+        $first = $errors ? trim($errors[0]->message) : 'unknown';
+        pg_log('NOTICE:phpunit.xml.dist parse failed (' . $first . '); using defaults');
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $plugin_base = dirname($test_dir_default);
+    $config_dirs = array();
+    $config_suffixes = array();
+    $config_prefixes = array();
+    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
+        $raw = trim((string) $dir);
+        $normalized = trim(str_replace('\\\\', '/', $raw), '/');
+        if ($raw === '' || ($normalized !== 'tests' && strpos($normalized, 'tests/') !== 0)) {
+            continue;
+        }
+        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($plugin_base . '/' . $raw, '/');
+        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
+            $suffix = trim($suffix);
+            if ($suffix !== '') {
+                $config_suffixes[] = $suffix;
+            }
+        }
+        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
+            $prefix = trim($prefix);
+            if ($prefix !== '') {
+                $config_prefixes[] = $prefix;
+            }
+        }
+    }
+    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
+        $raw = trim((string) $exclude);
+        if ($raw !== '') {
+            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($plugin_base . '/' . $raw, '/');
+        }
+    }
+    if (!empty($config_dirs)) {
+        $directories = $config_dirs;
+        pg_log('NOTICE:phpunit.xml.dist loaded from ' . $xml_path);
+    }
+    if (!empty($config_suffixes)) {
+        $suffixes = $config_suffixes;
+    }
+    if (!empty($config_prefixes)) {
+        $prefixes = $config_prefixes;
+    }
+    return array($directories, $suffixes, $prefixes, $excludes);
+}
+
+function wp_codebox_phpunit_discover(array $directories, array $suffixes, array $prefixes, array $excludes) {
+    $found = array();
+    foreach ($directories as $dir) {
+        if (!is_dir($dir)) {
+            pg_log('NOTICE:test directory does not exist: ' . $dir);
+            continue;
+        }
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $path = $file->getPathname();
+            foreach ($excludes as $exclude) {
+                if (strpos($path, $exclude) === 0) {
+                    continue 2;
+                }
+            }
+            $base = $file->getBasename();
+            $matches = false;
+            foreach ($suffixes as $suffix) {
+                if ($suffix !== '' && substr($base, -strlen($suffix)) === $suffix) {
+                    $matches = true;
+                    break;
+                }
+            }
+            if (!$matches) {
+                foreach ($prefixes as $prefix) {
+                    if ($prefix !== '' && strpos($base, $prefix) === 0) {
+                        $matches = true;
+                        break;
+                    }
+                }
+            }
+            if ($matches) {
+                $found[] = $path;
+            }
+        }
+    }
+    sort($found);
+    return array_values(array_unique($found));
+}
+
+pg_stage_begin('discover_tests');
+try {
+    $test_dir = $plugin_path . '/tests';
+    if (!is_dir($test_dir)) {
+        pg_log('NO_TEST_FILES');
+        pg_log('NOTICE:tests directory not found at ' . $test_dir);
+        pg_stage_ok('discover_tests');
+        exit(1);
+    }
+    list($directories, $suffixes, $prefixes, $excludes) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
+    $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes);
+    $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $plugin_path);
+    if ($selected_test_file !== '') {
+        $selected_abs = $plugin_path . '/' . ltrim($selected_test_file, '/');
+        if (!in_array($selected_abs, $test_files, true)) {
+            pg_log('NO_TEST_FILES');
+            pg_log('NOTICE:requested PHPUnit test file not discovered: ' . $selected_test_file);
+            pg_stage_ok('discover_tests');
+            exit(1);
+        }
+        $test_files = array($selected_abs);
+    }
+    pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
+    if (empty($test_files)) {
+        pg_log('NO_TEST_FILES');
+        pg_stage_ok('discover_tests');
+        exit(1);
+    }
+    pg_stage_ok('discover_tests');
+} catch (Throwable $e) {
+    pg_stage_fail('discover_tests', $e);
+    exit(1);
+}
+
+pg_stage_begin('load_tests');
+$suite = new PHPUnit\\Framework\\TestSuite('WP Codebox PHPUnit Tests');
+$before_classes = get_declared_classes();
+try {
+    foreach ($test_files as $test_file) {
+        require_once $test_file;
+    }
+} catch (Throwable $e) {
+    pg_stage_fail('load_tests', $e);
+    exit(1);
+}
+$after_classes = get_declared_classes();
+foreach (array_diff($after_classes, $before_classes) as $class_name) {
+    try {
+        $ref = new ReflectionClass($class_name);
+        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
+            $suite->addTestSuite($class_name);
+        }
+    } catch (Throwable $e) {
+        pg_log('NOTICE:reflection failed for ' . $class_name . ': ' . $e->getMessage());
+    }
+}
+pg_stage_ok('load_tests');
+
+function wp_codebox_phpunit_args(array $argv) {
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
+    $args = array_slice($argv, 1);
+    for ($i = 0; $i < count($args); $i++) {
+        $arg = $args[$i];
+        if ($arg === '--filter' && isset($args[$i + 1])) {
+            $arguments['filter'] = $args[++$i];
+            pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if (strpos($arg, '--filter=') === 0) {
+            $arguments['filter'] = substr($arg, strlen('--filter='));
+            pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if ($arg === '--list-tests') {
+            $arguments['listTests'] = true;
+            continue;
+        }
+        if ($arg === '--no-testdox') {
+            $arguments['testdox'] = false;
+            continue;
+        }
+        if ($arg === '--verbose' || $arg === '-v') {
+            $arguments['verbose'] = true;
+            continue;
+        }
+    }
+    return $arguments;
+}
+
+function wp_codebox_phpunit_print_test_list($test) {
+    if ($test instanceof PHPUnit\\Framework\\TestSuite) {
+        foreach ($test->tests() as $child) {
+            wp_codebox_phpunit_print_test_list($child);
+        }
+        return;
+    }
+    if ($test instanceof PHPUnit\\Framework\\TestCase) {
+        echo get_class($test) . '::' . $test->getName() . PHP_EOL;
+    }
+}
+
+pg_stage_begin('run_tests');
+pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
+try {
+    $phpunit_args = wp_codebox_phpunit_args($argv ?? array());
+    if (!empty($phpunit_args['listTests'])) {
+        wp_codebox_phpunit_print_test_list($suite);
+        pg_log('ALL TESTS PASSED');
+        pg_log('TESTS: ' . $suite->count() . ' FAILURES: 0 ERRORS: 0');
+        pg_stage_ok('run_tests');
+        exit(0);
+    }
+    $runner = new PHPUnit\\TextUI\\TestRunner();
+    $result = $runner->run($suite, $phpunit_args);
+    pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
+    pg_log('TESTS: ' . $result->count() . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
+    pg_stage_ok('run_tests');
+    exit($result->wasSuccessful() ? 0 : 1);
+} catch (Throwable $e) {
+    pg_stage_fail('run_tests', $e);
+    exit(1);
+}`
+}
+
 export function benchRunCode(options: BenchRunCodeOptions): string {
   return `require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
