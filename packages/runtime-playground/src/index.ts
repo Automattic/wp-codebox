@@ -24,7 +24,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, isSafeEnvName, normalizePhpCode, phpBody, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -657,9 +657,12 @@ class PlaygroundRuntime implements Runtime {
 
     const componentId = argValue(args, "component-id")?.trim() || pluginSlug
     const iterations = positiveIntegerArg(args, "iterations", 3)
-    const warmupIterations = positiveIntegerArg(args, "warmup", 1)
+    const warmupIterations = nonNegativeIntegerArg(args, "warmup", 1)
+    const dependencySlugs = commaListArg(args, "dependency-slugs")
+    const env = jsonObjectArg(args, "env-json")
+    const workloads = jsonArrayArg(args, "workloads-json")
     const response = await server.playground.run({
-      code: this.bootstrapPhpCode(benchRunCode({ componentId, pluginSlug, iterations, warmupIterations }), []),
+      code: this.bootstrapPhpCode(benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, workloads }), []),
     })
 
     return response.text

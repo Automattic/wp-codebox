@@ -16,6 +16,7 @@ interface RunOptions {
   policy?: RuntimePolicy
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
+  blueprint?: unknown
   json: boolean
 }
 
@@ -137,6 +138,11 @@ interface BenchRunOptions {
   componentPath: string
   componentId?: string
   pluginSlug?: string
+  dependencies: Array<{ source: string; slug: string }>
+  mounts: RunOptions["mounts"]
+  envJson?: string
+  wpConfigDefinesJson?: string
+  workloadsJson?: string
   iterations?: string
   warmupIterations?: string
   wpVersion?: string
@@ -358,17 +364,28 @@ async function runBench(options: BenchRunOptions): Promise<BenchRunOutput> {
   const componentPath = resolve(options.componentPath)
   const pluginSlug = options.pluginSlug ?? basename(componentPath)
   const componentId = options.componentId ?? pluginSlug
+  const env = parseJsonRecord(options.envJson, "--env-json")
+  const wpConfigDefines = parseJsonRecord(options.wpConfigDefinesJson, "--wp-config-defines-json")
+  const workloads = parseJsonArray(options.workloadsJson, "--workloads-json")
   const output = await run({
-    mounts: [componentMount(componentPath, `/wordpress/wp-content/plugins/${pluginSlug}`, pluginSlug)],
+    mounts: [
+      componentMount(componentPath, `/wordpress/wp-content/plugins/${pluginSlug}`, pluginSlug),
+      ...options.dependencies.map((dependency) => componentMount(dependency.source, `/wordpress/wp-content/plugins/${dependency.slug}`, dependency.slug)),
+      ...options.mounts,
+    ],
     command: "wordpress.bench",
     args: [
       `component-id=${componentId}`,
       `plugin-slug=${pluginSlug}`,
       `iterations=${positiveInteger(options.iterations, 3)}`,
-      `warmup=${positiveInteger(options.warmupIterations, 1)}`,
+      `warmup=${nonNegativeInteger(options.warmupIterations, 1)}`,
+      `dependency-slugs=${options.dependencies.map((dependency) => dependency.slug).join(",")}`,
+      `env-json=${JSON.stringify(env)}`,
+      `workloads-json=${JSON.stringify(workloads)}`,
     ],
     wpVersion: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
     artifactsDirectory: options.artifactsDirectory,
+    blueprint: Object.keys(wpConfigDefines).length > 0 ? wpConfigDefinesBlueprint(wpConfigDefines) : undefined,
     metadata: {
       ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
       task: stripUndefined({
@@ -376,8 +393,13 @@ async function runBench(options: BenchRunOptions): Promise<BenchRunOutput> {
         componentId,
         pluginSlug,
         componentPath,
+        dependencies: options.dependencies,
+        mounts: options.mounts,
+        env,
+        wpConfigDefines,
+        workloads,
         iterations: positiveInteger(options.iterations, 3),
-        warmupIterations: positiveInteger(options.warmupIterations, 1),
+        warmupIterations: nonNegativeInteger(options.warmupIterations, 1),
       }),
     },
     json: options.json,
@@ -772,7 +794,7 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
 }
 
 function parseBenchRunOptions(args: string[]): BenchRunOptions {
-  const options: Partial<BenchRunOptions> = { json: false }
+  const options: Partial<BenchRunOptions> = { json: false, dependencies: [], mounts: [] }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -799,6 +821,21 @@ function parseBenchRunOptions(args: string[]): BenchRunOptions {
       case "--plugin-slug":
         options.pluginSlug = value
         break
+      case "--dependency":
+        options.dependencies = [...(options.dependencies ?? []), parseDependency(value)]
+        break
+      case "--mount":
+        options.mounts = [...(options.mounts ?? []), parseMount(value)]
+        break
+      case "--env-json":
+        options.envJson = value
+        break
+      case "--wp-config-defines-json":
+        options.wpConfigDefinesJson = value
+        break
+      case "--workloads-json":
+        options.workloadsJson = value
+        break
       case "--iterations":
         options.iterations = value
         break
@@ -821,6 +858,52 @@ function parseBenchRunOptions(args: string[]): BenchRunOptions {
   }
 
   return options as BenchRunOptions
+}
+
+function parseDependency(value: string): { source: string; slug: string } {
+  const [source, slug = basename(resolve(value))] = value.split(":")
+  if (!source || !slug) {
+    throw new Error(`Invalid dependency, expected path[:slug]: ${value}`)
+  }
+
+  return { source: resolve(source), slug }
+}
+
+function parseJsonRecord(raw: string | undefined, label: string): Record<string, unknown> {
+  if (!raw) {
+    return {}
+  }
+
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object`)
+  }
+
+  return parsed as Record<string, unknown>
+}
+
+function parseJsonArray(raw: string | undefined, label: string): unknown[] {
+  if (!raw) {
+    return []
+  }
+
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON array`)
+  }
+
+  return parsed
+}
+
+function wpConfigDefinesBlueprint(defines: Record<string, unknown>): unknown {
+  return {
+    steps: [
+      {
+        step: "defineWpConfigConsts",
+        consts: defines,
+      },
+    ],
+  }
 }
 
 function parseBenchResults(raw: string): BenchResults {
@@ -914,6 +997,15 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function nonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
 function resolveSecretEnv(names: string[]): Record<string, string> {
   const secretEnv: Record<string, string> = {}
   for (const name of names) {
@@ -956,7 +1048,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
           kind: "wordpress",
           name: "wp-codebox-cli",
           version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: { steps: [] },
+          blueprint: options.blueprint ?? { steps: [] },
         },
         policy: options.policy ?? runPolicy(options.command),
         secretEnv: options.secretEnv,
