@@ -147,6 +147,11 @@ Bench run options:
   --component <path>       Local plugin component path containing tests/bench/*.php workloads.
   --component-id <id>      Component id for the BenchResults envelope. Defaults to component basename.
   --plugin-slug <slug>     Plugin directory slug inside WordPress. Defaults to component basename.
+  --dependency <path:slug> Extra plugin dependency to mount and activate. Repeatable.
+  --mount <host:vfs>       Extra host path to mount into the runtime. Repeatable.
+  --env-json <json>        Bench environment object exposed through getenv() and $_ENV.
+  --wp-config-defines-json <json> wp-config constant object applied before WordPress boots.
+  --workloads-json <json>  Configured workload array for PHP/ability/wp-cli steps.
   --iterations <n>         Measured iterations per workload. Defaults to 3.
   --warmup <n>             Warmup iterations per workload. Defaults to 1.
 
