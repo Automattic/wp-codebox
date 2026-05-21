@@ -154,7 +154,7 @@ const defaultPolicy: RuntimePolicy = {
 
 const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
-const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability", "wordpress.bench", "wordpress.phpunit", "wp-codebox.agent-runtime-probe", "wp-codebox.agent-sandbox-run"])
+const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability", "wordpress.bench", "wordpress.phpunit", "wordpress.core-phpunit", "wp-codebox.agent-runtime-probe", "wp-codebox.agent-sandbox-run"])
 
 const secretEnvPolicy: RuntimePolicy = {
   ...defaultPolicy,
@@ -1176,12 +1176,15 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
 }
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
-  if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit") {
+  if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit" || step.command === "wordpress.core-phpunit") {
     const code = recipeStepArgValue(step.args ?? [], "code")
     const codeFile = recipeStepArgValue(step.args ?? [], "code-file")
     const pluginSlug = recipeStepArgValue(step.args ?? [], "plugin-slug")
-    if (!code && !codeFile && (step.command !== "wordpress.phpunit" || !pluginSlug)) {
+    if (!code && !codeFile && step.command === "wordpress.run-php") {
       addIssue("missing-code", `${path}.args`, `${step.command} requires code=<php> or code-file=<path>.`)
+    }
+    if (!code && !codeFile && step.command === "wordpress.phpunit" && !pluginSlug) {
+      addIssue("missing-plugin-slug", `${path}.args`, "wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided.")
     }
     if (code && codeFile) {
       addIssue("ambiguous-code", `${path}.args`, `${step.command} accepts either code=<php> or code-file=<path>, not both.`)

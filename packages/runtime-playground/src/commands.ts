@@ -63,6 +63,16 @@ export interface PhpunitRunCodeOptions {
   dependencyMounts: string[]
 }
 
+export interface CorePhpunitRunCodeOptions {
+  coreRoot: string
+  testsDir: string
+  phpunitXml: string
+  selectedTestFile: string
+  changedTestFiles: unknown[]
+  autoloadFile: string
+  wpConfigDefines: Record<string, unknown>
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -784,6 +794,349 @@ try {
     exit($result->wasSuccessful() ? 0 : 1);
 } catch (Throwable $e) {
     pg_stage_fail('run_tests', $e);
+    exit(1);
+}`
+}
+
+export function corePhpunitRunCode(options: CorePhpunitRunCodeOptions): string {
+  return `error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+
+$core_root = rtrim(${JSON.stringify(options.coreRoot)}, '/');
+$tests_dir = rtrim(${JSON.stringify(options.testsDir)}, '/');
+$phpunit_xml = ${JSON.stringify(options.phpunitXml)};
+$selected_test_file = ${JSON.stringify(options.selectedTestFile)};
+$changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
+$autoload_file = ${JSON.stringify(options.autoloadFile)};
+$wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
+$result_file = $core_root . '/.pg-test-result.txt';
+$current_stage = 'preboot';
+
+function core_pg_log($msg) {
+    global $result_file;
+    file_put_contents($result_file, $msg . "\n", FILE_APPEND);
+}
+
+function core_pg_stage_begin($stage) {
+    global $current_stage;
+    $current_stage = $stage;
+    core_pg_log('STAGE_BEGIN:' . $stage);
+}
+
+function core_pg_stage_ok($stage) {
+    core_pg_log('STAGE_OK:' . $stage);
+}
+
+function core_pg_stage_fail($stage, Throwable $e) {
+    core_pg_log('STAGE_FAIL:' . $stage . ':' . get_class($e) . ': ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
+    core_pg_log('TRACE:');
+    foreach (explode("\n", $e->getTraceAsString()) as $line) {
+        core_pg_log('  ' . $line);
+    }
+}
+
+function core_pg_install_diagnostics_handlers() {
+    set_error_handler(function ($severity, $message, $file, $line) {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
+        core_pg_log('NOTICE:E_' . $severity . ': ' . $message . ' at ' . $file . ':' . $line);
+        return false;
+    });
+    register_shutdown_function(function () {
+        global $current_stage;
+        $error = error_get_last();
+        if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true)) {
+            core_pg_log('STAGE_FATAL:' . $current_stage . ':' . $error['message'] . ' at ' . $error['file'] . ':' . $error['line']);
+        }
+    });
+}
+
+function core_pg_write_tests_config(string $core_root, array $extra_defines): string {
+    $config_path = $core_root . '/wp-tests-config.php';
+    if (is_readable($config_path)) {
+        return $config_path;
+    }
+
+    $config = "<?php\n";
+    foreach ($extra_defines as $name => $value) {
+        if (is_string($name) && preg_match('/^[A-Z_][A-Z0-9_]*$/i', $name)) {
+            $config .= sprintf("if (!defined('%s')) { define('%s', %s); }\n", $name, $name, var_export($value, true));
+        }
+    }
+    $config .= "\n";
+    $config .= "define('DB_NAME', ':memory:');\n";
+    $config .= "define('DB_USER', 'root');\n";
+    $config .= "define('DB_PASSWORD', '');\n";
+    $config .= "define('DB_HOST', 'localhost');\n";
+    $config .= "define('DB_CHARSET', 'utf8');\n";
+    $config .= "define('DB_COLLATE', '');\n";
+    $config .= "define('WP_TESTS_DOMAIN', 'example.org');\n";
+    $config .= "define('WP_TESTS_EMAIL', 'admin@example.org');\n";
+    $config .= "define('WP_TESTS_TITLE', 'Test Blog');\n";
+    $config .= "define('WP_PHP_BINARY', 'php');\n";
+    $config .= "define('WP_RUN_CORE_TESTS', true);\n";
+    $config .= "define('ABSPATH', '" . addslashes($core_root) . "/');\n";
+    $config .= "define('FS_METHOD', 'direct');\n";
+    $config .= "\$table_prefix = 'wptests_';\n";
+    file_put_contents($config_path, $config);
+
+    return $config_path;
+}
+
+function core_pg_parse_phpunit_config(string $xml_path, string $default_dir): array {
+    $directories = array($default_dir);
+    $suffixes = array('Test.php');
+    $prefixes = array('test-');
+    $excludes = array();
+    if (!is_readable($xml_path)) {
+        core_pg_log('NOTICE:phpunit config not readable at ' . $xml_path . '; using defaults');
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $xml = @simplexml_load_file($xml_path);
+    if ($xml === false) {
+        core_pg_log('NOTICE:phpunit config parse failed; using defaults');
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $base = dirname($xml_path);
+    $config_dirs = array();
+    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
+        $raw = trim((string) $dir);
+        if ($raw === '') {
+            continue;
+        }
+        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
+        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
+            $suffix = trim($suffix);
+            if ($suffix !== '') {
+                $suffixes[] = $suffix;
+            }
+        }
+        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
+            $prefix = trim($prefix);
+            if ($prefix !== '') {
+                $prefixes[] = $prefix;
+            }
+        }
+    }
+    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
+        $raw = trim((string) $exclude);
+        if ($raw !== '') {
+            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
+        }
+    }
+    if (!empty($config_dirs)) {
+        $directories = $config_dirs;
+        core_pg_log('NOTICE:phpunit config loaded from ' . $xml_path);
+    }
+    return array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes);
+}
+
+function core_pg_discover_tests(array $directories, array $suffixes, array $prefixes, array $excludes): array {
+    $found = array();
+    foreach ($directories as $dir) {
+        if (!is_dir($dir)) {
+            core_pg_log('NOTICE:test directory does not exist: ' . $dir);
+            continue;
+        }
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $path = $file->getPathname();
+            foreach ($excludes as $exclude) {
+                if (strpos($path, $exclude) === 0) {
+                    continue 2;
+                }
+            }
+            $base = $file->getBasename();
+            $matches = false;
+            foreach ($suffixes as $suffix) {
+                if ($suffix !== '' && substr($base, -strlen($suffix)) === $suffix) {
+                    $matches = true;
+                    break;
+                }
+            }
+            if (!$matches) {
+                foreach ($prefixes as $prefix) {
+                    if ($prefix !== '' && strpos($base, $prefix) === 0) {
+                        $matches = true;
+                        break;
+                    }
+                }
+            }
+            if ($matches) {
+                $found[] = $path;
+            }
+        }
+    }
+    sort($found);
+    return array_values(array_unique($found));
+}
+
+function core_pg_relative_path(string $path, string $core_root): string {
+    $path = trim(str_replace('\\\\', '/', $path));
+    $core_root = rtrim(str_replace('\\\\', '/', $core_root), '/');
+    if (strpos($path, $core_root . '/') === 0) {
+        $path = substr($path, strlen($core_root) + 1);
+    }
+    while (strpos($path, './') === 0) {
+        $path = substr($path, 2);
+    }
+    return ltrim($path, '/');
+}
+
+function core_pg_filter_changed_test_files(array $test_files, string $changed_files_json, string $core_root): array {
+    $decoded = json_decode($changed_files_json, true);
+    if (!is_array($decoded) || empty($decoded)) {
+        return $test_files;
+    }
+    $wanted = array();
+    foreach ($decoded as $entry) {
+        if (is_scalar($entry)) {
+            $wanted[core_pg_relative_path((string) $entry, $core_root)] = true;
+        }
+    }
+    $filtered = array();
+    foreach ($test_files as $file) {
+        if (isset($wanted[core_pg_relative_path((string) $file, $core_root)])) {
+            $filtered[] = $file;
+        }
+    }
+    core_pg_log('SCOPED_TEST_FILES requested=' . count($wanted) . ' matched=' . count($filtered));
+    return $filtered;
+}
+
+function core_pg_phpunit_args(array $argv) {
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
+    $args = array_slice($argv, 1);
+    for ($i = 0; $i < count($args); $i++) {
+        $arg = $args[$i];
+        if ($arg === '--filter' && isset($args[$i + 1])) {
+            $arguments['filter'] = $args[++$i];
+            core_pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if (strpos($arg, '--filter=') === 0) {
+            $arguments['filter'] = substr($arg, strlen('--filter='));
+            core_pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if ($arg === '--list-tests') {
+            $arguments['listTests'] = true;
+            continue;
+        }
+        if ($arg === '--no-testdox') {
+            $arguments['testdox'] = false;
+            continue;
+        }
+        if ($arg === '--verbose' || $arg === '-v') {
+            $arguments['verbose'] = true;
+            continue;
+        }
+    }
+    return $arguments;
+}
+
+core_pg_install_diagnostics_handlers();
+
+core_pg_stage_begin('boot');
+try {
+    if (!is_readable($autoload_file)) {
+        throw new RuntimeException('core PHPUnit autoload file is not readable: ' . $autoload_file);
+    }
+    if (!is_dir($core_root)) {
+        throw new RuntimeException('core root is not a directory: ' . $core_root);
+    }
+    if (!is_dir($tests_dir)) {
+        throw new RuntimeException('core tests directory is not a directory: ' . $tests_dir);
+    }
+    if (!is_array($wp_config_defines)) {
+        $wp_config_defines = array();
+    }
+    require_once $autoload_file;
+    $config_path = core_pg_write_tests_config($core_root, $wp_config_defines);
+    define('WP_TESTS_CONFIG_FILE_PATH', $config_path);
+    core_pg_stage_ok('boot');
+} catch (Throwable $e) {
+    core_pg_stage_fail('boot', $e);
+    exit(1);
+}
+
+core_pg_stage_begin('bootstrap');
+try {
+    require_once $tests_dir . '/includes/bootstrap.php';
+    core_pg_stage_ok('bootstrap');
+} catch (Throwable $e) {
+    core_pg_stage_fail('bootstrap', $e);
+    exit(1);
+}
+
+core_pg_stage_begin('discover_tests');
+try {
+    list($directories, $suffixes, $prefixes, $excludes) = core_pg_parse_phpunit_config($phpunit_xml, $tests_dir . '/tests');
+    $test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes);
+    $test_files = core_pg_filter_changed_test_files($test_files, $changed_test_files_raw, $core_root);
+    if ($selected_test_file !== '') {
+        $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $core_root . '/' . ltrim($selected_test_file, '/');
+        if (!in_array($selected_abs, $test_files, true)) {
+            core_pg_log('NO_TEST_FILES');
+            core_pg_log('NOTICE:requested PHPUnit test file not discovered: ' . $selected_test_file);
+            core_pg_stage_ok('discover_tests');
+            exit(1);
+        }
+        $test_files = array($selected_abs);
+    }
+    core_pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
+    if (empty($test_files)) {
+        core_pg_log('NO_TEST_FILES');
+        core_pg_stage_ok('discover_tests');
+        exit(1);
+    }
+    core_pg_stage_ok('discover_tests');
+} catch (Throwable $e) {
+    core_pg_stage_fail('discover_tests', $e);
+    exit(1);
+}
+
+core_pg_stage_begin('load_tests');
+$suite = new PHPUnit\\Framework\\TestSuite('WP Codebox WordPress Core Tests');
+$before_classes = get_declared_classes();
+try {
+    foreach ($test_files as $test_file) {
+        require_once $test_file;
+    }
+} catch (Throwable $e) {
+    core_pg_stage_fail('load_tests', $e);
+    exit(1);
+}
+$after_classes = get_declared_classes();
+foreach (array_diff($after_classes, $before_classes) as $class_name) {
+    try {
+        $ref = new ReflectionClass($class_name);
+        if (!$ref->isAbstract() && $ref->isSubclassOf('PHPUnit\\Framework\\TestCase')) {
+            $suite->addTestSuite($class_name);
+        }
+    } catch (Throwable $e) {
+        core_pg_log('NOTICE:reflection failed for ' . $class_name . ': ' . $e->getMessage());
+    }
+}
+core_pg_stage_ok('load_tests');
+
+core_pg_stage_begin('run_tests');
+core_pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
+try {
+    $phpunit_args = core_pg_phpunit_args($argv ?? array());
+    $runner = new PHPUnit\\TextUI\\TestRunner();
+    $result = $runner->run($suite, $phpunit_args);
+    core_pg_log($result->wasSuccessful() ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
+    core_pg_log('TESTS: ' . $result->count() . ' FAILURES: ' . count($result->failures()) . ' ERRORS: ' . count($result->errors()));
+    core_pg_stage_ok('run_tests');
+    exit($result->wasSuccessful() ? 0 : 1);
+} catch (Throwable $e) {
+    core_pg_stage_fail('run_tests', $e);
     exit(1);
 }`
 }

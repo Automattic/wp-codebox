@@ -24,7 +24,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -682,6 +682,10 @@ class PlaygroundRuntime implements Runtime {
       return this.runPhpunit(spec)
     }
 
+    if (spec.command === "wordpress.core-phpunit") {
+      return this.runCorePhpunit(spec)
+    }
+
     throw new Error(`No Playground command handler is registered for: ${spec.command}`)
   }
 
@@ -774,6 +778,25 @@ class PlaygroundRuntime implements Runtime {
     }
     const response = await this.runPlaygroundCommand("wordpress.phpunit", server, { code })
     assertPlaygroundResponseOk("wordpress.phpunit", response)
+
+    return response.text
+  }
+
+  private async runCorePhpunit(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const args = spec.args ?? []
+    const explicitCode = argValue(args, "code") || argValue(args, "code-file")
+    const code = explicitCode ? await this.phpCodeFromArgs(args, "wordpress.core-phpunit") : normalizePhpCode(corePhpunitRunCode({
+      coreRoot: argValue(args, "core-root")?.trim() || "/wordpress",
+      testsDir: argValue(args, "tests-dir")?.trim() || "/wordpress/tests/phpunit",
+      phpunitXml: argValue(args, "phpunit-xml")?.trim() || "/wordpress/tests/phpunit/phpunit.xml.dist",
+      selectedTestFile: argValue(args, "test-file")?.trim() || "",
+      changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
+      autoloadFile: argValue(args, "autoload-file")?.trim() || "/wordpress/vendor/autoload.php",
+      wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
+    }))
+    const response = await this.runPlaygroundCommand("wordpress.core-phpunit", server, { code })
+    assertPlaygroundResponseOk("wordpress.core-phpunit", response)
 
     return response.text
   }
