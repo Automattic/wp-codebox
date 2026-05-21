@@ -95,6 +95,7 @@ $assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_s
 $assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['input_schema']['properties']['expected_artifacts']['type'] ?? '' ) );
 $assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
 $assert( 'ability exposes generic mounts schema', 'array' === ( $ability['input_schema']['properties']['mounts']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['mounts']['items']['properties']['metadata']['type'] ?? '' ) );
+$assert( 'ability exposes inheritance request schema', 'object' === ( $ability['input_schema']['properties']['inherit']['type'] ?? '' ) && 'array' === ( $ability['input_schema']['properties']['inherit']['properties']['connectors']['type'] ?? '' ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -191,6 +192,54 @@ $assert( 'runner recipe passes provider plugin path', str_contains( $captured_re
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = '';
+$GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = '';
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'       => $request['connectors'][0] ?? 'primary-ai',
+			'status'     => 'resolved',
+			'provider'   => 'openai',
+			'model'      => 'gpt-5.5',
+			'secret_env' => array( 'OPENAI_API_KEY' ),
+			'value'      => 'sk-test-secret-value',
+			'token'      => 'sk-test-secret-value',
+		),
+	);
+	$resolution['settings']   = array(
+		array(
+			'name'   => $request['settings'][0] ?? 'mode_models',
+			'status' => 'resolved',
+			'scope'  => 'site',
+			'value'  => 'sk-test-secret-value',
+		),
+	);
+
+	return $resolution;
+};
+
+$inherit_result = $runner->run(
+	array(
+		'goal'           => 'Use inherited connector configuration.',
+		'artifacts_path' => $root . '/artifacts',
+		'inherit'        => array(
+			'connectors' => array( 'primary-ai' ),
+			'settings'   => array( 'mode_models' ),
+		),
+	)
+);
+$inherit_recipe    = json_decode( $captured_recipe, true );
+$inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
+$assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
+$assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
+$assert( 'runner transports inherited secret env name only', ! is_wp_error( $inherit_result ) && in_array( 'OPENAI_API_KEY', $inherit_recipe['inputs']['secretEnv'] ?? array(), true ) && ! str_contains( $captured_recipe, 'OPENAI_API_KEY=' ) );
+$assert( 'runner records sanitized inheritance status', ! is_wp_error( $inherit_result ) && 'primary-ai' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['name'] ?? '' ) && 'resolved' === ( $inherit_recipe['inputs']['inheritance']['settings'][0]['status'] ?? '' ) );
+$assert( 'runner drops inherited secret values from recipe', ! str_contains( $captured_recipe, 'sk-test-secret-value' ) && ! str_contains( $captured_recipe, 'token' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
+$GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
 
 $raw_code = $runner->run(
 	array(

@@ -28,6 +28,7 @@ final class WP_Codebox_Abilities {
 		$register_callback = function (): void {
 			$task_input_schema  = self::task_input_schema();
 			$mount_schema      = self::mount_schema();
+			$inherit_schema    = self::inherit_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -84,6 +85,7 @@ final class WP_Codebox_Abilities {
 								'items'       => array( 'type' => 'string' ),
 							),
 							'mounts'                 => $mount_schema,
+							'inherit'                => $inherit_schema,
 							'secret_env'             => array(
 								'type'        => 'array',
 								'description' => 'Parent environment variable names to expose inside the sandbox. Pass names such as GITHUB_TOKEN; values are read from the parent process and are not accepted in this payload.',
@@ -171,6 +173,7 @@ final class WP_Codebox_Abilities {
 								'items' => array( 'type' => 'string' ),
 							),
 							'mounts'                 => $mount_schema,
+							'inherit'                => $inherit_schema,
 							'secret_env'             => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
@@ -370,6 +373,26 @@ final class WP_Codebox_Abilities {
 						'type'        => 'object',
 						'description' => 'Opaque caller metadata, for example repo, default_branch, repo_root_relative_to_mount, and editable flags.',
 					),
+				),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function inherit_schema(): array {
+		return array(
+			'type'        => 'object',
+			'description' => 'Declarative request for parent-environment connector or setting inheritance. Parent filters resolve names into a sanitized sandbox payload; secret values are never accepted here.',
+			'properties'  => array(
+				'connectors' => array(
+					'type'        => 'array',
+					'description' => 'Connector names the parent environment should resolve for this sandbox run.',
+					'items'       => array( 'type' => 'string' ),
+				),
+				'settings'   => array(
+					'type'        => 'array',
+					'description' => 'Setting names the parent environment should resolve for artifact/audit metadata. Values are not transported in this slice.',
+					'items'       => array( 'type' => 'string' ),
 				),
 			),
 		);

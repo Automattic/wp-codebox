@@ -1284,6 +1284,8 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: recipeExtraPlugins(recipe),
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        inherit: recipe.inputs?.inherit ?? {},
+        inheritance: recipe.inputs?.inheritance ?? {},
       },
     },
     task: {
@@ -1297,6 +1299,8 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: recipeExtraPlugins(recipe),
         secretEnv: recipe.inputs?.secretEnv ?? [],
+        inherit: recipe.inputs?.inherit ?? {},
+        inheritance: recipe.inputs?.inheritance ?? {},
       },
     },
     preparedWorkspaces: workspaceMounts.map((workspace) => ({

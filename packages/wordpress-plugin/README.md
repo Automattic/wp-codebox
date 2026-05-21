@@ -55,6 +55,26 @@ environment and are not accepted in the ability payload. For example, pass
 `"secret_env": ["GITHUB_TOKEN"]` after the host process has `GITHUB_TOKEN` in
 its environment; do not pass token values through ability input.
 
+Callers may also pass an `inherit` declaration to request parent-environment
+connectors or settings by name:
+
+```json
+{
+  "inherit": {
+    "connectors": ["primary-ai"],
+    "settings": ["mode_models"]
+  }
+}
+```
+
+The parent site resolves that declaration through the
+`wp_codebox_resolve_inheritance` filter. The resolver may return connector
+status, `provider`, `model`, and `secret_env` names. WP Codebox records the
+requested names and sanitized resolution status in the generated recipe/artifact
+metadata and merges inherited `secret_env` names into the sandbox secret-env
+allowlist. Secret values and setting values are not serialized into recipe JSON,
+artifact metadata, logs, or patches by this transport slice.
+
 Product callers may pass `mounts` to add editable or readonly host directories
 to the generated recipe. Each mount may include opaque `metadata` such as
 `repo`, `default_branch`, `repo_root_relative_to_mount`, and `editable` so tools

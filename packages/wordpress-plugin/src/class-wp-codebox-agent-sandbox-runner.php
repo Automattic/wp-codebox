@@ -304,10 +304,15 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return '' !== $mode ? $mode : 'sandbox';
 	}
 
-	private function provider( array $input ): string {
+	private function provider( array $input, ?array $inheritance = null ): string {
 		$provider = trim( (string) ( $input['provider'] ?? '' ) );
 		if ( '' !== $provider ) {
 			return $provider;
+		}
+
+		$inheritance_provider = $this->inheritance_provider( $input, $inheritance );
+		if ( '' !== $inheritance_provider ) {
+			return $inheritance_provider;
 		}
 
 		if ( function_exists( 'apply_filters' ) ) {
@@ -317,10 +322,15 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return trim( $provider );
 	}
 
-	private function model( array $input ): string {
+	private function model( array $input, ?array $inheritance = null ): string {
 		$model = trim( (string) ( $input['model'] ?? '' ) );
 		if ( '' !== $model ) {
 			return $model;
+		}
+
+		$inheritance_model = $this->inheritance_model( $input, $inheritance );
+		if ( '' !== $inheritance_model ) {
+			return $inheritance_model;
 		}
 
 		if ( function_exists( 'apply_filters' ) ) {
@@ -351,8 +361,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
-	private function secret_env_names( array $input ): array {
+	private function secret_env_names( array $input, ?array $inheritance = null ): array {
 		$names = is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array();
+		$names = array_merge( $names, $this->inheritance_secret_env_names( $input, $inheritance ) );
 		if ( empty( $names ) && function_exists( 'apply_filters' ) ) {
 			$names = apply_filters( 'wp_codebox_default_secret_env', array() );
 		}
@@ -372,6 +383,151 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				)
 			)
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array{connectors:string[],settings:string[]} */
+	private function inheritance_request( array $input ): array {
+		$inherit = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
+
+		return array(
+			'connectors' => $this->string_list( $inherit['connectors'] ?? array() ),
+			'settings'   => $this->string_list( $inherit['settings'] ?? array() ),
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} */
+	private function inheritance_resolution( array $input ): array {
+		$request    = $this->inheritance_request( $input );
+		$resolution = array(
+			'connectors' => array_map(
+				static fn( string $name ): array => array(
+					'name'   => $name,
+					'status' => 'unresolved',
+				),
+				$request['connectors']
+			),
+			'settings'   => array_map(
+				static fn( string $name ): array => array(
+					'name'   => $name,
+					'status' => 'unresolved',
+				),
+				$request['settings']
+			),
+		);
+
+		if ( function_exists( 'apply_filters' ) && ( ! empty( $request['connectors'] ) || ! empty( $request['settings'] ) ) ) {
+			$filtered = apply_filters( 'wp_codebox_resolve_inheritance', $resolution, $request, $input );
+			if ( is_array( $filtered ) ) {
+				$resolution = $filtered;
+			}
+		}
+
+		return array(
+			'connectors' => $this->sanitize_inheritance_connectors( $resolution['connectors'] ?? array() ),
+			'settings'   => $this->sanitize_inheritance_settings( $resolution['settings'] ?? array() ),
+		);
+	}
+
+	/** @param array<int,mixed> $connectors Inheritance connector rows. @return array<int,array<string,mixed>> */
+	private function sanitize_inheritance_connectors( array $connectors ): array {
+		$sanitized = array();
+		foreach ( $connectors as $connector ) {
+			if ( ! is_array( $connector ) ) {
+				continue;
+			}
+
+			$name = trim( (string) ( $connector['name'] ?? '' ) );
+			if ( '' === $name ) {
+				continue;
+			}
+
+			$entry = array(
+				'name'   => $name,
+				'status' => trim( (string) ( $connector['status'] ?? 'resolved' ) ),
+			);
+
+			foreach ( array( 'provider', 'model' ) as $field ) {
+				$value = trim( (string) ( $connector[ $field ] ?? '' ) );
+				if ( '' !== $value ) {
+					$entry[ $field ] = $value;
+				}
+			}
+
+			$secret_env = $this->string_list( $connector['secret_env'] ?? $connector['secretEnv'] ?? array() );
+			$secret_env = array_values( array_filter( $secret_env, static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) );
+			if ( ! empty( $secret_env ) ) {
+				$entry['secretEnv'] = array_values( array_unique( $secret_env ) );
+			}
+
+			$sanitized[] = $entry;
+		}
+
+		return $sanitized;
+	}
+
+	/** @param array<int,mixed> $settings Inheritance setting rows. @return array<int,array<string,mixed>> */
+	private function sanitize_inheritance_settings( array $settings ): array {
+		$sanitized = array();
+		foreach ( $settings as $setting ) {
+			if ( ! is_array( $setting ) ) {
+				continue;
+			}
+
+			$name = trim( (string) ( $setting['name'] ?? '' ) );
+			if ( '' === $name ) {
+				continue;
+			}
+
+			$entry = array(
+				'name'   => $name,
+				'status' => trim( (string) ( $setting['status'] ?? 'resolved' ) ),
+			);
+
+			$scope = trim( (string) ( $setting['scope'] ?? '' ) );
+			if ( '' !== $scope ) {
+				$entry['scope'] = $scope;
+			}
+
+			$sanitized[] = $entry;
+		}
+
+		return $sanitized;
+	}
+
+	/** @param array<string,mixed> $input Ability input. */
+	private function inheritance_provider( array $input, ?array $inheritance = null ): string {
+		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
+			$provider = trim( (string) ( $connector['provider'] ?? '' ) );
+			if ( '' !== $provider ) {
+				return $provider;
+			}
+		}
+
+		return '';
+	}
+
+	/** @param array<string,mixed> $input Ability input. */
+	private function inheritance_model( array $input, ?array $inheritance = null ): string {
+		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
+			$model = trim( (string) ( $connector['model'] ?? '' ) );
+			if ( '' !== $model ) {
+				return $model;
+			}
+		}
+
+		return '';
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return string[] */
+	private function inheritance_secret_env_names( array $input, ?array $inheritance = null ): array {
+		$names = array();
+		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
+			if ( is_array( $connector['secretEnv'] ?? null ) ) {
+				$names = array_merge( $names, $connector['secretEnv'] );
+			}
+		}
+
+		return $names;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
@@ -564,6 +720,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param string[] $task_prompts Encoded task prompts.
 	 */
 	private function write_agent_recipe( array $paths, array $input, array $task_prompts, string $wp_version ): string|WP_Error {
+		$inheritance = $this->inheritance_resolution( $input );
 		$provider_plugins = array_map(
 			fn( string $path ): array => array(
 				'source'   => $path,
@@ -580,8 +737,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'task=' . $task_prompt,
 				'agent=' . $this->agent_slug( $input ),
 				'mode=' . $this->mode( $input ),
-				'provider=' . $this->provider( $input ),
-				'model=' . $this->model( $input ),
+				'provider=' . $this->provider( $input, $inheritance ),
+				'model=' . $this->model( $input, $inheritance ),
 				'provider-plugin-slugs=' . implode( ',', $provider_slugs ),
 			);
 			if ( ! empty( $input['session_id'] ) ) {
@@ -610,6 +767,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			),
 			'inputs'   => array(
 				'mounts'       => $mounts,
+				'inherit'      => $this->inheritance_request( $input ),
+				'inheritance'  => $inheritance,
 				'extraPlugins' => array_merge(
 					array(
 						array( 'source' => $paths['agents_api'], 'slug' => 'agents-api', 'activate' => false ),
@@ -618,7 +777,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					),
 					$provider_plugins
 				),
-				'secretEnv'    => $this->secret_env_names( $input ),
+				'secretEnv'    => $this->secret_env_names( $input, $inheritance ),
 			),
 			'workflow' => array( 'steps' => $steps ),
 		);

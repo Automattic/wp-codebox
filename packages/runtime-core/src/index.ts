@@ -125,6 +125,8 @@ export interface WorkspaceRecipe {
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
+    inherit?: WorkspaceRecipeInheritanceRequest
+    inheritance?: WorkspaceRecipeInheritanceResolution
   }
   workflow: {
     steps: WorkspaceRecipeStep[]
@@ -132,6 +134,30 @@ export interface WorkspaceRecipe {
   artifacts?: {
     directory?: string
   }
+}
+
+export interface WorkspaceRecipeInheritanceRequest {
+  connectors?: string[]
+  settings?: string[]
+}
+
+export interface WorkspaceRecipeInheritanceConnector {
+  name: string
+  status: "resolved" | "unresolved" | "skipped" | (string & {})
+  provider?: string
+  model?: string
+  secretEnv?: string[]
+}
+
+export interface WorkspaceRecipeInheritanceSetting {
+  name: string
+  status: "resolved" | "unresolved" | "skipped" | (string & {})
+  scope?: string
+}
+
+export interface WorkspaceRecipeInheritanceResolution {
+  connectors?: WorkspaceRecipeInheritanceConnector[]
+  settings?: WorkspaceRecipeInheritanceSetting[]
 }
 
 export interface RuntimeInfo {
