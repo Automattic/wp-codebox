@@ -61,6 +61,7 @@ export interface PhpunitRunCodeOptions {
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
+  multisite: boolean
 }
 
 export interface CorePhpunitRunCodeOptions {
@@ -71,6 +72,7 @@ export interface CorePhpunitRunCodeOptions {
   changedTestFiles: unknown[]
   autoloadFile: string
   wpConfigDefines: Record<string, unknown>
+  multisite: boolean
 }
 
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
@@ -89,6 +91,7 @@ $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFil
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\\n"))};
+$multisite = ${JSON.stringify(options.multisite)};
 
 function pg_log($msg) {
     global $result_file;
@@ -327,7 +330,8 @@ function pg_run_install_stage(array $cfg) {
     try {
         $tests_dir = $cfg['tests_dir'];
         $config_path = $cfg['config_path'];
-        $argv = array('install.php', $config_path, 'no_ms_tests', 'no_core_tests');
+        $ms_tests = !empty($cfg['multisite']) ? 'run_ms_tests' : 'no_ms_tests';
+        $argv = array('install.php', $config_path, $ms_tests, 'no_core_tests');
         $_SERVER['argv'] = $argv;
         require_once $tests_dir . '/includes/install.php';
         while (ob_get_level() > 0) {
@@ -409,7 +413,7 @@ function pg_run_activation_stage(array $cfg): void {
     try {
         foreach (($cfg['plugin_files'] ?? array()) as $plugin_file) {
             if (is_string($plugin_file) && $plugin_file !== '') {
-                pg_activate_plugin_file($plugin_file);
+                pg_activate_plugin_file($plugin_file, !empty($cfg['multisite']));
             }
         }
         pg_stage_ok('activation');
@@ -419,21 +423,27 @@ function pg_run_activation_stage(array $cfg): void {
     }
 }
 
-function pg_activate_plugin_file(string $plugin_file): void {
+function pg_activate_plugin_file(string $plugin_file, bool $network_wide): void {
     if (!function_exists('plugin_basename') || !function_exists('do_action')) {
         pg_log('NOTICE:cannot activate plugin entry before WordPress plugin API is available: ' . $plugin_file);
         return;
     }
     $plugin_basename = plugin_basename($plugin_file);
-    pg_log('PLUGIN_ACTIVATE ' . $plugin_basename);
+    pg_log('PLUGIN_ACTIVATE ' . $plugin_basename . ($network_wide ? ' network_wide=1' : ''));
     pg_log('PLUGIN_ACTIVATE_BEGIN ' . $plugin_basename . ' ' . pg_diagnostic_context());
-    do_action('activate_' . $plugin_basename, false);
-    pg_mark_plugin_active($plugin_basename);
-    do_action('activated_plugin', $plugin_basename, false);
+    do_action('activate_' . $plugin_basename, $network_wide);
+    pg_mark_plugin_active($plugin_basename, $network_wide);
+    do_action('activated_plugin', $plugin_basename, false, $network_wide);
     pg_log('PLUGIN_ACTIVATE_OK ' . $plugin_basename . ' ' . pg_diagnostic_context());
 }
 
-function pg_mark_plugin_active(string $plugin_basename): void {
+function pg_mark_plugin_active(string $plugin_basename, bool $network_wide): void {
+    if ($network_wide && function_exists('get_site_option') && function_exists('update_site_option')) {
+        $active_plugins = (array) get_site_option('active_sitewide_plugins', array());
+        $active_plugins[$plugin_basename] = time();
+        update_site_option('active_sitewide_plugins', $active_plugins);
+        return;
+    }
     if (!function_exists('get_option') || !function_exists('update_option')) {
         return;
     }
@@ -505,6 +515,19 @@ if (is_array($bench_env)) {
 if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
 }
+if ($multisite) {
+    $wp_config_defines += array(
+        'WP_TESTS_MULTISITE' => true,
+        'MULTISITE' => true,
+        'SUBDOMAIN_INSTALL' => false,
+        'DOMAIN_CURRENT_SITE' => 'example.org',
+        'PATH_CURRENT_SITE' => '/',
+        'SITE_ID_CURRENT_SITE' => 1,
+        'BLOG_ID_CURRENT_SITE' => 1,
+    );
+    putenv('WP_MULTISITE=1');
+    $_ENV['WP_MULTISITE'] = '1';
+}
 
 $config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines));
 $pre_component_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
@@ -523,13 +546,13 @@ tests_add_filter('muplugins_loaded', function () use ($plugin_path, $dep_mounts,
     $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
 });
 
-pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir));
+pg_run_install_stage(array('config_path' => $config_path, 'tests_dir' => $tests_dir, 'multisite' => $multisite));
 pg_remove_new_wordpress_hook_callbacks('shutdown', $pre_component_shutdown_callbacks);
 $activation_files = $loaded_dep_files;
 if ($loaded_component_file !== null) {
     $activation_files[] = $loaded_component_file;
 }
-pg_run_activation_stage(array('plugin_files' => $activation_files));
+pg_run_activation_stage(array('plugin_files' => $activation_files, 'multisite' => $multisite));
 
 $pre_replayed_plugins_loaded_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
 $reopened_ability_categories_init = pg_reopen_wordpress_action('wp_abilities_api_categories_init');
@@ -810,6 +833,7 @@ $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
+$multisite = ${JSON.stringify(options.multisite)};
 $result_file = $core_root . '/.pg-test-result.txt';
 $current_stage = 'preboot';
 
@@ -1055,6 +1079,19 @@ try {
     }
     if (!is_array($wp_config_defines)) {
         $wp_config_defines = array();
+    }
+    if ($multisite) {
+        $wp_config_defines += array(
+            'WP_TESTS_MULTISITE' => true,
+            'MULTISITE' => true,
+            'SUBDOMAIN_INSTALL' => false,
+            'DOMAIN_CURRENT_SITE' => 'example.org',
+            'PATH_CURRENT_SITE' => '/',
+            'SITE_ID_CURRENT_SITE' => 1,
+            'BLOG_ID_CURRENT_SITE' => 1,
+        );
+        putenv('WP_MULTISITE=1');
+        $_ENV['WP_MULTISITE'] = '1';
     }
     require_once $autoload_file;
     $config_path = core_pg_write_tests_config($core_root, $wp_config_defines);
@@ -1500,6 +1537,15 @@ export function nonNegativeIntegerArg(args: string[], name: string, fallback: nu
 
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+export function booleanArg(args: string[], name: string, fallback = false): boolean {
+  const raw = argValue(args, name)
+  if (!raw) {
+    return fallback
+  }
+
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase())
 }
 
 export function commaListArg(args: string[], name: string): string[] {

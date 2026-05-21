@@ -24,7 +24,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -772,6 +772,7 @@ class PlaygroundRuntime implements Runtime {
       env: jsonObjectArg(args, "env-json"),
       wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
       dependencyMounts: commaListArg(args, "dependency-mounts"),
+      multisite: booleanArg(args, "multisite"),
     }))
     if (!explicitCode && !pluginSlug) {
       throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
@@ -794,6 +795,7 @@ class PlaygroundRuntime implements Runtime {
       changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
       autoloadFile: argValue(args, "autoload-file")?.trim() || "/wordpress/vendor/autoload.php",
       wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
+      multisite: booleanArg(args, "multisite"),
     }))
     const response = await this.runPlaygroundCommand("wordpress.core-phpunit", server, { code })
     assertPlaygroundResponseOk("wordpress.core-phpunit", response)
