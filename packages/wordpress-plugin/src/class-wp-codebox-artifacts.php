@@ -199,9 +199,12 @@ final class WP_Codebox_Artifacts {
 	private function artifact_root( array $input ): string|WP_Error {
 		$root = trim( (string) ( $input['artifacts_path'] ?? '' ) );
 		if ( '' === $root ) {
-			$base = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array( 'basedir' => sys_get_temp_dir() );
-			$root = is_array( $base ) && ! empty( $base['basedir'] ) ? (string) $base['basedir'] : sys_get_temp_dir();
-			$root = rtrim( $root, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'wp-codebox';
+			$root = trim( (string) $this->config_option( 'wp_codebox_artifacts_root', '' ) );
+			if ( '' === $root ) {
+				$base = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array( 'basedir' => sys_get_temp_dir() );
+				$root = is_array( $base ) && ! empty( $base['basedir'] ) ? (string) $base['basedir'] : sys_get_temp_dir();
+				$root = rtrim( $root, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'wp-codebox';
+			}
 		}
 
 		if ( function_exists( 'apply_filters' ) ) {
@@ -214,6 +217,18 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return rtrim( $real, DIRECTORY_SEPARATOR );
+	}
+
+	private function config_option( string $name, mixed $default ): mixed {
+		if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
+			return get_site_option( $name, $default );
+		}
+
+		if ( function_exists( 'get_option' ) ) {
+			return get_option( $name, $default );
+		}
+
+		return $default;
 	}
 
 	/** @return string[] */

@@ -51,7 +51,16 @@ mounts and activates them without knowing provider-specific behavior. Provider
 credentials continue to resolve through the provider's normal scoped mechanism.
 Pass `secret_env` as a list of environment variable names to expose selected
 parent process credentials inside the sandbox; values are read from the process
-environment and are not accepted in the ability payload.
+environment and are not accepted in the ability payload. For example, pass
+`"secret_env": ["GITHUB_TOKEN"]` after the host process has `GITHUB_TOKEN` in
+its environment; do not pass token values through ability input.
+
+Product callers may pass `mounts` to add editable or readonly host directories
+to the generated recipe. Each mount may include opaque `metadata` such as
+`repo`, `default_branch`, `repo_root_relative_to_mount`, and `editable` so tools
+inside the sandbox can map changed sandbox paths back to source repositories.
+WP Codebox preserves the metadata but does not interpret product-specific repo
+topology.
 
 Returned artifact metadata includes the runtime manifest, replay blueprint,
 after-state notes, captured readwrite mount index, event streams, and logs. WP
@@ -82,7 +91,8 @@ approval surface.
 
 Component paths can be supplied by ability input, the
 `wp_codebox_component_paths` option, or the `wp_codebox_component_paths`
-filter.
+filter. On multisite, WP Codebox reads `wp_codebox_component_paths` from network
+options because component paths are host-level configuration.
 
 Expected component keys:
 
@@ -92,7 +102,13 @@ Expected component keys:
 - `provider_plugins` (optional list)
 
 The CLI binary can be supplied by ability input, the `wp_codebox_bin` option,
-or the `wp_codebox_bin` filter.
+or the `wp_codebox_bin` filter. On multisite, WP Codebox reads `wp_codebox_bin`
+from network options because the binary path is host-level configuration.
+
+The artifact root can be supplied per request with `artifacts_path`, by the
+`wp_codebox_artifacts_root` option, or by the `wp_codebox_artifacts_root`
+filter. On multisite, WP Codebox reads `wp_codebox_artifacts_root` from network
+options.
 
 ## Package Artifact
 

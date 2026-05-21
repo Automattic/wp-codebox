@@ -30,6 +30,8 @@ if ( ! function_exists( 'is_wp_error' ) ) {
 
 $GLOBALS['wp_codebox_registered_abilities'] = array();
 $GLOBALS['wp_codebox_filters']              = array();
+$GLOBALS['wp_codebox_options']              = array();
+$GLOBALS['wp_codebox_site_options']         = array();
 
 function wp_register_ability( string $name, array $definition ): void {
 	$GLOBALS['wp_codebox_registered_abilities'][ $name ] = $definition;
@@ -51,7 +53,9 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 
 	return $filter;
 }
-function get_option( string $name, mixed $default = null ): mixed { return $default; }
+function is_multisite(): bool { return (bool) ( $GLOBALS['wp_codebox_is_multisite'] ?? false ); }
+function get_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_options'][ $name ] ?? $default; }
+function get_site_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_site_options'][ $name ] ?? $default; }
 
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
@@ -59,7 +63,7 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-data-machi
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 $root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
-foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'ai-provider-test', 'artifacts' ) as $dir ) {
+foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'ai-provider-test', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
 file_put_contents( $root . '/wp-codebox.js', "#!/usr/bin/env node\n" );
@@ -90,6 +94,7 @@ $assert( 'ability exposes task target schema', isset( $ability['input_schema']['
 $assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_schema']['properties']['allowed_tools']['type'] ?? '' ) );
 $assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['input_schema']['properties']['expected_artifacts']['type'] ?? '' ) );
 $assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
+$assert( 'ability exposes generic mounts schema', 'array' === ( $ability['input_schema']['properties']['mounts']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['mounts']['items']['properties']['metadata']['type'] ?? '' ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -150,6 +155,22 @@ $result = $runner->run(
 	array(
 		'task'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
+		'secret_env'     => array( 'GITHUB_TOKEN' ),
+		'mounts'         => array(
+			array(
+				'source'   => $root . '/editable-plugin',
+				'target'   => '/wordpress/wp-content/plugins/editable-plugin',
+				'mode'     => 'readwrite',
+				'metadata' => array(
+					'kind'                        => 'component',
+					'slug'                        => 'editable-plugin',
+					'repo'                        => 'example/editable-plugin',
+					'default_branch'              => 'main',
+					'repo_root_relative_to_mount' => '.',
+					'editable'                    => true,
+				),
+			),
+		),
 	)
 );
 
@@ -165,7 +186,8 @@ $assert( 'runner recipe passes sandbox mode', str_contains( $captured_recipe, 's
 $assert( 'runner recipe passes default provider', str_contains( $captured_recipe, 'openai' ) );
 $assert( 'runner recipe passes default model', str_contains( $captured_recipe, 'gpt-5.5' ) );
 $assert( 'runner recipe passes provider plugin path', str_contains( $captured_recipe, 'ai-provider-test' ) );
-$assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'OPENAI_API_KEY' ) );
+$assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
+$assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
 
 $raw_code = $runner->run(
@@ -185,6 +207,20 @@ $raw_code_file = $runner->run(
 	)
 );
 $assert( 'raw code file input fails closed', is_wp_error( $raw_code_file ) && 'wp_codebox_raw_code_forbidden' === $raw_code_file->get_error_code() );
+
+$invalid_mount = $runner->run(
+	array(
+		'task'           => 'Run a chat-requested sandbox task.',
+		'artifacts_path' => $root . '/artifacts',
+		'mounts'         => array(
+			array(
+				'source' => $root . '/missing-plugin',
+				'target' => '/wordpress/wp-content/plugins/missing-plugin',
+			),
+		),
+	)
+);
+$assert( 'invalid mount input fails closed', is_wp_error( $invalid_mount ) && 'wp_codebox_mount_source_invalid' === $invalid_mount->get_error_code() );
 
 $structured_result = $runner->run(
 	array(
@@ -224,6 +260,44 @@ $assert( 'batch runner recipe passes default provider', str_contains( $captured_
 $assert( 'batch runner recipe passes default model', str_contains( $captured_recipe, 'gpt-5.5' ) );
 $assert( 'batch runner recipe passes provider plugin path', str_contains( $captured_recipe, 'ai-provider-test' ) );
 $assert( 'batch runner recipe passes secret env name only', str_contains( $captured_recipe, 'OPENAI_API_KEY' ) );
+
+$pending_action_handlers_filter     = $GLOBALS['wp_codebox_filters']['datamachine_pending_action_handlers'] ?? null;
+$GLOBALS['wp_codebox_is_multisite'] = true;
+$GLOBALS['wp_codebox_filters']      = array_filter(
+	array( 'datamachine_pending_action_handlers' => $pending_action_handlers_filter ),
+	static fn( mixed $filter ): bool => null !== $filter
+);
+$GLOBALS['wp_codebox_site_options'] = array(
+	'wp_codebox_component_paths' => array(
+		'agents_api'        => $root . '/agents-api',
+		'data_machine'      => $root . '/data-machine',
+		'data_machine_code' => $root . '/data-machine-code',
+		'provider_plugins'  => array( $root . '/ai-provider-test' ),
+	),
+	'wp_codebox_bin'             => $root . '/wp-codebox.js',
+	'wp_codebox_artifacts_root'  => $root . '/artifact-network-root',
+);
+
+$network_result = $runner->run( array( 'task' => 'Use network-level WP Codebox configuration.' ) );
+$assert( 'multisite runner reads network-level options', ! is_wp_error( $network_result ) && str_starts_with( (string) ( $network_result['artifacts'] ?? '' ), $root . '/artifact-network-root' ) );
+
+$GLOBALS['wp_codebox_is_multisite'] = false;
+$GLOBALS['wp_codebox_filters']      = array_filter(
+	array(
+		'wp_codebox_component_paths'            => array(
+			'agents_api'        => $root . '/agents-api',
+			'data_machine'      => $root . '/data-machine',
+			'data_machine_code' => $root . '/data-machine-code',
+		),
+		'wp_codebox_bin'                        => $root . '/wp-codebox.js',
+		'wp_codebox_default_agent'              => 'site-coder',
+		'wp_codebox_default_provider'           => 'openai',
+		'wp_codebox_default_model'              => 'gpt-5.5',
+		'wp_codebox_default_secret_env'         => array( 'OPENAI_API_KEY' ),
+		'datamachine_pending_action_handlers'   => $pending_action_handlers_filter,
+	),
+	static fn( mixed $filter ): bool => null !== $filter
+);
 
 $missing_task = $runner->run( array( 'artifacts_path' => $root . '/artifacts' ) );
 $assert( 'missing task fails closed', is_wp_error( $missing_task ) && 'wp_codebox_task_missing' === $missing_task->get_error_code() );

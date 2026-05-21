@@ -27,6 +27,7 @@ final class WP_Codebox_Abilities {
 	private function register(): void {
 		$register_callback = function (): void {
 			$task_input_schema  = self::task_input_schema();
+			$mount_schema      = self::mount_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -82,9 +83,10 @@ final class WP_Codebox_Abilities {
 								'description' => 'AI provider plugin directories to mount and activate inside the sandbox.',
 								'items'       => array( 'type' => 'string' ),
 							),
+							'mounts'                 => $mount_schema,
 							'secret_env'             => array(
 								'type'        => 'array',
-								'description' => 'Parent environment variable names to expose inside the sandbox. Values are read from the parent process, not from this payload.',
+								'description' => 'Parent environment variable names to expose inside the sandbox. Pass names such as GITHUB_TOKEN; values are read from the parent process and are not accepted in this payload.',
 								'items'       => array( 'type' => 'string' ),
 							),
 							'session_id'             => array(
@@ -164,6 +166,7 @@ final class WP_Codebox_Abilities {
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
+							'mounts'                 => $mount_schema,
 							'secret_env'             => array(
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
@@ -335,6 +338,36 @@ final class WP_Codebox_Abilities {
 		}
 
 		add_action( 'wp_abilities_api_init', $register_callback );
+	}
+
+	/** @return array<string,mixed> */
+	private static function mount_schema(): array {
+		return array(
+			'type'        => 'array',
+			'description' => 'Additional host directories to mount into the sandbox. Callers may attach repo metadata for downstream tools that need to map sandbox paths back to source repositories.',
+			'items'       => array(
+				'type'       => 'object',
+				'required'   => array( 'source', 'target' ),
+				'properties' => array(
+					'source'   => array(
+						'type'        => 'string',
+						'description' => 'Host directory path to mount.',
+					),
+					'target'   => array(
+						'type'        => 'string',
+						'description' => 'Absolute sandbox path, such as /wordpress/wp-content/plugins/example.',
+					),
+					'mode'     => array(
+						'type' => 'string',
+						'enum' => array( 'readonly', 'readwrite' ),
+					),
+					'metadata' => array(
+						'type'        => 'object',
+						'description' => 'Opaque caller metadata, for example repo, default_branch, repo_root_relative_to_mount, and editable flags.',
+					),
+				),
+			),
+		);
 	}
 
 	/** @return array<string,mixed> */

@@ -185,6 +185,24 @@ npm run wp-codebox -- recipe-run \
 
 Recipes are JSON declarations for a sandbox setup plus workflow steps. They can mount existing directories, create disposable plugin/theme workspaces, activate extra plugins, allow-list selected secret environment variable names, and capture the output as artifacts.
 
+Mount entries may include opaque `metadata` that is preserved in runtime observations, artifact provenance, and captured mount files. Product-specific callers can use this to map sandbox paths back to source repositories without WP Codebox knowing about the caller's deployment environment:
+
+```json
+{
+  "source": "/srv/site/wp-content/plugins/example",
+  "target": "/wordpress/wp-content/plugins/example",
+  "mode": "readwrite",
+  "metadata": {
+    "kind": "component",
+    "slug": "example-plugin",
+    "repo": "org/example-plugin",
+    "default_branch": "main",
+    "repo_root_relative_to_mount": ".",
+    "editable": true
+  }
+}
+```
+
 Example recipes:
 
 - `examples/recipes/simple-plugin.json`: mount and probe the fixture plugin.
@@ -241,7 +259,7 @@ npm run wp-codebox -- agent-sandbox-run \
 Useful options:
 
 - `--provider-plugin <path>`: mount an AI provider plugin. Repeatable.
-- `--secret-env <NAME>`: expose a parent process environment variable by name. Repeatable. Values are read from the process environment and are not accepted in JSON payloads.
+- `--secret-env <NAME>`: expose a parent process environment variable by name, such as `--secret-env GITHUB_TOKEN`. Repeatable. Values are read from the process environment and are not accepted in JSON payloads.
 - `--mount <host:vfs[:mode]>`: mount extra task inputs.
 - `--session-id <id>`: continue an existing sandbox conversation session.
 - `--max-turns <n>`: bound the agent loop.

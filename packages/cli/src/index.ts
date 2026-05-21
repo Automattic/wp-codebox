@@ -281,6 +281,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         source: resolve(recipeDirectory, mount.source),
         target: mount.target,
         mode: mount.mode ?? "readwrite",
+        metadata: mount.metadata,
       })
     }
 
@@ -996,6 +997,10 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
 
     if (mount.mode && mount.mode !== "readonly" && mount.mode !== "readwrite") {
       throw new Error(`Recipe mount mode must be readonly or readwrite: ${recipePath}`)
+    }
+
+    if (mount.metadata !== undefined && (!mount.metadata || typeof mount.metadata !== "object" || Array.isArray(mount.metadata))) {
+      throw new Error(`Recipe mount metadata must be an object when provided: ${recipePath}`)
     }
   }
 

@@ -81,6 +81,7 @@ export interface WorkspaceRecipeMount {
   source: string
   target: string
   mode?: "readonly" | "readwrite"
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeStep {

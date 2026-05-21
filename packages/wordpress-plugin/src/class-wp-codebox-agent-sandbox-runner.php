@@ -235,14 +235,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $paths;
 	}
 
-	/** @return array<string,string> */
+	/** @return array<string,mixed> */
 	private function configured_paths(): array {
-		$paths = array();
-		if ( function_exists( 'get_option' ) ) {
-			$option = get_option( 'wp_codebox_component_paths', array() );
-			if ( is_array( $option ) ) {
-				$paths = $option;
-			}
+		$paths  = array();
+		$option = $this->config_option( 'wp_codebox_component_paths', array() );
+		if ( is_array( $option ) ) {
+			$paths = $option;
 		}
 
 		if ( function_exists( 'apply_filters' ) ) {
@@ -456,6 +454,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function default_artifacts_path(): string {
+		$configured = $this->clean_path( (string) $this->config_option( 'wp_codebox_artifacts_root', '' ) );
+		if ( '' !== $configured ) {
+			return $configured . DIRECTORY_SEPARATOR . $this->generate_run_id();
+		}
+
 		$base = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array( 'basedir' => sys_get_temp_dir() );
 		$root = is_array( $base ) && ! empty( $base['basedir'] ) ? (string) $base['basedir'] : sys_get_temp_dir();
 
@@ -463,10 +466,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function default_bin(): string {
-		$bin = 'wp-codebox';
-		if ( function_exists( 'get_option' ) ) {
-			$bin = (string) get_option( 'wp_codebox_bin', $bin );
-		}
+		$bin = (string) $this->config_option( 'wp_codebox_bin', 'wp-codebox' );
 
 		if ( function_exists( 'apply_filters' ) ) {
 			$bin = (string) apply_filters( 'wp_codebox_bin', $bin );
@@ -477,6 +477,63 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	private function clean_path( string $path ): string {
 		return rtrim( trim( $path ), DIRECTORY_SEPARATOR );
+	}
+
+	private function config_option( string $name, mixed $default ): mixed {
+		if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
+			return get_site_option( $name, $default );
+		}
+
+		if ( function_exists( 'get_option' ) ) {
+			return get_option( $name, $default );
+		}
+
+		return $default;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
+	private function recipe_mounts( array $input ): array|WP_Error {
+		$mounts = is_array( $input['mounts'] ?? null ) ? $input['mounts'] : array();
+		$normalized = array();
+
+		foreach ( $mounts as $index => $mount ) {
+			if ( ! is_array( $mount ) ) {
+				return new WP_Error( 'wp_codebox_mount_invalid', 'Each WP Codebox mount must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$source = $this->clean_path( (string) ( $mount['source'] ?? '' ) );
+			$target = trim( (string) ( $mount['target'] ?? '' ) );
+			if ( '' === $source || ! is_dir( $source ) ) {
+				return new WP_Error( 'wp_codebox_mount_source_invalid', 'WP Codebox mount source must be an existing directory.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			if ( '' === $target || ! str_starts_with( $target, '/' ) ) {
+				return new WP_Error( 'wp_codebox_mount_target_invalid', 'WP Codebox mount target must be an absolute sandbox path.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$mode = (string) ( $mount['mode'] ?? 'readwrite' );
+			if ( 'readonly' !== $mode && 'readwrite' !== $mode ) {
+				return new WP_Error( 'wp_codebox_mount_mode_invalid', 'WP Codebox mount mode must be readonly or readwrite.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$entry = array(
+				'source' => $source,
+				'target' => $target,
+				'mode'   => $mode,
+			);
+
+			if ( isset( $mount['metadata'] ) && ! is_array( $mount['metadata'] ) ) {
+				return new WP_Error( 'wp_codebox_mount_metadata_invalid', 'WP Codebox mount metadata must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			if ( isset( $mount['metadata'] ) ) {
+				$entry['metadata'] = $mount['metadata'];
+			}
+
+			$normalized[] = $entry;
+		}
+
+		return $normalized;
 	}
 
 	private function command_prefix( string $bin ): string {
@@ -526,6 +583,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			);
 		}
 
+		$mounts = $this->recipe_mounts( $input );
+		if ( is_wp_error( $mounts ) ) {
+			return $mounts;
+		}
+
 		$recipe = array(
 			'schema'   => 'wp-codebox/workspace-recipe/v1',
 			'runtime'  => array(
@@ -533,6 +595,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'blueprint' => array( 'steps' => array() ),
 			),
 			'inputs'   => array(
+				'mounts'       => $mounts,
 				'extraPlugins' => array_merge(
 					array(
 						array( 'source' => $paths['agents_api'], 'slug' => 'agents-api', 'activate' => false ),

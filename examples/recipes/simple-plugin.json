@@ -10,7 +10,15 @@
       {
         "source": "../simple-plugin",
         "target": "/wordpress/wp-content/plugins/simple-plugin",
-        "mode": "readwrite"
+        "mode": "readwrite",
+        "metadata": {
+          "kind": "component",
+          "slug": "simple-plugin",
+          "repo": "example/simple-plugin",
+          "default_branch": "main",
+          "repo_root_relative_to_mount": ".",
+          "editable": true
+        }
       }
     ]
   },
