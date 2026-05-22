@@ -105,6 +105,7 @@ function errorMessage(error: unknown): string {
 interface PlaygroundCliServer {
   playground: {
     run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse>
+    readFileAsText?(path: string): string | Promise<string>
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
@@ -778,6 +779,7 @@ class PlaygroundRuntime implements Runtime {
       throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
     }
     const response = await this.runPlaygroundCommand("wordpress.phpunit", server, { code })
+    await this.persistVfsDiagnosticFile(server, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`)
     assertPlaygroundResponseOk("wordpress.phpunit", response)
 
     return response.text
@@ -798,9 +800,51 @@ class PlaygroundRuntime implements Runtime {
       multisite: booleanArg(args, "multisite"),
     }))
     const response = await this.runPlaygroundCommand("wordpress.core-phpunit", server, { code })
+    await this.persistVfsDiagnosticFile(server, `${argValue(args, "core-root")?.trim() || "/wordpress"}/.pg-test-result.txt`)
     assertPlaygroundResponseOk("wordpress.core-phpunit", response)
 
     return response.text
+  }
+
+  private async persistVfsDiagnosticFile(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
+    if (!server.playground.readFileAsText) {
+      return
+    }
+
+    const hostPath = this.hostPathForVfsPath(vfsPath)
+    if (!hostPath) {
+      return
+    }
+
+    try {
+      const contents = await server.playground.readFileAsText(vfsPath)
+      await mkdir(dirname(hostPath), { recursive: true })
+      await writeFile(hostPath, contents)
+    } catch {
+      // The structured result is best-effort; preserve the command failure if copying fails.
+    }
+  }
+
+  private hostPathForVfsPath(vfsPath: string): string | undefined {
+    for (const mount of this.mounts) {
+      if (mount.mode !== "readwrite") {
+        continue
+      }
+
+      const target = mount.target.replace(/\/+$/, "")
+      if (vfsPath !== target && !vfsPath.startsWith(`${target}/`)) {
+        continue
+      }
+
+      const relativePath = vfsPath === target ? "" : vfsPath.slice(target.length + 1)
+      if (relativePath.split("/").includes("..")) {
+        continue
+      }
+
+      return join(mount.source, relativePath)
+    }
+
+    return undefined
   }
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {

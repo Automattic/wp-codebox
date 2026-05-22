@@ -37,6 +37,7 @@
     "artifact-contract-smoke": "tsx scripts/artifact-contract-smoke.ts",
     "runtime-episode-smoke": "tsx scripts/runtime-episode-smoke.ts",
     "core-phpunit-command-smoke": "tsx scripts/core-phpunit-command-smoke.ts",
+    "phpunit-diagnostic-artifact-smoke": "tsx scripts/phpunit-diagnostic-artifact-smoke.ts",
     "recipe-bench-smoke": "tsx scripts/recipe-bench-smoke.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "wordpress-plugin-smoke": "php tests/smoke-wordpress-plugin.php",
