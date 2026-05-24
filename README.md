@@ -301,6 +301,31 @@ npm run wp-codebox -- recipe-run \
 
 Dry-run output uses `wp-codebox/recipe-run-dry-run/v1` and includes resolved mounts, planned workspaces, extra plugins, workflow steps with parsed and resolved command args, allowed secret environment variable names without values, and per-step policy status. Use `recipe-run` without `--dry-run` when you want the real Playground-backed execution and artifact bundle.
 
+`inputs.extra_plugins` accepts existing local plugin directory paths and external HTTPS zip sources. Local paths keep the existing behavior: they are resolved relative to the recipe file and mounted read-only under `/wordpress/wp-content/plugins/<slug>`.
+
+External sources are explicit and CI-safe. WP Codebox validates URL-shaped sources before Playground boots, but it downloads them only when `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1` is set. Supported first-slice forms are WordPress.org plugin zip URLs and generic HTTPS `.zip` URLs:
+
+```json
+{
+  "inputs": {
+    "extraPlugins": [
+      {
+        "source": "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
+        "pluginFile": "bbpress/bbpress.php",
+        "activate": false
+      },
+      {
+        "source": "https://example.com/acme-helper.zip",
+        "slug": "acme-helper",
+        "pluginFile": "acme-helper/acme-helper.php"
+      }
+    ]
+  }
+}
+```
+
+WordPress.org plugin zip URLs infer the plugin slug from the zip filename. Generic HTTPS zip sources require `slug` so the sandbox mount target is deterministic. Dry-run plans and artifact provenance record the original source reference, resolved URL, source kind, and SHA-256 digest when a download occurs; temporary download paths are reported by category rather than as durable host paths.
+
 Mount entries may include opaque `metadata` that is preserved in runtime observations, artifact provenance, and captured mount files. Product-specific callers can use this to map sandbox paths back to source repositories without WP Codebox knowing about the caller's deployment environment:
 
 ```json
@@ -325,6 +350,7 @@ Example recipes:
 - `examples/recipes/wp-cli.json`: prove WP-CLI commands mutate the same runtime observed by later steps.
 - `examples/recipes/seeded-plugin-workspace.json`: create a disposable plugin scaffold, mutate it, and capture diffs.
 - `examples/recipes/datamachine-agent-bundle.json`: mount Agents API and Data Machine, then import a bundle through `wordpress.ability`.
+- `examples/recipes/cookbook/bbpress-reply-editor.json`: realistic bbPress dependency shape; once external source downloads are allowed, bbPress can be supplied by WordPress.org zip URL instead of an adjacent checkout.
 
 Supported workspace seeds:
 

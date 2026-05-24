@@ -83,6 +83,11 @@ async function main(): Promise<void> {
   assert(validate({
     schema: "wp-codebox/workspace-recipe/v1",
     inputs: {
+      extraPlugins: [{
+        source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
+        pluginFile: "bbpress/bbpress.php",
+        activate: false,
+      }],
       secretEnv: ["OPENAI_API_KEY"],
       inherit: { connectors: ["primary-ai"], settings: ["site-defaults"] },
       inheritance: {

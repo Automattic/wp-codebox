@@ -9,6 +9,8 @@ const cli = resolve(root, "packages/cli/dist/index.js")
 const workspace = resolve(root, "artifacts/recipe-dry-run-smoke")
 const recipePath = resolve(workspace, "recipe.json")
 const invalidRecipePath = resolve(workspace, "invalid-recipe.json")
+const externalRecipePath = resolve(workspace, "external-recipe.json")
+const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
 
 mkdirSync(workspace, { recursive: true })
@@ -64,6 +66,41 @@ writeFileSync(invalidRecipePath, `${JSON.stringify({
   },
 }, null, 2)}\n`)
 
+const externalRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  runtime: {
+    backend: "wordpress-playground",
+    name: "external-source-dry-run-smoke",
+    wp: "7.0",
+  },
+  inputs: {
+    extraPlugins: [
+      {
+        source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
+        pluginFile: "bbpress/bbpress.php",
+        activate: false,
+      },
+      {
+        source: "https://example.com/example-plugin.zip",
+        slug: "example-plugin",
+        pluginFile: "example-plugin/example-plugin.php",
+        activate: false,
+      },
+    ],
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=echo 'external dry run';"],
+      },
+    ],
+  },
+}
+
+writeFileSync(externalRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
+writeFileSync(externalDisabledRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
+
 const result = spawnSync(process.execPath, [
   cli,
   "recipe-run",
@@ -116,5 +153,37 @@ const invalidOutput = JSON.parse(invalidResult.stdout)
 assert.equal(invalidOutput.success, false)
 assert.equal(invalidOutput.valid, false)
 assert.equal(invalidOutput.validation.issues[0].code, "missing-code")
+
+const externalResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  externalRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "1" } })
+
+assert.equal(externalResult.status, 0, externalResult.stderr || externalResult.stdout)
+const externalOutput = JSON.parse(externalResult.stdout)
+assert.equal(externalOutput.success, true)
+assert.equal(externalOutput.plan.extra_plugins[0].slug, "bbpress")
+assert.equal(externalOutput.plan.extra_plugins[0].sourceType, "wporg_plugin_zip")
+assert.equal(externalOutput.plan.extra_plugins[0].provenance.resolvedUrl, "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip")
+assert.equal(externalOutput.plan.extra_plugins[1].sourceType, "https_zip")
+assert.equal(externalOutput.plan.extra_plugins[1].provenance.kind, "https_zip")
+
+const externalDisabledResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  externalDisabledRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "" } })
+
+assert.equal(externalDisabledResult.status, 1, externalDisabledResult.stderr || externalDisabledResult.stdout)
+const externalDisabledOutput = JSON.parse(externalDisabledResult.stdout)
+assert.equal(externalDisabledOutput.success, false)
+assert.equal(externalDisabledOutput.validation.issues[0].code, "network-downloads-disabled")
 
 console.log("recipe dry-run smoke passed")

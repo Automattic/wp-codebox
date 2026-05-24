@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { createWriteStream } from "node:fs"
+import { createHash } from "node:crypto"
+import { execFile } from "node:child_process"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
+import { promisify } from "node:util"
 import { createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
@@ -102,6 +108,9 @@ interface RecipeRunOutput {
   recipePath?: string
   runtime?: RuntimeInfo
   executions: ExecutionResult[]
+  validation?: {
+    issues: RecipeValidationIssue[]
+  }
   benchResults?: BenchResults
   benchResultsList?: BenchResults[]
   artifacts?: ArtifactBundle
@@ -168,10 +177,13 @@ interface RecipeDryRunWorkspace {
 
 interface RecipeDryRunExtraPlugin {
   source: string
+  sourceRef: string
+  sourceType: RecipeSourceType
   slug: string
   target: string
   pluginFile: string
   activate: boolean
+  provenance: RecipeSourceProvenance
 }
 
 interface RecipeDryRunStep {
@@ -204,6 +216,34 @@ interface PreparedWorkspaceSource {
   source: string
   baselineSource: string
   cleanupPaths: string[]
+}
+
+type RecipeSourceType = "local" | "https_zip" | "wporg_plugin_zip"
+
+interface RecipeSourceProvenance {
+  kind: RecipeSourceType
+  original: string
+  resolvedUrl?: string
+  digest?: {
+    sha256: string
+  }
+  localPathCategory?: "recipe-relative" | "temporary-download"
+}
+
+interface PreparedExternalSource {
+  source: string
+  cleanupPaths: string[]
+  provenance: RecipeSourceProvenance
+}
+
+interface PreparedExtraPlugin {
+  source: string
+  slug: string
+  target: string
+  pluginFile: string
+  activate: boolean
+  cleanupPaths: string[]
+  provenance: RecipeSourceProvenance
 }
 
 interface AgentRuntimeProbeOptions {
@@ -266,6 +306,8 @@ const defaultPolicy: RuntimePolicy = {
 
 const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
+const ALLOW_NETWORK_DOWNLOADS_ENV = "WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS"
+const execFileAsync = promisify(execFile)
 const commandCatalog: CommandMetadata[] = [
   {
     id: "inspect-mounted-inputs",
@@ -502,7 +544,10 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
       additionalProperties: false,
       required: ["source"],
       properties: {
-        source: { type: "string" },
+        source: {
+          type: "string",
+          description: "Local plugin directory path, WordPress.org plugin zip URL, or generic HTTPS zip URL.",
+        },
         slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
         pluginFile: { type: "string" },
         activate: { type: "boolean" },
@@ -767,6 +812,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       metadata: {
         kind: "extra-plugin",
         slug: plugin.slug,
+        source: plugin.provenance,
       },
       planned: "existing" as const,
     })),
@@ -830,14 +876,33 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
   const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
+  const issues = await validateWorkspaceRecipe(recipe, recipePath)
+  if (issues.length > 0) {
+    return {
+      success: false,
+      schema: "wp-codebox/recipe-run/v1",
+      recipePath,
+      executions: [],
+      validation: { issues },
+      error: {
+        name: "RecipeValidationError",
+        message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
+      },
+    }
+  }
+
   const policy = recipePolicy(recipe)
   const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
-  const workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
+  let workspaceMounts: PreparedWorkspaceMount[] = []
+  let extraPlugins: PreparedExtraPlugin[] = []
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: ExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
 
   try {
+    workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
+    extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+
     runtime = await createRuntime(
       {
         backend: recipe.runtime?.backend ?? "wordpress-playground",
@@ -852,7 +917,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, options.previewPublicUrl),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl),
         },
         preview: previewSpec(options.previewPublicUrl),
       },
@@ -869,13 +934,17 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       })
     }
 
-    for (const plugin of recipeExtraPlugins(recipe)) {
-      const slug = recipeExtraPluginSlug(plugin)
+    for (const plugin of extraPlugins) {
       await runtime.mount({
         type: "directory",
-        source: resolve(recipeDirectory, plugin.source),
-        target: `/wordpress/wp-content/plugins/${slug}`,
+        source: plugin.source,
+        target: plugin.target,
         mode: "readonly",
+        metadata: {
+          kind: "extra-plugin",
+          slug: plugin.slug,
+          source: plugin.provenance,
+        },
       })
     }
 
@@ -901,7 +970,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
-    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipeWorkspaces(workspaceMounts))
+    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins))
 
     const benchResultsList = executions
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
@@ -932,7 +1001,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       }
     }
 
-    await cleanupRecipeWorkspaces(workspaceMounts)
+    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins)
 
     return {
       success: false,
@@ -1771,17 +1840,36 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
 
   for (const [index, plugin] of recipeExtraPlugins(recipe).entries()) {
     const path = `$.inputs.extra_plugins[${index}]`
-    const pluginSource = resolve(recipeDirectory, plugin.source)
-    const slug = recipeExtraPluginSlug(plugin)
+    let source: ReturnType<typeof recipeSource>
+    try {
+      source = recipeSource(plugin.source)
+    } catch (error) {
+      addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
+      continue
+    }
+    const pluginSource = source.type === "local" ? resolve(recipeDirectory, plugin.source) : undefined
+    let slug: string
+    try {
+      slug = recipeExtraPluginSlug(plugin)
+    } catch (error) {
+      addIssue("invalid-slug", `${path}.slug`, error instanceof Error ? error.message : String(error))
+      continue
+    }
     const pluginFile = recipeExtraPluginFile(plugin)
-    await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
+
+    validateRecipeSource(source, `${path}.source`, addIssue)
+    if (pluginSource) {
+      await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
+    }
 
     if (!pluginFile.startsWith(`${slug}/`)) {
       addIssue("invalid-plugin-file", `${path}.pluginFile`, `Plugin file must be relative to the mounted plugin slug (${slug}/...).`)
       continue
     }
 
-    await validateExistingFile(join(pluginSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
+    if (pluginSource) {
+      await validateExistingFile(join(pluginSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
+    }
   }
 
   for (const [index, name] of (recipe.inputs?.secretEnv ?? []).entries()) {
@@ -1859,6 +1947,20 @@ async function validateExistingFile(path: string, issuePath: string, addIssue: (
 function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
   if (!path.startsWith("/")) {
     addIssue("invalid-sandbox-path", issuePath, `Sandbox paths must be absolute: ${path}`)
+  }
+}
+
+function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
+  if (source.type === "local") {
+    return
+  }
+
+  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
+    addIssue(
+      "network-downloads-disabled",
+      issuePath,
+      `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,
+    )
   }
 }
 
@@ -1941,7 +2043,15 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], previewPublicUrl: string | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined): Record<string, unknown> {
+  const extraPluginMetadata = extraPlugins.map((plugin) => ({
+    source: plugin.source,
+    slug: plugin.slug,
+    pluginFile: plugin.pluginFile,
+    activate: plugin.activate,
+    provenance: plugin.provenance,
+  }))
+
   return {
     recipe: {
       path: recipePath,
@@ -1954,7 +2064,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       inputs: {
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
-        extra_plugins: recipeExtraPlugins(recipe),
+        extra_plugins: extraPluginMetadata,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -1970,7 +2080,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       inputs: {
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
-        extra_plugins: recipeExtraPlugins(recipe),
+        extra_plugins: extraPluginMetadata,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2012,12 +2122,17 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const source = recipeSource(plugin.source)
+    const provenance = recipeSourceProvenance(source, recipeDirectory)
     return {
-      source: resolve(recipeDirectory, plugin.source),
+      source: source.type === "local" ? resolve(recipeDirectory, plugin.source) : source.resolvedUrl,
+      sourceRef: plugin.source,
+      sourceType: source.type,
       slug,
       target: `/wordpress/wp-content/plugins/${slug}`,
       pluginFile: recipeExtraPluginFile(plugin),
       activate: plugin.activate !== false,
+      provenance,
     }
   })
 }
@@ -2049,6 +2164,104 @@ async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory:
 
 async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Promise<void> {
   await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
+}
+
+async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[]): Promise<void> {
+  await Promise.all([
+    cleanupRecipeWorkspaces(workspaces),
+    ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
+  ])
+}
+
+async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedExtraPlugin[]> {
+  const plugins: PreparedExtraPlugin[] = []
+  for (const plugin of recipeExtraPlugins(recipe)) {
+    const slug = recipeExtraPluginSlug(plugin)
+    const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug)
+    const pluginFile = recipeExtraPluginFile(plugin)
+    await assertPreparedPluginFileExists(resolved.source, pluginFile.slice(slug.length + 1), plugin.source)
+    plugins.push({
+      source: resolved.source,
+      slug,
+      target: `/wordpress/wp-content/plugins/${slug}`,
+      pluginFile,
+      activate: plugin.activate !== false,
+      cleanupPaths: resolved.cleanupPaths,
+      provenance: resolved.provenance,
+    })
+  }
+
+  return plugins
+}
+
+async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFileRelativeToSource: string, sourceRef: string): Promise<void> {
+  try {
+    const result = await stat(join(sourceDirectory, pluginFileRelativeToSource))
+    if (result.isFile()) {
+      return
+    }
+  } catch {
+    // Throw a stable message below.
+  }
+
+  throw new Error(`Recipe extra plugin source did not contain expected plugin file ${pluginFileRelativeToSource}: ${sourceRef}`)
+}
+
+async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string): Promise<PreparedExternalSource> {
+  const source = recipeSource(sourceRef)
+  if (source.type === "local") {
+    return {
+      source: resolve(recipeDirectory, sourceRef),
+      cleanupPaths: [],
+      provenance: recipeSourceProvenance(source, recipeDirectory),
+    }
+  }
+
+  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
+    throw new Error(`External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`)
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))
+  const zipPath = join(directory, "source.zip")
+  const extractDirectory = join(directory, "extracted")
+  await mkdir(extractDirectory, { recursive: true })
+  const digest = await downloadRecipeSourceZip(source.resolvedUrl, zipPath)
+  await execFileAsync("unzip", ["-q", zipPath, "-d", extractDirectory])
+
+  return {
+    source: await extractedPluginSourceDirectory(extractDirectory, slug),
+    cleanupPaths: [directory],
+    provenance: {
+      ...recipeSourceProvenance(source, recipeDirectory),
+      digest: { sha256: digest },
+      localPathCategory: "temporary-download",
+    },
+  }
+}
+
+async function downloadRecipeSourceZip(url: string, targetPath: string): Promise<string> {
+  const response = await fetch(url)
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to download recipe source ${url}: HTTP ${response.status}`)
+  }
+
+  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(targetPath))
+  const buffer = await readFile(targetPath)
+  return createHash("sha256").update(buffer).digest("hex")
+}
+
+async function extractedPluginSourceDirectory(extractDirectory: string, slug: string): Promise<string> {
+  const slugDirectory = join(extractDirectory, slug)
+  try {
+    const result = await stat(slugDirectory)
+    if (result.isDirectory()) {
+      return slugDirectory
+    }
+  } catch {
+    // Fall through to generic zip layout.
+  }
+
+  return extractDirectory
 }
 
 async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recipeDirectory: string, slug: string): Promise<PreparedWorkspaceSource> {
@@ -2134,8 +2347,62 @@ function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtraPlugin
   return recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins ?? []
 }
 
+function recipeSource(sourceRef: string): { type: RecipeSourceType; resolvedUrl: string; wporgSlug?: string } {
+  let url: URL
+  try {
+    url = new URL(sourceRef)
+  } catch {
+    return { type: "local", resolvedUrl: sourceRef }
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`External recipe sources must use https:// URLs: ${sourceRef}`)
+  }
+
+  if (!url.pathname.toLowerCase().endsWith(".zip")) {
+    throw new Error(`External recipe sources must point to .zip archives: ${sourceRef}`)
+  }
+
+  if (url.hostname === "downloads.wordpress.org" && url.pathname.startsWith("/plugin/")) {
+    const filename = basename(url.pathname)
+    const match = filename.match(/^([A-Za-z0-9_-]+)\./)
+    return { type: "wporg_plugin_zip", resolvedUrl: url.toString(), ...(match ? { wporgSlug: match[1] } : {}) }
+  }
+
+  return { type: "https_zip", resolvedUrl: url.toString() }
+}
+
+function recipeSourceProvenance(source: ReturnType<typeof recipeSource>, recipeDirectory: string): RecipeSourceProvenance {
+  if (source.type === "local") {
+    return {
+      kind: "local",
+      original: source.resolvedUrl,
+      localPathCategory: resolve(recipeDirectory, source.resolvedUrl).startsWith(recipeDirectory) ? "recipe-relative" : undefined,
+    }
+  }
+
+  return {
+    kind: source.type,
+    original: source.resolvedUrl,
+    resolvedUrl: source.resolvedUrl,
+  }
+}
+
 function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): string {
-  return plugin.slug ?? basename(resolve(plugin.source))
+  if (plugin.slug) {
+    return plugin.slug
+  }
+
+  const source = recipeSource(plugin.source)
+  if (source.wporgSlug) {
+    return source.wporgSlug
+  }
+
+  if (source.type !== "local") {
+    throw new Error(`External extra_plugins sources require slug when it cannot be inferred from a WordPress.org plugin URL: ${plugin.source}`)
+  }
+
+  return basename(resolve(plugin.source))
 }
 
 function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
