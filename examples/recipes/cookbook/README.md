@@ -16,8 +16,8 @@ smoke testing.
 
 Boots a Playground with bbPress installed from `wordpress.org/plugins`, mounts
 your plugin under test, seeds one forum and one topic, and auto-logs in as
-admin. Pair with `--preview-hold` and navigate the preview URL to the topic
-permalink to land on the bbPress reply form.
+admin. Pair with `--preview-hold` and navigate the preview URL from the seed
+output to land on the bbPress reply form.
 
 **Replace** the `inputs.mounts[0].source` value in the recipe with the path
 to the plugin you want to exercise against bbPress. The default points at
@@ -35,8 +35,8 @@ npm run wp-codebox -- recipe-run \
   --json
 ```
 
-The seed step's JSON output includes `topic_permalink` — that's the URL on
-the preview server where the bbPress reply form renders.
+The seed step's JSON output includes the preview URLs for the seeded reply
+form.
 
 #### Why this exists
 

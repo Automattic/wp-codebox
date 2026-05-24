@@ -17,9 +17,19 @@ require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
 // Activate the plugin under test if the recipe mounted one and it isn't
 // already active via blueprint.
-$plugin_under_test = 'plugin-under-test/plugin-under-test.php';
-if ( file_exists( WP_PLUGIN_DIR . '/' . $plugin_under_test ) && ! is_plugin_active( $plugin_under_test ) ) {
-	activate_plugin( $plugin_under_test );
+$plugin_under_test = null;
+foreach ( get_plugins( '/plugin-under-test' ) as $plugin_file => $plugin_data ) {
+	if ( ! empty( $plugin_data['Name'] ) ) {
+		$plugin_under_test = 'plugin-under-test/' . $plugin_file;
+		break;
+	}
+}
+
+if ( $plugin_under_test && ! is_plugin_active( $plugin_under_test ) ) {
+	$activation_result = activate_plugin( $plugin_under_test );
+	if ( is_wp_error( $activation_result ) ) {
+		throw new RuntimeException( $activation_result->get_error_message() );
+	}
 }
 
 // Force bbPress to register its post types so wp_insert_post knows about them.
@@ -57,6 +67,18 @@ if ( is_wp_error( $topic_id ) || ! $topic_id ) {
 update_post_meta( $topic_id, '_bbp_forum_id', $forum_id );
 update_post_meta( $topic_id, '_bbp_topic_id', $topic_id );
 
+$reply_page_id = wp_insert_post( array(
+	'post_title'   => 'Cookbook bbPress Reply Editor',
+	'post_content' => sprintf( '[bbp-single-topic id="%d"]', (int) $topic_id ),
+	'post_status'  => 'publish',
+	'post_type'    => 'page',
+	'post_author'  => 1,
+) );
+
+if ( is_wp_error( $reply_page_id ) || ! $reply_page_id ) {
+	throw new RuntimeException( 'Failed to create reply editor page' );
+}
+
 // Set pretty permalinks so /forums/topic/<slug>/ resolves correctly.
 update_option( 'permalink_structure', '/%postname%/' );
 
@@ -71,10 +93,14 @@ wp_set_auth_cookie( 1, true );
 echo wp_json_encode( array(
 	'forum_id'           => (int) $forum_id,
 	'topic_id'           => (int) $topic_id,
+	'reply_page_id'      => (int) $reply_page_id,
 	'topic_permalink'    => get_permalink( $topic_id ),
+	'reply_page_url'     => get_permalink( $reply_page_id ),
 	'reply_form_anchor'  => get_permalink( $topic_id ) . '#new-post',
+	'reply_page_anchor'  => get_permalink( $reply_page_id ) . '#new-post',
 	'home_url'           => home_url( '/' ),
 	'bbpress_active'     => is_plugin_active( 'bbpress/bbpress.php' ),
-	'plugin_under_test'  => is_plugin_active( $plugin_under_test ),
+	'plugin_under_test'  => $plugin_under_test ? is_plugin_active( $plugin_under_test ) : false,
+	'plugin_file'        => $plugin_under_test,
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 echo "\n";

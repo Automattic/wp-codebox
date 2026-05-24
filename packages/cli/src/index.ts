@@ -901,6 +901,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipeWorkspaces(workspaceMounts))
 
     const benchResultsList = executions
@@ -911,7 +912,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
-      runtime: await runtime.info(),
+      runtime: runtimeInfo ?? await runtime.info(),
       executions,
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
@@ -1416,11 +1417,12 @@ async function run(options: RunOptions): Promise<RunOutput> {
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds)
 
     return {
       success: true,
-      runtime: await runtime.info(),
+      runtime: runtimeInfo ?? await runtime.info(),
       execution,
       artifacts,
     }
@@ -1457,11 +1459,9 @@ async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDes
     return
   }
 
-  setTimeout(() => {
-    void runtime.destroy().finally(() => {
-      void afterDestroy?.()
-    })
-  }, holdSeconds * 1000)
+  await new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000))
+  await runtime.destroy()
+  await afterDestroy?.()
 }
 
 function parsePreviewHoldSeconds(value: string): number {
