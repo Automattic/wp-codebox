@@ -210,6 +210,26 @@ own action, observation, reward, and report schemas outside WP Codebox.
 
 ## CLI Commands
 
+### `commands`
+
+Discover the supported runtime and recipe commands without launching Playground.
+
+```bash
+npm run wp-codebox -- commands --json
+```
+
+JSON output uses `wp-codebox/command-catalog/v1` and includes each command id, description, accepted args, known output shape, and runtime policy requirement. Human output is a concise command list.
+
+### `schema recipe`
+
+Print the JSON Schema for `wp-codebox/workspace-recipe/v1` without reading a recipe or launching Playground.
+
+```bash
+npm run wp-codebox -- schema recipe --json
+```
+
+The schema covers `runtime`, `inputs.mounts`, `inputs.workspaces`, `inputs.extra_plugins` / `inputs.extraPlugins`, `inputs.secretEnv`, `workflow.steps`, and `artifacts`.
+
 ### `run`
 
 Run one command in a disposable runtime.

@@ -37,6 +37,21 @@ interface BatchOutputLike {
   runs: Array<RunOutputLike & { index: number; task: string }>
 }
 
+interface CommandCatalogOutputLike {
+  commands: Array<{
+    id: string
+    description: string
+    acceptedArgs: Array<{ name: string; required?: boolean }>
+    outputShape: string
+    policyRequirement: string
+  }>
+}
+
+interface RecipeSchemaOutputLike {
+  id: string
+  jsonSchema: Record<string, unknown>
+}
+
 export async function captureStdout<T>(callback: () => Promise<T>): Promise<{ result: T; logs: string[] }> {
   const logs: string[] = []
   const write = process.stdout.write.bind(process.stdout)
@@ -129,8 +144,30 @@ export function printBatchHumanOutput(output: BatchOutputLike): void {
   }
 }
 
+export function printCommandCatalogHumanOutput(output: CommandCatalogOutputLike): void {
+  console.log("WP Codebox commands")
+  for (const command of output.commands) {
+    const requiredArgs = command.acceptedArgs.filter((arg) => arg.required).map((arg) => arg.name)
+    console.log(`${command.id}: ${command.description}`)
+    if (requiredArgs.length > 0) {
+      console.log(`  Required args: ${requiredArgs.join(", ")}`)
+    }
+    console.log(`  Output: ${command.outputShape}`)
+    console.log(`  Policy: ${command.policyRequirement}`)
+  }
+}
+
+export function printRecipeSchemaHumanOutput(output: RecipeSchemaOutputLike): void {
+  const properties = output.jsonSchema.properties && typeof output.jsonSchema.properties === "object" ? Object.keys(output.jsonSchema.properties) : []
+  console.log("WP Codebox recipe schema")
+  console.log(`Schema: ${output.id}`)
+  console.log(`Top-level fields: ${properties.join(", ")}`)
+}
+
 export function printHelp(): void {
   console.log(`Usage:
+  wp-codebox commands [--json]
+  wp-codebox schema recipe [--json]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox recipe-run --recipe <path> [options]
   wp-codebox run --mount <host>:<vfs> --command <id> [options]
@@ -145,6 +182,10 @@ Options:
   --preview-hold <n>   Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --json               Emit machine-readable JSON.
+
+Discovery:
+  commands             Print supported runtime and recipe command metadata.
+  schema recipe        Print the wp-codebox/workspace-recipe/v1 JSON Schema.
 
 Example:
   wp-codebox run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)

@@ -5,7 +5,33 @@ import { basename, dirname, join, resolve } from "node:path"
 import { createRuntime, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
-import { captureStdout, printBatchHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+import { captureStdout, printBatchHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+
+interface CommandMetadata {
+  id: string
+  description: string
+  acceptedArgs: Array<{
+    name: string
+    description: string
+    required?: boolean
+    repeatable?: boolean
+    format?: string
+  }>
+  outputShape: string
+  policyRequirement: string
+  recipe: boolean
+}
+
+interface CommandCatalogOutput {
+  schema: "wp-codebox/command-catalog/v1"
+  commands: CommandMetadata[]
+}
+
+interface RecipeSchemaOutput {
+  schema: "wp-codebox/json-schema/v1"
+  id: "wp-codebox/workspace-recipe/v1"
+  jsonSchema: Record<string, unknown>
+}
 
 interface RunOptions {
   mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
@@ -154,7 +180,300 @@ const defaultPolicy: RuntimePolicy = {
 
 const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
-const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability", "wordpress.bench", "wordpress.phpunit", "wordpress.core-phpunit", "wp-codebox.agent-runtime-probe", "wp-codebox.agent-sandbox-run"])
+const commandCatalog: CommandMetadata[] = [
+  {
+    id: "inspect-mounted-inputs",
+    description: "List mounted input entries visible inside the Playground runtime.",
+    acceptedArgs: [],
+    outputShape: "JSON array of mounted input descriptors.",
+    policyRequirement: "Runtime policy commands must include inspect-mounted-inputs.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.run-php",
+    description: "Run PHP against WordPress, bootstrapping wp-load.php unless bootstrap=none is supplied.",
+    acceptedArgs: [
+      { name: "code", description: "Inline PHP code to run.", format: "PHP string" },
+      { name: "code-file", description: "Path to a PHP file whose contents should run.", format: "path" },
+      { name: "bootstrap", description: "Use bootstrap=none to skip wp-load.php.", format: "wordpress|none" },
+    ],
+    outputShape: "Raw command stdout from the PHP snippet.",
+    policyRequirement: "Runtime policy commands must include wordpress.run-php.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.wp-cli",
+    description: "Run a WP-CLI command inside the same disposable WordPress runtime.",
+    acceptedArgs: [
+      { name: "command", description: "WP-CLI command line, with or without the leading wp token.", required: true, format: "string" },
+    ],
+    outputShape: "Raw WP-CLI stdout.",
+    policyRequirement: "Runtime policy commands must include wordpress.wp-cli.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.ability",
+    description: "Execute a registered WordPress Ability in the sandbox.",
+    acceptedArgs: [
+      { name: "name", description: "Ability name to execute.", required: true, format: "string" },
+      { name: "input", description: "Ability input payload.", format: "JSON object" },
+    ],
+    outputShape: "JSON object with command, name, input, and result fields.",
+    policyRequirement: "Runtime policy commands must include wordpress.ability.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.bench",
+    description: "Run plugin benchmark workloads and emit a Homeboy-compatible BenchResults envelope.",
+    acceptedArgs: [
+      { name: "component-id", description: "Component id for the BenchResults envelope.", format: "string" },
+      { name: "plugin-slug", description: "Plugin slug containing tests/bench workloads.", required: true, format: "slug" },
+      { name: "iterations", description: "Measured iterations per workload.", format: "positive integer" },
+      { name: "warmup", description: "Warmup iterations before measurement.", format: "non-negative integer" },
+      { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
+      { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
+      { name: "workloads-json", description: "Explicit workload list.", format: "JSON array" },
+    ],
+    outputShape: "BenchResults JSON envelope with component_id, iterations, and scenarios.",
+    policyRequirement: "Runtime policy commands must include wordpress.bench.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.phpunit",
+    description: "Run plugin PHPUnit tests with normalized diagnostics and test-result artifact capture.",
+    acceptedArgs: [
+      { name: "plugin-slug", description: "Plugin slug under wp-content/plugins.", format: "slug" },
+      { name: "code", description: "Inline override PHP runner code.", format: "PHP string" },
+      { name: "code-file", description: "Path to override PHP runner code.", format: "path" },
+      { name: "autoload-file", description: "PHPUnit/vendor autoload path inside the sandbox.", format: "sandbox path" },
+      { name: "tests-dir", description: "WP PHPUnit tests directory inside the sandbox.", format: "sandbox path" },
+      { name: "phpunit-xml", description: "phpunit.xml path inside the plugin.", format: "path" },
+      { name: "test-file", description: "Single test file to run.", format: "path" },
+      { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
+      { name: "env-json", description: "PHPUnit environment values.", format: "JSON object" },
+      { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
+      { name: "dependency-mounts", description: "Comma-separated mounted dependency paths.", format: "comma-separated sandbox paths" },
+      { name: "multisite", description: "Run as multisite.", format: "boolean" },
+    ],
+    outputShape: "Raw PHPUnit runner JSON/log output plus normalized test-results artifact when artifacts are collected.",
+    policyRequirement: "Runtime policy commands must include wordpress.phpunit.",
+    recipe: true,
+  },
+  {
+    id: "wordpress.core-phpunit",
+    description: "Run WordPress core PHPUnit tests with normalized diagnostics and test-result artifact capture.",
+    acceptedArgs: [
+      { name: "core-root", description: "WordPress develop checkout root inside the sandbox.", format: "sandbox path" },
+      { name: "tests-dir", description: "Core tests directory inside the sandbox.", format: "sandbox path" },
+      { name: "phpunit-xml", description: "phpunit.xml path.", format: "path" },
+      { name: "test-file", description: "Single test file to run.", format: "path" },
+      { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
+      { name: "autoload-file", description: "Autoload path inside the sandbox.", format: "sandbox path" },
+      { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
+      { name: "multisite", description: "Run as multisite.", format: "boolean" },
+    ],
+    outputShape: "Raw PHPUnit runner JSON/log output plus normalized test-results artifact when artifacts are collected.",
+    policyRequirement: "Runtime policy commands must include wordpress.core-phpunit.",
+    recipe: true,
+  },
+  {
+    id: "wp-codebox.agent-runtime-probe",
+    description: "Recipe-only probe that boots Agents API, Data Machine, and Data Machine Code and verifies the stack loads.",
+    acceptedArgs: [
+      { name: "provider-plugin-slugs", description: "Comma-separated provider plugin slugs already mounted by recipe inputs.", format: "comma-separated slugs" },
+    ],
+    outputShape: "JSON probe result emitted by the sandbox PHP runner.",
+    policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
+    recipe: true,
+  },
+  {
+    id: "wp-codebox.agent-sandbox-run",
+    description: "Recipe-only helper that runs one natural-language task through the sandboxed agent stack.",
+    acceptedArgs: [
+      { name: "task", description: "Task prompt for the sandbox agent.", required: true, format: "string" },
+      { name: "agent", description: "Agent slug.", format: "string" },
+      { name: "mode", description: "Agent mode.", format: "string" },
+      { name: "provider", description: "AI provider id.", format: "string" },
+      { name: "model", description: "Model id.", format: "string" },
+      { name: "session-id", description: "Conversation session id.", format: "string" },
+      { name: "max-turns", description: "Maximum agent loop turns.", format: "positive integer" },
+      { name: "provider-plugin-slugs", description: "Comma-separated provider plugin slugs already mounted by recipe inputs.", format: "comma-separated slugs" },
+      { name: "code", description: "Inline PHP runner override for operator/debug use.", format: "PHP string" },
+      { name: "code-file", description: "Path to PHP runner override for operator/debug use.", format: "path" },
+    ],
+    outputShape: "JSON agent run result emitted by the sandbox PHP runner.",
+    policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
+    recipe: true,
+  },
+]
+const supportedRecipeCommands = new Set(commandCatalog.filter((command) => command.recipe).map((command) => command.id))
+const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "wp-codebox/workspace-recipe/v1",
+  title: "WP Codebox workspace recipe",
+  type: "object",
+  additionalProperties: false,
+  required: ["schema", "workflow"],
+  properties: {
+    schema: { const: "wp-codebox/workspace-recipe/v1" },
+    runtime: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        backend: { const: "wordpress-playground" },
+        name: { type: "string" },
+        wp: { type: "string" },
+        blueprint: { type: "object" },
+      },
+    },
+    inputs: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        mounts: {
+          type: "array",
+          items: { $ref: "#/$defs/mount" },
+        },
+        workspaces: {
+          type: "array",
+          items: { $ref: "#/$defs/workspace" },
+        },
+        extra_plugins: {
+          type: "array",
+          items: { $ref: "#/$defs/extraPlugin" },
+        },
+        extraPlugins: {
+          type: "array",
+          items: { $ref: "#/$defs/extraPlugin" },
+        },
+        secretEnv: {
+          type: "array",
+          items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+        },
+        inherit: { $ref: "#/$defs/inheritanceRequest" },
+        inheritance: { $ref: "#/$defs/inheritanceResolution" },
+      },
+    },
+    workflow: {
+      type: "object",
+      additionalProperties: false,
+      required: ["steps"],
+      properties: {
+        steps: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/$defs/step" },
+        },
+      },
+    },
+    artifacts: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        directory: { type: "string" },
+      },
+    },
+  },
+  $defs: {
+    metadata: {
+      type: "object",
+      additionalProperties: true,
+    },
+    mount: {
+      type: "object",
+      additionalProperties: false,
+      required: ["source", "target"],
+      properties: {
+        source: { type: "string" },
+        target: { type: "string", pattern: "^/" },
+        mode: { enum: ["readonly", "readwrite"] },
+        metadata: { $ref: "#/$defs/metadata" },
+      },
+    },
+    workspace: {
+      type: "object",
+      additionalProperties: false,
+      required: ["seed"],
+      properties: {
+        target: { type: "string", pattern: "^/" },
+        mode: { enum: ["readonly", "readwrite"] },
+        seed: { $ref: "#/$defs/workspaceSeed" },
+      },
+    },
+    workspaceSeed: {
+      type: "object",
+      additionalProperties: false,
+      required: ["type"],
+      properties: {
+        type: { enum: ["plugin_scaffold", "theme_scaffold", "directory"] },
+        slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+        name: { type: "string" },
+        source: { type: "string" },
+      },
+    },
+    extraPlugin: {
+      type: "object",
+      additionalProperties: false,
+      required: ["source"],
+      properties: {
+        source: { type: "string" },
+        slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+        pluginFile: { type: "string" },
+        activate: { type: "boolean" },
+      },
+    },
+    step: {
+      type: "object",
+      additionalProperties: false,
+      required: ["command"],
+      properties: {
+        command: { enum: commandCatalog.filter((command) => command.recipe).map((command) => command.id) },
+        args: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+    },
+    inheritanceRequest: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        connectors: { type: "array", items: { type: "string" } },
+        settings: { type: "array", items: { type: "string" } },
+      },
+    },
+    inheritanceResolution: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        connectors: { type: "array", items: { $ref: "#/$defs/inheritanceConnector" } },
+        settings: { type: "array", items: { $ref: "#/$defs/inheritanceSetting" } },
+      },
+    },
+    inheritanceConnector: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "status"],
+      properties: {
+        name: { type: "string" },
+        status: { type: "string" },
+        provider: { type: "string" },
+        model: { type: "string" },
+        secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+      },
+    },
+    inheritanceSetting: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "status"],
+      properties: {
+        name: { type: "string" },
+        status: { type: "string" },
+        scope: { type: "string" },
+      },
+    },
+  },
+}
 
 const secretEnvPolicy: RuntimePolicy = {
   ...defaultPolicy,
@@ -205,6 +524,37 @@ async function main(args: string[]): Promise<number> {
     return output.success ? 0 : 1
   }
 
+  if (command === "commands") {
+    const json = parseDiscoveryJsonOption(args)
+    const output = commandCatalogOutput()
+    if (!json) {
+      printCommandCatalogHumanOutput(output)
+      return 0
+    }
+
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    return 0
+  }
+
+  if (command === "schema") {
+    const subcommand = args.shift()
+    if (subcommand !== "recipe") {
+      console.error(`Unknown schema command: ${subcommand ?? ""}`)
+      printHelp()
+      return 1
+    }
+
+    const json = parseDiscoveryJsonOption(args)
+    const output = recipeSchemaOutput()
+    if (!json) {
+      printRecipeSchemaHumanOutput(output)
+      return 0
+    }
+
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    return 0
+  }
+
   if (command !== "run") {
     console.error(`Unknown command: ${command}`)
     printHelp()
@@ -225,6 +575,35 @@ async function main(args: string[]): Promise<number> {
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   printJsonFailureDiagnostic(output)
   return output.success ? 0 : 1
+}
+
+function parseDiscoveryJsonOption(args: string[]): boolean {
+  let json = false
+  for (const arg of args) {
+    if (arg === "--json") {
+      json = true
+      continue
+    }
+
+    throw new Error(`Unknown option: ${arg}`)
+  }
+
+  return json
+}
+
+function commandCatalogOutput(): CommandCatalogOutput {
+  return {
+    schema: "wp-codebox/command-catalog/v1",
+    commands: commandCatalog,
+  }
+}
+
+function recipeSchemaOutput(): RecipeSchemaOutput {
+  return {
+    schema: "wp-codebox/json-schema/v1",
+    id: "wp-codebox/workspace-recipe/v1",
+    jsonSchema: workspaceRecipeJsonSchema,
+  }
 }
 
 function printJsonFailureDiagnostic(output: { success: boolean; error?: { message?: string }; logs?: string[] }): void {

@@ -24,3 +24,17 @@ npm run package-distribution-smoke
 The distribution smoke runs `npm pack --dry-run --json` and verifies the package
 contains `package.json`, `README.md`, and the compiled CLI entrypoint used by the
 published binary.
+
+## Discovery
+
+Tooling can discover the stable command and recipe-authoring surface without
+booting WordPress Playground:
+
+```bash
+wp-codebox commands --json
+wp-codebox schema recipe --json
+```
+
+`commands` emits `wp-codebox/command-catalog/v1` with command ids,
+descriptions, accepted args, known output shape, and policy requirements.
+`schema recipe` emits the JSON Schema for `wp-codebox/workspace-recipe/v1`.
