@@ -202,6 +202,7 @@ Options:
   --wp <version>       WordPress version for Playground. Defaults to 7.0; accepts latest, trunk, nightly, or numeric versions.
   --artifacts <dir>    Artifact root directory.
   --preview-hold <n>   Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
+  --preview-port <n>   Start Playground on a fixed local port. Defaults to a random available port.
   --preview-public-url <url>
                        Public tunnel/proxy URL to report in preview artifacts and pass to Playground as site-url.
                        Remote access still requires an external tunnel/proxy; bind-host support depends on upstream Playground.

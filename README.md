@@ -204,7 +204,21 @@ npm run wp-codebox -- run \
 
 The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
-When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url`, so WordPress-generated links can align with the public preview where Playground supports that option. The local Playground URL remains recorded as `preview.localUrl`.
+For tunnel-first review, reserve the local port in the tunnel command and pass that same port to WP Codebox. `--preview-port <n>` makes Playground use a fixed local port instead of its default random port, and `--preview-public-url <url>` reports the tunnel URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`.
+
+```bash
+kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
+  --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin \
+  --command wordpress.run-php \
+  --arg code-file=./examples/simple-plugin/probe.php \
+  --artifacts ./artifacts \
+  --preview-hold 15m \
+  --preview-port 4173 \
+  --preview-public-url "$TRAFORO_URL" \
+  --json'
+```
+
+When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url`, so WordPress-generated links can align with the public preview where Playground supports that option. The local Playground URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
 
 Remote preview access still requires an external tunnel or proxy. WP Codebox does not claim true bind-host support: a `--preview-bind` style option depends on upstream WordPress Playground exposing a host/bind API. Track upstream support in https://github.com/WordPress/wordpress-playground/issues/3681.
 
@@ -277,6 +291,7 @@ npm run wp-codebox -- run \
   --mount <host-path>:<sandbox-path>[:readonly|readwrite] \
   --command <command> \
   --arg <key=value> \
+  --preview-port <local-port> \
   --preview-public-url <public-tunnel-url> \
   --json
 ```
@@ -294,7 +309,7 @@ Supported runtime commands today:
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 
-`--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
+`--preview-port` fixes the local Playground port for tunnel/proxy wiring. Omit it to keep the current random-port behavior. `--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
 
 ### `recipe validate`
 
@@ -318,6 +333,7 @@ Run a repeatable recipe.
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/simple-plugin.json \
   --preview-hold 15m \
+  --preview-port 4173 \
   --preview-public-url https://example-tunnel.test/ \
   --json
 ```

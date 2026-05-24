@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { assertRuntimeCommandAllowed } from "@chubes4/wp-codebox-core"
 import {
@@ -73,6 +74,15 @@ class PlaygroundCommandCrashError extends Error {
   constructor(readonly command: string, readonly cause: unknown) {
     super(`${command} crashed before producing a structured response\n\n${errorMessage(cause)}`)
     this.name = "PlaygroundCommandCrashError"
+  }
+}
+
+class PlaygroundPreviewPortUnavailableError extends Error {
+  readonly code = "wp-codebox-preview-port-in-use"
+
+  constructor(readonly port: number, readonly cause: unknown) {
+    super(`--preview-port ${port} is unavailable: EADDRINUSE. Choose another port or stop the process currently using it.`)
+    this.name = "PlaygroundPreviewPortUnavailableError"
   }
 }
 
@@ -962,20 +972,31 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
   private async startPlayground(): Promise<PlaygroundCliServer> {
     const { runCLI } = (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
+    if (this.spec.preview?.port) {
+      await assertPreviewPortAvailable(this.spec.preview.port)
+    }
 
-    return runCLI({
-      command: "server",
-      port: 0,
-      quiet: true,
-      skipBrowser: true,
-      mount: this.mounts.map((mount) => ({
-        hostPath: mount.source,
-        vfsPath: mount.target,
-      })),
-      wp: this.spec.environment.version,
-      "site-url": this.spec.preview?.siteUrl,
-      blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy),
-    })
+    try {
+      return await runCLI({
+        command: "server",
+        port: this.spec.preview?.port ?? 0,
+        quiet: true,
+        skipBrowser: true,
+        mount: this.mounts.map((mount) => ({
+          hostPath: mount.source,
+          vfsPath: mount.target,
+        })),
+        wp: this.spec.environment.version,
+        "site-url": this.spec.preview?.siteUrl,
+        blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy),
+      })
+    } catch (error) {
+      if (this.spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
+        throw new PlaygroundPreviewPortUnavailableError(this.spec.preview.port, error)
+      }
+
+      throw error
+    }
   }
 
   private async observeStub(spec: ObservationSpec): Promise<unknown> {
@@ -993,6 +1014,44 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
 export function createPlaygroundRuntimeBackend(): RuntimeBackend {
   return new PlaygroundRuntimeBackend()
+}
+
+function errorHasCode(error: unknown, code: string): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  if ("code" in error && error.code === code) {
+    return true
+  }
+
+  if ("cause" in error && errorHasCode(error.cause, code)) {
+    return true
+  }
+
+  return error instanceof Error && error.message.includes(code)
+}
+
+async function assertPreviewPortAvailable(port: number): Promise<void> {
+  const server = createServer()
+  try {
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen)
+      server.listen(port, "127.0.0.1", () => resolveListen())
+    })
+  } catch (error) {
+    if (errorHasCode(error, "EADDRINUSE")) {
+      throw new PlaygroundPreviewPortUnavailableError(port, error)
+    }
+
+    throw error
+  } finally {
+    if (server.listening) {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose())
+      })
+    }
+  }
 }
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {

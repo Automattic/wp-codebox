@@ -81,6 +81,7 @@ export interface RuntimeCreateSpec {
 export interface RuntimePreviewSpec {
   publicUrl?: string
   siteUrl?: string
+  port?: number
 }
 
 export interface WorkspaceRecipeMount {
