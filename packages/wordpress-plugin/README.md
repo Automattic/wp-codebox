@@ -114,6 +114,12 @@ Without Data Machine pending actions, `stage-artifact-apply` fails closed with
 available through `apply-approved-artifact` for hosts that provide their own
 approval surface.
 
+See [External Apply Adapter Contract](../../docs/external-apply-adapter-contract.md)
+for the parent-control-plane contract. The documented smoke fixture proves that
+an external adapter can consume the verified artifact payload and record adapter
+metadata, PR URL, branch, commit, and artifact digest without WP Codebox calling
+Homeboy, Data Machine Code, or any other product-specific apply-back system.
+
 ## Configuration
 
 Component paths can be supplied by ability input, the
