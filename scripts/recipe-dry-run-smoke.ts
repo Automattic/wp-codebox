@@ -12,6 +12,7 @@ const invalidRecipePath = resolve(workspace, "invalid-recipe.json")
 const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
+const multisiteCookbookRecipePath = resolve(root, "examples/recipes/cookbook/multisite-network.json")
 
 mkdirSync(workspace, { recursive: true })
 writeFileSync(recipePath, `${JSON.stringify({
@@ -185,5 +186,24 @@ assert.equal(externalDisabledResult.status, 1, externalDisabledResult.stderr || 
 const externalDisabledOutput = JSON.parse(externalDisabledResult.stdout)
 assert.equal(externalDisabledOutput.success, false)
 assert.equal(externalDisabledOutput.validation.issues[0].code, "network-downloads-disabled")
+
+const multisiteCookbookResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  multisiteCookbookRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8" })
+
+assert.equal(multisiteCookbookResult.status, 0, multisiteCookbookResult.stderr || multisiteCookbookResult.stdout)
+const multisiteCookbookOutput = JSON.parse(multisiteCookbookResult.stdout)
+assert.equal(multisiteCookbookOutput.success, true)
+assert.equal(multisiteCookbookOutput.plan.mounts.length, 2)
+assert.equal(multisiteCookbookOutput.plan.mounts[0].target, "/wordpress/wp-content/plugins/plugin-under-test")
+assert.equal(multisiteCookbookOutput.plan.mounts[1].target, "/tmp/wp-codebox-cookbook")
+assert.equal(multisiteCookbookOutput.plan.workflow.steps.length, 2)
+assert.equal(multisiteCookbookOutput.plan.workflow.steps[0].resolvedParsedArgs.command, "wp core multisite-convert --title=\"WP Codebox Network\" --base=\"/\"")
+assert.equal(multisiteCookbookOutput.plan.workflow.steps[1].resolvedParsedArgs.command, "wp eval-file /tmp/wp-codebox-cookbook/multisite-network-seed.php")
 
 console.log("recipe dry-run smoke passed")

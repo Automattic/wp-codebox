@@ -12,6 +12,46 @@ smoke testing.
 
 ## Available recipes
 
+### `multisite-network.json`
+
+Converts the Playground install to multisite with WP-CLI, mounts your plugin
+under test, network-activates it when a plugin file is present, seeds two child
+sites through a WP-CLI `eval-file` seed, and emits network, site, and admin URLs
+from the seed step.
+
+**Replace** the `inputs.mounts[0].source` value in the recipe with the path to
+the plugin you want to exercise in network mode. The default points at
+`../simple-plugin` so the recipe runs out of the box.
+
+```bash
+# Edit examples/recipes/cookbook/multisite-network.json:
+#   "source": "../../path/to/your-plugin"
+#
+# Then:
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/cookbook/multisite-network.json \
+  --preview-hold 30m \
+  --json
+```
+
+The seed step's JSON output includes `network_admin_url`, `main_site_url`, and a
+`sites` array with two child-site URLs and admin URLs. Pair with
+`--preview-hold` to click through network admin and child-site screens while the
+Playground preview stays alive.
+
+#### Why this exists
+
+Many WordPress plugins only break when they are network-active, read network
+options, or run across multiple sites. This recipe gives plugin authors a
+repeatable first smoke test for that surface without requiring a local multisite
+install.
+
+#### Extending
+
+The seed step is intentionally small. Add more sites, roles, options, or content
+in `multisite-network-seed.php` before the JSON output line if your plugin needs
+a richer network shape.
+
 ### `bbpress-reply-editor.json`
 
 Boots a Playground with bbPress installed from `wordpress.org/plugins`, mounts

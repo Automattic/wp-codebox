@@ -1,0 +1,69 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "multisite-network-lab",
+    "wp": "7.0",
+    "blueprint": {
+      "steps": [
+        {
+          "step": "installTheme",
+          "themeData": {
+            "resource": "wordpress.org/themes",
+            "slug": "twentytwentyfive"
+          },
+          "options": {
+            "activate": true
+          }
+        },
+        {
+          "step": "login",
+          "username": "admin",
+          "password": "password"
+        }
+      ]
+    }
+  },
+  "inputs": {
+    "mounts": [
+      {
+        "source": "../../simple-plugin",
+        "target": "/wordpress/wp-content/plugins/plugin-under-test",
+        "mode": "readwrite",
+        "metadata": {
+          "kind": "component",
+          "slug": "plugin-under-test",
+          "editable": true
+        }
+      },
+      {
+        "source": ".",
+        "target": "/tmp/wp-codebox-cookbook",
+        "mode": "readonly",
+        "metadata": {
+          "kind": "recipe-support",
+          "slug": "multisite-network-seed"
+        }
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.wp-cli",
+        "args": [
+          "command=wp core multisite-convert --title=\"WP Codebox Network\" --base=\"/\""
+        ]
+      },
+      {
+        "command": "wordpress.wp-cli",
+        "args": [
+          "command=wp eval-file /tmp/wp-codebox-cookbook/multisite-network-seed.php"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts"
+  }
+}
