@@ -994,7 +994,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
         })),
         wp: this.spec.environment.version,
         "site-url": this.spec.preview?.siteUrl,
-        blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy),
+        blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy, this.spec.preview?.siteUrl),
       })
 
       if (!this.spec.preview?.port) {

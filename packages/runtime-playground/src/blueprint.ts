@@ -16,17 +16,19 @@ export function normalizeBlueprint(blueprint: unknown): { extraLibraries?: unkno
   }
 }
 
-export function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpec["policy"]): unknown {
-  if (!policy.commands.includes("wordpress.wp-cli")) {
+export function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpec["policy"], siteUrl?: string): unknown {
+  if (!siteUrl && !policy.commands.includes("wordpress.wp-cli")) {
     return blueprint
   }
 
   const base = !blueprint || typeof blueprint !== "object" || Array.isArray(blueprint) ? {} : blueprint as Record<string, unknown>
+  const steps = Array.isArray(base.steps) ? base.steps : []
   const extraLibraries = Array.isArray(base.extraLibraries) ? base.extraLibraries : []
 
   return {
     ...base,
-    extraLibraries: [...new Set([...extraLibraries, "wp-cli"])],
+    ...(policy.commands.includes("wordpress.wp-cli") ? { extraLibraries: [...new Set([...extraLibraries, "wp-cli"])] } : {}),
+    ...(siteUrl ? { steps: [{ step: "defineSiteUrl", siteUrl }, ...steps] } : {}),
   }
 }
 

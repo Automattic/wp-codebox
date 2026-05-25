@@ -218,7 +218,7 @@ kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
   --json'
 ```
 
-When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url`, so WordPress-generated links can align with the public preview where Playground supports that option. The local Playground URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
+When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url` and defines `WP_HOME` / `WP_SITEURL` in the sandbox config, so WordPress-generated links and canonical redirects align with the public preview URL. The local Playground URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
 
 Remote preview access still requires an external tunnel or proxy. WP Codebox does not claim true bind-host support: a `--preview-bind` style option depends on upstream WordPress Playground exposing a host/bind API. Track upstream support in https://github.com/WordPress/wordpress-playground/issues/3681.
 
