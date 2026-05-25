@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -24,13 +24,18 @@ try {
     artifactsDirectory,
     "--preview-port",
     String(runPort),
+    "--preview-bind",
+    "0.0.0.0",
     "--preview-public-url",
     "https://run-preview.example.test/",
     "--json",
   ])
   assert.equal(runOutput.success, true)
   assert.equal(new URL(runOutput.artifacts.preview.localUrl).port, String(runPort))
+  assert.equal(new URL(runOutput.artifacts.preview.localUrl).hostname, "127.0.0.1")
   assert.equal(runOutput.artifacts.preview.url, "https://run-preview.example.test/")
+  const runMetadata = JSON.parse(await readFile(runOutput.artifacts.metadataPath, "utf8"))
+  assert.equal(runMetadata.provenance.task.previewBind, "0.0.0.0")
 
   const recipePort = await reserveFreePort()
   const recipeOutput = await runCliJson([
@@ -84,6 +89,24 @@ try {
     (error) => {
       const childError = error as { stdout?: string; stderr?: string }
       assert.match(`${childError.stdout ?? ""}\n${childError.stderr ?? ""}`, /--preview-port must be an integer between 1 and 65535/)
+      return true
+    },
+  )
+
+  await assert.rejects(
+    () => runCliJson([
+      "run",
+      "--mount",
+      "./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin",
+      "--command",
+      "wordpress.run-php",
+      "--preview-bind",
+      "0.0.0.0",
+      "--json",
+    ]),
+    (error) => {
+      const childError = error as { stdout?: string; stderr?: string }
+      assert.match(`${childError.stdout ?? ""}\n${childError.stderr ?? ""}`, /--preview-bind requires --preview-port/)
       return true
     },
   )

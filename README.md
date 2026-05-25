@@ -237,7 +237,7 @@ npm run wp-codebox -- run \
 
 The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
-For tunnel-first review, reserve the local port in the tunnel command and pass that same port to WP Codebox. `--preview-port <n>` makes Playground use a fixed local port instead of its default random port, and `--preview-public-url <url>` reports the tunnel URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`.
+For tunnel-first review, reserve the local port in the tunnel command and pass that same port to WP Codebox. `--preview-port <n>` makes WP Codebox expose Playground through a fixed local proxy port instead of reporting Playground's default random port, and `--preview-public-url <url>` reports the tunnel URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`.
 
 ```bash
 kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
@@ -251,9 +251,9 @@ kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
   --json'
 ```
 
-When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url` and defines `WP_HOME` / `WP_SITEURL` in the sandbox config, so WordPress-generated links and canonical redirects align with the public preview URL. The local Playground URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
+When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url` and defines `WP_HOME` / `WP_SITEURL` in the sandbox config, so WordPress-generated links and canonical redirects align with the public preview URL. The local proxy URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
 
-Remote preview access still requires an external tunnel or proxy. WP Codebox does not claim true bind-host support: a `--preview-bind` style option depends on upstream WordPress Playground exposing a host/bind API. Track upstream support in https://github.com/WordPress/wordpress-playground/issues/3681.
+Remote-host previews can opt into `--preview-bind <host>` with `--preview-port`. The flag changes the WP Codebox preview proxy bind address only; the upstream Playground server remains loopback-bound because `@wp-playground/cli` does not expose host/bind control yet. The default stays `127.0.0.1`. Use `--preview-bind 0.0.0.0` only behind trusted firewall, tunnel, or reverse-proxy controls because the sandbox preview is reachable for the hold duration. Track the upstream Playground bind-host API gap in https://github.com/WordPress/wordpress-playground/issues/3681.
 
 ## Runtime Episodes
 
@@ -325,6 +325,7 @@ npm run wp-codebox -- run \
   --command <command> \
   --arg <key=value> \
   --preview-port <local-port> \
+  --preview-bind 127.0.0.1 \
   --preview-public-url <public-tunnel-url> \
   --json
 ```
@@ -345,7 +346,7 @@ Supported runtime commands today:
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 
-`--preview-port` fixes the local Playground port for tunnel/proxy wiring. Omit it to keep the current random-port behavior. `--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
+`--preview-port` fixes the local WP Codebox proxy port for tunnel/proxy wiring. Omit it to keep the current random-port behavior from upstream Playground. `--preview-bind` changes that fixed-port proxy bind address and requires `--preview-port`; it does not change the upstream Playground server bind. `--preview-public-url` is metadata and site-url alignment only; it does not make a loopback-only preview reachable without a tunnel/proxy or explicit proxy bind.
 
 ### `boot`
 

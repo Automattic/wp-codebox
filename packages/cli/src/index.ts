@@ -52,6 +52,7 @@ interface RunOptions {
   previewHoldSeconds?: number
   previewPublicUrl?: string
   previewPort?: number
+  previewBind?: string
   json: boolean
 }
 
@@ -77,6 +78,7 @@ interface BootOptions {
   previewHoldSeconds?: number
   previewPublicUrl?: string
   previewPort?: number
+  previewBind?: string
   json: boolean
 }
 
@@ -98,6 +100,7 @@ interface BlueprintValidateOptions {
   previewHoldSeconds?: number
   previewPublicUrl?: string
   previewPort?: number
+  previewBind?: string
   json: boolean
 }
 
@@ -117,6 +120,7 @@ interface RecipeRunOptions {
   previewHoldSeconds?: number
   previewPublicUrl?: string
   previewPort?: number
+  previewBind?: string
   json: boolean
   dryRun: boolean
 }
@@ -1102,9 +1106,9 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl, options.previewPort),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl, options.previewPort, options.previewBind),
         },
-        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -1352,8 +1356,12 @@ function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: stri
   }
 }
 
-function previewSpec(publicUrl: string | undefined, port: number | undefined): { publicUrl?: string; siteUrl?: string; port?: number } | undefined {
-  if (!publicUrl && port === undefined) {
+function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string } | undefined {
+  if (bind && port === undefined) {
+    throw new Error("--preview-bind requires --preview-port because upstream Playground does not expose bind-host control yet")
+  }
+
+  if (!publicUrl && port === undefined && !bind) {
     return undefined
   }
 
@@ -1361,6 +1369,7 @@ function previewSpec(publicUrl: string | undefined, port: number | undefined): {
     publicUrl,
     siteUrl: publicUrl,
     port,
+    bind,
   })
 }
 
@@ -1374,6 +1383,7 @@ function runMetadata(options: RunOptions): Record<string, unknown> {
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
       previewPort: options.previewPort,
+      previewBind: options.previewBind,
     }),
   }
 }
@@ -1386,6 +1396,7 @@ function bootMetadata(options: BootOptions): Record<string, unknown> {
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
       previewPort: options.previewPort,
+      previewBind: options.previewBind,
     }),
   }
 }
@@ -1399,6 +1410,7 @@ function blueprintValidationMetadata(options: BlueprintValidateOptions): Record<
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
       previewPort: options.previewPort,
+      previewBind: options.previewBind,
     }),
   }
 }
@@ -1692,7 +1704,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
         metadata: options.metadata ?? runMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -1756,7 +1768,7 @@ async function boot(options: BootOptions): Promise<BootOutput> {
         policy: options.policy ?? defaultPolicy,
         artifactsDirectory: options.artifactsDirectory,
         metadata: bootMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -1819,7 +1831,7 @@ async function validateBlueprint(options: BlueprintValidateOptions): Promise<Blu
         policy: options.policy ?? defaultPolicy,
         artifactsDirectory: options.artifactsDirectory,
         metadata: blueprintValidationMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -1905,6 +1917,19 @@ function parsePreviewPort(value: string): number {
   return port
 }
 
+function parsePreviewBind(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    throw new Error("--preview-bind must not be empty")
+  }
+
+  if (/[/\\\s]/.test(trimmed)) {
+    throw new Error("--preview-bind must be a hostname or IP address, not a URL")
+  }
+
+  return trimmed
+}
+
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
   const options: RunOptions = {
     mounts: [],
@@ -1952,6 +1977,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
         break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
+        break
+      case "--preview-bind":
+        options.previewBind = parsePreviewBind(value)
         break
       case "--policy":
         options.policy = await parsePolicy(value)
@@ -2015,6 +2043,9 @@ async function parseBootOptions(args: string[]): Promise<BootOptions> {
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
         break
+      case "--preview-bind":
+        options.previewBind = parsePreviewBind(value)
+        break
       case "--policy":
         options.policy = await parsePolicy(value)
         break
@@ -2063,6 +2094,9 @@ async function parseBlueprintValidateOptions(args: string[]): Promise<BlueprintV
         break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
+        break
+      case "--preview-bind":
+        options.previewBind = parsePreviewBind(value)
         break
       case "--policy":
         options.policy = await parsePolicy(value)
@@ -2117,6 +2151,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
+        break
+      case "--preview-bind":
+        options.previewBind = parsePreviewBind(value)
         break
       default:
         throw new Error(`Unknown option: ${name}`)
@@ -2630,7 +2667,7 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined, previewPort: number | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -2664,6 +2701,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       recipePath,
       previewPublicUrl,
       previewPort,
+      previewBind,
       workflow: {
         steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
       },

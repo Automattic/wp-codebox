@@ -144,6 +144,7 @@ export interface RuntimePreviewSpec {
   publicUrl?: string
   siteUrl?: string
   port?: number
+  bind?: string
 }
 
 export interface WorkspaceRecipeMount {

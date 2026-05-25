@@ -1138,7 +1138,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
         return server
       }
 
-      return await withPreviewProxy(server, this.spec.preview.port)
+      return await withPreviewProxy(server, this.spec.preview.port, this.spec.preview.bind)
     } catch (error) {
       if (this.spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
         throw new PlaygroundPreviewPortUnavailableError(this.spec.preview.port, error)
@@ -1294,10 +1294,10 @@ function jsonLines(records: unknown[]): string {
   return records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : ""
 }
 
-async function withPreviewProxy(server: PlaygroundCliServer, port: number): Promise<PlaygroundCliServer> {
+async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1"): Promise<PlaygroundCliServer> {
   let proxy: PlaygroundPreviewProxy | undefined
   try {
-    proxy = await startPreviewProxy(server.serverUrl, port)
+    proxy = await startPreviewProxy(server.serverUrl, port, bind)
   } catch (error) {
     await server[Symbol.asyncDispose]()
     throw error
@@ -1313,7 +1313,7 @@ async function withPreviewProxy(server: PlaygroundCliServer, port: number): Prom
   }
 }
 
-async function startPreviewProxy(targetUrl: string, port: number): Promise<PlaygroundPreviewProxy> {
+async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
   const proxy = createHttpServer((incoming, outgoing) => {
     const targetRequest = httpRequest(
@@ -1343,11 +1343,15 @@ async function startPreviewProxy(targetUrl: string, port: number): Promise<Playg
 
   await new Promise<void>((resolveListen, rejectListen) => {
     proxy.once("error", rejectListen)
-    proxy.listen(port, "127.0.0.1", () => resolveListen())
+    proxy.listen(port, bind, () => resolveListen())
   })
 
+  const address = proxy.address()
+  const resolvedPort = address && typeof address === "object" ? address.port : port
+  const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
+
   return {
-    serverUrl: `http://127.0.0.1:${port}`,
+    serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
     async dispose() {
       if (!proxy.listening) {
         return
@@ -1358,6 +1362,10 @@ async function startPreviewProxy(targetUrl: string, port: number): Promise<Playg
       })
     },
   }
+}
+
+function formatPreviewHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
 function proxyRequestHeaders(headers: IncomingHttpHeaders, target: URL): IncomingHttpHeaders {
