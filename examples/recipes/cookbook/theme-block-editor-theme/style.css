@@ -1,0 +1,63 @@
+/*
+Theme Name: Theme Block Editor Cookbook
+Theme URI: https://github.com/chubes4/wp-codebox
+Author: WP Codebox
+Description: Minimal fixture theme for the theme block-editor cookbook recipe.
+Version: 0.1.0
+Requires at least: 6.5
+Tested up to: 7.0
+Text Domain: theme-block-editor-cookbook
+*/
+
+:root {
+	--cookbook-ink: #17202a;
+	--cookbook-paper: #fffaf2;
+	--cookbook-accent: #b45309;
+}
+
+body {
+	background: var(--cookbook-paper);
+	color: var(--cookbook-ink);
+	font-family: Georgia, "Times New Roman", serif;
+	margin: 0;
+}
+
+a {
+	color: var(--cookbook-accent);
+}
+
+.site-header,
+.site-footer {
+	padding: 1.5rem clamp(1rem, 4vw, 4rem);
+}
+
+.site-header {
+	border-bottom: 1px solid rgba(23, 32, 42, 0.14);
+}
+
+.site-footer {
+	border-top: 1px solid rgba(23, 32, 42, 0.14);
+}
+
+.site-title {
+	font-size: clamp(1.4rem, 3vw, 2.4rem);
+	font-weight: 700;
+}
+
+.wp-site-blocks > main {
+	min-height: 65vh;
+}
+
+.wp-block-cover {
+	font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.wp-block-button__link {
+	border-radius: 999px;
+	font-weight: 700;
+	padding: 0.85rem 1.25rem;
+}
+
+.wp-block-query .wp-block-post-title {
+	font-size: 1.35rem;
+}

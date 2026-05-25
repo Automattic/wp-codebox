@@ -12,6 +12,47 @@ smoke testing.
 
 ## Available recipes
 
+### `theme-block-editor.json`
+
+Boots a Playground with a theme mounted at
+`/wordpress/wp-content/themes/theme-under-test`, activates that mounted theme,
+seeds a page with common block-editor surfaces, and auto-logs in as admin. Pair
+with `--preview-hold` and open the seed output's `frontend_url` or
+`block_editor_url` to review the theme in both rendered and editor contexts.
+
+**Replace** the `inputs.mounts[0].source` value in the recipe with the path to
+the theme you want to exercise. The default points at the adjacent
+`theme-block-editor-theme` fixture so the recipe runs out of the box.
+
+```bash
+# Edit examples/recipes/cookbook/theme-block-editor.json:
+#   "source": "../../path/to/your-theme"
+#
+# Then:
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/cookbook/theme-block-editor.json \
+  --preview-hold 30m \
+  --json
+```
+
+The seed step's JSON output includes the seeded page's frontend URL, the front
+page URL, the block editor URL, and admin URLs for page review.
+
+#### Why this exists
+
+Theme and editor-facing changes often fail only after WordPress boots with real
+block markup, editor styles, and admin routing. This recipe gives theme authors
+and plugin authors a fast visual smoke surface before installing a change on a
+real site.
+
+#### Extending
+
+Edit `theme-block-editor-seed.php` to add blocks, templates, patterns, custom
+post types, or additional admin/editor URLs that match your product surface. If
+you need to test an editor-facing plugin instead of a theme, add a second mount
+under `/wordpress/wp-content/plugins/<plugin-slug>` and activate it from the
+seed step before emitting URLs.
+
 ### `seeded-content.json`
 
 Boots a Playground with Twenty Twenty-Five active, mounts your plugin under
