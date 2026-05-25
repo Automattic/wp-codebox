@@ -65,6 +65,10 @@ plane adapter, and persists this external record shape:
     "patch_sha256": "...",
     "approved_files": ["/wordpress/wp-content/plugins/example/generated.txt"]
   },
+  "approval": {
+    "approver": "site-user:1",
+    "approved_at": "2026-05-25T00:00:00.000Z"
+  },
   "target": {
     "repo": "example/example-plugin",
     "branch": "codebox/apply-generated-file",
@@ -73,10 +77,12 @@ plane adapter, and persists this external record shape:
   },
   "result": {
     "status": "pr-opened",
-    "pr_url": "https://github.com/example/example-plugin/pull/123"
+    "pr_url": "https://github.com/example/example-plugin/pull/123",
+    "author": "wp-codebox-bot"
   }
 }
 ```
 
-The smoke asserts that the external record includes adapter metadata, PR URL,
-branch, commit, and artifact digest while excluding the raw patch body.
+The smoke asserts that the external record includes adapter metadata, explicit
+owner approval metadata, bot-authored PR metadata, branch, commit, and artifact
+digest while excluding the raw patch body.

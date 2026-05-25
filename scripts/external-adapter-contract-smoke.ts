@@ -52,6 +52,10 @@ interface ExternalApplyRecord {
     patch_sha256: string
     approved_files: string[]
   }
+  approval: {
+    approver: string
+    approved_at: string
+  }
   target: {
     repo: string
     branch: string
@@ -61,6 +65,7 @@ interface ExternalApplyRecord {
   result: {
     status: "pr-opened"
     pr_url: string
+    author: string
   }
 }
 
@@ -109,6 +114,10 @@ function externalParentControlPlaneApply(payload: ArtifactBundlePayload): Extern
       patch_sha256: payload.patch_sha256,
       approved_files: payload.approved_files,
     },
+    approval: {
+      approver: "site-user:1",
+      approved_at: "2026-05-25T00:00:00.000Z",
+    },
     target: {
       repo,
       branch,
@@ -118,6 +127,7 @@ function externalParentControlPlaneApply(payload: ArtifactBundlePayload): Extern
     result: {
       status: "pr-opened",
       pr_url: "https://github.com/example/example-plugin/pull/123",
+      author: "wp-codebox-bot",
     },
   }
 }
@@ -185,7 +195,9 @@ try {
 
   const persisted = JSON.parse(await readFile(recordPath, "utf8")) as ExternalApplyRecord
   assert.equal(persisted.adapter.name, "fixture-parent-control-plane")
+  assert.equal(persisted.approval.approver, "site-user:1")
   assert.equal(persisted.result.pr_url, "https://github.com/example/example-plugin/pull/123")
+  assert.equal(persisted.result.author, "wp-codebox-bot")
   assert.equal(persisted.target.branch, "codebox/apply-generated-file")
   assert.equal(persisted.target.commit, "abc1234")
   assert.equal(persisted.artifact.content_digest, digest)
