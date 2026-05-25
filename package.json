@@ -39,6 +39,7 @@
     "core-phpunit-command-smoke": "tsx scripts/core-phpunit-command-smoke.ts",
     "phpunit-diagnostic-artifact-smoke": "tsx scripts/phpunit-diagnostic-artifact-smoke.ts",
     "recipe-bench-smoke": "tsx scripts/recipe-bench-smoke.ts",
+    "recipe-browser-smoke": "tsx scripts/recipe-browser-smoke.ts",
     "preview-port-smoke": "tsx scripts/preview-port-smoke.ts",
     "preview-response-body-smoke": "tsx scripts/preview-response-body-smoke.ts",
     "discovery-command-smoke": "tsx scripts/discovery-command-smoke.ts",
@@ -52,6 +53,7 @@
   ],
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "playwright": "^1.60.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
   },
