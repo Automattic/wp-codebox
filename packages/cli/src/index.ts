@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { promisify } from "node:util"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
@@ -191,6 +191,7 @@ interface RecipeDryRunPlan {
   mounts: RecipeDryRunMount[]
   workspaces: RecipeDryRunWorkspace[]
   extra_plugins: RecipeDryRunExtraPlugin[]
+  siteSeeds: RecipeDryRunSiteSeed[]
   secretEnv: Array<{ name: string; available: boolean }>
   policy: RuntimePolicy & {
     valid: boolean
@@ -230,6 +231,23 @@ interface RecipeDryRunExtraPlugin {
   pluginFile: string
   activate: boolean
   provenance: RecipeSourceProvenance
+}
+
+interface RecipeDryRunSiteSeed {
+  index: number
+  type: WorkspaceRecipeSiteSeed["type"]
+  name: string
+  source?: string
+  format?: WorkspaceRecipeSiteSeed["format"]
+  scopes: WorkspaceRecipeSiteSeed["scopes"]
+  bounded: boolean
+  dryRunOnly: true
+  privacy: {
+    exportsParentSiteData: false
+    importsIntoSandbox: false
+    includesRecordData: false
+    secrets: "excluded-by-default"
+  }
 }
 
 interface RecipeDryRunStep {
@@ -537,6 +555,11 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
           type: "array",
           items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
         },
+        siteSeeds: {
+          type: "array",
+          description: "Explicit site/content seed declarations. The v1 CLI only validates and reports these in dry-run plans; it does not export parent-site data or import seed data into the sandbox.",
+          items: { $ref: "#/$defs/siteSeed" },
+        },
         inherit: { $ref: "#/$defs/inheritanceRequest" },
         inheritance: { $ref: "#/$defs/inheritanceResolution" },
       },
@@ -613,6 +636,46 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         activate: { type: "boolean" },
       },
     },
+    siteSeed: {
+      type: "object",
+      additionalProperties: false,
+      required: ["type", "name", "scopes"],
+      properties: {
+        type: { enum: ["fixture", "parent_site"] },
+        name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+        source: { type: "string", description: "Fixture file path. Not allowed for parent_site dry-run declarations." },
+        format: { enum: ["json", "wxr", "playground-blueprint"] },
+        scopes: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            posts: { $ref: "#/$defs/siteSeedScope" },
+            terms: { $ref: "#/$defs/siteSeedScope" },
+            options: { $ref: "#/$defs/siteSeedScope" },
+            users: { $ref: "#/$defs/siteSeedScope" },
+            media: { $ref: "#/$defs/siteSeedScope" },
+            activePlugins: { type: "boolean" },
+            activeTheme: { type: "boolean" },
+          },
+        },
+      },
+    },
+    siteSeedScope: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ids: { type: "array", items: { type: "integer", minimum: 1 }, maxItems: 100 },
+        slugs: { type: "array", items: { type: "string" }, maxItems: 100 },
+        names: { type: "array", items: { type: "string" }, maxItems: 100 },
+        postTypes: { type: "array", items: { type: "string" }, maxItems: 25 },
+        taxonomies: { type: "array", items: { type: "string" }, maxItems: 25 },
+        roles: { type: "array", items: { type: "string" }, maxItems: 25 },
+        statuses: { type: "array", items: { type: "string" }, maxItems: 25 },
+        includeFiles: { type: "boolean" },
+        anonymize: { type: "boolean" },
+        maxRecords: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
     step: {
       type: "object",
       additionalProperties: false,
@@ -651,6 +714,32 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         provider: { type: "string" },
         model: { type: "string" },
         secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+        credentials: { $ref: "#/$defs/connectorCredentialEnvelope" },
+      },
+    },
+    connectorCredentialEnvelope: {
+      type: "object",
+      additionalProperties: false,
+      required: ["schema", "connector", "scope", "status", "secrets"],
+      properties: {
+        schema: { const: "wp-codebox/connector-credentials/v1" },
+        connector: { type: "string" },
+        scope: { const: "connector" },
+        status: { enum: ["available", "missing", "denied"] },
+        reason: { type: "string" },
+        secrets: { type: "array", items: { $ref: "#/$defs/connectorCredentialSecret" } },
+      },
+    },
+    connectorCredentialSecret: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "status"],
+      properties: {
+        name: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+        status: { enum: ["available", "missing", "denied"] },
+        scope: { type: "string" },
+        source: { type: "string" },
+        reason: { type: "string" },
       },
     },
     inheritanceSetting: {
@@ -889,6 +978,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const policyValidation = validateRuntimePolicy(policy)
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)
+  const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const mounts: RecipeDryRunMount[] = [
     ...workspaces.map((workspace) => ({
       type: "directory" as const,
@@ -933,6 +1023,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
     mounts,
     workspaces,
     extra_plugins: extraPlugins,
+    siteSeeds,
     secretEnv: (recipe.inputs?.secretEnv ?? []).map((name) => ({
       name,
       available: process.env[name] !== undefined,
@@ -2173,6 +2264,33 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
     }
   }
 
+  const siteSeeds = recipe.inputs?.siteSeeds ?? []
+  if (!Array.isArray(siteSeeds)) {
+    throw new Error(`Recipe siteSeeds must be an array: ${recipePath}`)
+  }
+
+  for (const siteSeed of siteSeeds) {
+    if (!siteSeed || typeof siteSeed !== "object") {
+      throw new Error(`Recipe siteSeeds entries must be objects: ${recipePath}`)
+    }
+
+    if (siteSeed.type !== "fixture" && siteSeed.type !== "parent_site") {
+      throw new Error(`Recipe siteSeeds type is unsupported: ${recipePath}`)
+    }
+
+    if (!siteSeed.name || typeof siteSeed.name !== "string") {
+      throw new Error(`Recipe siteSeeds entries must include name: ${recipePath}`)
+    }
+
+    if (siteSeed.type === "fixture" && !siteSeed.source) {
+      throw new Error(`Recipe fixture siteSeeds require source: ${recipePath}`)
+    }
+
+    if (!siteSeed.scopes || typeof siteSeed.scopes !== "object" || Array.isArray(siteSeed.scopes)) {
+      throw new Error(`Recipe siteSeeds entries must include scopes: ${recipePath}`)
+    }
+  }
+
   return recipe
 }
 
@@ -2258,7 +2376,70 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
     }
   }
 
+  for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
+    await validateRecipeSiteSeed(siteSeed, recipeDirectory, `$.inputs.siteSeeds[${index}]`, addIssue)
+  }
+
   return issues
+}
+
+async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeDirectory: string, path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(siteSeed.name)) {
+    addIssue("invalid-site-seed-name", `${path}.name`, `Site seed names must be stable identifiers: ${siteSeed.name}`)
+  }
+
+  if (siteSeed.type === "fixture") {
+    await validateExistingFile(resolve(recipeDirectory, siteSeed.source ?? ""), `${path}.source`, addIssue)
+  }
+
+  if (siteSeed.type === "parent_site" && siteSeed.source) {
+    addIssue("invalid-site-seed-source", `${path}.source`, "Parent-site seed declarations must not name a source file in this dry-run-only slice.")
+  }
+
+  const scopeEntries = Object.entries(siteSeed.scopes).filter(([, value]) => value !== undefined && value !== false)
+  if (scopeEntries.length === 0) {
+    addIssue("missing-site-seed-scopes", `${path}.scopes`, "Site seed declarations must opt in to at least one bounded scope.")
+  }
+
+  for (const [scopeName, scope] of scopeEntries) {
+    if (scope === true) {
+      continue
+    }
+
+    if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+      addIssue("invalid-site-seed-scope", `${path}.scopes.${scopeName}`, "Site seed scopes must be objects or explicit true flags where supported.")
+      continue
+    }
+
+    validateSiteSeedScopeBounds(scope as NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>, `${path}.scopes.${scopeName}`, scopeName, siteSeed.type, addIssue)
+  }
+}
+
+function validateSiteSeedScopeBounds(scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>, path: string, scopeName: string, seedType: WorkspaceRecipeSiteSeed["type"], addIssue: (code: string, path: string, message: string) => void): void {
+  const maxRecords = scope.maxRecords
+  if (maxRecords !== undefined && (!Number.isInteger(maxRecords) || maxRecords < 1 || maxRecords > 100)) {
+    addIssue("invalid-site-seed-bound", `${path}.maxRecords`, "Site seed maxRecords must be an integer from 1 through 100.")
+  }
+
+  if (seedType === "parent_site" && maxRecords === undefined && !hasExplicitSiteSeedSelectors(scope)) {
+    addIssue("unbounded-site-seed-scope", path, "Parent-site scopes require maxRecords or explicit ids/slugs/names selectors before any future export can run.")
+  }
+
+  if (scopeName === "options" && (!scope.names || scope.names.length === 0)) {
+    addIssue("unbounded-site-seed-options", `${path}.names`, "Option seed scopes must name explicit option keys; wildcard option export is not supported.")
+  }
+
+  if (scopeName === "users" && scope.anonymize === false) {
+    addIssue("unsafe-site-seed-users", `${path}.anonymize`, "User seed scopes must keep anonymization enabled unless a future importer explicitly supports reviewed identities.")
+  }
+
+  if (scopeName === "media" && scope.includeFiles === true && seedType === "parent_site") {
+    addIssue("unsafe-site-seed-media-files", `${path}.includeFiles`, "Parent-site media file copying is outside this dry-run-only slice; declare metadata selectors without includeFiles.")
+  }
+}
+
+function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>): boolean {
+  return [scope.ids, scope.slugs, scope.names].some((values) => Array.isArray(values) && values.length > 0)
 }
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
@@ -2471,6 +2652,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        siteSeeds: recipe.inputs?.siteSeeds ?? [],
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2489,6 +2671,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        siteSeeds: recipe.inputs?.siteSeeds ?? [],
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2547,6 +2730,51 @@ function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: stri
       provenance,
     }
   })
+}
+
+function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunSiteSeed[] {
+  return (recipe.inputs?.siteSeeds ?? []).map((siteSeed, index) => ({
+    index,
+    type: siteSeed.type,
+    name: siteSeed.name,
+    ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
+    ...(siteSeed.format ? { format: siteSeed.format } : {}),
+    scopes: siteSeed.scopes,
+    bounded: siteSeedScopesAreBounded(siteSeed),
+    dryRunOnly: true,
+    privacy: {
+      exportsParentSiteData: false,
+      importsIntoSandbox: false,
+      includesRecordData: false,
+      secrets: "excluded-by-default",
+    },
+  }))
+}
+
+function siteSeedScopesAreBounded(siteSeed: WorkspaceRecipeSiteSeed): boolean {
+  for (const [scopeName, scope] of Object.entries(siteSeed.scopes)) {
+    if (!scope || scope === true) {
+      continue
+    }
+
+    if (scopeName === "options" && (!scope.names || scope.names.length === 0)) {
+      return false
+    }
+
+    if (siteSeed.type === "parent_site" && scope.maxRecords === undefined && !hasExplicitSiteSeedSelectors(scope)) {
+      return false
+    }
+
+    if (scopeName === "users" && scope.anonymize === false) {
+      return false
+    }
+
+    if (scopeName === "media" && scope.includeFiles === true && siteSeed.type === "parent_site") {
+      return false
+    }
+  }
+
+  return Object.values(siteSeed.scopes).some((scope) => scope !== undefined && scope !== false)
 }
 
 async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedWorkspaceMount[]> {

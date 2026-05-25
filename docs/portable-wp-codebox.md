@@ -44,7 +44,32 @@ The v0 policy is intentionally small and backend-agnostic. Core validation prove
 | `commands` | Yes. Backends can call `assertRuntimeCommandAllowed()` before execution. Disallowed commands raise `RuntimeCommandPolicyViolationError` with structured `toJSON()` output for artifacts. | The complete command allow-list requested by the control plane. |
 | `network` | Shape only. `allow`, `deny`, and host allow-lists are validated. | The network boundary that a real runtime backend must enforce. |
 | `filesystem` | Shape only. Mount and write behavior still belongs to backend implementations. | The intended filesystem boundary for sandbox-local writes and mounted inputs. |
-| `secrets` | Shape only. No secret injection is implemented in the runtime stub. | Whether future control planes may inject no secrets or connector-scoped secrets. |
+| `secrets` | Connector-scoped names can be declared and redacted from artifacts. Secret values stay in parent environment variables and are not accepted in recipe, args, logs, or artifacts. | Whether a control plane may inject no secrets or connector-scoped secrets. |
 | `approvals` | Shape only. No approval UI is implemented in the runtime stub. | The approval posture expected by a product surface before writes or commands. |
 
 This keeps the v0 contract honest: `commands` are actively denied by the stub, while the remaining fields are explicit declarations that can be carried into artifacts and enforced as backends become real.
+
+## Connector-Scoped Credential Envelope
+
+Parent sites resolve connector credentials through an explicit envelope. The envelope is provenance, not transport: it names the connector scope and sandbox environment variable names, but never includes secret values.
+
+```json
+{
+  "schema": "wp-codebox/connector-credentials/v1",
+  "connector": "primary-ai",
+  "scope": "connector",
+  "status": "available",
+  "secrets": [
+    {
+      "name": "OPENAI_API_KEY",
+      "status": "available",
+      "scope": "primary-ai",
+      "source": "parent-env"
+    }
+  ]
+}
+```
+
+Status values are `available`, `missing`, or `denied`. A parent WordPress runner fails closed before launching the sandbox when any requested connector credential envelope or secret reports `missing` or `denied`, returning `wp-codebox/connector-credential-failure/v1` with the same redacted connector/secret names and reasons.
+
+Successful runs carry the sanitized envelope through `inputs.inheritance.connectors[].credentials` and artifact provenance. Artifact redaction treats configured secret names and values as redactable, so provenance, logs, patches, mounted files, and review metadata expose only names/status/source/scope.

@@ -96,6 +96,7 @@ $assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['in
 $assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
 $assert( 'ability exposes generic mounts schema', 'array' === ( $ability['input_schema']['properties']['mounts']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['mounts']['items']['properties']['metadata']['type'] ?? '' ) );
 $assert( 'ability exposes inheritance request schema', 'object' === ( $ability['input_schema']['properties']['inherit']['type'] ?? '' ) && 'array' === ( $ability['input_schema']['properties']['inherit']['properties']['connectors']['type'] ?? '' ) );
+$assert( 'ability exposes connector credential envelope schema', 'object' === ( $ability['input_schema']['properties']['inherit']['properties']['credentials']['type'] ?? '' ) && 'array' === ( $ability['input_schema']['properties']['inherit']['properties']['credentials']['properties']['secrets']['type'] ?? '' ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -203,6 +204,20 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( ar
 			'provider'   => 'openai',
 			'model'      => 'gpt-5.5',
 			'secret_env' => array( 'OPENAI_API_KEY' ),
+			'credentials' => array(
+				'schema'    => 'wp-codebox/connector-credentials/v1',
+				'connector' => $request['connectors'][0] ?? 'primary-ai',
+				'scope'     => 'connector',
+				'status'    => 'available',
+				'secrets'   => array(
+					array(
+						'name'   => 'OPENAI_API_KEY',
+						'status' => 'available',
+						'scope'  => 'primary-ai',
+						'source' => 'parent-env',
+					),
+				),
+			),
 			'value'      => 'sk-test-secret-value',
 			'token'      => 'sk-test-secret-value',
 		),
@@ -234,8 +249,79 @@ $inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
 $assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
 $assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
 $assert( 'runner transports inherited secret env name only', ! is_wp_error( $inherit_result ) && in_array( 'OPENAI_API_KEY', $inherit_recipe['inputs']['secretEnv'] ?? array(), true ) && ! str_contains( $captured_recipe, 'OPENAI_API_KEY=' ) );
+$assert( 'runner records connector credential provenance without value', ! is_wp_error( $inherit_result ) && 'wp-codebox/connector-credentials/v1' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) );
 $assert( 'runner records sanitized inheritance status', ! is_wp_error( $inherit_result ) && 'primary-ai' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['name'] ?? '' ) && 'resolved' === ( $inherit_recipe['inputs']['inheritance']['settings'][0]['status'] ?? '' ) );
 $assert( 'runner drops inherited secret values from recipe', ! str_contains( $captured_recipe, 'sk-test-secret-value' ) && ! str_contains( $captured_recipe, 'token' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'        => $request['connectors'][0] ?? 'primary-ai',
+			'status'      => 'resolved',
+			'provider'    => 'openai',
+			'model'       => 'gpt-5.5',
+			'credentials' => array(
+				'schema'    => 'wp-codebox/connector-credentials/v1',
+				'connector' => $request['connectors'][0] ?? 'primary-ai',
+				'scope'     => 'connector',
+				'status'    => 'denied',
+				'reason'    => 'scope not approved',
+				'secrets'   => array(
+					array(
+						'name'   => 'OPENAI_API_KEY',
+						'status' => 'denied',
+						'scope'  => 'primary-ai',
+						'source' => 'connector',
+						'reason' => 'scope not approved',
+					),
+				),
+			),
+		),
+	);
+
+	return $resolution;
+};
+
+$denied_credentials = $runner->run(
+	array(
+		'goal'           => 'Use denied connector credentials.',
+		'artifacts_path' => $root . '/artifacts',
+		'inherit'        => array( 'connectors' => array( 'primary-ai' ) ),
+	)
+);
+$assert( 'denied connector credential scope fails closed', is_wp_error( $denied_credentials ) && 'wp_codebox_connector_credentials_unavailable' === $denied_credentials->get_error_code() );
+$assert( 'denied connector credential failure is observable and redacted', is_wp_error( $denied_credentials ) && 'wp-codebox/connector-credential-failure/v1' === ( $denied_credentials->get_error_data()['schema'] ?? '' ) && ! str_contains( json_encode( $denied_credentials->get_error_data() ), 'sk-test-secret-value' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'        => $request['connectors'][0] ?? 'primary-ai',
+			'status'      => 'resolved',
+			'provider'    => 'openai',
+			'model'       => 'gpt-5.5',
+			'credentials' => array(
+				'schema'    => 'wp-codebox/connector-credentials/v1',
+				'connector' => $request['connectors'][0] ?? 'primary-ai',
+				'scope'     => 'connector',
+				'status'    => 'missing',
+				'secrets'   => array(
+					array( 'name' => 'OPENAI_API_KEY', 'status' => 'missing', 'scope' => 'primary-ai', 'source' => 'parent-env' ),
+				),
+			),
+		),
+	);
+
+	return $resolution;
+};
+
+$missing_credentials = $runner->run(
+	array(
+		'goal'           => 'Use missing connector credentials.',
+		'artifacts_path' => $root . '/artifacts',
+		'inherit'        => array( 'connectors' => array( 'primary-ai' ) ),
+	)
+);
+$assert( 'missing connector credential scope fails closed', is_wp_error( $missing_credentials ) && 'wp_codebox_connector_credentials_unavailable' === $missing_credentials->get_error_code() );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';

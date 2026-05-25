@@ -46,6 +46,10 @@ descriptions, accepted args, known output shape, and policy requirements.
 - `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
 - `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.
 
+Recipes may declare `inputs.siteSeeds` for explicit content/site seed planning. This first slice is dry-run-only: WP Codebox validates bounded fixture or parent-site seed declarations and reports them under `plan.siteSeeds`, but it does not export data from a parent WordPress site and does not import seed records into Playground during normal `recipe-run` execution.
+
+Parent-site-derived declarations must stay minimized: each scope needs explicit selectors or `maxRecords`, option scopes must name exact option keys, user scopes must stay anonymized, and parent-site media file copying is rejected. Dry-run output reports only names, selectors, bounds, fixture paths, and privacy flags; it does not include record bodies, option values, user emails, secrets, uploads, or database rows.
+
 ## Interactive Boot
 
 - `wp-codebox boot [--mount <host>:<vfs>] --hold <duration> [--json]` boots Playground, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold`, then tears down and collects artifacts without creating a workflow command.

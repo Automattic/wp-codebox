@@ -36,6 +36,33 @@
           "editable": true
         }
       }
+    ],
+    "siteSeeds": [
+      {
+        "type": "parent_site",
+        "name": "bounded-editorial-shape",
+        "scopes": {
+          "posts": {
+            "postTypes": ["page", "post"],
+            "maxRecords": 10
+          },
+          "terms": {
+            "taxonomies": ["category", "post_tag"],
+            "maxRecords": 10
+          },
+          "options": {
+            "names": ["blogname", "show_on_front", "page_on_front", "page_for_posts"],
+            "maxRecords": 4
+          },
+          "users": {
+            "roles": ["administrator", "editor", "author"],
+            "maxRecords": 3,
+            "anonymize": true
+          },
+          "activePlugins": true,
+          "activeTheme": true
+        }
+      }
     ]
   },
   "workflow": {

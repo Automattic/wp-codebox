@@ -165,6 +165,38 @@ export interface WorkspaceRecipeExtraPlugin {
   activate?: boolean
 }
 
+export type WorkspaceRecipeSiteSeedType = "fixture" | "parent_site"
+export type WorkspaceRecipeSiteSeedFormat = "json" | "wxr" | "playground-blueprint"
+
+export interface WorkspaceRecipeSiteSeedScopeSelector {
+  ids?: number[]
+  slugs?: string[]
+  names?: string[]
+  postTypes?: string[]
+  taxonomies?: string[]
+  roles?: string[]
+  statuses?: string[]
+  includeFiles?: boolean
+  anonymize?: boolean
+  maxRecords?: number
+}
+
+export interface WorkspaceRecipeSiteSeed {
+  type: WorkspaceRecipeSiteSeedType
+  name: string
+  source?: string
+  format?: WorkspaceRecipeSiteSeedFormat
+  scopes: {
+    posts?: WorkspaceRecipeSiteSeedScopeSelector
+    terms?: WorkspaceRecipeSiteSeedScopeSelector
+    options?: WorkspaceRecipeSiteSeedScopeSelector
+    users?: WorkspaceRecipeSiteSeedScopeSelector
+    media?: WorkspaceRecipeSiteSeedScopeSelector
+    activePlugins?: boolean
+    activeTheme?: boolean
+  }
+}
+
 export type WorkspaceRecipeSeedType = "plugin_scaffold" | "theme_scaffold" | "directory"
 
 export interface WorkspaceRecipeWorkspaceSeed {
@@ -219,6 +251,7 @@ export interface WorkspaceRecipe {
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
+    siteSeeds?: WorkspaceRecipeSiteSeed[]
     inherit?: WorkspaceRecipeInheritanceRequest
     inheritance?: WorkspaceRecipeInheritanceResolution
   }
@@ -241,6 +274,26 @@ export interface WorkspaceRecipeInheritanceConnector {
   provider?: string
   model?: string
   secretEnv?: string[]
+  credentials?: ConnectorCredentialEnvelope
+}
+
+export type ConnectorCredentialStatus = "available" | "missing" | "denied"
+
+export interface ConnectorCredentialSecret {
+  name: string
+  status: ConnectorCredentialStatus
+  scope?: string
+  source?: "parent-env" | "connector" | (string & {})
+  reason?: string
+}
+
+export interface ConnectorCredentialEnvelope {
+  schema: "wp-codebox/connector-credentials/v1"
+  connector: string
+  scope: "connector"
+  status: ConnectorCredentialStatus
+  secrets: ConnectorCredentialSecret[]
+  reason?: string
 }
 
 export interface WorkspaceRecipeInheritanceSetting {

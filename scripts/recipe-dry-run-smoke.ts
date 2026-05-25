@@ -11,10 +11,13 @@ const recipePath = resolve(workspace, "recipe.json")
 const invalidRecipePath = resolve(workspace, "invalid-recipe.json")
 const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
+const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
+const fixtureSeedPath = resolve(workspace, "fixture-seed.json")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
 const multisiteCookbookRecipePath = resolve(root, "examples/recipes/cookbook/multisite-network.json")
 
 mkdirSync(workspace, { recursive: true })
+writeFileSync(fixtureSeedPath, `${JSON.stringify({ posts: [{ slug: "fixture-page" }] }, null, 2)}\n`)
 writeFileSync(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   runtime: {
@@ -41,6 +44,28 @@ writeFileSync(recipePath, `${JSON.stringify({
         pluginFile: "simple-plugin/simple-plugin.php",
       },
     ],
+    siteSeeds: [
+      {
+        type: "fixture",
+        name: "fixture-editorial-shape",
+        source: "./fixture-seed.json",
+        format: "json",
+        scopes: {
+          posts: { slugs: ["fixture-page"], maxRecords: 1 },
+        },
+      },
+      {
+        type: "parent_site",
+        name: "bounded-parent-shape",
+        scopes: {
+          posts: { postTypes: ["page"], slugs: ["sample-page"], maxRecords: 1 },
+          options: { names: ["blogname"], maxRecords: 1 },
+          users: { roles: ["administrator"], maxRecords: 1, anonymize: true },
+          activePlugins: true,
+          activeTheme: true,
+        },
+      },
+    ],
   },
   workflow: {
     steps: [
@@ -63,6 +88,29 @@ writeFileSync(invalidRecipePath, `${JSON.stringify({
       {
         command: "wordpress.run-php",
         args: [],
+      },
+    ],
+  },
+}, null, 2)}\n`)
+
+writeFileSync(invalidSiteSeedRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    siteSeeds: [
+      {
+        type: "parent_site",
+        name: "unsafe-parent-users",
+        scopes: {
+          users: { roles: ["administrator"], anonymize: false },
+        },
+      },
+    ],
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=echo 'invalid seed';"],
       },
     ],
   },
@@ -130,6 +178,13 @@ assert.equal(output.plan.workspaces[0].sourceMode, "site-backed")
 assert.equal(output.plan.workspaces[0].metadata.workspaceRoot, "/workspace")
 assert.equal(output.plan.workspaces[0].metadata.sourceMode, "site-backed")
 assert.equal(output.plan.extra_plugins[0].target, "/wordpress/wp-content/plugins/simple-plugin")
+assert.equal(output.plan.siteSeeds.length, 2)
+assert.equal(output.plan.siteSeeds[0].source, fixtureSeedPath)
+assert.equal(output.plan.siteSeeds[0].privacy.includesRecordData, false)
+assert.equal(output.plan.siteSeeds[1].type, "parent_site")
+assert.equal(output.plan.siteSeeds[1].bounded, true)
+assert.equal(output.plan.siteSeeds[1].privacy.exportsParentSiteData, false)
+assert.equal(output.plan.siteSeeds[1].privacy.importsIntoSandbox, false)
 assert.equal(output.plan.secretEnv[0].name, "DRY_RUN_TOKEN")
 assert.equal(Object.prototype.hasOwnProperty.call(output.plan.secretEnv[0], "value"), false)
 assert.equal(output.plan.secretEnv[0].available, true)
@@ -158,6 +213,20 @@ const invalidOutput = JSON.parse(invalidResult.stdout)
 assert.equal(invalidOutput.success, false)
 assert.equal(invalidOutput.valid, false)
 assert.equal(invalidOutput.validation.issues[0].code, "missing-code")
+
+const invalidSiteSeedResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  invalidSiteSeedRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8" })
+
+assert.equal(invalidSiteSeedResult.status, 1, invalidSiteSeedResult.stderr || invalidSiteSeedResult.stdout)
+const invalidSiteSeedOutput = JSON.parse(invalidSiteSeedResult.stdout)
+assert.equal(invalidSiteSeedOutput.success, false)
+assert.equal(invalidSiteSeedOutput.validation.issues.some((issue: { code: string }) => issue.code === "unsafe-site-seed-users"), true)
 
 const externalResult = spawnSync(process.execPath, [
   cli,

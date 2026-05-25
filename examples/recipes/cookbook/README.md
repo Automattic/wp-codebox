@@ -10,6 +10,19 @@ mounts a target plugin or theme, seeds a realistic host context via Playground
 blueprint steps, and is intended to be paired with `--preview-hold` for visual
 smoke testing.
 
+## Site seed planning boundary
+
+Recipe authors can use `inputs.siteSeeds` to describe fixture or parent-site
+content shapes for dry-run review, but the current cookbook recipes still seed
+runtime content through explicit fixture scripts. WP Codebox does not snapshot a
+parent site, read private production rows, copy uploads, or import site seed
+records from `inputs.siteSeeds` in this slice.
+
+Treat parent-site seed declarations as a reviewable manifest only: opt in to
+bounded scopes, name exact option keys, keep user data anonymized, and keep
+secrets, credentials, private post bodies, raw option values, and upload files
+out of recipe files and dry-run evidence.
+
 ## Available recipes
 
 ### `multisite-network.json`

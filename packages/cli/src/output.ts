@@ -22,6 +22,7 @@ interface RecipeRunOutputLike extends RunOutputLike {
     mounts?: unknown[]
     workspaces?: unknown[]
     extra_plugins?: unknown[]
+    siteSeeds?: unknown[]
   }
   validation?: {
     issues?: Array<{ code: string; path: string; message: string }>
@@ -159,6 +160,7 @@ export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
     console.log(`Mounts: ${output.plan?.mounts?.length ?? 0}`)
     console.log(`Workspaces: ${output.plan?.workspaces?.length ?? 0}`)
     console.log(`Extra plugins: ${output.plan?.extra_plugins?.length ?? 0}`)
+    console.log(`Site seeds: ${output.plan?.siteSeeds?.length ?? 0}`)
     return
   }
 
