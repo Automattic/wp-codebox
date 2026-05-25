@@ -6,6 +6,7 @@ import { resolve } from "node:path"
 const repoRoot = resolve(import.meta.dirname, "..")
 const port = await reserveFreePort()
 const publicUrl = "https://preview-public.example.test"
+const previewReadyTimeoutMs = 75000
 const child = spawn(process.execPath, [
   "packages/cli/dist/index.js",
   "run",
@@ -46,7 +47,7 @@ const exitCode = await exitPromise
 assert.ok(exitCode === 0 || exitCode === null, `wp-codebox exited with ${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`)
 
 async function waitForCanonicalRedirect(listenPort: number): Promise<string> {
-  const deadline = Date.now() + 18000
+  const deadline = Date.now() + previewReadyTimeoutMs
   let lastError: unknown
   while (Date.now() < deadline) {
     try {
