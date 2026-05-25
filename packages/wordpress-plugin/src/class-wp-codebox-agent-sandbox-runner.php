@@ -459,10 +459,115 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				$entry['secretEnv'] = array_values( array_unique( $secret_env ) );
 			}
 
+			$credentials = $this->sanitize_connector_credentials( $connector['credentials'] ?? null, $name );
+			if ( ! empty( $credentials ) ) {
+				$entry['credentials'] = $credentials;
+			}
+
 			$sanitized[] = $entry;
 		}
 
 		return $sanitized;
+	}
+
+	/** @return array<string,mixed> */
+	private function sanitize_connector_credentials( mixed $credentials, string $connector_name ): array {
+		if ( ! is_array( $credentials ) ) {
+			return array();
+		}
+
+		$status = $this->credential_status( (string) ( $credentials['status'] ?? 'missing' ) );
+		$entry  = array(
+			'schema'    => 'wp-codebox/connector-credentials/v1',
+			'connector' => $connector_name,
+			'scope'     => 'connector',
+			'status'    => $status,
+			'secrets'   => array(),
+		);
+
+		$reason = $this->redacted_reason( $credentials['reason'] ?? '' );
+		if ( '' !== $reason ) {
+			$entry['reason'] = $reason;
+		}
+
+		foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
+			if ( ! is_array( $secret ) ) {
+				continue;
+			}
+
+			$name = trim( (string) ( $secret['name'] ?? '' ) );
+			if ( 1 !== preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+				continue;
+			}
+
+			$secret_entry = array(
+				'name'   => $name,
+				'status' => $this->credential_status( (string) ( $secret['status'] ?? $status ) ),
+			);
+
+			foreach ( array( 'scope', 'source', 'reason' ) as $field ) {
+				$value = 'reason' === $field ? $this->redacted_reason( $secret[ $field ] ?? '' ) : trim( (string) ( $secret[ $field ] ?? '' ) );
+				if ( '' !== $value ) {
+					$secret_entry[ $field ] = $value;
+				}
+			}
+
+			$entry['secrets'][] = $secret_entry;
+		}
+
+		return $entry;
+	}
+
+	private function credential_status( string $status ): string {
+		return in_array( $status, array( 'available', 'missing', 'denied' ), true ) ? $status : 'missing';
+	}
+
+	private function redacted_reason( mixed $reason ): string {
+		$reason = trim( (string) $reason );
+		if ( '' === $reason ) {
+			return '';
+		}
+
+		return substr( preg_replace( '/[^A-Za-z0-9 .:_-]/', '', $reason ) ?? '', 0, 160 );
+	}
+
+	/** @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance */
+	private function connector_credentials_error( array $inheritance ): WP_Error|null {
+		$failures = array();
+		foreach ( $inheritance['connectors'] as $connector ) {
+			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
+			if ( empty( $credentials ) ) {
+				continue;
+			}
+
+			$status = (string) ( $credentials['status'] ?? 'missing' );
+			$secrets = array_filter(
+				is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array(),
+				static fn( mixed $secret ): bool => is_array( $secret ) && in_array( (string) ( $secret['status'] ?? '' ), array( 'missing', 'denied' ), true )
+			);
+
+			if ( in_array( $status, array( 'missing', 'denied' ), true ) || ! empty( $secrets ) ) {
+				$failures[] = array(
+					'name'        => (string) ( $connector['name'] ?? '' ),
+					'status'      => (string) ( $connector['status'] ?? '' ),
+					'credentials' => $credentials,
+				);
+			}
+		}
+
+		if ( empty( $failures ) ) {
+			return null;
+		}
+
+		return new WP_Error(
+			'wp_codebox_connector_credentials_unavailable',
+			'Requested connector credentials are missing or denied for this sandbox scope.',
+			array(
+				'status'     => 403,
+				'schema'     => 'wp-codebox/connector-credential-failure/v1',
+				'connectors' => $failures,
+			)
+		);
 	}
 
 	/** @param array<int,mixed> $settings Inheritance setting rows. @return array<int,array<string,mixed>> */
@@ -524,6 +629,13 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
 			if ( is_array( $connector['secretEnv'] ?? null ) ) {
 				$names = array_merge( $names, $connector['secretEnv'] );
+			}
+
+			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
+			foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
+				if ( is_array( $secret ) && 'available' === ( $secret['status'] ?? '' ) ) {
+					$names[] = (string) ( $secret['name'] ?? '' );
+				}
 			}
 		}
 
@@ -721,6 +833,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 */
 	private function write_agent_recipe( array $paths, array $input, array $task_prompts, string $wp_version ): string|WP_Error {
 		$inheritance = $this->inheritance_resolution( $input );
+		$credential_error = $this->connector_credentials_error( $inheritance );
+		if ( null !== $credential_error ) {
+			return $credential_error;
+		}
+
 		$provider_plugins = array_map(
 			fn( string $path ): array => array(
 				'source'   => $path,

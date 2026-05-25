@@ -88,7 +88,7 @@ final class WP_Codebox_Abilities {
 							'inherit'                => $inherit_schema,
 							'secret_env'             => array(
 								'type'        => 'array',
-								'description' => 'Parent environment variable names to expose inside the sandbox. Pass names such as GITHUB_TOKEN; values are read from the parent process and are not accepted in this payload.',
+								'description' => 'Explicit parent environment variable names to expose inside the sandbox. Prefer connector-scoped inheritance credentials for product flows. Values are read from the parent process and are not accepted in this payload.',
 								'items'       => array( 'type' => 'string' ),
 							),
 							'session_id'             => array(
@@ -380,9 +380,36 @@ final class WP_Codebox_Abilities {
 
 	/** @return array<string,mixed> */
 	private static function inherit_schema(): array {
+		$credential_secret_schema = array(
+			'type'       => 'object',
+			'required'   => array( 'name', 'status' ),
+			'properties' => array(
+				'name'   => array(
+					'type'        => 'string',
+					'description' => 'Sandbox environment variable name. Secret values are never transported.',
+				),
+				'status' => array(
+					'type' => 'string',
+					'enum' => array( 'available', 'missing', 'denied' ),
+				),
+				'scope'  => array(
+					'type'        => 'string',
+					'description' => 'Parent-side connector scope that authorized this secret name.',
+				),
+				'source' => array(
+					'type'        => 'string',
+					'description' => 'Redacted source label, such as parent-env or connector.',
+				),
+				'reason' => array(
+					'type'        => 'string',
+					'description' => 'Redacted missing/denied reason for audit surfaces.',
+				),
+			),
+		);
+
 		return array(
 			'type'        => 'object',
-			'description' => 'Declarative request for parent-environment connector or setting inheritance. Parent filters resolve names into a sanitized sandbox payload; secret values are never accepted here.',
+			'description' => 'Declarative request for parent-environment connector or setting inheritance. Parent filters resolve names into a sanitized sandbox payload with explicit connector-scoped credential envelopes; secret values are never accepted here.',
 			'properties'  => array(
 				'connectors' => array(
 					'type'        => 'array',
@@ -393,6 +420,18 @@ final class WP_Codebox_Abilities {
 					'type'        => 'array',
 					'description' => 'Setting names the parent environment should resolve for artifact/audit metadata. Values are not transported in this slice.',
 					'items'       => array( 'type' => 'string' ),
+				),
+				'credentials' => array(
+					'type'        => 'object',
+					'description' => 'Observable credential envelope shape returned under inheritance.connectors[].credentials by parent filters. Values are not accepted.',
+					'properties'  => array(
+						'schema'    => array( 'type' => 'string' ),
+						'connector' => array( 'type' => 'string' ),
+						'scope'     => array( 'type' => 'string', 'enum' => array( 'connector' ) ),
+						'status'    => array( 'type' => 'string', 'enum' => array( 'available', 'missing', 'denied' ) ),
+						'reason'    => array( 'type' => 'string' ),
+						'secrets'   => array( 'type' => 'array', 'items' => $credential_secret_schema ),
+					),
 				),
 			),
 		);

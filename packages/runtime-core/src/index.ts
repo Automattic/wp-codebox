@@ -154,6 +154,26 @@ export interface WorkspaceRecipeInheritanceConnector {
   provider?: string
   model?: string
   secretEnv?: string[]
+  credentials?: ConnectorCredentialEnvelope
+}
+
+export type ConnectorCredentialStatus = "available" | "missing" | "denied"
+
+export interface ConnectorCredentialSecret {
+  name: string
+  status: ConnectorCredentialStatus
+  scope?: string
+  source?: "parent-env" | "connector" | (string & {})
+  reason?: string
+}
+
+export interface ConnectorCredentialEnvelope {
+  schema: "wp-codebox/connector-credentials/v1"
+  connector: string
+  scope: "connector"
+  status: ConnectorCredentialStatus
+  secrets: ConnectorCredentialSecret[]
+  reason?: string
 }
 
 export interface WorkspaceRecipeInheritanceSetting {

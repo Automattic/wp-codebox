@@ -649,6 +649,32 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         provider: { type: "string" },
         model: { type: "string" },
         secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+        credentials: { $ref: "#/$defs/connectorCredentialEnvelope" },
+      },
+    },
+    connectorCredentialEnvelope: {
+      type: "object",
+      additionalProperties: false,
+      required: ["schema", "connector", "scope", "status", "secrets"],
+      properties: {
+        schema: { const: "wp-codebox/connector-credentials/v1" },
+        connector: { type: "string" },
+        scope: { const: "connector" },
+        status: { enum: ["available", "missing", "denied"] },
+        reason: { type: "string" },
+        secrets: { type: "array", items: { $ref: "#/$defs/connectorCredentialSecret" } },
+      },
+    },
+    connectorCredentialSecret: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "status"],
+      properties: {
+        name: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
+        status: { enum: ["available", "missing", "denied"] },
+        scope: { type: "string" },
+        source: { type: "string" },
+        reason: { type: "string" },
       },
     },
     inheritanceSetting: {

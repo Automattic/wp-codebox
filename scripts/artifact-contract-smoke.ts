@@ -269,7 +269,29 @@ try {
       secretEnv: { [secretName]: secretValue },
       metadata: {
         runtime: { version: "0.0.0" },
-        task: { kind: "agent-sandbox-run", input: `Redact ${secretName}` },
+        task: {
+          kind: "agent-sandbox-run",
+          input: `Redact ${secretName}`,
+          inheritance: {
+            connectors: [
+              {
+                name: "primary-ai",
+                status: "resolved",
+                provider: "openai",
+                model: "gpt-5.5",
+                credentials: {
+                  schema: "wp-codebox/connector-credentials/v1",
+                  connector: "primary-ai",
+                  scope: "connector",
+                  status: "available",
+                  secrets: [
+                    { name: secretName, status: "available", scope: "primary-ai", source: "parent-env" },
+                  ],
+                },
+              },
+            ],
+          },
+        },
       },
     },
     createPlaygroundRuntimeBackend(),
@@ -309,6 +331,8 @@ try {
   assert.equal(redactionReview.redaction.status, "redacted")
   assert.ok(redactionReview.redaction.total >= 3)
   assert.ok(redactionReview.riskFlags.includes("secrets-redacted"))
+  assert.equal(redactionReview.provenance.task.inheritance.connectors[0].credentials.schema, "wp-codebox/connector-credentials/v1")
+  assert.equal(redactionReview.provenance.task.inheritance.connectors[0].credentials.status, "available")
   await redactionRuntime.destroy()
 
   console.log("Artifact contract smoke passed")
