@@ -30,6 +30,7 @@ writeFileSync(recipePath, `${JSON.stringify({
     secretEnv: ["DRY_RUN_TOKEN"],
     workspaces: [
       {
+        sourceMode: "site-backed",
         seed: {
           type: "plugin_scaffold",
           slug: "dry-run-plugin",
@@ -173,6 +174,9 @@ assert.equal(output.plan.runtime.backend, "wordpress-playground")
 assert.equal(output.plan.workspaces.length, 1)
 assert.equal(output.plan.workspaces[0].generated, true)
 assert.equal(output.plan.workspaces[0].source, undefined)
+assert.equal(output.plan.workspaces[0].sourceMode, "site-backed")
+assert.equal(output.plan.workspaces[0].metadata.workspaceRoot, "/workspace")
+assert.equal(output.plan.workspaces[0].metadata.sourceMode, "site-backed")
 assert.equal(output.plan.extra_plugins[0].target, "/wordpress/wp-content/plugins/simple-plugin")
 assert.equal(output.plan.siteSeeds.length, 2)
 assert.equal(output.plan.siteSeeds[0].source, fixtureSeedPath)

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT } from "@chubes4/wp-codebox-core"
 
 export interface AgentSandboxCodeOptions {
   task: string
@@ -43,6 +44,8 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       connector_id: "wp-codebox-cli",
       mode,
       agent_modes: [mode],
+      workspace_root: SANDBOX_WORKSPACE_ROOT,
+      tool_contract: sandboxToolContract(),
     },
   }
 
@@ -75,6 +78,14 @@ if (is_array($sandbox_model_settings) && !empty($sandbox_model_settings)) {
 add_filter('agents_chat_permission', static function () {
     return true;
 }, 100, 2);
+
+add_filter('datamachine_code_sandbox_safe_abilities', static function () {
+    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_SAFE_ABILITIES]))}, true);
+}, 100);
+
+add_filter('datamachine_code_sandbox_parent_only_abilities', static function () {
+    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_PARENT_ONLY_ABILITIES]))}, true);
+}, 100);
 
 $ability = function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
 if (!$ability || !method_exists($ability, 'execute')) {
@@ -115,6 +126,14 @@ if (!$ability || !method_exists($ability, 'execute')) {
 
 echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
 `
+}
+
+function sandboxToolContract(): Record<string, unknown> {
+  return {
+    schema: "wp-codebox/sandbox-dmc-tools/v1",
+    safe_abilities: [...SANDBOX_DMC_SAFE_ABILITIES],
+    parent_only_abilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
+  }
 }
 
 function scopedAgentConfig(mode: string, provider: string | undefined, model: string | undefined): Record<string, unknown> {

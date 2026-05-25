@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { promisify } from "node:util"
-import { createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
@@ -216,6 +216,7 @@ interface RecipeDryRunWorkspace {
   source?: string
   target: string
   mode: "readonly" | "readwrite"
+  sourceMode: SandboxWorkspaceMode
   seed: WorkspaceRecipeWorkspace["seed"]
   generated: boolean
   metadata: Record<string, unknown>
@@ -606,6 +607,7 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
       properties: {
         target: { type: "string", pattern: "^/" },
         mode: { enum: ["readonly", "readwrite"] },
+        sourceMode: { enum: ["repo-backed", "site-backed"] },
         seed: { $ref: "#/$defs/workspaceSeed" },
       },
     },
@@ -2241,6 +2243,10 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
     if (workspace.mode && workspace.mode !== "readonly" && workspace.mode !== "readwrite") {
       throw new Error(`Recipe workspace mode must be readonly or readwrite: ${recipePath}`)
     }
+
+    if (workspace.sourceMode && workspace.sourceMode !== "repo-backed" && workspace.sourceMode !== "site-backed") {
+      throw new Error(`Recipe workspace sourceMode must be repo-backed or site-backed: ${recipePath}`)
+    }
   }
 
   const rawExtraPlugins = recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins
@@ -2319,9 +2325,6 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
     const path = `$.inputs.workspaces[${index}]`
     if (workspace.seed.type === "directory") {
       await validateExistingDirectory(resolve(recipeDirectory, workspace.seed.source ?? ""), `${path}.seed.source`, addIssue)
-      if (!workspace.target) {
-        addIssue("missing-target", `${path}.target`, "Directory workspace seeds require an explicit sandbox target.")
-      }
     }
 
     if (workspace.target) {
@@ -2655,6 +2658,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         inheritance: recipe.inputs?.inheritance ?? {},
       },
     },
+    workspace: sandboxWorkspaceContract(workspaceMounts, recipe.inputs?.mounts ?? []),
     task: {
       kind: "recipe-run",
       recipePath,
@@ -2686,11 +2690,14 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
     const slug = workspace.seed.slug ?? basename(resolve(recipeDirectory, workspace.seed.source ?? `workspace-${index}`))
     const target = workspace.target ?? defaultWorkspaceTarget(workspace, slug)
     const generated = workspace.seed.type !== "directory"
+    const sourceMode = workspace.sourceMode ?? "repo-backed"
     const metadata = {
       kind: "recipe-workspace",
       index,
       seed: workspace.seed,
       target,
+      workspaceRoot: SANDBOX_WORKSPACE_ROOT,
+      sourceMode,
       dryRun: true,
     }
 
@@ -2699,6 +2706,7 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
       ...(generated ? {} : { source: resolve(recipeDirectory, workspace.seed.source ?? "") }),
       target,
       mode: workspace.mode ?? "readwrite",
+      sourceMode,
       seed: workspace.seed,
       generated,
       metadata,
@@ -2787,6 +2795,8 @@ async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory:
         seed: workspace.seed,
         baselineSource: prepared.baselineSource,
         target,
+        workspaceRoot: SANDBOX_WORKSPACE_ROOT,
+        sourceMode: workspace.sourceMode ?? "repo-backed",
       },
     })
   }
@@ -2930,7 +2940,42 @@ function defaultWorkspaceTarget(workspace: WorkspaceRecipeWorkspace, slug: strin
     return workspace.target
   }
 
-  throw new Error("Directory workspace seeds require an explicit target")
+  return `${SANDBOX_WORKSPACE_ROOT}/${slug}`
+}
+
+function sandboxWorkspaceContract(workspaceMounts: PreparedWorkspaceMount[], mounts: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]): SandboxWorkspaceContract {
+  const mountRefs = [
+    ...workspaceMounts.map((mount) => workspaceMountRef(mount.target, mount.mode, mount.metadata)),
+    ...(Array.isArray(mounts) ? mounts.map((mount) => workspaceMountRef(mount.target, mount.mode ?? "readwrite", mount.metadata ?? {})) : []),
+  ]
+
+  return {
+    schema: "wp-codebox/sandbox-workspace/v1",
+    root: SANDBOX_WORKSPACE_ROOT,
+    defaultMode: "repo-backed",
+    mounts: mountRefs,
+    dmc: {
+      safeAbilities: [...SANDBOX_DMC_SAFE_ABILITIES],
+      parentOnlyAbilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
+    },
+  }
+}
+
+function workspaceMountRef(target: string, mode: "readonly" | "readwrite", metadata: Record<string, unknown> = {}): SandboxWorkspaceContract["mounts"][number] {
+  const sourceMode: SandboxWorkspaceMode = metadata.sourceMode === "site-backed" ? "site-backed" : "repo-backed"
+
+  return stripUndefined({
+    target,
+    mode,
+    sourceMode,
+    workspaceRef: typeof metadata.workspaceRef === "string" ? metadata.workspaceRef : undefined,
+    mountRole: typeof metadata.mountRole === "string" ? metadata.mountRole : typeof metadata.kind === "string" ? metadata.kind : undefined,
+    component: typeof metadata.component === "string" ? metadata.component : typeof metadata.slug === "string" ? metadata.slug : undefined,
+    repo: typeof metadata.repo === "string" ? metadata.repo : undefined,
+    gitRef: typeof metadata.gitRef === "string" ? metadata.gitRef : typeof metadata.default_branch === "string" ? metadata.default_branch : undefined,
+    defaultBranch: typeof metadata.default_branch === "string" ? metadata.default_branch : undefined,
+    wpContentPath: typeof metadata.wpContentPath === "string" ? metadata.wpContentPath : undefined,
+  })
 }
 
 async function writePluginScaffold(directory: string, slug: string, name: string): Promise<void> {

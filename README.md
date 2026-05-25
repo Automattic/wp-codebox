@@ -20,7 +20,7 @@ Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
 
 What you can build on top of WP Codebox:
 
-- **Agentic coding against a WordPress site.** Let users describe a change in chat — from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live Playground preview URL, open a PR via mounted GitHub tooling. The contributor never needs shell access.
+- **Agentic coding against a WordPress site.** Let users describe a change in chat — from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live Playground preview URL, then let the parent control plane review, apply, and open any PR. The contributor never needs shell access.
 - **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated Playground workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model PRs as review surface. See [wp-gym](https://github.com/Automattic/wp-gym).
 - **Long-running terrariums.** Boot a Playground that an agent evolves over time — software, content, configuration — with day-cycle automation driven from CI. See [world-of-wordpress](https://github.com/chubes4/world-of-wordpress).
 - **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via Playground + WordPress import, post Playground preview links as PR evidence. See [wp-site-generator](https://github.com/chubes4/wp-site-generator).
@@ -45,6 +45,38 @@ What WP Codebox provides for product use cases:
 - Launch sandboxed Data Machine / Agents API coding-agent tasks from the CLI or WordPress ability surface.
 - Fan out several task descriptions into separate isolated sandboxes.
 - Produce artifact bundles — patches, diffs, test results, live Playground preview URLs — that a parent product can review, replay, apply, or discard.
+
+## In-Sandbox Workspace Contract
+
+WP Codebox reserves `/workspace` as the stable editable workspace root inside a
+sandbox. Repo-backed tasks mount a repository at `/workspace` and preserve the
+repository layout exactly, so `wing-map-display/blocks/map/render.php` in the
+repo is `/workspace/wing-map-display/blocks/map/render.php` in the sandbox.
+Site-backed tasks mount a site snapshot under the same root, normally with
+`/workspace/wp-content/...` paths, and produce a changed-files bundle rather
+than a git patch against a repo `HEAD`.
+
+`wp-content` runtime mounts can coexist with `/workspace` mounts. A caller may
+mount the same source into `/wordpress/wp-content/plugins/<slug>` so WordPress
+loads it, and into `/workspace/<repo-relative-path>` so DMC tools edit it with
+repo-relative paths. Artifact metadata records both mount targets and any opaque
+mount metadata such as `repo`, `gitRef`, `default_branch`, `workspaceRef`,
+`component`, `wpContentPath`, and `sourceMode`.
+
+Artifact bundles include `metadata.json.provenance.workspace` with:
+
+- `root`: always `/workspace` for the v1 contract.
+- `defaultMode`: `repo-backed` unless a mount declares `sourceMode: site-backed`.
+- `mounts`: normalized workspace mount refs for repo components and site
+  snapshots.
+- `dmc.safeAbilities`: the sandbox DMC ability allow-list.
+- `dmc.parentOnlyAbilities`: DMC abilities reserved for the parent control plane.
+
+Sandbox agents may read, write, edit, patch, grep, list, and diff files inside
+the mounted workspace. Read-only GitHub abilities may be exposed for context.
+Push, deploy, worktree lifecycle, GitSync, PR creation, issue mutation, comments,
+merge, cleanup, and apply-back operations stay parent-only. The sandbox produces
+artifacts; the parent site decides whether and how to apply them.
 
 ## Why A WordPress Plugin?
 
