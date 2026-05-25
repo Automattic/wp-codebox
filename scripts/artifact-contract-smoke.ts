@@ -95,6 +95,17 @@ try {
   assert.equal(metadata.provenance.task.recipePath.endsWith("examples/recipes/seeded-plugin-workspace.json"), true)
   assert.equal(metadata.provenance.task.previewPublicUrl, "https://preview.example.test/codebox/")
   assert.ok(metadata.provenance.task.inputs.workspaces.length > 0)
+  assert.equal(metadata.provenance.workspace.schema, "wp-codebox/sandbox-workspace/v1")
+  assert.equal(metadata.provenance.workspace.root, "/workspace")
+  assert.equal(metadata.provenance.workspace.defaultMode, "repo-backed")
+  assert.ok(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/workspace-edit"))
+  assert.ok(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/get-github-file"))
+  assert.ok(metadata.provenance.workspace.dmc.parentOnlyAbilities.includes("datamachine/workspace-git-push"))
+  assert.ok(metadata.provenance.workspace.dmc.parentOnlyAbilities.includes("datamachine/create-github-pull-request"))
+  assert.equal(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/workspace-git-push"), false)
+  assert.ok(metadata.provenance.workspace.mounts.some((mount: { target: string; sourceMode: string; mountRole?: string }) =>
+    mount.target === "/wordpress/wp-content/plugins/seeded-helper" && mount.sourceMode === "repo-backed" && mount.mountRole === "recipe-workspace",
+  ))
   assert.ok(metadata.provenance.mounts.some((mount: { target: string; mode: string; metadata?: { kind?: string } }) =>
     mount.target === "/wordpress/wp-content/plugins/seeded-helper" && mount.mode === "readwrite" && mount.metadata?.kind === "recipe-workspace",
   ))

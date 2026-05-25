@@ -1,5 +1,67 @@
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 
+export const SANDBOX_WORKSPACE_ROOT = "/workspace"
+
+export type SandboxWorkspaceMode = "repo-backed" | "site-backed"
+
+export const SANDBOX_DMC_SAFE_ABILITIES = [
+  "datamachine/workspace-read",
+  "datamachine/workspace-ls",
+  "datamachine/workspace-grep",
+  "datamachine/workspace-write",
+  "datamachine/workspace-edit",
+  "datamachine/workspace-apply-patch",
+  "datamachine/workspace-git-status",
+  "datamachine/workspace-git-log",
+  "datamachine/workspace-git-diff",
+  "datamachine/list-github-issues",
+  "datamachine/get-github-issue",
+  "datamachine/list-github-pulls",
+  "datamachine/get-github-pull",
+  "datamachine/list-github-pull-files",
+  "datamachine/get-github-check-runs",
+  "datamachine/get-github-commit-statuses",
+  "datamachine/list-github-tree",
+  "datamachine/get-github-file",
+  "datamachine/list-github-repos",
+] as const
+
+export const SANDBOX_DMC_PARENT_ONLY_ABILITIES = [
+  "datamachine/workspace-clone",
+  "datamachine/workspace-adopt",
+  "datamachine/workspace-remove",
+  "datamachine/workspace-delete",
+  "datamachine/workspace-git-pull",
+  "datamachine/workspace-git-add",
+  "datamachine/workspace-git-commit",
+  "datamachine/workspace-git-push",
+  "datamachine/workspace-git-rebase",
+  "datamachine/workspace-git-reset",
+  "datamachine/workspace-pr-rebase",
+  "datamachine/workspace-worktree-add",
+  "datamachine/workspace-worktree-finalize",
+  "datamachine/workspace-worktree-remove",
+  "datamachine/workspace-worktree-prune",
+  "datamachine/workspace-worktree-cleanup",
+  "datamachine/workspace-cleanup-apply",
+  "datamachine/create-github-issue",
+  "datamachine/update-github-issue",
+  "datamachine/create-github-pull-request",
+  "datamachine/comment-github-issue",
+  "datamachine/comment-github-pull-request",
+  "datamachine/upsert-github-pull-review-comment",
+  "datamachine/merge-github-pull-request",
+  "datamachine/cleanup-github-pull-request",
+  "datamachine/create-or-update-github-file",
+  "datamachine/create-code-task",
+  "datamachine/gitsync-bind",
+  "datamachine/gitsync-unbind",
+  "datamachine/gitsync-pull",
+  "datamachine/gitsync-submit",
+  "datamachine/gitsync-push",
+  "datamachine/gitsync-policy-update",
+] as const
+
 export interface EnvironmentSpec {
   kind: string
   name?: string
@@ -115,7 +177,32 @@ export interface WorkspaceRecipeWorkspaceSeed {
 export interface WorkspaceRecipeWorkspace {
   target?: string
   mode?: "readonly" | "readwrite"
+  sourceMode?: SandboxWorkspaceMode
   seed: WorkspaceRecipeWorkspaceSeed
+}
+
+export interface SandboxWorkspaceMountRef {
+  target: string
+  mode: "readonly" | "readwrite"
+  sourceMode: SandboxWorkspaceMode
+  workspaceRef?: string
+  mountRole?: string
+  component?: string
+  repo?: string
+  gitRef?: string
+  defaultBranch?: string
+  wpContentPath?: string
+}
+
+export interface SandboxWorkspaceContract {
+  schema: "wp-codebox/sandbox-workspace/v1"
+  root: typeof SANDBOX_WORKSPACE_ROOT | (string & {})
+  defaultMode: SandboxWorkspaceMode
+  mounts: SandboxWorkspaceMountRef[]
+  dmc: {
+    safeAbilities: string[]
+    parentOnlyAbilities: string[]
+  }
 }
 
 export interface WorkspaceRecipe {
@@ -276,6 +363,7 @@ export interface ArtifactContentDigest {
 
 export interface ArtifactProvenance {
   task?: Record<string, unknown>
+  workspace?: SandboxWorkspaceContract
   runtime: {
     backend: RuntimeBackendKind
     version?: string

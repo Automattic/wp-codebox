@@ -82,6 +82,15 @@ inside the sandbox can map changed sandbox paths back to source repositories.
 WP Codebox preserves the metadata but does not interpret product-specific repo
 topology.
 
+The stable in-sandbox coding workspace root is `/workspace`. Repo-backed mode
+mounts a repository there with its repository layout preserved. Site-backed mode
+mounts a snapshot of a site's files, usually with `wp-content` under
+`/workspace/wp-content`, and produces changed-file artifacts for reviewed
+apply-back. If WordPress also needs to load a plugin or theme, callers can mount
+the same source into `/wordpress/wp-content/plugins/<slug>` or
+`/wordpress/wp-content/themes/<slug>` in addition to `/workspace/...`; both
+mounts are captured in artifact metadata.
+
 For browser review, callers may pass `preview_hold_seconds` to keep the live
 Playground runtime available after artifact capture. The ability response's
 `run.artifacts.preview.url` and the artifact's `files/review.json` `preview`
@@ -159,9 +168,29 @@ npm run package-distribution-smoke
 ## Boundary
 
 Data Machine Code is the mounted coding-tools component for file-editing agent
-sandboxes. It provides workspace/file/GitHub tools inside the isolated runtime.
-This plugin owns the parent-site ability surface and sandbox lifecycle boundary;
-DMC does not own that control plane.
+sandboxes. It provides sandbox-scoped workspace and file tools inside the
+isolated runtime. This plugin owns the parent-site ability surface and sandbox
+lifecycle boundary; DMC does not own that control plane.
+
+Sandbox-safe DMC abilities are an explicit allow-list:
+
+- Workspace read/list/search/edit primitives: `datamachine/workspace-read`,
+  `datamachine/workspace-ls`, `datamachine/workspace-grep`,
+  `datamachine/workspace-write`, `datamachine/workspace-edit`, and
+  `datamachine/workspace-apply-patch`.
+- Local evidence primitives: `datamachine/workspace-git-status`,
+  `datamachine/workspace-git-log`, and `datamachine/workspace-git-diff`.
+- Read-only GitHub context primitives: issue, PR, PR file, check/status, tree,
+  file, and repo list/get abilities.
+
+Parent-only DMC abilities include workspace clone/adopt/remove/delete, worktree
+lifecycle and cleanup, git pull/add/commit/push/rebase/reset, GitSync
+bind/pull/submit/push/policy changes, issue/PR creation or mutation, comments,
+review comments, merges, PR cleanup, GitHub file writes, and code-task creation.
+Those abilities must not be exposed through the sandbox agent bundle. The sandbox
+produces artifact metadata, changed files, patches, and review evidence; the
+parent control plane performs reviewed apply-back, branch pushes, deploys, and PR
+creation.
 
 Data Machine, Data Machine Code, Homeboy Extensions, wp-gym, and other systems
 are consumers or mounted tools. They do not own WP Codebox's artifact contract.

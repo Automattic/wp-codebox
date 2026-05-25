@@ -13,6 +13,7 @@ import type {
   MountSpec,
   RuntimeCreateSpec,
   RuntimeInfo,
+  SandboxWorkspaceContract,
 } from "@chubes4/wp-codebox-core"
 
 export interface CapturedMountFile {
@@ -323,6 +324,7 @@ export function buildArtifactProvenance({
 }): ArtifactProvenance {
   return stripUndefined({
     task: provenanceContext(context, "task"),
+    workspace: provenanceWorkspace(context),
     runtime: stripUndefined({
       backend: runtime.backend,
       version: provenanceString(provenanceContext(context, "runtime"), "version"),
@@ -497,6 +499,15 @@ function provenanceContext(context: Record<string, unknown>, key: string): Recor
   }
 
   return value
+}
+
+function provenanceWorkspace(context: Record<string, unknown>): SandboxWorkspaceContract | undefined {
+  const value = provenanceContext(context, "workspace")
+  if (value?.schema !== "wp-codebox/sandbox-workspace/v1" || typeof value.root !== "string" || !Array.isArray(value.mounts)) {
+    return undefined
+  }
+
+  return value as unknown as SandboxWorkspaceContract
 }
 
 function provenanceString(context: Record<string, unknown> | undefined, key: string): string | undefined {
