@@ -44,3 +44,8 @@ descriptions, accepted args, known output shape, and policy requirements.
 - `wp-codebox recipe validate --recipe <path> [--json]` validates recipe shape, paths, commands, and arguments without resolving a full execution plan.
 - `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
 - `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.
+
+## Interactive Boot
+
+- `wp-codebox boot [--mount <host>:<vfs>] --hold <duration> [--json]` boots Playground, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold`, then tears down and collects artifacts without creating a workflow command.
+- `boot` accepts the runtime setup options relevant to interactive previews: `--mount`, `--blueprint <json|file>`, `--wp`, `--artifacts`, `--policy <json|file>`, `--preview-port`, and `--preview-public-url`.

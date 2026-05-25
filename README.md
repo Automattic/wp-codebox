@@ -314,6 +314,25 @@ WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks ne
 
 `--preview-port` fixes the local Playground port for tunnel/proxy wiring. Omit it to keep the current random-port behavior. `--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
 
+### `boot`
+
+Boot a disposable Playground runtime for interactive sandbox review without running a workflow step.
+
+```bash
+npm run wp-codebox -- boot \
+  --mount <host-path>:<sandbox-path>[:readonly|readwrite] \
+  --blueprint ./playground-blueprint.json \
+  --artifacts ./artifacts \
+  --hold 15m \
+  --preview-port 4173 \
+  --preview-public-url https://example-tunnel.test/ \
+  --json
+```
+
+`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. `--hold` uses the same duration syntax and 3600-second maximum as `run --preview-hold`.
+
+The JSON output uses `wp-codebox/boot/v1` and includes runtime information plus the collected artifact bundle. The artifact bundle includes preview metadata, mounted-file capture, diffs, review metadata, and lifecycle logs, but no `execution` object and no fake command entry.
+
 ### `recipe validate`
 
 Validate a workspace recipe without launching Playground.

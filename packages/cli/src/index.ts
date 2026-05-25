@@ -11,7 +11,7 @@ import { promisify } from "node:util"
 import { createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
-import { captureStdout, printBatchHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+import { captureStdout, printBatchHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 
 interface CommandMetadata {
   id: string
@@ -66,6 +66,27 @@ interface RunOutput {
     message: string
     code?: string
   }
+}
+
+interface BootOptions {
+  mounts: RunOptions["mounts"]
+  wpVersion?: string
+  artifactsDirectory?: string
+  policy?: RuntimePolicy
+  blueprint?: unknown
+  previewHoldSeconds?: number
+  previewPublicUrl?: string
+  previewPort?: number
+  json: boolean
+}
+
+interface BootOutput {
+  success: boolean
+  schema: "wp-codebox/boot/v1"
+  runtime?: RuntimeInfo
+  artifacts?: ArtifactBundle
+  logs?: string[]
+  error?: RunOutput["error"]
 }
 
 interface RecipeRunOptions {
@@ -632,6 +653,23 @@ async function main(args: string[]): Promise<number> {
   if (!command || command === "help" || command === "--help" || command === "-h") {
     printHelp()
     return command ? 0 : 1
+  }
+
+  if (command === "boot") {
+    const options = await parseBootOptions(args)
+    const execute = () => boot(options)
+
+    if (!options.json) {
+      const output = await execute()
+      printBootHumanOutput(output)
+      return output.success ? 0 : 1
+    }
+
+    const { result, logs } = await captureStdout(execute)
+    const output = logs.length > 0 ? { ...result, logs } : result
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    printJsonFailureDiagnostic(output)
+    return output.success ? 0 : 1
   }
 
   if (command === "recipe-run") {
@@ -1208,6 +1246,18 @@ function runMetadata(options: RunOptions): Record<string, unknown> {
   }
 }
 
+function bootMetadata(options: BootOptions): Record<string, unknown> {
+  return {
+    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
+    task: stripUndefined({
+      kind: "cli-boot",
+      artifactsDirectory: options.artifactsDirectory,
+      previewPublicUrl: options.previewPublicUrl,
+      previewPort: options.previewPort,
+    }),
+  }
+}
+
 function agentRuntimeMetadata(options: AgentRuntimeProbeOptions): Record<string, unknown> {
   const base = runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION)
 
@@ -1544,6 +1594,69 @@ async function run(options: RunOptions): Promise<RunOutput> {
   }
 }
 
+async function boot(options: BootOptions): Promise<BootOutput> {
+  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
+  let artifacts: ArtifactBundle | undefined
+
+  try {
+    runtime = await createRuntime(
+      {
+        backend: "wordpress-playground",
+        environment: {
+          kind: "wordpress",
+          name: "wp-codebox-boot",
+          version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
+          blueprint: options.blueprint ?? { steps: [] },
+        },
+        policy: options.policy ?? defaultPolicy,
+        artifactsDirectory: options.artifactsDirectory,
+        metadata: bootMetadata(options),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+      },
+      createPlaygroundRuntimeBackend(),
+    )
+
+    for (const mount of options.mounts) {
+      await runtime.mount({ type: "directory", source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
+    }
+
+    await runtime.observe({ type: "runtime-info" })
+    await runtime.observe({ type: "mounts" })
+    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
+    await releaseRuntime(runtime, options.previewHoldSeconds)
+
+    return {
+      success: true,
+      schema: "wp-codebox/boot/v1",
+      runtime: runtimeInfo ?? await runtime.info(),
+      artifacts,
+    }
+  } catch (error) {
+    if (runtime) {
+      try {
+        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+      } catch {
+        // Preserve the original failure as the CLI result.
+      }
+
+      try {
+        await runtime.destroy()
+      } catch {
+        // Preserve the original failure as the CLI result.
+      }
+    }
+
+    return {
+      success: false,
+      schema: "wp-codebox/boot/v1",
+      ...(runtime ? { runtime: await runtime.info() } : {}),
+      ...(artifacts ? { artifacts } : {}),
+      error: serializeError(error),
+    }
+  }
+}
+
 async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>): Promise<void> {
   const holdSeconds = Math.max(0, Math.floor(previewHoldSeconds))
   if (holdSeconds === 0) {
@@ -1648,6 +1761,60 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
 
   if (options.mounts.length === 0) {
     throw new Error("At least one --mount host:vfs value is required")
+  }
+
+  return options
+}
+
+async function parseBootOptions(args: string[]): Promise<BootOptions> {
+  const options: BootOptions = {
+    mounts: [],
+    json: false,
+  }
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--mount":
+        options.mounts.push(parseMount(value))
+        break
+      case "--wp":
+        options.wpVersion = value
+        break
+      case "--blueprint":
+        options.blueprint = await parseJsonOption(value)
+        break
+      case "--artifacts":
+        options.artifactsDirectory = value
+        break
+      case "--hold":
+        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
+        break
+      case "--preview-public-url":
+        options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-port":
+        options.previewPort = parsePreviewPort(value)
+        break
+      case "--policy":
+        options.policy = await parsePolicy(value)
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
   }
 
   return options
@@ -2531,8 +2698,16 @@ function parseMount(value: string): RunOptions["mounts"][number] {
 }
 
 async function parsePolicy(value: string): Promise<RuntimePolicy> {
-  const raw = value.trim().startsWith("{") ? value : await readFile(resolve(value), "utf8")
-  return JSON.parse(raw) as RuntimePolicy
+  return JSON.parse(await readJsonOption(value)) as RuntimePolicy
+}
+
+async function parseJsonOption(value: string): Promise<unknown> {
+  return JSON.parse(await readJsonOption(value))
+}
+
+async function readJsonOption(value: string): Promise<string> {
+  const trimmed = value.trim()
+  return trimmed.startsWith("{") || trimmed.startsWith("[") ? value : await readFile(resolve(value), "utf8")
 }
 
 function stripUndefined<T extends Record<string, unknown>>(record: T): T {
