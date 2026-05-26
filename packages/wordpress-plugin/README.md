@@ -26,6 +26,14 @@ may still pass `task` as a string; the runner normalizes it into `goal` and
 returns the normalized `task_input` in the ability response. Raw PHP `code` and
 `code_file` fields remain rejected on this product ability path.
 
+When `allowed_tools` includes Data Machine ability names, the parent-side runner
+enforces the sandbox allow-list before launching the CLI. Parent-only abilities
+such as workspace worktree, Git push, GitSync, GitHub mutation, and code-task
+creation fail closed with `wp_codebox_tool_not_allowed`; hosts can narrow the
+safe Data Machine tool set with the `wp_codebox_allowed_sandbox_tools` option or
+filter. Non-Data-Machine labels remain descriptive task hints for the sandbox
+agent.
+
 ```json
 {
   "schema": "wp-codebox/task-input/v1",
@@ -204,6 +212,12 @@ Those abilities must not be exposed through the sandbox agent bundle. The sandbo
 produces artifact metadata, changed files, patches, and review evidence; the
 parent control plane performs reviewed apply-back, branch pushes, deploys, and PR
 creation.
+
+The WordPress runner validates any requested `datamachine/*` entries in
+`allowed_tools` against that boundary before the sandbox process starts. The
+default list matches the sandbox-safe DMC abilities above; installations can
+narrow it with `wp_codebox_allowed_sandbox_tools` while parent-only abilities are
+always removed from the effective allow-list.
 
 Data Machine, Data Machine Code, Homeboy Extensions, wp-gym, and other systems
 are consumers or mounted tools. They do not own WP Codebox's artifact contract.

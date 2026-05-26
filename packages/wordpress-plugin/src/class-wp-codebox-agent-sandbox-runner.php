@@ -13,6 +13,63 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const BATCH_SCHEMA = 'wp-codebox/agent-task-batch/v1';
 	private const SESSION_SCHEMA = 'wp-codebox/sandbox-session/v1';
 	private const TASK_INPUT_SCHEMA = 'wp-codebox/task-input/v1';
+	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
+	private const DEFAULT_SANDBOX_TOOLS = array(
+		'datamachine/workspace-read',
+		'datamachine/workspace-ls',
+		'datamachine/workspace-grep',
+		'datamachine/workspace-write',
+		'datamachine/workspace-edit',
+		'datamachine/workspace-apply-patch',
+		'datamachine/workspace-git-status',
+		'datamachine/workspace-git-log',
+		'datamachine/workspace-git-diff',
+		'datamachine/list-github-issues',
+		'datamachine/get-github-issue',
+		'datamachine/list-github-pulls',
+		'datamachine/get-github-pull',
+		'datamachine/list-github-pull-files',
+		'datamachine/get-github-check-runs',
+		'datamachine/get-github-commit-statuses',
+		'datamachine/list-github-tree',
+		'datamachine/get-github-file',
+		'datamachine/list-github-repos',
+	);
+	private const PARENT_ONLY_SANDBOX_TOOLS = array(
+		'datamachine/workspace-clone',
+		'datamachine/workspace-adopt',
+		'datamachine/workspace-remove',
+		'datamachine/workspace-delete',
+		'datamachine/workspace-git-pull',
+		'datamachine/workspace-git-add',
+		'datamachine/workspace-git-commit',
+		'datamachine/workspace-git-push',
+		'datamachine/workspace-git-rebase',
+		'datamachine/workspace-git-reset',
+		'datamachine/workspace-pr-rebase',
+		'datamachine/workspace-worktree-add',
+		'datamachine/workspace-worktree-finalize',
+		'datamachine/workspace-worktree-remove',
+		'datamachine/workspace-worktree-prune',
+		'datamachine/workspace-worktree-cleanup',
+		'datamachine/workspace-cleanup-apply',
+		'datamachine/create-github-issue',
+		'datamachine/update-github-issue',
+		'datamachine/create-github-pull-request',
+		'datamachine/comment-github-issue',
+		'datamachine/comment-github-pull-request',
+		'datamachine/upsert-github-pull-review-comment',
+		'datamachine/merge-github-pull-request',
+		'datamachine/cleanup-github-pull-request',
+		'datamachine/create-or-update-github-file',
+		'datamachine/create-code-task',
+		'datamachine/gitsync-bind',
+		'datamachine/gitsync-unbind',
+		'datamachine/gitsync-pull',
+		'datamachine/gitsync-submit',
+		'datamachine/gitsync-push',
+		'datamachine/gitsync-policy-update',
+	);
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -678,6 +735,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		foreach ( array( 'allowed_tools', 'expected_artifacts' ) as $field ) {
 			$values = $this->string_list( $input[ $field ] ?? array() );
 			if ( ! empty( $values ) ) {
+				if ( 'allowed_tools' === $field ) {
+					$tool_error = $this->allowed_tools_error( $values );
+					if ( is_wp_error( $tool_error ) ) {
+						return $tool_error;
+					}
+				}
 				$task_input[ $field ] = $values;
 			}
 		}
@@ -723,6 +786,65 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 						$values
 					),
 					static fn( string $value ): bool => '' !== $value
+				)
+			)
+		);
+	}
+
+	/** @param string[] $tools */
+	private function allowed_tools_error( array $tools ): WP_Error|null {
+		$allowed = $this->sandbox_tool_allowlist();
+		$denied  = array();
+
+		foreach ( $tools as $tool ) {
+			if ( ! str_starts_with( $tool, 'datamachine/' ) ) {
+				continue;
+			}
+
+			$reason = in_array( $tool, self::PARENT_ONLY_SANDBOX_TOOLS, true ) ? 'parent-only' : 'not-allowlisted';
+			if ( 'parent-only' === $reason || ! in_array( $tool, $allowed, true ) ) {
+				$denied[] = array(
+					'tool'   => $tool,
+					'reason' => $reason,
+				);
+			}
+		}
+
+		if ( empty( $denied ) ) {
+			return null;
+		}
+
+		return new WP_Error(
+			'wp_codebox_tool_not_allowed',
+			'One or more requested Data Machine tools are not allowed in the sandbox scope.',
+			array(
+				'status'        => 403,
+				'schema'        => self::TOOL_DENIAL_SCHEMA,
+				'denied_tools'  => $denied,
+				'allowed_tools' => $allowed,
+			)
+		);
+	}
+
+	/** @return string[] */
+	private function sandbox_tool_allowlist(): array {
+		$tools = $this->config_option( 'wp_codebox_allowed_sandbox_tools', self::DEFAULT_SANDBOX_TOOLS );
+		if ( function_exists( 'apply_filters' ) ) {
+			$tools = apply_filters( 'wp_codebox_allowed_sandbox_tools', $tools );
+		}
+
+		if ( ! is_array( $tools ) ) {
+			$tools = array();
+		}
+
+		return array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static fn( $tool ): string => trim( (string) $tool ),
+						$tools
+					),
+					static fn( string $tool ): bool => str_starts_with( $tool, 'datamachine/' ) && ! in_array( $tool, self::PARENT_ONLY_SANDBOX_TOOLS, true )
 				)
 			)
 		);

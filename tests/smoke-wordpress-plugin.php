@@ -383,7 +383,7 @@ $structured_result = $runner->run(
 			'kind' => 'plugin',
 			'path' => 'wp-content/plugins/simple-plugin',
 		),
-		'allowed_tools'      => array( 'workspace.read', 'workspace.write', '' ),
+		'allowed_tools'      => array( 'workspace.read', 'workspace.write', 'datamachine/workspace-read', '' ),
 		'expected_artifacts' => array( 'patch', 'tests', 'patch' ),
 		'policy'             => array( 'applyBack' => 'reviewed' ),
 		'context'            => array( 'issue' => 'https://github.com/chubes4/wp-codebox/issues/29' ),
@@ -393,8 +393,30 @@ $structured_result = $runner->run(
 
 $assert( 'runner accepts structured task input', ! is_wp_error( $structured_result ) && 'Add a focused product feature.' === ( $structured_result['task_input']['goal'] ?? '' ) );
 $assert( 'runner preserves structured target', ! is_wp_error( $structured_result ) && 'plugin' === ( $structured_result['task_input']['target']['kind'] ?? '' ) );
-$assert( 'runner normalizes task input lists', ! is_wp_error( $structured_result ) && array( 'workspace.read', 'workspace.write' ) === ( $structured_result['task_input']['allowed_tools'] ?? array() ) && array( 'patch', 'tests' ) === ( $structured_result['task_input']['expected_artifacts'] ?? array() ) );
+$assert( 'runner normalizes task input lists', ! is_wp_error( $structured_result ) && array( 'workspace.read', 'workspace.write', 'datamachine/workspace-read' ) === ( $structured_result['task_input']['allowed_tools'] ?? array() ) && array( 'patch', 'tests' ) === ( $structured_result['task_input']['expected_artifacts'] ?? array() ) );
 $assert( 'runner passes structured task contract to recipe', str_contains( $captured_recipe, 'wp-codebox/task-input/v1' ) && str_contains( $captured_recipe, 'allowed_tools' ) );
+
+$parent_only_tool = $runner->run(
+	array(
+		'goal'           => 'Try a parent-only workspace mutation.',
+		'allowed_tools'  => array( 'datamachine/workspace-git-push' ),
+		'artifacts_path' => $root . '/artifacts',
+	)
+);
+$assert( 'parent-only Data Machine tool request fails closed', is_wp_error( $parent_only_tool ) && 'wp_codebox_tool_not_allowed' === $parent_only_tool->get_error_code() );
+$assert( 'tool denial includes structured redacted details', is_wp_error( $parent_only_tool ) && 'wp-codebox/tool-allowlist-denial/v1' === ( $parent_only_tool->get_error_data()['schema'] ?? '' ) && 'parent-only' === ( $parent_only_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] = array( 'datamachine/workspace-read' );
+$not_allowlisted_tool = $runner->run(
+	array(
+		'goal'           => 'Try an unconfigured sandbox tool.',
+		'allowed_tools'  => array( 'datamachine/workspace-write' ),
+		'artifacts_path' => $root . '/artifacts',
+	)
+);
+$assert( 'configured Data Machine tool allow-list fails closed', is_wp_error( $not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $not_allowlisted_tool->get_error_code() );
+$assert( 'configured allow-list denial reports allowed tools', is_wp_error( $not_allowlisted_tool ) && array( 'datamachine/workspace-read' ) === ( $not_allowlisted_tool->get_error_data()['allowed_tools'] ?? array() ) && 'not-allowlisted' === ( $not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] );
 
 $batch_result = $runner->run_batch(
 	array(
