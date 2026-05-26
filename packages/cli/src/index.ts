@@ -1147,7 +1147,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       })
     }
 
-    const pluginActivationCode = activateExtraPluginsCode(recipe)
+    const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
       executions.push(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }))
     }
@@ -2390,7 +2390,7 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
       addIssue("invalid-slug", `${path}.slug`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const pluginFile = recipeExtraPluginFile(plugin)
+    const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
 
     validateRecipeSource(source, `${path}.source`, addIssue)
     if (pluginSource) {
@@ -2599,7 +2599,19 @@ function recipeWpCliCommandFromArgs(args: string[]): string {
 
 async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: string, policy: RuntimePolicy): Promise<RecipeDryRunStep[]> {
   const steps: Array<Promise<RecipeDryRunStep>> = []
-  const pluginActivationCode = activateExtraPluginsCode(recipe)
+  const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
+    const slug = recipeExtraPluginSlug(plugin)
+    return {
+      source: plugin.source,
+      slug,
+      target: `/wordpress/wp-content/plugins/${slug}`,
+      pluginFile: await resolveRecipeExtraPluginFile(plugin, recipeDirectory),
+      activate: plugin.activate !== false,
+      cleanupPaths: [],
+      provenance: recipeSourceProvenance(recipeSource(plugin.source), recipeDirectory),
+    }
+  }))
+  const pluginActivationCode = activateExtraPluginsCode(dryRunExtraPlugins)
   if (pluginActivationCode) {
     steps.push(recipeDryRunStep({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }, recipeDirectory, policy, -1, "activate-extra-plugins"))
   }
@@ -2858,7 +2870,7 @@ async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirector
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
     const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug)
-    const pluginFile = recipeExtraPluginFile(plugin)
+    const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     await assertPreparedPluginFileExists(resolved.source, pluginFile.slice(slug.length + 1), plugin.source)
     plugins.push({
       source: resolved.source,
@@ -2951,6 +2963,7 @@ async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recip
     const source = resolve(recipeDirectory, workspace.seed.source ?? "")
     await cp(source, directory, { recursive: true })
     await cp(source, baselineDirectory, { recursive: true })
+    await ensureStandaloneGitPrimary(directory)
     return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
   }
 
@@ -2963,6 +2976,22 @@ async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recip
   await writePluginScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
   await writePluginScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
   return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
+}
+
+async function ensureStandaloneGitPrimary(directory: string): Promise<void> {
+  const gitPath = join(directory, ".git")
+  try {
+    const gitStat = await stat(gitPath)
+    if (gitStat.isDirectory()) {
+      return
+    }
+
+    await rm(gitPath, { force: true })
+  } catch {
+    // No Git metadata was copied; initialize a sandbox-local primary below.
+  }
+
+  await execFileAsync("git", ["init", "--quiet"], { cwd: directory })
 }
 
 function defaultWorkspaceTarget(workspace: WorkspaceRecipeWorkspace, slug: string): string {
@@ -3125,10 +3154,34 @@ function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
   return plugin.pluginFile ?? `${slug}/${slug}.php`
 }
 
-function activateExtraPluginsCode(recipe: WorkspaceRecipe): string | null {
-  const pluginFiles = recipeExtraPlugins(recipe)
+async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): Promise<string> {
+  const slug = recipeExtraPluginSlug(plugin)
+  if (plugin.pluginFile) {
+    return plugin.pluginFile
+  }
+
+  const source = recipeSource(plugin.source)
+  if (source.type === "local") {
+    const pluginSource = resolve(recipeDirectory, plugin.source)
+    for (const candidate of [`${slug}/${slug}.php`, `${slug}/plugin.php`]) {
+      try {
+        const result = await stat(join(pluginSource, candidate.slice(slug.length + 1)))
+        if (result.isFile()) {
+          return candidate
+        }
+      } catch {
+        // Try the next common plugin entrypoint.
+      }
+    }
+  }
+
+  return `${slug}/${slug}.php`
+}
+
+function activateExtraPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {
+  const pluginFiles = extraPlugins
     .filter((plugin) => plugin.activate !== false)
-    .map(recipeExtraPluginFile)
+    .map((plugin) => plugin.pluginFile)
 
   if (pluginFiles.length === 0) {
     return null

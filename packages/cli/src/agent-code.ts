@@ -32,18 +32,20 @@ export async function resolveSandboxTaskCode(options: AgentSandboxCodeOptions): 
 
 function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const mode = options.mode ?? "sandbox"
+  const agentModes = sandboxAgentModes(mode)
   const agentConfig = scopedAgentConfig(mode, options.provider, options.model)
   const input: Record<string, unknown> = {
     agent: options.agent,
     message: options.task,
     session_id: options.sessionId ?? null,
     mode,
+    modes: agentModes,
     client_context: {
       source: "bridge",
       client_name: "wp-codebox",
       connector_id: "wp-codebox-cli",
       mode,
-      agent_modes: [mode],
+      agent_modes: agentModes,
       workspace_root: SANDBOX_WORKSPACE_ROOT,
       tool_contract: sandboxToolContract(),
     },
@@ -58,15 +60,50 @@ if (function_exists('wp_set_current_user')) {
     wp_set_current_user(1);
 }
 
+if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
+    define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
+}
+
+$sandbox_workspace_adoptions = array();
+if (function_exists('wp_get_ability')) {
+    $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions): void {
+        $sandbox_adopt_ability = wp_get_ability('datamachine/workspace-adopt');
+        if (!$sandbox_adopt_ability || !method_exists($sandbox_adopt_ability, 'execute')) {
+            return;
+        }
+        foreach (glob(rtrim(DATAMACHINE_WORKSPACE_PATH, '/') . '/*', GLOB_ONLYDIR) ?: array() as $sandbox_workspace_dir) {
+            $sandbox_workspace_name = basename($sandbox_workspace_dir);
+            $sandbox_adopt_result = $sandbox_adopt_ability->execute(array(
+                'path' => $sandbox_workspace_dir,
+                'name' => $sandbox_workspace_name,
+            ));
+            $sandbox_workspace_adoptions[$sandbox_workspace_name] = is_wp_error($sandbox_adopt_result)
+                ? array('success' => false, 'error' => $sandbox_adopt_result->get_error_message())
+                : $sandbox_adopt_result;
+        }
+    };
+    if (class_exists('DataMachine\\Abilities\\PermissionHelper')) {
+        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback, 1);
+    } else {
+        $sandbox_adopt_callback();
+    }
+}
+$sandbox_stack['workspace_adoptions'] = $sandbox_workspace_adoptions;
+
 if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
     $sandbox_agent_slug = sanitize_title((string) (${JSON.stringify(input.agent)}));
     if ('' !== $sandbox_agent_slug) {
-        (new DataMachine\\Core\\Database\\Agents\\Agents())->create_if_missing(
+        $sandbox_agents = new DataMachine\\Core\\Database\\Agents\\Agents();
+        $sandbox_agent_config = json_decode(${JSON.stringify(JSON.stringify(agentConfig))}, true);
+        $sandbox_agent_id = $sandbox_agents->create_if_missing(
             $sandbox_agent_slug,
             'Sandbox Agent',
             1,
-            json_decode(${JSON.stringify(JSON.stringify(agentConfig))}, true)
+            $sandbox_agent_config
         );
+        if ($sandbox_agent_id > 0 && method_exists($sandbox_agents, 'update_agent')) {
+            $sandbox_agents->update_agent($sandbox_agent_id, array('agent_config' => $sandbox_agent_config));
+        }
     }
 }
 
@@ -86,6 +123,20 @@ add_filter('datamachine_code_sandbox_safe_abilities', static function () {
 add_filter('datamachine_code_sandbox_parent_only_abilities', static function () {
     return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_PARENT_ONLY_ABILITIES]))}, true);
 }, 100);
+
+add_action('datamachine_agent_modes', static function () {
+    if (class_exists('DataMachine\\Engine\\AI\\AgentModeRegistry')) {
+        DataMachine\\Engine\\AI\\AgentModeRegistry::register('sandbox', 25, array(
+            'label' => 'Sandbox',
+            'description' => 'WP Codebox sandbox execution with reviewed artifact output.',
+        ));
+    }
+}, 100);
+
+add_filter('datamachine_agent_mode_sandbox', static function (string $content): string {
+    $guidance = ${JSON.stringify(sandboxModeGuidance())};
+    return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
+}, 100, 1);
 
 $ability = function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
 if (!$ability || !method_exists($ability, 'execute')) {
@@ -131,19 +182,47 @@ echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
 function sandboxToolContract(): Record<string, unknown> {
   return {
     schema: "wp-codebox/sandbox-dmc-tools/v1",
+    modes: ["pipeline", "sandbox"],
+    tools: sandboxToolNames(),
     safe_abilities: [...SANDBOX_DMC_SAFE_ABILITIES],
     parent_only_abilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
   }
 }
 
+function sandboxToolNames(): string[] {
+  return SANDBOX_DMC_SAFE_ABILITIES.map((ability) => ability.replace(/^datamachine\//, "").replaceAll("-", "_"))
+}
+
+function sandboxAgentModes(mode: string): string[] {
+  return Array.from(new Set([mode, "pipeline"].filter(Boolean)))
+}
+
+function sandboxModeGuidance(): string {
+  return `# WP Codebox Sandbox Context
+
+You are running inside a disposable WP Codebox sandbox. The sandbox can produce a reviewed artifact bundle from workspace changes.
+
+Use the available workspace tools by their exact names: ${sandboxToolNames().join(", ")}.
+
+Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write, workspace_edit, or workspace_apply_patch.
+
+The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
+}
+
 function scopedAgentConfig(mode: string, provider: string | undefined, model: string | undefined): Record<string, unknown> {
+  const toolPolicy = {
+    mode: "allow",
+    tools: sandboxToolNames(),
+  }
+
   if (!provider && !model) {
-    return {}
+    return { tool_policy: toolPolicy }
   }
 
   return {
     ...(provider ? { default_provider: provider } : {}),
     ...(model ? { default_model: model } : {}),
+    tool_policy: toolPolicy,
     mode_models: {
       [mode]: {
         ...(provider ? { provider } : {}),
@@ -173,6 +252,10 @@ function scopedSettings(mode: string, provider: string | undefined, model: strin
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
+    define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
+}
 
 add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 
