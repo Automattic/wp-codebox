@@ -26,7 +26,7 @@ try {
         runtime: { version: "0.0.0" },
         task: { kind: "preview-response-body-smoke" },
       },
-      preview: { port: previewPort },
+      preview: { port: previewPort, bind: "0.0.0.0" },
     },
     createPlaygroundRuntimeBackend(),
   )
