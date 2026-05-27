@@ -696,6 +696,8 @@ These abilities shell out to the local `wp-codebox` CLI, boot disposable Playgro
 
 Component paths can come from ability input, the `wp_codebox_component_paths` option, or the `wp_codebox_component_paths` filter.
 
+Product callers can opt into public preview wiring through `preview_port`, `preview_bind`, and `preview_public_url`. Omit them to keep the default loopback-only random-port preview behavior; `preview_bind` requires `preview_port`, and `preview_public_url` must be an `http` or `https` URL.
+
 Expected component keys:
 
 - `agents_api`

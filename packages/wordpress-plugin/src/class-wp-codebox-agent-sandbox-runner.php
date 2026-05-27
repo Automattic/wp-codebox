@@ -121,6 +121,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_bin_invalid', 'wp_codebox_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
 		}
 
+		$preview_args = $this->preview_args( $input );
+		if ( is_wp_error( $preview_args ) ) {
+			return $preview_args;
+		}
+
 		$recipe_file = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version );
 		if ( is_wp_error( $recipe_file ) ) {
 			return $recipe_file;
@@ -132,7 +137,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			escapeshellarg( $recipe_file ),
 			escapeshellarg( $artifacts )
 		);
-		$command .= $this->preview_hold_arg( $input );
+		$command .= $preview_args;
 
 		$result    = $this->run_command( $command );
 		@unlink( $recipe_file );
@@ -218,6 +223,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_bin_invalid', 'wp_codebox_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
 		}
 
+		$preview_args = $this->preview_args( $input );
+		if ( is_wp_error( $preview_args ) ) {
+			return $preview_args;
+		}
+
 		$concurrency = max( 1, (int) ( $input['concurrency'] ?? 2 ) );
 		$recipe_file = $this->write_agent_recipe( $paths, $input, $task_prompts, $wp_version );
 		if ( is_wp_error( $recipe_file ) ) {
@@ -230,7 +240,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			escapeshellarg( $recipe_file ),
 			escapeshellarg( $artifacts )
 		);
-		$command .= $this->preview_hold_arg( $input );
+		$command .= $preview_args;
 
 		$result    = $this->run_command( $command );
 		@unlink( $recipe_file );
@@ -882,10 +892,84 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return max( 0, min( 3600, $seconds ) );
 	}
 
+	private function preview_args( array $input ): string|WP_Error {
+		$args    = $this->preview_hold_arg( $input );
+		$port    = $this->preview_port( $input );
+		$bind    = $this->preview_bind( $input );
+		$public  = $this->preview_public_url( $input );
+
+		foreach ( array( $port, $bind, $public ) as $value ) {
+			if ( is_wp_error( $value ) ) {
+				return $value;
+			}
+		}
+
+		if ( null !== $bind && null === $port ) {
+			return new WP_Error( 'wp_codebox_preview_bind_requires_port', 'preview_bind requires preview_port.', array( 'status' => 400 ) );
+		}
+
+		if ( null !== $port ) {
+			$args .= ' --preview-port ' . escapeshellarg( (string) $port );
+		}
+		if ( null !== $bind ) {
+			$args .= ' --preview-bind ' . escapeshellarg( $bind );
+		}
+		if ( null !== $public ) {
+			$args .= ' --preview-public-url ' . escapeshellarg( $public );
+		}
+
+		return $args;
+	}
+
 	private function preview_hold_arg( array $input ): string {
 		$seconds = $this->preview_hold_seconds( $input );
 
 		return $seconds > 0 ? ' --preview-hold ' . escapeshellarg( (string) $seconds ) : '';
+	}
+
+	private function preview_port( array $input ): int|WP_Error|null {
+		if ( ! array_key_exists( 'preview_port', $input ) || '' === trim( (string) $input['preview_port'] ) ) {
+			return null;
+		}
+
+		$raw = trim( (string) $input['preview_port'] );
+		if ( ! preg_match( '/^\d+$/', $raw ) ) {
+			return new WP_Error( 'wp_codebox_preview_port_invalid', 'preview_port must be an integer between 1 and 65535.', array( 'status' => 400 ) );
+		}
+
+		$port = (int) $raw;
+		if ( $port < 1 || $port > 65535 ) {
+			return new WP_Error( 'wp_codebox_preview_port_invalid', 'preview_port must be an integer between 1 and 65535.', array( 'status' => 400 ) );
+		}
+
+		return $port;
+	}
+
+	private function preview_bind( array $input ): string|WP_Error|null {
+		if ( ! array_key_exists( 'preview_bind', $input ) || '' === trim( (string) $input['preview_bind'] ) ) {
+			return null;
+		}
+
+		$bind = trim( (string) $input['preview_bind'] );
+		if ( str_contains( $bind, '/' ) || str_contains( $bind, '\\' ) || preg_match( '/\s/', $bind ) ) {
+			return new WP_Error( 'wp_codebox_preview_bind_invalid', 'preview_bind must be a hostname or IP address, not a URL.', array( 'status' => 400 ) );
+		}
+
+		return $bind;
+	}
+
+	private function preview_public_url( array $input ): string|WP_Error|null {
+		if ( ! array_key_exists( 'preview_public_url', $input ) || '' === trim( (string) $input['preview_public_url'] ) ) {
+			return null;
+		}
+
+		$url   = trim( (string) $input['preview_public_url'] );
+		$parts = function_exists( 'wp_parse_url' ) ? wp_parse_url( $url ) : parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['host'] ) || empty( $parts['scheme'] ) || ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return new WP_Error( 'wp_codebox_preview_public_url_invalid', 'preview_public_url must be an http or https URL with a hostname.', array( 'status' => 400 ) );
+		}
+
+		return $url;
 	}
 
 	private function config_option( string $name, mixed $default ): mixed {

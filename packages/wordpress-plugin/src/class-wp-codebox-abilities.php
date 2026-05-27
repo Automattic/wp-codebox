@@ -31,6 +31,7 @@ final class WP_Codebox_Abilities {
 			$inherit_schema    = self::inherit_schema();
 			$session_schema    = self::sandbox_session_schema();
 			$session_input     = self::sandbox_session_input_schema();
+			$preview_schema    = self::preview_input_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -103,10 +104,10 @@ final class WP_Codebox_Abilities {
 								'type'        => 'integer',
 								'description' => 'Maximum agent loop turns for this sandbox task.',
 							),
-							'preview_hold_seconds'   => array(
-								'type'        => 'integer',
-								'description' => 'Seconds to keep the live Playground preview URL available after capture. Max 3600.',
-							),
+							'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
+							'preview_port'           => $preview_schema['preview_port'],
+							'preview_bind'           => $preview_schema['preview_bind'],
+							'preview_public_url'     => $preview_schema['preview_public_url'],
 							'wp'                     => array(
 								'type'        => 'string',
 								'description' => 'WordPress version passed to Playground. Defaults to trunk.',
@@ -186,7 +187,10 @@ final class WP_Codebox_Abilities {
 								'items' => array( 'type' => 'string' ),
 							),
 							'max_turns'              => array( 'type' => 'integer' ),
-							'preview_hold_seconds'   => array( 'type' => 'integer' ),
+							'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
+							'preview_port'           => $preview_schema['preview_port'],
+							'preview_bind'           => $preview_schema['preview_bind'],
+							'preview_public_url'     => $preview_schema['preview_public_url'],
 							'wp'                     => array( 'type' => 'string' ),
 							'artifacts_path'         => array( 'type' => 'string' ),
 							'wp_codebox_bin'    => array( 'type' => 'string' ),
@@ -441,6 +445,31 @@ final class WP_Codebox_Abilities {
 						'secrets'   => array( 'type' => 'array', 'items' => $credential_secret_schema ),
 					),
 				),
+			),
+		);
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function preview_input_schema(): array {
+		return array(
+			'preview_hold_seconds' => array(
+				'type'        => 'integer',
+				'description' => 'Seconds to keep the live Playground preview URL available after capture. Max 3600.',
+			),
+			'preview_port'         => array(
+				'type'        => 'integer',
+				'minimum'     => 1,
+				'maximum'     => 65535,
+				'description' => 'Optional fixed local WP Codebox preview proxy port. Omit to keep the default loopback-only random-port behavior.',
+			),
+			'preview_bind'         => array(
+				'type'        => 'string',
+				'description' => 'Optional fixed-port preview proxy bind host or IP. Requires preview_port. Defaults to 127.0.0.1 when omitted.',
+			),
+			'preview_public_url'   => array(
+				'type'        => 'string',
+				'format'      => 'uri',
+				'description' => 'Optional public http/https URL reported in preview metadata and passed to the sandbox for site URL alignment.',
 			),
 		);
 	}
