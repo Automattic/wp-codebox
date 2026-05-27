@@ -167,7 +167,7 @@ export interface WorkspaceRecipeExtraPlugin {
 }
 
 export type WorkspaceRecipeSiteSeedType = "fixture" | "parent_site"
-export type WorkspaceRecipeSiteSeedFormat = "json" | "wxr" | "playground-blueprint"
+export type WorkspaceRecipeSiteSeedFormat = "json" | (string & {})
 
 export interface WorkspaceRecipeSiteSeedScopeSelector {
   ids?: number[]

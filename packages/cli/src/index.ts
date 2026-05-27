@@ -244,6 +244,7 @@ interface RecipeDryRunSiteSeed {
   name: string
   source?: string
   format?: WorkspaceRecipeSiteSeed["format"]
+  importer?: string
   scopes: WorkspaceRecipeSiteSeed["scopes"]
   bounded: boolean
   dryRunOnly: boolean
@@ -259,6 +260,8 @@ interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
   action: "imported" | "skipped"
   reason?: string
   counts?: Record<string, number>
+  warnings?: string[]
+  provenance?: Record<string, unknown>
 }
 
 interface RecipeDryRunStep {
@@ -655,7 +658,7 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         type: { enum: ["fixture", "parent_site"] },
         name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
         source: { type: "string", description: "Fixture file path. Not allowed for parent_site dry-run declarations." },
-        format: { enum: ["json", "wxr", "playground-blueprint"] },
+        format: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
         scopes: {
           type: "object",
           additionalProperties: false,
@@ -1154,12 +1157,12 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       })
     }
 
-    const siteSeeds = await importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions)
-
     const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
       executions.push(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }))
     }
+
+    const siteSeeds = await importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions)
 
     for (const step of recipe.workflow.steps) {
       executions.push(await runtime.execute(await recipeExecutionSpec(step, recipeDirectory)))
@@ -2805,12 +2808,13 @@ function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string)
     name: siteSeed.name,
     ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
     ...(siteSeed.format ? { format: siteSeed.format } : {}),
+    ...(siteSeed.type === "fixture" ? { importer: siteSeed.format ?? "json" } : {}),
     scopes: siteSeed.scopes,
     bounded: siteSeedScopesAreBounded(siteSeed),
-    dryRunOnly: siteSeed.type !== "fixture" || (siteSeed.format !== undefined && siteSeed.format !== "json"),
+    dryRunOnly: siteSeed.type !== "fixture",
     privacy: {
       exportsParentSiteData: false,
-      importsIntoSandbox: siteSeed.type === "fixture" && (siteSeed.format === undefined || siteSeed.format === "json"),
+      importsIntoSandbox: siteSeed.type === "fixture",
       includesRecordData: siteSeed.type === "fixture",
       secrets: "excluded-by-default",
     },
@@ -2832,25 +2836,49 @@ async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: s
     }
 
     const format = siteSeed.format ?? "json"
-    if (format !== "json") {
-      throw new Error(`Recipe fixture siteSeed ${siteSeed.name} uses unsupported executable format: ${format}`)
+    const source = resolve(recipeDirectory, siteSeed.source ?? "")
+    if (format === "json") {
+      const rawSeed = JSON.parse(await readFile(source, "utf8"))
+      const bounded = boundedFixtureSeed(rawSeed, siteSeed.scopes)
+      const execution = await runtime.execute({
+        command: "wordpress.run-php",
+        args: [`code=${siteSeedJsonImportCode(siteSeed.name, bounded.seed)}`],
+      })
+      executions.push(execution)
+      const imported = parseSiteSeedImportResult(execution.stdout)
+      results.push({
+        ...base,
+        action: "imported",
+        counts: {
+          ...bounded.counts,
+          ...imported.counts,
+        },
+        ...(imported.warnings.length > 0 ? { warnings: imported.warnings } : {}),
+        provenance: {
+          importer: "json",
+          source,
+          ...(imported.provenance ?? {}),
+        },
+      })
+      continue
     }
 
-    const source = resolve(recipeDirectory, siteSeed.source ?? "")
-    const rawSeed = JSON.parse(await readFile(source, "utf8"))
-    const bounded = boundedFixtureSeed(rawSeed, siteSeed.scopes)
+    const sourceContents = await readFile(source, "utf8")
     const execution = await runtime.execute({
       command: "wordpress.run-php",
-      args: [`code=${siteSeedJsonImportCode(siteSeed.name, bounded.seed)}`],
+      args: [`code=${siteSeedRegistryImportCode(siteSeed, format, source, sourceContents)}`],
     })
     executions.push(execution)
-    const counts = parseSiteSeedImportCounts(execution.stdout)
+    const imported = parseSiteSeedImportResult(execution.stdout)
     results.push({
       ...base,
       action: "imported",
-      counts: {
-        ...bounded.counts,
-        ...counts,
+      counts: imported.counts,
+      ...(imported.warnings.length > 0 ? { warnings: imported.warnings } : {}),
+      provenance: {
+        importer: format,
+        source,
+        ...(imported.provenance ?? {}),
       },
     })
   }
@@ -2865,26 +2893,32 @@ function recipeSiteSeedRunBase(siteSeed: WorkspaceRecipeSiteSeed, recipeDirector
     name: siteSeed.name,
     ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
     ...(siteSeed.format ? { format: siteSeed.format } : {}),
+    ...(siteSeed.type === "fixture" ? { importer: siteSeed.format ?? "json" } : {}),
     scopes: siteSeed.scopes,
     bounded: siteSeedScopesAreBounded(siteSeed),
     privacy: {
       exportsParentSiteData: false,
-      importsIntoSandbox: siteSeed.type === "fixture" && (siteSeed.format === undefined || siteSeed.format === "json"),
+      importsIntoSandbox: siteSeed.type === "fixture",
       includesRecordData: siteSeed.type === "fixture",
       secrets: "excluded-by-default",
     },
   }
 }
 
-function parseSiteSeedImportCounts(stdout: string): Record<string, number> {
-  const parsed = JSON.parse(stdout.trim() || "{}") as { counts?: Record<string, unknown> }
+function parseSiteSeedImportResult(stdout: string): { counts: Record<string, number>; warnings: string[]; provenance?: Record<string, unknown> } {
+  const parsed = JSON.parse(stdout.trim() || "{}") as { counts?: Record<string, unknown>; warnings?: unknown[]; provenance?: unknown }
   const counts: Record<string, number> = {}
   for (const [key, value] of Object.entries(parsed.counts ?? {})) {
     if (typeof value === "number") {
       counts[key] = value
     }
   }
-  return counts
+  const warnings = (parsed.warnings ?? []).filter((warning): warning is string => typeof warning === "string")
+  return {
+    counts,
+    warnings,
+    ...(parsed.provenance && typeof parsed.provenance === "object" && !Array.isArray(parsed.provenance) ? { provenance: parsed.provenance as Record<string, unknown> } : {}),
+  }
 }
 
 function siteSeedJsonImportCode(seedName: string, seed: unknown): string {
@@ -2988,6 +3022,80 @@ if (is_string($active_theme) && '' !== $active_theme) {
 }
 
 echo wp_json_encode(array('schema' => 'wp-codebox/site-seed-import/v1', 'name' => $seed_name, 'counts' => $counts));
+`}
+
+function siteSeedRegistryImportCode(siteSeed: WorkspaceRecipeSiteSeed, format: string, source: string, sourceContents: string): string {
+  const encodedName = JSON.stringify(siteSeed.name)
+  const encodedFormat = JSON.stringify(format)
+  const encodedSource = JSON.stringify(source)
+  const encodedSourceBasename = JSON.stringify(basename(source))
+  const encodedSourceContents = JSON.stringify(sourceContents)
+  const encodedScopes = JSON.stringify(JSON.stringify(siteSeed.scopes))
+  return `
+$seed_name = ${encodedName};
+$format = ${encodedFormat};
+$source = ${encodedSource};
+$source_basename = ${encodedSourceBasename};
+$source_contents = ${encodedSourceContents};
+$scopes = json_decode(${encodedScopes}, true);
+if (!is_array($scopes)) {
+    throw new RuntimeException('Site seed scopes must decode to an object.');
+}
+
+$importers = apply_filters('wp_codebox_site_seed_importers', array());
+if (!is_array($importers) || !array_key_exists($format, $importers)) {
+    throw new RuntimeException('No WP Codebox site seed importer registered for format: ' . $format);
+}
+
+$importer = $importers[$format];
+$callback = is_array($importer) && array_key_exists('callback', $importer) ? $importer['callback'] : $importer;
+if (!is_callable($callback)) {
+    throw new RuntimeException('WP Codebox site seed importer is not callable for format: ' . $format);
+}
+
+$result = call_user_func($callback, array(
+    'schema' => 'wp-codebox/site-seed-import-request/v1',
+    'name' => $seed_name,
+    'format' => $format,
+    'source' => $source,
+    'source_basename' => $source_basename,
+    'source_contents' => $source_contents,
+    'scopes' => $scopes,
+    'metadata' => array(
+        'source_size' => strlen($source_contents),
+    ),
+));
+
+if (!is_array($result)) {
+    throw new RuntimeException('WP Codebox site seed importer must return an array for format: ' . $format);
+}
+
+$counts = array();
+foreach (($result['counts'] ?? array()) as $key => $value) {
+    if (is_int($value) || is_float($value)) {
+        $counts[(string) $key] = $value;
+    }
+}
+
+$warnings = array();
+foreach (($result['warnings'] ?? array()) as $warning) {
+    if (is_string($warning)) {
+        $warnings[] = $warning;
+    }
+}
+
+$provenance = isset($result['provenance']) && is_array($result['provenance']) ? $result['provenance'] : array();
+$provenance['importer'] = $format;
+$provenance['source'] = $source;
+
+echo wp_json_encode(array(
+    'schema' => 'wp-codebox/site-seed-import/v1',
+    'name' => $seed_name,
+    'importer' => $format,
+    'counts' => $counts,
+    'warnings' => $warnings,
+    'provenance' => $provenance,
+));
 `}
 
 function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["scopes"]): { seed: Record<string, unknown>; counts: Record<string, number> } {
