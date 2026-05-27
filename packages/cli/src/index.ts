@@ -2897,7 +2897,7 @@ if (!is_array($seed)) {
     throw new RuntimeException('Site seed fixture must decode to a JSON object.');
 }
 
-$counts = array('posts' => 0, 'options' => 0, 'terms' => 0);
+$counts = array('posts' => 0, 'options' => 0, 'terms' => 0, 'activePlugins' => 0, 'activeTheme' => 0);
 
 foreach (($seed['posts'] ?? array()) as $post) {
     if (!is_array($post)) {
@@ -2951,6 +2951,42 @@ foreach (($seed['terms'] ?? array()) as $term) {
     $counts['terms']++;
 }
 
+$active_plugins = $seed['activePlugins'] ?? array();
+if (is_array($active_plugins) && count($active_plugins) > 0) {
+    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+    foreach ($active_plugins as $plugin) {
+        $plugin_file = is_array($plugin) ? ($plugin['pluginFile'] ?? ($plugin['file'] ?? '')) : $plugin;
+        $plugin_file = is_string($plugin_file) ? $plugin_file : '';
+        if ('' === $plugin_file || str_starts_with($plugin_file, '/') || str_contains($plugin_file, '..') || !str_ends_with($plugin_file, '.php')) {
+            throw new RuntimeException('Unsafe site seed active plugin entry from ' . $seed_name . '.');
+        }
+        if (!file_exists(WP_PLUGIN_DIR . '/' . $plugin_file)) {
+            throw new RuntimeException('Site seed active plugin is not installed in sandbox: ' . $plugin_file);
+        }
+        $result = activate_plugin($plugin_file, '', false, true);
+        if (is_wp_error($result)) {
+            throw new RuntimeException('Failed to activate site seed plugin from ' . $seed_name . ': ' . $result->get_error_message());
+        }
+        $counts['activePlugins']++;
+    }
+}
+
+$active_theme = $seed['activeTheme'] ?? null;
+if (is_array($active_theme)) {
+    $active_theme = $active_theme['stylesheet'] ?? ($active_theme['slug'] ?? null);
+}
+if (is_string($active_theme) && '' !== $active_theme) {
+    if (!preg_match('/^[A-Za-z0-9_-]+$/', $active_theme)) {
+        throw new RuntimeException('Unsafe site seed active theme entry from ' . $seed_name . '.');
+    }
+    $theme = wp_get_theme($active_theme);
+    if (!$theme->exists()) {
+        throw new RuntimeException('Site seed active theme is not installed in sandbox: ' . $active_theme);
+    }
+    switch_theme($active_theme);
+    $counts['activeTheme']++;
+}
+
 echo wp_json_encode(array('schema' => 'wp-codebox/site-seed-import/v1', 'name' => $seed_name, 'counts' => $counts));
 `}
 
@@ -2963,9 +2999,11 @@ function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["s
   const posts = boundedRecords(arrayRecords(seed.posts), scopes.posts, (record, scope) => matchesPostScope(record, scope))
   const options = boundedOptions(seed.options, scopes.options)
   const terms = boundedRecords(arrayRecords(seed.terms), scopes.terms, (record, scope) => matchesTermScope(record, scope))
+  const activePlugins = boundedActivePlugins(seed.activePlugins, scopes.activePlugins)
+  const activeTheme = boundedActiveTheme(seed.activeTheme, scopes.activeTheme)
 
   return {
-    seed: stripUndefined({ posts: posts.records, options: options.records, terms: terms.records }),
+    seed: stripUndefined({ posts: posts.records, options: options.records, terms: terms.records, activePlugins: activePlugins.records, activeTheme: activeTheme.record }),
     counts: {
       fixturePostsIncluded: posts.records.length,
       fixturePostsExcluded: posts.excluded,
@@ -2973,8 +3011,37 @@ function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["s
       fixtureOptionsExcluded: options.excluded,
       fixtureTermsIncluded: terms.records.length,
       fixtureTermsExcluded: terms.excluded,
+      fixtureActivePluginsIncluded: activePlugins.records.length,
+      fixtureActivePluginsExcluded: activePlugins.excluded,
+      fixtureActiveThemeIncluded: activeTheme.record === undefined ? 0 : 1,
+      fixtureActiveThemeExcluded: activeTheme.excluded,
     },
   }
+}
+
+function boundedActivePlugins(activePlugins: unknown, scope: boolean | undefined): { records: Array<string | Record<string, unknown>>; excluded: number } {
+  const records = Array.isArray(activePlugins)
+    ? activePlugins.filter((plugin): plugin is string | Record<string, unknown> => typeof plugin === "string" || (Boolean(plugin) && typeof plugin === "object" && !Array.isArray(plugin)))
+    : []
+
+  if (scope !== true) {
+    return { records: [], excluded: records.length }
+  }
+
+  const included = records.slice(0, 100)
+  return { records: included, excluded: records.length - included.length }
+}
+
+function boundedActiveTheme(activeTheme: unknown, scope: boolean | undefined): { record: unknown; excluded: number } {
+  if (activeTheme === undefined || activeTheme === null) {
+    return { record: undefined, excluded: 0 }
+  }
+
+  if (scope !== true) {
+    return { record: undefined, excluded: 1 }
+  }
+
+  return { record: activeTheme, excluded: 0 }
 }
 
 function arrayRecords(value: unknown): Array<Record<string, unknown>> {

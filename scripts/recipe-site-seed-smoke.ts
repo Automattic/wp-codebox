@@ -31,6 +31,8 @@ writeFileSync(fixtureSeedPath, `${JSON.stringify({
     blogname: "WP Codebox Seeded Sandbox",
     admin_email: "private@example.test",
   },
+  activePlugins: ["simple-plugin/simple-plugin.php"],
+  activeTheme: "twentytwentyfive",
   terms: [
     {
       taxonomy: "category",
@@ -49,6 +51,13 @@ writeFileSync(recipePath, `${JSON.stringify({
     blueprint: { steps: [] },
   },
   inputs: {
+    mounts: [
+      {
+        source: "../../examples/simple-plugin",
+        target: "/wordpress/wp-content/plugins/simple-plugin",
+        mode: "readonly",
+      },
+    ],
     siteSeeds: [
       {
         type: "fixture",
@@ -59,6 +68,8 @@ writeFileSync(recipePath, `${JSON.stringify({
           posts: { postTypes: ["page"], slugs: ["site-seed-smoke-page"], maxRecords: 1 },
           options: { names: ["blogname"], maxRecords: 1 },
           terms: { taxonomies: ["category"], slugs: ["site-seed-smoke-category"], maxRecords: 1 },
+          activePlugins: true,
+          activeTheme: true,
         },
       },
       {
@@ -76,7 +87,7 @@ writeFileSync(recipePath, `${JSON.stringify({
       {
         command: "wordpress.run-php",
         args: [
-          "code=$page = get_page_by_path('site-seed-smoke-page', OBJECT, 'page'); if (!$page) { throw new RuntimeException('seeded page missing'); } if (get_page_by_path('site-seed-smoke-excluded-page', OBJECT, 'page')) { throw new RuntimeException('unscoped page imported'); } if (get_option('blogname') !== 'WP Codebox Seeded Sandbox') { throw new RuntimeException('seeded option missing'); } if (!term_exists('site-seed-smoke-category', 'category')) { throw new RuntimeException('seeded term missing'); } echo wp_json_encode(array('page' => $page->post_name, 'blogname' => get_option('blogname')));",
+          "code=$page = get_page_by_path('site-seed-smoke-page', OBJECT, 'page'); if (!$page) { throw new RuntimeException('seeded page missing'); } if (get_page_by_path('site-seed-smoke-excluded-page', OBJECT, 'page')) { throw new RuntimeException('unscoped page imported'); } if (get_option('blogname') !== 'WP Codebox Seeded Sandbox') { throw new RuntimeException('seeded option missing'); } if (!term_exists('site-seed-smoke-category', 'category')) { throw new RuntimeException('seeded term missing'); } if (!is_plugin_active('simple-plugin/simple-plugin.php')) { throw new RuntimeException('seeded plugin not active'); } if (get_stylesheet() !== 'twentytwentyfive') { throw new RuntimeException('seeded theme not active: ' . get_stylesheet()); } echo wp_json_encode(array('page' => $page->post_name, 'blogname' => get_option('blogname'), 'pluginActive' => is_plugin_active('simple-plugin/simple-plugin.php'), 'stylesheet' => get_stylesheet()));",
         ],
       },
     ],
@@ -102,7 +113,11 @@ assert.equal(output.siteSeeds[0].privacy.importsIntoSandbox, true)
 assert.equal(output.siteSeeds[0].counts.posts, 1)
 assert.equal(output.siteSeeds[0].counts.options, 1)
 assert.equal(output.siteSeeds[0].counts.terms, 1)
+assert.equal(output.siteSeeds[0].counts.activePlugins, 1)
+assert.equal(output.siteSeeds[0].counts.activeTheme, 1)
 assert.equal(output.siteSeeds[0].counts.fixturePostsExcluded, 1)
+assert.equal(output.siteSeeds[0].counts.fixtureActivePluginsIncluded, 1)
+assert.equal(output.siteSeeds[0].counts.fixtureActiveThemeIncluded, 1)
 assert.equal(output.siteSeeds[1].action, "skipped")
 assert.equal(output.siteSeeds[1].bounded, true)
 assert.equal(output.siteSeeds[1].privacy.exportsParentSiteData, false)
@@ -111,5 +126,7 @@ assert.equal(output.executions.length, 2)
 const workflowResult = JSON.parse(output.executions[1].stdout)
 assert.equal(workflowResult.page, "site-seed-smoke-page")
 assert.equal(workflowResult.blogname, "WP Codebox Seeded Sandbox")
+assert.equal(workflowResult.pluginActive, true)
+assert.equal(workflowResult.stylesheet, "twentytwentyfive")
 
 console.log("recipe site seed smoke passed")
