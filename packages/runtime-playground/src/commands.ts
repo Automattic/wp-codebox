@@ -238,6 +238,194 @@ function numberField(record: Record<string, unknown>, key: string): number | und
   return undefined
 }
 
+export interface ThemeCheckFinding {
+  type: string
+  severity: "error" | "warning" | "required" | "recommended" | "info" | "unknown"
+  message: string
+}
+
+export interface ThemeCheckNormalizedOutput {
+  schema: "wp-codebox/theme-check/v1"
+  command: "wordpress.theme-check"
+  targetTheme: string
+  status: "passed" | "failed" | "error"
+  exitCode: number
+  summary: {
+    total: number
+    errors: number
+    warnings: number
+    required: number
+    recommended: number
+    info: number
+    unknown: number
+  }
+  findings: ThemeCheckFinding[]
+  raw: {
+    format: "json" | "text"
+    parseError?: string
+  }
+}
+
+export function themeCheckRunCode(theme: string): string {
+  return `$theme_slug = ${JSON.stringify(theme)};
+$plugin_dir = WP_PLUGIN_DIR . '/theme-check';
+if (!file_exists($plugin_dir . '/theme-check.php')) {
+    throw new RuntimeException('Theme Check plugin is not installed in the sandbox.');
+}
+
+require_once $plugin_dir . '/checkbase.php';
+require_once $plugin_dir . '/main.php';
+
+$theme = wp_get_theme($theme_slug);
+if (!$theme->exists()) {
+    throw new RuntimeException("Theme '{$theme_slug}' not found.");
+}
+
+$success = run_themechecks_against_theme($theme, $theme_slug);
+$messages = array();
+global $themechecks;
+foreach ($themechecks as $check) {
+    if ($check instanceof themecheck) {
+        $error = (array) $check->getError();
+        if (!empty($error)) {
+            $messages = array_merge($messages, $error);
+        }
+    }
+}
+
+$processed = array_map(function ($message) {
+    if (preg_match('/<span[^>]*>(.*?)<\/span>(.*)/', $message, $matches)) {
+        $key = $matches[1];
+        $value = $matches[2];
+    } else {
+        $key = '';
+        $value = $message;
+    }
+
+    $key = wp_strip_all_tags($key);
+    $key = html_entity_decode($key, ENT_QUOTES, 'UTF-8');
+    $key = rtrim($key, ':');
+
+    $value = wp_strip_all_tags($value);
+    $value = html_entity_decode($value, ENT_QUOTES, 'UTF-8');
+    $value = ltrim($value, ': ');
+
+    return array(
+        'type' => trim($key),
+        'value' => trim($value),
+    );
+}, $messages);
+
+echo wp_json_encode(array(
+    'exitCode' => $success ? 0 : 1,
+    'findings' => $processed,
+), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+export function normalizeThemeCheckOutput(rawOutput: string, exitCode: number, targetTheme: string): ThemeCheckNormalizedOutput {
+  const trimmed = cleanWpCliOutput(rawOutput).trim()
+  const findings: ThemeCheckFinding[] = []
+  let format: ThemeCheckNormalizedOutput["raw"]["format"] = "json"
+  let parseError: string | undefined
+  let effectiveExitCode = exitCode
+
+  try {
+    const parsed = trimmed ? JSON.parse(extractJsonPayload(trimmed)) : []
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.exitCode === "number") {
+      effectiveExitCode = parsed.exitCode
+    }
+    const rows = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.findings) ? parsed.findings : undefined
+    if (!rows) {
+      throw new Error("Theme Check JSON output must be an array or an object with findings")
+    }
+
+    for (const item of rows) {
+      if (!item || typeof item !== "object") {
+        continue
+      }
+
+      const record = item as Record<string, unknown>
+      const rawType = typeof record.type === "string" ? record.type.trim() : ""
+      const rawMessage = typeof record.value === "string" ? record.value.trim() : ""
+      const prefixed = !rawType ? rawMessage.match(/^(ERROR|WARNING|REQUIRED|RECOMMENDED|INFO)\s*:?\s*(.*)$/i) : null
+      const type = prefixed?.[1] ?? rawType
+      const message = prefixed?.[2]?.trim() || rawMessage
+      if (!type && !message) {
+        continue
+      }
+
+      findings.push({
+        type,
+        severity: themeCheckSeverity(type),
+        message,
+      })
+    }
+  } catch (error) {
+    format = "text"
+    parseError = error instanceof Error ? error.message : String(error)
+    if (trimmed) {
+      findings.push({ type: "raw", severity: "unknown", message: trimmed })
+    }
+  }
+
+  const summary = {
+    total: findings.length,
+    errors: findings.filter((finding) => finding.severity === "error").length,
+    warnings: findings.filter((finding) => finding.severity === "warning").length,
+    required: findings.filter((finding) => finding.severity === "required").length,
+    recommended: findings.filter((finding) => finding.severity === "recommended").length,
+    info: findings.filter((finding) => finding.severity === "info").length,
+    unknown: findings.filter((finding) => finding.severity === "unknown").length,
+  }
+
+  return {
+    schema: "wp-codebox/theme-check/v1",
+    command: "wordpress.theme-check",
+    targetTheme,
+    status: format === "text" && effectiveExitCode !== 0 ? "error" : effectiveExitCode === 0 ? "passed" : "failed",
+    exitCode: effectiveExitCode,
+    summary,
+    findings,
+    raw: {
+      format,
+      ...(parseError ? { parseError } : {}),
+    },
+  }
+}
+
+function extractJsonPayload(output: string): string {
+  const firstObject = output.indexOf("{")
+  const firstArray = output.indexOf("[")
+  const starts = [firstObject, firstArray].filter((index) => index >= 0)
+  if (starts.length === 0) {
+    return output
+  }
+
+  const start = Math.min(...starts)
+  const end = output[start] === "[" ? output.lastIndexOf("]") : output.lastIndexOf("}")
+  return end > start ? output.slice(start, end + 1) : output.slice(start)
+}
+
+function themeCheckSeverity(type: string): ThemeCheckFinding["severity"] {
+  const normalized = type.trim().toLowerCase()
+  if (["error", "errors"].includes(normalized)) {
+    return "error"
+  }
+  if (["warning", "warnings"].includes(normalized)) {
+    return "warning"
+  }
+  if (["required", "requirement"].includes(normalized)) {
+    return "required"
+  }
+  if (["recommended", "recommendation"].includes(normalized)) {
+    return "recommended"
+  }
+  if (["info", "information", "notice"].includes(normalized)) {
+    return "info"
+  }
+
+  return "unknown"
+}
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');

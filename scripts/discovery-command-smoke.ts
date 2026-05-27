@@ -36,6 +36,7 @@ const expectedCommandIds = [
   "wordpress.phpunit",
   "wordpress.plugin-check",
   "wordpress.core-phpunit",
+  "wordpress.theme-check",
   "wordpress.browser-probe",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
@@ -66,6 +67,8 @@ async function main(): Promise<void> {
 
   const wpCli = catalog.commands.find((command) => command.id === "wordpress.wp-cli")
   assert(wpCli?.acceptedArgs.some((arg) => arg.name === "command" && arg.required), "wordpress.wp-cli must document required command arg")
+  const themeCheck = catalog.commands.find((command) => command.id === "wordpress.theme-check")
+  assert(themeCheck?.acceptedArgs.some((arg) => arg.name === "theme" && arg.required), "wordpress.theme-check must document required theme arg")
 
   const pluginCheck = catalog.commands.find((command) => command.id === "wordpress.plugin-check")
   assert(pluginCheck?.acceptedArgs.some((arg) => arg.name === "plugin-slug" && arg.required), "wordpress.plugin-check must document required plugin-slug arg")

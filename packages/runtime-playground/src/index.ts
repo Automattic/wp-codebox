@@ -26,7 +26,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -182,6 +182,17 @@ interface BrowserProbeErrorRecord {
   timestamp: string
 }
 
+interface ThemeCheckArtifact {
+  theme: string
+  files: {
+    raw: string
+    normalized: string
+  }
+  summary: ReturnType<typeof normalizeThemeCheckOutput>["summary"]
+  status: ReturnType<typeof normalizeThemeCheckOutput>["status"]
+  exitCode: number
+}
+
 export class PlaygroundRuntimeBackend implements RuntimeBackend {
   readonly kind = "wordpress-playground" as const
 
@@ -200,6 +211,7 @@ class PlaygroundRuntime implements Runtime {
   private readonly events: LifecycleEvent[] = []
   private readonly browserProbes: BrowserProbeArtifact[] = []
   private readonly pluginChecks: PluginCheckArtifact[] = []
+  private readonly themeChecks: ThemeCheckArtifact[] = []
   private readonly artifactRoot: string
   private cliServerPromise?: Promise<PlaygroundCliServer>
 
@@ -361,6 +373,7 @@ class PlaygroundRuntime implements Runtime {
     const redactor = new ArtifactRedactor(this.spec.secretEnv)
     await this.redactBrowserArtifacts(redactor)
     await this.redactPluginCheckArtifacts(redactor)
+    await this.redactThemeCheckArtifacts(redactor)
     const preview = await this.previewInfo(createdAt, spec.previewHoldSeconds)
     const browser = this.browserReviewSummary()
 
@@ -419,6 +432,7 @@ class PlaygroundRuntime implements Runtime {
       mountDiffs: relative(this.artifactRoot, diffsPath),
       ...(browser ? { browser: "files/browser/summary.json" } : {}),
       ...(this.pluginChecks.length > 0 ? { pluginChecks: this.pluginChecks.map((check) => check.files.normalized) } : {}),
+      ...(this.themeChecks.length > 0 ? { themeChecks: this.themeChecks.map((check) => check.files.normalized) } : {}),
     }
     metadata.artifacts = artifactFiles
     const blueprintAfter = buildBlueprintAfter({
@@ -452,6 +466,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(reviewPath, "review", "application/json"),
       ...this.browserManifestFiles(),
       ...this.pluginCheckManifestFiles(),
+      ...this.themeCheckManifestFiles(),
       ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -786,6 +801,10 @@ class PlaygroundRuntime implements Runtime {
       return this.runCorePhpunit(spec)
     }
 
+    if (spec.command === "wordpress.theme-check") {
+      return this.runThemeCheck(spec)
+    }
+
     if (spec.command === "wordpress.browser-probe") {
       return this.runBrowserProbe(spec)
     }
@@ -981,6 +1000,32 @@ class PlaygroundRuntime implements Runtime {
     return `${JSON.stringify(normalized, null, 2)}\n`
   }
 
+  private async runThemeCheck(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const args = spec.args ?? []
+    const theme = argValue(args, "theme")?.trim()
+    if (!theme) {
+      throw new Error("wordpress.theme-check requires theme=<slug>")
+    }
+
+    if (!server.playground.writeFile) {
+      throw new Error("wordpress.theme-check requires a Playground backend with writeFile support")
+    }
+
+    if (!await this.themeCheckPluginInstalled(server)) {
+      const install = await this.runWpCliArgv(server, ["plugin", "install", "theme-check"])
+      assertPlaygroundResponseOk("wordpress.theme-check", install)
+    }
+
+    const response = await this.runPlaygroundCommand("wordpress.theme-check", server, { code: this.bootstrapPhpCode(themeCheckRunCode(theme), []) })
+    assertPlaygroundResponseOk("wordpress.theme-check", response)
+    const raw = cleanWpCliOutput(response.text)
+    const normalized = normalizeThemeCheckOutput(raw, response.exitCode ?? 0, theme)
+    await this.writeThemeCheckArtifacts(theme, raw, normalized)
+
+    return `${JSON.stringify(normalized, null, 2)}\n`
+  }
+
   private async runWpCliCommand(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
     if (!server.playground.writeFile) {
       throw new Error("WP-CLI commands require a Playground backend with writeFile support")
@@ -1091,6 +1136,44 @@ class PlaygroundRuntime implements Runtime {
     } catch {
       // The structured result is best-effort; preserve the command failure if copying fails.
     }
+  }
+
+  private async runWpCliArgv(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
+    if (!server.playground.writeFile) {
+      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
+    }
+
+    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
+    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
+    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+  }
+
+  private async themeCheckPluginInstalled(server: PlaygroundCliServer): Promise<boolean> {
+    const response = await this.runPlaygroundCommand("wordpress.theme-check", server, {
+      code: "<?php echo file_exists('/wordpress/wp-content/plugins/theme-check/theme-check.php') ? 'yes' : 'no';",
+    })
+
+    return response.text.trim() === "yes"
+  }
+
+  private async writeThemeCheckArtifacts(theme: string, raw: string, normalized: ReturnType<typeof normalizeThemeCheckOutput>): Promise<void> {
+    const safeTheme = theme.replace(/[^a-z0-9_-]/gi, "-") || "theme"
+    const directory = join(this.artifactRoot, "files", "theme-check")
+    await mkdir(directory, { recursive: true })
+    const rawPath = join(directory, `${safeTheme}.raw.txt`)
+    const normalizedPath = join(directory, `${safeTheme}.normalized.json`)
+    await writeFile(rawPath, raw.endsWith("\n") ? raw : `${raw}\n`)
+    await writeFile(normalizedPath, `${JSON.stringify(normalized, null, 2)}\n`)
+    this.themeChecks.push({
+      theme,
+      files: {
+        raw: relative(this.artifactRoot, rawPath),
+        normalized: relative(this.artifactRoot, normalizedPath),
+      },
+      summary: normalized.summary,
+      status: normalized.status,
+      exitCode: normalized.exitCode,
+    })
   }
 
   private hostPathForVfsPath(vfsPath: string): string | undefined {
@@ -1322,6 +1405,33 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
           await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
         } catch {
           // Plugin Check artifacts are generated before bundle collection; tolerate missing files.
+        }
+      }
+    }
+  }
+
+  private themeCheckManifestFiles(): ArtifactManifestFile[] {
+    if (this.themeChecks.length === 0) {
+      return []
+    }
+
+    const files = new Map<string, { kind: string; contentType: string }>()
+    for (const check of this.themeChecks) {
+      files.set(check.files.raw, { kind: "theme-check-raw", contentType: "text/plain" })
+      files.set(check.files.normalized, { kind: "theme-check-normalized", contentType: "application/json" })
+    }
+
+    return [...files.entries()].map(([path, entry]) => fileEntry(join(this.artifactRoot, path), entry.kind, entry.contentType))
+  }
+
+  private async redactThemeCheckArtifacts(redactor: ArtifactRedactor): Promise<void> {
+    for (const check of this.themeChecks) {
+      for (const path of [check.files.raw, check.files.normalized]) {
+        const absolutePath = join(this.artifactRoot, path)
+        try {
+          await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
+        } catch {
+          // Theme Check capture is best-effort; preserve artifact collection if a file vanished.
         }
       }
     }

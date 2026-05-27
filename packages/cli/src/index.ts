@@ -537,6 +537,16 @@ const commandCatalog: CommandMetadata[] = [
     recipe: true,
   },
   {
+    id: "wordpress.theme-check",
+    description: "Run Theme Check against a mounted WordPress theme inside the disposable Playground runtime.",
+    acceptedArgs: [
+      { name: "theme", description: "Theme slug under wp-content/themes.", required: true, format: "slug" },
+    ],
+    outputShape: "Normalized Theme Check JSON plus files/theme-check raw and normalized artifacts.",
+    policyRequirement: "Runtime policy commands must include wordpress.theme-check.",
+    recipe: true,
+  },
+  {
     id: "wordpress.browser-probe",
     description: "Open the live Playground preview in Playwright and capture browser console, page errors, and screenshot artifacts.",
     acceptedArgs: [
