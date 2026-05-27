@@ -156,7 +156,7 @@ interface RecipeRunOutput {
   schema: "wp-codebox/recipe-run/v1"
   recipePath?: string
   runtime?: RuntimeInfo
-  executions: ExecutionResult[]
+  executions: RecipeExecutionResult[]
   siteSeeds?: RecipeRunSiteSeed[]
   validation?: {
     issues: RecipeValidationIssue[]
@@ -203,8 +203,17 @@ interface RecipeDryRunPlan {
     issues: ReturnType<typeof validateRuntimePolicy>["issues"]
   }
   workflow: {
+    before?: RecipeDryRunStep[]
     steps: RecipeDryRunStep[]
+    after?: RecipeDryRunStep[]
   }
+}
+
+type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after"
+
+type RecipeExecutionResult = ExecutionResult & {
+  recipePhase?: RecipeWorkflowPhase
+  recipeStepIndex?: number
 }
 
 interface RecipeDryRunMount {
@@ -262,6 +271,7 @@ interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
 }
 
 interface RecipeDryRunStep {
+  phase: RecipeWorkflowPhase
   index: number
   command: string
   args: string[]
@@ -580,9 +590,17 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
       additionalProperties: false,
       required: ["steps"],
       properties: {
+        before: {
+          type: "array",
+          items: { $ref: "#/$defs/step" },
+        },
         steps: {
           type: "array",
           minItems: 1,
+          items: { $ref: "#/$defs/step" },
+        },
+        after: {
+          type: "array",
           items: { $ref: "#/$defs/step" },
         },
       },
@@ -990,6 +1008,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
+  const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy)
   const mounts: RecipeDryRunMount[] = [
     ...workspaces.map((workspace) => ({
       type: "directory" as const,
@@ -1045,7 +1064,9 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       issues: policyValidation.issues,
     },
     workflow: {
-      steps: await recipeDryRunSteps(recipe, recipeDirectory, policy),
+      ...(recipe.workflow.before ? { before: workflowSteps.filter((step) => step.phase === "before") } : {}),
+      steps: workflowSteps,
+      ...(recipe.workflow.after ? { after: workflowSteps.filter((step) => step.phase === "after") } : {}),
     },
   }
 }
@@ -1092,7 +1113,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
-  const executions: ExecutionResult[] = []
+  const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
 
   try {
@@ -1158,11 +1179,11 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
 
     const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
-      executions.push(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }))
+      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }), "setup", -1))
     }
 
-    for (const step of recipe.workflow.steps) {
-      executions.push(await runtime.execute(await recipeExecutionSpec(step, recipeDirectory)))
+    for (const workflowStep of recipeWorkflowSteps(recipe)) {
+      executions.push(await executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory))
     }
 
     await runtime.observe({ type: "runtime-info" })
@@ -1229,7 +1250,7 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
       valid: issues.length === 0,
       issues,
       summary: {
-        steps: recipe.workflow.steps.length,
+        steps: recipeWorkflowSteps(recipe).length,
         mounts: recipe.inputs?.mounts?.length ?? 0,
         workspaces: recipe.inputs?.workspaces?.length ?? 0,
         extraPlugins: recipeExtraPlugins(recipe).length,
@@ -2241,13 +2262,19 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
     throw new Error(`Recipe must include at least one workflow step: ${recipePath}`)
   }
 
-  for (const step of recipe.workflow.steps) {
+  for (const phase of ["before", "after"] as const) {
+    if (recipe.workflow[phase] !== undefined && !Array.isArray(recipe.workflow[phase])) {
+      throw new Error(`Recipe workflow ${phase} must be an array: ${recipePath}`)
+    }
+  }
+
+  for (const { phase, step } of recipeWorkflowSteps(recipe)) {
     if (!step || typeof step.command !== "string" || step.command === "") {
-      throw new Error(`Recipe workflow steps must include a command: ${recipePath}`)
+      throw new Error(`Recipe workflow ${phase} entries must include a command: ${recipePath}`)
     }
 
     if (step.args && !Array.isArray(step.args)) {
-      throw new Error(`Recipe workflow step args must be arrays: ${recipePath}`)
+      throw new Error(`Recipe workflow ${phase} args must be arrays: ${recipePath}`)
     }
   }
 
@@ -2352,8 +2379,8 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
     addIssue("unsupported-backend", "$.runtime.backend", `Unsupported recipe backend: ${recipe.runtime.backend}`)
   }
 
-  for (const [index, step] of recipe.workflow.steps.entries()) {
-    const path = `$.workflow.steps[${index}]`
+  for (const { phase, index, step } of recipeWorkflowSteps(recipe)) {
+    const path = `$.workflow.${phase}[${index}]`
     if (!supportedRecipeCommands.has(step.command)) {
       addIssue("unsupported-command", `${path}.command`, `Unsupported recipe command: ${step.command}`)
       continue
@@ -2607,6 +2634,44 @@ function recipeWpCliCommandFromArgs(args: string[]): string {
   return recipeStepArgValue(args, "command")?.trim() ?? args.join(" ").trim()
 }
 
+function recipeWorkflowSteps(recipe: WorkspaceRecipe): Array<{ phase: Exclude<RecipeWorkflowPhase, "setup">; index: number; step: WorkspaceRecipe["workflow"]["steps"][number] }> {
+  return [
+    ...(recipe.workflow.before ?? []).map((step, index) => ({ phase: "before" as const, index, step })),
+    ...recipe.workflow.steps.map((step, index) => ({ phase: "steps" as const, index, step })),
+    ...(recipe.workflow.after ?? []).map((step, index) => ({ phase: "after" as const, index, step })),
+  ]
+}
+
+function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number): RecipeExecutionResult {
+  return {
+    ...execution,
+    recipePhase,
+    recipeStepIndex,
+  }
+}
+
+async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string): Promise<RecipeExecutionResult> {
+  try {
+    const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory))
+    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
+  }
+}
+
+function recipeWorkflowMetadata(recipe: WorkspaceRecipe): { before?: Array<{ command: string; args: string[] }>; steps: Array<{ command: string; args: string[] }>; after?: Array<{ command: string; args: string[] }> } {
+  return {
+    ...(recipe.workflow.before ? { before: recipe.workflow.before.map(recipeStepMetadata) } : {}),
+    steps: recipe.workflow.steps.map(recipeStepMetadata),
+    ...(recipe.workflow.after ? { after: recipe.workflow.after.map(recipeStepMetadata) } : {}),
+  }
+}
+
+function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]): { command: string; args: string[] } {
+  return { command: step.command, args: step.args ?? [] }
+}
+
 async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: string, policy: RuntimePolicy): Promise<RecipeDryRunStep[]> {
   const steps: Array<Promise<RecipeDryRunStep>> = []
   const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
@@ -2623,20 +2688,21 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   }))
   const pluginActivationCode = activateExtraPluginsCode(dryRunExtraPlugins)
   if (pluginActivationCode) {
-    steps.push(recipeDryRunStep({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }, recipeDirectory, policy, -1, "activate-extra-plugins"))
+    steps.push(recipeDryRunStep({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }, recipeDirectory, policy, "setup", -1, "activate-extra-plugins"))
   }
 
-  for (const [index, step] of recipe.workflow.steps.entries()) {
-    steps.push(recipeDryRunStep(step, recipeDirectory, policy, index))
+  for (const workflowStep of recipeWorkflowSteps(recipe)) {
+    steps.push(recipeDryRunStep(workflowStep.step, recipeDirectory, policy, workflowStep.phase, workflowStep.index))
   }
 
   return Promise.all(steps)
 }
 
-async function recipeDryRunStep(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, policy: RuntimePolicy, index: number, label?: string): Promise<RecipeDryRunStep> {
+async function recipeDryRunStep(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, policy: RuntimePolicy, phase: RecipeWorkflowPhase, index: number, label?: string): Promise<RecipeDryRunStep> {
   const resolved = await recipeExecutionSpec(step, recipeDirectory)
   const allowed = policy.commands.includes(resolved.command)
   return {
+    phase,
     index,
     command: label ?? step.command,
     args: step.args ?? [],
@@ -2671,7 +2737,7 @@ function parseRecipeArgs(args: string[]): Record<string, string | true> {
 }
 
 function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
-  const commands = recipe.workflow.steps.map((step) => step.command.startsWith("wp-codebox.agent-") ? "wordpress.run-php" : step.command)
+  const commands = recipeWorkflowSteps(recipe).map(({ step }) => step.command.startsWith("wp-codebox.agent-") ? "wordpress.run-php" : step.command)
   if (recipeExtraPlugins(recipe).some((plugin) => plugin.activate !== false)) {
     commands.unshift("wordpress.run-php")
   }
@@ -2701,6 +2767,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     provenance: plugin.provenance,
   }))
   const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
+  const workflow = recipeWorkflowMetadata(recipe)
 
   return {
     recipe: {
@@ -2708,9 +2775,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       schema: recipe.schema,
       runtime: recipe.runtime ?? {},
       artifacts: recipe.artifacts ?? {},
-      workflow: {
-        steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
-      },
+      workflow,
       inputs: {
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
@@ -2729,9 +2794,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       previewPublicUrl,
       previewPort,
       previewBind,
-      workflow: {
-        steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
-      },
+      workflow,
       inputs: {
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
@@ -2817,7 +2880,7 @@ function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string)
   }))
 }
 
-async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: ExecutionResult[]): Promise<RecipeRunSiteSeed[]> {
+async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunSiteSeed[]> {
   const results: RecipeRunSiteSeed[] = []
 
   for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
@@ -2843,7 +2906,7 @@ async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: s
       command: "wordpress.run-php",
       args: [`code=${siteSeedJsonImportCode(siteSeed.name, bounded.seed)}`],
     })
-    executions.push(execution)
+    executions.push(withRecipeExecutionPhase(execution, "setup", index))
     const counts = parseSiteSeedImportCounts(execution.stdout)
     results.push({
       ...base,
