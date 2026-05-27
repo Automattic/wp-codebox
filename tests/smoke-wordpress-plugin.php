@@ -30,22 +30,46 @@ if ( ! function_exists( 'is_wp_error' ) ) {
 
 $GLOBALS['wp_codebox_registered_abilities']         = array();
 $GLOBALS['wp_codebox_registered_ability_categories'] = array();
+$GLOBALS['wp_codebox_actions']                      = array();
+$GLOBALS['wp_codebox_current_action']              = null;
 $GLOBALS['wp_codebox_filters']                      = array();
 $GLOBALS['wp_codebox_options']                      = array();
 $GLOBALS['wp_codebox_site_options']                 = array();
 
 function wp_register_ability( string $name, array $definition ): void {
+	if ( isset( $definition['category'] ) && ! isset( $GLOBALS['wp_codebox_registered_ability_categories'][ $definition['category'] ] ) ) {
+		return;
+	}
+
 	$GLOBALS['wp_codebox_registered_abilities'][ $name ] = $definition;
 }
 
 function wp_register_ability_category( string $slug, array $args ): void {
+	if ( ! doing_action( 'wp_abilities_api_categories_init' ) ) {
+		return;
+	}
+
 	$GLOBALS['wp_codebox_registered_ability_categories'][ $slug ] = $args;
 }
 
 function doing_action( string $hook ): bool {
-	return in_array( $hook, array( 'wp_abilities_api_init', 'wp_abilities_api_categories_init' ), true );
+	return $hook === $GLOBALS['wp_codebox_current_action'];
 }
-function add_action( string $hook, callable $callback, int $priority = 10 ): void {}
+function add_action( string $hook, callable $callback, int $priority = 10 ): void {
+	$GLOBALS['wp_codebox_actions'][ $hook ][ $priority ][] = $callback;
+}
+function do_action( string $hook ): void {
+	$previous_action = $GLOBALS['wp_codebox_current_action'];
+	$GLOBALS['wp_codebox_current_action'] = $hook;
+	$callbacks = $GLOBALS['wp_codebox_actions'][ $hook ] ?? array();
+	ksort( $callbacks );
+	foreach ( $callbacks as $priority_callbacks ) {
+		foreach ( $priority_callbacks as $callback ) {
+			$callback();
+		}
+	}
+	$GLOBALS['wp_codebox_current_action'] = $previous_action;
+}
 function add_filter( string $hook, callable $callback, int $priority = 10 ): void { $GLOBALS['wp_codebox_filters'][ $hook ] = $callback; }
 function current_user_can( string $capability ): bool { return 'manage_options' === $capability; }
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
@@ -92,6 +116,12 @@ echo "WP Codebox WordPress plugin - smoke\n";
 
 new WP_Codebox_Data_Machine_Pending_Actions();
 new WP_Codebox_Abilities();
+
+do_action( 'wp_abilities_api_init' );
+$assert( 'ability registration waits for category registration', ! isset( $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task'] ) );
+
+do_action( 'wp_abilities_api_categories_init' );
+do_action( 'wp_abilities_api_init' );
 
 $category = $GLOBALS['wp_codebox_registered_ability_categories']['wp-codebox'] ?? null;
 $assert( 'wp-codebox ability category registered', is_array( $category ) );
