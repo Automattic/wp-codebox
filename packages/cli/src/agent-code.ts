@@ -64,6 +64,8 @@ if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
     define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
 }
 
+add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_false', 100);
+
 $sandbox_workspace_adoptions = array();
 if (function_exists('wp_get_ability')) {
     $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions): void {
@@ -256,6 +258,8 @@ require_once ABSPATH . 'wp-admin/includes/plugin.php';
 if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
     define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
 }
+
+add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_false', 100);
 
 add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 

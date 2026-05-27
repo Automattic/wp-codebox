@@ -14,6 +14,7 @@ async function main() {
   assert.match(code, /\\"agent_modes\\":\[\\"sandbox\\",\\"pipeline\\"\]/, "client context should report additive sandbox modes")
   assert.match(code, /\\"tool_policy\\":\{\\"mode\\":\\"allow\\",\\"tools\\":\[.*\\"workspace_read\\"/, "sandbox agent should allow workspace tools")
   assert.match(code, /datamachine_agent_mode_sandbox/, "sandbox mode should inject tool guidance")
+  assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")
   assert.match(code, /Do not invent alternate tool names such as read_file/, "sandbox guidance should prevent pseudo-tool aliases")
   assert.match(code, /workspace_apply_patch/, "sandbox tool policy should include patch application")
 }
