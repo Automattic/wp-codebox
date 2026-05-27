@@ -23,6 +23,7 @@ interface RecipeRunOutputLike extends RunOutputLike {
     workspaces?: unknown[]
     extra_plugins?: unknown[]
     siteSeeds?: unknown[]
+    stagedFiles?: unknown[]
   }
   validation?: {
     issues?: Array<{ code: string; path: string; message: string }>
@@ -38,6 +39,7 @@ interface RecipeValidateOutputLike {
     mounts: number
     workspaces: number
     extraPlugins: number
+    stagedFiles?: number
   }
 }
 
@@ -161,6 +163,7 @@ export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
     console.log(`Workspaces: ${output.plan?.workspaces?.length ?? 0}`)
     console.log(`Extra plugins: ${output.plan?.extra_plugins?.length ?? 0}`)
     console.log(`Site seeds: ${output.plan?.siteSeeds?.length ?? 0}`)
+    console.log(`Staged files: ${output.plan?.stagedFiles?.length ?? 0}`)
     return
   }
 
@@ -182,6 +185,9 @@ export function printRecipeValidateHumanOutput(output: RecipeValidateOutputLike)
     console.log(`Mounts: ${output.summary.mounts}`)
     console.log(`Workspaces: ${output.summary.workspaces}`)
     console.log(`Extra plugins: ${output.summary.extraPlugins}`)
+    if (output.summary.stagedFiles !== undefined) {
+      console.log(`Staged files: ${output.summary.stagedFiles}`)
+    }
   }
 
   for (const issue of output.issues) {

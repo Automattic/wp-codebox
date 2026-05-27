@@ -154,6 +154,11 @@ export interface WorkspaceRecipeMount {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeStagedFile {
+  source: string
+  target: string
+}
+
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
@@ -253,6 +258,7 @@ export interface WorkspaceRecipe {
     extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
+    stagedFiles?: WorkspaceRecipeStagedFile[]
     inherit?: WorkspaceRecipeInheritanceRequest
     inheritance?: WorkspaceRecipeInheritanceResolution
   }

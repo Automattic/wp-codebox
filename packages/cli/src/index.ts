@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { promisify } from "node:util"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
@@ -147,6 +147,7 @@ interface RecipeValidateOutput {
     mounts: number
     workspaces: number
     extraPlugins: number
+    stagedFiles: number
   }
   error?: RunOutput["error"]
 }
@@ -157,6 +158,7 @@ interface RecipeRunOutput {
   recipePath?: string
   runtime?: RuntimeInfo
   executions: RecipeExecutionResult[]
+  stagedFiles?: RecipeRunStagedFile[]
   siteSeeds?: RecipeRunSiteSeed[]
   validation?: {
     issues: RecipeValidationIssue[]
@@ -197,6 +199,7 @@ interface RecipeDryRunPlan {
   workspaces: RecipeDryRunWorkspace[]
   extra_plugins: RecipeDryRunExtraPlugin[]
   siteSeeds: RecipeDryRunSiteSeed[]
+  stagedFiles: RecipeDryRunStagedFile[]
   secretEnv: Array<{ name: string; available: boolean }>
   policy: RuntimePolicy & {
     valid: boolean
@@ -217,7 +220,7 @@ type RecipeExecutionResult = ExecutionResult & {
 }
 
 interface RecipeDryRunMount {
-  type: "directory"
+  type: MountSpec["type"]
   source?: string
   target: string
   mode: "readonly" | "readwrite"
@@ -271,6 +274,19 @@ interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
   counts?: Record<string, number>
   warnings?: string[]
   provenance?: Record<string, unknown>
+}
+
+interface RecipeDryRunStagedFile {
+  index: number
+  source: string
+  sourceRef: string
+  target: string
+  type: MountSpec["type"]
+  provenance: RecipeStagedFileProvenance
+}
+
+interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
+  action: "staged"
 }
 
 interface RecipeDryRunStep {
@@ -332,6 +348,23 @@ interface PreparedExtraPlugin {
   activate: boolean
   cleanupPaths: string[]
   provenance: RecipeSourceProvenance
+}
+
+interface RecipeStagedFileProvenance {
+  kind: "local"
+  original: string
+  localPathCategory?: "recipe-relative"
+}
+
+interface PreparedStagedFile {
+  source: string
+  originalSource: string
+  sourceRef: string
+  target: string
+  type: MountSpec["type"]
+  cleanupPaths: string[]
+  provenance: RecipeStagedFileProvenance
+  metadata: Record<string, unknown>
 }
 
 interface AgentRuntimeProbeOptions {
@@ -584,6 +617,11 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
           description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
           items: { $ref: "#/$defs/siteSeed" },
         },
+        stagedFiles: {
+          type: "array",
+          description: "Local recipe-owned files or directories copied into absolute sandbox paths before workflow steps execute.",
+          items: { $ref: "#/$defs/stagedFile" },
+        },
         inherit: { $ref: "#/$defs/inheritanceRequest" },
         inheritance: { $ref: "#/$defs/inheritanceResolution" },
       },
@@ -706,6 +744,15 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         includeFiles: { type: "boolean" },
         anonymize: { type: "boolean" },
         maxRecords: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+    stagedFile: {
+      type: "object",
+      additionalProperties: false,
+      required: ["source", "target"],
+      properties: {
+        source: { type: "string" },
+        target: { type: "string", pattern: "^/" },
       },
     },
     step: {
@@ -1011,6 +1058,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
+  const stagedFiles = await recipeDryRunStagedFiles(recipe, recipeDirectory)
   const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy)
   const mounts: RecipeDryRunMount[] = [
     ...workspaces.map((workspace) => ({
@@ -1041,6 +1089,18 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       ...(mount.metadata ? { metadata: mount.metadata } : {}),
       planned: "existing" as const,
     })),
+    ...stagedFiles.map((stagedFile) => ({
+      type: stagedFile.type,
+      source: stagedFile.source,
+      target: stagedFile.target,
+      mode: "readwrite" as const,
+      metadata: {
+        kind: "staged-file",
+        index: stagedFile.index,
+        source: stagedFile.provenance,
+      },
+      planned: "generated" as const,
+    })),
   ]
 
   return {
@@ -1057,6 +1117,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
     workspaces,
     extra_plugins: extraPlugins,
     siteSeeds,
+    stagedFiles,
     secretEnv: (recipe.inputs?.secretEnv ?? []).map((name) => ({
       name,
       available: process.env[name] !== undefined,
@@ -1115,6 +1176,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
+  let stagedFiles: PreparedStagedFile[] = []
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
@@ -1122,6 +1184,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   try {
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
     extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+    stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
 
     runtime = await createRuntime(
       {
@@ -1137,7 +1200,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl, options.previewPort, options.previewBind),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, options.previewPublicUrl, options.previewPort, options.previewBind),
         },
         preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
@@ -1178,6 +1241,16 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       })
     }
 
+    for (const stagedFile of stagedFiles) {
+      await runtime.mount({
+        type: stagedFile.type,
+        source: stagedFile.source,
+        target: stagedFile.target,
+        mode: "readwrite",
+        metadata: stagedFile.metadata,
+      })
+    }
+
     const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
       executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }), "setup", -1))
@@ -1193,7 +1266,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
     const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins))
+    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles))
 
     const benchResultsList = executions
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
@@ -1205,6 +1278,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       recipePath,
       runtime: runtimeInfo ?? await runtime.info(),
       executions,
+      stagedFiles: stagedFiles.map(recipeRunStagedFile),
       siteSeeds,
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
@@ -1225,7 +1299,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       }
     }
 
-    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins)
+    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles)
 
     return {
       success: false,
@@ -1257,6 +1331,7 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
         mounts: recipe.inputs?.mounts?.length ?? 0,
         workspaces: recipe.inputs?.workspaces?.length ?? 0,
         extraPlugins: recipeExtraPlugins(recipe).length,
+        stagedFiles: recipe.inputs?.stagedFiles?.length ?? 0,
       },
     }
   } catch (error) {
@@ -2368,6 +2443,25 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
     }
   }
 
+  const stagedFiles = recipe.inputs?.stagedFiles ?? []
+  if (!Array.isArray(stagedFiles)) {
+    throw new Error(`Recipe stagedFiles must be an array: ${recipePath}`)
+  }
+
+  for (const stagedFile of stagedFiles) {
+    if (!stagedFile || typeof stagedFile !== "object") {
+      throw new Error(`Recipe stagedFiles entries must be objects: ${recipePath}`)
+    }
+
+    if (!stagedFile.source || typeof stagedFile.source !== "string") {
+      throw new Error(`Recipe stagedFiles entries must include source: ${recipePath}`)
+    }
+
+    if (!stagedFile.target || typeof stagedFile.target !== "string") {
+      throw new Error(`Recipe stagedFiles entries must include target: ${recipePath}`)
+    }
+  }
+
   return recipe
 }
 
@@ -2455,6 +2549,12 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
 
   for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
     await validateRecipeSiteSeed(siteSeed, recipeDirectory, `$.inputs.siteSeeds[${index}]`, addIssue)
+  }
+
+  for (const [index, stagedFile] of (recipe.inputs?.stagedFiles ?? []).entries()) {
+    const path = `$.inputs.stagedFiles[${index}]`
+    await validateExistingFileOrDirectory(resolve(recipeDirectory, stagedFile.source), `${path}.source`, addIssue)
+    validateAbsoluteSandboxPath(stagedFile.target, `${path}.target`, addIssue)
   }
 
   return issues
@@ -2605,6 +2705,17 @@ async function validateExistingFile(path: string, issuePath: string, addIssue: (
     }
   } catch {
     addIssue("missing-path", issuePath, `File does not exist: ${path}`)
+  }
+}
+
+async function validateExistingFileOrDirectory(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  try {
+    const result = await stat(path)
+    if (!result.isFile() && !result.isDirectory()) {
+      addIssue("unsupported-path", issuePath, `Expected file or directory: ${path}`)
+    }
+  } catch {
+    addIssue("missing-path", issuePath, `File or directory does not exist: ${path}`)
   }
 }
 
@@ -2761,7 +2872,7 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -2770,6 +2881,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     provenance: plugin.provenance,
   }))
   const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
+  const stagedFileProvenance = stagedFiles.map(recipeRunStagedFile)
   const workflow = recipeWorkflowMetadata(recipe)
 
   return {
@@ -2785,6 +2897,8 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         extra_plugins: extraPluginMetadata,
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
+        stagedFiles: recipe.inputs?.stagedFiles ?? [],
+        stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2804,6 +2918,8 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         extra_plugins: extraPluginMetadata,
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
+        stagedFiles: recipe.inputs?.stagedFiles ?? [],
+        stagedFileProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2813,6 +2929,13 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       target: workspace.target,
       mode: workspace.mode,
       metadata: workspace.metadata,
+    })),
+    preparedStagedFiles: stagedFiles.map((stagedFile) => ({
+      sourceRef: stagedFile.sourceRef,
+      target: stagedFile.target,
+      type: stagedFile.type,
+      provenance: stagedFile.provenance,
+      metadata: stagedFile.metadata,
     })),
   }
 }
@@ -2882,6 +3005,33 @@ function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string)
       secrets: "excluded-by-default",
     },
   }))
+}
+
+async function recipeDryRunStagedFiles(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<RecipeDryRunStagedFile[]> {
+  return Promise.all((recipe.inputs?.stagedFiles ?? []).map(async (stagedFile, index) => {
+    const source = resolve(recipeDirectory, stagedFile.source)
+    return {
+      index,
+      source,
+      sourceRef: stagedFile.source,
+      target: stagedFile.target,
+      type: await stagedFileMountType(source),
+      provenance: stagedFileProvenance(stagedFile, recipeDirectory),
+    }
+  }))
+}
+
+function recipeRunStagedFile(stagedFile: PreparedStagedFile): RecipeRunStagedFile {
+  const index = typeof stagedFile.metadata.index === "number" ? stagedFile.metadata.index : 0
+  return {
+    index,
+    source: stagedFile.originalSource,
+    sourceRef: stagedFile.sourceRef,
+    target: stagedFile.target,
+    type: stagedFile.type,
+    provenance: stagedFile.provenance,
+    action: "staged",
+  }
 }
 
 async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunSiteSeed[]> {
@@ -3340,10 +3490,11 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
   await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
 }
 
-async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[]): Promise<void> {
+async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = []): Promise<void> {
   await Promise.all([
     cleanupRecipeWorkspaces(workspaces),
     ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
+    ...stagedFiles.flatMap((stagedFile) => stagedFile.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
   ])
 }
 
@@ -3366,6 +3517,54 @@ async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirector
   }
 
   return plugins
+}
+
+async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedStagedFile[]> {
+  const stagedFiles: PreparedStagedFile[] = []
+  for (const [index, stagedFile] of (recipe.inputs?.stagedFiles ?? []).entries()) {
+    const originalSource = resolve(recipeDirectory, stagedFile.source)
+    const type = await stagedFileMountType(originalSource)
+    const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-staged-file-"))
+    const stagedSource = join(stagingRoot, basename(originalSource))
+    await cp(originalSource, stagedSource, { recursive: type === "directory" })
+    const provenance = stagedFileProvenance(stagedFile, recipeDirectory)
+    stagedFiles.push({
+      source: stagedSource,
+      originalSource,
+      sourceRef: stagedFile.source,
+      target: stagedFile.target,
+      type,
+      cleanupPaths: [stagingRoot],
+      provenance,
+      metadata: {
+        kind: "staged-file",
+        index,
+        source: provenance,
+      },
+    })
+  }
+
+  return stagedFiles
+}
+
+async function stagedFileMountType(source: string): Promise<MountSpec["type"]> {
+  const result = await stat(source)
+  if (result.isDirectory()) {
+    return "directory"
+  }
+  if (result.isFile()) {
+    return "file"
+  }
+
+  throw new Error(`Recipe stagedFiles source must be a file or directory: ${source}`)
+}
+
+function stagedFileProvenance(stagedFile: WorkspaceRecipeStagedFile, recipeDirectory: string): RecipeStagedFileProvenance {
+  return {
+    kind: "local",
+    original: stagedFile.source,
+    localPathCategory: resolve(recipeDirectory, stagedFile.source).startsWith(recipeDirectory) ? "recipe-relative" : undefined,
+  }
 }
 
 async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFileRelativeToSource: string, sourceRef: string): Promise<void> {
