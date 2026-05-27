@@ -1,6 +1,49 @@
+import { createHash } from "node:crypto"
+
 export * from "./workspace-policy.js"
 
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
+
+export const RUNTIME_EPISODE_TRACE_SCHEMA = "wp-codebox/runtime-episode-trace/v1" as const
+
+export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
+  $id: RUNTIME_EPISODE_TRACE_SCHEMA,
+  type: "object",
+  required: ["schema", "version", "id", "createdAt", "runtime", "reset", "steps", "snapshots"],
+  properties: {
+    schema: { const: RUNTIME_EPISODE_TRACE_SCHEMA },
+    version: { const: 1 },
+    id: { type: "string", minLength: 1 },
+    createdAt: { type: "string", minLength: 1 },
+    runtime: { type: "object", required: ["id", "backend", "environment", "createdAt", "status"] },
+    reset: { type: "object", required: ["id", "runtime", "observations", "observationRefs"] },
+    steps: {
+      type: "array",
+      items: { type: "object", required: ["id", "index", "action", "actionRef", "execution", "executionRef"] },
+    },
+    snapshots: {
+      type: "array",
+      items: { type: "object", required: ["id", "createdAt", "semantics", "metadata"] },
+    },
+    artifacts: { type: "object" },
+    artifactRef: { type: "object", required: ["kind", "id"] },
+  },
+  additionalProperties: true,
+} as const
+
+const RUNTIME_EPISODE_TRACE_FORBIDDEN_FIELDS = new Set([
+  "reward",
+  "success",
+  "grader",
+  "scenario",
+  "task-set",
+  "task_set",
+  "taskSet",
+  "benchmark",
+  "model-eval",
+  "model_eval",
+  "modelEval",
+])
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
@@ -342,6 +385,24 @@ export interface ExecutionSpec {
   timeoutMs?: number
 }
 
+export interface RuntimeEpisodeContentDigest {
+  algorithm: "sha256"
+  value: string
+}
+
+export interface RuntimeEpisodeTraceRef {
+  kind: "action" | "execution" | "observation" | "snapshot" | "artifact-bundle" | (string & {})
+  id: string
+  digest?: RuntimeEpisodeContentDigest
+  artifactId?: string
+  path?: string
+}
+
+export interface RuntimeEpisodeActionRecord extends ExecutionSpec {
+  id: string
+  digest: RuntimeEpisodeContentDigest
+}
+
 export interface ExecutionResult {
   id: string
   command: string
@@ -359,6 +420,7 @@ export interface ObservationSpec {
 }
 
 export interface ObservationResult {
+  id?: string
   type: string
   data: unknown
   observedAt: string
@@ -383,7 +445,9 @@ export interface LifecycleEvent {
 export interface Snapshot {
   id: string
   createdAt: string
+  semantics?: "metadata-only" | "runtime-state-artifact" | (string & {})
   metadata: Record<string, unknown>
+  artifactRefs?: RuntimeEpisodeTraceRef[]
 }
 
 export interface ArtifactSpec {
@@ -616,24 +680,45 @@ export interface RuntimeEpisodeSpec {
 }
 
 export interface RuntimeEpisodeResetResult {
+  id: string
   runtime: RuntimeInfo
   observations: ObservationResult[]
+  observationRefs: RuntimeEpisodeTraceRef[]
 }
 
 export interface RuntimeEpisodeStepResult {
+  id: string
   index: number
-  action: ExecutionSpec
+  action: RuntimeEpisodeActionRecord
+  actionRef: RuntimeEpisodeTraceRef
   execution: ExecutionResult
+  executionRef: RuntimeEpisodeTraceRef
   observation?: ObservationResult
+  observationRef?: RuntimeEpisodeTraceRef
 }
 
 export interface RuntimeEpisodeTrace {
-  schema: "wp-codebox/runtime-episode-trace/v1"
+  schema: typeof RUNTIME_EPISODE_TRACE_SCHEMA
+  version: 1
+  id: string
+  createdAt: string
   runtime: RuntimeInfo
   reset: RuntimeEpisodeResetResult
   steps: RuntimeEpisodeStepResult[]
   snapshots: Snapshot[]
   artifacts?: ArtifactBundle
+  artifactRef?: RuntimeEpisodeTraceRef
+}
+
+export interface RuntimeEpisodeTraceValidationIssue {
+  path: string
+  message: string
+}
+
+export interface RuntimeEpisodeTraceValidationResult {
+  valid: boolean
+  schema: typeof RUNTIME_EPISODE_TRACE_SCHEMA
+  issues: RuntimeEpisodeTraceValidationIssue[]
 }
 
 export interface RuntimeEpisode {
@@ -776,6 +861,151 @@ export function assertRuntimeCommandAllowed(command: string, policy: RuntimePoli
   }
 }
 
+export function runtimeEpisodeDigest(value: unknown): RuntimeEpisodeContentDigest {
+  return {
+    algorithm: "sha256",
+    value: createHash("sha256").update("wp-codebox/runtime-episode-trace/v1\n").update(stableJson(value)).digest("hex"),
+  }
+}
+
+export function validateRuntimeEpisodeTrace(trace: unknown): RuntimeEpisodeTraceValidationResult {
+  const issues: RuntimeEpisodeTraceValidationIssue[] = []
+  const candidate = trace as Partial<RuntimeEpisodeTrace> | null
+
+  if (!candidate || typeof candidate !== "object") {
+    return { valid: false, schema: RUNTIME_EPISODE_TRACE_SCHEMA, issues: [{ path: "$", message: "trace must be an object" }] }
+  }
+
+  if (candidate.schema !== RUNTIME_EPISODE_TRACE_SCHEMA) {
+    issues.push({ path: "$.schema", message: `schema must be ${RUNTIME_EPISODE_TRACE_SCHEMA}` })
+  }
+  if (candidate.version !== 1) {
+    issues.push({ path: "$.version", message: "version must be 1" })
+  }
+  if (!nonEmptyString(candidate.id)) {
+    issues.push({ path: "$.id", message: "id must be a non-empty string" })
+  }
+  if (!nonEmptyString(candidate.createdAt)) {
+    issues.push({ path: "$.createdAt", message: "createdAt must be a non-empty string" })
+  }
+  if (!candidate.runtime || typeof candidate.runtime !== "object" || !nonEmptyString(candidate.runtime.id)) {
+    issues.push({ path: "$.runtime.id", message: "runtime id is required" })
+  }
+  if (!candidate.reset || typeof candidate.reset !== "object" || !nonEmptyString(candidate.reset.id)) {
+    issues.push({ path: "$.reset.id", message: "reset id is required" })
+  }
+  if (!Array.isArray(candidate.reset?.observations)) {
+    issues.push({ path: "$.reset.observations", message: "reset observations must be an array" })
+  }
+  if (!Array.isArray(candidate.reset?.observationRefs)) {
+    issues.push({ path: "$.reset.observationRefs", message: "reset observationRefs must be an array" })
+  }
+  if (!Array.isArray(candidate.steps)) {
+    issues.push({ path: "$.steps", message: "steps must be an array" })
+  } else {
+    candidate.steps.forEach((step, index) => validateRuntimeEpisodeStep(step, index, issues))
+  }
+  if (!Array.isArray(candidate.snapshots)) {
+    issues.push({ path: "$.snapshots", message: "snapshots must be an array" })
+  } else {
+    candidate.snapshots.forEach((snapshot, index) => {
+      if (!nonEmptyString(snapshot.id)) {
+        issues.push({ path: `$.snapshots[${index}].id`, message: "snapshot id is required" })
+      }
+      if (!nonEmptyString(snapshot.semantics)) {
+        issues.push({ path: `$.snapshots[${index}].semantics`, message: "snapshot semantics are required" })
+      }
+    })
+  }
+
+  collectForbiddenRuntimeEpisodeTraceFields(candidate, "$", issues)
+
+  return { valid: issues.length === 0, schema: RUNTIME_EPISODE_TRACE_SCHEMA, issues }
+}
+
+function validateRuntimeEpisodeStep(
+  step: RuntimeEpisodeStepResult,
+  index: number,
+  issues: RuntimeEpisodeTraceValidationIssue[],
+): void {
+  const path = `$.steps[${index}]`
+  if (!nonEmptyString(step.id)) {
+    issues.push({ path: `${path}.id`, message: "step id is required" })
+  }
+  if (step.index !== index) {
+    issues.push({ path: `${path}.index`, message: "step index must match array position" })
+  }
+  if (!nonEmptyString(step.action?.id)) {
+    issues.push({ path: `${path}.action.id`, message: "action id is required" })
+  }
+  if (!nonEmptyString(step.actionRef?.id)) {
+    issues.push({ path: `${path}.actionRef.id`, message: "actionRef id is required" })
+  }
+  if (!nonEmptyString(step.execution?.id)) {
+    issues.push({ path: `${path}.execution.id`, message: "execution id is required" })
+  }
+  if (!nonEmptyString(step.executionRef?.id)) {
+    issues.push({ path: `${path}.executionRef.id`, message: "executionRef id is required" })
+  }
+  if (step.observation && !nonEmptyString(step.observation.id)) {
+    issues.push({ path: `${path}.observation.id`, message: "observation id is required" })
+  }
+}
+
+function collectForbiddenRuntimeEpisodeTraceFields(
+  value: unknown,
+  path: string,
+  issues: RuntimeEpisodeTraceValidationIssue[],
+): void {
+  if (!value || typeof value !== "object") {
+    return
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectForbiddenRuntimeEpisodeTraceFields(item, `${path}[${index}]`, issues))
+    return
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = `${path}.${key}`
+    if (RUNTIME_EPISODE_TRACE_FORBIDDEN_FIELDS.has(key)) {
+      issues.push({ path: childPath, message: `${key} is not part of the generic runtime episode trace contract` })
+    }
+    collectForbiddenRuntimeEpisodeTraceFields(child, childPath, issues)
+  }
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`
+  }
+
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+    .join(",")}}`
+}
+
+function observationRef(observation: ObservationResult, fallbackId: string): RuntimeEpisodeTraceRef {
+  return { kind: "observation", id: observation.id || fallbackId, digest: runtimeEpisodeDigest(observation) }
+}
+
+function observationWithId(observation: ObservationResult, fallbackId: string): ObservationResult {
+  return { ...observation, id: observation.id || fallbackId }
+}
+
+function snapshotWithSemantics(snapshot: Snapshot): Snapshot {
+  return { semantics: "metadata-only", ...snapshot }
+}
+
 export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBackend): Promise<Runtime> {
   assertRuntimePolicy(spec.policy)
 
@@ -793,6 +1023,7 @@ export async function createRuntimeEpisode(spec: RuntimeEpisodeSpec, backend: Ru
 class RuntimeEpisodeRunner implements RuntimeEpisode {
   private runtime?: Runtime
   private resetResult?: RuntimeEpisodeResetResult
+  private resetCount = 0
   private readonly steps: RuntimeEpisodeStepResult[] = []
   private readonly snapshots: Snapshot[] = []
   private artifacts?: ArtifactBundle
@@ -819,14 +1050,17 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       await this.runtime.mount(mount)
     }
 
+    const runtime = await this.runtime.info()
+    const resetId = `${runtime.id}:reset:${this.resetCount++}`
     const observations = []
-    for (const observation of this.spec.resetObservations ?? [{ type: "runtime-info" }, { type: "mounts" }]) {
-      observations.push(await this.runtime.observe(observation))
+    for (const [index, observation] of (this.spec.resetObservations ?? [{ type: "runtime-info" }, { type: "mounts" }]).entries()) {
+      observations.push(observationWithId(await this.runtime.observe(observation), `${resetId}:observation:${index}`))
     }
-
     this.resetResult = {
-      runtime: await this.runtime.info(),
+      id: resetId,
+      runtime,
       observations,
+      observationRefs: observations.map((observation, index) => observationRef(observation, `${resetId}:observation:${index}`)),
     }
 
     return this.resetResult
@@ -835,11 +1069,24 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
   async step(action: ExecutionSpec, observation: ObservationSpec | false = this.spec.stepObservation ?? false): Promise<RuntimeEpisodeStepResult> {
     const runtime = this.assertRuntime()
     const execution = await runtime.execute(action)
+    const index = this.steps.length
+    const stepId = `${execution.id}:step:${index}`
+    const actionRecord = {
+      ...action,
+      id: `${stepId}:action`,
+      digest: runtimeEpisodeDigest(action),
+    }
+    const stepObservation = observation ? observationWithId(await runtime.observe(observation), `${stepId}:observation`) : undefined
     const result: RuntimeEpisodeStepResult = {
-      index: this.steps.length,
-      action,
+      id: stepId,
+      index,
+      action: actionRecord,
+      actionRef: { kind: "action", id: actionRecord.id, digest: actionRecord.digest },
       execution,
-      ...(observation ? { observation: await runtime.observe(observation) } : {}),
+      executionRef: { kind: "execution", id: execution.id, digest: runtimeEpisodeDigest(execution) },
+      ...(stepObservation
+        ? { observation: stepObservation, observationRef: observationRef(stepObservation, `${stepId}:observation`) }
+        : {}),
     }
 
     this.steps.push(result)
@@ -851,7 +1098,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
   }
 
   async snapshot(): Promise<Snapshot> {
-    const snapshot = await this.assertRuntime().snapshot()
+    const snapshot = snapshotWithSemantics(await this.assertRuntime().snapshot())
     this.snapshots.push(snapshot)
     return snapshot
   }
@@ -864,17 +1111,32 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
   async trace(): Promise<RuntimeEpisodeTrace> {
     const runtime = this.assertRuntime()
     const reset = this.resetResult ?? {
+      id: `${(await runtime.info()).id}:reset:unrecorded`,
       runtime: await runtime.info(),
       observations: [],
+      observationRefs: [],
     }
+    const artifactRef = this.artifacts
+      ? {
+          kind: "artifact-bundle" as const,
+          id: this.artifacts.id,
+          artifactId: this.artifacts.id,
+          path: this.artifacts.directory,
+          digest: { algorithm: "sha256" as const, value: this.artifacts.contentDigest },
+        }
+      : undefined
 
     return {
-      schema: "wp-codebox/runtime-episode-trace/v1",
+      schema: RUNTIME_EPISODE_TRACE_SCHEMA,
+      version: 1,
+      id: `trace-${reset.runtime.id}`,
+      createdAt: new Date().toISOString(),
       runtime: await runtime.info(),
       reset,
       steps: [...this.steps],
       snapshots: [...this.snapshots],
       ...(this.artifacts ? { artifacts: this.artifacts } : {}),
+      ...(artifactRef ? { artifactRef } : {}),
     }
   }
 
