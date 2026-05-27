@@ -157,6 +157,7 @@ interface RecipeRunOutput {
   recipePath?: string
   runtime?: RuntimeInfo
   executions: ExecutionResult[]
+  siteSeeds?: RecipeRunSiteSeed[]
   validation?: {
     issues: RecipeValidationIssue[]
   }
@@ -245,13 +246,19 @@ interface RecipeDryRunSiteSeed {
   format?: WorkspaceRecipeSiteSeed["format"]
   scopes: WorkspaceRecipeSiteSeed["scopes"]
   bounded: boolean
-  dryRunOnly: true
+  dryRunOnly: boolean
   privacy: {
-    exportsParentSiteData: false
-    importsIntoSandbox: false
-    includesRecordData: false
+    exportsParentSiteData: boolean
+    importsIntoSandbox: boolean
+    includesRecordData: boolean
     secrets: "excluded-by-default"
   }
+}
+
+interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
+  action: "imported" | "skipped"
+  reason?: string
+  counts?: Record<string, number>
 }
 
 interface RecipeDryRunStep {
@@ -561,7 +568,7 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         },
         siteSeeds: {
           type: "array",
-          description: "Explicit site/content seed declarations. The v1 CLI only validates and reports these in dry-run plans; it does not export parent-site data or import seed data into the sandbox.",
+          description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
           items: { $ref: "#/$defs/siteSeed" },
         },
         inherit: { $ref: "#/$defs/inheritanceRequest" },
@@ -1147,6 +1154,8 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       })
     }
 
+    const siteSeeds = await importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions)
+
     const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
       executions.push(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }))
@@ -1172,6 +1181,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       recipePath,
       runtime: runtimeInfo ?? await runtime.info(),
       executions,
+      siteSeeds,
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       artifacts,
@@ -2430,7 +2440,7 @@ async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeD
   }
 
   if (siteSeed.type === "parent_site" && siteSeed.source) {
-    addIssue("invalid-site-seed-source", `${path}.source`, "Parent-site seed declarations must not name a source file in this dry-run-only slice.")
+    addIssue("invalid-site-seed-source", `${path}.source`, "Parent-site seed declarations must not name a source file until explicit parent export support lands.")
   }
 
   const scopeEntries = Object.entries(siteSeed.scopes).filter(([, value]) => value !== undefined && value !== false)
@@ -2665,6 +2675,9 @@ function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   if (recipeExtraPlugins(recipe).some((plugin) => plugin.activate !== false)) {
     commands.unshift("wordpress.run-php")
   }
+  if ((recipe.inputs?.siteSeeds ?? []).some((siteSeed) => siteSeed.type === "fixture")) {
+    commands.unshift("wordpress.run-php")
+  }
 
   return {
     ...defaultPolicy,
@@ -2687,6 +2700,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     activate: plugin.activate,
     provenance: plugin.provenance,
   }))
+  const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
 
   return {
     recipe: {
@@ -2702,6 +2716,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
+        siteSeedProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2722,6 +2737,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
+        siteSeedProvenance,
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
@@ -2791,14 +2807,242 @@ function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string)
     ...(siteSeed.format ? { format: siteSeed.format } : {}),
     scopes: siteSeed.scopes,
     bounded: siteSeedScopesAreBounded(siteSeed),
-    dryRunOnly: true,
+    dryRunOnly: siteSeed.type !== "fixture" || (siteSeed.format !== undefined && siteSeed.format !== "json"),
     privacy: {
       exportsParentSiteData: false,
-      importsIntoSandbox: false,
-      includesRecordData: false,
+      importsIntoSandbox: siteSeed.type === "fixture" && (siteSeed.format === undefined || siteSeed.format === "json"),
+      includesRecordData: siteSeed.type === "fixture",
       secrets: "excluded-by-default",
     },
   }))
+}
+
+async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: ExecutionResult[]): Promise<RecipeRunSiteSeed[]> {
+  const results: RecipeRunSiteSeed[] = []
+
+  for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
+    const base = recipeSiteSeedRunBase(siteSeed, recipeDirectory, index)
+    if (siteSeed.type !== "fixture") {
+      results.push({
+        ...base,
+        action: "skipped",
+        reason: "parent-site export is not implemented in this first executable site seed slice",
+      })
+      continue
+    }
+
+    const format = siteSeed.format ?? "json"
+    if (format !== "json") {
+      throw new Error(`Recipe fixture siteSeed ${siteSeed.name} uses unsupported executable format: ${format}`)
+    }
+
+    const source = resolve(recipeDirectory, siteSeed.source ?? "")
+    const rawSeed = JSON.parse(await readFile(source, "utf8"))
+    const bounded = boundedFixtureSeed(rawSeed, siteSeed.scopes)
+    const execution = await runtime.execute({
+      command: "wordpress.run-php",
+      args: [`code=${siteSeedJsonImportCode(siteSeed.name, bounded.seed)}`],
+    })
+    executions.push(execution)
+    const counts = parseSiteSeedImportCounts(execution.stdout)
+    results.push({
+      ...base,
+      action: "imported",
+      counts: {
+        ...bounded.counts,
+        ...counts,
+      },
+    })
+  }
+
+  return results
+}
+
+function recipeSiteSeedRunBase(siteSeed: WorkspaceRecipeSiteSeed, recipeDirectory: string, index: number): Omit<RecipeRunSiteSeed, "action" | "reason" | "counts"> {
+  return {
+    index,
+    type: siteSeed.type,
+    name: siteSeed.name,
+    ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
+    ...(siteSeed.format ? { format: siteSeed.format } : {}),
+    scopes: siteSeed.scopes,
+    bounded: siteSeedScopesAreBounded(siteSeed),
+    privacy: {
+      exportsParentSiteData: false,
+      importsIntoSandbox: siteSeed.type === "fixture" && (siteSeed.format === undefined || siteSeed.format === "json"),
+      includesRecordData: siteSeed.type === "fixture",
+      secrets: "excluded-by-default",
+    },
+  }
+}
+
+function parseSiteSeedImportCounts(stdout: string): Record<string, number> {
+  const parsed = JSON.parse(stdout.trim() || "{}") as { counts?: Record<string, unknown> }
+  const counts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(parsed.counts ?? {})) {
+    if (typeof value === "number") {
+      counts[key] = value
+    }
+  }
+  return counts
+}
+
+function siteSeedJsonImportCode(seedName: string, seed: unknown): string {
+  const encodedSeed = JSON.stringify(JSON.stringify(seed))
+  const encodedName = JSON.stringify(seedName)
+  return `
+$seed_name = ${encodedName};
+$seed = json_decode(${encodedSeed}, true);
+if (!is_array($seed)) {
+    throw new RuntimeException('Site seed fixture must decode to a JSON object.');
+}
+
+$counts = array('posts' => 0, 'options' => 0, 'terms' => 0);
+
+foreach (($seed['posts'] ?? array()) as $post) {
+    if (!is_array($post)) {
+        continue;
+    }
+    $postarr = array(
+        'post_type' => isset($post['post_type']) ? (string) $post['post_type'] : 'post',
+        'post_status' => isset($post['post_status']) ? (string) $post['post_status'] : (isset($post['status']) ? (string) $post['status'] : 'publish'),
+        'post_title' => isset($post['post_title']) ? (string) $post['post_title'] : (isset($post['title']) ? (string) $post['title'] : 'Seeded post'),
+        'post_content' => isset($post['post_content']) ? (string) $post['post_content'] : (isset($post['content']) ? (string) $post['content'] : ''),
+        'post_excerpt' => isset($post['post_excerpt']) ? (string) $post['post_excerpt'] : (isset($post['excerpt']) ? (string) $post['excerpt'] : ''),
+    );
+    if (isset($post['slug'])) {
+        $postarr['post_name'] = (string) $post['slug'];
+    } elseif (isset($post['post_name'])) {
+        $postarr['post_name'] = (string) $post['post_name'];
+    }
+    $post_id = wp_insert_post($postarr, true);
+    if (is_wp_error($post_id)) {
+        throw new RuntimeException('Failed to import site seed post from ' . $seed_name . ': ' . $post_id->get_error_message());
+    }
+    $counts['posts']++;
+}
+
+$options = $seed['options'] ?? array();
+if (is_array($options)) {
+    foreach ($options as $key => $option) {
+        if (is_array($option) && array_key_exists('name', $option)) {
+            update_option((string) $option['name'], $option['value'] ?? '');
+            $counts['options']++;
+            continue;
+        }
+        if (is_string($key)) {
+            update_option($key, $option);
+            $counts['options']++;
+        }
+    }
+}
+
+foreach (($seed['terms'] ?? array()) as $term) {
+    if (!is_array($term) || empty($term['name']) || empty($term['taxonomy'])) {
+        continue;
+    }
+    $result = wp_insert_term((string) $term['name'], (string) $term['taxonomy'], array_filter(array(
+        'slug' => isset($term['slug']) ? (string) $term['slug'] : null,
+        'description' => isset($term['description']) ? (string) $term['description'] : null,
+    ), static fn($value) => $value !== null));
+    if (is_wp_error($result) && 'term_exists' !== $result->get_error_code()) {
+        throw new RuntimeException('Failed to import site seed term from ' . $seed_name . ': ' . $result->get_error_message());
+    }
+    $counts['terms']++;
+}
+
+echo wp_json_encode(array('schema' => 'wp-codebox/site-seed-import/v1', 'name' => $seed_name, 'counts' => $counts));
+`}
+
+function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["scopes"]): { seed: Record<string, unknown>; counts: Record<string, number> } {
+  if (!rawSeed || typeof rawSeed !== "object" || Array.isArray(rawSeed)) {
+    throw new Error("Recipe fixture siteSeed JSON must be an object")
+  }
+
+  const seed = rawSeed as Record<string, unknown>
+  const posts = boundedRecords(arrayRecords(seed.posts), scopes.posts, (record, scope) => matchesPostScope(record, scope))
+  const options = boundedOptions(seed.options, scopes.options)
+  const terms = boundedRecords(arrayRecords(seed.terms), scopes.terms, (record, scope) => matchesTermScope(record, scope))
+
+  return {
+    seed: stripUndefined({ posts: posts.records, options: options.records, terms: terms.records }),
+    counts: {
+      fixturePostsIncluded: posts.records.length,
+      fixturePostsExcluded: posts.excluded,
+      fixtureOptionsIncluded: options.count,
+      fixtureOptionsExcluded: options.excluded,
+      fixtureTermsIncluded: terms.records.length,
+      fixtureTermsExcluded: terms.excluded,
+    },
+  }
+}
+
+function arrayRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : []
+}
+
+function boundedRecords(records: Array<Record<string, unknown>>, scope: WorkspaceRecipeSiteSeed["scopes"]["posts"], matches: (record: Record<string, unknown>, scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>) => boolean): { records: Array<Record<string, unknown>>; excluded: number } {
+  if (!scope) {
+    return { records: [], excluded: records.length }
+  }
+
+  const filtered = records.filter((record) => matches(record, scope))
+  const maxRecords = scope.maxRecords ?? filtered.length
+  return {
+    records: filtered.slice(0, maxRecords),
+    excluded: records.length - Math.min(filtered.length, maxRecords),
+  }
+}
+
+function boundedOptions(options: unknown, scope: WorkspaceRecipeSiteSeed["scopes"]["options"]): { records: Record<string, unknown> | Array<Record<string, unknown>> | undefined; count: number; excluded: number } {
+  if (!scope || !scope.names || scope.names.length === 0) {
+    const count = Array.isArray(options) ? options.length : options && typeof options === "object" ? Object.keys(options).length : 0
+    return { records: undefined, count: 0, excluded: count }
+  }
+
+  const allowed = new Set(scope.names)
+  const maxRecords = scope.maxRecords ?? allowed.size
+  if (Array.isArray(options)) {
+    const filtered = options.filter((option): option is Record<string, unknown> => Boolean(option) && typeof option === "object" && !Array.isArray(option) && typeof option.name === "string" && allowed.has(option.name)).slice(0, maxRecords)
+    return { records: filtered, count: filtered.length, excluded: options.length - filtered.length }
+  }
+
+  if (!options || typeof options !== "object") {
+    return { records: undefined, count: 0, excluded: 0 }
+  }
+
+  const entries = Object.entries(options as Record<string, unknown>).filter(([name]) => allowed.has(name)).slice(0, maxRecords)
+  return { records: Object.fromEntries(entries), count: entries.length, excluded: Object.keys(options).length - entries.length }
+}
+
+function matchesPostScope(record: Record<string, unknown>, scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>): boolean {
+  return matchesNumberSelector(record, scope.ids, ["id", "ID"]) &&
+    matchesStringSelector(record, scope.slugs, ["slug", "post_name"]) &&
+    matchesStringSelector(record, scope.postTypes, ["post_type", "type"]) &&
+    matchesStringSelector(record, scope.statuses, ["post_status", "status"])
+}
+
+function matchesTermScope(record: Record<string, unknown>, scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["terms"]>): boolean {
+  return matchesNumberSelector(record, scope.ids, ["id", "term_id"]) &&
+    matchesStringSelector(record, scope.slugs, ["slug"]) &&
+    matchesStringSelector(record, scope.names, ["name"]) &&
+    matchesStringSelector(record, scope.taxonomies, ["taxonomy"])
+}
+
+function matchesStringSelector(record: Record<string, unknown>, allowed: string[] | undefined, keys: string[]): boolean {
+  if (!allowed || allowed.length === 0) {
+    return true
+  }
+  const values = keys.map((key) => record[key]).filter((value): value is string => typeof value === "string")
+  return values.some((value) => allowed.includes(value))
+}
+
+function matchesNumberSelector(record: Record<string, unknown>, allowed: number[] | undefined, keys: string[]): boolean {
+  if (!allowed || allowed.length === 0) {
+    return true
+  }
+  const values = keys.map((key) => record[key]).filter((value): value is number => typeof value === "number")
+  return values.some((value) => allowed.includes(value))
 }
 
 function siteSeedScopesAreBounded(siteSeed: WorkspaceRecipeSiteSeed): boolean {
