@@ -75,6 +75,207 @@ export interface CorePhpunitRunCodeOptions {
   multisite: boolean
 }
 
+export interface PluginCheckFinding {
+  code?: string
+  type?: string
+  severity?: string
+  message?: string
+  file?: string
+  line?: number
+  column?: number
+  docs?: string
+  raw: Record<string, unknown>
+}
+
+export interface PluginCheckNormalizedOutput {
+  schema: "wp-codebox/plugin-check/v1"
+  command: "wordpress.plugin-check"
+  targetPlugin: string
+  exitCode: number
+  status: "passed" | "failed"
+  summary: {
+    total: number
+    errors: number
+    warnings: number
+    notices: number
+    info: number
+    unknown: number
+  }
+  findings: PluginCheckFinding[]
+  rawFormat: "json" | "text"
+}
+
+export function pluginCheckRunCode(pluginSlug: string, checkSlugs: string[] = []): string {
+  return `if ( ! function_exists( 'activate_plugin' ) ) {
+    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+}
+
+$plugin_slug = ${JSON.stringify(pluginSlug)};
+$check_slugs = json_decode( ${JSON.stringify(JSON.stringify(checkSlugs))}, true );
+$plugin_check_file = WP_PLUGIN_DIR . '/plugin-check/plugin.php';
+if ( file_exists( $plugin_check_file ) && ! is_plugin_active( 'plugin-check/plugin.php' ) ) {
+    $activation = activate_plugin( 'plugin-check/plugin.php' );
+    if ( is_wp_error( $activation ) ) {
+        throw new RuntimeException( $activation->get_error_message() );
+    }
+}
+
+if ( ! class_exists( '\\WordPress\\Plugin_Check\\Checker\\CLI_Runner' ) ) {
+    throw new RuntimeException( 'The official Plugin Check plugin is not loaded in this Playground runtime.' );
+}
+
+$runner = new \\WordPress\\Plugin_Check\\Checker\\CLI_Runner();
+$runner->set_experimental_flag( false );
+$runner->set_check_slugs( is_array( $check_slugs ) ? $check_slugs : array() );
+$runner->set_categories( array() );
+$runner->set_plugin( $plugin_slug );
+$runner->set_slug( $plugin_slug );
+$runner->set_mode( 'new' );
+$result = $runner->run();
+$errors = $result ? $result->get_errors() : array();
+$warnings = $result ? $result->get_warnings() : array();
+
+echo wp_json_encode( array(
+    'schema' => 'wordpress/plugin-check/raw/v1',
+    'plugin' => $plugin_slug,
+    'errors' => $errors,
+    'warnings' => $warnings,
+), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
+}
+
+export function normalizePluginCheckOutput(rawOutput: string, exitCode: number, pluginSlug: string): PluginCheckNormalizedOutput {
+  const parsed = parsePluginCheckJson(rawOutput)
+  const findings = parsed ? collectPluginCheckFindings(parsed) : []
+  const summary = findings.reduce<PluginCheckNormalizedOutput["summary"]>((counts, finding) => {
+    counts.total++
+    const severity = pluginCheckSeverity(finding)
+    counts[severity]++
+    return counts
+  }, { total: 0, errors: 0, warnings: 0, notices: 0, info: 0, unknown: 0 })
+  const effectiveExitCode = exitCode === 0 && summary.errors > 0 ? 1 : exitCode
+
+  return {
+    schema: "wp-codebox/plugin-check/v1",
+    command: "wordpress.plugin-check",
+    targetPlugin: pluginSlug,
+    exitCode: effectiveExitCode,
+    status: effectiveExitCode === 0 && summary.errors === 0 ? "passed" : "failed",
+    summary,
+    findings,
+    rawFormat: parsed ? "json" : "text",
+  }
+}
+
+function parsePluginCheckJson(rawOutput: string): unknown | undefined {
+  const trimmed = rawOutput.trim()
+  if (!trimmed) {
+    return []
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const firstJson = trimmed.match(/[\[{]/)
+    if (!firstJson) {
+      return undefined
+    }
+
+    try {
+      return JSON.parse(trimmed.slice(firstJson.index))
+    } catch {
+      return undefined
+    }
+  }
+}
+
+function collectPluginCheckFindings(value: unknown, inheritedFile = "", inheritedType = ""): PluginCheckFinding[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectPluginCheckFindings(item, inheritedFile, inheritedType))
+  }
+
+  if (!value || typeof value !== "object") {
+    return []
+  }
+
+  const record = value as Record<string, unknown>
+  if (looksLikePluginCheckFinding(record)) {
+    return [normalizePluginCheckFinding(record, inheritedFile, inheritedType)]
+  }
+
+  return Object.entries(record).flatMap(([key, child]) => collectPluginCheckFindings(
+    child,
+    looksLikePathKey(key) ? key : inheritedFile,
+    pluginCheckTypeKey(key) ?? inheritedType,
+  ))
+}
+
+function looksLikePluginCheckFinding(record: Record<string, unknown>): boolean {
+  return ["message", "code", "type", "severity"].some((key) => typeof record[key] === "string")
+}
+
+function looksLikePathKey(key: string): boolean {
+  return key.includes("/") || key.endsWith(".php") || key.endsWith(".js") || key.endsWith(".css")
+}
+
+function pluginCheckTypeKey(key: string): string | undefined {
+  if (key === "errors" || key === "warnings") {
+    return key.slice(0, -1)
+  }
+  return undefined
+}
+
+function normalizePluginCheckFinding(record: Record<string, unknown>, inheritedFile: string, inheritedType: string): PluginCheckFinding {
+  const file = stringField(record, "file") || stringField(record, "filename") || stringField(record, "path") || inheritedFile || undefined
+  const line = numberField(record, "line") ?? numberField(record, "line_number")
+  const column = numberField(record, "column") ?? numberField(record, "column_number")
+  const type = stringField(record, "type") || inheritedType
+
+  return {
+    ...(stringField(record, "code") ? { code: stringField(record, "code") } : {}),
+    ...(type ? { type } : {}),
+    ...(stringField(record, "severity") ? { severity: stringField(record, "severity") } : {}),
+    ...(stringField(record, "message") ? { message: stringField(record, "message") } : {}),
+    ...(file ? { file } : {}),
+    ...(typeof line === "number" ? { line } : {}),
+    ...(typeof column === "number" ? { column } : {}),
+    ...(stringField(record, "docs") || stringField(record, "documentation") ? { docs: stringField(record, "docs") || stringField(record, "documentation") } : {}),
+    raw: record,
+  }
+}
+
+function pluginCheckSeverity(finding: PluginCheckFinding): "errors" | "warnings" | "notices" | "info" | "unknown" {
+  const value = `${finding.severity ?? finding.type ?? finding.code ?? ""}`.toLowerCase()
+  if (value.includes("error")) {
+    return "errors"
+  }
+  if (value.includes("warning") || value.includes("warn")) {
+    return "warnings"
+  }
+  if (value.includes("notice")) {
+    return "notices"
+  }
+  if (value.includes("info")) {
+    return "info"
+  }
+  return "unknown"
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  return typeof record[key] === "string" && record[key].trim() !== "" ? record[key] : undefined
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key]
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');

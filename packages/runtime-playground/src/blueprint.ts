@@ -17,7 +17,9 @@ export function normalizeBlueprint(blueprint: unknown): { extraLibraries?: unkno
 }
 
 export function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpec["policy"], siteUrl?: string): unknown {
-  if (!siteUrl && !policy.commands.includes("wordpress.wp-cli")) {
+  const needsWpCli = policy.commands.includes("wordpress.wp-cli") || policy.commands.includes("wordpress.plugin-check")
+  const needsPluginCheck = policy.commands.includes("wordpress.plugin-check")
+  if (!siteUrl && !needsWpCli && !needsPluginCheck) {
     return blueprint
   }
 
@@ -27,8 +29,16 @@ export function playgroundBlueprint(blueprint: unknown, policy: RuntimeCreateSpe
 
   return {
     ...base,
-    ...(policy.commands.includes("wordpress.wp-cli") ? { extraLibraries: [...new Set([...extraLibraries, "wp-cli"])] } : {}),
-    ...(siteUrl ? { steps: [{ step: "defineSiteUrl", siteUrl }, ...steps] } : {}),
+    ...(needsWpCli ? { extraLibraries: [...new Set([...extraLibraries, "wp-cli"])] } : {}),
+    steps: [
+      ...(siteUrl ? [{ step: "defineSiteUrl", siteUrl }] : []),
+      ...(needsPluginCheck ? [{
+        step: "installPlugin",
+        pluginData: { resource: "wordpress.org/plugins", slug: "plugin-check" },
+        options: { activate: true },
+      }] : []),
+      ...steps,
+    ],
   }
 }
 

@@ -26,7 +26,7 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, phpBody, phpunitRunCode, pluginCheckRunCode, positiveIntegerArg, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifest,
@@ -158,6 +158,22 @@ interface BrowserProbeArtifact {
   }
 }
 
+interface PluginCheckArtifact {
+  targetPlugin: string
+  files: {
+    raw: string
+    normalized: string
+  }
+  summary: {
+    total: number
+    errors: number
+    warnings: number
+    notices: number
+    info: number
+    unknown: number
+  }
+}
+
 interface BrowserProbeErrorRecord {
   type: "pageerror" | "probe-error"
   name: string
@@ -183,6 +199,7 @@ class PlaygroundRuntime implements Runtime {
   private readonly observations: ObservationResult[] = []
   private readonly events: LifecycleEvent[] = []
   private readonly browserProbes: BrowserProbeArtifact[] = []
+  private readonly pluginChecks: PluginCheckArtifact[] = []
   private readonly artifactRoot: string
   private cliServerPromise?: Promise<PlaygroundCliServer>
 
@@ -343,6 +360,7 @@ class PlaygroundRuntime implements Runtime {
     const reviewPath = join(filesDirectory, "review.json")
     const redactor = new ArtifactRedactor(this.spec.secretEnv)
     await this.redactBrowserArtifacts(redactor)
+    await this.redactPluginCheckArtifacts(redactor)
     const preview = await this.previewInfo(createdAt, spec.previewHoldSeconds)
     const browser = this.browserReviewSummary()
 
@@ -400,6 +418,7 @@ class PlaygroundRuntime implements Runtime {
       review: relative(this.artifactRoot, reviewPath),
       mountDiffs: relative(this.artifactRoot, diffsPath),
       ...(browser ? { browser: "files/browser/summary.json" } : {}),
+      ...(this.pluginChecks.length > 0 ? { pluginChecks: this.pluginChecks.map((check) => check.files.normalized) } : {}),
     }
     metadata.artifacts = artifactFiles
     const blueprintAfter = buildBlueprintAfter({
@@ -432,6 +451,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(testResultsPath, "test-results", "application/json"),
       fileEntry(reviewPath, "review", "application/json"),
       ...this.browserManifestFiles(),
+      ...this.pluginCheckManifestFiles(),
       ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -758,6 +778,10 @@ class PlaygroundRuntime implements Runtime {
       return this.runPhpunit(spec)
     }
 
+    if (spec.command === "wordpress.plugin-check") {
+      return this.runPluginCheck(spec)
+    }
+
     if (spec.command === "wordpress.core-phpunit") {
       return this.runCorePhpunit(spec)
     }
@@ -902,6 +926,62 @@ class PlaygroundRuntime implements Runtime {
     assertPlaygroundResponseOk("wordpress.wp-cli", response)
 
     return cleanWpCliOutput(response.text)
+  }
+
+  private async runPluginCheck(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const args = spec.args ?? []
+    const pluginSlug = argValue(args, "plugin-slug")?.trim()
+    if (!pluginSlug) {
+      throw new Error("wordpress.plugin-check requires plugin-slug=<slug>")
+    }
+
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(pluginSlug)) {
+      throw new Error("wordpress.plugin-check plugin-slug must be a WordPress plugin slug")
+    }
+    const checkSlugs = commaListArg(args, "checks")
+
+    if (!server.playground.writeFile) {
+      throw new Error("wordpress.plugin-check requires a Playground backend with writeFile support")
+    }
+
+    const pluginPath = `/wordpress/wp-content/plugins/${pluginSlug}`
+    const existsResponse = await this.runWpCliCommand(server, ["plugin", "path", pluginSlug])
+    if (existsResponse.exitCode !== 0) {
+      throw new Error(`wordpress.plugin-check target plugin is not installed or mounted at ${pluginPath}`)
+    }
+
+    const rawResponse = await this.runPlaygroundCommand("wordpress.plugin-check", server, { code: this.bootstrapPhpCode(pluginCheckRunCode(pluginSlug, checkSlugs), []) })
+    assertPlaygroundResponseOk("wordpress.plugin-check", rawResponse)
+    const rawOutput = rawResponse.text
+    const normalized = normalizePluginCheckOutput(rawOutput, rawResponse.exitCode ?? 0, pluginSlug)
+    const pluginCheckDirectory = join(this.artifactRoot, "files", "plugin-check")
+    await mkdir(pluginCheckDirectory, { recursive: true })
+    const safeSlug = pluginSlug.replace(/[^a-z0-9_-]/gi, "-")
+    const rawPath = join(pluginCheckDirectory, `${safeSlug}.raw.json`)
+    const normalizedPath = join(pluginCheckDirectory, `${safeSlug}.json`)
+    await writeFile(rawPath, rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`)
+    await writeFile(normalizedPath, `${JSON.stringify(normalized, null, 2)}\n`)
+    this.pluginChecks.push({
+      targetPlugin: pluginSlug,
+      files: {
+        raw: relative(this.artifactRoot, rawPath),
+        normalized: relative(this.artifactRoot, normalizedPath),
+      },
+      summary: normalized.summary,
+    })
+
+    return `${JSON.stringify(normalized, null, 2)}\n`
+  }
+
+  private async runWpCliCommand(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
+    if (!server.playground.writeFile) {
+      throw new Error("WP-CLI commands require a Playground backend with writeFile support")
+    }
+
+    const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
+    await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
+    return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
   }
 
   private async runAbility(spec: ExecutionSpec): Promise<string> {
@@ -1203,6 +1283,13 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     return [...files.entries()].map(([path, entry]) => fileEntry(join(this.artifactRoot, path), entry.kind, entry.contentType))
   }
 
+  private pluginCheckManifestFiles(): ArtifactManifestFile[] {
+    return this.pluginChecks.flatMap((check) => [
+      fileEntry(join(this.artifactRoot, check.files.raw), "plugin-check-raw", "application/json"),
+      fileEntry(join(this.artifactRoot, check.files.normalized), "plugin-check", "application/json"),
+    ])
+  }
+
   private async redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void> {
     for (const probe of this.browserProbes) {
       for (const path of [probe.files.console, probe.files.errors, probe.files.summary]) {
@@ -1215,6 +1302,19 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
           await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
         } catch {
           // Browser capture is best-effort; preserve artifact collection if a file vanished.
+        }
+      }
+    }
+  }
+
+  private async redactPluginCheckArtifacts(redactor: ArtifactRedactor): Promise<void> {
+    for (const check of this.pluginChecks) {
+      for (const path of [check.files.raw, check.files.normalized]) {
+        const absolutePath = join(this.artifactRoot, path)
+        try {
+          await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
+        } catch {
+          // Plugin Check artifacts are generated before bundle collection; tolerate missing files.
         }
       }
     }

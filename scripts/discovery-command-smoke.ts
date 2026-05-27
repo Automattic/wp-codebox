@@ -34,6 +34,7 @@ const expectedCommandIds = [
   "wordpress.ability",
   "wordpress.bench",
   "wordpress.phpunit",
+  "wordpress.plugin-check",
   "wordpress.core-phpunit",
   "wordpress.browser-probe",
   "wp-codebox.agent-runtime-probe",
@@ -65,6 +66,9 @@ async function main(): Promise<void> {
 
   const wpCli = catalog.commands.find((command) => command.id === "wordpress.wp-cli")
   assert(wpCli?.acceptedArgs.some((arg) => arg.name === "command" && arg.required), "wordpress.wp-cli must document required command arg")
+
+  const pluginCheck = catalog.commands.find((command) => command.id === "wordpress.plugin-check")
+  assert(pluginCheck?.acceptedArgs.some((arg) => arg.name === "plugin-slug" && arg.required), "wordpress.plugin-check must document required plugin-slug arg")
 
   const schemaOutput = await cliJson<RecipeSchemaOutput>(["schema", "recipe", "--json"])
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")

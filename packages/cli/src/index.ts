@@ -509,6 +509,17 @@ const commandCatalog: CommandMetadata[] = [
     recipe: true,
   },
   {
+    id: "wordpress.plugin-check",
+    description: "Run the official WordPress Plugin Check plugin against a mounted plugin and emit normalized findings.",
+    acceptedArgs: [
+      { name: "plugin-slug", description: "Plugin slug under wp-content/plugins to validate.", required: true, format: "slug" },
+      { name: "checks", description: "Optional comma-separated official Plugin Check slugs to run; omit to run the default suite.", format: "comma-separated check slugs" },
+    ],
+    outputShape: "wp-codebox/plugin-check/v1 JSON with command, target plugin, exit code/status, summary counts, and findings; raw and normalized outputs are captured in artifacts.",
+    policyRequirement: "Runtime policy commands must include wordpress.plugin-check.",
+    recipe: true,
+  },
+  {
     id: "wordpress.core-phpunit",
     description: "Run WordPress core PHPUnit tests with normalized diagnostics and test-result artifact capture.",
     acceptedArgs: [
