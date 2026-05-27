@@ -315,6 +315,7 @@ class PlaygroundRuntime implements Runtime {
 
   async observe(spec: ObservationSpec): Promise<ObservationResult> {
     const observation: ObservationResult = {
+      id: id("observation"),
       type: spec.type,
       data: await this.observeStub(spec),
       observedAt: now(),
@@ -332,6 +333,7 @@ class PlaygroundRuntime implements Runtime {
     const snapshot = {
       id: id("snapshot"),
       createdAt: now(),
+      semantics: "metadata-only" as const,
       metadata: {
         runtime: await this.info(),
         mounts: this.mounts,

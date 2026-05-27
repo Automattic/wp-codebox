@@ -295,6 +295,27 @@ await episode.close()
 Products such as eval harnesses can project this generic episode trace into their
 own action, observation, reward, and report schemas outside WP Codebox.
 
+The episode trace is a versioned machine-verifiable contract with schema
+`wp-codebox/runtime-episode-trace/v1`. `@chubes4/wp-codebox-core` exports
+`RUNTIME_EPISODE_TRACE_JSON_SCHEMA` for schema-aware consumers and
+`validateRuntimeEpisodeTrace()` for lightweight runtime checks. The trace stays
+generic: it carries runtime, reset, step, action, execution, observation,
+snapshot, and artifact references only. Domain fields such as reward, grader,
+scenario, benchmark, task-set, and model-eval belong in consumers that project
+the trace into their own schemas.
+
+Episode steps include stable ids and refs for the step, requested action,
+runtime execution, optional observation, and collected artifact bundle. Action
+and execution refs include SHA-256 digests over the canonical trace v1 JSON
+payload so callers can compare command/result records without depending on
+presentation logs.
+
+Runtime snapshots are explicit about their semantics. The current Playground
+backend returns `semantics: "metadata-only"`, which records runtime and mount
+metadata for audit context but is not a full replayable WordPress state image.
+Call `collectArtifacts()` when the caller needs replay inputs, changed files,
+patches, logs, observations, and artifact bundle refs.
+
 ## CLI Commands
 
 ### `commands`
