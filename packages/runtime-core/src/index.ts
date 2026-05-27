@@ -257,7 +257,9 @@ export interface WorkspaceRecipe {
     inheritance?: WorkspaceRecipeInheritanceResolution
   }
   workflow: {
+    before?: WorkspaceRecipeStep[]
     steps: WorkspaceRecipeStep[]
+    after?: WorkspaceRecipeStep[]
   }
   artifacts?: {
     directory?: string

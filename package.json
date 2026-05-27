@@ -50,10 +50,11 @@
     "discovery-command-smoke": "tsx scripts/discovery-command-smoke.ts",
     "agent-sandbox-code-smoke": "tsx scripts/agent-sandbox-code-smoke.ts",
     "recipe-dry-run-smoke": "tsx scripts/recipe-dry-run-smoke.ts",
+    "recipe-workflow-phases-smoke": "tsx scripts/recipe-workflow-phases-smoke.ts",
     "recipe-site-seed-smoke": "tsx scripts/recipe-site-seed-smoke.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "wordpress-plugin-smoke": "php tests/smoke-wordpress-plugin.php",
-    "check": "npm run build && npm run discovery-command-smoke && npm run agent-sandbox-code-smoke && npm run policy-validation-smoke && npm run wordpress-plugin-smoke && npm run package-distribution-smoke && npm run artifact-contract-smoke && npm run external-adapter-contract-smoke && npm run runtime-episode-smoke && npm run core-phpunit-command-smoke && npm run recipe-bench-smoke && npm run recipe-dry-run-smoke && npm run recipe-site-seed-smoke && npm run preview-port-smoke && npm run preview-public-url-canonical-smoke && npm run preview-response-body-smoke && npm run boot-preview-smoke && npm run blueprint-validation-smoke && npm run browser-probe-artifact-smoke && npm run wp-codebox -- run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json"
+    "check": "npm run build && npm run discovery-command-smoke && npm run agent-sandbox-code-smoke && npm run policy-validation-smoke && npm run wordpress-plugin-smoke && npm run package-distribution-smoke && npm run artifact-contract-smoke && npm run external-adapter-contract-smoke && npm run runtime-episode-smoke && npm run core-phpunit-command-smoke && npm run recipe-bench-smoke && npm run recipe-dry-run-smoke && npm run recipe-workflow-phases-smoke && npm run recipe-site-seed-smoke && npm run preview-port-smoke && npm run preview-public-url-canonical-smoke && npm run preview-response-body-smoke && npm run boot-preview-smoke && npm run blueprint-validation-smoke && npm run browser-probe-artifact-smoke && npm run wp-codebox -- run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json"
   },
   "workspaces": [
     "packages/*"
