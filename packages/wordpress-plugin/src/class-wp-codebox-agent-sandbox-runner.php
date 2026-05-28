@@ -970,9 +970,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		$outcome = array(
 			'schema'      => self::REMEDIATION_OUTCOME_SCHEMA,
-			'success'     => false,
-			'kind'        => 'agent_no_pr_outcome',
-			'failure'     => 'agent_no_pr_outcome',
+			'success'     => true,
+			'kind'        => 'unable_to_remediate',
+			'failure'     => '',
 			'exit_code'   => $exit_code,
 			'retryable'   => false,
 			'diagnostics' => array_filter(
@@ -1028,6 +1028,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		if ( $max_turns_reached ) {
+			$outcome['success'] = false;
 			$outcome['kind'] = 'max_turns_exceeded';
 			$outcome['failure'] = 'max_turns_exceeded';
 			$outcome['retryable'] = true;
@@ -1035,10 +1036,17 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		if ( 0 !== $exit_code || ! empty( $provider_error ) ) {
+			$outcome['success'] = false;
 			$outcome['kind'] = 'provider_error';
 			$outcome['failure'] = 'provider_error';
 			$outcome['provider_error'] = $provider_error;
 			$outcome['retryable'] = (bool) ( $provider_error['retryable'] ?? true );
+			return $outcome;
+		}
+
+		if ( $false_positive ) {
+			$outcome['kind'] = 'noop_artifact';
+			$outcome['false_positive'] = true;
 		}
 
 		return $outcome;
@@ -1048,6 +1056,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private function remediation_false_positive( array $run ): bool {
 		foreach ( array_merge( array( $run ), $this->agent_payloads( $run ) ) as $payload ) {
 			if ( $this->recursive_truthy_key( $payload, 'false_positive' ) || $this->recursive_truthy_key( $payload, 'falsePositive' ) ) {
+				return true;
+			}
+
+			$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $payload, JSON_UNESCAPED_SLASHES ) : json_encode( $payload, JSON_UNESCAPED_SLASHES );
+			$text    = strtolower( is_string( $encoded ) ? $encoded : '' );
+			if ( str_contains( $text, 'false positive' ) || str_contains( $text, 'false_positive' ) ) {
 				return true;
 			}
 		}
