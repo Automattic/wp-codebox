@@ -715,6 +715,7 @@ export interface ArtifactBundle {
   patchPath: string
   testResultsPath: string
   reviewPath: string
+  runAttestationPath?: string
   artifactVerificationPath?: string
   workspacePolicyPath?: string
   preview?: ArtifactPreview
