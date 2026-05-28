@@ -68,8 +68,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "playwright": "^1.60.0",
-    "tsx": "^4.20.0",
-    "typescript": "^5.8.0"
+    "tsx": "^4.20.0"
   },
   "description": "**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely — every sandbox is a disposable WordPress Playground that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.",
   "main": "index.js",
@@ -237,6 +236,7 @@
     "to-buffer": "^1.2.2",
     "toidentifier": "^1.0.1",
     "type-is": "^1.6.18",
+    "typescript": "^5.8.0",
     "typed-array-buffer": "^1.0.3",
     "undici-types": "^7.16.0",
     "universal-github-app-jwt": "^1.2.0",
