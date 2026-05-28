@@ -3136,6 +3136,7 @@ function parseArtifactVerifyOptions(args: string[]): ArtifactVerifyOptions {
 
     switch (name) {
       case "--bundle":
+      case "--artifacts":
         options.bundleDirectory = value
         break
       default:

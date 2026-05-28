@@ -251,6 +251,7 @@ export function printHelp(): void {
 Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
+  --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
   --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.core-phpunit, wordpress.plugin-check, wordpress.wp-cli, wordpress.ability, wordpress.bench, and wordpress.browser-probe.

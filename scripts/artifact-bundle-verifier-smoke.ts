@@ -23,6 +23,9 @@ try {
   const { stdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "verify", "--bundle", validBundle, "--json"], { cwd: root })
   assert.equal(JSON.parse(stdout).valid, true)
 
+  const artifactsOption = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "verify", "--artifacts", validBundle, "--json"], { cwd: root })
+  assert.equal(JSON.parse(artifactsOption.stdout).valid, true)
+
   const missingManifest = join(workspace, "missing-manifest")
   await mkdir(missingManifest, { recursive: true })
   assertViolation(await verifyArtifactBundle(missingManifest), "missing-manifest")
