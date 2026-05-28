@@ -627,7 +627,7 @@ $text_false_positive_result = $remediation_run(
 		'metadata' => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
 	)
 );
-$assert( 'strict remediation outcome rejects text-only false-positive conclusions without artifact', ! is_wp_error( $text_false_positive_result ) && false === ( $text_false_positive_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $text_false_positive_result['outcome']['kind'] ?? '' ) );
+$assert( 'strict remediation outcome returns noop artifact for text-only false-positive conclusions without artifact', ! is_wp_error( $text_false_positive_result ) && true === ( $text_false_positive_result['success'] ?? false ) && 'noop_artifact' === ( $text_false_positive_result['outcome']['kind'] ?? '' ) && true === ( $text_false_positive_result['outcome']['false_positive'] ?? false ) );
 
 $normal_no_pr_result = $remediation_run(
 	array(
@@ -635,7 +635,7 @@ $normal_no_pr_result = $remediation_run(
 		'metadata' => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
 	)
 );
-$assert( 'strict remediation outcome rejects normal answers without artifact', ! is_wp_error( $normal_no_pr_result ) && false === ( $normal_no_pr_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $normal_no_pr_result['outcome']['failure'] ?? '' ) );
+$assert( 'strict remediation outcome returns unable-to-remediate terminal outcome without artifact', ! is_wp_error( $normal_no_pr_result ) && true === ( $normal_no_pr_result['success'] ?? false ) && 'unable_to_remediate' === ( $normal_no_pr_result['outcome']['kind'] ?? '' ) );
 
 $fix_artifact_result = $remediation_run(
 	array(

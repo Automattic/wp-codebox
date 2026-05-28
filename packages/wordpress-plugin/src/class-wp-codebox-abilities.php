@@ -606,17 +606,17 @@ final class WP_Codebox_Abilities {
 	private static function remediation_outcome_schema(): array {
 		return array(
 			'type'        => 'object',
-			'description' => 'Strict audit-remediation terminal outcome. Successful sandbox outcomes require a reviewed fix or false-positive artifact; parent orchestrators apply artifacts and open PRs outside the sandbox.',
+			'description' => 'Strict audit-remediation terminal outcome. Sandbox runs return reviewed artifacts when they can remediate, or an explicit terminal no-op/failure outcome when they cannot. Parent orchestrators apply artifacts and open PRs outside the sandbox.',
 			'properties'  => array(
 				'schema'                => array( 'type' => 'string' ),
 				'success'               => array( 'type' => 'boolean' ),
 				'kind'                  => array(
 					'type' => 'string',
-					'enum' => array( 'fix_artifact', 'false_positive_artifact', 'fix_pr', 'false_positive_pr', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded' ),
+					'enum' => array( 'fix_artifact', 'false_positive_artifact', 'noop_artifact', 'unable_to_remediate', 'fix_pr', 'false_positive_pr', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded' ),
 				),
 				'failure'               => array(
 					'type' => 'string',
-					'enum' => array( 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded' ),
+					'enum' => array( 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', '' ),
 				),
 				'pr_url'                => array( 'type' => 'string' ),
 				'false_positive_pr_url' => array( 'type' => 'string' ),
