@@ -233,14 +233,16 @@ $captured_command  = '';
 $captured_commands = array();
 $captured_recipe   = '';
 $captured_recipes  = array();
+$captured_secret_env = array();
 $command_count     = 0;
 $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 	array(
 		'shell_available' => fn() => true,
-		'command_runner'  => function ( string $command ) use ( &$captured_command, &$captured_commands, &$captured_recipe, &$captured_recipes, &$command_count ): array {
+		'command_runner'  => function ( string $command, array $secret_env = array() ) use ( &$captured_command, &$captured_commands, &$captured_recipe, &$captured_recipes, &$captured_secret_env, &$command_count ): array {
 			++$command_count;
 			$captured_command    = $command;
 			$captured_commands[] = $command;
+			$captured_secret_env = $secret_env;
 			if ( preg_match( "/--recipe '([^']+)'/", $command, $matches ) && is_readable( $matches[1] ) ) {
 				$captured_recipe   = (string) file_get_contents( $matches[1] );
 				$captured_recipes[] = $captured_recipe;
@@ -354,6 +356,7 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( ar
 			'provider'   => 'openai',
 			'model'      => 'gpt-5.5',
 			'secret_env' => array( 'OPENAI_API_KEY' ),
+			'secret_env_values' => array( 'OPENAI_API_KEY' => 'sk-test-secret-value' ),
 			'credentials' => array(
 				'schema'    => 'wp-codebox/connector-credentials/v1',
 				'connector' => $request['connectors'][0] ?? 'primary-ai',
@@ -399,6 +402,7 @@ $inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
 $assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
 $assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
 $assert( 'runner transports inherited secret env name only', ! is_wp_error( $inherit_result ) && in_array( 'OPENAI_API_KEY', $inherit_recipe['inputs']['secretEnv'] ?? array(), true ) && ! str_contains( $captured_recipe, 'OPENAI_API_KEY=' ) );
+$assert( 'runner passes inherited secret env value to command runner', ! is_wp_error( $inherit_result ) && 'sk-test-secret-value' === ( $captured_secret_env['OPENAI_API_KEY'] ?? '' ) );
 $assert( 'runner records connector credential provenance without value', ! is_wp_error( $inherit_result ) && 'wp-codebox/connector-credentials/v1' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) );
 $assert( 'runner records sanitized inheritance status', ! is_wp_error( $inherit_result ) && 'primary-ai' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['name'] ?? '' ) && 'resolved' === ( $inherit_recipe['inputs']['inheritance']['settings'][0]['status'] ?? '' ) );
 $assert( 'runner drops inherited secret values from recipe', ! str_contains( $captured_recipe, 'sk-test-secret-value' ) && ! str_contains( $captured_recipe, 'token' ) );
