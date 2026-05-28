@@ -140,6 +140,143 @@ add_filter('datamachine_agent_mode_sandbox', static function (string $content): 
     return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
 }, 100, 1);
 
+if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') && !class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
+    final class WP_Codebox_Sandbox_Perception_Directive implements DataMachine\\Engine\\AI\\Directives\\DirectiveInterface {
+        private const TREE_MAX_DEPTH = 2;
+
+        public static function get_outputs(string $provider_name, array $tools, ?string $step_id = null, array $payload = array()): array {
+            unset($provider_name, $step_id);
+            $workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? DATAMACHINE_WORKSPACE_PATH : (${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
+            $sections = array(
+                self::section_header(),
+                self::section_workspace((string) $workspace_root),
+                self::section_runtime(),
+                self::section_tools($tools, is_array($payload['client_context']['tool_contract'] ?? null) ? $payload['client_context']['tool_contract'] : array()),
+                self::section_outcome(),
+            );
+            $content = trim(implode("\n\n", array_filter($sections, static fn(string $section): bool => '' !== $section)));
+            if ('' === $content) {
+                return array();
+            }
+            return array(array('type' => 'system_text', 'content' => $content));
+        }
+
+        private static function section_header(): string {
+            return implode("\n", array(
+                '# WP Codebox Sandbox Perception',
+                '',
+                'Live snapshot of the disposable WP Codebox sandbox at the start of this run. Use it as your starting awareness; workspace tools remain available for targeted inspection and edits.',
+            ));
+        }
+
+        private static function section_workspace(string $workspace_root): string {
+            if ('' === $workspace_root || !is_dir($workspace_root)) {
+                return '';
+            }
+            $entries = self::scan_tree($workspace_root, $workspace_root, 0);
+            sort($entries, SORT_STRING);
+            $lines = array(
+                '## Workspace',
+                '',
+                sprintf('- Root: %s', $workspace_root),
+                sprintf('- Tree depth: %d', self::TREE_MAX_DEPTH),
+                '',
+                'Tree:',
+            );
+            foreach ($entries as $entry) {
+                $lines[] = $entry;
+            }
+            return implode("\n", $lines);
+        }
+
+        private static function scan_tree(string $base, string $current, int $depth): array {
+            if ($depth > self::TREE_MAX_DEPTH) {
+                return array();
+            }
+            $ignored = array('.git', 'node_modules', 'vendor', 'dist', 'build', '.homeboy-build');
+            $items = scandir($current);
+            if (false === $items) {
+                return array();
+            }
+            $results = array();
+            foreach ($items as $item) {
+                if ('.' === $item || '..' === $item || in_array($item, $ignored, true)) {
+                    continue;
+                }
+                $path = $current . '/' . $item;
+                $relative = ltrim(substr($path, strlen($base)), '/');
+                if (is_dir($path)) {
+                    $results[] = $relative . '/';
+                    $results = array_merge($results, self::scan_tree($base, $path, $depth + 1));
+                    continue;
+                }
+                $results[] = $relative;
+            }
+            return $results;
+        }
+
+        private static function section_runtime(): string {
+            $plugins = array();
+            foreach ((array) get_option('active_plugins', array()) as $plugin_file) {
+                $plugins[] = '- ' . (string) $plugin_file;
+            }
+            $lines = array(
+                '## Runtime',
+                '',
+                sprintf('- WordPress: %s', get_bloginfo('version')),
+                sprintf('- PHP: %s', PHP_VERSION),
+            );
+            if (!empty($plugins)) {
+                $lines[] = '';
+                $lines[] = 'Active plugins:';
+                $lines = array_merge($lines, $plugins);
+            }
+            return implode("\n", $lines);
+        }
+
+        private static function section_tools(array $tools, array $tool_contract): string {
+            $tool_names = array_keys($tools);
+            sort($tool_names, SORT_STRING);
+            $contract_tools = array_values(array_filter((array) ($tool_contract['tools'] ?? array()), 'is_string'));
+            sort($contract_tools, SORT_STRING);
+            $lines = array('## Tool Surface', '');
+            if (!empty($tool_names)) {
+                $lines[] = 'Resolved tools:';
+                foreach ($tool_names as $tool_name) {
+                    $lines[] = sprintf('- %s', $tool_name);
+                }
+            }
+            if (!empty($contract_tools)) {
+                $lines[] = '';
+                $lines[] = 'Sandbox contract tools:';
+                foreach ($contract_tools as $tool_name) {
+                    $lines[] = sprintf('- %s', $tool_name);
+                }
+            }
+            return implode("\n", $lines);
+        }
+
+        private static function section_outcome(): string {
+            return implode("\n", array(
+                '## Outcome Contract',
+                '',
+                'Make repository changes through workspace tools when the task calls for code changes. The parent WP Codebox run captures sandbox diffs as reviewed artifacts; return a concise final outcome that includes changed files, verification, and any PR or false-positive disposition when available.',
+            ));
+        }
+    }
+}
+
+add_filter('datamachine_directives', static function (array $directives): array {
+    if (class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
+        $directives[] = array(
+            'class' => 'WP_Codebox_Sandbox_Perception_Directive',
+            'priority' => 25,
+            'modes' => array('sandbox'),
+        );
+    }
+    return $directives;
+});
+
 $ability = function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
 if (!$ability || !method_exists($ability, 'execute')) {
     $sandbox_agent_runtime = array(
