@@ -94,10 +94,13 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-data-machi
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 $root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
-foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'ai-provider-test', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
+foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
 file_put_contents( $root . '/wp-codebox.js', "#!/usr/bin/env node\n" );
+if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
+	define( 'WP_PLUGIN_DIR', $root . '/plugin-root' );
+}
 
 $failures = array();
 $total    = 0;
@@ -270,6 +273,28 @@ $assert( 'runner recipe passes provider plugin path', str_contains( $captured_re
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
+
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
+$plugin_native_result = $runner->run(
+	array(
+		'goal'           => 'Run with the host-installed Agents API plugin only.',
+		'artifacts_path' => $root . '/artifacts',
+	)
+);
+$plugin_native_recipe  = json_decode( $captured_recipe, true );
+$plugin_native_plugins = array_map(
+	static fn( array $plugin ): string => (string) ( $plugin['slug'] ?? '' ),
+	$plugin_native_recipe['inputs']['extraPlugins'] ?? array()
+);
+$assert( 'runner defaults Agents API path from WP_PLUGIN_DIR', ! is_wp_error( $plugin_native_result ) && in_array( 'agents-api', $plugin_native_plugins, true ) );
+$assert( 'runner does not require Data Machine component paths', ! is_wp_error( $plugin_native_result ) && ! in_array( 'data-machine', $plugin_native_plugins, true ) && ! in_array( 'data-machine-code', $plugin_native_plugins, true ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
+	'agents_api'        => $root . '/agents-api',
+	'data_machine'      => $root . '/data-machine',
+	'data_machine_code' => $root . '/data-machine-code',
+	'provider_plugins'  => array( $root . '/ai-provider-test' ),
+);
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = '';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = '';

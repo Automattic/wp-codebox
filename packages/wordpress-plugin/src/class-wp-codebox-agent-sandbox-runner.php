@@ -284,7 +284,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array{agents_api:string,data_machine:string,data_machine_code:string}|WP_Error
 	 */
 	private function resolve_component_paths( array $input ): array|WP_Error {
-		$configured = $this->configured_paths();
+		$configured = array_merge( $this->default_component_paths(), $this->configured_paths() );
 		$paths      = array(
 			'agents_api'        => $this->clean_path( (string) ( $input['agents_api_path'] ?? $configured['agents_api'] ?? '' ) ),
 			'data_machine'      => $this->clean_path( (string) ( $input['data_machine_path'] ?? $configured['data_machine'] ?? '' ) ),
@@ -292,8 +292,45 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 
 		foreach ( $paths as $key => $path ) {
-			if ( '' === $path || ! is_dir( $path ) ) {
+			if ( '' === $path ) {
+				if ( 'agents_api' !== $key ) {
+					continue;
+				}
+
 				return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
+			}
+
+			if ( ! is_dir( $path ) ) {
+				return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
+			}
+		}
+
+		return $paths;
+	}
+
+	/** @return array{agents_api:string,data_machine:string,data_machine_code:string} */
+	private function default_component_paths(): array {
+		$paths = array(
+			'agents_api'        => '',
+			'data_machine'      => '',
+			'data_machine_code' => '',
+		);
+
+		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
+			return $paths;
+		}
+
+		$plugin_dir = $this->clean_path( (string) WP_PLUGIN_DIR );
+		foreach (
+			array(
+				'agents_api'        => 'agents-api',
+				'data_machine'      => 'data-machine',
+				'data_machine_code' => 'data-machine-code',
+			) as $key => $slug
+		) {
+			$path = $plugin_dir . DIRECTORY_SEPARATOR . $slug;
+			if ( is_dir( $path ) ) {
+				$paths[ $key ] = $path;
 			}
 		}
 
@@ -1088,14 +1125,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'mounts'       => $mounts,
 				'inherit'      => $this->inheritance_request( $input ),
 				'inheritance'  => $inheritance,
-				'extraPlugins' => array_merge(
-					array(
-						array( 'source' => $paths['agents_api'], 'slug' => 'agents-api', 'activate' => false ),
-						array( 'source' => $paths['data_machine'], 'slug' => 'data-machine', 'activate' => false ),
-						array( 'source' => $paths['data_machine_code'], 'slug' => 'data-machine-code', 'activate' => false ),
-					),
-					$provider_plugins
-				),
+				'extraPlugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
 				'secretEnv'    => $this->secret_env_names( $input, $inheritance ),
 			),
 			'workflow' => array( 'steps' => $steps ),
@@ -1113,6 +1143,33 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $file;
+	}
+
+	/**
+	 * @param array{agents_api:string,data_machine:string,data_machine_code:string} $paths Component paths.
+	 * @return array<int,array{source:string,slug:string,activate:bool}>
+	 */
+	private function component_plugins( array $paths ): array {
+		$plugins = array();
+		foreach (
+			array(
+				'agents_api'        => 'agents-api',
+				'data_machine'      => 'data-machine',
+				'data_machine_code' => 'data-machine-code',
+			) as $key => $slug
+		) {
+			if ( '' === $paths[ $key ] ) {
+				continue;
+			}
+
+			$plugins[] = array(
+				'source'   => $paths[ $key ],
+				'slug'     => $slug,
+				'activate' => false,
+			);
+		}
+
+		return $plugins;
 	}
 
 	private function generate_run_id(): string {
