@@ -1721,6 +1721,23 @@ function upsertManifestFile(manifest: ArtifactManifest, file: ArtifactManifestFi
   manifest.files[index] = file
 }
 
+function artifactManifestFile(path: string, kind: string, contentType: string): ArtifactManifestFile {
+  return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
+}
+
+async function refreshArtifactManifestFileHashes(directory: string, manifest: ArtifactManifest): Promise<void> {
+  for (const file of manifest.files) {
+    if (file.path !== "manifest.json") {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
+    }
+  }
+  for (const file of manifest.files) {
+    if (file.path === "manifest.json") {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
+    }
+  }
+}
+
 export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBackend): Promise<Runtime> {
   assertRuntimePolicy(spec.policy)
 
@@ -1846,9 +1863,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     const eventsRelativePath = "files/runtime-episode.jsonl"
     await writeFile(this.artifacts.runtimeEpisodeTracePath, `${JSON.stringify(trace, null, 2)}\n`)
     await writeFile(this.artifacts.runtimeEpisodeEventsPath, `${runtimeEpisodeJsonLines(trace)}`)
-    await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactMetadataForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactReviewForRuntimeEpisodeTrace(traceRelativePath)
+    await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
   }
 
   private async updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -1857,8 +1874,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     }
 
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
-    upsertManifestFile(manifest, { path: traceRelativePath, kind: "runtime-episode-trace", contentType: "application/json" })
-    upsertManifestFile(manifest, { path: eventsRelativePath, kind: "runtime-episode-events", contentType: "application/x-ndjson" })
+    upsertManifestFile(manifest, artifactManifestFile(traceRelativePath, "runtime-episode-trace", "application/json"))
+    upsertManifestFile(manifest, artifactManifestFile(eventsRelativePath, "runtime-episode-events", "application/x-ndjson"))
+    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
