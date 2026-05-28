@@ -316,7 +316,22 @@ export interface WorkspaceRecipe {
   }
   artifacts?: {
     directory?: string
+    verify?: boolean | WorkspaceRecipeArtifactVerifier
+    workspacePolicy?: boolean | WorkspaceRecipeWorkspacePolicyArtifact
   }
+}
+
+export interface WorkspaceRecipeArtifactVerifier {
+  enabled?: boolean
+  strict?: boolean
+}
+
+export interface WorkspaceRecipeWorkspacePolicyArtifact {
+  enabled?: boolean
+  strict?: boolean
+  writableRoots?: string[]
+  hiddenPaths?: string[]
+  gitBacked?: boolean
 }
 
 export interface WorkspaceRecipeInheritanceRequest {
@@ -658,6 +673,8 @@ export interface ArtifactBundle {
   patchPath: string
   testResultsPath: string
   reviewPath: string
+  artifactVerificationPath?: string
+  workspacePolicyPath?: string
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string
