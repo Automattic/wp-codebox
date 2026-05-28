@@ -62,6 +62,7 @@ final class WP_Codebox_Abilities {
 			$mount_schema      = self::mount_schema();
 			$inherit_schema    = self::inherit_schema();
 			$session_schema    = self::sandbox_session_schema();
+			$browser_session_schema = self::browser_playground_session_schema();
 			$session_input     = self::sandbox_session_input_schema();
 			$preview_schema    = self::preview_input_schema();
 			$artifact_id_schema = array(
@@ -267,6 +268,62 @@ final class WP_Codebox_Abilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'run_agent_task_batch' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/create-browser-playground-session',
+				array(
+					'label'               => 'Create Browser Playground Session',
+					'description'         => 'Prepare a WP Codebox browser-executed WordPress Playground session without requiring the host to run the WP Codebox CLI or Node.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'anyOf'      => array(
+							array( 'required' => array( 'goal' ) ),
+							array( 'required' => array( 'task' ) ),
+						),
+						'properties' => array(
+							'goal'               => $task_input_schema['properties']['goal'],
+							'task'               => array(
+								'type'        => 'string',
+								'description' => 'Legacy task description. Prefer goal for new product callers.',
+							),
+							'target'             => $task_input_schema['properties']['target'],
+							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
+							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
+							'policy'             => $task_input_schema['properties']['policy'],
+							'context'            => $task_input_schema['properties']['context'],
+							'sandbox_session_id' => $session_input['sandbox_session_id'],
+							'orchestrator'       => $session_input['orchestrator'],
+							'playground'         => array(
+								'type'        => 'object',
+								'description' => 'Optional browser Playground client configuration overrides.',
+							),
+							'blueprint'          => array(
+								'type'        => 'object',
+								'description' => 'Optional WordPress Playground blueprint for the browser to compile and run.',
+							),
+							'artifact_files'     => array(
+								'type'        => 'array',
+								'description' => 'Optional text artifact files the browser should write into Playground.',
+								'items'       => array(
+									'type'       => 'object',
+									'required'   => array( 'path', 'content' ),
+									'properties' => array(
+										'path'        => array( 'type' => 'string' ),
+										'content'     => array( 'type' => 'string' ),
+										'kind'        => array( 'type' => 'string' ),
+										'description' => array( 'type' => 'string' ),
+									),
+								),
+							),
+						),
+					),
+					'output_schema'       => $browser_session_schema,
+					'execute_callback'    => array( self::class, 'create_browser_playground_session' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
@@ -573,6 +630,26 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @return array<string,mixed> */
+	private static function browser_playground_session_schema(): array {
+		return array(
+			'type'       => 'object',
+			'properties' => array(
+				'success'    => array( 'type' => 'boolean' ),
+				'schema'     => array( 'type' => 'string' ),
+				'execution'  => array(
+					'type'        => 'string',
+					'enum'        => array( 'browser-playground' ),
+					'description' => 'The caller browser executes WordPress Playground; the host site does not run the WP Codebox CLI.',
+				),
+				'session'    => array( 'type' => 'object' ),
+				'task_input' => self::task_input_schema(),
+				'playground' => array( 'type' => 'object' ),
+				'artifacts'  => array( 'type' => 'object' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
 	private static function task_input_schema(): array {
 		return array(
 			'type'       => 'object',
@@ -629,6 +706,57 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function create_browser_playground_session( array $input ): array|WP_Error {
+		$task_input = self::normalize_task_input( $input );
+		if ( is_wp_error( $task_input ) ) {
+			return $task_input;
+		}
+
+		$session_id = trim( (string) ( $input['sandbox_session_id'] ?? $input['session_id'] ?? '' ) );
+		if ( '' === $session_id ) {
+			$session_id = self::generate_id();
+		}
+
+		$playground = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
+		$blueprint  = is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array();
+		$artifacts  = self::browser_artifact_files( $input );
+		if ( is_wp_error( $artifacts ) ) {
+			return $artifacts;
+		}
+
+		return array(
+			'success'    => true,
+			'schema'     => 'wp-codebox/browser-playground-session/v1',
+			'execution'  => 'browser-playground',
+			'session'    => array(
+				'schema'       => 'wp-codebox/browser-playground-session/v1',
+				'id'           => $session_id,
+				'status'       => 'ready',
+				'persistence'  => 'external-orchestrator',
+				'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			),
+			'task_input' => $task_input,
+			'playground' => array(
+				'client_module_url' => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
+				'remote_url'        => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+				'scope'             => (string) ( $playground['scope'] ?? $session_id ),
+				'blueprint'         => self::browser_playground_blueprint( $blueprint, $playground ),
+				'capabilities'      => array(
+					'compile_blueprint' => true,
+					'run_blueprint'     => true,
+					'write_file'        => true,
+					'run_php'           => true,
+				),
+			),
+			'artifacts'  => array(
+				'schema'             => 'wp-codebox/browser-artifacts/v1',
+				'files'              => $artifacts,
+				'expected_artifacts' => $task_input['expected_artifacts'],
+			),
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function list_artifacts( array $input = array() ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->list( $input );
 	}
@@ -657,5 +785,91 @@ final class WP_Codebox_Abilities {
 		$allowed = current_user_can( 'manage_options' );
 
 		return (bool) apply_filters( 'wp_codebox_can_run_agent_task', $allowed );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private static function normalize_task_input( array $input ): array|WP_Error {
+		$goal = trim( (string) ( $input['goal'] ?? $input['task'] ?? '' ) );
+		if ( '' === $goal ) {
+			return new WP_Error( 'wp_codebox_task_missing', 'goal or task is required.', array( 'status' => 400 ) );
+		}
+
+		return array(
+			'schema'             => 'wp-codebox/task-input/v1',
+			'goal'               => $goal,
+			'target'             => is_array( $input['target'] ?? null ) ? $input['target'] : array(),
+			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
+			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
+			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
+			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
+		);
+	}
+
+	/** @return string[] */
+	private static function string_list( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$items = array();
+		foreach ( $value as $item ) {
+			$item = trim( (string) $item );
+			if ( '' !== $item && ! in_array( $item, $items, true ) ) {
+				$items[] = $item;
+			}
+		}
+
+		return $items;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,string>>|WP_Error */
+	private static function browser_artifact_files( array $input ): array|WP_Error {
+		$files = is_array( $input['artifact_files'] ?? null ) ? $input['artifact_files'] : array();
+		$normalized = array();
+		foreach ( $files as $index => $file ) {
+			if ( ! is_array( $file ) ) {
+				return new WP_Error( 'wp_codebox_browser_artifact_file_invalid', 'Each browser artifact file must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$path = trim( (string) ( $file['path'] ?? '' ) );
+			if ( '' === $path || str_contains( $path, '..' ) || str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
+				return new WP_Error( 'wp_codebox_browser_artifact_path_invalid', 'Browser artifact file paths must be safe relative paths.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$normalized[] = array(
+				'path'        => $path,
+				'content'     => (string) ( $file['content'] ?? '' ),
+				'kind'        => (string) ( $file['kind'] ?? 'text' ),
+				'description' => (string) ( $file['description'] ?? '' ),
+			);
+		}
+
+		return $normalized;
+	}
+
+	/** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $playground Playground config. @return array<string,mixed> */
+	private static function browser_playground_blueprint( array $blueprint, array $playground ): array {
+		if ( ! empty( $blueprint ) ) {
+			return $blueprint;
+		}
+
+		return array(
+			'preferredVersions' => array(
+				'wp'  => (string) ( $playground['wp'] ?? '6.9' ),
+				'php' => (string) ( $playground['php'] ?? '8.2' ),
+			),
+			'features'          => array(
+				'networking' => true,
+			),
+			'steps'             => array(),
+		);
+	}
+
+	private static function generate_id(): string {
+		if ( function_exists( 'wp_generate_uuid4' ) ) {
+			return wp_generate_uuid4();
+		}
+
+		return bin2hex( random_bytes( 16 ) );
 	}
 }

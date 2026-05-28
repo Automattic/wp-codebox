@@ -156,6 +156,13 @@ $assert( 'batch ability exposes preview configuration schema', 'integer' === ( $
 $assert( 'batch ability contract does not expose unimplemented concurrency', ! isset( $batch_ability['input_schema']['properties']['concurrency'] ) && ! isset( $batch_ability['output_schema']['properties']['concurrency'] ) );
 $assert( 'batch ability exposes per-task run outputs', isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['artifact_id'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['preview_url'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['error'] ) );
 
+$browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
+$assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
+$assert( 'browser Playground session ability is REST visible', true === ( $browser_session_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser Playground session accepts goal or legacy task', array( 'goal' ) === ( $browser_session_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_session_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser Playground session exposes artifact file schema', 'array' === ( $browser_session_ability['input_schema']['properties']['artifact_files']['type'] ?? '' ) );
+$assert( 'browser Playground session output declares browser execution', array( 'browser-playground' ) === ( $browser_session_ability['output_schema']['properties']['execution']['enum'] ?? array() ) );
+
 $artifact_abilities = array(
 	'wp-codebox/list-artifacts',
 	'wp-codebox/get-artifact',
@@ -180,6 +187,46 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_agent'] = 'site-coder';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model'] = 'gpt-5.5';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI_API_KEY' );
+
+$browser_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'               => 'Prepare a Studio Web browser preview.',
+		'sandbox_session_id' => 'browser-session-123',
+		'target'             => array( 'kind' => 'static-site' ),
+		'allowed_tools'      => array( 'filesystem-write', 'filesystem-write', '' ),
+		'expected_artifacts' => array( 'static-site' ),
+		'orchestrator'       => array( 'id' => 'studio-web' ),
+		'artifact_files'     => array(
+			array(
+				'path'    => 'static-site/index.html',
+				'content' => '<main>Preview</main>',
+				'kind'    => 'static-html',
+			),
+		),
+	)
+);
+$assert( 'browser Playground session returns without shelling out', ! is_wp_error( $browser_session ) && true === ( $browser_session['success'] ?? false ) );
+$assert( 'browser Playground session schema is stable', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_session['schema'] ?? '' ) );
+$assert( 'browser Playground session pins browser execution', ! is_wp_error( $browser_session ) && 'browser-playground' === ( $browser_session['execution'] ?? '' ) );
+$assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.automattic.ai' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.automattic.ai' ) );
+$assert( 'browser Playground session includes default blueprint', ! is_wp_error( $browser_session ) && true === ( $browser_session['playground']['blueprint']['features']['networking'] ?? false ) && is_array( $browser_session['playground']['blueprint']['steps'] ?? null ) );
+$assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'static-site/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );
+$assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
+
+$invalid_browser_file = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'           => 'Prepare an unsafe browser preview.',
+		'artifact_files' => array(
+			array(
+				'path'    => '../secret.txt',
+				'content' => 'nope',
+			),
+		),
+	)
+);
+$assert( 'browser Playground session rejects unsafe artifact paths', is_wp_error( $invalid_browser_file ) && 'wp_codebox_browser_artifact_path_invalid' === $invalid_browser_file->get_error_code() );
 
 $captured_command  = '';
 $captured_commands = array();
