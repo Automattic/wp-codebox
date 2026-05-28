@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -b packages/runtime-core packages/runtime-playground packages/cli",
+    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli",
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "package-distribution-smoke": "tsx scripts/package-distribution-smoke.ts",
