@@ -93,10 +93,10 @@ if (function_exists('wp_get_ability')) {
 $sandbox_stack['workspace_adoptions'] = $sandbox_workspace_adoptions;
 
 if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
-    $sandbox_agent_slug = sanitize_title((string) (${JSON.stringify(input.agent)}));
+    $sandbox_agent_slug = sanitize_title((string) (${phpStringLiteral(String(input.agent ?? ""))}));
     if ('' !== $sandbox_agent_slug) {
         $sandbox_agents = new DataMachine\\Core\\Database\\Agents\\Agents();
-        $sandbox_agent_config = json_decode(${JSON.stringify(JSON.stringify(agentConfig))}, true);
+        $sandbox_agent_config = json_decode(${phpStringLiteral(JSON.stringify(agentConfig))}, true);
         $sandbox_agent_id = $sandbox_agents->create_if_missing(
             $sandbox_agent_slug,
             'Sandbox Agent',
@@ -109,7 +109,7 @@ if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
     }
 }
 
-$sandbox_model_settings = json_decode(${JSON.stringify(JSON.stringify(scopedSettings(mode, options.provider, options.model)))}, true);
+$sandbox_model_settings = json_decode(${phpStringLiteral(JSON.stringify(scopedSettings(mode, options.provider, options.model)))}, true);
 if (is_array($sandbox_model_settings) && !empty($sandbox_model_settings)) {
     update_option('datamachine_settings', array_merge(get_option('datamachine_settings', array()), $sandbox_model_settings));
 }
@@ -119,11 +119,11 @@ add_filter('agents_chat_permission', static function () {
 }, 100, 2);
 
 add_filter('datamachine_code_sandbox_safe_abilities', static function () {
-    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_SAFE_ABILITIES]))}, true);
+    return json_decode(${phpStringLiteral(JSON.stringify([...SANDBOX_DMC_SAFE_ABILITIES]))}, true);
 }, 100);
 
 add_filter('datamachine_code_sandbox_parent_only_abilities', static function () {
-    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_PARENT_ONLY_ABILITIES]))}, true);
+    return json_decode(${phpStringLiteral(JSON.stringify([...SANDBOX_DMC_PARENT_ONLY_ABILITIES]))}, true);
 }, 100);
 
 add_action('datamachine_agent_modes', static function () {
@@ -136,7 +136,7 @@ add_action('datamachine_agent_modes', static function () {
 }, 100);
 
 add_filter('datamachine_agent_mode_sandbox', static function (string $content): string {
-    $guidance = ${JSON.stringify(sandboxModeGuidance())};
+    $guidance = ${phpStringLiteral(sandboxModeGuidance())};
     return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
 }, 100, 1);
 
@@ -289,7 +289,7 @@ if (!$ability || !method_exists($ability, 'execute')) {
         ),
     );
 } else {
-    $agent_input = ${JSON.stringify(JSON.stringify(input))};
+    $agent_input = ${phpStringLiteral(JSON.stringify(input))};
     $agent_result = $ability->execute(json_decode($agent_input, true));
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
@@ -404,7 +404,7 @@ $plugins = array_merge(array(
     'agents-api/agents-api.php',
     'data-machine/data-machine.php',
     'data-machine-code/data-machine-code.php',
-), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+), wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)));
 
 function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     $entries = array();
@@ -439,7 +439,7 @@ do_action('init');
 do_action('wp_abilities_api_categories_init');
 do_action('wp_abilities_api_init');
 
-$sandbox_task = ${JSON.stringify(task)};
+$sandbox_task = ${phpStringLiteral(task)};
 $sandbox_stack = array(
     'plugins' => $activation_results,
     'signals' => array(
@@ -449,7 +449,7 @@ $sandbox_stack = array(
         'data_machine_permission_helper' => class_exists('DataMachine\\Abilities\\PermissionHelper'),
         'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
         'data_machine_code_workspace' => class_exists('DataMachineCode\\Workspace\\Workspace'),
-        'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+        'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
     ),
 );
 
@@ -474,6 +474,10 @@ function phpBody(code: string): string {
   return code.trimStart().replace(/^<\?php\s*/, "")
 }
 
+function phpStringLiteral(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
+}
+
 export function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -484,7 +488,7 @@ $plugins = array_merge(array(
     'agents-api/agents-api.php',
     'data-machine/data-machine.php',
     'data-machine-code/data-machine-code.php',
-), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+), wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)));
 
 function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     $entries = array();
@@ -531,7 +535,7 @@ echo json_encode(
             'data_machine_permission_helper' => class_exists('DataMachine\\\\Abilities\\\\PermissionHelper'),
             'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
             'data_machine_code_workspace' => class_exists('DataMachineCode\\\\Workspace\\\\Workspace'),
-            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
         ),
     ),
     JSON_PRETTY_PRINT
