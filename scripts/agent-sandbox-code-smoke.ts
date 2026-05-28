@@ -10,8 +10,9 @@ async function main() {
     model: "opencode-go/kimi-k2.6",
   })
 
-  assert.match(code, /\\"modes\\":\[\\"sandbox\\",\\"pipeline\\"\]/, "sandbox chat input should inherit pipeline tool surface")
-  assert.match(code, /\\"agent_modes\\":\[\\"sandbox\\",\\"pipeline\\"\]/, "client context should report additive sandbox modes")
+  assert.match(code, /\\"modes\\":\[\\"sandbox\\",\\"chat\\"\]/, "sandbox chat input should inherit chat tool surface")
+  assert.match(code, /\\"agent_modes\\":\[\\"sandbox\\",\\"chat\\"\]/, "client context should report additive sandbox modes without pipeline completion semantics")
+  assert.doesNotMatch(code, /\\"pipeline\\"/, "sandbox agents should not use pipeline mode because it completes after handler tools")
   assert.match(code, /\\"tool_policy\\":\{\\"mode\\":\\"allow\\",\\"tools\\":\[.*\\"workspace_read\\"/, "sandbox agent should allow workspace tools")
   assert.match(code, /datamachine_agent_mode_sandbox/, "sandbox mode should inject tool guidance")
   assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")

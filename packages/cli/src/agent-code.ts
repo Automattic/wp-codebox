@@ -184,7 +184,7 @@ echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
 function sandboxToolContract(): Record<string, unknown> {
   return {
     schema: "wp-codebox/sandbox-dmc-tools/v1",
-    modes: ["pipeline", "sandbox"],
+    modes: ["chat", "sandbox"],
     tools: sandboxToolNames(),
     safe_abilities: [...SANDBOX_DMC_SAFE_ABILITIES],
     parent_only_abilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
@@ -196,7 +196,7 @@ function sandboxToolNames(): string[] {
 }
 
 function sandboxAgentModes(mode: string): string[] {
-  return Array.from(new Set([mode, "pipeline"].filter(Boolean)))
+  return Array.from(new Set([mode, "chat"].filter(Boolean)))
 }
 
 function sandboxModeGuidance(): string {
