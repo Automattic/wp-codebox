@@ -127,7 +127,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $preview_args;
 		}
 
-		$recipe_file = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version );
+		$inheritance_payload = $this->inheritance_resolution_payload( $input );
+		$recipe_file         = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version, $inheritance_payload['inheritance'] );
 		if ( is_wp_error( $recipe_file ) ) {
 			return $recipe_file;
 		}
@@ -140,7 +141,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 		$command .= $preview_args;
 
-		$result    = $this->run_command( $command );
+		$result    = $this->run_command( $command, $inheritance_payload['secret_env'] );
 		@unlink( $recipe_file );
 		$exit_code = (int) ( $result['exit_code'] ?? 1 );
 		$output    = (string) ( $result['output'] ?? '' );
@@ -507,6 +508,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} */
 	private function inheritance_resolution( array $input ): array {
+		return $this->inheritance_resolution_payload( $input )['inheritance'];
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array{inheritance:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},secret_env:array<string,string>} */
+	private function inheritance_resolution_payload( array $input ): array {
 		$request    = $this->inheritance_request( $input );
 		$resolution = array(
 			'connectors' => array_map(
@@ -533,9 +539,63 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return array(
-			'connectors' => $this->sanitize_inheritance_connectors( $resolution['connectors'] ?? array() ),
-			'settings'   => $this->sanitize_inheritance_settings( $resolution['settings'] ?? array() ),
+			'inheritance' => array(
+				'connectors' => $this->sanitize_inheritance_connectors( $resolution['connectors'] ?? array() ),
+				'settings'   => $this->sanitize_inheritance_settings( $resolution['settings'] ?? array() ),
+			),
+			'secret_env'  => $this->inheritance_secret_env_values( $resolution['connectors'] ?? array() ),
 		);
+	}
+
+	/** @param array<int,mixed> $connectors Raw inheritance connector rows. @return array<string,string> */
+	private function inheritance_secret_env_values( array $connectors ): array {
+		$values = array();
+		foreach ( $connectors as $connector ) {
+			if ( ! is_array( $connector ) ) {
+				continue;
+			}
+
+			foreach ( array( 'secret_env_values', 'secretEnvValues' ) as $field ) {
+				if ( is_array( $connector[ $field ] ?? null ) ) {
+					$values = array_merge( $values, $this->sanitize_secret_env_values( $connector[ $field ] ) );
+				}
+			}
+
+			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
+			foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
+				if ( ! is_array( $secret ) || ! isset( $secret['value'] ) ) {
+					continue;
+				}
+
+				$name = trim( (string) ( $secret['name'] ?? '' ) );
+				if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+					$value = (string) $secret['value'];
+					if ( '' !== $value ) {
+						$values[ $name ] = $value;
+					}
+				}
+			}
+		}
+
+		return $values;
+	}
+
+	/** @param array<mixed> $raw_values Raw secret env map. @return array<string,string> */
+	private function sanitize_secret_env_values( array $raw_values ): array {
+		$values = array();
+		foreach ( $raw_values as $name => $value ) {
+			$name = trim( (string) $name );
+			if ( 1 !== preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+				continue;
+			}
+
+			$value = (string) $value;
+			if ( '' !== $value ) {
+				$values[ $name ] = $value;
+			}
+		}
+
+		return $values;
 	}
 
 	/** @param array<int,mixed> $connectors Inheritance connector rows. @return array<int,array<string,mixed>> */
@@ -1291,8 +1351,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param array<string,mixed> $input Ability input.
 	 * @param string[] $task_prompts Encoded task prompts.
 	 */
-	private function write_agent_recipe( array $paths, array $input, array $task_prompts, string $wp_version ): string|WP_Error {
-		$inheritance = $this->inheritance_resolution( $input );
+	private function write_agent_recipe( array $paths, array $input, array $task_prompts, string $wp_version, ?array $inheritance = null ): string|WP_Error {
+		$inheritance = $inheritance ?? $this->inheritance_resolution( $input );
 		$credential_error = $this->connector_credentials_error( $inheritance );
 		if ( null !== $credential_error ) {
 			return $credential_error;
@@ -1480,10 +1540,37 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return new WP_Error( 'json_decode_failed', json_last_error_msg() );
 	}
 
-	/** @return array{exit_code:int,output:string} */
-	private function run_command( string $command ): array {
+	/** @param array<string,string> $secret_env Secret env values for the child process. @return array{exit_code:int,output:string} */
+	private function run_command( string $command, array $secret_env = array() ): array {
 		if ( isset( $this->callbacks['command_runner'] ) ) {
-			return ( $this->callbacks['command_runner'] )( $command );
+			return ( $this->callbacks['command_runner'] )( $command, $secret_env );
+		}
+
+		if ( ! empty( $secret_env ) && ! function_exists( 'proc_open' ) ) {
+			return array(
+				'exit_code' => 1,
+				'output'    => 'WP Codebox inherited secret environment requires proc_open support.',
+			);
+		}
+
+		if ( ! empty( $secret_env ) ) {
+			$descriptor_spec = array(
+				1 => array( 'pipe', 'w' ),
+				2 => array( 'pipe', 'w' ),
+			);
+			$current_env = getenv();
+			$process     = proc_open( $command, $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
+			if ( is_resource( $process ) ) {
+				$output = stream_get_contents( $pipes[1] );
+				$error  = stream_get_contents( $pipes[2] );
+				fclose( $pipes[1] );
+				fclose( $pipes[2] );
+
+				return array(
+					'exit_code' => proc_close( $process ),
+					'output'    => trim( (string) $output . "\n" . (string) $error ),
+				);
+			}
 		}
 
 		$output = array();
