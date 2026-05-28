@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import Ajv from "ajv"
 import {
   RUNTIME_EPISODE_TRACE_JSON_SCHEMA,
   RUNTIME_EPISODE_TRACE_SCHEMA,
@@ -83,6 +84,8 @@ try {
 
     const trace = await episode.trace()
     assert.equal(RUNTIME_EPISODE_TRACE_JSON_SCHEMA.$id, RUNTIME_EPISODE_TRACE_SCHEMA)
+    const validateJsonSchema = new Ajv({ strict: false }).compile(RUNTIME_EPISODE_TRACE_JSON_SCHEMA)
+    assert.equal(validateJsonSchema(trace), true, JSON.stringify(validateJsonSchema.errors, null, 2))
     assert.equal(trace.schema, RUNTIME_EPISODE_TRACE_SCHEMA)
     assert.equal(trace.version, 1)
     assert.match(trace.id, /^trace-runtime-/)

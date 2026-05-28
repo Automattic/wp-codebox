@@ -30,6 +30,24 @@ export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
           action: {
             type: "object",
             required: ["schema", "id", "kind", "command", "args", "digest"],
+            properties: {
+              schema: { const: RUNTIME_EPISODE_ACTION_SCHEMA },
+              id: { type: "string", minLength: 1 },
+              kind: { const: "command" },
+              command: { type: "string", minLength: 1 },
+              args: { type: "array", items: { type: "string" } },
+              cwd: { type: "string" },
+              timeoutMs: { type: "number", minimum: 0 },
+              digest: {
+                type: "object",
+                required: ["algorithm", "value"],
+                properties: {
+                  algorithm: { const: "sha256" },
+                  value: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                },
+                additionalProperties: false,
+              },
+            },
             additionalProperties: false,
           },
           observation: {
