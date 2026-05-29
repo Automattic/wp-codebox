@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
-import { execFile, spawnSync } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -107,6 +107,23 @@ interface RecipeRunOptions {
   previewBind?: string
   json: boolean
   dryRun: boolean
+}
+
+type RecipeInterruptionSignal = "SIGINT" | "SIGTERM" | "SIGHUP"
+
+interface RecipeInterruptionMetadata {
+  signal: RecipeInterruptionSignal
+  receivedAt: string
+  artifactsFinalized: boolean
+}
+
+interface RecipeInterruptionController {
+  readonly metadata: RecipeInterruptionMetadata | undefined
+  install(): void
+  dispose(): void
+  interruptible<T>(promise: Promise<T>): Promise<T>
+  throwIfInterrupted(): void
+  propagateIfInterrupted(): void
 }
 
 interface RecipeArtifactEvidenceFile {
@@ -326,6 +343,7 @@ interface RecipeRunOutput {
   benchResults?: BenchResults
   benchResultsList?: BenchResults[]
   artifacts?: ArtifactBundle
+  interruption?: RecipeInterruptionMetadata
   logs?: string[]
   error?: RunOutput["error"]
 }
@@ -686,7 +704,7 @@ const secretEnvPolicy: RuntimePolicy = {
 async function main(args: string[]): Promise<number> {
   const command = args.shift()
 
-  const jspiRespawnExitCode = maybeRespawnWithJspi(command, args)
+  const jspiRespawnExitCode = await maybeRespawnWithJspi(command, args)
   if (jspiRespawnExitCode !== undefined) {
     return jspiRespawnExitCode
   }
@@ -732,19 +750,28 @@ async function main(args: string[]): Promise<number> {
 
   if (command === "recipe-run") {
     const options = parseRecipeRunOptions(args)
-    const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options) : runRecipe(options)
+    const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
+    interruption?.install()
+    const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options) : runRecipe(options, interruption)
 
-    if (!options.json) {
-      const output = await execute()
-      printRecipeHumanOutput(output)
+    try {
+      if (!options.json) {
+        const output = interruptedRecipeOutput(await execute(), interruption)
+        printRecipeHumanOutput(output)
+        interruption?.propagateIfInterrupted()
+        return output.success ? 0 : 1
+      }
+
+      const { result, logs } = await captureStdout(execute)
+      const interruptedResult = interruptedRecipeOutput(result, interruption)
+      const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
+      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+      printJsonFailureDiagnostic(output)
+      interruption?.propagateIfInterrupted()
       return output.success ? 0 : 1
+    } finally {
+      interruption?.dispose()
     }
-
-    const { result, logs } = await captureStdout(execute)
-    const output = logs.length > 0 ? { ...result, logs } : result
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-    printJsonFailureDiagnostic(output)
-    return output.success ? 0 : 1
   }
 
   if (command === "recipe") {
@@ -862,7 +889,7 @@ async function main(args: string[]): Promise<number> {
   return output.success ? 0 : 1
 }
 
-function maybeRespawnWithJspi(command: string | undefined, args: string[]): number | undefined {
+async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
   if (!command || !["boot", "run", "recipe-run"].includes(command)) {
     return undefined
   }
@@ -873,7 +900,7 @@ function maybeRespawnWithJspi(command: string | undefined, args: string[]): numb
 
   const requiredFlags = ["--experimental-wasm-jspi", "--experimental-wasm-stack-switching"]
   const missingFlags = requiredFlags.filter((flag) => !process.execArgv.includes(flag))
-  const child = spawnSync(process.execPath, [...missingFlags, ...process.execArgv, ...process.argv.slice(1, 2), command, ...args], {
+  const child = spawn(process.execPath, [...missingFlags, ...process.execArgv, ...process.argv.slice(1, 2), command, ...args], {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -881,16 +908,39 @@ function maybeRespawnWithJspi(command: string | undefined, args: string[]): numb
     },
   })
 
-  if (child.error) {
+  let parentSignal: NodeJS.Signals | undefined
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"]
+  const forwardSignal = (signal: NodeJS.Signals): void => {
+    parentSignal ??= signal
+    child.kill(signal)
+  }
+  for (const signal of signals) {
+    process.on(signal, forwardSignal)
+  }
+
+  try {
+    const exit = await new Promise<{ status: number | null; signal: NodeJS.Signals | null }>((resolveExit, reject) => {
+      child.once("error", reject)
+      child.once("close", (status, signal) => resolveExit({ status, signal }))
+    })
+
+    const signal = exit.signal ?? parentSignal
+    if (signal) {
+      for (const forwardedSignal of signals) {
+        process.off(forwardedSignal, forwardSignal)
+      }
+      process.kill(process.pid, signal)
+      return 1
+    }
+
+    return exit.status ?? 1
+  } catch {
     return undefined
+  } finally {
+    for (const signal of signals) {
+      process.off(signal, forwardSignal)
+    }
   }
-
-  if (child.signal) {
-    process.kill(process.pid, child.signal)
-    return 1
-  }
-
-  return child.status ?? 1
 }
 
 function shouldRespawnWithJspi(): boolean {
@@ -1166,7 +1216,113 @@ function printJsonFailureDiagnostic(output: { success: boolean; error?: { messag
   }
 }
 
-async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
+class RecipeInterruptedError extends Error {
+  readonly code = "recipe-interrupted"
+
+  constructor(readonly signal: RecipeInterruptionSignal, readonly receivedAt: string) {
+    super(`Recipe run interrupted by ${signal}`)
+    this.name = "RecipeInterruptedError"
+  }
+}
+
+function createRecipeInterruptionController(): RecipeInterruptionController {
+  let metadata: RecipeInterruptionMetadata | undefined
+  let rejectInterrupted: ((error: RecipeInterruptedError) => void) | undefined
+  let installed = false
+  const signals: RecipeInterruptionSignal[] = ["SIGINT", "SIGTERM", "SIGHUP"]
+  const handler = (signal: RecipeInterruptionSignal): void => {
+    if (!metadata) {
+      metadata = { signal, receivedAt: new Date().toISOString(), artifactsFinalized: false }
+    }
+    rejectInterrupted?.(new RecipeInterruptedError(metadata.signal, metadata.receivedAt))
+  }
+
+  const controller: RecipeInterruptionController = {
+    get metadata() {
+      return metadata
+    },
+    install() {
+      if (installed) {
+        return
+      }
+      for (const signal of signals) {
+        process.on(signal, handler)
+      }
+      installed = true
+    },
+    dispose() {
+      if (!installed) {
+        return
+      }
+      for (const signal of signals) {
+        process.off(signal, handler)
+      }
+      installed = false
+    },
+    async interruptible<T>(promise: Promise<T>): Promise<T> {
+      if (metadata) {
+        throw new RecipeInterruptedError(metadata.signal, metadata.receivedAt)
+      }
+
+      let settled = false
+      try {
+        return await Promise.race([
+          promise.finally(() => {
+            settled = true
+          }),
+          new Promise<T>((_resolve, reject) => {
+            rejectInterrupted = (error) => {
+              if (!settled) {
+                reject(error)
+              }
+            }
+          }),
+        ])
+      } finally {
+        rejectInterrupted = undefined
+      }
+    },
+    throwIfInterrupted() {
+      if (metadata) {
+        throw new RecipeInterruptedError(metadata.signal, metadata.receivedAt)
+      }
+    },
+    propagateIfInterrupted() {
+      if (!metadata) {
+        return
+      }
+      controller.dispose()
+      process.kill(process.pid, metadata.signal)
+    },
+  }
+
+  return controller
+}
+
+function markRecipeArtifactsFinalized(interruption: RecipeInterruptionController | undefined, artifactsFinalized: boolean): void {
+  if (interruption?.metadata) {
+    interruption.metadata.artifactsFinalized = artifactsFinalized
+  }
+}
+
+function interruptedRecipeOutput<T extends RecipeRunCommandOutput>(output: T, interruption: RecipeInterruptionController | undefined): T {
+  if (!interruption?.metadata || output.schema !== "wp-codebox/recipe-run/v1") {
+    return output
+  }
+
+  return {
+    ...output,
+    success: false,
+    interruption: interruption.metadata,
+    error: {
+      name: "RecipeInterruptedError",
+      message: `Recipe run interrupted by ${interruption.metadata.signal}`,
+      code: "recipe-interrupted",
+    },
+  } as T
+}
+
+async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
   const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -1194,13 +1350,15 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
+  const awaitRecipe = <T>(promise: Promise<T>): Promise<T> => interruption ? interruption.interruptible(promise) : promise
 
   try {
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
     extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
+    interruption?.throwIfInterrupted()
 
-    runtime = await createRuntime(
+    runtime = await awaitRecipe(createRuntime(
       {
         backend: recipe.runtime?.backend ?? "wordpress-playground",
         environment: {
@@ -1219,20 +1377,22 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
-    )
+    ))
+    interruption?.throwIfInterrupted()
 
     for (const workspace of workspaceMounts) {
-      await runtime.mount({
+      await awaitRecipe(runtime.mount({
         type: "directory",
         source: workspace.source,
         target: workspace.target,
         mode: workspace.mode,
         metadata: workspace.metadata,
-      })
+      }))
+      interruption?.throwIfInterrupted()
     }
 
     for (const plugin of extraPlugins) {
-      await runtime.mount({
+      await awaitRecipe(runtime.mount({
         type: "directory",
         source: plugin.source,
         target: plugin.target,
@@ -1242,49 +1402,57 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
           slug: plugin.slug,
           source: plugin.provenance,
         },
-      })
+      }))
+      interruption?.throwIfInterrupted()
     }
 
     for (const mount of recipe.inputs?.mounts ?? []) {
-      await runtime.mount({
+      await awaitRecipe(runtime.mount({
         type: "directory",
         source: resolve(recipeDirectory, mount.source),
         target: mount.target,
         mode: mount.mode ?? "readwrite",
         metadata: mount.metadata,
-      })
+      }))
+      interruption?.throwIfInterrupted()
     }
 
     for (const stagedFile of stagedFiles) {
-      await runtime.mount({
+      await awaitRecipe(runtime.mount({
         type: stagedFile.type,
         source: stagedFile.source,
         target: stagedFile.target,
         mode: "readwrite",
         metadata: stagedFile.metadata,
-      })
+      }))
+      interruption?.throwIfInterrupted()
     }
 
     const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
     if (pluginActivationCode) {
-      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }), "setup", -1))
+      executions.push(withRecipeExecutionPhase(await awaitRecipe(runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] })), "setup", -1))
+      interruption?.throwIfInterrupted()
     }
 
-    const siteSeeds = await importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions)
+    const siteSeeds = await awaitRecipe(importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions))
+    interruption?.throwIfInterrupted()
 
     for (const workflowStep of recipeWorkflowSteps(recipe)) {
-      executions.push(await executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory))
+      executions.push(await awaitRecipe(executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory)))
+      interruption?.throwIfInterrupted()
     }
 
-    await runtime.observe({ type: "runtime-info" })
-    await runtime.observe({ type: "mounts" })
+    await awaitRecipe(runtime.observe({ type: "runtime-info" }))
+    await awaitRecipe(runtime.observe({ type: "mounts" }))
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
     const evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
     const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
     Object.assign(evidence, agentEvidence)
+    markRecipeArtifactsFinalized(interruption, true)
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles))
+    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles), interruption)
+    interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
@@ -1322,11 +1490,17 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     }
   } catch (error) {
     if (runtime) {
-      try {
-        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
+      artifacts = await collectAndFinalizeFailedRecipeArtifacts({
+        runtime,
+        existingArtifacts: artifacts,
+        recipe,
+        workspaceMounts,
+        stagedFiles,
+        policy: effectivePolicy,
+        secretEnv,
+        executions,
+        interruption,
+      })
 
       try {
         await runtime.destroy()
@@ -1344,9 +1518,42 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       ...(runtime ? { runtime: await runtime.info() } : {}),
       executions,
       ...(artifacts ? { artifacts } : {}),
+      ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
       error: serializeError(error),
     }
   }
+}
+
+async function collectAndFinalizeFailedRecipeArtifacts(args: {
+  runtime: Runtime
+  existingArtifacts?: ArtifactBundle
+  recipe: WorkspaceRecipe
+  workspaceMounts: PreparedWorkspaceMount[]
+  stagedFiles: PreparedStagedFile[]
+  policy: RuntimePolicy
+  secretEnv: Record<string, string>
+  executions: RecipeExecutionResult[]
+  interruption?: RecipeInterruptionController
+}): Promise<ArtifactBundle | undefined> {
+  let artifacts = args.existingArtifacts
+
+  if (!artifacts) {
+    try {
+      artifacts = await args.runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+    } catch {
+      return undefined
+    }
+  }
+
+  try {
+    await finalizeRecipeArtifactEvidence(artifacts, args.recipe, args.workspaceMounts, args.stagedFiles, args.policy, args.secretEnv)
+    await finalizeAgentSandboxEvidence(artifacts, args.executions)
+    markRecipeArtifactsFinalized(args.interruption, true)
+  } catch {
+    markRecipeArtifactsFinalized(args.interruption, true)
+  }
+
+  return artifacts
 }
 
 async function finalizeRecipeArtifactEvidence(
@@ -2630,7 +2837,7 @@ async function validateBlueprint(options: BlueprintValidateOptions): Promise<Blu
   }
 }
 
-async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>): Promise<void> {
+async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>, interruption?: RecipeInterruptionController): Promise<void> {
   const holdSeconds = Math.max(0, Math.floor(previewHoldSeconds))
   if (holdSeconds === 0) {
     await runtime.destroy()
@@ -2638,9 +2845,12 @@ async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDes
     return
   }
 
-  await new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000))
-  await runtime.destroy()
-  await afterDestroy?.()
+  try {
+    await (interruption ? interruption.interruptible(new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000))) : new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000)))
+  } finally {
+    await runtime.destroy()
+    await afterDestroy?.()
+  }
 }
 
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
