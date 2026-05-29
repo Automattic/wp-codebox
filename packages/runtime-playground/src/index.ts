@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
+import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, buildRuntimeSnapshotBundle, calculateArtifactManifestFileSha256, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -55,6 +55,23 @@ function now(): string {
 
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+async function refreshArtifactManifestFileHashes(directory: string, manifest: ArtifactManifest): Promise<void> {
+  manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "manifest.json" ? file : ({
+    ...file,
+    sha256: {
+      algorithm: "sha256" as const,
+      value: await calculateArtifactManifestFileSha256(directory, manifest, file),
+    },
+  })))
+  manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
+    ...file,
+    sha256: {
+      algorithm: "sha256" as const,
+      value: await calculateArtifactManifestFileSha256(directory, manifest, file),
+    },
+  })))
 }
 
 interface PlaygroundRunResponse {
@@ -441,6 +458,7 @@ class PlaygroundRuntime implements Runtime {
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
     const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
+    const runtimeSnapshotBundlePath = join(filesDirectory, "runtime-snapshot-bundle.json")
     const redactor = new ArtifactRedactor(this.spec.secretEnv)
     await this.redactBrowserArtifacts(redactor)
     await this.redactPluginCheckArtifacts(redactor)
@@ -449,6 +467,7 @@ class PlaygroundRuntime implements Runtime {
     const browser = this.browserReviewSummary()
 
     const runtime = await this.info()
+    const wordpressState = await this.snapshotWordPressState()
     const capturedMounts = await this.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
@@ -501,6 +520,7 @@ class PlaygroundRuntime implements Runtime {
       testResults: relative(this.artifactRoot, testResultsPath),
       review: relative(this.artifactRoot, reviewPath),
       runtimeReferenceManifest: relative(this.artifactRoot, runtimeReferenceManifestPath),
+      runtimeSnapshotBundle: relative(this.artifactRoot, runtimeSnapshotBundlePath),
       mountDiffs: relative(this.artifactRoot, diffsPath),
       ...(browser ? { browser: "files/browser/summary.json" } : {}),
       ...(this.pluginChecks.length > 0 ? { pluginChecks: this.pluginChecks.map((check) => check.files.normalized) } : {}),
@@ -537,6 +557,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(testResultsPath, "test-results", "application/json"),
       fileEntry(reviewPath, "review", "application/json"),
       fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
+      fileEntry(runtimeSnapshotBundlePath, "runtime-snapshot-bundle", "application/json"),
       ...this.browserManifestFiles(),
       ...this.observationManifestFiles(),
       ...this.pluginCheckManifestFiles(),
@@ -569,6 +590,7 @@ class PlaygroundRuntime implements Runtime {
     }
     await writeRedactedArtifact(redactor, reviewPath, this.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
     await writeFile(runtimeReferenceManifestPath, "{}\n")
+    await writeFile(runtimeSnapshotBundlePath, "{}\n")
     metadata.redaction = redactor.summary()
     await writeRedactedArtifact(redactor, metadataPath, this.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
 
@@ -600,6 +622,25 @@ class PlaygroundRuntime implements Runtime {
         value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
       },
     })))
+    const snapshotBundleFileRefs = manifest.files.map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
+    const findSnapshotBundleRef = (path: string) => snapshotBundleFileRefs.find((file) => file.path === path)
+    const runtimeSnapshotBundle = buildRuntimeSnapshotBundle({
+      createdAt,
+      runtime,
+      wordpressState,
+      refs: {
+        blueprintAfter: findSnapshotBundleRef("blueprint.after.json"),
+        blueprintAfterNotes: findSnapshotBundleRef("blueprint.after-notes.json"),
+        mountedFiles: findSnapshotBundleRef("files/mounted-files.json"),
+        changedFiles: findSnapshotBundleRef("files/changed-files.json"),
+        patch: findSnapshotBundleRef("files/patch.diff"),
+      },
+    })
+    await writeFile(runtimeSnapshotBundlePath, `${JSON.stringify(runtimeSnapshotBundle, null, 2)}\n`)
+    await refreshArtifactManifestFileHashes(this.artifactRoot, manifest)
+    const runtimeReferenceFileRefs = manifest.files
+      .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
+      .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
     const runtimeReferenceManifest = buildRuntimeReferenceManifest({
       createdAt,
       runtime,
@@ -608,9 +649,8 @@ class PlaygroundRuntime implements Runtime {
         id: bundleId,
         digest: { algorithm: "sha256", value: contentDigest },
       },
-      files: manifest.files
-        .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
-        .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
+      files: runtimeReferenceFileRefs,
+      snapshotBundle: runtimeReferenceFileRefs.find((file) => file.path === "files/runtime-snapshot-bundle.json"),
     })
     await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
     manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-manifest.json" ? ({
@@ -649,6 +689,7 @@ class PlaygroundRuntime implements Runtime {
       testResultsPath,
       reviewPath,
       runtimeReferenceManifestPath,
+      runtimeSnapshotBundlePath,
       ...(preview ? { preview } : {}),
       contentDigest,
       createdAt,
@@ -1553,6 +1594,15 @@ echo wp_json_encode( array(
 `, []) })
     assertPlaygroundResponseOk("observe.wordpress-state", response)
     return JSON.parse(response.text || "{}")
+  }
+
+  private async snapshotWordPressState(): Promise<unknown | undefined> {
+    try {
+      return await this.observeWordPressState()
+    } catch (error) {
+      this.recordEvent("runtime.snapshot.wordpress-state-unavailable", { error: errorMessage(error) })
+      return undefined
+    }
   }
 
   private async observeHttpResponse(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {

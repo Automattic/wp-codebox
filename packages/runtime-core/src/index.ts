@@ -11,6 +11,7 @@ export const RUNTIME_EPISODE_ACTION_SCHEMA = "wp-codebox/runtime-episode-action/
 export const RUNTIME_EPISODE_OBSERVATION_SCHEMA = "wp-codebox/runtime-episode-observation/v1" as const
 export const RUNTIME_EPISODE_SNAPSHOT_SCHEMA = "wp-codebox/runtime-episode-snapshot/v1" as const
 export const RUNTIME_REFERENCE_MANIFEST_SCHEMA = "wp-codebox/runtime-reference-manifest/v1" as const
+export const RUNTIME_SNAPSHOT_BUNDLE_SCHEMA = "wp-codebox/runtime-snapshot-bundle/v1" as const
 
 export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
   $id: RUNTIME_EPISODE_TRACE_SCHEMA,
@@ -628,6 +629,54 @@ export interface RuntimeReferenceManifestSnapshotRef {
   artifactRefs: RuntimeEpisodeTraceRef[]
 }
 
+export type RuntimeSnapshotBundleReplayStatus = "partial-artifact-backed" | "not-replayable" | (string & {})
+
+export interface RuntimeSnapshotBundleComponent {
+  status: "captured" | "partial" | "not-captured" | (string & {})
+  refs?: RuntimeReferenceManifestFileRef[]
+  data?: unknown
+  limitations?: string[]
+}
+
+export interface RuntimeSnapshotBundleReplay {
+  status: RuntimeSnapshotBundleReplayStatus
+  instructions: string[]
+  limitations: string[]
+}
+
+export interface RuntimeSnapshotBundle {
+  schema: typeof RUNTIME_SNAPSHOT_BUNDLE_SCHEMA
+  version: 1
+  id: string
+  createdAt: string
+  digest: RuntimeEpisodeContentDigest
+  runtime: RuntimeInfo
+  replay: RuntimeSnapshotBundleReplay
+  components: {
+    database: RuntimeSnapshotBundleComponent
+    playgroundState: RuntimeSnapshotBundleComponent
+    uploadsMedia: RuntimeSnapshotBundleComponent
+    activeThemePlugins: RuntimeSnapshotBundleComponent
+    mountedFiles: RuntimeSnapshotBundleComponent
+    blueprint: RuntimeSnapshotBundleComponent
+  }
+}
+
+export interface BuildRuntimeSnapshotBundleInput {
+  createdAt: string
+  runtime: RuntimeInfo
+  wordpressState?: unknown
+  refs: {
+    blueprintAfter?: RuntimeReferenceManifestFileRef
+    blueprintAfterNotes?: RuntimeReferenceManifestFileRef
+    mountedFiles?: RuntimeReferenceManifestFileRef
+    changedFiles?: RuntimeReferenceManifestFileRef
+    patch?: RuntimeReferenceManifestFileRef
+    trace?: RuntimeReferenceManifestFileRef
+    events?: RuntimeReferenceManifestFileRef
+  }
+}
+
 export interface RuntimeReferenceManifest {
   schema: typeof RUNTIME_REFERENCE_MANIFEST_SCHEMA
   version: 1
@@ -639,6 +688,7 @@ export interface RuntimeReferenceManifest {
   files: RuntimeReferenceManifestFileRef[]
   trace?: RuntimeReferenceManifestFileRef
   events?: RuntimeReferenceManifestFileRef
+  snapshotBundle?: RuntimeReferenceManifestFileRef
   snapshots: RuntimeReferenceManifestSnapshotRef[]
 }
 
@@ -649,6 +699,7 @@ export interface BuildRuntimeReferenceManifestInput {
   files: RuntimeReferenceManifestFileRef[]
   trace?: RuntimeReferenceManifestFileRef
   events?: RuntimeReferenceManifestFileRef
+  snapshotBundle?: RuntimeReferenceManifestFileRef
   snapshots?: Snapshot[]
 }
 
@@ -729,6 +780,7 @@ export interface ArtifactReview {
     runtimeReferenceManifest?: string
     agentResult?: string
     transcript?: string
+    runtimeSnapshotBundle?: string
   }
   browser?: ArtifactReviewBrowserSummary
   redaction?: ArtifactRedactionSummary
@@ -843,6 +895,7 @@ export interface ArtifactBundle {
   artifactVerificationPath?: string
   workspacePolicyPath?: string
   runtimeReferenceManifestPath?: string
+  runtimeSnapshotBundlePath?: string
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string
@@ -955,6 +1008,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyMetadataReferences(bundleDirectory, manifestFiles, violations)
   await verifyReviewEvidence(bundleDirectory, manifest, manifestFiles, violations)
   await verifyRuntimeEpisodeTraceArtifacts(bundleDirectory, manifest, violations)
+  await verifyRuntimeSnapshotBundleArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyRuntimeReferenceManifestArtifacts(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
@@ -1096,8 +1150,39 @@ function isRuntimeReferenceManifestShape(value: unknown): value is RuntimeRefere
     && value.files.every(isRuntimeReferenceManifestFileRefShape)
     && (value.trace === undefined || isRuntimeReferenceManifestFileRefShape(value.trace))
     && (value.events === undefined || isRuntimeReferenceManifestFileRefShape(value.events))
+    && (value.snapshotBundle === undefined || isRuntimeReferenceManifestFileRefShape(value.snapshotBundle))
     && Array.isArray(value.snapshots)
     && value.snapshots.every(isRuntimeReferenceManifestSnapshotRefShape)
+}
+
+function isRuntimeSnapshotBundleShape(value: unknown): value is RuntimeSnapshotBundle {
+  return isRecord(value)
+    && value.schema === RUNTIME_SNAPSHOT_BUNDLE_SCHEMA
+    && value.version === 1
+    && typeof value.id === "string"
+    && typeof value.createdAt === "string"
+    && validDigest(value.digest)
+    && isRecord(value.runtime)
+    && isRecord(value.replay)
+    && typeof value.replay.status === "string"
+    && Array.isArray(value.replay.instructions)
+    && value.replay.instructions.every((instruction) => typeof instruction === "string")
+    && Array.isArray(value.replay.limitations)
+    && value.replay.limitations.every((limitation) => typeof limitation === "string")
+    && isRecord(value.components)
+    && isRuntimeSnapshotBundleComponentShape(value.components.database)
+    && isRuntimeSnapshotBundleComponentShape(value.components.playgroundState)
+    && isRuntimeSnapshotBundleComponentShape(value.components.uploadsMedia)
+    && isRuntimeSnapshotBundleComponentShape(value.components.activeThemePlugins)
+    && isRuntimeSnapshotBundleComponentShape(value.components.mountedFiles)
+    && isRuntimeSnapshotBundleComponentShape(value.components.blueprint)
+}
+
+function isRuntimeSnapshotBundleComponentShape(value: unknown): value is RuntimeSnapshotBundleComponent {
+  return isRecord(value)
+    && typeof value.status === "string"
+    && (value.refs === undefined || (Array.isArray(value.refs) && value.refs.every(isRuntimeReferenceManifestFileRefShape)))
+    && (value.limitations === undefined || (Array.isArray(value.limitations) && value.limitations.every((limitation) => typeof limitation === "string")))
 }
 
 function isRuntimeReferenceManifestArtifactBundleRefShape(value: unknown): value is RuntimeReferenceManifestArtifactBundleRef {
@@ -1258,6 +1343,10 @@ async function verifyReviewEvidence(directory: string, manifest: ArtifactManifes
   if (typeof evidence.runtimeReferenceManifest === "string") {
     validateArtifactReference(evidence.runtimeReferenceManifest, "files/review.json:evidence.runtimeReferenceManifest", manifestFiles, violations)
   }
+
+  if (typeof evidence.runtimeSnapshotBundle === "string") {
+    validateArtifactReference(evidence.runtimeSnapshotBundle, "files/review.json:evidence.runtimeSnapshotBundle", manifestFiles, violations)
+  }
 }
 
 async function verifyRuntimeEpisodeTraceArtifacts(directory: string, manifest: ArtifactManifest, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
@@ -1339,6 +1428,54 @@ async function verifyRuntimeReferenceManifestArtifacts(directory: string, manife
     if (referenceManifest.events) {
       validateArtifactReference(referenceManifest.events.path, `${file.path}:events.path`, manifestFiles, violations)
       await verifyReferencedFileDigest(directory, referenceManifest.events, `${file.path}:events.sha256`, violations)
+    }
+
+    if (referenceManifest.snapshotBundle) {
+      validateArtifactReference(referenceManifest.snapshotBundle.path, `${file.path}:snapshotBundle.path`, manifestFiles, violations)
+      await verifyReferencedFileDigest(directory, referenceManifest.snapshotBundle, `${file.path}:snapshotBundle.sha256`, violations)
+    }
+  }
+}
+
+async function verifyRuntimeSnapshotBundleArtifacts(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-snapshot-bundle") {
+      continue
+    }
+
+    let snapshotBundle: unknown
+    try {
+      snapshotBundle = JSON.parse(await readFile(join(directory, file.path), "utf8"))
+    } catch (error) {
+      violations.push({
+        code: "malformed-reference",
+        path: file.path,
+        file: file.path,
+        message: `Runtime snapshot bundle is not valid JSON: ${errorMessage(error)}`,
+      })
+      continue
+    }
+
+    if (!isRuntimeSnapshotBundleShape(snapshotBundle)) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: "Runtime snapshot bundle does not match wp-codebox/runtime-snapshot-bundle/v1." })
+      continue
+    }
+
+    const expectedDigest = runtimeSnapshotBundleDigest(snapshotBundle)
+    if (snapshotBundle.digest.value !== expectedDigest.value) {
+      violations.push({ code: "digest-mismatch", path: `${file.path}:digest`, file: file.path, message: `Runtime snapshot bundle digest does not match declared replay refs: expected ${expectedDigest.value}, got ${snapshotBundle.digest.value}` })
+    }
+
+    const expectedId = `runtime-snapshot-bundle-sha256-${snapshotBundle.digest.value}`
+    if (snapshotBundle.id !== expectedId) {
+      violations.push({ code: "bundle-id-mismatch", path: `${file.path}:id`, file: file.path, message: `Runtime snapshot bundle id must match its digest: expected ${expectedId}, got ${snapshotBundle.id}` })
+    }
+
+    for (const [componentName, component] of Object.entries(snapshotBundle.components)) {
+      for (const [index, referencedFile] of (component.refs ?? []).entries()) {
+        validateArtifactReference(referencedFile.path, `${file.path}:components.${componentName}.refs[${index}].path`, manifestFiles, violations)
+        await verifyReferencedFileDigest(directory, referencedFile, `${file.path}:components.${componentName}.refs[${index}].sha256`, violations)
+      }
     }
   }
 }
@@ -1644,6 +1781,7 @@ export function buildRuntimeReferenceManifest(input: BuildRuntimeReferenceManife
     files: input.files.map(runtimeReferenceManifestFileRef).sort((left, right) => left.path.localeCompare(right.path)),
     ...(input.trace ? { trace: runtimeReferenceManifestFileRef(input.trace) } : {}),
     ...(input.events ? { events: runtimeReferenceManifestFileRef(input.events) } : {}),
+    ...(input.snapshotBundle ? { snapshotBundle: runtimeReferenceManifestFileRef(input.snapshotBundle) } : {}),
     snapshots: (input.snapshots ?? []).map(runtimeReferenceManifestSnapshotRef),
   }
   const digest = runtimeReferenceManifestDigest(manifest)
@@ -1674,7 +1812,108 @@ function runtimeReferenceManifestDigestPayload(manifest: RuntimeReferenceManifes
     files: manifest.files,
     ...(manifest.trace ? { trace: manifest.trace } : {}),
     ...(manifest.events ? { events: manifest.events } : {}),
+    ...(manifest.snapshotBundle ? { snapshotBundle: manifest.snapshotBundle } : {}),
     snapshots: manifest.snapshots,
+  }
+}
+
+export function buildRuntimeSnapshotBundle(input: BuildRuntimeSnapshotBundleInput): RuntimeSnapshotBundle {
+  const refs = input.refs
+  const mountedFileRefs = [refs.mountedFiles, refs.changedFiles, refs.patch].filter(isRuntimeReferenceManifestFileRef)
+  const blueprintRefs = [refs.blueprintAfter, refs.blueprintAfterNotes].filter(isRuntimeReferenceManifestFileRef)
+  const playgroundRefs = [refs.trace, refs.events].filter(isRuntimeReferenceManifestFileRef)
+  const bundle = {
+    schema: RUNTIME_SNAPSHOT_BUNDLE_SCHEMA,
+    version: 1 as const,
+    id: "runtime-snapshot-bundle-pending",
+    createdAt: input.createdAt,
+    digest: { algorithm: "sha256" as const, value: "0".repeat(64) },
+    runtime: input.runtime,
+    replay: {
+      status: "partial-artifact-backed" as const,
+      instructions: [
+        "Create a compatible WordPress Playground runtime with the declared runtime environment and policy.",
+        "Apply the partial blueprint.after.json replay file, then restore captured replayable mounted files to their declared targets.",
+        "Replay runtime episode actions from files/runtime-episode-trace.json when action-level reproduction is required.",
+      ],
+      limitations: [
+        "The Playground database is not exported in this v1 bundle.",
+        "Uploads/media files are only represented when they appear in captured readwrite mounts; no Media Library export is captured.",
+        "Binary mounted files are captured for audit but are not embedded in the partial Playground blueprint.",
+      ],
+    },
+    components: {
+      database: {
+        status: "not-captured" as const,
+        limitations: ["No portable database dump is captured by the current Playground backend."],
+      },
+      playgroundState: {
+        status: playgroundRefs.length > 0 ? "partial" as const : "not-captured" as const,
+        ...(playgroundRefs.length > 0 ? { refs: playgroundRefs } : {}),
+        limitations: ["Replay state comes from trace/actions and artifact refs, not a VM memory checkpoint."],
+      },
+      uploadsMedia: {
+        status: "not-captured" as const,
+        limitations: ["Media Library and uploads directory export are not captured unless the caller mounted uploads as a readwrite input."],
+      },
+      activeThemePlugins: {
+        status: input.wordpressState ? "captured" as const : "not-captured" as const,
+        ...(input.wordpressState ? { data: activeThemePluginsSnapshot(input.wordpressState) } : {}),
+      },
+      mountedFiles: {
+        status: mountedFileRefs.length > 0 ? "partial" as const : "not-captured" as const,
+        ...(mountedFileRefs.length > 0 ? { refs: mountedFileRefs } : {}),
+        limitations: ["Captured mounted files are bounded by file-count, file-size, skipped-directory, and text replayability limits."],
+      },
+      blueprint: {
+        status: blueprintRefs.length > 0 ? "partial" as const : "not-captured" as const,
+        ...(blueprintRefs.length > 0 ? { refs: blueprintRefs } : {}),
+        limitations: ["blueprint.after.json restores captured replayable text files only; it is not a complete site image."],
+      },
+    },
+  }
+  const digest = runtimeSnapshotBundleDigest(bundle)
+
+  return {
+    ...bundle,
+    id: `runtime-snapshot-bundle-sha256-${digest.value}`,
+    digest,
+  }
+}
+
+export function runtimeSnapshotBundleDigest(bundle: RuntimeSnapshotBundle): RuntimeEpisodeContentDigest {
+  return {
+    algorithm: "sha256",
+    value: createHash("sha256")
+      .update("wp-codebox/runtime-snapshot-bundle/v1\n")
+      .update(stableJson(runtimeSnapshotBundleDigestPayload(bundle)))
+      .digest("hex"),
+  }
+}
+
+function runtimeSnapshotBundleDigestPayload(bundle: RuntimeSnapshotBundle): Record<string, unknown> {
+  return {
+    schema: bundle.schema,
+    version: bundle.version,
+    runtime: bundle.runtime,
+    replay: bundle.replay,
+    components: bundle.components,
+  }
+}
+
+function isRuntimeReferenceManifestFileRef(value: RuntimeReferenceManifestFileRef | undefined): value is RuntimeReferenceManifestFileRef {
+  return value !== undefined
+}
+
+function activeThemePluginsSnapshot(wordpressState: unknown): unknown {
+  if (!isRecord(wordpressState)) {
+    return wordpressState
+  }
+
+  return {
+    ...(typeof wordpressState.wordpressVersion === "string" ? { wordpressVersion: wordpressState.wordpressVersion } : {}),
+    ...(typeof wordpressState.activeTheme === "string" ? { activeTheme: wordpressState.activeTheme } : {}),
+    ...(Array.isArray(wordpressState.activePlugins) ? { activePlugins: wordpressState.activePlugins.filter((plugin) => typeof plugin === "string") } : {}),
   }
 }
 
@@ -2311,7 +2550,31 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     await this.updateArtifactMetadataForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactReviewForRuntimeEpisodeTrace(traceRelativePath)
     await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
+    await this.updateRuntimeSnapshotBundleForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateRuntimeReferenceManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
+  }
+
+  private async updateRuntimeSnapshotBundleForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
+    if (!this.artifacts?.runtimeSnapshotBundlePath) {
+      return
+    }
+
+    const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
+    const fileRefs = manifest.files.map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
+    const snapshotBundle = JSON.parse(await readFile(this.artifacts.runtimeSnapshotBundlePath, "utf8")) as RuntimeSnapshotBundle
+    const traceRef = fileRefs.find((file) => file.path === traceRelativePath)
+    const eventsRef = fileRefs.find((file) => file.path === eventsRelativePath)
+
+    snapshotBundle.components.playgroundState = {
+      ...snapshotBundle.components.playgroundState,
+      status: traceRef || eventsRef ? "partial" : snapshotBundle.components.playgroundState.status,
+      refs: [traceRef, eventsRef].filter(isRuntimeReferenceManifestFileRef),
+    }
+    snapshotBundle.digest = runtimeSnapshotBundleDigest(snapshotBundle)
+    snapshotBundle.id = `runtime-snapshot-bundle-sha256-${snapshotBundle.digest.value}`
+    await writeFile(this.artifacts.runtimeSnapshotBundlePath, `${JSON.stringify(snapshotBundle, null, 2)}\n`)
+    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
   private async updateRuntimeReferenceManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -2325,6 +2588,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
     const traceRef = fileRefs.find((file) => file.path === traceRelativePath)
     const eventsRef = fileRefs.find((file) => file.path === eventsRelativePath)
+    const snapshotBundleRef = fileRefs.find((file) => file.path === "files/runtime-snapshot-bundle.json")
     const referenceManifest = buildRuntimeReferenceManifest({
       createdAt: this.artifacts.createdAt,
       runtime: manifest.runtime,
@@ -2336,6 +2600,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       files: fileRefs,
       ...(traceRef ? { trace: traceRef } : {}),
       ...(eventsRef ? { events: eventsRef } : {}),
+      ...(snapshotBundleRef ? { snapshotBundle: snapshotBundleRef } : {}),
       snapshots: this.snapshots,
     })
     await writeFile(this.artifacts.runtimeReferenceManifestPath, `${JSON.stringify(referenceManifest, null, 2)}\n`)

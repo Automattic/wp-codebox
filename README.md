@@ -330,10 +330,21 @@ Artifact bundles also include `files/runtime-reference-manifest.json` using
 schema `wp-codebox/runtime-reference-manifest/v1`. This manifest is a stable,
 hashable index of runtime-related refs: the artifact-bundle id/digest,
 bundle-relative artifact file refs with SHA-256 values, optional trace/events
-refs, and snapshot refs. Its id is `runtime-reference-manifest-sha256-<digest>`,
-where the digest is computed from the declared refs rather than presentation
-fields such as `createdAt`. `verifyArtifactBundle()` validates the manifest
-shape, referenced file hashes, artifact-bundle digest, and id/digest pairing.
+refs, a snapshot-bundle ref, and snapshot refs. Its id is
+`runtime-reference-manifest-sha256-<digest>`, where the digest is computed from
+the declared refs rather than presentation fields such as `createdAt`.
+`verifyArtifactBundle()` validates the manifest shape, referenced file hashes,
+artifact-bundle digest, and id/digest pairing.
+
+Artifact bundles also include `files/runtime-snapshot-bundle.json` using schema
+`wp-codebox/runtime-snapshot-bundle/v1`. This is the bounded replay foundation
+for WordPress runtime state. The v1 bundle is explicitly
+`partial-artifact-backed`: it points to replay inputs WP Codebox already knows how
+to verify, including the partial Playground blueprint, mounted-file manifests,
+patch/changed-file artifacts, runtime trace/events when present, and active
+theme/plugin metadata captured from WordPress. It intentionally marks unsupported
+state as limitations: no portable database dump, no VM memory checkpoint, and no
+Media Library/uploads export unless uploads were already part of captured mounts.
 
 Products such as eval harnesses can project this generic episode trace into their
 own action, observation, reward, and report schemas outside WP Codebox.
@@ -389,6 +400,11 @@ explicit `replay.status`. For current Playground snapshots that status is
 `metadata-only` with limitations explaining that replay must come from trace
 actions and artifact files. This keeps full WordPress replay as an incremental
 backend capability while giving consumers a concrete contract today.
+
+For a replay attempt, start from `files/runtime-snapshot-bundle.json` instead of
+assuming a snapshot is a restore point. The bundle's `replay.instructions` define
+the supported sequence, and each component has `captured`, `partial`, or
+`not-captured` status with file refs or limitations.
 
 ## CLI Commands
 
@@ -671,6 +687,7 @@ Current bundles include:
 - `files/test-results.json`: normalized test-results artifact with schema, summary counts, suites, and raw log references. When WP Codebox has not run test-aware commands, the artifact is present with `status: "unknown"`, zero counts, an empty `suites` array, and pointers to raw command logs instead of inferred pass/fail data.
 - `files/review.json`: frontend-oriented review payload with summary, progress labels, changed file labels, evidence links, and approval actions.
 - `files/runtime-reference-manifest.json`: stable runtime ref index with artifact-bundle, file, trace/events, and snapshot refs plus SHA-256 digests.
+- `files/runtime-snapshot-bundle.json`: bounded replay contract for partial WordPress runtime state, with supported refs plus explicit database/uploads limitation markers.
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.

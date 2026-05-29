@@ -10,7 +10,9 @@ import {
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
   RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
   RUNTIME_REFERENCE_MANIFEST_SCHEMA,
+  RUNTIME_SNAPSHOT_BUNDLE_SCHEMA,
   runtimeReferenceManifestDigest,
+  runtimeSnapshotBundleDigest,
   createRuntimeEpisode,
   validateRuntimeEpisodeTrace,
   verifyArtifactBundle,
@@ -126,10 +128,12 @@ try {
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode.jsonl" && file.kind === "runtime-episode-events"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === httpObservation.artifactRefs?.[0].path && file.kind === "observation-artifact"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
+    assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-snapshot-bundle.json" && file.kind === "runtime-snapshot-bundle"))
 
     const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
     assert.equal(review.evidence.runtimeEpisodeTrace, "files/runtime-episode-trace.json")
     assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
+    assert.equal(review.evidence.runtimeSnapshotBundle, "files/runtime-snapshot-bundle.json")
     assert.ok(review.progress.some((event: { component?: string; label?: string }) => event.component === "runtime-episode" && event.label === "Runtime episode trace persisted"))
 
     const referenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath ?? "", "utf8"))
@@ -138,6 +142,7 @@ try {
     assert.equal(referenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
     assert.equal(referenceManifest.trace.path, "files/runtime-episode-trace.json")
     assert.equal(referenceManifest.events.path, "files/runtime-episode.jsonl")
+    assert.equal(referenceManifest.snapshotBundle.path, "files/runtime-snapshot-bundle.json")
     assert.equal(referenceManifest.snapshots.length, 1)
     assert.equal(referenceManifest.snapshots[0].id, snapshot.id)
     assert.equal(referenceManifest.snapshots[0].semantics, "metadata-only")
@@ -145,6 +150,18 @@ try {
     assert.ok(referenceManifest.snapshots[0].replay.limitations.some((limitation: string) => limitation.includes("not a WordPress database or filesystem checkpoint")))
     assert.equal(referenceManifest.digest.value, runtimeReferenceManifestDigest(referenceManifest).value)
     assert.equal(referenceManifest.id, `runtime-reference-manifest-sha256-${referenceManifest.digest.value}`)
+
+    const snapshotBundle = JSON.parse(await readFile(artifacts.runtimeSnapshotBundlePath ?? "", "utf8"))
+    assert.equal(snapshotBundle.schema, RUNTIME_SNAPSHOT_BUNDLE_SCHEMA)
+    assert.equal(snapshotBundle.replay.status, "partial-artifact-backed")
+    assert.equal(snapshotBundle.components.database.status, "not-captured")
+    assert.equal(snapshotBundle.components.activeThemePlugins.status, "captured")
+    assert.equal(typeof snapshotBundle.components.activeThemePlugins.data.wordpressVersion, "string")
+    assert.equal(snapshotBundle.components.playgroundState.status, "partial")
+    assert.ok(snapshotBundle.components.playgroundState.refs.some((ref: { path: string }) => ref.path === "files/runtime-episode-trace.json"))
+    assert.ok(snapshotBundle.components.blueprint.refs.some((ref: { path: string }) => ref.path === "blueprint.after.json"))
+    assert.equal(snapshotBundle.digest.value, runtimeSnapshotBundleDigest(snapshotBundle).value)
+    assert.equal(snapshotBundle.id, `runtime-snapshot-bundle-sha256-${snapshotBundle.digest.value}`)
 
     const trace = await episode.trace()
     const persistedTrace = JSON.parse(await readFile(artifacts.runtimeEpisodeTracePath, "utf8"))
