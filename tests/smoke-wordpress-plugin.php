@@ -376,13 +376,71 @@ $assert( 'browser Playground session exposes artifact URL paths', ! is_wp_error(
 $assert( 'browser Playground session exposes preview URL', ! is_wp_error( $browser_session ) && '/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['playground']['preview_url'] ?? '' ) && '/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['artifacts']['preview_url'] ?? '' ) );
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 
+$browser_parent_only_tool = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview with a parent-only tool.',
+		'allowed_tools'         => array( 'datamachine/workspace-git-push' ),
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+	)
+);
+$assert( 'browser Playground session rejects parent-only Data Machine tools before recipe emission', is_wp_error( $browser_parent_only_tool ) && 'wp_codebox_tool_not_allowed' === $browser_parent_only_tool->get_error_code() );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] = array( 'datamachine/workspace-read' );
+$browser_not_allowlisted_tool = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview with an unconfigured tool.',
+		'allowed_tools'         => array( 'datamachine/workspace-write' ),
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+	)
+);
+$assert( 'browser Playground session rejects tools outside configured allow-list before recipe emission', is_wp_error( $browser_not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $browser_not_allowlisted_tool->get_error_code() && 'not-allowlisted' === ( $browser_not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] );
+
 $browser_session_missing_prereqs = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
 		'goal' => 'Prepare a browser preview without coding prerequisites.',
 	)
 );
-$assert( 'browser Playground session with missing prerequisites does not emit ready-to-code', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['signals']['ready_to_code']['emitted'] ?? true ) && in_array( 'provider_plugin', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) && in_array( 'provider_secret', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) );
+$assert( 'browser Playground session with missing prerequisites returns blocked state', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['success'] ?? true ) && 'blocked' === ( $browser_session_missing_prereqs['status'] ?? '' ) && 'blocked' === ( $browser_session_missing_prereqs['session']['status'] ?? '' ) );
+$assert( 'browser Playground session with missing prerequisites does not emit ready-to-code or recipe', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['signals']['ready_to_code']['emitted'] ?? true ) && ! array_key_exists( 'recipe', $browser_session_missing_prereqs ) && in_array( 'provider_plugin', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) && in_array( 'provider_secret', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) );
+
+unset( $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] );
+$browser_session_missing_agents_api = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview without Agents API.',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+	)
+);
+$assert( 'browser Playground session blocks when Agents API prerequisite is missing', ! is_wp_error( $browser_session_missing_agents_api ) && false === ( $browser_session_missing_agents_api['success'] ?? true ) && in_array( 'agents_api', $browser_session_missing_agents_api['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_agents_api ) );
+$GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
+
+rmdir( $root . '/plugin-root/data-machine' );
+$browser_session_missing_data_machine = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview without Data Machine.',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+	)
+);
+$assert( 'browser Playground session blocks when Data Machine prerequisite is missing', ! is_wp_error( $browser_session_missing_data_machine ) && false === ( $browser_session_missing_data_machine['success'] ?? true ) && in_array( 'data_machine', $browser_session_missing_data_machine['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_data_machine ) );
+mkdir( $root . '/plugin-root/data-machine', 0777, true );
+
+$browser_session_missing_secret = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview without provider secret.',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+	)
+);
+$assert( 'browser Playground session blocks when provider secret prerequisite is missing', ! is_wp_error( $browser_session_missing_secret ) && false === ( $browser_session_missing_secret['success'] ?? true ) && in_array( 'provider_secret', $browser_session_missing_secret['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_secret ) );
 rmdir( $root . '/plugin-root/data-machine-code' );
 rmdir( $root . '/plugin-root/data-machine' );
 

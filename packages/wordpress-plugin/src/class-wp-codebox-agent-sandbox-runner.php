@@ -855,7 +855,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$values = $this->string_list( $input[ $field ] ?? array() );
 			if ( ! empty( $values ) ) {
 				if ( 'allowed_tools' === $field ) {
-					$tool_error = $this->allowed_tools_error( $values );
+					$tool_error = $this->validate_allowed_tools( $values );
 					if ( is_wp_error( $tool_error ) ) {
 						return $tool_error;
 					}
@@ -911,7 +911,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param string[] $tools */
-	private function allowed_tools_error( array $tools ): WP_Error|null {
+	public function validate_allowed_tools( array $tools ): WP_Error|null {
 		$allowed = $this->sandbox_tool_allowlist();
 		$denied  = array();
 
