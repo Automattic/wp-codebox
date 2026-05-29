@@ -198,6 +198,12 @@ $browser_session = call_user_func(
 		'allowed_tools'      => array( 'filesystem-write', 'filesystem-write', '' ),
 		'expected_artifacts' => array( 'static-site' ),
 		'orchestrator'       => array( 'id' => 'studio-web' ),
+		'browser_plugins'    => array(
+			array(
+				'slug' => 'agents-api',
+				'url'  => 'https://example.test/agents-api.zip',
+			),
+		),
 		'artifact_files'     => array(
 			array(
 				'path'    => 'static-site/index.html',
@@ -213,6 +219,9 @@ $assert( 'browser Playground session pins browser execution', ! is_wp_error( $br
 $assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.automattic.ai' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.automattic.ai' ) );
 $assert( 'browser Playground session includes default blueprint', ! is_wp_error( $browser_session ) && true === ( $browser_session['playground']['blueprint']['features']['networking'] ?? false ) && is_array( $browser_session['playground']['blueprint']['steps'] ?? null ) );
 $assert( 'browser Playground session defaults to latest WordPress and PHP', ! is_wp_error( $browser_session ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['wp'] ?? '' ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['php'] ?? '' ) );
+$assert( 'browser Playground session installs browser plugins', ! is_wp_error( $browser_session ) && 'installPlugin' === ( $browser_session['playground']['blueprint']['steps'][0]['step'] ?? '' ) && 'https://example.test/agents-api.zip' === ( $browser_session['playground']['blueprint']['steps'][0]['pluginData']['url'] ?? '' ) );
+$assert( 'browser Playground session includes recipe', ! is_wp_error( $browser_session ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_session['recipe']['schema'] ?? '' ) );
+$assert( 'browser Playground recipe calls agents/chat inside site', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "wp_get_ability( 'agents/chat' )" ) );
 $assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'static-site/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 
