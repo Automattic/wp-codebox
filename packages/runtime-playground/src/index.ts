@@ -221,6 +221,7 @@ interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
   files: {
+    actions?: string
     console?: string
     errors?: string
     html?: string
@@ -229,6 +230,7 @@ interface BrowserProbeArtifact {
     summary: string
   }
   summary: {
+    actions?: number
     consoleMessages: number
     errors: number
     finalUrl: string
@@ -250,6 +252,22 @@ interface BrowserProbeViewport {
 }
 
 type BrowserProbeReplayability = "artifact-backed" | "partial" | "diagnostic-only"
+
+interface BrowserActionRecord {
+  index: number
+  type: string
+  status: "ok" | "failed"
+  startedAt: string
+  finishedAt: string
+  url?: string
+  selector?: string
+  text?: string
+  key?: string
+  waitFor?: string
+  duration?: string
+  finalUrl?: string
+  error?: BrowserProbeErrorRecord
+}
 
 interface PluginCheckArtifact {
   targetPlugin: string
@@ -323,6 +341,7 @@ class PlaygroundRuntime implements Runtime {
     "wordpress.core-phpunit": (runtime, spec) => runtime.runCorePhpunit(spec),
     "wordpress.theme-check": (runtime, spec) => runtime.runThemeCheck(spec),
     "wordpress.browser-probe": (runtime, spec) => runtime.runBrowserProbe(spec),
+    "wordpress.browser-actions": (runtime, spec) => runtime.runBrowserActions(spec),
   } satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundRuntime, spec: ExecutionSpec) => Promise<string> | string>
 
   private status: RuntimeInfo["status"] = "created"
@@ -904,6 +923,173 @@ class PlaygroundRuntime implements Runtime {
     }, null, 2)}\n`
   }
 
+  private async runBrowserActions(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const args = spec.args ?? []
+    const actions = browserActionsFromArgs(args)
+    const initialUrl = argValue(args, "url")?.trim()
+    if (actions.length === 0 && !initialUrl) {
+      throw new Error("wordpress.browser-actions requires actions-json=<array> or url=<path-or-url>")
+    }
+
+    if (initialUrl && actions[0]?.type !== "navigate") {
+      actions.unshift({ type: "navigate", url: initialUrl })
+    }
+
+    const capture = new Set(commaListArg(args, "capture"))
+    if (capture.size === 0) {
+      capture.add("actions")
+      capture.add("console")
+      capture.add("errors")
+      capture.add("network")
+      capture.add("html")
+      capture.add("screenshot")
+    }
+
+    for (const item of capture) {
+      if (!["actions", "console", "errors", "html", "network", "screenshot"].includes(item)) {
+        throw new Error(`wordpress.browser-actions capture supports actions, console, errors, html, network, screenshot: ${item}`)
+      }
+    }
+
+    const browserDirectory = join(this.artifactRoot, "files", "browser")
+    await mkdir(browserDirectory, { recursive: true })
+
+    const actionRecords: BrowserActionRecord[] = []
+    const consoleMessages: Record<string, unknown>[] = []
+    const errors: BrowserProbeErrorRecord[] = []
+    const network: BrowserProbeNetworkRecord[] = []
+    const actionsPath = join(browserDirectory, "actions.jsonl")
+    const consolePath = join(browserDirectory, "console.jsonl")
+    const errorsPath = join(browserDirectory, "errors.jsonl")
+    const htmlPath = join(browserDirectory, "snapshot.html")
+    const networkPath = join(browserDirectory, "network.jsonl")
+    const screenshotPath = join(browserDirectory, "screenshot.png")
+    const summaryPath = join(browserDirectory, "action-summary.json")
+    const startedAt = now()
+    const { chromium } = await import("playwright")
+    const browser = await chromium.launch()
+    let requestedUrl = initialUrl ? resolveBrowserProbeUrl(initialUrl, server.serverUrl) : server.serverUrl
+    let finalUrl = requestedUrl
+    let htmlSha256: string | undefined
+    let screenshotSha256: string | undefined
+    let viewport: BrowserProbeViewport | null = null
+    let pendingError: Error | undefined
+
+    try {
+      const page = await browser.newPage()
+      viewport = await browserProbeViewport(page)
+      if (capture.has("console")) {
+        page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
+      }
+      if (capture.has("errors")) {
+        page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
+      }
+      if (capture.has("network")) {
+        page.on("response", (response) => network.push(serializeBrowserResponse(response)))
+        page.on("requestfailed", (request) => network.push(serializeBrowserRequestFailure(request)))
+      }
+
+      for (const [index, action] of actions.entries()) {
+        const recordStartedAt = now()
+        try {
+          await executeBrowserAction(page, action, server.serverUrl)
+          finalUrl = page.url()
+          if (action.type === "navigate") {
+            requestedUrl = resolveBrowserActionUrl(action, server.serverUrl)
+          }
+          actionRecords.push(browserActionRecord(index, action, "ok", recordStartedAt, finalUrl))
+        } catch (error) {
+          const serialized = serializeBrowserError("probe-error", error)
+          errors.push(serialized)
+          actionRecords.push(browserActionRecord(index, action, "failed", recordStartedAt, page.url(), serialized))
+          pendingError = error instanceof Error ? error : new Error(String(error))
+          break
+        }
+      }
+
+      if (capture.has("html")) {
+        const html = await page.content()
+        await writeFile(htmlPath, html)
+        htmlSha256 = sha256(Buffer.from(html, "utf8"))
+      }
+
+      if (capture.has("screenshot")) {
+        await page.screenshot({ path: screenshotPath, fullPage: true })
+        screenshotSha256 = await fileSha256(screenshotPath)
+      }
+    } finally {
+      await browser.close()
+      if (capture.has("actions")) {
+        await writeFile(actionsPath, jsonLines(actionRecords))
+      }
+      if (capture.has("console")) {
+        await writeFile(consolePath, jsonLines(consoleMessages))
+      }
+      if (capture.has("errors")) {
+        await writeFile(errorsPath, jsonLines(errors))
+      }
+      if (capture.has("network")) {
+        await writeFile(networkPath, jsonLines(network))
+      }
+
+      const artifact: BrowserProbeArtifact = {
+        requestedUrl,
+        url: requestedUrl,
+        files: {
+          ...(capture.has("actions") ? { actions: "files/browser/actions.jsonl" } : {}),
+          ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
+          ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
+          ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
+          ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+          ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
+          summary: "files/browser/action-summary.json",
+        },
+        summary: {
+          actions: actionRecords.length,
+          consoleMessages: consoleMessages.length,
+          errors: errors.length,
+          finalUrl,
+          htmlSnapshot: capture.has("html"),
+          networkEvents: network.length,
+          replayability: browserProbeReplayability(capture),
+          screenshot: capture.has("screenshot"),
+          viewport,
+        },
+      }
+      this.browserProbes.push(artifact)
+      await writeFile(summaryPath, `${JSON.stringify({
+        schema: "wp-codebox/browser-actions/v1",
+        requestedUrl,
+        finalUrl,
+        capture: [...capture].sort(),
+        actions: actionRecords,
+        startedAt,
+        finishedAt: now(),
+        files: artifact.files,
+        hashes: {
+          ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
+          ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
+        },
+        viewport,
+        summary: artifact.summary,
+      }, null, 2)}\n`)
+    }
+
+    if (pendingError) {
+      throw new Error(`wordpress.browser-actions failed after ${actionRecords.length} action(s): ${pendingError.message}`)
+    }
+
+    return `${JSON.stringify({
+      command: "wordpress.browser-actions",
+      requestedUrl,
+      finalUrl: this.browserProbes.at(-1)?.summary.finalUrl ?? finalUrl,
+      files: this.browserProbes.at(-1)?.files,
+      summary: this.browserProbes.at(-1)?.summary,
+      actions: actionRecords,
+    }, null, 2)}\n`
+  }
+
   private async runPhp(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const code = await this.phpCodeFromArgs(spec.args ?? [])
@@ -1443,7 +1629,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
 
     if (spec.type === "wordpress-state") {
-      return { data: await this.observeWordPressState(), artifactRefs }
+      return this.observeWordPressState(spec, observationId)
     }
 
     if (spec.type === "http-response") {
@@ -1473,9 +1659,32 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     return { type: spec.type, path: spec.path ?? null }
   }
 
-  private async observeWordPressState(): Promise<unknown> {
+  private async observeWordPressState(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
     const cliServer = await this.bootPlayground()
+    const config = {
+      sections: spec.sections,
+      redaction: spec.redaction ?? "safe",
+      includeContent: spec.includeContent === true,
+      optionNames: spec.optionNames,
+      userFields: spec.userFields,
+    }
     const response = await cliServer.playground.run({ code: this.bootstrapPhpCode(`
+$config = json_decode( ${JSON.stringify(JSON.stringify(config))}, true );
+$requested_sections = isset( $config['sections'] ) && is_array( $config['sections'] ) ? array_values( array_unique( array_map( 'strval', $config['sections'] ) ) ) : array( 'summary' );
+$redaction = isset( $config['redaction'] ) ? (string) $config['redaction'] : 'safe';
+$include_content = ! empty( $config['includeContent'] );
+$option_names = isset( $config['optionNames'] ) && is_array( $config['optionNames'] ) ? array_values( array_unique( array_map( 'strval', $config['optionNames'] ) ) ) : array();
+$user_fields = isset( $config['userFields'] ) && is_array( $config['userFields'] ) ? array_values( array_unique( array_map( 'strval', $config['userFields'] ) ) ) : array();
+$allowed_sections = array( 'summary', 'posts', 'terms', 'menus', 'templates', 'media', 'options', 'users', 'rest-routes', 'abilities' );
+$sections = array_values( array_intersect( $requested_sections, $allowed_sections ) );
+if ( empty( $sections ) ) {
+    $sections = array( 'summary' );
+}
+
+$hash_value = function ( $value ) {
+    return hash( 'sha256', wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) );
+};
+
 $post_counts = array();
 foreach ( get_post_types( array(), 'names' ) as $post_type ) {
     $counts = wp_count_posts( $post_type );
@@ -1485,17 +1694,237 @@ foreach ( get_post_types( array(), 'names' ) as $post_type ) {
     }
 }
 
+$exports = array();
+$exports['summary'] = array(
+    'siteUrl'           => get_site_url(),
+    'homeUrl'           => get_home_url(),
+    'wordpressVersion'  => get_bloginfo( 'version' ),
+    'activeTheme'       => wp_get_theme()->get_stylesheet(),
+    'activePlugins'     => array_values( (array) get_option( 'active_plugins', array() ) ),
+    'postCounts'        => $post_counts,
+);
+
+if ( in_array( 'posts', $sections, true ) ) {
+    $post_types = get_post_types( array( 'public' => true ), 'names' );
+    $posts = get_posts( array(
+        'post_type'      => array_values( $post_types ),
+        'post_status'    => 'any',
+        'posts_per_page' => 200,
+        'orderby'        => 'ID',
+        'order'          => 'ASC',
+    ) );
+    $exports['posts'] = array_map( function ( $post ) use ( $include_content, $hash_value ) {
+        $entry = array(
+            'id'          => (int) $post->ID,
+            'type'        => $post->post_type,
+            'slug'        => $post->post_name,
+            'status'      => $post->post_status,
+            'title'       => get_the_title( $post ),
+            'contentHash' => $hash_value( (string) $post->post_content ),
+            'modifiedGmt' => $post->post_modified_gmt,
+        );
+        if ( $include_content ) {
+            $entry['content'] = (string) $post->post_content;
+        }
+        return $entry;
+    }, $posts );
+}
+
+if ( in_array( 'terms', $sections, true ) ) {
+    $terms = get_terms( array( 'hide_empty' => false ) );
+    $exports['terms'] = is_wp_error( $terms ) ? array() : array_map( function ( $term ) {
+        return array(
+            'id'       => (int) $term->term_id,
+            'taxonomy' => $term->taxonomy,
+            'slug'     => $term->slug,
+            'name'     => $term->name,
+            'parent'   => (int) $term->parent,
+            'count'    => (int) $term->count,
+        );
+    }, $terms );
+}
+
+if ( in_array( 'menus', $sections, true ) ) {
+    $menus = wp_get_nav_menus();
+    $exports['menus'] = array_map( function ( $menu ) {
+        $items = wp_get_nav_menu_items( $menu->term_id );
+        return array(
+            'id'    => (int) $menu->term_id,
+            'slug'  => $menu->slug,
+            'name'  => $menu->name,
+            'items' => is_array( $items ) ? array_map( function ( $item ) {
+                return array(
+                    'id'       => (int) $item->ID,
+                    'title'    => $item->title,
+                    'url'      => $item->url,
+                    'parentId' => (int) $item->menu_item_parent,
+                    'object'   => $item->object,
+                    'type'     => $item->type,
+                );
+            }, $items ) : array(),
+        );
+    }, $menus );
+}
+
+if ( in_array( 'templates', $sections, true ) ) {
+    $exports['templates'] = array(
+        'theme'         => wp_get_theme()->get_stylesheet(),
+        'templates'     => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $hash_value ) {
+            return array(
+                'id'          => $template->id ?? '',
+                'slug'        => $template->slug ?? '',
+                'theme'       => $template->theme ?? '',
+                'type'        => $template->type ?? '',
+                'source'      => $template->source ?? '',
+                'contentHash' => $hash_value( (string) ( $template->content ?? '' ) ),
+            );
+        }, get_block_templates( array(), 'wp_template' ) ) : array(),
+        'templateParts' => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $hash_value ) {
+            return array(
+                'id'          => $template->id ?? '',
+                'slug'        => $template->slug ?? '',
+                'theme'       => $template->theme ?? '',
+                'area'        => $template->area ?? '',
+                'source'      => $template->source ?? '',
+                'contentHash' => $hash_value( (string) ( $template->content ?? '' ) ),
+            );
+        }, get_block_templates( array(), 'wp_template_part' ) ) : array(),
+        'globalStyles'  => function_exists( 'wp_get_global_stylesheet' ) ? array( 'stylesheetHash' => $hash_value( wp_get_global_stylesheet() ) ) : null,
+    );
+}
+
+if ( in_array( 'media', $sections, true ) ) {
+    $attachments = get_posts( array(
+        'post_type'      => 'attachment',
+        'post_status'    => 'any',
+        'posts_per_page' => 200,
+        'orderby'        => 'ID',
+        'order'          => 'ASC',
+    ) );
+    $exports['media'] = array_map( function ( $attachment ) {
+        return array(
+            'id'       => (int) $attachment->ID,
+            'slug'     => $attachment->post_name,
+            'title'    => get_the_title( $attachment ),
+            'mimeType' => $attachment->post_mime_type,
+            'metadata' => wp_get_attachment_metadata( $attachment->ID ),
+        );
+    }, $attachments );
+}
+
+if ( in_array( 'options', $sections, true ) ) {
+    $exports['options'] = array();
+    foreach ( $option_names as $option_name ) {
+        $exports['options'][ $option_name ] = get_option( $option_name, null );
+    }
+}
+
+if ( in_array( 'users', $sections, true ) ) {
+    $allowed_user_fields = array_intersect( $user_fields, array( 'ID', 'user_login', 'display_name', 'roles', 'caps' ) );
+    $users = get_users( array( 'orderby' => 'ID', 'order' => 'ASC' ) );
+    $exports['users'] = array_map( function ( $user ) use ( $allowed_user_fields, $redaction ) {
+        $entry = array( 'id' => (int) $user->ID, 'redacted' => 'none' !== $redaction );
+        foreach ( $allowed_user_fields as $field ) {
+            if ( 'ID' === $field ) {
+                $entry['ID'] = (int) $user->ID;
+            } elseif ( 'roles' === $field ) {
+                $entry['roles'] = array_values( (array) $user->roles );
+            } elseif ( 'caps' === $field ) {
+                $entry['caps'] = array_keys( array_filter( (array) $user->allcaps ) );
+            } elseif ( 'none' === $redaction ) {
+                $entry[ $field ] = (string) $user->{$field};
+            }
+        }
+        return $entry;
+    }, $users );
+}
+
+if ( in_array( 'rest-routes', $sections, true ) ) {
+    $routes = rest_get_server()->get_routes();
+    $exports['rest-routes'] = array_map( function ( $route, $handlers ) {
+        return array(
+            'route'   => $route,
+            'methods' => array_values( array_unique( array_reduce( $handlers, function ( $methods, $handler ) {
+                foreach ( (array) ( $handler['methods'] ?? array() ) as $method => $enabled ) {
+                    if ( $enabled ) {
+                        $methods[] = is_string( $method ) ? $method : (string) $enabled;
+                    }
+                }
+                return $methods;
+            }, array() ) ) ),
+        );
+    }, array_keys( $routes ), $routes );
+}
+
+if ( in_array( 'abilities', $sections, true ) ) {
+    $abilities = array();
+    if ( function_exists( 'wp_get_abilities' ) ) {
+        $registered = wp_get_abilities();
+        if ( is_array( $registered ) ) {
+            foreach ( $registered as $name => $ability ) {
+                $abilities[] = array(
+                    'name'        => (string) $name,
+                    'description' => is_array( $ability ) ? (string) ( $ability['description'] ?? '' ) : '',
+                    'category'    => is_array( $ability ) ? (string) ( $ability['category'] ?? '' ) : '',
+                );
+            }
+        }
+    }
+    $exports['abilities'] = $abilities;
+}
+
 echo wp_json_encode( array(
-    'siteUrl' => get_site_url(),
-    'homeUrl' => get_home_url(),
-    'wordpressVersion' => get_bloginfo( 'version' ),
-    'activeTheme' => wp_get_theme()->get_stylesheet(),
-    'activePlugins' => array_values( (array) get_option( 'active_plugins', array() ) ),
-    'postCounts' => $post_counts,
+    'schema'    => 'wp-codebox/wordpress-state-export/v1',
+    'version'   => 1,
+    'generatedAt' => gmdate( 'c' ),
+    'config'    => array(
+        'sections'       => $sections,
+        'redaction'      => $redaction,
+        'includeContent' => $include_content,
+        'optionNames'    => $option_names,
+        'userFields'     => $user_fields,
+    ),
+    'sections'  => $exports,
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 `, []) })
     assertPlaygroundResponseOk("observe.wordpress-state", response)
-    return JSON.parse(response.text || "{}")
+    const stateExport = JSON.parse(response.text || "{}") as {
+      schema?: string
+      version?: number
+      generatedAt?: string
+      config?: Record<string, unknown>
+      sections?: Record<string, unknown>
+    }
+    const sectionArtifacts: Record<string, { artifact: string; sha256: string; bytes: number }> = {}
+    const artifactRefs: RuntimeEpisodeTraceRef[] = []
+    const sections = stateExport.sections ?? {}
+
+    for (const [section, contents] of Object.entries(sections)) {
+      const serialized = `${JSON.stringify({ schema: "wp-codebox/wordpress-state-section/v1", section, data: contents }, null, 2)}\n`
+      const digest = createHash("sha256").update(serialized).digest("hex")
+      const relativePath = `files/observations/${observationId}-wordpress-state-${safeArtifactSegment(section)}.json`
+      await mkdir(dirname(join(this.artifactRoot, relativePath)), { recursive: true })
+      await writeFile(join(this.artifactRoot, relativePath), serialized)
+      sectionArtifacts[section] = { artifact: relativePath, sha256: digest, bytes: Buffer.byteLength(serialized) }
+      artifactRefs.push({
+        kind: "wordpress-state-section",
+        id: `${observationId}:${section}`,
+        path: relativePath,
+        digest: { algorithm: "sha256", value: digest },
+      })
+    }
+
+    return {
+      data: {
+        schema: stateExport.schema ?? "wp-codebox/wordpress-state-export/v1",
+        version: stateExport.version ?? 1,
+        generatedAt: stateExport.generatedAt,
+        config: stateExport.config,
+        sections: Object.fromEntries(Object.entries(sections).map(([section, contents]) => [section, summarizeWordPressStateSection(section, contents)])),
+        artifacts: sectionArtifacts,
+      },
+      artifactRefs,
+    }
   }
 
   private async observeHttpResponse(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
@@ -1553,8 +1982,9 @@ echo wp_json_encode( array(
     const consoleMessages = this.browserProbes.reduce((total, probe) => total + probe.summary.consoleMessages, 0)
     const errors = this.browserProbes.reduce((total, probe) => total + probe.summary.errors, 0)
     const screenshots = this.browserProbes.filter((probe) => probe.summary.screenshot).length
+    const actions = this.browserProbes.reduce((total, probe) => total + (probe.summary.actions ?? 0), 0)
     return {
-      summary: `Browser probe captured ${consoleMessages} console message${consoleMessages === 1 ? "" : "s"}, ${errors} error${errors === 1 ? "" : "s"}, and ${screenshots} screenshot${screenshots === 1 ? "" : "s"}.`,
+      summary: `Browser evidence captured ${actions} action${actions === 1 ? "" : "s"}, ${consoleMessages} console message${consoleMessages === 1 ? "" : "s"}, ${errors} error${errors === 1 ? "" : "s"}, and ${screenshots} screenshot${screenshots === 1 ? "" : "s"}.`,
       probes: this.browserProbes.map((probe) => ({
         url: probe.url,
         requestedUrl: probe.requestedUrl,
@@ -1569,6 +1999,9 @@ echo wp_json_encode( array(
         screenshot: probe.files.screenshot,
         console: probe.files.console,
         errorsFile: probe.files.errors,
+        actions: probe.files.actions,
+        actionCount: probe.summary.actions,
+        summaryFile: probe.files.summary,
       })),
     }
   }
@@ -1580,6 +2013,9 @@ echo wp_json_encode( array(
 
     const files = new Map<string, { kind: string; contentType: string }>()
     for (const probe of this.browserProbes) {
+      if (probe.files.actions) {
+        files.set(probe.files.actions, { kind: "browser-actions", contentType: "application/x-ndjson" })
+      }
       if (probe.files.console) {
         files.set(probe.files.console, { kind: "browser-console", contentType: "application/x-ndjson" })
       }
@@ -1605,7 +2041,7 @@ echo wp_json_encode( array(
     return this.observations.flatMap((observation) =>
       (observation.artifactRefs ?? [])
         .filter((ref): ref is RuntimeEpisodeTraceRef & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
-        .map((ref) => fileEntry(join(this.artifactRoot, ref.path), "observation-artifact", "text/plain")),
+        .map((ref) => fileEntry(join(this.artifactRoot, ref.path), ref.kind, ref.path.endsWith(".json") ? "application/json" : "text/plain")),
     )
   }
 
@@ -1618,7 +2054,7 @@ echo wp_json_encode( array(
 
   private async redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void> {
     for (const probe of this.browserProbes) {
-      for (const path of [probe.files.console, probe.files.errors, probe.files.html, probe.files.network, probe.files.summary]) {
+      for (const path of [probe.files.actions, probe.files.console, probe.files.errors, probe.files.html, probe.files.network, probe.files.summary]) {
         if (!path) {
           continue
         }
@@ -1678,6 +2114,30 @@ export function createPlaygroundRuntimeBackend(): RuntimeBackend {
   return new PlaygroundRuntimeBackend()
 }
 
+function safeArtifactSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "section"
+}
+
+function summarizeWordPressStateSection(section: string, contents: unknown): unknown {
+  if (section === "summary") {
+    return contents
+  }
+
+  if (Array.isArray(contents)) {
+    return { count: contents.length }
+  }
+
+  if (contents && typeof contents === "object") {
+    const entries = Object.entries(contents as Record<string, unknown>)
+    return {
+      count: entries.length,
+      keys: entries.map(([key]) => key),
+    }
+  }
+
+  return { count: contents == null ? 0 : 1 }
+}
+
 async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number): Promise<void> {
   if (["domcontentloaded", "load", "networkidle"].includes(waitFor)) {
     await page.goto(url, { waitUntil: waitFor as "domcontentloaded" | "load" | "networkidle", timeout: 30_000 })
@@ -1701,6 +2161,145 @@ async function navigateBrowserProbe(page: Page, url: string, waitFor: string, du
   }
 
   throw new Error(`wordpress.browser-probe wait-for supports domcontentloaded, load, networkidle, selector:<selector>, duration: ${waitFor}`)
+}
+
+type BrowserActionInput = Record<string, unknown> & { type: string }
+
+function browserActionsFromArgs(args: string[]): BrowserActionInput[] {
+  return jsonArrayArg(args, "actions-json").map((action, index) => {
+    if (!action || typeof action !== "object" || Array.isArray(action)) {
+      throw new Error(`wordpress.browser-actions actions-json[${index}] must be an object`)
+    }
+    const typedAction = action as BrowserActionInput
+    if (typeof typedAction.type !== "string" || typedAction.type.length === 0) {
+      throw new Error(`wordpress.browser-actions actions-json[${index}].type is required`)
+    }
+    return typedAction
+  })
+}
+
+async function executeBrowserAction(page: Page, action: BrowserActionInput, baseUrl: string): Promise<void> {
+  if (action.type === "navigate") {
+    await page.goto(resolveBrowserActionUrl(action, baseUrl), { waitUntil: browserActionLoadState(action.waitFor) })
+    return
+  }
+
+  if (action.type === "click") {
+    if (typeof action.selector === "string" && action.selector.length > 0) {
+      await page.click(action.selector)
+      return
+    }
+    if (typeof action.text === "string" && action.text.length > 0) {
+      await page.getByText(action.text).click()
+      return
+    }
+    throw new Error("wordpress.browser-actions click requires selector or text")
+  }
+
+  if (action.type === "fill") {
+    if (typeof action.selector !== "string" || action.selector.length === 0) {
+      throw new Error("wordpress.browser-actions fill requires selector")
+    }
+    if (typeof action.value !== "string") {
+      throw new Error("wordpress.browser-actions fill requires value")
+    }
+    await page.fill(action.selector, action.value)
+    return
+  }
+
+  if (action.type === "press") {
+    if (typeof action.key !== "string" || action.key.length === 0) {
+      throw new Error("wordpress.browser-actions press requires key")
+    }
+    if (typeof action.selector === "string" && action.selector.length > 0) {
+      await page.press(action.selector, action.key)
+      return
+    }
+    await page.keyboard.press(action.key)
+    return
+  }
+
+  if (action.type === "wait") {
+    await waitForBrowserAction(page, action)
+    return
+  }
+
+  if (action.type === "capture") {
+    return
+  }
+
+  throw new Error(`wordpress.browser-actions action type is not supported: ${action.type}`)
+}
+
+function resolveBrowserActionUrl(action: BrowserActionInput, baseUrl: string): string {
+  if (typeof action.url !== "string" || action.url.trim().length === 0) {
+    throw new Error("wordpress.browser-actions navigate requires url")
+  }
+  return resolveBrowserProbeUrl(action.url.trim(), baseUrl)
+}
+
+function browserActionLoadState(waitFor: unknown): "domcontentloaded" | "load" | "networkidle" {
+  if (waitFor === undefined || waitFor === null || waitFor === "") {
+    return "domcontentloaded"
+  }
+  if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
+    return waitFor
+  }
+  throw new Error(`wordpress.browser-actions navigate waitFor supports domcontentloaded, load, networkidle: ${waitFor}`)
+}
+
+async function waitForBrowserAction(page: Page, action: BrowserActionInput): Promise<void> {
+  if (typeof action.selector === "string" && action.selector.length > 0) {
+    await page.waitForSelector(action.selector)
+    return
+  }
+
+  const waitFor = typeof action.waitFor === "string" ? action.waitFor : "load"
+  if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
+    await page.waitForLoadState(waitFor)
+    return
+  }
+  if (waitFor === "duration") {
+    await page.waitForTimeout(browserActionDurationMs(action))
+    return
+  }
+
+  throw new Error(`wordpress.browser-actions wait supports selector, domcontentloaded, load, networkidle, duration: ${waitFor}`)
+}
+
+function browserActionDurationMs(action: BrowserActionInput): number {
+  const raw = typeof action.duration === "string" ? action.duration : "0ms"
+  const match = raw.trim().match(/^(\d+(?:\.\d+)?)(ms|s)$/)
+  if (!match) {
+    throw new Error("wordpress.browser-actions duration must be a duration like 500ms or 2s")
+  }
+  const value = Number.parseFloat(match[1])
+  return Math.max(0, Math.round(match[2] === "ms" ? value : value * 1000))
+}
+
+function browserActionRecord(
+  index: number,
+  action: BrowserActionInput,
+  status: BrowserActionRecord["status"],
+  startedAt: string,
+  finalUrl: string,
+  error?: BrowserProbeErrorRecord,
+): BrowserActionRecord {
+  return {
+    index,
+    type: action.type,
+    status,
+    startedAt,
+    finishedAt: now(),
+    ...(typeof action.url === "string" ? { url: action.url } : {}),
+    ...(typeof action.selector === "string" ? { selector: action.selector } : {}),
+    ...(typeof action.text === "string" ? { text: action.text } : {}),
+    ...(typeof action.key === "string" ? { key: action.key } : {}),
+    ...(typeof action.waitFor === "string" ? { waitFor: action.waitFor } : {}),
+    ...(typeof action.duration === "string" ? { duration: action.duration } : {}),
+    finalUrl,
+    ...(error ? { error } : {}),
+  }
 }
 
 function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {
