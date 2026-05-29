@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256 } from "@chubes4/wp-codebox-core"
+import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -43,6 +43,7 @@ import type {
   Runtime,
   RuntimeBackend,
   RuntimeCreateSpec,
+  RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
 } from "@chubes4/wp-codebox-core"
@@ -369,12 +370,24 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async observe(spec: ObservationSpec): Promise<ObservationResult> {
+    const observationId = id("observation")
+    const observedAt = now()
+    const observed = await this.observeData(spec, observationId)
     const observation: ObservationResult = {
-      id: id("observation"),
+      schema: RUNTIME_EPISODE_OBSERVATION_SCHEMA,
+      id: observationId,
       type: spec.type,
-      data: await this.observeStub(spec),
-      observedAt: now(),
+      data: observed.data,
+      observedAt,
+      ...(observed.artifactRefs.length > 0 ? { artifactRefs: observed.artifactRefs } : {}),
     }
+    observation.digest = runtimeEpisodeDigest({
+      schema: RUNTIME_EPISODE_OBSERVATION_SCHEMA,
+      type: observation.type,
+      data: observation.data,
+      observedAt: observation.observedAt,
+      artifactRefs: observation.artifactRefs ?? [],
+    })
 
     this.observations.push(observation)
     this.recordEvent("runtime.observed", {
@@ -525,6 +538,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(reviewPath, "review", "application/json"),
       fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
       ...this.browserManifestFiles(),
+      ...this.observationManifestFiles(),
       ...this.pluginCheckManifestFiles(),
       ...this.themeCheckManifestFiles(),
       ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
@@ -1462,6 +1476,47 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
   }
 
+  private async observeData(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
+    const artifactRefs: RuntimeEpisodeTraceRef[] = []
+
+    if (spec.type === "command-result") {
+      const command = spec.commandId ? this.commands.find((candidate) => candidate.id === spec.commandId) : this.commands.at(-1)
+      return {
+        data: command
+          ? {
+              id: command.id,
+              command: command.command,
+              args: command.args,
+              exitCode: command.exitCode,
+              stdout: command.stdout,
+              stderr: command.stderr,
+              startedAt: command.startedAt,
+              finishedAt: command.finishedAt,
+            }
+          : { commandId: spec.commandId ?? null, found: false },
+        artifactRefs,
+      }
+    }
+
+    if (spec.type === "wordpress-state") {
+      return { data: await this.observeWordPressState(), artifactRefs }
+    }
+
+    if (spec.type === "http-response") {
+      return this.observeHttpResponse(spec, observationId)
+    }
+
+    if (spec.type === "browser-result") {
+      return { data: this.browserReviewSummary() ?? { probes: [] }, artifactRefs }
+    }
+
+    if (spec.type === "runtime-events" || spec.type === "runtime-logs") {
+      return { data: this.events, artifactRefs }
+    }
+
+    return { data: await this.observeStub(spec), artifactRefs }
+  }
+
   private async observeStub(spec: ObservationSpec): Promise<unknown> {
     if (spec.type === "runtime-info") {
       return this.info()
@@ -1472,6 +1527,78 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
 
     return { type: spec.type, path: spec.path ?? null }
+  }
+
+  private async observeWordPressState(): Promise<unknown> {
+    const cliServer = await this.bootPlayground()
+    const response = await cliServer.playground.run({ code: this.bootstrapPhpCode(`
+$post_counts = array();
+foreach ( get_post_types( array(), 'names' ) as $post_type ) {
+    $counts = wp_count_posts( $post_type );
+    $post_counts[ $post_type ] = array();
+    foreach ( get_object_vars( $counts ) as $status => $count ) {
+        $post_counts[ $post_type ][ $status ] = (int) $count;
+    }
+}
+
+echo wp_json_encode( array(
+    'siteUrl' => get_site_url(),
+    'homeUrl' => get_home_url(),
+    'wordpressVersion' => get_bloginfo( 'version' ),
+    'activeTheme' => wp_get_theme()->get_stylesheet(),
+    'activePlugins' => array_values( (array) get_option( 'active_plugins', array() ) ),
+    'postCounts' => $post_counts,
+), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+`, []) })
+    assertPlaygroundResponseOk("observe.wordpress-state", response)
+    return JSON.parse(response.text || "{}")
+  }
+
+  private async observeHttpResponse(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
+    const url = await this.resolveObservationUrl(spec.url ?? spec.path ?? "/")
+    const response = await fetch(url, {
+      method: spec.method ?? "GET",
+      headers: spec.headers,
+      body: spec.body,
+    })
+    const body = await response.text()
+    const bodyDigest = createHash("sha256").update(body).digest("hex")
+    const artifactRefs: RuntimeEpisodeTraceRef[] = []
+    const data: Record<string, unknown> = {
+      url,
+      method: spec.method ?? "GET",
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      bodySha256: bodyDigest,
+      bodyBytes: Buffer.byteLength(body),
+    }
+
+    if (spec.includeBody === true && body.length <= 4096) {
+      data.body = body
+    } else if (body.length > 0) {
+      const relativePath = `files/observations/${observationId}-body.txt`
+      await mkdir(dirname(join(this.artifactRoot, relativePath)), { recursive: true })
+      await writeFile(join(this.artifactRoot, relativePath), body)
+      artifactRefs.push({
+        kind: "observation-artifact",
+        id: `${observationId}:body`,
+        path: relativePath,
+        digest: { algorithm: "sha256", value: bodyDigest },
+      })
+    }
+
+    return { data, artifactRefs }
+  }
+
+  private async resolveObservationUrl(url: string): Promise<string> {
+    if (/^https?:\/\//.test(url)) {
+      return url
+    }
+
+    const previewUrl = await this.currentPreviewUrl()
+    const baseUrl = previewUrl ?? (await this.bootPlayground()).serverUrl
+    return new URL(url, baseUrl).toString()
   }
 
   private browserReviewSummary(): ArtifactReviewBrowserSummary | undefined {
@@ -1528,6 +1655,14 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
 
     return [...files.entries()].map(([path, entry]) => fileEntry(join(this.artifactRoot, path), entry.kind, entry.contentType))
+  }
+
+  private observationManifestFiles(): ArtifactManifestFile[] {
+    return this.observations.flatMap((observation) =>
+      (observation.artifactRefs ?? [])
+        .filter((ref): ref is RuntimeEpisodeTraceRef & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
+        .map((ref) => fileEntry(join(this.artifactRoot, ref.path), "observation-artifact", "text/plain")),
+    )
   }
 
   private pluginCheckManifestFiles(): ArtifactManifestFile[] {

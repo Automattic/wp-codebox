@@ -343,12 +343,20 @@ the trace into their own schemas.
 Episode steps include stable ids and refs for the step, requested action,
 runtime execution, optional observation, and collected artifact bundle. Actions
 use the generic `wp-codebox/runtime-episode-action/v1` envelope with
-`kind: "command"`, a command name, string args, optional `cwd`, optional
-`timeoutMs`, and a SHA-256 digest over that replay payload. Observations use
-the generic `wp-codebox/runtime-episode-observation/v1` envelope with id, type,
-data, timestamp, and digest. Refs carry matching digests so callers can compare
-action args, observations, executions, snapshots, and artifacts without parsing
-presentation logs.
+`kind: "command" | "filesystem" | "http" | "browser"`, the underlying command
+execution name, string args, optional replay intent fields such as `method`,
+`url`, `path`, `operation`, `selector`, and a SHA-256 digest over that canonical
+payload. Non-command action kinds preserve higher-level runtime intent while the
+command execution remains the compatibility primitive.
+
+Observations use the generic `wp-codebox/runtime-episode-observation/v1`
+envelope with id, type, data, timestamp, optional artifact refs, and digest. The
+Playground backend provides structured observation types for `runtime-info`,
+`mounts`, `command-result`, `wordpress-state`, `http-response`,
+`browser-result`, `runtime-events`, and `runtime-logs`. Large observation
+payloads can be stored as bundle-relative artifacts and referenced by digest.
+Refs carry matching digests so callers can compare action args, observations,
+executions, snapshots, and artifacts without parsing presentation logs.
 
 Replay is bounded to the generic runtime contract. A consumer can replay a step
 by creating a compatible backend runtime, applying the same mounts/artifact

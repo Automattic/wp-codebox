@@ -35,11 +35,18 @@ export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
             properties: {
               schema: { const: RUNTIME_EPISODE_ACTION_SCHEMA },
               id: { type: "string", minLength: 1 },
-              kind: { const: "command" },
+              kind: { enum: ["command", "filesystem", "http", "browser"] },
               command: { type: "string", minLength: 1 },
               args: { type: "array", items: { type: "string" } },
               cwd: { type: "string" },
               timeoutMs: { type: "number", minimum: 0 },
+              method: { type: "string", minLength: 1 },
+              url: { type: "string", minLength: 1 },
+              path: { type: "string", minLength: 1 },
+              operation: { type: "string", minLength: 1 },
+              selector: { type: "string", minLength: 1 },
+              description: { type: "string", minLength: 1 },
+              metadata: { type: "object" },
               digest: {
                 type: "object",
                 required: ["algorithm", "value"],
@@ -438,6 +445,19 @@ export interface ExecutionSpec {
   timeoutMs?: number
 }
 
+export type RuntimeEpisodeActionKind = "command" | "filesystem" | "http" | "browser"
+
+export interface RuntimeEpisodeActionSpec extends ExecutionSpec {
+  kind?: RuntimeEpisodeActionKind
+  method?: string
+  url?: string
+  path?: string
+  operation?: string
+  selector?: string
+  description?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface RuntimeEpisodeContentDigest {
   algorithm: "sha256"
   value: string
@@ -454,11 +474,18 @@ export interface RuntimeEpisodeTraceRef {
 export interface RuntimeEpisodeActionRecord {
   schema: typeof RUNTIME_EPISODE_ACTION_SCHEMA
   id: string
-  kind: "command"
+  kind: RuntimeEpisodeActionKind
   command: string
   args: string[]
   cwd?: string
   timeoutMs?: number
+  method?: string
+  url?: string
+  path?: string
+  operation?: string
+  selector?: string
+  description?: string
+  metadata?: Record<string, unknown>
   digest: RuntimeEpisodeContentDigest
 }
 
@@ -474,8 +501,24 @@ export interface ExecutionResult {
 }
 
 export interface ObservationSpec {
-  type: "runtime-info" | "mounts" | "files" | (string & {})
+  type:
+    | "runtime-info"
+    | "mounts"
+    | "files"
+    | "command-result"
+    | "wordpress-state"
+    | "http-response"
+    | "browser-result"
+    | "runtime-events"
+    | "runtime-logs"
+    | (string & {})
   path?: string
+  commandId?: string
+  url?: string
+  method?: string
+  headers?: Record<string, string>
+  body?: string
+  includeBody?: boolean
 }
 
 export interface ObservationResult {
@@ -484,6 +527,7 @@ export interface ObservationResult {
   type: string
   data: unknown
   observedAt: string
+  artifactRefs?: RuntimeEpisodeTraceRef[]
   digest?: RuntimeEpisodeContentDigest
 }
 
@@ -1409,7 +1453,7 @@ export interface RuntimeEpisodeTraceValidationResult {
 
 export interface RuntimeEpisode {
   reset(): Promise<RuntimeEpisodeResetResult>
-  step(action: ExecutionSpec, observation?: ObservationSpec | false): Promise<RuntimeEpisodeStepResult>
+  step(action: RuntimeEpisodeActionSpec, observation?: ObservationSpec | false): Promise<RuntimeEpisodeStepResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
   snapshot(): Promise<Snapshot>
   collectArtifacts(spec?: ArtifactSpec): Promise<ArtifactBundle>
@@ -1642,19 +1686,24 @@ function runtimeSnapshotReplaySemantics(semantics: string): RuntimeReferenceMani
   }
 }
 
-function runtimeEpisodeActionDigestPayload(action: RuntimeEpisodeActionRecord | ExecutionSpec): Record<string, unknown> {
+function runtimeEpisodeActionDigestPayload(action: RuntimeEpisodeActionRecord | RuntimeEpisodeActionSpec): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     schema: RUNTIME_EPISODE_ACTION_SCHEMA,
-    kind: "command",
+    kind: action.kind ?? "command",
     command: action.command,
     args: Array.isArray(action.args) ? action.args : [],
   }
 
-  if (typeof action.cwd === "string") {
-    payload.cwd = action.cwd
+  for (const key of ["cwd", "method", "url", "path", "operation", "selector", "description"] as const) {
+    if (typeof action[key] === "string") {
+      payload[key] = action[key]
+    }
   }
   if (typeof action.timeoutMs === "number") {
     payload.timeoutMs = action.timeoutMs
+  }
+  if (isRecord(action.metadata)) {
+    payload.metadata = action.metadata
   }
 
   return payload
@@ -1666,6 +1715,7 @@ function runtimeEpisodeObservationDigestPayload(observation: ObservationResult):
     type: observation.type,
     data: observation.data,
     observedAt: observation.observedAt,
+    artifactRefs: observation.artifactRefs ?? [],
   }
 }
 
@@ -1798,8 +1848,8 @@ function validateRuntimeEpisodeAction(
   if (action.schema !== RUNTIME_EPISODE_ACTION_SCHEMA) {
     issues.push({ path: `${path}.schema`, message: `action schema must be ${RUNTIME_EPISODE_ACTION_SCHEMA}` })
   }
-  if (action.kind !== "command") {
-    issues.push({ path: `${path}.kind`, message: "action kind must be command" })
+  if (!["command", "filesystem", "http", "browser"].includes(`${action.kind}`)) {
+    issues.push({ path: `${path}.kind`, message: "action kind must be command, filesystem, http, or browser" })
   }
   if (!nonEmptyString(action.command)) {
     issues.push({ path: `${path}.command`, message: "action command is required" })
@@ -1809,6 +1859,14 @@ function validateRuntimeEpisodeAction(
   }
   if (action.cwd !== undefined && typeof action.cwd !== "string") {
     issues.push({ path: `${path}.cwd`, message: "action cwd must be a string when present" })
+  }
+  for (const key of ["method", "url", "path", "operation", "selector", "description"] as const) {
+    if (action[key] !== undefined && !nonEmptyString(action[key])) {
+      issues.push({ path: `${path}.${key}`, message: `action ${key} must be a non-empty string when present` })
+    }
+  }
+  if (action.metadata !== undefined && !isRecord(action.metadata)) {
+    issues.push({ path: `${path}.metadata`, message: "action metadata must be an object when present" })
   }
   const timeoutMs = action.timeoutMs
   if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0)) {
@@ -1853,6 +1911,14 @@ function validateRuntimeEpisodeObservation(
   if (!validDigest(observation.digest)) {
     issues.push({ path: `${path}.digest`, message: "observation digest must be a sha256 digest" })
     return
+  }
+
+  if (observation.artifactRefs !== undefined) {
+    if (!Array.isArray(observation.artifactRefs)) {
+      issues.push({ path: `${path}.artifactRefs`, message: "observation artifactRefs must be an array when present" })
+    } else {
+      observation.artifactRefs.forEach((ref, index) => validateRuntimeEpisodeTraceRef(ref, `${path}.artifactRefs[${index}]`, undefined, issues))
+    }
   }
 
   const expected = runtimeEpisodeDigest(runtimeEpisodeObservationDigestPayload(observation as unknown as ObservationResult))
@@ -2138,7 +2204,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     return this.resetResult
   }
 
-  async step(action: ExecutionSpec, observation: ObservationSpec | false = this.spec.stepObservation ?? false): Promise<RuntimeEpisodeStepResult> {
+  async step(action: RuntimeEpisodeActionSpec, observation: ObservationSpec | false = this.spec.stepObservation ?? false): Promise<RuntimeEpisodeStepResult> {
     const runtime = this.assertRuntime()
     const execution = await runtime.execute(action)
     const index = this.steps.length
@@ -2146,11 +2212,18 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     const actionRecord = {
       schema: RUNTIME_EPISODE_ACTION_SCHEMA,
       id: `${stepId}:action`,
-      kind: "command" as const,
+      kind: action.kind ?? "command",
       command: action.command,
       args: action.args ?? [],
       ...(action.cwd ? { cwd: action.cwd } : {}),
       ...(action.timeoutMs !== undefined ? { timeoutMs: action.timeoutMs } : {}),
+      ...(action.method ? { method: action.method } : {}),
+      ...(action.url ? { url: action.url } : {}),
+      ...(action.path ? { path: action.path } : {}),
+      ...(action.operation ? { operation: action.operation } : {}),
+      ...(action.selector ? { selector: action.selector } : {}),
+      ...(action.description ? { description: action.description } : {}),
+      ...(action.metadata ? { metadata: action.metadata } : {}),
       digest: runtimeEpisodeDigest(runtimeEpisodeActionDigestPayload(action)),
     }
     const stepObservation = observation ? observationWithId(await runtime.observe(observation), `${stepId}:observation`) : undefined
