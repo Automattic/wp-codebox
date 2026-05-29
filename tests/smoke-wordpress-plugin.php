@@ -121,6 +121,7 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 
 	return $filter;
 }
+function wp_parse_url( string $url ): array|false { return parse_url( $url ); }
 function is_multisite(): bool { return (bool) ( $GLOBALS['wp_codebox_is_multisite'] ?? false ); }
 function get_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_options'][ $name ] ?? $default; }
 function get_site_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_site_options'][ $name ] ?? $default; }
@@ -329,6 +330,7 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_agent'] = 'site-coder';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model'] = 'gpt-5.5';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI_API_KEY' );
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org' );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 mkdir( $root . '/plugin-root/data-machine', 0777, true );
 mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
@@ -346,8 +348,9 @@ $browser_session = call_user_func(
 		'orchestrator'          => array( 'id' => 'studio-web' ),
 		'browser_plugins'       => array(
 			array(
-				'slug' => 'agents-api',
-				'url'  => 'https://example.test/agents-api.zip',
+				'slug'   => 'agents-api',
+				'url'    => 'https://example.test/agents-api.zip',
+				'sha256' => str_repeat( 'a', 64 ),
 			),
 		),
 		'artifact_files'        => array(
@@ -369,6 +372,8 @@ $assert( 'browser Playground session includes default blueprint', ! is_wp_error(
 $assert( 'browser Playground session defaults to latest WordPress and PHP', ! is_wp_error( $browser_session ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['wp'] ?? '' ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['php'] ?? '' ) );
 $assert( 'browser Playground session logs in before admin workflows', ! is_wp_error( $browser_session ) && 'login' === ( $browser_session['playground']['blueprint']['steps'][0]['step'] ?? '' ) && 'admin' === ( $browser_session['playground']['blueprint']['steps'][0]['username'] ?? '' ) );
 $assert( 'browser Playground session installs browser plugins', ! is_wp_error( $browser_session ) && 'installPlugin' === ( $browser_session['playground']['blueprint']['steps'][1]['step'] ?? '' ) && 'https://example.test/agents-api.zip' === ( $browser_session['playground']['blueprint']['steps'][1]['pluginData']['url'] ?? '' ) );
+$assert( 'browser Playground session records trusted origins', ! is_wp_error( $browser_session ) && 'https://playground.automattic.ai' === ( $browser_session['playground']['provenance']['client_module_url']['origin'] ?? '' ) );
+$assert( 'browser Playground session records browser plugin provenance', ! is_wp_error( $browser_session ) && 'example.test' === ( $browser_session['plugins'][0]['provenance']['host'] ?? '' ) && str_repeat( 'a', 64 ) === ( $browser_session['plugins'][0]['provenance']['sha256'] ?? '' ) );
 $assert( 'browser Playground session includes recipe', ! is_wp_error( $browser_session ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_session['recipe']['schema'] ?? '' ) );
 $assert( 'browser Playground recipe calls agents/chat inside site', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "wp_get_ability( 'agents/chat' )" ) );
 $assert( 'browser Playground recipe guards permission bypass to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'Emscripten' === PHP_OS_FAMILY" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
@@ -402,6 +407,33 @@ $browser_not_allowlisted_tool = call_user_func(
 );
 $assert( 'browser Playground session rejects tools outside configured allow-list before recipe emission', is_wp_error( $browser_not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $browser_not_allowlisted_tool->get_error_code() && 'not-allowlisted' === ( $browser_not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] );
+
+$browser_insecure_plugin_url = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'            => 'Prepare a browser preview with an insecure plugin URL.',
+		'browser_plugins' => array( array( 'url' => 'http://example.test/plugin.zip' ) ),
+	)
+);
+$assert( 'browser Playground session rejects insecure browser plugin URLs', is_wp_error( $browser_insecure_plugin_url ) && 'wp_codebox_browser_plugin_url_insecure' === $browser_insecure_plugin_url->get_error_code() );
+
+$browser_untrusted_plugin_host = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'            => 'Prepare a browser preview with an untrusted plugin host.',
+		'browser_plugins' => array( array( 'url' => 'https://evil.example/plugin.zip' ) ),
+	)
+);
+$assert( 'browser Playground session rejects untrusted browser plugin hosts', is_wp_error( $browser_untrusted_plugin_host ) && 'wp_codebox_browser_plugin_host_not_allowed' === $browser_untrusted_plugin_host->get_error_code() );
+
+$browser_untrusted_playground_origin = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'       => 'Prepare a browser preview with an untrusted Playground client.',
+		'playground' => array( 'client_module_url' => 'https://evil.example/client.js' ),
+	)
+);
+$assert( 'browser Playground session rejects untrusted Playground origins', is_wp_error( $browser_untrusted_playground_origin ) && 'wp_codebox_browser_origin_not_allowed' === $browser_untrusted_playground_origin->get_error_code() );
 
 $browser_session_missing_prereqs = call_user_func(
 	$browser_session_ability['execute_callback'],
