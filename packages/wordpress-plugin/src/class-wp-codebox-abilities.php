@@ -1925,7 +1925,7 @@ flush_rewrite_rules();
 				),
 			),
 			'artifacts' => array(
-				'directory' => '/wordpress/wp-content/uploads/studio-web',
+				'directory' => '/wordpress/wp-content/uploads/wp-codebox/artifacts',
 			),
 			'browser'  => array(
 				'execution'   => 'php-wasm',
