@@ -1249,26 +1249,19 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function preview_hold_seconds( array $input ): int {
-		$seconds = (int) ( $input['preview_hold_seconds'] ?? $input['preview_hold'] ?? 0 );
-
-		return max( 0, min( 3600, $seconds ) );
+		return WP_Codebox_Preview_Options::preview_hold_seconds( $input );
 	}
 
 	private function preview_args( array $input ): string|WP_Error {
-		$args    = $this->preview_hold_arg( $input );
-		$port    = $this->preview_port( $input );
-		$bind    = $this->preview_bind( $input );
-		$public  = $this->preview_public_url( $input );
-
-		foreach ( array( $port, $bind, $public ) as $value ) {
-			if ( is_wp_error( $value ) ) {
-				return $value;
-			}
+		$options = WP_Codebox_Preview_Options::normalize( $input );
+		if ( is_wp_error( $options ) ) {
+			return $options;
 		}
 
-		if ( null !== $bind && null === $port ) {
-			return new WP_Error( 'wp_codebox_preview_bind_requires_port', 'preview_bind requires preview_port.', array( 'status' => 400 ) );
-		}
+		$args = $options['preview_hold_seconds'] > 0 ? ' --preview-hold ' . escapeshellarg( (string) $options['preview_hold_seconds'] ) : '';
+		$port = $options['preview_port'];
+		$bind = $options['preview_bind'];
+		$public = $options['preview_public_url'];
 
 		if ( null !== $port ) {
 			$args .= ' --preview-port ' . escapeshellarg( (string) $port );
@@ -1287,51 +1280,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$seconds = $this->preview_hold_seconds( $input );
 
 		return $seconds > 0 ? ' --preview-hold ' . escapeshellarg( (string) $seconds ) : '';
-	}
-
-	private function preview_port( array $input ): int|WP_Error|null {
-		if ( ! array_key_exists( 'preview_port', $input ) || '' === trim( (string) $input['preview_port'] ) ) {
-			return null;
-		}
-
-		$raw = trim( (string) $input['preview_port'] );
-		if ( ! preg_match( '/^\d+$/', $raw ) ) {
-			return new WP_Error( 'wp_codebox_preview_port_invalid', 'preview_port must be an integer between 1 and 65535.', array( 'status' => 400 ) );
-		}
-
-		$port = (int) $raw;
-		if ( $port < 1 || $port > 65535 ) {
-			return new WP_Error( 'wp_codebox_preview_port_invalid', 'preview_port must be an integer between 1 and 65535.', array( 'status' => 400 ) );
-		}
-
-		return $port;
-	}
-
-	private function preview_bind( array $input ): string|WP_Error|null {
-		if ( ! array_key_exists( 'preview_bind', $input ) || '' === trim( (string) $input['preview_bind'] ) ) {
-			return null;
-		}
-
-		$bind = trim( (string) $input['preview_bind'] );
-		if ( str_contains( $bind, '/' ) || str_contains( $bind, '\\' ) || preg_match( '/\s/', $bind ) ) {
-			return new WP_Error( 'wp_codebox_preview_bind_invalid', 'preview_bind must be a hostname or IP address, not a URL.', array( 'status' => 400 ) );
-		}
-
-		return $bind;
-	}
-
-	private function preview_public_url( array $input ): string|WP_Error|null {
-		if ( ! array_key_exists( 'preview_public_url', $input ) || '' === trim( (string) $input['preview_public_url'] ) ) {
-			return null;
-		}
-
-		$url   = trim( (string) $input['preview_public_url'] );
-		$parts = function_exists( 'wp_parse_url' ) ? wp_parse_url( $url ) : parse_url( $url );
-		if ( ! is_array( $parts ) || empty( $parts['host'] ) || empty( $parts['scheme'] ) || ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
-			return new WP_Error( 'wp_codebox_preview_public_url_invalid', 'preview_public_url must be an http or https URL with a hostname.', array( 'status' => 400 ) );
-		}
-
-		return $url;
 	}
 
 	private function config_option( string $name, mixed $default ): mixed {

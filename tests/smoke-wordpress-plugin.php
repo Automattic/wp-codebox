@@ -145,6 +145,7 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-data-machine-pending-actions.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-preview-options.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
@@ -175,6 +176,17 @@ $assert   = function ( string $label, bool $condition ) use ( &$failures, &$tota
 	$failures[] = $label;
 	echo "  fail {$label}\n";
 };
+
+$preview_fixture = json_decode( file_get_contents( __DIR__ . '/../contracts/preview-options.fixture.json' ), true );
+$assert( 'preview option schema matches shared fixture', WP_Codebox_Preview_Options::input_schema() === $preview_fixture['options'] );
+foreach ( $preview_fixture['cases'] as $preview_case ) {
+	$normalized = WP_Codebox_Preview_Options::normalize( $preview_case['input'] );
+	if ( $preview_case['valid'] ) {
+		$assert( 'preview fixture valid: ' . $preview_case['name'], ! is_wp_error( $normalized ) && $normalized === $preview_case['normalized'] );
+	} else {
+		$assert( 'preview fixture invalid: ' . $preview_case['name'], is_wp_error( $normalized ) && $preview_case['code'] === $normalized->get_error_code() );
+	}
+}
 
 $stable_json = function ( mixed $value ) use ( &$stable_json ): string {
 	if ( ! is_array( $value ) ) {

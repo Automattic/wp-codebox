@@ -638,27 +638,7 @@ final class WP_Codebox_Abilities {
 
 	/** @return array<string,array<string,mixed>> */
 	private static function preview_input_schema(): array {
-		return array(
-			'preview_hold_seconds' => array(
-				'type'        => 'integer',
-				'description' => 'Seconds to keep the live Playground preview URL available after capture. Max 3600.',
-			),
-			'preview_port'         => array(
-				'type'        => 'integer',
-				'minimum'     => 1,
-				'maximum'     => 65535,
-				'description' => 'Optional fixed local WP Codebox preview proxy port. Omit to keep the default loopback-only random-port behavior.',
-			),
-			'preview_bind'         => array(
-				'type'        => 'string',
-				'description' => 'Optional fixed-port preview proxy bind host or IP. Requires preview_port. Defaults to 127.0.0.1 when omitted.',
-			),
-			'preview_public_url'   => array(
-				'type'        => 'string',
-				'format'      => 'uri',
-				'description' => 'Optional public http/https URL reported in preview metadata and passed to the sandbox for site URL alignment.',
-			),
-		);
+		return WP_Codebox_Preview_Options::input_schema();
 	}
 
 	/** @return array<string,mixed> */

@@ -23,6 +23,7 @@ require_once __DIR__ . '/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-data-machine-pending-actions.php';
+require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {

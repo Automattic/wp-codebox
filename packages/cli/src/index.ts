@@ -10,6 +10,7 @@ import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "./preview-options.js"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -2642,48 +2643,6 @@ async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDes
   await afterDestroy?.()
 }
 
-function parsePreviewHoldSeconds(value: string): number {
-  const match = value.trim().match(/^(\d+)(s|m)?$/)
-  if (!match) {
-    throw new Error(`Invalid --preview-hold value: ${value}`)
-  }
-
-  const amount = Number.parseInt(match[1], 10)
-  const seconds = match[2] === "m" ? amount * 60 : amount
-  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 3600) {
-    throw new Error("--preview-hold must be between 0s and 3600s")
-  }
-
-  return seconds
-}
-
-function parsePreviewPort(value: string): number {
-  const trimmed = value.trim()
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid --preview-port value: ${value}`)
-  }
-
-  const port = Number.parseInt(trimmed, 10)
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw new Error("--preview-port must be an integer between 1 and 65535")
-  }
-
-  return port
-}
-
-function parsePreviewBind(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    throw new Error("--preview-bind must not be empty")
-  }
-
-  if (/[/\\\s]/.test(trimmed)) {
-    throw new Error("--preview-bind must be a hostname or IP address, not a URL")
-  }
-
-  return trimmed
-}
-
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
   const options: RunOptions = {
     mounts: [],
@@ -2919,25 +2878,6 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
   }
 
   return options as RecipeRunOptions
-}
-
-function parsePreviewPublicUrl(value: string): string {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    throw new Error(`Invalid --preview-public-url value: ${value}`)
-  }
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("--preview-public-url must be an http or https URL")
-  }
-
-  if (!url.hostname) {
-    throw new Error("--preview-public-url must include a hostname")
-  }
-
-  return url.toString()
 }
 
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
