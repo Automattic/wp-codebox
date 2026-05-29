@@ -325,7 +325,15 @@ final class WP_Codebox_Abilities {
 							'browser_plugins'    => array(
 								'type'        => 'array',
 								'description' => 'Optional plugin zip URLs the browser Playground should install and activate before running the recipe.',
-								'items'       => array( 'type' => 'object' ),
+								'items'       => array(
+									'type'       => 'object',
+									'properties' => array(
+										'slug'     => array( 'type' => 'string' ),
+										'url'      => array( 'type' => 'string' ),
+										'activate' => array( 'type' => 'boolean' ),
+										'sha256'   => array( 'type' => 'string' ),
+									),
+								),
 							),
 							'blueprint'          => array(
 								'type'        => 'object',
@@ -830,7 +838,11 @@ final class WP_Codebox_Abilities {
 			$session_id = self::generate_id();
 		}
 
-		$playground     = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
+		$playground = self::browser_playground( $input );
+		if ( is_wp_error( $playground ) ) {
+			return $playground;
+		}
+
 		$browser_runner = is_array( $input['browser_runner'] ?? null ) ? $input['browser_runner'] : array();
 		$browser_plugins = self::browser_plugins( $input );
 		if ( is_wp_error( $browser_plugins ) ) {
@@ -871,8 +883,8 @@ final class WP_Codebox_Abilities {
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 			'plugins'    => $browser_plugins,
 			'playground' => array(
-				'client_module_url'  => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
-				'remote_url'         => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+				'client_module_url'  => $playground['client_module_url'],
+				'remote_url'         => $playground['remote_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -884,6 +896,7 @@ final class WP_Codebox_Abilities {
 					'write_file'        => true,
 					'run_php'           => true,
 				),
+				'provenance'         => $playground['provenance'],
 			),
 			'recipe'     => $recipe,
 			'signals'    => array(
@@ -934,8 +947,8 @@ final class WP_Codebox_Abilities {
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 			'plugins'    => $browser_plugins,
 			'playground' => array(
-				'client_module_url'  => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
-				'remote_url'         => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+				'client_module_url'  => $playground['client_module_url'],
+				'remote_url'         => $playground['remote_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -947,6 +960,7 @@ final class WP_Codebox_Abilities {
 					'write_file'        => true,
 					'run_php'           => true,
 				),
+				'provenance'         => $playground['provenance'],
 			),
 			'signals'    => array(
 				'ready_to_code' => $ready_to_code,
@@ -1130,6 +1144,65 @@ final class WP_Codebox_Abilities {
 		return $normalized;
 	}
 
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private static function browser_playground( array $input ): array|WP_Error {
+		$playground = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
+		$client     = self::browser_trusted_url(
+			(string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
+			'client_module_url',
+			'wp_codebox_browser_playground_allowed_origins',
+			array( 'https://playground.automattic.ai' )
+		);
+		if ( is_wp_error( $client ) ) {
+			return $client;
+		}
+
+		$remote = self::browser_trusted_url(
+			(string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+			'remote_url',
+			'wp_codebox_browser_playground_allowed_origins',
+			array( 'https://playground.automattic.ai' )
+		);
+		if ( is_wp_error( $remote ) ) {
+			return $remote;
+		}
+
+		$playground['client_module_url'] = $client['url'];
+		$playground['remote_url']        = $remote['url'];
+		$playground['provenance']        = array(
+			'schema'            => 'wp-codebox/browser-playground-provenance/v1',
+			'client_module_url' => $client,
+			'remote_url'        => $remote,
+		);
+
+		return $playground;
+	}
+
+	/** @return array{url:string,origin:string,host:string} | WP_Error */
+	private static function browser_trusted_url( string $url, string $field, string $filter, array $default_allowed_origins ): array|WP_Error {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_url_invalid', 'Browser Playground URL must be absolute.', array( 'status' => 400, 'field' => $field ) );
+		}
+
+		$scheme = strtolower( (string) $parts['scheme'] );
+		if ( 'https' !== $scheme ) {
+			return new WP_Error( 'wp_codebox_browser_url_insecure', 'Browser Playground URL must use https://.', array( 'status' => 400, 'field' => $field ) );
+		}
+
+		$origin  = self::url_origin( $parts );
+		$allowed = self::normalized_origins( apply_filters( $filter, $default_allowed_origins, $field, $url ) );
+		if ( ! in_array( $origin, $allowed, true ) ) {
+			return new WP_Error( 'wp_codebox_browser_origin_not_allowed', 'Browser Playground URL origin is not allowed.', array( 'status' => 400, 'field' => $field, 'origin' => $origin ) );
+		}
+
+		return array(
+			'url'    => $url,
+			'origin' => $origin,
+			'host'   => strtolower( (string) $parts['host'] ),
+		);
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
 	private static function browser_plugins( array $input ): array|WP_Error {
 		$plugins = is_array( $input['browser_plugins'] ?? null ) ? $input['browser_plugins'] : array();
@@ -1142,18 +1215,77 @@ final class WP_Codebox_Abilities {
 
 			$url = trim( (string) ( $plugin['url'] ?? '' ) );
 			$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
-			if ( '' === $url || ! preg_match( '#^https?://#i', $url ) ) {
-				return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be an http or https URL.', array( 'status' => 400, 'index' => $index ) );
+			$source = self::browser_plugin_url( $url, $index );
+			if ( is_wp_error( $source ) ) {
+				return $source;
+			}
+
+			$sha256 = strtolower( trim( (string) ( $plugin['sha256'] ?? '' ) ) );
+			if ( '' !== $sha256 && ! preg_match( '/^[a-f0-9]{64}$/', $sha256 ) ) {
+				return new WP_Error( 'wp_codebox_browser_plugin_sha256_invalid', 'Browser plugin sha256 must be a 64-character hex digest.', array( 'status' => 400, 'index' => $index ) );
 			}
 
 			$normalized[] = array(
-				'url'      => $url,
+				'url'      => $source['url'],
 				'slug'     => $slug,
 				'activate' => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
+				'provenance' => array_filter(
+					array(
+						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
+						'url'    => $source['url'],
+						'origin' => $source['origin'],
+						'host'   => $source['host'],
+						'sha256' => $sha256,
+					)
+				),
 			);
 		}
 
 		return $normalized;
+	}
+
+	/** @return array{url:string,origin:string,host:string}|WP_Error */
+	private static function browser_plugin_url( string $url, int $index ): array|WP_Error {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be absolute.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$scheme     = strtolower( (string) $parts['scheme'] );
+		$allow_http = (bool) apply_filters( 'wp_codebox_browser_plugin_allow_http', false, $url, $index );
+		if ( 'https' !== $scheme && ! ( $allow_http && 'http' === $scheme ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_insecure', 'Browser plugin URL must use https://.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$origin        = self::url_origin( $parts );
+		$default_hosts = array( 'downloads.wordpress.org' );
+		$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_plugin_allowed_hosts', $default_hosts, $url, $index ) ) );
+		$host          = strtolower( (string) $parts['host'] );
+		if ( ! in_array( $host, $allowed_hosts, true ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );
+		}
+
+		return array( 'url' => $url, 'origin' => $origin, 'host' => $host );
+	}
+
+	/** @param array<string,string|int> $parts URL parts. */
+	private static function url_origin( array $parts ): string {
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		$host   = strtolower( (string) ( $parts['host'] ?? '' ) );
+		$port   = isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '';
+		return $scheme . '://' . $host . $port;
+	}
+
+	/** @return string[] */
+	private static function normalized_origins( mixed $origins ): array {
+		$normalized = array();
+		foreach ( self::string_list( $origins ) as $origin ) {
+			$parts = wp_parse_url( $origin );
+			if ( is_array( $parts ) && ! empty( $parts['scheme'] ) && ! empty( $parts['host'] ) ) {
+				$normalized[] = self::url_origin( $parts );
+			}
+		}
+		return array_values( array_unique( $normalized ) );
 	}
 
 	private static function safe_key( string $value ): string {

@@ -11,6 +11,8 @@ const recipePath = resolve(workspace, "recipe.json")
 const invalidRecipePath = resolve(workspace, "invalid-recipe.json")
 const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
+const externalUntrustedHostRecipePath = resolve(workspace, "external-untrusted-host-recipe.json")
+const externalStrictDigestRecipePath = resolve(workspace, "external-strict-digest-recipe.json")
 const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
 const fixtureSeedPath = resolve(workspace, "fixture-seed.json")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
@@ -150,6 +152,29 @@ const externalRecipe = {
 
 writeFileSync(externalRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
 writeFileSync(externalDisabledRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
+writeFileSync(externalUntrustedHostRecipePath, `${JSON.stringify({
+  ...externalRecipe,
+  inputs: {
+    extraPlugins: [
+      {
+        source: "https://evil.example/plugin.zip",
+        slug: "evil-plugin",
+        pluginFile: "evil-plugin/evil-plugin.php",
+      },
+    ],
+  },
+}, null, 2)}\n`)
+writeFileSync(externalStrictDigestRecipePath, `${JSON.stringify({
+  ...externalRecipe,
+  inputs: {
+    extraPlugins: [
+      {
+        source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
+        pluginFile: "bbpress/bbpress.php",
+      },
+    ],
+  },
+}, null, 2)}\n`)
 
 const result = spawnSync(process.execPath, [
   cli,
@@ -238,7 +263,7 @@ const externalResult = spawnSync(process.execPath, [
   externalRecipePath,
   "--dry-run",
   "--json",
-], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "1" } })
+], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "1", WP_CODEBOX_ALLOWED_DOWNLOAD_HOSTS: "downloads.wordpress.org,example.com" } })
 
 assert.equal(externalResult.status, 0, externalResult.stderr || externalResult.stdout)
 const externalOutput = JSON.parse(externalResult.stdout)
@@ -248,6 +273,35 @@ assert.equal(externalOutput.plan.extra_plugins[0].sourceType, "wporg_plugin_zip"
 assert.equal(externalOutput.plan.extra_plugins[0].provenance.resolvedUrl, "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip")
 assert.equal(externalOutput.plan.extra_plugins[1].sourceType, "https_zip")
 assert.equal(externalOutput.plan.extra_plugins[1].provenance.kind, "https_zip")
+assert.equal(externalOutput.plan.extra_plugins[1].provenance.policy.host, "example.com")
+
+const externalUntrustedHostResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  externalUntrustedHostRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "1" } })
+
+assert.equal(externalUntrustedHostResult.status, 1, externalUntrustedHostResult.stderr || externalUntrustedHostResult.stdout)
+const externalUntrustedHostOutput = JSON.parse(externalUntrustedHostResult.stdout)
+assert.equal(externalUntrustedHostOutput.success, false)
+assert.equal(externalUntrustedHostOutput.validation.issues[0].code, "download-host-not-allowed")
+
+const externalStrictDigestResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  externalStrictDigestRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8", env: { ...process.env, WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS: "1", WP_CODEBOX_REQUIRE_SOURCE_SHA256: "1" } })
+
+assert.equal(externalStrictDigestResult.status, 1, externalStrictDigestResult.stderr || externalStrictDigestResult.stdout)
+const externalStrictDigestOutput = JSON.parse(externalStrictDigestResult.stdout)
+assert.equal(externalStrictDigestOutput.success, false)
+assert.equal(externalStrictDigestOutput.validation.issues[0].code, "missing-source-sha256")
 
 const externalDisabledResult = spawnSync(process.execPath, [
   cli,

@@ -1,12 +1,9 @@
 #!/usr/bin/env node
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { createWriteStream } from "node:fs"
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { createHash } from "node:crypto"
 import { execFile, spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { Readable } from "node:stream"
-import { pipeline } from "node:stream/promises"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, calculateArtifactManifestFileSha256, checkWorkspacePolicy, commandRegistry, createRuntime, recipeCommandDefinitions, validateRuntimePolicy, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type CommandDefinition, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
@@ -493,6 +490,15 @@ interface RecipeSourceProvenance {
   resolvedUrl?: string
   digest?: {
     sha256: string
+    expected?: string
+    verified?: boolean
+  }
+  policy?: {
+    host: string
+    maxDownloadBytes: number
+    maxExtractedBytes: number
+    maxExtractedFiles: number
+    sha256Required: boolean
   }
   localPathCategory?: "recipe-relative" | "temporary-download"
 }
@@ -591,7 +597,48 @@ const defaultPolicy: RuntimePolicy = {
 const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
 const ALLOW_NETWORK_DOWNLOADS_ENV = "WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS"
+const ALLOWED_DOWNLOAD_HOSTS_ENV = "WP_CODEBOX_ALLOWED_DOWNLOAD_HOSTS"
+const REQUIRE_SOURCE_SHA256_ENV = "WP_CODEBOX_REQUIRE_SOURCE_SHA256"
+const MAX_DOWNLOAD_BYTES_ENV = "WP_CODEBOX_MAX_DOWNLOAD_BYTES"
+const MAX_EXTRACTED_BYTES_ENV = "WP_CODEBOX_MAX_EXTRACTED_BYTES"
+const MAX_EXTRACTED_FILES_ENV = "WP_CODEBOX_MAX_EXTRACTED_FILES"
+const DEFAULT_ALLOWED_DOWNLOAD_HOSTS = ["downloads.wordpress.org"]
+const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
+const DEFAULT_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
+const DEFAULT_MAX_EXTRACTED_FILES = 2000
 const execFileAsync = promisify(execFile)
+
+function isSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/i.test(value)
+}
+
+function sourceSha256Required(): boolean {
+  return process.env[REQUIRE_SOURCE_SHA256_ENV] === "1"
+}
+
+function allowedDownloadHosts(): string[] {
+  const configured = process.env[ALLOWED_DOWNLOAD_HOSTS_ENV]
+  return (configured ? configured.split(",") : DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function envPositiveInteger(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? "")
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback
+}
+
+function maxDownloadBytes(): number {
+  return envPositiveInteger(MAX_DOWNLOAD_BYTES_ENV, DEFAULT_MAX_DOWNLOAD_BYTES)
+}
+
+function maxExtractedBytes(): number {
+  return envPositiveInteger(MAX_EXTRACTED_BYTES_ENV, DEFAULT_MAX_EXTRACTED_BYTES)
+}
+
+function maxExtractedFiles(): number {
+  return envPositiveInteger(MAX_EXTRACTED_FILES_ENV, DEFAULT_MAX_EXTRACTED_FILES)
+}
 
 function normalizedWorkspaceSeedExcludePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "")
@@ -796,6 +843,7 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
         slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
         pluginFile: { type: "string" },
         activate: { type: "boolean" },
+        sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
       },
     },
     siteSeed: {
@@ -3438,7 +3486,7 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
     const path = `$.inputs.extra_plugins[${index}]`
     let source: ReturnType<typeof recipeSource>
     try {
-      source = recipeSource(plugin.source)
+      source = recipeSource(plugin.source, plugin.sha256)
     } catch (error) {
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
@@ -3453,7 +3501,7 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
     }
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
 
-    validateRecipeSource(source, `${path}.source`, addIssue)
+    validateRecipeSource(source, `${path}.source`, addIssue, plugin.sha256)
     if (pluginSource) {
       await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
     }
@@ -3652,7 +3700,7 @@ function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: 
   }
 }
 
-function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
+function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void, expectedSha256?: string): void {
   if (source.type === "local") {
     return
   }
@@ -3663,6 +3711,18 @@ function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath
       issuePath,
       `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,
     )
+  }
+
+  if (!allowedDownloadHosts().includes(source.host)) {
+    addIssue("download-host-not-allowed", issuePath, `External recipe source host is not allowed: ${source.host}`)
+  }
+
+  if (expectedSha256 !== undefined && !isSha256(expectedSha256)) {
+    addIssue("invalid-source-sha256", issuePath, "External recipe source sha256 must be a 64-character hex digest.")
+  }
+
+  if (sourceSha256Required() && !expectedSha256) {
+    addIssue("missing-source-sha256", issuePath, `External recipe sources require sha256 when ${REQUIRE_SOURCE_SHA256_ENV}=1.`)
   }
 }
 
@@ -3725,7 +3785,7 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
       pluginFile: await resolveRecipeExtraPluginFile(plugin, recipeDirectory),
       activate: plugin.activate !== false,
       cleanupPaths: [],
-      provenance: recipeSourceProvenance(recipeSource(plugin.source), recipeDirectory),
+      provenance: recipeSourceProvenance(recipeSource(plugin.source, plugin.sha256), recipeDirectory),
     }
   }))
   const pluginActivationCode = activateExtraPluginsCode(dryRunExtraPlugins)
@@ -3900,7 +3960,7 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
-    const source = recipeSource(plugin.source)
+    const source = recipeSource(plugin.source, plugin.sha256)
     const provenance = recipeSourceProvenance(source, recipeDirectory)
     return {
       source: source.type === "local" ? resolve(recipeDirectory, plugin.source) : source.resolvedUrl,
@@ -4510,7 +4570,7 @@ async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirector
   const plugins: PreparedExtraPlugin[] = []
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
-    const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug)
+    const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug, plugin.sha256)
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     await assertPreparedPluginFileExists(resolved.source, pluginFile.slice(slug.length + 1), plugin.source)
     plugins.push({
@@ -4588,8 +4648,8 @@ async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFil
   throw new Error(`Recipe extra plugin source did not contain expected plugin file ${pluginFileRelativeToSource}: ${sourceRef}`)
 }
 
-async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string): Promise<PreparedExternalSource> {
-  const source = recipeSource(sourceRef)
+async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, slug: string, expectedSha256?: string): Promise<PreparedExternalSource> {
+  const source = recipeSource(sourceRef, expectedSha256)
   if (source.type === "local") {
     return {
       source: resolve(recipeDirectory, sourceRef),
@@ -4602,33 +4662,115 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
     throw new Error(`External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`)
   }
 
+  if (!allowedDownloadHosts().includes(source.host)) {
+    throw new Error(`External recipe source host is not allowed: ${source.host}`)
+  }
+
   const directory = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))
   const zipPath = join(directory, "source.zip")
   const extractDirectory = join(directory, "extracted")
   await mkdir(extractDirectory, { recursive: true })
-  const digest = await downloadRecipeSourceZip(source.resolvedUrl, zipPath)
+  const digest = await downloadRecipeSourceZip(source.resolvedUrl, zipPath, source.expectedSha256)
+  await assertSafeZipEntries(zipPath)
   await execFileAsync("unzip", ["-q", zipPath, "-d", extractDirectory])
+  await assertExtractedSourceBounds(extractDirectory)
 
   return {
     source: await extractedPluginSourceDirectory(extractDirectory, slug),
     cleanupPaths: [directory],
     provenance: {
       ...recipeSourceProvenance(source, recipeDirectory),
-      digest: { sha256: digest },
+      digest: { sha256: digest, ...(source.expectedSha256 ? { expected: source.expectedSha256, verified: true } : {}) },
+      policy: {
+        host: source.host,
+        maxDownloadBytes: maxDownloadBytes(),
+        maxExtractedBytes: maxExtractedBytes(),
+        maxExtractedFiles: maxExtractedFiles(),
+        sha256Required: sourceSha256Required(),
+      },
       localPathCategory: "temporary-download",
     },
   }
 }
 
-async function downloadRecipeSourceZip(url: string, targetPath: string): Promise<string> {
+async function downloadRecipeSourceZip(url: string, targetPath: string, expectedSha256?: string): Promise<string> {
   const response = await fetch(url)
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download recipe source ${url}: HTTP ${response.status}`)
   }
 
-  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(targetPath))
-  const buffer = await readFile(targetPath)
-  return createHash("sha256").update(buffer).digest("hex")
+  const finalUrl = response.url || url
+  let finalSource: ReturnType<typeof recipeSource>
+  try {
+    finalSource = recipeSource(finalUrl, expectedSha256)
+  } catch (error) {
+    throw new Error(`Recipe source redirected to an invalid URL: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (finalSource.type === "local" || !allowedDownloadHosts().includes(finalSource.host)) {
+    throw new Error(`Recipe source redirected to a host that is not allowed: ${finalSource.host || finalUrl}`)
+  }
+
+  const contentLength = Number(response.headers.get("content-length") ?? "0")
+  if (contentLength > maxDownloadBytes()) {
+    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${url}`)
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (buffer.byteLength > maxDownloadBytes()) {
+    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${url}`)
+  }
+
+  const digest = createHash("sha256").update(buffer).digest("hex")
+  if (expectedSha256 && digest !== expectedSha256.toLowerCase()) {
+    throw new Error(`Recipe source sha256 mismatch for ${url}: expected ${expectedSha256.toLowerCase()}, got ${digest}`)
+  }
+
+  await writeFile(targetPath, buffer)
+  return digest
+}
+
+async function assertSafeZipEntries(zipPath: string): Promise<void> {
+  const { stdout } = await execFileAsync("unzip", ["-Z1", zipPath])
+  const entries = stdout.split(/\r?\n/).filter(Boolean)
+  if (entries.length > maxExtractedFiles()) {
+    throw new Error(`Recipe source zip contains too many entries: ${entries.length}`)
+  }
+
+  for (const entry of entries) {
+    const normalized = entry.replace(/\\/g, "/")
+    if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
+      throw new Error(`Recipe source zip contains an unsafe path: ${entry}`)
+    }
+  }
+}
+
+async function assertExtractedSourceBounds(directory: string): Promise<void> {
+  const totals = await directoryTotals(directory)
+  if (totals.files > maxExtractedFiles()) {
+    throw new Error(`Recipe source extraction contains too many files: ${totals.files}`)
+  }
+  if (totals.bytes > maxExtractedBytes()) {
+    throw new Error(`Recipe source extraction exceeds ${maxExtractedBytes()} bytes: ${totals.bytes}`)
+  }
+}
+
+async function directoryTotals(directory: string): Promise<{ files: number; bytes: number }> {
+  let files = 0
+  let bytes = 0
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      const child = await directoryTotals(path)
+      files += child.files
+      bytes += child.bytes
+    } else if (entry.isFile()) {
+      const result = await stat(path)
+      files += 1
+      bytes += result.size
+    }
+  }
+  return { files, bytes }
 }
 
 async function extractedPluginSourceDirectory(extractDirectory: string, slug: string): Promise<string> {
@@ -4780,12 +4922,12 @@ function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtraPlugin
   return recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins ?? []
 }
 
-function recipeSource(sourceRef: string): { type: RecipeSourceType; resolvedUrl: string; wporgSlug?: string } {
+function recipeSource(sourceRef: string, expectedSha256?: string): { type: RecipeSourceType; resolvedUrl: string; host: string; expectedSha256?: string; wporgSlug?: string } {
   let url: URL
   try {
     url = new URL(sourceRef)
   } catch {
-    return { type: "local", resolvedUrl: sourceRef }
+    return { type: "local", resolvedUrl: sourceRef, host: "" }
   }
 
   if (url.protocol !== "https:") {
@@ -4799,10 +4941,10 @@ function recipeSource(sourceRef: string): { type: RecipeSourceType; resolvedUrl:
   if (url.hostname === "downloads.wordpress.org" && url.pathname.startsWith("/plugin/")) {
     const filename = basename(url.pathname)
     const match = filename.match(/^([A-Za-z0-9_-]+)\./)
-    return { type: "wporg_plugin_zip", resolvedUrl: url.toString(), ...(match ? { wporgSlug: match[1] } : {}) }
+    return { type: "wporg_plugin_zip", resolvedUrl: url.toString(), host: url.hostname, ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}), ...(match ? { wporgSlug: match[1] } : {}) }
   }
 
-  return { type: "https_zip", resolvedUrl: url.toString() }
+  return { type: "https_zip", resolvedUrl: url.toString(), host: url.hostname, ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
 }
 
 function recipeSourceProvenance(source: ReturnType<typeof recipeSource>, recipeDirectory: string): RecipeSourceProvenance {
@@ -4818,6 +4960,14 @@ function recipeSourceProvenance(source: ReturnType<typeof recipeSource>, recipeD
     kind: source.type,
     original: source.resolvedUrl,
     resolvedUrl: source.resolvedUrl,
+    ...(source.expectedSha256 ? { digest: { sha256: source.expectedSha256, expected: source.expectedSha256, verified: false } } : {}),
+    policy: {
+      host: source.host,
+      maxDownloadBytes: maxDownloadBytes(),
+      maxExtractedBytes: maxExtractedBytes(),
+      maxExtractedFiles: maxExtractedFiles(),
+      sha256Required: sourceSha256Required(),
+    },
   }
 }
 
@@ -4826,7 +4976,7 @@ function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): string {
     return plugin.slug
   }
 
-  const source = recipeSource(plugin.source)
+  const source = recipeSource(plugin.source, plugin.sha256)
   if (source.wporgSlug) {
     return source.wporgSlug
   }
@@ -4849,7 +4999,7 @@ async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin, 
     return plugin.pluginFile
   }
 
-  const source = recipeSource(plugin.source)
+  const source = recipeSource(plugin.source, plugin.sha256)
   if (source.type === "local") {
     const pluginSource = resolve(recipeDirectory, plugin.source)
     for (const candidate of [`${slug}/${slug}.php`, `${slug}/plugin.php`]) {

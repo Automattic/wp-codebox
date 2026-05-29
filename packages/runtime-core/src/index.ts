@@ -411,6 +411,7 @@ export interface WorkspaceRecipeExtraPlugin {
   slug?: string
   pluginFile?: string
   activate?: boolean
+  sha256?: string
 }
 
 export type WorkspaceRecipeSiteSeedType = "fixture" | "parent_site"
