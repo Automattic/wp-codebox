@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { assertRuntimeCommandAllowed, calculateArtifactManifestFileSha256 } from "@chubes4/wp-codebox-core"
+import { assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256 } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -395,6 +395,7 @@ class PlaygroundRuntime implements Runtime {
     const patchPath = join(filesDirectory, "patch.diff")
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
+    const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
     const redactor = new ArtifactRedactor(this.spec.secretEnv)
     await this.redactBrowserArtifacts(redactor)
     await this.redactPluginCheckArtifacts(redactor)
@@ -454,6 +455,7 @@ class PlaygroundRuntime implements Runtime {
       patch: relative(this.artifactRoot, patchPath),
       testResults: relative(this.artifactRoot, testResultsPath),
       review: relative(this.artifactRoot, reviewPath),
+      runtimeReferenceManifest: relative(this.artifactRoot, runtimeReferenceManifestPath),
       mountDiffs: relative(this.artifactRoot, diffsPath),
       ...(browser ? { browser: "files/browser/summary.json" } : {}),
       ...(this.pluginChecks.length > 0 ? { pluginChecks: this.pluginChecks.map((check) => check.files.normalized) } : {}),
@@ -489,6 +491,7 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(patchPath, "patch", "text/x-diff"),
       fileEntry(testResultsPath, "test-results", "application/json"),
       fileEntry(reviewPath, "review", "application/json"),
+      fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
       ...this.browserManifestFiles(),
       ...this.pluginCheckManifestFiles(),
       ...this.themeCheckManifestFiles(),
@@ -519,6 +522,7 @@ class PlaygroundRuntime implements Runtime {
       review.riskFlags.push("secrets-redacted")
     }
     await writeRedactedArtifact(redactor, reviewPath, this.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
+    await writeFile(runtimeReferenceManifestPath, "{}\n")
     metadata.redaction = redactor.summary()
     await writeRedactedArtifact(redactor, metadataPath, this.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
 
@@ -550,6 +554,33 @@ class PlaygroundRuntime implements Runtime {
         value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
       },
     })))
+    const runtimeReferenceManifest = buildRuntimeReferenceManifest({
+      createdAt,
+      runtime,
+      artifactBundle: {
+        kind: "artifact-bundle",
+        id: bundleId,
+        digest: { algorithm: "sha256", value: contentDigest },
+      },
+      files: manifest.files
+        .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
+        .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
+    })
+    await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
+    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-manifest.json" ? ({
+      ...file,
+      sha256: {
+        algorithm: "sha256" as const,
+        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
+      },
+    }) : file))
+    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
+      ...file,
+      sha256: {
+        algorithm: "sha256" as const,
+        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
+      },
+    })))
     await writeRedactedArtifact(redactor, manifestPath, this.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
 
     return {
@@ -571,6 +602,7 @@ class PlaygroundRuntime implements Runtime {
       patchPath,
       testResultsPath,
       reviewPath,
+      runtimeReferenceManifestPath,
       ...(preview ? { preview } : {}),
       contentDigest,
       createdAt,

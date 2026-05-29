@@ -9,6 +9,8 @@ import {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
   RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
+  RUNTIME_REFERENCE_MANIFEST_SCHEMA,
+  runtimeReferenceManifestDigest,
   createRuntimeEpisode,
   validateRuntimeEpisodeTrace,
   verifyArtifactBundle,
@@ -94,10 +96,26 @@ try {
     const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode-trace.json" && file.kind === "runtime-episode-trace"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode.jsonl" && file.kind === "runtime-episode-events"))
+    assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
 
     const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
     assert.equal(review.evidence.runtimeEpisodeTrace, "files/runtime-episode-trace.json")
+    assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
     assert.ok(review.progress.some((event: { component?: string; label?: string }) => event.component === "runtime-episode" && event.label === "Runtime episode trace persisted"))
+
+    const referenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath ?? "", "utf8"))
+    assert.equal(referenceManifest.schema, RUNTIME_REFERENCE_MANIFEST_SCHEMA)
+    assert.equal(referenceManifest.artifactBundle.id, artifacts.id)
+    assert.equal(referenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
+    assert.equal(referenceManifest.trace.path, "files/runtime-episode-trace.json")
+    assert.equal(referenceManifest.events.path, "files/runtime-episode.jsonl")
+    assert.equal(referenceManifest.snapshots.length, 1)
+    assert.equal(referenceManifest.snapshots[0].id, snapshot.id)
+    assert.equal(referenceManifest.snapshots[0].semantics, "metadata-only")
+    assert.equal(referenceManifest.snapshots[0].replay.status, "metadata-only")
+    assert.ok(referenceManifest.snapshots[0].replay.limitations.some((limitation: string) => limitation.includes("not a WordPress database or filesystem checkpoint")))
+    assert.equal(referenceManifest.digest.value, runtimeReferenceManifestDigest(referenceManifest).value)
+    assert.equal(referenceManifest.id, `runtime-reference-manifest-sha256-${referenceManifest.digest.value}`)
 
     const trace = await episode.trace()
     const persistedTrace = JSON.parse(await readFile(artifacts.runtimeEpisodeTracePath, "utf8"))

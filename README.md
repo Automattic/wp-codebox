@@ -319,6 +319,15 @@ those files with `runtime-episode-trace` and `runtime-episode-events` kinds,
 checks the advertised trace file exists and validates against
 `wp-codebox/runtime-episode-trace/v1`.
 
+Artifact bundles also include `files/runtime-reference-manifest.json` using
+schema `wp-codebox/runtime-reference-manifest/v1`. This manifest is a stable,
+hashable index of runtime-related refs: the artifact-bundle id/digest,
+bundle-relative artifact file refs with SHA-256 values, optional trace/events
+refs, and snapshot refs. Its id is `runtime-reference-manifest-sha256-<digest>`,
+where the digest is computed from the declared refs rather than presentation
+fields such as `createdAt`. `verifyArtifactBundle()` validates the manifest
+shape, referenced file hashes, artifact-bundle digest, and id/digest pairing.
+
 Products such as eval harnesses can project this generic episode trace into their
 own action, observation, reward, and report schemas outside WP Codebox.
 
@@ -359,6 +368,12 @@ logs, observations, and artifact bundle refs. Future backends may emit stronger
 snapshot semantics such as runtime-state artifacts, but replay consumers should
 branch on the snapshot `semantics` field instead of assuming a portable restore
 point.
+
+The runtime reference manifest repeats each snapshot's `semantics` and adds an
+explicit `replay.status`. For current Playground snapshots that status is
+`metadata-only` with limitations explaining that replay must come from trace
+actions and artifact files. This keeps full WordPress replay as an incremental
+backend capability while giving consumers a concrete contract today.
 
 ## CLI Commands
 
@@ -634,6 +649,7 @@ Current bundles include:
 - `files/patch.diff`: canonical combined text patch for changed readwrite mounts that declare a baseline.
 - `files/test-results.json`: normalized test-results artifact with schema, summary counts, suites, and raw log references. When WP Codebox has not run test-aware commands, the artifact is present with `status: "unknown"`, zero counts, an empty `suites` array, and pointers to raw command logs instead of inferred pass/fail data.
 - `files/review.json`: frontend-oriented review payload with summary, progress labels, changed file labels, evidence links, and approval actions.
+- `files/runtime-reference-manifest.json`: stable runtime ref index with artifact-bundle, file, trace/events, and snapshot refs plus SHA-256 digests.
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.

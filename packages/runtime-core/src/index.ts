@@ -10,6 +10,7 @@ export const RUNTIME_EPISODE_TRACE_SCHEMA = "wp-codebox/runtime-episode-trace/v1
 export const RUNTIME_EPISODE_ACTION_SCHEMA = "wp-codebox/runtime-episode-action/v1" as const
 export const RUNTIME_EPISODE_OBSERVATION_SCHEMA = "wp-codebox/runtime-episode-observation/v1" as const
 export const RUNTIME_EPISODE_SNAPSHOT_SCHEMA = "wp-codebox/runtime-episode-snapshot/v1" as const
+export const RUNTIME_REFERENCE_MANIFEST_SCHEMA = "wp-codebox/runtime-reference-manifest/v1" as const
 
 export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
   $id: RUNTIME_EPISODE_TRACE_SCHEMA,
@@ -557,6 +558,56 @@ export interface ArtifactContentDigest {
   value: string
 }
 
+export type RuntimeSnapshotReplayStatus = "metadata-only" | "runtime-state-artifact" | "not-replayable" | (string & {})
+
+export interface RuntimeReferenceManifestFileRef {
+  path: string
+  kind: string
+  contentType: string
+  sha256: ArtifactFileDigest
+}
+
+export interface RuntimeReferenceManifestArtifactBundleRef {
+  kind: "artifact-bundle"
+  id: string
+  digest: ArtifactFileDigest
+}
+
+export interface RuntimeReferenceManifestSnapshotRef {
+  id: string
+  semantics: string
+  digest: RuntimeEpisodeContentDigest
+  replay: {
+    status: RuntimeSnapshotReplayStatus
+    limitations: string[]
+  }
+  artifactRefs: RuntimeEpisodeTraceRef[]
+}
+
+export interface RuntimeReferenceManifest {
+  schema: typeof RUNTIME_REFERENCE_MANIFEST_SCHEMA
+  version: 1
+  id: string
+  createdAt: string
+  digest: RuntimeEpisodeContentDigest
+  runtime: RuntimeInfo
+  artifactBundle: RuntimeReferenceManifestArtifactBundleRef
+  files: RuntimeReferenceManifestFileRef[]
+  trace?: RuntimeReferenceManifestFileRef
+  events?: RuntimeReferenceManifestFileRef
+  snapshots: RuntimeReferenceManifestSnapshotRef[]
+}
+
+export interface BuildRuntimeReferenceManifestInput {
+  createdAt: string
+  runtime: RuntimeInfo
+  artifactBundle: RuntimeReferenceManifestArtifactBundleRef
+  files: RuntimeReferenceManifestFileRef[]
+  trace?: RuntimeReferenceManifestFileRef
+  events?: RuntimeReferenceManifestFileRef
+  snapshots?: Snapshot[]
+}
+
 export interface ArtifactProvenance {
   task?: Record<string, unknown>
   workspace?: SandboxWorkspaceContract
@@ -631,6 +682,7 @@ export interface ArtifactReview {
     changedFiles: string
     testResults?: string
     runtimeEpisodeTrace?: string
+    runtimeReferenceManifest?: string
   }
   browser?: ArtifactReviewBrowserSummary
   redaction?: ArtifactRedactionSummary
@@ -730,6 +782,7 @@ export interface ArtifactBundle {
   runtimeEpisodeEventsPath?: string
   artifactVerificationPath?: string
   workspacePolicyPath?: string
+  runtimeReferenceManifestPath?: string
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string
@@ -839,6 +892,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyMetadataReferences(bundleDirectory, manifestFiles, violations)
   await verifyReviewEvidence(bundleDirectory, manifest, manifestFiles, violations)
   await verifyRuntimeEpisodeTraceArtifacts(bundleDirectory, manifest, violations)
+  await verifyRuntimeReferenceManifestArtifacts(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
 }
@@ -936,6 +990,53 @@ function isArtifactManifestFileShape(value: unknown): value is ArtifactManifestF
     && typeof value.path === "string"
     && typeof value.kind === "string"
     && typeof value.contentType === "string"
+}
+
+function isRuntimeReferenceManifestShape(value: unknown): value is RuntimeReferenceManifest {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return value.schema === RUNTIME_REFERENCE_MANIFEST_SCHEMA
+    && value.version === 1
+    && typeof value.id === "string"
+    && typeof value.createdAt === "string"
+    && isArtifactFileDigestShape(value.digest)
+    && isRecord(value.runtime)
+    && isRuntimeReferenceManifestArtifactBundleRefShape(value.artifactBundle)
+    && Array.isArray(value.files)
+    && value.files.every(isRuntimeReferenceManifestFileRefShape)
+    && (value.trace === undefined || isRuntimeReferenceManifestFileRefShape(value.trace))
+    && (value.events === undefined || isRuntimeReferenceManifestFileRefShape(value.events))
+    && Array.isArray(value.snapshots)
+    && value.snapshots.every(isRuntimeReferenceManifestSnapshotRefShape)
+}
+
+function isRuntimeReferenceManifestArtifactBundleRefShape(value: unknown): value is RuntimeReferenceManifestArtifactBundleRef {
+  return isRecord(value)
+    && value.kind === "artifact-bundle"
+    && typeof value.id === "string"
+    && isArtifactFileDigestShape(value.digest)
+}
+
+function isRuntimeReferenceManifestFileRefShape(value: unknown): value is RuntimeReferenceManifestFileRef {
+  return isRecord(value)
+    && typeof value.path === "string"
+    && typeof value.kind === "string"
+    && typeof value.contentType === "string"
+    && isArtifactFileDigestShape(value.sha256)
+}
+
+function isRuntimeReferenceManifestSnapshotRefShape(value: unknown): value is RuntimeReferenceManifestSnapshotRef {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.semantics === "string"
+    && validDigest(value.digest)
+    && isRecord(value.replay)
+    && typeof value.replay.status === "string"
+    && Array.isArray(value.replay.limitations)
+    && value.replay.limitations.every((limitation) => typeof limitation === "string")
+    && Array.isArray(value.artifactRefs)
 }
 
 function isArtifactFileDigestShape(value: unknown): value is ArtifactFileDigest {
@@ -1061,6 +1162,10 @@ async function verifyReviewEvidence(directory: string, manifest: ArtifactManifes
   if (typeof evidence.runtimeEpisodeTrace === "string") {
     validateArtifactReference(evidence.runtimeEpisodeTrace, "files/review.json:evidence.runtimeEpisodeTrace", manifestFiles, violations)
   }
+
+  if (typeof evidence.runtimeReferenceManifest === "string") {
+    validateArtifactReference(evidence.runtimeReferenceManifest, "files/review.json:evidence.runtimeReferenceManifest", manifestFiles, violations)
+  }
 }
 
 async function verifyRuntimeEpisodeTraceArtifacts(directory: string, manifest: ArtifactManifest, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
@@ -1088,6 +1193,77 @@ async function verifyRuntimeEpisodeTraceArtifacts(directory: string, manifest: A
         message: `Runtime episode trace is not valid JSON: ${errorMessage(error)}`,
       })
     }
+  }
+}
+
+async function verifyRuntimeReferenceManifestArtifacts(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-reference-manifest") {
+      continue
+    }
+
+    let referenceManifest: unknown
+    try {
+      referenceManifest = JSON.parse(await readFile(join(directory, file.path), "utf8"))
+    } catch (error) {
+      violations.push({
+        code: "malformed-reference",
+        path: file.path,
+        file: file.path,
+        message: `Runtime reference manifest is not valid JSON: ${errorMessage(error)}`,
+      })
+      continue
+    }
+
+    if (!isRuntimeReferenceManifestShape(referenceManifest)) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: "Runtime reference manifest does not match wp-codebox/runtime-reference-manifest/v1." })
+      continue
+    }
+
+    const expectedDigest = runtimeReferenceManifestDigest(referenceManifest)
+    if (referenceManifest.digest.value !== expectedDigest.value) {
+      violations.push({ code: "digest-mismatch", path: `${file.path}:digest`, file: file.path, message: `Runtime reference manifest digest does not match declared refs: expected ${expectedDigest.value}, got ${referenceManifest.digest.value}` })
+    }
+
+    const expectedId = `runtime-reference-manifest-sha256-${referenceManifest.digest.value}`
+    if (referenceManifest.id !== expectedId) {
+      violations.push({ code: "bundle-id-mismatch", path: `${file.path}:id`, file: file.path, message: `Runtime reference manifest id must match its digest: expected ${expectedId}, got ${referenceManifest.id}` })
+    }
+
+    if (referenceManifest.artifactBundle.id !== manifest.id || referenceManifest.artifactBundle.digest.value !== manifest.contentDigest.value) {
+      violations.push({ code: "review-evidence-mismatch", path: `${file.path}:artifactBundle`, file: file.path, message: "Runtime reference manifest artifactBundle ref must match manifest id and contentDigest." })
+    }
+
+    for (const [index, referencedFile] of referenceManifest.files.entries()) {
+      validateArtifactReference(referencedFile.path, `${file.path}:files[${index}].path`, manifestFiles, violations)
+      await verifyReferencedFileDigest(directory, referencedFile, `${file.path}:files[${index}].sha256`, violations)
+    }
+
+    if (referenceManifest.trace) {
+      validateArtifactReference(referenceManifest.trace.path, `${file.path}:trace.path`, manifestFiles, violations)
+      await verifyReferencedFileDigest(directory, referenceManifest.trace, `${file.path}:trace.sha256`, violations)
+    }
+
+    if (referenceManifest.events) {
+      validateArtifactReference(referenceManifest.events.path, `${file.path}:events.path`, manifestFiles, violations)
+      await verifyReferencedFileDigest(directory, referenceManifest.events, `${file.path}:events.sha256`, violations)
+    }
+  }
+}
+
+async function verifyReferencedFileDigest(directory: string, file: RuntimeReferenceManifestFileRef, path: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  if (!isArtifactFileDigestShape(file.sha256)) {
+    violations.push({ code: "missing-file-hash", path, file: file.path, message: `Runtime reference manifest file ref must include a lowercase SHA-256 digest: ${file.path}` })
+    return
+  }
+
+  try {
+    const value = createHash("sha256").update(await readFile(join(directory, file.path))).digest("hex")
+    if (value !== file.sha256.value) {
+      violations.push({ code: "file-hash-mismatch", path, file: file.path, message: `Runtime reference manifest file ref hash does not match ${file.path}: expected ${value}, got ${file.sha256.value}` })
+    }
+  } catch (error) {
+    violations.push({ code: "file-hash-mismatch", path, file: file.path, message: `Unable to hash runtime reference file ${file.path}: ${errorMessage(error)}` })
   }
 }
 
@@ -1361,6 +1537,94 @@ export function runtimeEpisodeDigest(value: unknown): RuntimeEpisodeContentDiges
   return {
     algorithm: "sha256",
     value: createHash("sha256").update("wp-codebox/runtime-episode-trace/v1\n").update(stableJson(value)).digest("hex"),
+  }
+}
+
+export function buildRuntimeReferenceManifest(input: BuildRuntimeReferenceManifestInput): RuntimeReferenceManifest {
+  const manifest = {
+    schema: RUNTIME_REFERENCE_MANIFEST_SCHEMA,
+    version: 1 as const,
+    id: "runtime-reference-manifest-pending",
+    createdAt: input.createdAt,
+    digest: { algorithm: "sha256" as const, value: "0".repeat(64) },
+    runtime: input.runtime,
+    artifactBundle: input.artifactBundle,
+    files: input.files.map(runtimeReferenceManifestFileRef).sort((left, right) => left.path.localeCompare(right.path)),
+    ...(input.trace ? { trace: runtimeReferenceManifestFileRef(input.trace) } : {}),
+    ...(input.events ? { events: runtimeReferenceManifestFileRef(input.events) } : {}),
+    snapshots: (input.snapshots ?? []).map(runtimeReferenceManifestSnapshotRef),
+  }
+  const digest = runtimeReferenceManifestDigest(manifest)
+
+  return {
+    ...manifest,
+    id: `runtime-reference-manifest-sha256-${digest.value}`,
+    digest,
+  }
+}
+
+export function runtimeReferenceManifestDigest(manifest: RuntimeReferenceManifest): RuntimeEpisodeContentDigest {
+  return {
+    algorithm: "sha256",
+    value: createHash("sha256")
+      .update("wp-codebox/runtime-reference-manifest/v1\n")
+      .update(stableJson(runtimeReferenceManifestDigestPayload(manifest)))
+      .digest("hex"),
+  }
+}
+
+function runtimeReferenceManifestDigestPayload(manifest: RuntimeReferenceManifest): Record<string, unknown> {
+  return {
+    schema: manifest.schema,
+    version: manifest.version,
+    runtime: manifest.runtime,
+    artifactBundle: manifest.artifactBundle,
+    files: manifest.files,
+    ...(manifest.trace ? { trace: manifest.trace } : {}),
+    ...(manifest.events ? { events: manifest.events } : {}),
+    snapshots: manifest.snapshots,
+  }
+}
+
+function runtimeReferenceManifestFileRef(file: RuntimeReferenceManifestFileRef): RuntimeReferenceManifestFileRef {
+  return {
+    path: file.path,
+    kind: file.kind,
+    contentType: file.contentType,
+    sha256: file.sha256,
+  }
+}
+
+function runtimeReferenceManifestSnapshotRef(snapshot: Snapshot): RuntimeReferenceManifestSnapshotRef {
+  const semantics = snapshot.semantics ?? "metadata-only"
+
+  return {
+    id: snapshot.id,
+    semantics,
+    digest: snapshot.digest ?? runtimeEpisodeDigest(runtimeEpisodeSnapshotDigestPayload({ ...snapshot, semantics })),
+    replay: runtimeSnapshotReplaySemantics(semantics),
+    artifactRefs: [...(snapshot.artifactRefs ?? [])],
+  }
+}
+
+function runtimeSnapshotReplaySemantics(semantics: string): RuntimeReferenceManifestSnapshotRef["replay"] {
+  if (semantics === "runtime-state-artifact") {
+    return { status: "runtime-state-artifact", limitations: [] }
+  }
+
+  if (semantics === "metadata-only") {
+    return {
+      status: "metadata-only",
+      limitations: [
+        "Snapshot records runtime metadata only; it is not a WordPress database or filesystem checkpoint.",
+        "Replay consumers must use trace actions and artifact bundle files to reconstruct supported state.",
+      ],
+    }
+  }
+
+  return {
+    status: "not-replayable",
+    limitations: [`Snapshot semantics are not recognized by this WP Codebox version: ${semantics}`],
   }
 }
 
@@ -1914,7 +2178,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
   }
 
   private async persistRuntimeEpisodeTraceArtifacts(): Promise<void> {
-    if (!this.artifacts?.runtimeEpisodeTracePath || !this.artifacts.runtimeEpisodeEventsPath) {
+    if (!this.artifacts?.runtimeEpisodeTracePath || !this.artifacts.runtimeEpisodeEventsPath || !this.artifacts.runtimeReferenceManifestPath) {
       return
     }
 
@@ -1926,6 +2190,36 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     await this.updateArtifactMetadataForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactReviewForRuntimeEpisodeTrace(traceRelativePath)
     await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
+    await this.updateRuntimeReferenceManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
+  }
+
+  private async updateRuntimeReferenceManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
+    if (!this.artifacts?.runtimeReferenceManifestPath) {
+      return
+    }
+
+    const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
+    const fileRefs = manifest.files
+      .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
+      .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
+    const traceRef = fileRefs.find((file) => file.path === traceRelativePath)
+    const eventsRef = fileRefs.find((file) => file.path === eventsRelativePath)
+    const referenceManifest = buildRuntimeReferenceManifest({
+      createdAt: this.artifacts.createdAt,
+      runtime: manifest.runtime,
+      artifactBundle: {
+        kind: "artifact-bundle",
+        id: manifest.id,
+        digest: { algorithm: "sha256", value: manifest.contentDigest.value },
+      },
+      files: fileRefs,
+      ...(traceRef ? { trace: traceRef } : {}),
+      ...(eventsRef ? { events: eventsRef } : {}),
+      snapshots: this.snapshots,
+    })
+    await writeFile(this.artifacts.runtimeReferenceManifestPath, `${JSON.stringify(referenceManifest, null, 2)}\n`)
+    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
   private async updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {

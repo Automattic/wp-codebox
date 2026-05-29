@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import { createRuntime, verifyArtifactBundle } from "@chubes4/wp-codebox-core"
+import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, createRuntime, runtimeReferenceManifestDigest, verifyArtifactBundle } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 
 const execFileAsync = promisify(execFile)
@@ -61,6 +61,7 @@ try {
   const patch = await readFile(artifacts.patchPath, "utf8")
   const testResults = JSON.parse(await readFile(artifacts.testResultsPath, "utf8"))
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
+  const runtimeReferenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath, "utf8"))
   const contentDigest = createHash("sha256")
     .update("wp-codebox/artifact-content/v1\n")
     .update("files/changed-files.json\n")
@@ -83,6 +84,7 @@ try {
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/patch.diff" && file.kind === "patch"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/review.json" && file.kind === "review"))
+  assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-evidence/run-attestation.json" && file.kind === "run-attestation"))
   const runtimeEvidence = metadata.artifacts.runtimeEvidence
   assert.match(runtimeEvidence["run-attestation"].sha256, /^[a-f0-9]{64}$/)
@@ -91,6 +93,7 @@ try {
     patch: "files/patch.diff",
     testResults: "files/test-results.json",
     review: "files/review.json",
+    runtimeReferenceManifest: "files/runtime-reference-manifest.json",
     mountDiffs: "files/diffs.json",
     runtimeEvidence,
   })
@@ -137,6 +140,14 @@ try {
   assert.equal(review.evidence.artifactContentDigest, contentDigest)
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")
   assert.equal(review.evidence.testResults, "files/test-results.json")
+  assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
+  assert.equal(runtimeReferenceManifest.schema, RUNTIME_REFERENCE_MANIFEST_SCHEMA)
+  assert.equal(runtimeReferenceManifest.artifactBundle.id, artifacts.id)
+  assert.equal(runtimeReferenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
+  assert.equal(runtimeReferenceManifest.digest.value, runtimeReferenceManifestDigest(runtimeReferenceManifest).value)
+  assert.equal(runtimeReferenceManifest.id, `runtime-reference-manifest-sha256-${runtimeReferenceManifest.digest.value}`)
+  assert.equal(runtimeReferenceManifest.snapshots.length, 0)
+  assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/changed-files.json"))
   assert.ok(review.changedFiles.some((file: { path: string; status: string }) =>
     file.path === "/wordpress/wp-content/plugins/seeded-helper/generated.txt" && file.status === "added",
   ))
