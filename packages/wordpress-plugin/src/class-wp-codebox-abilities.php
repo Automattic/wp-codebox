@@ -886,8 +886,8 @@ final class WP_Codebox_Abilities {
 
 		return array(
 			'preferredVersions' => array(
-				'wp'  => (string) ( $playground['wp'] ?? '6.9' ),
-				'php' => (string) ( $playground['php'] ?? '8.2' ),
+				'wp'  => (string) ( $playground['wp'] ?? 'latest' ),
+				'php' => (string) ( $playground['php'] ?? 'latest' ),
 			),
 			'features'          => array(
 				'networking' => true,
