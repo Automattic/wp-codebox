@@ -15,62 +15,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const TASK_INPUT_SCHEMA = 'wp-codebox/task-input/v1';
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const REMEDIATION_OUTCOME_SCHEMA = 'wp-codebox/agent-sandbox-remediation-outcome/v1';
-	private const DEFAULT_SANDBOX_TOOLS = array(
-		'datamachine/workspace-read',
-		'datamachine/workspace-ls',
-		'datamachine/workspace-grep',
-		'datamachine/workspace-write',
-		'datamachine/workspace-edit',
-		'datamachine/workspace-apply-patch',
-		'datamachine/workspace-git-status',
-		'datamachine/workspace-git-log',
-		'datamachine/workspace-git-diff',
-		'datamachine/list-github-issues',
-		'datamachine/get-github-issue',
-		'datamachine/list-github-pulls',
-		'datamachine/get-github-pull',
-		'datamachine/list-github-pull-files',
-		'datamachine/get-github-check-runs',
-		'datamachine/get-github-commit-statuses',
-		'datamachine/list-github-tree',
-		'datamachine/get-github-file',
-		'datamachine/list-github-repos',
-	);
-	private const PARENT_ONLY_SANDBOX_TOOLS = array(
-		'datamachine/workspace-clone',
-		'datamachine/workspace-adopt',
-		'datamachine/workspace-remove',
-		'datamachine/workspace-delete',
-		'datamachine/workspace-git-pull',
-		'datamachine/workspace-git-add',
-		'datamachine/workspace-git-commit',
-		'datamachine/workspace-git-push',
-		'datamachine/workspace-git-rebase',
-		'datamachine/workspace-git-reset',
-		'datamachine/workspace-pr-rebase',
-		'datamachine/workspace-worktree-add',
-		'datamachine/workspace-worktree-finalize',
-		'datamachine/workspace-worktree-remove',
-		'datamachine/workspace-worktree-prune',
-		'datamachine/workspace-worktree-cleanup',
-		'datamachine/workspace-cleanup-apply',
-		'datamachine/create-github-issue',
-		'datamachine/update-github-issue',
-		'datamachine/create-github-pull-request',
-		'datamachine/comment-github-issue',
-		'datamachine/comment-github-pull-request',
-		'datamachine/upsert-github-pull-review-comment',
-		'datamachine/merge-github-pull-request',
-		'datamachine/cleanup-github-pull-request',
-		'datamachine/create-or-update-github-file',
-		'datamachine/create-code-task',
-		'datamachine/gitsync-bind',
-		'datamachine/gitsync-unbind',
-		'datamachine/gitsync-pull',
-		'datamachine/gitsync-submit',
-		'datamachine/gitsync-push',
-		'datamachine/gitsync-policy-update',
-	);
+	private const SANDBOX_TOOL_POLICY_FILE = __DIR__ . '/generated-sandbox-datamachine-tool-policy.php';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -920,7 +865,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				continue;
 			}
 
-			$reason = in_array( $tool, self::PARENT_ONLY_SANDBOX_TOOLS, true ) ? 'parent-only' : 'not-allowlisted';
+			$reason = in_array( $tool, self::parent_only_sandbox_tools(), true ) ? 'parent-only' : 'not-allowlisted';
 			if ( 'parent-only' === $reason || ! in_array( $tool, $allowed, true ) ) {
 				$denied[] = array(
 					'tool'   => $tool,
@@ -1244,7 +1189,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @return string[] */
 	private function sandbox_tool_allowlist(): array {
-		$tools = $this->config_option( 'wp_codebox_allowed_sandbox_tools', self::DEFAULT_SANDBOX_TOOLS );
+		$tools = $this->config_option( 'wp_codebox_allowed_sandbox_tools', self::default_sandbox_tools() );
 		if ( function_exists( 'apply_filters' ) ) {
 			$tools = apply_filters( 'wp_codebox_allowed_sandbox_tools', $tools );
 		}
@@ -1260,10 +1205,38 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 						static fn( $tool ): string => trim( (string) $tool ),
 						$tools
 					),
-					static fn( string $tool ): bool => str_starts_with( $tool, 'datamachine/' ) && ! in_array( $tool, self::PARENT_ONLY_SANDBOX_TOOLS, true )
+					static fn( string $tool ): bool => str_starts_with( $tool, 'datamachine/' ) && ! in_array( $tool, self::parent_only_sandbox_tools(), true )
 				)
 			)
 		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function sandbox_tool_policy(): array {
+		static $policy = null;
+
+		if ( null !== $policy ) {
+			return $policy;
+		}
+
+		$loaded = is_readable( self::SANDBOX_TOOL_POLICY_FILE ) ? require self::SANDBOX_TOOL_POLICY_FILE : array();
+		$policy = is_array( $loaded ) ? $loaded : array();
+
+		return $policy;
+	}
+
+	/** @return string[] */
+	private static function default_sandbox_tools(): array {
+		$policy = self::sandbox_tool_policy();
+
+		return is_array( $policy['safe_tools'] ?? null ) ? array_values( $policy['safe_tools'] ) : array();
+	}
+
+	/** @return string[] */
+	private static function parent_only_sandbox_tools(): array {
+		$policy = self::sandbox_tool_policy();
+
+		return is_array( $policy['parent_only_tools'] ?? null ) ? array_values( $policy['parent_only_tools'] ) : array();
 	}
 
 	private function default_artifacts_path(): string {
