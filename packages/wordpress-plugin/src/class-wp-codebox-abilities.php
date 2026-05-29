@@ -829,6 +829,9 @@ final class WP_Codebox_Abilities {
 			return $artifacts;
 		}
 		$ready_to_code = self::browser_ready_to_code_signal( $input );
+		if ( false === ( $ready_to_code['emitted'] ?? false ) ) {
+			return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $artifacts, $playground, $blueprint );
+		}
 
 		$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground );
 		if ( is_wp_error( $recipe ) ) {
@@ -865,6 +868,64 @@ final class WP_Codebox_Abilities {
 				),
 			),
 			'recipe'     => $recipe,
+			'signals'    => array(
+				'ready_to_code' => $ready_to_code,
+			),
+			'artifacts'  => array(
+				'schema'             => 'wp-codebox/browser-artifacts/v1',
+				'files'              => $artifacts,
+				'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
+				'expected_artifacts' => $task_input['expected_artifacts'],
+			),
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $input Ability input.
+	 * @param array<string,mixed> $task_input Normalized task input.
+	 * @param array<string,mixed> $ready_to_code Readiness signal.
+	 * @param array<int,array<string,string>> $browser_plugins Browser plugin specs.
+	 * @param array<int,array<string,string>> $artifacts Browser artifact specs.
+	 * @param array<string,mixed> $playground Playground input.
+	 * @param array<string,mixed> $blueprint Playground blueprint.
+	 * @return array<string,mixed>
+	 */
+	private static function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $artifacts, array $playground, array $blueprint ): array {
+		return array(
+			'success'    => false,
+			'schema'     => 'wp-codebox/browser-playground-session/v1',
+			'execution'  => 'browser-playground',
+			'status'     => 'blocked',
+			'error'      => array(
+				'code'    => 'wp_codebox_browser_prerequisites_missing',
+				'message' => 'Browser Playground sandbox is missing required coding prerequisites.',
+				'missing' => $ready_to_code['missing'] ?? array(),
+			),
+			'session'    => array(
+				'schema'       => 'wp-codebox/browser-playground-session/v1',
+				'id'           => $session_id,
+				'status'       => 'blocked',
+				'persistence'  => 'external-orchestrator',
+				'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			),
+			'task_input' => $task_input,
+			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
+			'plugins'    => $browser_plugins,
+			'playground' => array(
+				'client_module_url'  => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
+				'remote_url'         => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
+				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
+				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
+				'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
+				'blueprint'          => self::browser_playground_blueprint( $blueprint, $playground ),
+				'capabilities'       => array(
+					'compile_blueprint' => true,
+					'run_blueprint'     => true,
+					'write_file'        => true,
+					'run_php'           => true,
+				),
+			),
 			'signals'    => array(
 				'ready_to_code' => $ready_to_code,
 			),
@@ -982,7 +1043,7 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_task_missing', 'goal or task is required.', array( 'status' => 400 ) );
 		}
 
-		return array(
+		$task_input = array(
 			'schema'             => 'wp-codebox/task-input/v1',
 			'goal'               => $goal,
 			'target'             => is_array( $input['target'] ?? null ) ? $input['target'] : array(),
@@ -991,6 +1052,13 @@ final class WP_Codebox_Abilities {
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
 		);
+
+		$tool_error = ( new WP_Codebox_Agent_Sandbox_Runner() )->validate_allowed_tools( $task_input['allowed_tools'] );
+		if ( is_wp_error( $tool_error ) ) {
+			return $tool_error;
+		}
+
+		return $task_input;
 	}
 
 	/** @return string[] */
