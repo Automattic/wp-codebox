@@ -46,7 +46,7 @@ import type {
   RuntimeInfo,
   Snapshot,
 } from "@chubes4/wp-codebox-core"
-import type { ConsoleMessage, Page } from "playwright"
+import type { ConsoleMessage, Page, Request, Response } from "playwright"
 
 function now(): string {
   return new Date().toISOString()
@@ -167,19 +167,38 @@ interface PlaygroundCliModule {
 }
 
 interface BrowserProbeArtifact {
+  requestedUrl: string
   url: string
   files: {
     console?: string
     errors?: string
+    html?: string
+    network?: string
     screenshot?: string
     summary: string
   }
   summary: {
     consoleMessages: number
     errors: number
+    finalUrl: string
+    htmlSnapshot: boolean
+    networkEvents: number
+    replayability: BrowserProbeReplayability
     screenshot: boolean
+    viewport: BrowserProbeViewport | null
   }
 }
+
+interface BrowserProbeViewport {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  isMobile: boolean
+  hasTouch: boolean
+  userAgent: string
+}
+
+type BrowserProbeReplayability = "artifact-backed" | "partial" | "diagnostic-only"
 
 interface PluginCheckArtifact {
   targetPlugin: string
@@ -203,6 +222,19 @@ interface BrowserProbeErrorRecord {
   message: string
   stack?: string
   timestamp: string
+}
+
+interface BrowserProbeNetworkRecord {
+  type: "response" | "requestfailed"
+  url: string
+  method: string
+  resourceType: string
+  timestamp: string
+  status?: number
+  statusText?: string
+  ok?: boolean
+  contentType?: string | null
+  failure?: ReturnType<Request["failure"]>
 }
 
 interface ThemeCheckArtifact {
@@ -864,12 +896,14 @@ class PlaygroundRuntime implements Runtime {
     if (capture.size === 0) {
       capture.add("console")
       capture.add("errors")
+      capture.add("html")
+      capture.add("network")
       capture.add("screenshot")
     }
 
     for (const item of capture) {
-      if (!["console", "errors", "screenshot"].includes(item)) {
-        throw new Error(`wordpress.browser-probe capture supports console, errors, screenshot: ${item}`)
+      if (!["console", "errors", "html", "network", "screenshot"].includes(item)) {
+        throw new Error(`wordpress.browser-probe capture supports console, errors, html, network, screenshot: ${item}`)
       }
     }
 
@@ -881,30 +915,50 @@ class PlaygroundRuntime implements Runtime {
 
     const consoleMessages: Record<string, unknown>[] = []
     const errors: BrowserProbeErrorRecord[] = []
+    const network: BrowserProbeNetworkRecord[] = []
     const consolePath = join(browserDirectory, "console.jsonl")
     const errorsPath = join(browserDirectory, "errors.jsonl")
+    const htmlPath = join(browserDirectory, "snapshot.html")
+    const networkPath = join(browserDirectory, "network.jsonl")
     const screenshotPath = join(browserDirectory, "screenshot.png")
     const summaryPath = join(browserDirectory, "summary.json")
     const startedAt = now()
     const { chromium } = await import("playwright")
     const browser = await chromium.launch()
+    let finalUrl = targetUrl
+    let htmlSha256: string | undefined
+    let screenshotSha256: string | undefined
+    let viewport: BrowserProbeViewport | null = null
 
     try {
       const page = await browser.newPage()
+      viewport = await browserProbeViewport(page)
       if (capture.has("console")) {
         page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
       }
       if (capture.has("errors")) {
         page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
       }
+      if (capture.has("network")) {
+        page.on("response", (response) => network.push(serializeBrowserResponse(response)))
+        page.on("requestfailed", (request) => network.push(serializeBrowserRequestFailure(request)))
+      }
 
       await navigateBrowserProbe(page, targetUrl, waitFor, durationMs)
       if (durationMs > 0 && waitFor !== "duration") {
         await page.waitForTimeout(durationMs)
       }
+      finalUrl = page.url()
+
+      if (capture.has("html")) {
+        const html = await page.content()
+        await writeFile(htmlPath, html)
+        htmlSha256 = sha256(Buffer.from(html, "utf8"))
+      }
 
       if (capture.has("screenshot")) {
         await page.screenshot({ path: screenshotPath, fullPage: true })
+        screenshotSha256 = await fileSha256(screenshotPath)
       }
     } catch (error) {
       errors.push(serializeBrowserError("probe-error", error))
@@ -917,38 +971,56 @@ class PlaygroundRuntime implements Runtime {
       if (capture.has("errors")) {
         await writeFile(errorsPath, jsonLines(errors))
       }
+      if (capture.has("network")) {
+        await writeFile(networkPath, jsonLines(network))
+      }
 
       const artifact: BrowserProbeArtifact = {
+        requestedUrl: targetUrl,
         url: targetUrl,
         files: {
           ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
           ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
+          ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
+          ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
           ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
           summary: "files/browser/summary.json",
         },
         summary: {
           consoleMessages: consoleMessages.length,
           errors: errors.length,
+          finalUrl,
+          htmlSnapshot: capture.has("html"),
+          networkEvents: network.length,
+          replayability: browserProbeReplayability(capture),
           screenshot: capture.has("screenshot"),
+          viewport,
         },
       }
       this.browserProbes.push(artifact)
       await writeFile(summaryPath, `${JSON.stringify({
         schema: "wp-codebox/browser-probe/v1",
-        url: targetUrl,
+        requestedUrl: targetUrl,
+        finalUrl,
         waitFor,
         durationMs,
         capture: [...capture].sort(),
         startedAt,
         finishedAt: now(),
         files: artifact.files,
+        hashes: {
+          ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
+          ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
+        },
+        viewport,
         summary: artifact.summary,
       }, null, 2)}\n`)
     }
 
     return `${JSON.stringify({
       command: "wordpress.browser-probe",
-      url: targetUrl,
+      requestedUrl: targetUrl,
+      finalUrl: this.browserProbes.at(-1)?.summary.finalUrl ?? targetUrl,
       files: this.browserProbes.at(-1)?.files,
       summary: this.browserProbes.at(-1)?.summary,
     }, null, 2)}\n`
@@ -1382,8 +1454,15 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
       summary: `Browser probe captured ${consoleMessages} console message${consoleMessages === 1 ? "" : "s"}, ${errors} error${errors === 1 ? "" : "s"}, and ${screenshots} screenshot${screenshots === 1 ? "" : "s"}.`,
       probes: this.browserProbes.map((probe) => ({
         url: probe.url,
+        requestedUrl: probe.requestedUrl,
+        finalUrl: probe.summary.finalUrl,
+        viewport: probe.summary.viewport,
+        replayability: probe.summary.replayability,
         consoleMessages: probe.summary.consoleMessages,
         errors: probe.summary.errors,
+        html: probe.files.html,
+        network: probe.files.network,
+        networkEvents: probe.summary.networkEvents,
         screenshot: probe.files.screenshot,
         console: probe.files.console,
         errorsFile: probe.files.errors,
@@ -1404,6 +1483,12 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
       if (probe.files.errors) {
         files.set(probe.files.errors, { kind: "browser-errors", contentType: "application/x-ndjson" })
       }
+      if (probe.files.html) {
+        files.set(probe.files.html, { kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8" })
+      }
+      if (probe.files.network) {
+        files.set(probe.files.network, { kind: "browser-network", contentType: "application/x-ndjson" })
+      }
       if (probe.files.screenshot) {
         files.set(probe.files.screenshot, { kind: "browser-screenshot", contentType: "image/png" })
       }
@@ -1422,7 +1507,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
   private async redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void> {
     for (const probe of this.browserProbes) {
-      for (const path of [probe.files.console, probe.files.errors, probe.files.summary]) {
+      for (const path of [probe.files.console, probe.files.errors, probe.files.html, probe.files.network, probe.files.summary]) {
         if (!path) {
           continue
         }
@@ -1513,6 +1598,70 @@ function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {
   } catch {
     return new URL(pathOrUrl, baseUrl).toString()
   }
+}
+
+async function browserProbeViewport(page: Page): Promise<BrowserProbeViewport> {
+  const viewport = page.viewportSize()
+  const device = await page.evaluate(() => ({
+    deviceScaleFactor: window.devicePixelRatio,
+    hasTouch: navigator.maxTouchPoints > 0,
+    userAgent: navigator.userAgent,
+  }))
+
+  return {
+    width: viewport?.width ?? 0,
+    height: viewport?.height ?? 0,
+    deviceScaleFactor: device.deviceScaleFactor,
+    isMobile: /Mobile|Android|iPhone|iPad/i.test(device.userAgent),
+    hasTouch: device.hasTouch,
+    userAgent: device.userAgent,
+  }
+}
+
+function browserProbeReplayability(capture: Set<string>): BrowserProbeReplayability {
+  if (capture.has("html") && capture.has("screenshot")) {
+    return "artifact-backed"
+  }
+
+  if (capture.has("html") || capture.has("screenshot") || capture.has("network")) {
+    return "partial"
+  }
+
+  return "diagnostic-only"
+}
+
+function serializeBrowserResponse(response: Response): BrowserProbeNetworkRecord {
+  const request = response.request()
+  return {
+    type: "response",
+    url: response.url(),
+    method: request.method(),
+    resourceType: request.resourceType(),
+    status: response.status(),
+    statusText: response.statusText(),
+    ok: response.ok(),
+    contentType: response.headers()["content-type"] ?? null,
+    timestamp: now(),
+  }
+}
+
+function serializeBrowserRequestFailure(request: Request): BrowserProbeNetworkRecord {
+  return {
+    type: "requestfailed",
+    url: request.url(),
+    method: request.method(),
+    resourceType: request.resourceType(),
+    failure: request.failure(),
+    timestamp: now(),
+  }
+}
+
+async function fileSha256(path: string): Promise<string> {
+  return sha256(await readFile(path))
+}
+
+function sha256(contents: Buffer): string {
+  return createHash("sha256").update(contents).digest("hex")
 }
 
 function durationArg(args: string[], name: string, fallbackMs: number): number {

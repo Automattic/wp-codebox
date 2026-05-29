@@ -641,8 +641,22 @@ export interface ArtifactReviewBrowserSummary {
   summary: string
   probes: Array<{
     url: string
+    requestedUrl?: string
+    finalUrl?: string
+    viewport?: {
+      width: number
+      height: number
+      deviceScaleFactor: number
+      isMobile: boolean
+      hasTouch: boolean
+      userAgent: string
+    } | null
+    replayability?: "artifact-backed" | "partial" | "diagnostic-only"
     consoleMessages: number
     errors: number
+    html?: string
+    network?: string
+    networkEvents?: number
     screenshot?: string
     console?: string
     errorsFile?: string

@@ -37,7 +37,7 @@ await writeFile(recipePath, `${JSON.stringify({
     steps: [
       {
         command: "wordpress.browser-probe",
-        args: ["url=/", "wait-for=load", "duration=1s", "capture=console,errors,screenshot"],
+        args: ["url=/", "wait-for=load", "duration=1s", "capture=console,errors,html,network,screenshot"],
       },
     ],
   },
@@ -60,6 +60,8 @@ assert.ok(output.artifacts?.directory, "recipe-run should return an artifact dir
 const artifactDirectory = output.artifacts.directory
 const consolePath = join(artifactDirectory, "files", "browser", "console.jsonl")
 const errorsPath = join(artifactDirectory, "files", "browser", "errors.jsonl")
+const htmlPath = join(artifactDirectory, "files", "browser", "snapshot.html")
+const networkPath = join(artifactDirectory, "files", "browser", "network.jsonl")
 const screenshotPath = join(artifactDirectory, "files", "browser", "screenshot.png")
 const summaryPath = join(artifactDirectory, "files", "browser", "summary.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
@@ -67,23 +69,56 @@ const reviewPath = join(artifactDirectory, "files", "review.json")
 
 assert.equal(existsSync(consolePath), true, "console.jsonl should be captured")
 assert.equal(existsSync(errorsPath), true, "errors.jsonl should be captured")
+assert.equal(existsSync(htmlPath), true, "snapshot.html should be captured")
+assert.equal(existsSync(networkPath), true, "network.jsonl should be captured")
 assert.equal(existsSync(screenshotPath), true, "screenshot.png should be captured")
 assert.equal(existsSync(summaryPath), true, "summary.json should be captured")
 
 const consoleLog = await readFile(consolePath, "utf8")
 const errorLog = await readFile(errorsPath, "utf8")
+const htmlSnapshot = await readFile(htmlPath, "utf8")
+const networkLog = await readFile(networkPath, "utf8")
 assert.match(consoleLog, /wp-codebox fixture console error/)
 assert.match(errorLog, /wp-codebox fixture browser error/)
+assert.match(htmlSnapshot, /Browser Error Fixture|wp-codebox fixture console error/)
+assert.match(networkLog, /"type":"response"/)
+
+const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
+  requestedUrl: string
+  finalUrl: string
+  files: { html?: string; network?: string; screenshot?: string }
+  hashes: { html?: { value: string }; screenshot?: { value: string } }
+  viewport: { width: number; height: number; userAgent: string }
+  summary: { replayability: string; networkEvents: number; htmlSnapshot: boolean }
+}
+assert.equal(summary.requestedUrl.endsWith("/"), true, "summary should include requested URL")
+assert.equal(summary.finalUrl.endsWith("/"), true, "summary should include final URL")
+assert.equal(summary.files.html, "files/browser/snapshot.html")
+assert.equal(summary.files.network, "files/browser/network.jsonl")
+assert.match(summary.hashes.html?.value ?? "", /^[a-f0-9]{64}$/)
+assert.match(summary.hashes.screenshot?.value ?? "", /^[a-f0-9]{64}$/)
+assert.equal(summary.summary.replayability, "artifact-backed")
+assert.equal(summary.summary.htmlSnapshot, true)
+assert.ok(summary.summary.networkEvents >= 1, "summary should count network events")
+assert.ok(summary.viewport.width > 0, "summary should include viewport width")
+assert.ok(summary.viewport.height > 0, "summary should include viewport height")
+assert.ok(summary.viewport.userAgent.length > 0, "summary should include user agent")
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
 assert.ok(manifest.files.some((file) => file.path === "files/browser/console.jsonl" && file.kind === "browser-console"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/errors.jsonl" && file.kind === "browser-errors"))
+assert.ok(manifest.files.some((file) => file.path === "files/browser/snapshot.html" && file.kind === "browser-html-snapshot"))
+assert.ok(manifest.files.some((file) => file.path === "files/browser/network.jsonl" && file.kind === "browser-network"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/screenshot.png" && file.kind === "browser-screenshot"))
 
-const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number }> } }
+const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; html?: string; network?: string; finalUrl?: string; replayability?: string }> } }
 assert.ok(review.browser?.probes?.[0], "review should include browser probe summary")
 assert.ok(review.browser.probes[0].consoleMessages >= 1, "review should count console messages")
 assert.ok(review.browser.probes[0].errors >= 1, "review should count browser errors")
+assert.equal(review.browser.probes[0].html, "files/browser/snapshot.html")
+assert.equal(review.browser.probes[0].network, "files/browser/network.jsonl")
+assert.equal(review.browser.probes[0].replayability, "artifact-backed")
+assert.equal(review.browser.probes[0].finalUrl?.endsWith("/"), true, "review should include final URL")
 
 console.log(`Browser probe artifact smoke passed: ${artifactDirectory}`)
 

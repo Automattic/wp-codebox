@@ -403,13 +403,13 @@ Supported runtime commands today:
 - `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`.
 - `wordpress.wp-cli`: run WP-CLI; accepts `command='wp option get home'` or plain args.
 - `wordpress.ability`: execute a registered WordPress Ability; accepts `name=<ability>` and optional JSON `input=<object>`.
-- `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture browser console, page errors, and screenshot artifacts under `files/browser/`.
+- `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
 
 `wordpress.run-php` loads `/wordpress/wp-load.php` by default. Use `--arg bootstrap=none` for raw PHP.
 
 `wordpress.wp-cli` automatically enables Playground's `wp-cli` extra library when the command is allowed by runtime policy.
 
-`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, and `capture=console,errors,screenshot`. It records `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled, and the artifact review includes a concise browser summary with counts.
+`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, and `capture=console,errors,html,network,screenshot`. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, viewport/device metadata, HTML and screenshot hashes, network event counts, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 

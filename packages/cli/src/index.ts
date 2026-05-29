@@ -672,14 +672,14 @@ const commandCatalog: CommandMetadata[] = [
   },
   {
     id: "wordpress.browser-probe",
-    description: "Open the live Playground preview in Playwright and capture browser console, page errors, and screenshot artifacts.",
+    description: "Open the live Playground preview in Playwright and capture generic browser replay/audit evidence artifacts.",
     acceptedArgs: [
       { name: "url", description: "Preview path or absolute URL to visit.", required: true, format: "path or URL" },
       { name: "wait-for", description: "Navigation wait condition.", format: "domcontentloaded|load|networkidle|selector:<selector>|duration" },
       { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
-      { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,screenshot" },
+      { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,html,network,screenshot" },
     ],
-    outputShape: "JSON summary plus files/browser/console.jsonl, errors.jsonl, summary.json, and screenshot.png when captured.",
+    outputShape: "JSON summary plus files/browser/console.jsonl, errors.jsonl, network.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
     recipe: true,
   },
@@ -3484,7 +3484,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["console", "errors", "screenshot"].includes(item)) {
+        if (!["console", "errors", "html", "network", "screenshot"].includes(item)) {
           addIssue("invalid-capture", `${path}.args`, `wordpress.browser-probe capture does not support: ${item}`)
         }
       }
