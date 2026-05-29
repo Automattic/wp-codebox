@@ -675,6 +675,7 @@ final class WP_Codebox_Abilities {
 				'session'    => array( 'type' => 'object' ),
 				'task_input' => self::task_input_schema(),
 				'playground' => array( 'type' => 'object' ),
+				'signals'    => array( 'type' => 'object' ),
 				'artifacts'  => array( 'type' => 'object' ),
 			),
 		);
@@ -777,6 +778,14 @@ final class WP_Codebox_Abilities {
 					'run_blueprint'     => true,
 					'write_file'        => true,
 					'run_php'           => true,
+				),
+			),
+			'signals'    => array(
+				'ready_to_code' => array(
+					'schema'  => 'wp-codebox/signal/v1',
+					'name'    => 'ready_to_code',
+					'emitted' => true,
+					'message' => 'Browser Playground sandbox is ready to code.',
 				),
 			),
 			'artifacts'  => array(
