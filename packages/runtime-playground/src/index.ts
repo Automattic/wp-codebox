@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
-import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
+import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, getCommandDefinition, runtimeEpisodeDigest, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
@@ -54,6 +54,12 @@ interface PlaygroundRunResponse {
   exitCode?: number
   errors?: string
   text: string
+}
+
+interface RuntimeWpCliBridge {
+  url: string
+  token: string
+  close: () => Promise<void>
 }
 
 class PlaygroundCommandError extends Error {
@@ -850,8 +856,16 @@ class PlaygroundRuntime implements Runtime {
   private async runPhp(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const code = await this.phpCodeFromArgs(spec.args ?? [])
-    const response = await this.runPlaygroundCommand("wordpress.run-php", server, { code: this.bootstrapPhpCode(code, spec.args ?? []) })
-    assertPlaygroundResponseOk("wordpress.run-php", response)
+    const bridge = argValue(spec.args ?? [], "wp-cli-bridge") === "1" ? await this.createRuntimeWpCliBridge(server) : undefined
+    let response: PlaygroundRunResponse
+    try {
+      response = await this.runPlaygroundCommand("wordpress.run-php", server, { code: this.bootstrapPhpCode(code, spec.args ?? [], bridge) })
+      assertPlaygroundResponseOk("wordpress.run-php", response)
+    } finally {
+      if (bridge) {
+        await bridge.close()
+      }
+    }
 
     return response.text
   }
@@ -967,6 +981,59 @@ class PlaygroundRuntime implements Runtime {
     const scriptPath = `/tmp/wp-codebox-wp-cli-${this.commands.length}-${Date.now().toString(36)}.php`
     await server.playground.writeFile(scriptPath, wpCliPhpScript(argv))
     return this.runPlaygroundCommand("wordpress.wp-cli", server, { scriptPath })
+  }
+
+  private async createRuntimeWpCliBridge(server: PlaygroundCliServer): Promise<RuntimeWpCliBridge> {
+    const token = randomBytes(24).toString("base64url")
+    const bridge = createHttpServer(async (request, response) => {
+      try {
+        if (request.method !== "POST" || request.url !== "/execute") {
+          writeBridgeJson(response, 404, { success: false, error: "not_found" })
+          return
+        }
+
+        if (request.headers.authorization !== `Bearer ${token}`) {
+          writeBridgeJson(response, 403, { success: false, error: "forbidden" })
+          return
+        }
+
+        const action = await readBridgeJson(request)
+        const type = typeof action.type === "string" ? action.type.trim() : ""
+        const command = typeof action.command === "string" ? action.command.trim() : ""
+        if (type !== "wp_cli" || command === "") {
+          writeBridgeJson(response, 400, { success: false, error: "wp_cli command is required" })
+          return
+        }
+
+        const argv = shellArgv(command)
+        if (argv[0] === "wp") {
+          argv.shift()
+        }
+        const started = Date.now()
+        const result = await this.runWpCliCommand(server, argv)
+        const exitCode = result.exitCode ?? 0
+        writeBridgeJson(response, 200, {
+          type,
+          command: command.startsWith("wp ") ? command : `wp ${command}`,
+          exitCode,
+          stdout: cleanWpCliOutput(result.text),
+          stderr: result.errors ?? "",
+          success: exitCode === 0,
+          timedOut: false,
+          durationMs: Date.now() - started,
+          error: exitCode === 0 ? "" : (result.errors?.trim() || cleanWpCliOutput(result.text).trim() || "WP-CLI command failed"),
+        })
+      } catch (error) {
+        writeBridgeJson(response, 500, { success: false, error: errorMessage(error) })
+      }
+    })
+
+    const url = await listenLocalHttpServer(bridge)
+    return {
+      url,
+      token,
+      close: () => closeHttpServer(bridge),
+    }
   }
 
   private async runAbility(spec: ExecutionSpec): Promise<string> {
@@ -1148,7 +1215,7 @@ ${this.secretEnvPhp()}
 ${phpBody(code)}`
   }
 
-  private bootstrapPhpCode(code: string, args: string[]): string {
+  private bootstrapPhpCode(code: string, args: string[], wpCliBridge?: RuntimeWpCliBridge): string {
     if (argValue(args, "bootstrap") === "none") {
       return code
     }
@@ -1156,6 +1223,9 @@ ${phpBody(code)}`
     return `<?php
 require_once '/wordpress/wp-load.php';
 ${this.secretEnvPhp()}
+${wpCliBridge ? `putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
+putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
+` : ""}
 ${phpBody(code)}`
   }
 
@@ -1783,4 +1853,52 @@ async function assertPreviewPortAvailable(port: number): Promise<void> {
       })
     }
   }
+}
+
+function readBridgeJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let body = ""
+    request.on("data", (chunk) => {
+      body += chunk.toString()
+      if (body.length > 1024 * 1024) {
+        reject(new Error("Request body too large"))
+        request.destroy()
+      }
+    })
+    request.on("end", () => {
+      try {
+        const parsed = body ? JSON.parse(body) : {}
+        resolve(parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {})
+      } catch (error) {
+        reject(error)
+      }
+    })
+    request.on("error", reject)
+  })
+}
+
+function writeBridgeJson(response: ServerResponse, statusCode: number, payload: unknown): void {
+  response.writeHead(statusCode, { "content-type": "application/json" })
+  response.end(`${JSON.stringify(payload)}\n`)
+}
+
+function listenLocalHttpServer(server: ReturnType<typeof createHttpServer>): Promise<string> {
+  return new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen)
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", rejectListen)
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        rejectListen(new Error("Runtime WP-CLI bridge did not expose a TCP address"))
+        return
+      }
+      resolveListen(`http://${address.address}:${address.port}`)
+    })
+  })
+}
+
+function closeHttpServer(server: ReturnType<typeof createHttpServer>): Promise<void> {
+  return new Promise((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose())
+  })
 }

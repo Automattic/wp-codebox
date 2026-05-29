@@ -2282,7 +2282,10 @@ async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][nu
 
     return {
       command: "wordpress.run-php",
-      args: [`code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })))}`],
+      args: [
+        `code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })))}`,
+        "wp-cli-bridge=1",
+      ],
     }
   }
 
@@ -3695,6 +3698,9 @@ function parseRecipeArgs(args: string[]): Record<string, string | true> {
 
 function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   const commands = recipeWorkflowSteps(recipe).map(({ step }) => step.command.startsWith("wp-codebox.agent-") ? "wordpress.run-php" : step.command)
+  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wp-codebox.agent-sandbox-run")) {
+    commands.unshift("wordpress.wp-cli")
+  }
   if (recipeExtraPlugins(recipe).some((plugin) => plugin.activate !== false)) {
     commands.unshift("wordpress.run-php")
   }
