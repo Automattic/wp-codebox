@@ -32,9 +32,15 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public static function stage_apply_artifact( array $input ): array|WP_Error {
-		$bundle_result = ( new WP_Codebox_Artifacts() )->get( $input );
+		$artifacts     = new WP_Codebox_Artifacts();
+		$bundle_result = $artifacts->get( $input );
 		if ( is_wp_error( $bundle_result ) ) {
 			return $bundle_result;
+		}
+
+		$verification = $artifacts->verify_resolved_bundle( $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
 		}
 
 		$apply_input = self::apply_input( $input );
@@ -53,7 +59,7 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 			'kind'         => self::KIND,
 			'summary'      => $summary,
 			'apply_input'  => $apply_input,
-			'preview_data' => self::preview_data( $bundle, $apply_input ),
+			'preview_data' => self::preview_data( $bundle, $apply_input, $verification ),
 			'agent_id'     => isset( $input['agent_id'] ) ? (int) $input['agent_id'] : 0,
 			'user_id'      => isset( $input['user_id'] ) ? (int) $input['user_id'] : 0,
 			'context'      => isset( $input['context'] ) && is_array( $input['context'] ) ? $input['context'] : array(),
@@ -127,12 +133,13 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 	}
 
 	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $apply_input Stored apply input. */
-	private static function preview_data( array $bundle, array $apply_input ): array {
+	private static function preview_data( array $bundle, array $apply_input, array $verification ): array {
 		return array(
 			'schema'         => 'wp-codebox/pending-apply-preview/v1',
 			'artifact_id'    => (string) ( $bundle['id'] ?? $apply_input['artifact_id'] ?? '' ),
 			'content_digest' => (string) ( $bundle['content_digest'] ?? '' ),
 			'created_at'     => (string) ( $bundle['created_at'] ?? '' ),
+			'verification'   => $verification,
 			'approved_files' => $apply_input['approved_files'] ?? array(),
 			'changed_files'  => is_array( $bundle['changed_files'] ?? null ) ? $bundle['changed_files'] : array(),
 			'test_results'   => is_array( $bundle['test_results'] ?? null ) ? $bundle['test_results'] : array(),

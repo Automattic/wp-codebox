@@ -174,6 +174,78 @@ $assert   = function ( string $label, bool $condition ) use ( &$failures, &$tota
 	echo "  fail {$label}\n";
 };
 
+$stable_json = function ( mixed $value ) use ( &$stable_json ): string {
+	if ( ! is_array( $value ) ) {
+		return json_encode( $value, JSON_UNESCAPED_SLASHES );
+	}
+
+	if ( array_is_list( $value ) ) {
+		return '[' . implode( ',', array_map( $stable_json, $value ) ) . ']';
+	}
+
+	ksort( $value, SORT_STRING );
+	$parts = array();
+	foreach ( $value as $key => $item ) {
+		$parts[] = json_encode( (string) $key, JSON_UNESCAPED_SLASHES ) . ':' . $stable_json( $item );
+	}
+
+	return '{' . implode( ',', $parts ) . '}';
+};
+
+$manifest_self_hash = function ( array $manifest ) use ( $stable_json ): string {
+	foreach ( $manifest['files'] as &$file ) {
+		if ( 'manifest.json' === ( $file['path'] ?? '' ) ) {
+			$file['sha256'] = array( 'algorithm' => 'sha256', 'value' => str_repeat( '0', 64 ) );
+		}
+	}
+	unset( $file );
+
+	return hash( 'sha256', "wp-codebox/artifact-manifest-self/v1\n" . $stable_json( $manifest ) );
+};
+
+$copy_directory = function ( string $source, string $destination ) use ( &$copy_directory ): void {
+	mkdir( $destination, 0777, true );
+	foreach ( scandir( $source ) ?: array() as $entry ) {
+		if ( '.' === $entry || '..' === $entry ) {
+			continue;
+		}
+
+		$source_path      = $source . '/' . $entry;
+		$destination_path = $destination . '/' . $entry;
+		if ( is_dir( $source_path ) ) {
+			$copy_directory( $source_path, $destination_path );
+			continue;
+		}
+
+		copy( $source_path, $destination_path );
+	}
+};
+
+$refresh_manifest_hashes = function ( string $bundle_path ) use ( $manifest_self_hash ): void {
+	$manifest_path = $bundle_path . '/manifest.json';
+	$manifest      = json_decode( (string) file_get_contents( $manifest_path ), true );
+	foreach ( $manifest['files'] as &$manifest_file ) {
+		if ( 'manifest.json' !== $manifest_file['path'] ) {
+			$manifest_file['sha256'] = array( 'algorithm' => 'sha256', 'value' => hash_file( 'sha256', $bundle_path . '/' . $manifest_file['path'] ) );
+		}
+	}
+	unset( $manifest_file );
+	foreach ( $manifest['files'] as &$manifest_file ) {
+		if ( 'manifest.json' === $manifest_file['path'] ) {
+			$manifest_file['sha256'] = array( 'algorithm' => 'sha256', 'value' => $manifest_self_hash( $manifest ) );
+		}
+	}
+	unset( $manifest_file );
+	file_put_contents( $manifest_path, json_encode( $manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
+};
+
+$violation_codes = static function ( WP_Error $error ): array {
+	$data       = $error->get_error_data();
+	$violations = is_array( $data['violations'] ?? null ) ? $data['violations'] : array();
+
+	return array_values( array_filter( array_map( static fn( mixed $violation ): string => is_array( $violation ) ? (string) ( $violation['code'] ?? '' ) : '', $violations ) ) );
+};
+
 echo "WP Codebox WordPress plugin - smoke\n";
 
 new WP_Codebox_Data_Machine_Pending_Actions();
@@ -1013,101 +1085,82 @@ $approved_patch_diff = "diff --git a/generated.txt b/generated.txt\n+cooked\n";
 $patch_diff          = $approved_patch_diff . "diff --git a/unapproved.txt b/unapproved.txt\n+unsafe\n";
 $content_digest      = hash( 'sha256', "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n" . $changed_files_json . "\nfiles/patch.diff\n" . $patch_diff );
 $artifact_id         = 'artifact-bundle-sha256-' . $content_digest;
-file_put_contents(
-	$bundle_dir . '/manifest.json',
-	json_encode(
-		array(
-			'id'            => $artifact_id,
-			'contentDigest' => array(
-				'algorithm' => 'sha256',
-				'inputs'    => array( 'files/changed-files.json', 'files/patch.diff' ),
-				'value'     => $content_digest,
-			),
-			'createdAt'     => '2026-05-19T00:00:00Z',
-			'files'         => array(
-				array(
-					'path'        => 'files/changed-files.json',
-					'kind'        => 'changed-files',
-					'contentType' => 'application/json',
-				),
-				array(
-					'path'        => 'files/patch.diff',
-					'kind'        => 'patch',
-					'contentType' => 'text/x-diff',
-				),
-				array(
-					'path'        => 'files/test-results.json',
-					'kind'        => 'test-results',
-					'contentType' => 'application/json',
-				),
-				array(
-					'path'        => 'files/review.json',
-					'kind'        => 'review',
-					'contentType' => 'application/json',
-				),
-			),
+$metadata = array(
+	'artifacts'  => array( 'patch' => 'files/patch.diff' ),
+	'provenance' => array(
+		'task' => array(
+			'requester' => 'chat:user-7',
 		),
-		JSON_PRETTY_PRINT
-	) . "\n"
+	),
 );
-file_put_contents(
-	$bundle_dir . '/metadata.json',
-	json_encode(
+$test_results = array(
+	'schema'           => 'wp-codebox/test-results/v1',
+	'status'           => 'unknown',
+	'summary'          => array(
+		'total'   => 0,
+		'passed'  => 0,
+		'failed'  => 0,
+		'skipped' => 0,
+		'unknown' => 0,
+	),
+	'suites'           => array(),
+	'rawLogReferences' => array(),
+);
+$review = array(
+	'schema'       => 'wp-codebox/artifact-review/v1',
+	'artifactId'   => $artifact_id,
+	'summary'      => 'Sandbox produced changes in 1 file.',
+	'actions'      => array(
 		array(
-			'artifacts'  => array( 'patch' => 'files/patch.diff' ),
-			'provenance' => array(
-				'task' => array(
-					'requester' => 'chat:user-7',
-				),
-			),
+			'kind'                  => 'approve',
+			'label'                 => 'Approve all changes',
+			'requiresApprovedFiles' => true,
 		),
-		JSON_PRETTY_PRINT
-	) . "\n"
+	),
+	'evidence'     => array(
+		'artifactContentDigest' => $content_digest,
+		'changedFiles'          => 'files/changed-files.json',
+		'patch'                 => 'files/patch.diff',
+		'patchSha256'           => hash( 'sha256', $patch_diff ),
+	),
+	'changedFiles' => array(
+		array(
+			'path'   => '/wordpress/wp-content/plugins/example/generated.txt',
+			'status' => 'added',
+		),
+	),
 );
+file_put_contents( $bundle_dir . '/metadata.json', json_encode( $metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
 file_put_contents( $bundle_dir . '/files/changed-files.json', $changed_files_json );
 file_put_contents( $bundle_dir . '/files/patch.diff', $patch_diff );
-file_put_contents(
-	$bundle_dir . '/files/test-results.json',
-	json_encode(
-		array(
-			'schema'           => 'wp-codebox/test-results/v1',
-			'status'           => 'unknown',
-			'summary'          => array(
-				'total'   => 0,
-				'passed'  => 0,
-				'failed'  => 0,
-				'skipped' => 0,
-				'unknown' => 0,
-			),
-			'suites'           => array(),
-			'rawLogReferences' => array(
-				array(
-					'path' => 'logs/commands.log',
-					'kind' => 'commands-log',
-				),
-			),
-		),
-		JSON_PRETTY_PRINT
-	) . "\n"
+file_put_contents( $bundle_dir . '/files/test-results.json', json_encode( $test_results, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
+file_put_contents( $bundle_dir . '/files/review.json', json_encode( $review, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
+$manifest = array(
+	'id'            => $artifact_id,
+	'contentDigest' => array(
+		'algorithm' => 'sha256',
+		'inputs'    => array( 'files/changed-files.json', 'files/patch.diff' ),
+		'value'     => $content_digest,
+	),
+	'createdAt'     => '2026-05-19T00:00:00Z',
+	'runtime'       => array( 'type' => 'php-smoke-fixture' ),
+	'files'         => array(
+		array( 'path' => 'manifest.json', 'kind' => 'manifest', 'contentType' => 'application/json' ),
+		array( 'path' => 'metadata.json', 'kind' => 'metadata', 'contentType' => 'application/json' ),
+		array( 'path' => 'files/changed-files.json', 'kind' => 'changed-files', 'contentType' => 'application/json' ),
+		array( 'path' => 'files/patch.diff', 'kind' => 'patch', 'contentType' => 'text/x-diff' ),
+		array( 'path' => 'files/test-results.json', 'kind' => 'test-results', 'contentType' => 'application/json' ),
+		array( 'path' => 'files/review.json', 'kind' => 'review', 'contentType' => 'application/json' ),
+	),
 );
-file_put_contents(
-	$bundle_dir . '/files/review.json',
-	json_encode(
-		array(
-			'schema'     => 'wp-codebox/artifact-review/v1',
-			'artifactId' => $artifact_id,
-			'summary'    => 'Sandbox produced changes in 1 file.',
-			'actions'    => array(
-				array(
-					'kind'                  => 'approve',
-					'label'                 => 'Approve all changes',
-					'requiresApprovedFiles' => true,
-				),
-			),
-		),
-		JSON_PRETTY_PRINT
-	) . "\n"
-);
+foreach ( $manifest['files'] as &$manifest_file ) {
+	if ( 'manifest.json' !== $manifest_file['path'] ) {
+		$manifest_file['sha256'] = array( 'algorithm' => 'sha256', 'value' => hash_file( 'sha256', $bundle_dir . '/' . $manifest_file['path'] ) );
+	}
+}
+unset( $manifest_file );
+$manifest['files'][0]['sha256'] = array( 'algorithm' => 'sha256', 'value' => $manifest_self_hash( $manifest ) );
+file_put_contents( $bundle_dir . '/manifest.json', json_encode( $manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
 
 $artifacts = new WP_Codebox_Artifacts();
 $listed    = $artifacts->list( array( 'artifacts_path' => $artifact_root ) );
@@ -1128,6 +1181,44 @@ $assert( 'artifact get returns canonical changed files', ! is_wp_error( $read_ar
 $assert( 'artifact get returns test results', ! is_wp_error( $read_artifact ) && 'wp-codebox/test-results/v1' === ( $read_artifact['artifact']['test_results']['schema'] ?? '' ) );
 $assert( 'artifact get returns review payload', ! is_wp_error( $read_artifact ) && 'wp-codebox/artifact-review/v1' === ( $read_artifact['artifact']['review']['schema'] ?? '' ) );
 $assert( 'artifact get verifies content digest', ! is_wp_error( $read_artifact ) && $content_digest === ( $read_artifact['artifact']['content_digest'] ?? '' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_bin'] = dirname( __DIR__ ) . '/packages/cli/dist/index.js';
+
+$malformed_manifest_root = $root . '/artifact-malformed-manifest';
+mkdir( $malformed_manifest_root . '/broken', 0777, true );
+file_put_contents( $malformed_manifest_root . '/broken/manifest.json', "{\n" );
+$verify_output = array();
+$verify_exit   = 0;
+exec( 'node ' . escapeshellarg( $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] ) . ' artifacts verify --bundle ' . escapeshellarg( $malformed_manifest_root . '/broken' ) . ' --json 2>&1', $verify_output, $verify_exit );
+$verify_result = json_decode( implode( "\n", $verify_output ), true );
+$assert( 'generic verifier reports malformed manifest fixtures', 1 === $verify_exit && false === ( $verify_result['valid'] ?? true ) && 'malformed-manifest' === ( $verify_result['violations'][0]['code'] ?? '' ) );
+
+$hash_fixture_root = $root . '/artifact-hash-fixture';
+$copy_directory( $bundle_dir, $hash_fixture_root . '/runtime-test' );
+file_put_contents( $hash_fixture_root . '/runtime-test/metadata.json', "{}\n" );
+$hash_failure = $artifacts->apply_approved(
+	array(
+		'artifacts_path' => $hash_fixture_root,
+		'artifact_id'    => $artifact_id,
+		'approved_files' => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
+	)
+);
+$assert( 'approved artifact apply rejects hash mismatch fixtures before delegation', is_wp_error( $hash_failure ) && 'wp_codebox_artifact_verification_failed' === $hash_failure->get_error_code() && in_array( 'file-hash-mismatch', $violation_codes( $hash_failure ), true ) );
+
+$reference_fixture_root = $root . '/artifact-reference-fixture';
+$copy_directory( $bundle_dir, $reference_fixture_root . '/runtime-test' );
+$reference_metadata = $metadata;
+$reference_metadata['artifacts']['patch'] = 'files/missing.diff';
+file_put_contents( $reference_fixture_root . '/runtime-test/metadata.json', json_encode( $reference_metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
+$refresh_manifest_hashes( $reference_fixture_root . '/runtime-test' );
+$reference_failure = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact(
+	array(
+		'artifacts_path' => $reference_fixture_root,
+		'artifact_id'    => $artifact_id,
+		'approved_files' => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
+	)
+);
+$assert( 'pending artifact apply rejects malformed references before staging', is_wp_error( $reference_failure ) && 'wp_codebox_artifact_verification_failed' === $reference_failure->get_error_code() && in_array( 'malformed-reference', $violation_codes( $reference_failure ), true ) && 'https://github.com/chubes4/wp-codebox/issues/176' === ( $reference_failure->get_error_data()['issue_url'] ?? '' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ): array {
 	return array(
@@ -1180,6 +1271,7 @@ $staged = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact(
 $assert( 'pending artifact apply can be staged', ! is_wp_error( $staged ) && true === ( $staged['staged'] ?? false ) && WP_Codebox_Data_Machine_Pending_Actions::KIND === ( $captured_stage_args['kind'] ?? '' ) );
 $assert( 'pending artifact apply stores exact apply input', $artifact_id === ( $captured_stage_args['apply_input']['artifact_id'] ?? '' ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $captured_stage_args['apply_input']['approved_files'] ?? array() ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $captured_stage_args['apply_input']['apply_target'] ?? array() ) );
 $assert( 'pending artifact apply preview includes review and changed files', 'wp-codebox/pending-apply-preview/v1' === ( $captured_stage_args['preview_data']['schema'] ?? '' ) && 'wp-codebox/artifact-review/v1' === ( $captured_stage_args['preview_data']['review']['schema'] ?? '' ) && 'wp-codebox/changed-files/v1' === ( $captured_stage_args['preview_data']['changed_files']['schema'] ?? '' ) );
+$assert( 'pending artifact apply preview includes successful bundle verification', true === ( $captured_stage_args['preview_data']['verification']['valid'] ?? false ) && 'wp-codebox/artifact-bundle-verification/v1' === ( $captured_stage_args['preview_data']['verification']['schema'] ?? '' ) );
 
 $handlers = apply_filters( 'datamachine_pending_action_handlers', array() );
 $assert( 'pending artifact apply handler registers with Data Machine', isset( $handlers[ WP_Codebox_Data_Machine_Pending_Actions::KIND ]['apply'] ) && is_callable( $handlers[ WP_Codebox_Data_Machine_Pending_Actions::KIND ]['apply'] ) );

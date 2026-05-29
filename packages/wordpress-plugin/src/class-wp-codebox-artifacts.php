@@ -13,6 +13,8 @@ final class WP_Codebox_Artifacts {
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_AUDIT_SCHEMA = 'wp-codebox/apply-audit/v1';
+	private const VERIFICATION_SCHEMA = 'wp-codebox/artifact-bundle-verification/v1';
+	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/chubes4/wp-codebox/issues/176';
 	private const CONTENT_DIGEST_PREFIX = "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n";
 	private const CONTENT_DIGEST_SEPARATOR = "\nfiles/patch.diff\n";
 
@@ -97,6 +99,11 @@ final class WP_Codebox_Artifacts {
 			return $root;
 		}
 
+		$verification = $this->verify_artifact_bundle( $bundle, $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
+		}
+
 		$approved_files = $this->approved_files( $input );
 		if ( empty( $approved_files ) ) {
 			return new WP_Error( 'wp_codebox_approved_files_missing', 'approved_files must include at least one sandbox path.', array( 'status' => 400 ) );
@@ -152,6 +159,7 @@ final class WP_Codebox_Artifacts {
 			'patch'                   => $patch,
 			'patch_sha256'            => hash( 'sha256', $patch ),
 			'artifact_content_digest' => $content_digest,
+			'artifact_verification'   => $verification,
 		);
 
 		$result = apply_filters( 'wp_codebox_apply_approved_artifact', null, $payload );
@@ -174,8 +182,19 @@ final class WP_Codebox_Artifacts {
 			'approved_files' => $approved_files,
 			'patch_sha256'   => $payload['patch_sha256'],
 			'content_digest' => $content_digest,
+			'verification'   => $verification,
 			'result'         => $result,
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function verify_resolved_bundle( array $input ): array|WP_Error {
+		$bundle = $this->resolve_bundle( $input );
+		if ( is_wp_error( $bundle ) ) {
+			return $bundle;
+		}
+
+		return $this->verify_artifact_bundle( $bundle, $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -368,6 +387,108 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return hash( 'sha256', self::CONTENT_DIGEST_PREFIX . $changed_files . self::CONTENT_DIGEST_SEPARATOR . $patch );
+	}
+
+	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function verify_artifact_bundle( array $bundle, array $input ): array|WP_Error {
+		$directory = realpath( (string) ( $bundle['directory'] ?? '' ) );
+		if ( false === $directory || ! is_dir( $directory ) ) {
+			return new WP_Error( 'wp_codebox_artifact_directory_missing', 'Artifact bundle directory is missing.', array( 'status' => 400 ) );
+		}
+
+		if ( ! function_exists( 'exec' ) ) {
+			return $this->artifact_verifier_unavailable( 'Shell execution is not available for WP Codebox artifact verification.' );
+		}
+
+		$bin = trim( (string) ( $input['wp_codebox_bin'] ?? $this->default_bin() ) );
+		if ( '' === $bin || ! preg_match( '#^[A-Za-z0-9_./:@+-]+$#', $bin ) ) {
+			return new WP_Error( 'wp_codebox_bin_invalid', 'wp_codebox_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
+		}
+
+		$command = sprintf(
+			'%s artifacts verify --bundle %s --json',
+			$this->command_prefix( $bin ),
+			escapeshellarg( $directory )
+		);
+
+		$output = array();
+		$exit   = 0;
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Required to delegate to the packaged generic artifact verifier.
+		exec( $command . ' 2>&1', $output, $exit );
+		$raw     = implode( "\n", $output );
+		$decoded = json_decode( $raw, true );
+
+		if ( ! is_array( $decoded ) ) {
+			return $this->artifact_verifier_unavailable( 'WP Codebox artifact verifier did not return valid JSON.', array( 'exit_code' => $exit, 'output' => $this->bound_output( $raw ) ) );
+		}
+
+		if ( self::VERIFICATION_SCHEMA !== ( $decoded['schema'] ?? '' ) || ! array_key_exists( 'valid', $decoded ) || ! is_array( $decoded['violations'] ?? null ) ) {
+			return $this->artifact_verifier_unavailable( 'WP Codebox artifact verifier returned an unexpected payload.', array( 'exit_code' => $exit, 'output' => $decoded ) );
+		}
+
+		if ( true !== (bool) $decoded['valid'] ) {
+			return new WP_Error(
+				'wp_codebox_artifact_verification_failed',
+				'Artifact bundle verification failed.',
+				array(
+					'status'       => 400,
+					'schema'       => self::VERIFICATION_SCHEMA,
+					'valid'        => false,
+					'violations'   => $decoded['violations'],
+					'verification' => $decoded,
+					'issue_url'    => self::GENERIC_VERIFIER_ISSUE_URL,
+				)
+			);
+		}
+
+		if ( 0 !== $exit ) {
+			return $this->artifact_verifier_unavailable( 'WP Codebox artifact verifier exited unsuccessfully.', array( 'exit_code' => $exit, 'output' => $decoded ) );
+		}
+
+		return $decoded;
+	}
+
+	/** @param array<string,mixed> $extra_data Additional WP_Error data. */
+	private function artifact_verifier_unavailable( string $message, array $extra_data = array() ): WP_Error {
+		return new WP_Error(
+			'wp_codebox_artifact_verifier_unavailable',
+			$message,
+			array_merge(
+				array(
+					'status'    => 500,
+					'issue_url' => self::GENERIC_VERIFIER_ISSUE_URL,
+				),
+				$extra_data
+			)
+		);
+	}
+
+	private function default_bin(): string {
+		$bundled = defined( 'WP_CODEBOX_PLUGIN_PATH' ) ? WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox' : '';
+		$default = is_string( $bundled ) && is_file( $bundled ) ? $bundled : 'wp-codebox';
+		$bin     = (string) $this->config_option( 'wp_codebox_bin', $default );
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$bin = (string) apply_filters( 'wp_codebox_bin', $bin );
+		}
+
+		return $bin;
+	}
+
+	private function command_prefix( string $bin ): string {
+		if ( str_ends_with( $bin, '.js' ) && is_file( $bin ) ) {
+			return 'node ' . escapeshellarg( $bin );
+		}
+
+		return escapeshellarg( $bin );
+	}
+
+	private function bound_output( string $output ): string {
+		if ( strlen( $output ) <= 4000 ) {
+			return $output;
+		}
+
+		return substr( $output, 0, 4000 );
 	}
 
 	private function resolve_artifact_file( string $directory, string $relative_path ): string {
