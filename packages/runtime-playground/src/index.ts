@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
+import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256, getCommandDefinition, runtimeEpisodeDigest, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -257,7 +257,24 @@ export class PlaygroundRuntimeBackend implements RuntimeBackend {
   }
 }
 
+export function playgroundRuntimeCommandIds(): string[] {
+  return Object.keys(PlaygroundRuntime.commandHandlers)
+}
+
 class PlaygroundRuntime implements Runtime {
+  static readonly commandHandlers = {
+    "inspect-mounted-inputs": (runtime) => runtime.inspectMountedInputs(),
+    "wordpress.run-php": (runtime, spec) => runtime.runPhp(spec),
+    "wordpress.wp-cli": (runtime, spec) => runtime.runWpCli(spec),
+    "wordpress.ability": (runtime, spec) => runtime.runAbility(spec),
+    "wordpress.bench": (runtime, spec) => runtime.runBench(spec),
+    "wordpress.phpunit": (runtime, spec) => runtime.runPhpunit(spec),
+    "wordpress.plugin-check": (runtime, spec) => runtime.runPluginCheck(spec),
+    "wordpress.core-phpunit": (runtime, spec) => runtime.runCorePhpunit(spec),
+    "wordpress.theme-check": (runtime, spec) => runtime.runThemeCheck(spec),
+    "wordpress.browser-probe": (runtime, spec) => runtime.runBrowserProbe(spec),
+  } satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundRuntime, spec: ExecutionSpec) => Promise<string> | string>
+
   private status: RuntimeInfo["status"] = "created"
   private readonly runtimeId = id("runtime")
   private readonly createdAt = now()
@@ -887,44 +904,13 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async executePlaygroundCommand(spec: ExecutionSpec): Promise<string> {
-    if (spec.command === "inspect-mounted-inputs") {
-      return this.inspectMountedInputs()
-    }
-
-    if (spec.command === "wordpress.run-php") {
-      return this.runPhp(spec)
-    }
-
-    if (spec.command === "wordpress.wp-cli") {
-      return this.runWpCli(spec)
-    }
-
-    if (spec.command === "wordpress.ability") {
-      return this.runAbility(spec)
-    }
-
-    if (spec.command === "wordpress.bench") {
-      return this.runBench(spec)
-    }
-
-    if (spec.command === "wordpress.phpunit") {
-      return this.runPhpunit(spec)
-    }
-
-    if (spec.command === "wordpress.plugin-check") {
-      return this.runPluginCheck(spec)
-    }
-
-    if (spec.command === "wordpress.core-phpunit") {
-      return this.runCorePhpunit(spec)
-    }
-
-    if (spec.command === "wordpress.theme-check") {
-      return this.runThemeCheck(spec)
-    }
-
-    if (spec.command === "wordpress.browser-probe") {
-      return this.runBrowserProbe(spec)
+    const definition = getCommandDefinition(spec.command)
+    if (definition?.handler.kind === "playground") {
+      const handler = PlaygroundRuntime.commandHandlers[definition.id as PlaygroundRuntimeCommandId]
+      if (!handler) {
+        throw new Error(`No Playground command handler is registered for: ${spec.command}`)
+      }
+      return handler(this, spec)
     }
 
     throw new Error(`No Playground command handler is registered for: ${spec.command}`)
