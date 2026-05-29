@@ -3,33 +3,26 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, buildRuntimeReferenceManifest, calculateArtifactManifestFileSha256, getCommandDefinition, runtimeEpisodeDigest, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
+import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, assertRuntimeCommandAllowed, getCommandDefinition, runtimeEpisodeDigest, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
   SKIPPED_CAPTURE_DIRECTORIES,
   ArtifactRedactor,
-  artifactContentDigest,
-  buildArtifactProvenance,
-  buildArtifactReview,
-  buildBlueprintAfter,
-  buildBlueprintAfterNotes,
-  buildTestResults,
   directoryDiff,
   fileEntry,
   isReplayableText,
   mountTargetPath,
-  serializeCapturedMountFiles,
   type CapturedMountFiles,
   type ChangedFile,
   type MountDiff,
   type MountDiffsResult,
 } from "./artifacts.js"
+import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import { playgroundBlueprint } from "./blueprint.js"
 import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
-  ArtifactManifest,
   ArtifactManifestFile,
   ArtifactPreview,
   ArtifactReviewBrowserSummary,
@@ -434,242 +427,38 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async collectArtifacts(spec: ArtifactSpec = {}): Promise<ArtifactBundle> {
-    await mkdir(this.artifactRoot, { recursive: true })
-    const logsDirectory = join(this.artifactRoot, "logs")
-    const filesDirectory = join(this.artifactRoot, "files")
-    await mkdir(logsDirectory, { recursive: true })
-    await mkdir(filesDirectory, { recursive: true })
-
-    const createdAt = now()
-    const manifestPath = join(this.artifactRoot, "manifest.json")
-    const metadataPath = join(this.artifactRoot, "metadata.json")
-    const blueprintAfterPath = join(this.artifactRoot, "blueprint.after.json")
-    const blueprintAfterNotesPath = join(this.artifactRoot, "blueprint.after-notes.json")
-    const eventsPath = join(this.artifactRoot, "events.jsonl")
-    const commandsPath = join(this.artifactRoot, "commands.jsonl")
-    const observationsPath = join(this.artifactRoot, "observations.jsonl")
-    const runtimeLogPath = join(logsDirectory, "runtime.log")
-    const commandsLogPath = join(logsDirectory, "commands.log")
-    const mountsPath = join(filesDirectory, "mounts.json")
-    const capturedMountsPath = join(filesDirectory, "mounted-files.json")
-    const diffsPath = join(filesDirectory, "diffs.json")
-    const changedFilesPath = join(filesDirectory, "changed-files.json")
-    const patchPath = join(filesDirectory, "patch.diff")
-    const testResultsPath = join(filesDirectory, "test-results.json")
-    const reviewPath = join(filesDirectory, "review.json")
-    const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
-    const redactor = new ArtifactRedactor(this.spec.secretEnv)
-    await this.redactBrowserArtifacts(redactor)
-    await this.redactPluginCheckArtifacts(redactor)
-    await this.redactThemeCheckArtifacts(redactor)
-    const preview = await this.previewInfo(createdAt, spec.previewHoldSeconds)
-    const browser = this.browserReviewSummary()
-
-    const runtime = await this.info()
-    const capturedMounts = await this.captureMountedFiles(filesDirectory, redactor)
-    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory, redactor)
-    const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
-    const redactedPatch = redactor.redact("files/patch.diff", patch)
-    const contentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
-    const bundleId = `artifact-bundle-sha256-${contentDigest}`
-    const contentDigestMetadata = {
-      algorithm: "sha256",
-      inputs: ["files/changed-files.json", "files/patch.diff"],
-      value: contentDigest,
-    }
-    const provenance = buildArtifactProvenance({
-      runtime,
-      context: this.spec.metadata ?? {},
-      mounts: this.mounts,
-    })
-    const metadata: Record<string, unknown> = {
-      id: bundleId,
-      contentDigest: contentDigestMetadata,
-      createdAt,
-      runtime,
-      provenance,
-      mounts: this.mounts,
-      policy: this.spec.policy,
-      context: this.spec.metadata ?? {},
-      spec,
-    }
-    this.recordEvent("runtime.artifacts.collected", {
-      id: bundleId,
-      directory: this.artifactRoot,
-      createdAt,
-      spec,
-    })
-    const testResults = buildTestResults()
-    const review = buildArtifactReview({
-      artifactId: bundleId,
-      createdAt,
-      provenance,
-      changedFiles,
-      patch: redactedPatch,
-      contentDigest,
-      runtimeCreatedAt: this.createdAt,
-      mounts: this.mounts,
-      preview,
-      browser,
-    })
-    const artifactFiles = {
-      changedFiles: relative(this.artifactRoot, changedFilesPath),
-      patch: relative(this.artifactRoot, patchPath),
-      testResults: relative(this.artifactRoot, testResultsPath),
-      review: relative(this.artifactRoot, reviewPath),
-      runtimeReferenceManifest: relative(this.artifactRoot, runtimeReferenceManifestPath),
-      mountDiffs: relative(this.artifactRoot, diffsPath),
-      ...(browser ? { browser: "files/browser/summary.json" } : {}),
-      ...(this.pluginChecks.length > 0 ? { pluginChecks: this.pluginChecks.map((check) => check.files.normalized) } : {}),
-      ...(this.themeChecks.length > 0 ? { themeChecks: this.themeChecks.map((check) => check.files.normalized) } : {}),
-    }
-    metadata.artifacts = artifactFiles
-    const blueprintAfter = buildBlueprintAfter({
-      environment: this.spec.environment,
-      capturedMounts,
-    })
-    const blueprintAfterNotes = buildBlueprintAfterNotes({
-      createdAt,
+    return new ArtifactBundleBuilder({
+      artifactRoot: this.artifactRoot,
       runtimeId: this.runtimeId,
-      environment: this.spec.environment,
+      runtimeCreatedAt: this.createdAt,
+      spec: this.spec,
       mounts: this.mounts,
-      capturedMounts,
-    })
-
-    const manifestFiles: ArtifactManifestFile[] = [
-      fileEntry(manifestPath, "manifest", "application/json"),
-      fileEntry(metadataPath, "metadata", "application/json"),
-      fileEntry(blueprintAfterPath, "blueprint-after", "application/json"),
-      fileEntry(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
-      fileEntry(eventsPath, "events", "application/x-ndjson"),
-      fileEntry(commandsPath, "commands", "application/x-ndjson"),
-      fileEntry(observationsPath, "observations", "application/x-ndjson"),
-      fileEntry(runtimeLogPath, "log", "text/plain"),
-      fileEntry(commandsLogPath, "log", "text/plain"),
-      fileEntry(mountsPath, "mounts", "application/json"),
-      fileEntry(capturedMountsPath, "mounted-files", "application/json"),
-      fileEntry(diffsPath, "mount-diffs", "application/json"),
-      fileEntry(changedFilesPath, "changed-files", "application/json"),
-      fileEntry(patchPath, "patch", "text/x-diff"),
-      fileEntry(testResultsPath, "test-results", "application/json"),
-      fileEntry(reviewPath, "review", "application/json"),
-      fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
-      ...this.browserManifestFiles(),
-      ...this.observationManifestFiles(),
-      ...this.pluginCheckManifestFiles(),
-      ...this.themeCheckManifestFiles(),
-      ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
-      ...capturedMounts.files.map((file) =>
-        fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
-      ),
-    ]
-
-    metadata.preview = preview
-
-    await writeRedactedArtifact(redactor, blueprintAfterPath, this.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, blueprintAfterNotesPath, this.artifactRoot, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
-    await writeJsonLines(eventsPath, this.events, redactor, this.artifactRoot)
-    await writeJsonLines(commandsPath, this.commands, redactor, this.artifactRoot)
-    await writeJsonLines(observationsPath, this.observations, redactor, this.artifactRoot)
-    await writeRedactedArtifact(redactor, runtimeLogPath, this.artifactRoot, this.formatRuntimeLog())
-    await writeRedactedArtifact(redactor, commandsLogPath, this.artifactRoot, this.formatCommandsLog())
-    await writeRedactedArtifact(redactor, mountsPath, this.artifactRoot, `${JSON.stringify(this.mounts, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, capturedMountsPath, this.artifactRoot, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
-    await writeRedactedArtifact(redactor, diffsPath, this.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
-    await writeFile(changedFilesPath, changedFilesJson)
-    await writeFile(patchPath, redactedPatch)
-    await writeRedactedArtifact(redactor, testResultsPath, this.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
-    const redaction = redactor.summary()
-    if (redaction.total > 0) {
-      review.redaction = redaction
-      review.riskFlags.push("secrets-redacted")
-    }
-    await writeRedactedArtifact(redactor, reviewPath, this.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
-    await writeFile(runtimeReferenceManifestPath, "{}\n")
-    metadata.redaction = redactor.summary()
-    await writeRedactedArtifact(redactor, metadataPath, this.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
-
-    const manifest: ArtifactManifest = {
-      id: bundleId,
-      contentDigest: {
-        algorithm: "sha256",
-        inputs: ["files/changed-files.json", "files/patch.diff"],
-        value: contentDigest,
-      },
-      createdAt,
-      runtime,
-      files: manifestFiles.map((file) => ({
-        ...file,
-        path: relative(this.artifactRoot, file.path),
-      })),
-    }
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
-      },
-    })))
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
-      },
-    })))
-    const runtimeReferenceManifest = buildRuntimeReferenceManifest({
-      createdAt,
-      runtime,
-      artifactBundle: {
-        kind: "artifact-bundle",
+      commands: this.commands,
+      observations: this.observations,
+      events: this.events,
+      info: () => this.info(),
+      previewInfo: (createdAt, previewHoldSeconds) => this.previewInfo(createdAt, previewHoldSeconds),
+      browserReviewSummary: () => this.browserReviewSummary(),
+      captureMountedFiles: (filesDirectory, redactor) => this.captureMountedFiles(filesDirectory, redactor),
+      captureMountDiffs: (filesDirectory, redactor) => this.captureMountDiffs(filesDirectory, redactor),
+      redactBrowserArtifacts: (redactor) => this.redactBrowserArtifacts(redactor),
+      redactPluginCheckArtifacts: (redactor) => this.redactPluginCheckArtifacts(redactor),
+      redactThemeCheckArtifacts: (redactor) => this.redactThemeCheckArtifacts(redactor),
+      browserManifestFiles: () => this.browserManifestFiles(),
+      pluginCheckArtifactPaths: () => this.pluginChecks.map((check) => check.files.normalized),
+      themeCheckArtifactPaths: () => this.themeChecks.map((check) => check.files.normalized),
+      observationManifestFiles: () => this.observationManifestFiles(),
+      pluginCheckManifestFiles: () => this.pluginCheckManifestFiles(),
+      themeCheckManifestFiles: () => this.themeCheckManifestFiles(),
+      formatRuntimeLog: () => this.formatRuntimeLog(),
+      formatCommandsLog: () => this.formatCommandsLog(),
+      recordArtifactsCollected: (bundleId, createdAt, artifactSpec) => this.recordEvent("runtime.artifacts.collected", {
         id: bundleId,
-        digest: { algorithm: "sha256", value: contentDigest },
-      },
-      files: manifest.files
-        .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
-        .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
-    })
-    await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-manifest.json" ? ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
-      },
-    }) : file))
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(this.artifactRoot, manifest, file),
-      },
-    })))
-    await writeRedactedArtifact(redactor, manifestPath, this.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
-
-    return {
-      id: bundleId,
-      directory: this.artifactRoot,
-      manifestPath,
-      metadataPath,
-      blueprintAfterPath,
-      blueprintAfterNotesPath,
-      eventsPath,
-      commandsPath,
-      observationsPath,
-      runtimeLogPath,
-      commandsLogPath,
-      mountsPath,
-      capturedMountsPath,
-      diffsPath,
-      changedFilesPath,
-      patchPath,
-      testResultsPath,
-      reviewPath,
-      runtimeReferenceManifestPath,
-      ...(preview ? { preview } : {}),
-      contentDigest,
-      createdAt,
-    }
+        directory: this.artifactRoot,
+        createdAt,
+        spec: artifactSpec,
+      }),
+    }).build(spec)
   }
 
   private async captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles> {
@@ -1994,12 +1783,4 @@ async function assertPreviewPortAvailable(port: number): Promise<void> {
       })
     }
   }
-}
-
-async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
-  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
-}
-
-async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {
-  await writeFile(path, redactor.redact(relative(artifactRoot, path), contents))
 }
