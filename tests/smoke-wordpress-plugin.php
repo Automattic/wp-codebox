@@ -410,6 +410,8 @@ $browser_session_missing_prereqs = call_user_func(
 	)
 );
 $assert( 'browser Playground session with missing prerequisites returns blocked state', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['success'] ?? true ) && 'blocked' === ( $browser_session_missing_prereqs['status'] ?? '' ) && 'blocked' === ( $browser_session_missing_prereqs['session']['status'] ?? '' ) );
+$assert( 'browser Playground blocked session identifies disposable execution scope', ! is_wp_error( $browser_session_missing_prereqs ) && 'disposable-playground' === ( $browser_session_missing_prereqs['execution_scope'] ?? '' ) && 'disposable-playground' === ( $browser_session_missing_prereqs['session']['execution_scope'] ?? '' ) );
+$assert( 'browser Playground blocked session identifies sandbox permission model', ! is_wp_error( $browser_session_missing_prereqs ) && 'sandbox-bypass' === ( $browser_session_missing_prereqs['permission_model'] ?? '' ) && 'sandbox-bypass' === ( $browser_session_missing_prereqs['session']['permission_model'] ?? '' ) );
 $assert( 'browser Playground session with missing prerequisites does not emit ready-to-code or recipe', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['signals']['ready_to_code']['emitted'] ?? true ) && ! array_key_exists( 'recipe', $browser_session_missing_prereqs ) && in_array( 'provider_plugin', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) && in_array( 'provider_secret', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) );
 
 unset( $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] );

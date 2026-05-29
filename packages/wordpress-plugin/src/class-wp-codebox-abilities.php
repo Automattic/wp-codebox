@@ -906,21 +906,25 @@ final class WP_Codebox_Abilities {
 	 */
 	private static function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $artifacts, array $playground, array $blueprint ): array {
 		return array(
-			'success'    => false,
-			'schema'     => 'wp-codebox/browser-playground-session/v1',
-			'execution'  => 'browser-playground',
-			'status'     => 'blocked',
-			'error'      => array(
+			'success'          => false,
+			'schema'           => 'wp-codebox/browser-playground-session/v1',
+			'execution'        => 'browser-playground',
+			'execution_scope'  => 'disposable-playground',
+			'permission_model' => 'sandbox-bypass',
+			'status'           => 'blocked',
+			'error'            => array(
 				'code'    => 'wp_codebox_browser_prerequisites_missing',
 				'message' => 'Browser Playground sandbox is missing required coding prerequisites.',
 				'missing' => $ready_to_code['missing'] ?? array(),
 			),
-			'session'    => array(
-				'schema'       => 'wp-codebox/browser-playground-session/v1',
-				'id'           => $session_id,
-				'status'       => 'blocked',
-				'persistence'  => 'external-orchestrator',
-				'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			'session'          => array(
+				'schema'           => 'wp-codebox/browser-playground-session/v1',
+				'id'               => $session_id,
+				'status'           => 'blocked',
+				'persistence'      => 'external-orchestrator',
+				'execution_scope'  => 'disposable-playground',
+				'permission_model' => 'sandbox-bypass',
+				'orchestrator'     => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
 			),
 			'task_input' => $task_input,
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
