@@ -41,6 +41,8 @@ try {
     "recipe-run",
     "--recipe",
     recipePath,
+    "--artifacts",
+    artifacts,
     "--preview-hold",
     "120s",
     "--json",
