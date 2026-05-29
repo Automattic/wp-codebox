@@ -1,5 +1,7 @@
 {
   "id": "wp-codebox",
+  "remote_url": "https://github.com/chubes4/wp-codebox.git",
+  "changelog_target": "CHANGELOG.md",
   "extensions": {
     "nodejs": {}
   },
@@ -21,9 +23,17 @@
     {
       "file": "packages/cli/package.json",
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
+    },
+    {
+      "file": "packages/wordpress-plugin/wp-codebox.php",
+      "pattern": "Version:\\s*([0-9.]+)"
+    },
+    {
+      "file": "packages/wordpress-plugin/wp-codebox.php",
+      "pattern": "WP_CODEBOX_PLUGIN_VERSION',\\s*'([0-9.]+)"
     }
   ],
-  "self_checks": {
+  "scripts": {
     "lint": [
       "npm run build"
     ],
