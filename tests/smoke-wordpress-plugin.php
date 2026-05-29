@@ -328,6 +328,8 @@ $assert( 'browser Playground session ability registered', is_array( $browser_ses
 $assert( 'browser Playground session ability is REST visible', true === ( $browser_session_ability['meta']['show_in_rest'] ?? false ) );
 $assert( 'browser Playground session accepts goal or legacy task', array( 'goal' ) === ( $browser_session_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_session_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
 $assert( 'browser Playground session exposes artifact file schema', 'array' === ( $browser_session_ability['input_schema']['properties']['artifact_files']['type'] ?? '' ) );
+$assert( 'browser Playground session exposes site blueprint artifact schema', 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) && 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['properties']['blueprint']['type'] ?? '' ) );
+$assert( 'browser Playground session declares site blueprint artifact output', 'object' === ( $browser_session_ability['output_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) );
 $assert( 'browser Playground session output declares browser execution', array( 'browser-playground' ) === ( $browser_session_ability['output_schema']['properties']['execution']['enum'] ?? array() ) );
 
 $artifact_abilities = array(
@@ -454,6 +456,43 @@ $assert( 'browser Playground session exposes preview URL', ! is_wp_error( $brows
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 $assert( 'browser Playground session returns canonical task input metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/task-input/v1' === ( $browser_session['task_input']['schema'] ?? '' ) && 1 === ( $browser_session['task_input']['version'] ?? 0 ) );
 $assert( 'browser Playground session exposes canonical task string', ! is_wp_error( $browser_session ) && 'Prepare a Studio Web browser preview.' === ( $browser_session['task'] ?? '' ) );
+
+$browser_site_blueprint_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                    => 'Prepare a pulled live-site copy.',
+		'provider_plugin_paths'   => array( $root . '/ai-provider-test' ),
+		'inherit'                 => array( 'connectors' => array( 'openai' ) ),
+		'site_blueprint_artifact' => array(
+			'schema'     => 'wp-codebox/site-blueprint-artifact/v1',
+			'id'         => 'wpcom-site-123-backup-456',
+			'blueprint'  => array(
+				'features' => array( 'networking' => true ),
+				'steps'    => array(
+					array(
+						'step' => 'runPHP',
+						'code' => '<?php update_option( "blogname", "Pulled Site" );',
+					),
+				),
+			),
+			'provenance' => array(
+				'provider'       => 'wpcom-sync',
+				'remote_site_id' => 123,
+			),
+		),
+	)
+);
+$assert( 'browser Playground session compiles site blueprint artifact before agent runtime', ! is_wp_error( $browser_site_blueprint_session ) && true === ( $browser_site_blueprint_session['success'] ?? false ) && 'runPHP' === ( $browser_site_blueprint_session['playground']['blueprint']['steps'][1]['step'] ?? '' ) && str_contains( (string) ( $browser_site_blueprint_session['playground']['blueprint']['steps'][1]['code'] ?? '' ), 'Pulled Site' ) );
+$assert( 'browser Playground session echoes site blueprint artifact provenance', ! is_wp_error( $browser_site_blueprint_session ) && 'wpcom-site-123-backup-456' === ( $browser_site_blueprint_session['site_blueprint_artifact']['id'] ?? '' ) && 'wpcom-sync' === ( $browser_site_blueprint_session['site_blueprint_artifact']['provenance']['provider'] ?? '' ) );
+
+$browser_invalid_site_blueprint = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                    => 'Prepare an invalid pulled site copy.',
+		'site_blueprint_artifact' => array( 'id' => 'missing-blueprint' ),
+	)
+);
+$assert( 'browser Playground session rejects malformed site blueprint artifacts', is_wp_error( $browser_invalid_site_blueprint ) && 'wp_codebox_site_blueprint_artifact_invalid' === $browser_invalid_site_blueprint->get_error_code() );
 
 $browser_parent_only_tool = call_user_func(
 	$browser_session_ability['execute_callback'],
