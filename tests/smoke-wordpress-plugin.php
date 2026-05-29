@@ -11,6 +11,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', sys_get_temp_dir() . '/wp-codebox-wordpress-plugin/' );
 }
 
+$plugin_bundle_root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-bundle-' . getmypid();
+if ( ! defined( 'WP_CODEBOX_PLUGIN_PATH' ) ) {
+	define( 'WP_CODEBOX_PLUGIN_PATH', $plugin_bundle_root . '/wp-codebox/' );
+}
+
 if ( ! class_exists( 'WP_Ability' ) ) {
 	class WP_Ability {}
 }
@@ -30,6 +35,24 @@ if ( ! class_exists( 'WP_CLI' ) ) {
 		public static function line( string $message ): void { $GLOBALS['wp_codebox_cli_lines'][] = $message; }
 		public static function warning( string $message ): void { $GLOBALS['wp_codebox_cli_warnings'][] = $message; }
 		public static function error( string $message ): void { throw new RuntimeException( $message ); }
+	}
+}
+
+if ( ! class_exists( 'WP_Post' ) ) {
+	class WP_Post {
+		public function __construct( public int $ID, public string $post_type, public string $post_status, public string $post_name, public string $post_title, public string $post_content = '', public string $post_excerpt = '', public string $post_mime_type = '' ) {}
+	}
+}
+
+if ( ! class_exists( 'WP_Term' ) ) {
+	class WP_Term {
+		public function __construct( public int $term_id, public string $taxonomy, public string $slug, public string $name, public string $description = '' ) {}
+	}
+}
+
+if ( ! class_exists( 'WP_User' ) ) {
+	class WP_User {
+		public function __construct( public int $ID, public string $display_name, public array $roles ) {}
 	}
 }
 
@@ -101,6 +124,21 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 function is_multisite(): bool { return (bool) ( $GLOBALS['wp_codebox_is_multisite'] ?? false ); }
 function get_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_options'][ $name ] ?? $default; }
 function get_site_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_site_options'][ $name ] ?? $default; }
+function home_url( string $path = '' ): string { return 'https://parent.example.test' . $path; }
+function sanitize_key( string $key ): string { return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '', $key ) ?? '' ); }
+function sanitize_title( string $title ): string { return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '-', $title ) ?? '' ); }
+function sanitize_text_field( string $text ): string { return trim( preg_replace( '/[\r\n\t]+/', ' ', $text ) ?? '' ); }
+function absint( mixed $value ): int { return abs( (int) $value ); }
+function get_stylesheet(): string { return 'twentytwentyfive'; }
+function get_posts( array $args ): array {
+	if ( 'attachment' === ( $args['post_type'] ?? '' ) ) {
+		return array( new WP_Post( 5, 'attachment', 'inherit', 'seed-image', 'Seed Image', '', '', 'image/png' ) );
+	}
+
+	return array( new WP_Post( 7, 'page', 'publish', 'seed-page', 'Seed Page', '<!-- wp:paragraph --><p>Seeded</p><!-- /wp:paragraph -->' ) );
+}
+function get_terms( array $args ): array { return array( new WP_Term( 3, 'category', 'seed-category', 'Seed Category' ) ); }
+function get_users( array $args ): array { return array( new WP_User( 11, 'Private User', array( 'editor' ) ) ); }
 
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
@@ -113,6 +151,12 @@ foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root
 	mkdir( $root . '/' . $dir, 0777, true );
 }
 file_put_contents( $root . '/wp-codebox.js', "#!/usr/bin/env node\n" );
+mkdir( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin', 0777, true );
+mkdir( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/vendor/node/bin', 0777, true );
+file_put_contents( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox', "#!/usr/bin/env bash\n" );
+file_put_contents( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/vendor/node/bin/node', "#!/usr/bin/env bash\n" );
+chmod( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox', 0755 );
+chmod( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/vendor/node/bin/node', 0755 );
 if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 	define( 'WP_PLUGIN_DIR', $root . '/plugin-root' );
 }
@@ -163,6 +207,7 @@ $assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_s
 $assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['input_schema']['properties']['expected_artifacts']['type'] ?? '' ) );
 $assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
 $assert( 'ability exposes generic mounts schema', 'array' === ( $ability['input_schema']['properties']['mounts']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['mounts']['items']['properties']['metadata']['type'] ?? '' ) );
+$assert( 'ability exposes bounded parent-site seed schema', 'array' === ( $ability['input_schema']['properties']['site_seeds']['type'] ?? '' ) && array( 'parent_site' ) === ( $ability['input_schema']['properties']['site_seeds']['items']['properties']['type']['enum'] ?? array() ) );
 $assert( 'ability exposes inheritance request schema', 'object' === ( $ability['input_schema']['properties']['inherit']['type'] ?? '' ) && 'array' === ( $ability['input_schema']['properties']['inherit']['properties']['connectors']['type'] ?? '' ) );
 $assert( 'ability exposes connector credential envelope schema', 'object' === ( $ability['input_schema']['properties']['inherit']['properties']['credentials']['type'] ?? '' ) && 'array' === ( $ability['input_schema']['properties']['inherit']['properties']['credentials']['properties']['secrets']['type'] ?? '' ) );
 $assert( 'ability exposes external sandbox session schema', 'string' === ( $ability['input_schema']['properties']['sandbox_session_id']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['orchestrator']['type'] ?? '' ) && 'object' === ( $ability['output_schema']['properties']['session']['type'] ?? '' ) );
@@ -335,6 +380,26 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 								'localUrl' => 'http://127.0.0.1:' . ( 12344 + $command_count ),
 							),
 						),
+						'agentResult' => array(
+							'schema'       => 'wp-codebox/agent-result/v1',
+							'status'       => 'completed',
+							'actionable'   => false,
+							'summary'      => 'Agent sandbox completed without actionable file changes.',
+							'noOpReason'   => 'no_file_changes',
+							'changedFiles' => array(
+								'count'    => 0,
+								'paths'    => array(),
+								'artifact' => 'files/changed-files.json',
+							),
+							'patch'        => array(
+								'bytes'    => 0,
+								'artifact' => 'files/patch.diff',
+							),
+							'transcript'   => array(
+								'artifact'       => 'files/transcript.json',
+								'executionCount' => 1,
+							),
+						),
 					)
 				),
 			);
@@ -382,9 +447,10 @@ $assert( 'runner returns caller-owned sandbox session envelope', ! is_wp_error( 
 $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_error( $result ) && 'agent-chat-session-456' === ( $result['session']['agent_session_id'] ?? '' ) && str_contains( $captured_recipe, 'session-id=agent-chat-session-456' ) );
 $assert( 'runner returns orchestrator correlation and artifact refs', ! is_wp_error( $result ) && 'job-123' === ( $result['session']['orchestrator']['job_id'] ?? '' ) && 'artifact-bundle-sha256-fixture' === ( $result['session']['artifacts']['bundle_id'] ?? '' ) );
 $assert( 'runner returns public preview URL in session artifact metadata', ! is_wp_error( $result ) && 'https://preview.example.test/session-123/' === ( $result['session']['artifacts']['preview_url'] ?? '' ) && 'https://preview.example.test/session-123/' === ( $result['run']['artifacts']['preview']['url'] ?? '' ) );
+$assert( 'runner surfaces normalized agent result summary', ! is_wp_error( $result ) && 'wp-codebox/agent-result/v1' === ( $result['agent_result']['schema'] ?? '' ) && false === ( $result['agent_result']['actionable'] ?? true ) && 'no_file_changes' === ( $result['agent_result']['noOpReason'] ?? '' ) && 'files/transcript.json' === ( $result['agent_result']['transcript']['artifact'] ?? '' ) );
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $assert( 'runner invokes recipe-run', str_contains( $captured_command, 'recipe-run' ) );
-$assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node ' ) );
+$assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node' ) && str_contains( $captured_command, 'wp-codebox.js' ) );
 $assert( 'runner passes preview hold to CLI', str_contains( $captured_command, '--preview-hold' ) && str_contains( $captured_command, "'30'" ) );
 $assert( 'runner passes preview configuration to CLI', str_contains( $captured_command, '--preview-port' ) && str_contains( $captured_command, "'45678'" ) && str_contains( $captured_command, '--preview-bind' ) && str_contains( $captured_command, "'127.0.0.1'" ) && str_contains( $captured_command, '--preview-public-url' ) && str_contains( $captured_command, "'https://preview.example.test/session-123/'" ) );
 $assert( 'runner recipe uses agent step', str_contains( $captured_recipe, 'wp-codebox.agent-sandbox-run' ) );
@@ -397,6 +463,35 @@ $assert( 'runner recipe passes provider plugin path', str_contains( $captured_re
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
+
+$GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';
+$GLOBALS['wp_codebox_options']['active_plugins'] = array( 'agents-api/agents-api.php' );
+$seed_result = $runner->run(
+	array(
+		'goal'           => 'Run with a bounded parent-site seed.',
+		'artifacts_path' => $root . '/artifacts',
+		'site_seeds'    => array(
+			array(
+				'type'   => 'parent_site',
+				'name'   => 'parent-site-smoke',
+				'scopes' => array(
+					'posts'         => array( 'postTypes' => array( 'page' ), 'maxRecords' => 1 ),
+					'terms'         => array( 'taxonomies' => array( 'category' ), 'maxRecords' => 1 ),
+					'options'       => array( 'names' => array( 'blogname' ), 'maxRecords' => 1 ),
+					'users'         => array( 'roles' => array( 'editor' ), 'anonymize' => true, 'maxRecords' => 1 ),
+					'media'         => array( 'maxRecords' => 1 ),
+					'activePlugins' => true,
+					'activeTheme'   => true,
+				),
+			),
+		),
+	)
+);
+$seed_recipe = json_decode( $captured_recipe, true );
+$seed_path   = (string) ( $seed_recipe['inputs']['siteSeeds'][0]['source'] ?? '' );
+$assert( 'runner exports bounded parent-site seed as fixture', ! is_wp_error( $seed_result ) && 'fixture' === ( $seed_recipe['inputs']['siteSeeds'][0]['type'] ?? '' ) && 'json' === ( $seed_recipe['inputs']['siteSeeds'][0]['format'] ?? '' ) );
+$assert( 'runner cleans temporary parent-site seed fixture after run', ! is_wp_error( $seed_result ) && '' !== $seed_path && ! file_exists( $seed_path ) );
+$assert( 'runner preserves parent-site seed scope in recipe', ! is_wp_error( $seed_result ) && 1 === ( $seed_recipe['inputs']['siteSeeds'][0]['scopes']['posts']['maxRecords'] ?? 0 ) && true === ( $seed_recipe['inputs']['siteSeeds'][0]['scopes']['users']['anonymize'] ?? false ) );
 
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
 $plugin_native_result = $runner->run(
@@ -412,6 +507,18 @@ $plugin_native_plugins = array_map(
 );
 $assert( 'runner defaults Agents API path from WP_PLUGIN_DIR', ! is_wp_error( $plugin_native_result ) && in_array( 'agents-api', $plugin_native_plugins, true ) );
 $assert( 'runner does not require Data Machine component paths', ! is_wp_error( $plugin_native_result ) && ! in_array( 'data-machine', $plugin_native_plugins, true ) && ! in_array( 'data-machine-code', $plugin_native_plugins, true ) );
+
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] );
+$bundled_runtime_result = $runner->run(
+	array(
+		'goal'           => 'Run with the packaged WP Codebox CLI runtime.',
+		'artifacts_path' => $root . '/artifacts',
+	)
+);
+$assert( 'runner defaults to packaged CLI wrapper when present', ! is_wp_error( $bundled_runtime_result ) && str_contains( $captured_command, WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox' ) );
+$assert( 'runner preflights packaged Node runtime', ! is_wp_error( $bundled_runtime_result ) && ! str_contains( $captured_command, 'node: not found' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_bin'] = $root . '/wp-codebox.js';
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
 	'agents_api'        => $root . '/agents-api',
@@ -784,6 +891,7 @@ $assert( 'batch runner invokes recipe-run once per task', 2 === count( $batch_re
 $assert( 'batch runner emits one agent step per isolated recipe', 1 === substr_count( $batch_recipes[0] ?? '', 'wp-codebox.agent-sandbox-run' ) && 1 === substr_count( $batch_recipes[1] ?? '', 'wp-codebox.agent-sandbox-run' ) );
 $assert( 'batch runner returns sequential isolation contract', 'sequential-isolated-sandboxes' === ( $batch_result['execution'] ?? '' ) && ! array_key_exists( 'concurrency', $batch_result ) );
 $assert( 'batch runner returns per-task artifact refs', ! is_wp_error( $batch_result ) && '' !== ( $batch_result['runs'][0]['artifact_id'] ?? '' ) && '' !== ( $batch_result['runs'][1]['artifact_id'] ?? '' ) && ( $batch_result['runs'][0]['artifact_id'] ?? '' ) !== ( $batch_result['runs'][1]['artifact_id'] ?? '' ) );
+$assert( 'batch runner returns per-task agent result summaries', ! is_wp_error( $batch_result ) && 'wp-codebox/agent-result/v1' === ( $batch_result['runs'][0]['agent_result']['schema'] ?? '' ) && 'files/transcript.json' === ( $batch_result['runs'][1]['agent_result']['transcript']['artifact'] ?? '' ) );
 $assert( 'batch runner returns per-task preview URLs', ! is_wp_error( $batch_result ) && 'https://preview.example.test/batch/' === ( $batch_result['runs'][0]['preview_url'] ?? '' ) && 'https://preview.example.test/batch/' === ( $batch_result['runs'][1]['preview_url'] ?? '' ) );
 $assert( 'batch runner assigns per-task sandbox session ids', ! is_wp_error( $batch_result ) && 'parent-batch-789:1' === ( $batch_result['runs'][0]['session']['id'] ?? '' ) && 'parent-batch-789:2' === ( $batch_result['runs'][1]['session']['id'] ?? '' ) );
 $assert( 'batch runner reports per-task counts', ! is_wp_error( $batch_result ) && 2 === ( $batch_result['total'] ?? 0 ) && 2 === ( $batch_result['completed'] ?? 0 ) && 0 === ( $batch_result['failed'] ?? -1 ) );

@@ -145,6 +145,61 @@ interface RecipeArtifactEvidenceResult {
     artifact: RecipeArtifactEvidenceFile
     strict: boolean
   }
+  agentResult?: AgentSandboxResultSummary & {
+    artifact: RecipeArtifactEvidenceFile
+  }
+  transcript?: AgentSandboxTranscript & {
+    artifact: RecipeArtifactEvidenceFile
+  }
+}
+
+interface AgentSandboxResultSummary {
+  schema: "wp-codebox/agent-result/v1"
+  status: "completed" | "failed" | "unknown"
+  actionable: boolean
+  summary: string
+  changedFiles: {
+    count: number
+    paths: string[]
+    statuses: Record<string, number>
+    artifact: string
+  }
+  patch: {
+    bytes: number
+    sha256: string
+    artifact: string
+  }
+  transcript: {
+    artifact: string
+    executionCount: number
+  }
+  artifacts: {
+    directory: string
+    review: string
+    manifest: string
+  }
+  failures: Array<{ executionIndex: number; command: string; exitCode: number; message: string }>
+  noOpReason?: string
+  workspaceTools?: {
+    diagnostics: string[]
+  }
+}
+
+interface AgentSandboxTranscript {
+  schema: "wp-codebox/agent-transcript/v1"
+  executions: AgentSandboxTranscriptExecution[]
+}
+
+interface AgentSandboxTranscriptExecution {
+  executionIndex: number
+  command: string
+  exitCode: number
+  recipePhase?: string
+  recipeStepIndex?: number
+  recipeCommand?: string
+  stdout: string
+  stderr: string
+  parsed?: unknown
 }
 
 interface RecipeRunAttestation {
@@ -339,6 +394,7 @@ type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after"
 type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
+  recipeCommand?: string
 }
 
 interface RecipeDryRunMount {
@@ -551,6 +607,35 @@ const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
 const ALLOW_NETWORK_DOWNLOADS_ENV = "WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS"
 const execFileAsync = promisify(execFile)
+
+const DEFAULT_WORKSPACE_SEED_EXCLUDED_NAMES = new Set([
+  ".git",
+  ".homeboy",
+  ".homeboy-bin",
+  ".homeboy-build",
+  ".datamachine",
+  "node_modules",
+  "target",
+  "vendor",
+])
+
+function shouldCopyWorkspaceSeedEntry(sourceRoot: string, entry: string): boolean {
+  const relativePath = relative(sourceRoot, entry)
+  if (!relativePath) {
+    return true
+  }
+
+  return !relativePath.split(/[\\/]+/).some((part) => {
+    return DEFAULT_WORKSPACE_SEED_EXCLUDED_NAMES.has(part) || part === ".DS_Store" || part === ".env" || part.startsWith(".env.") || part.startsWith("._")
+  })
+}
+
+async function copyWorkspaceSeedDirectory(source: string, target: string): Promise<void> {
+  await cp(source, target, {
+    recursive: true,
+    filter: (entry) => shouldCopyWorkspaceSeedEntry(source, entry),
+  })
+}
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
 const commandCatalog: CommandMetadata[] = [
@@ -1610,6 +1695,8 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
     const evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
+    const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
+    Object.assign(evidence, agentEvidence)
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles))
@@ -1629,6 +1716,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         siteSeeds,
         ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
+        ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
         artifacts,
         error: strictFailure,
       }
@@ -1644,6 +1732,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       siteSeeds,
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
+      ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
       artifacts,
     }
   } catch (error) {
@@ -1750,6 +1839,188 @@ async function finalizeRecipeArtifactEvidence(
 
   await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
   return result
+}
+
+async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "transcript">> {
+  const transcript = buildAgentSandboxTranscript(executions)
+  if (transcript.executions.length === 0) {
+    return {}
+  }
+
+  const transcriptPath = join(dirname(artifacts.reviewPath), "transcript.json")
+  const agentResultPath = join(dirname(artifacts.reviewPath), "agent-result.json")
+  const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
+  const agentResult = await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path)
+  const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, transcriptFile])
+
+  return {
+    agentResult: { ...agentResult, artifact: agentResultFile },
+    transcript: { ...transcript, artifact: transcriptFile },
+  }
+}
+
+function buildAgentSandboxTranscript(executions: RecipeExecutionResult[]): AgentSandboxTranscript {
+  return {
+    schema: "wp-codebox/agent-transcript/v1",
+    executions: executions
+      .map((execution, index) => ({ execution, index }))
+      .filter(({ execution }) => isAgentSandboxExecution(execution))
+      .map(({ execution, index }) => ({
+        executionIndex: index,
+        command: execution.command,
+        exitCode: execution.exitCode,
+        recipePhase: execution.recipePhase,
+        recipeStepIndex: execution.recipeStepIndex,
+        recipeCommand: execution.recipeCommand,
+        stdout: boundTranscriptText(execution.stdout),
+        stderr: boundTranscriptText(execution.stderr),
+        ...(decodeJsonFragment(execution.stdout) ?? decodeJsonFragment(execution.stderr) ? { parsed: decodeJsonFragment(execution.stdout) ?? decodeJsonFragment(execution.stderr) } : {}),
+      })),
+  }
+}
+
+function isAgentSandboxExecution(execution: RecipeExecutionResult): boolean {
+  return execution.recipeCommand === "wp-codebox.agent-sandbox-run"
+}
+
+async function buildAgentSandboxResultSummary(artifacts: ArtifactBundle, transcript: AgentSandboxTranscript, transcriptPath: string): Promise<AgentSandboxResultSummary> {
+  const changedFiles = await readChangedFileSummary(artifacts.changedFilesPath)
+  const patch = await readPatchSummary(artifacts.patchPath)
+  const failures = transcript.executions
+    .filter((execution) => execution.exitCode !== 0)
+    .map((execution) => ({
+      executionIndex: execution.executionIndex,
+      command: execution.command,
+      exitCode: execution.exitCode,
+      message: firstTranscriptMessage(execution) || `Command exited with ${execution.exitCode}`,
+    }))
+  const status: AgentSandboxResultSummary["status"] = failures.length > 0 ? "failed" : transcript.executions.length > 0 ? "completed" : "unknown"
+  const actionable = status === "completed" && (changedFiles.count > 0 || patch.bytes > 0)
+  const noOpReason = actionable ? undefined : status === "failed" ? "execution_failed" : "no_file_changes"
+
+  return stripUndefined({
+    schema: "wp-codebox/agent-result/v1" as const,
+    status,
+    actionable,
+    summary: actionable
+      ? `Agent sandbox produced ${changedFiles.count === 1 ? "1 changed file" : `${changedFiles.count} changed files`} and a ${patch.bytes}-byte patch.`
+      : status === "failed"
+        ? "Agent sandbox failed before producing actionable file changes."
+        : "Agent sandbox completed without actionable file changes.",
+    changedFiles,
+    patch,
+    transcript: {
+      artifact: transcriptPath,
+      executionCount: transcript.executions.length,
+    },
+    artifacts: {
+      directory: artifacts.directory,
+      review: relative(artifacts.directory, artifacts.reviewPath),
+      manifest: relative(artifacts.directory, artifacts.manifestPath),
+    },
+    failures,
+    noOpReason,
+    workspaceTools: workspaceToolDiagnostics(transcript),
+  })
+}
+
+async function readChangedFileSummary(path: string): Promise<AgentSandboxResultSummary["changedFiles"]> {
+  try {
+    const decoded = JSON.parse(await readFile(path, "utf8"))
+    const files: Record<string, unknown>[] = Array.isArray(decoded?.files) ? decoded.files.filter(isRecord) : []
+    const statuses: Record<string, number> = {}
+    for (const file of files) {
+      const status = typeof file.status === "string" && file.status.length > 0 ? file.status : "unknown"
+      statuses[status] = (statuses[status] ?? 0) + 1
+    }
+
+    return {
+      count: files.length,
+      paths: files.map((file) => String(file.relativePath ?? file.relative_path ?? file.path ?? "")).filter(Boolean),
+      statuses,
+      artifact: "files/changed-files.json",
+    }
+  } catch {
+    return { count: 0, paths: [], statuses: {}, artifact: "files/changed-files.json" }
+  }
+}
+
+async function readPatchSummary(path: string): Promise<AgentSandboxResultSummary["patch"]> {
+  try {
+    const patch = await readFile(path, "utf8")
+    return {
+      bytes: Buffer.byteLength(patch),
+      sha256: createHash("sha256").update(patch).digest("hex"),
+      artifact: "files/patch.diff",
+    }
+  } catch {
+    return { bytes: 0, sha256: createHash("sha256").update("").digest("hex"), artifact: "files/patch.diff" }
+  }
+}
+
+function firstTranscriptMessage(execution: AgentSandboxTranscriptExecution): string {
+  const parsed = isRecord(execution.parsed) ? execution.parsed : undefined
+  const result = isRecord(parsed?.result) ? parsed.result : parsed
+  for (const key of ["message", "error", "error_message", "errorMessage", "answer"]) {
+    const value = result?.[key]
+    if (typeof value === "string" && value.trim()) {
+      return boundTranscriptText(value.trim(), 500)
+    }
+  }
+
+  return boundTranscriptText(execution.stderr || execution.stdout, 500)
+}
+
+function workspaceToolDiagnostics(transcript: AgentSandboxTranscript): AgentSandboxResultSummary["workspaceTools"] | undefined {
+  const diagnostics = new Set<string>()
+  const text = transcript.executions.map((execution) => `${execution.stdout}\n${execution.stderr}`).join("\n").toLowerCase()
+  if (text.includes("workspace") && /not found|unknown tool|tool_not_found|tool not found|not available/.test(text)) {
+    diagnostics.add("workspace-tool-unavailable")
+  }
+  if (/permission denied|not allowlisted|not allowed|forbidden/.test(text)) {
+    diagnostics.add("workspace-tool-denied")
+  }
+  if (text.includes("workspace_apply_patch") || text.includes("workspace-edit") || text.includes("workspace_write")) {
+    diagnostics.add("workspace-tool-surface-observed")
+  }
+
+  return diagnostics.size > 0 ? { diagnostics: [...diagnostics].sort() } : undefined
+}
+
+function recipeAgentResultOutput(agentResult: RecipeArtifactEvidenceResult["agentResult"]): AgentSandboxResultSummary | undefined {
+  if (!agentResult) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = agentResult
+  return result
+}
+
+function decodeJsonFragment(text: string): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const start = trimmed.indexOf("{")
+    const end = trimmed.lastIndexOf("}")
+    if (start === -1 || end <= start) {
+      return undefined
+    }
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1))
+    } catch {
+      return undefined
+    }
+  }
+}
+
+function boundTranscriptText(text: string, maxLength = 12000): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}\n[truncated ${text.length - maxLength} bytes]` : text
 }
 
 async function buildRecipeRunAttestation(args: {
@@ -2071,12 +2342,15 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
 
   const evidence = Object.fromEntries(evidenceFiles.map((file) => [file.kind, { path: file.path, sha256: file.sha256 }]))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8")) as Record<string, unknown>
-  metadata.artifacts = { ...(isRecord(metadata.artifacts) ? metadata.artifacts : {}), runtimeEvidence: evidence }
-  metadata.evidence = { ...(isRecord(metadata.evidence) ? metadata.evidence : {}), runtimeEvidence: evidence }
+  const metadataArtifacts = isRecord(metadata.artifacts) ? metadata.artifacts : {}
+  const metadataEvidence = isRecord(metadata.evidence) ? metadata.evidence : {}
+  metadata.artifacts = { ...metadataArtifacts, runtimeEvidence: { ...(isRecord(metadataArtifacts.runtimeEvidence) ? metadataArtifacts.runtimeEvidence : {}), ...evidence } }
+  metadata.evidence = { ...metadataEvidence, runtimeEvidence: { ...(isRecord(metadataEvidence.runtimeEvidence) ? metadataEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`)
 
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8")) as Record<string, unknown>
-  review.evidence = { ...(isRecord(review.evidence) ? review.evidence : {}), runtimeEvidence: evidence }
+  const reviewEvidence = isRecord(review.evidence) ? review.evidence : {}
+  review.evidence = { ...reviewEvidence, runtimeEvidence: { ...(isRecord(reviewEvidence.runtimeEvidence) ? reviewEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
   for (const file of manifest.files) {
@@ -3578,18 +3852,19 @@ function recipeWorkflowSteps(recipe: WorkspaceRecipe): Array<{ phase: Exclude<Re
   ]
 }
 
-function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number): RecipeExecutionResult {
+function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string): RecipeExecutionResult {
   return {
     ...execution,
     recipePhase,
     recipeStepIndex,
+    recipeCommand,
   }
 }
 
 async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string): Promise<RecipeExecutionResult> {
   try {
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory))
-    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index)
+    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
@@ -3966,7 +4241,7 @@ if (!is_array($seed)) {
     throw new RuntimeException('Site seed fixture must decode to a JSON object.');
 }
 
-$counts = array('posts' => 0, 'options' => 0, 'terms' => 0, 'activePlugins' => 0, 'activeTheme' => 0);
+$counts = array('posts' => 0, 'options' => 0, 'terms' => 0, 'users' => 0, 'media' => 0, 'activePlugins' => 0, 'activeTheme' => 0);
 
 foreach (($seed['posts'] ?? array()) as $post) {
     if (!is_array($post)) {
@@ -4018,6 +4293,59 @@ foreach (($seed['terms'] ?? array()) as $term) {
         throw new RuntimeException('Failed to import site seed term from ' . $seed_name . ': ' . $result->get_error_message());
     }
     $counts['terms']++;
+}
+
+foreach (($seed['users'] ?? array()) as $user) {
+    if (!is_array($user)) {
+        continue;
+    }
+    $login = isset($user['user_login']) ? (string) $user['user_login'] : (isset($user['login']) ? (string) $user['login'] : '');
+    if ('' === $login || !preg_match('/^[A-Za-z0-9_.@-]+$/', $login)) {
+        throw new RuntimeException('Unsafe site seed user login from ' . $seed_name . '.');
+    }
+    if (username_exists($login)) {
+        $counts['users']++;
+        continue;
+    }
+    $email = isset($user['user_email']) ? (string) $user['user_email'] : (isset($user['email']) ? (string) $user['email'] : $login . '@example.invalid');
+    if (!is_email($email)) {
+        $email = $login . '@example.invalid';
+    }
+    $user_id = wp_insert_user(array(
+        'user_login' => $login,
+        'user_pass' => wp_generate_password(24, true, true),
+        'user_email' => $email,
+        'display_name' => isset($user['display_name']) ? (string) $user['display_name'] : $login,
+        'role' => isset($user['role']) ? (string) $user['role'] : (is_array($user['roles'] ?? null) && count($user['roles']) > 0 ? (string) reset($user['roles']) : 'subscriber'),
+    ));
+    if (is_wp_error($user_id)) {
+        throw new RuntimeException('Failed to import site seed user from ' . $seed_name . ': ' . $user_id->get_error_message());
+    }
+    $counts['users']++;
+}
+
+foreach (($seed['media'] ?? array()) as $media) {
+    if (!is_array($media)) {
+        continue;
+    }
+    $attachment = array(
+        'post_type' => 'attachment',
+        'post_status' => isset($media['post_status']) ? (string) $media['post_status'] : 'inherit',
+        'post_title' => isset($media['post_title']) ? (string) $media['post_title'] : (isset($media['title']) ? (string) $media['title'] : 'Seeded media'),
+        'post_content' => isset($media['post_content']) ? (string) $media['post_content'] : '',
+        'post_excerpt' => isset($media['post_excerpt']) ? (string) $media['post_excerpt'] : '',
+        'post_mime_type' => isset($media['post_mime_type']) ? (string) $media['post_mime_type'] : (isset($media['mime_type']) ? (string) $media['mime_type'] : ''),
+    );
+    if (isset($media['slug'])) {
+        $attachment['post_name'] = (string) $media['slug'];
+    } elseif (isset($media['post_name'])) {
+        $attachment['post_name'] = (string) $media['post_name'];
+    }
+    $attachment_id = wp_insert_post($attachment, true);
+    if (is_wp_error($attachment_id)) {
+        throw new RuntimeException('Failed to import site seed media from ' . $seed_name . ': ' . $attachment_id->get_error_message());
+    }
+    $counts['media']++;
 }
 
 $active_plugins = $seed['activePlugins'] ?? array();
@@ -4142,11 +4470,13 @@ function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["s
   const posts = boundedRecords(arrayRecords(seed.posts), scopes.posts, (record, scope) => matchesPostScope(record, scope))
   const options = boundedOptions(seed.options, scopes.options)
   const terms = boundedRecords(arrayRecords(seed.terms), scopes.terms, (record, scope) => matchesTermScope(record, scope))
+  const users = boundedRecords(arrayRecords(seed.users), scopes.users, (record, scope) => matchesUserScope(record, scope))
+  const media = boundedRecords(arrayRecords(seed.media), scopes.media, (record, scope) => matchesMediaScope(record, scope))
   const activePlugins = boundedActivePlugins(seed.activePlugins, scopes.activePlugins)
   const activeTheme = boundedActiveTheme(seed.activeTheme, scopes.activeTheme)
 
   return {
-    seed: stripUndefined({ posts: posts.records, options: options.records, terms: terms.records, activePlugins: activePlugins.records, activeTheme: activeTheme.record }),
+    seed: stripUndefined({ posts: posts.records, options: options.records, terms: terms.records, users: users.records, media: media.records, activePlugins: activePlugins.records, activeTheme: activeTheme.record }),
     counts: {
       fixturePostsIncluded: posts.records.length,
       fixturePostsExcluded: posts.excluded,
@@ -4154,6 +4484,10 @@ function boundedFixtureSeed(rawSeed: unknown, scopes: WorkspaceRecipeSiteSeed["s
       fixtureOptionsExcluded: options.excluded,
       fixtureTermsIncluded: terms.records.length,
       fixtureTermsExcluded: terms.excluded,
+      fixtureUsersIncluded: users.records.length,
+      fixtureUsersExcluded: users.excluded,
+      fixtureMediaIncluded: media.records.length,
+      fixtureMediaExcluded: media.excluded,
       fixtureActivePluginsIncluded: activePlugins.records.length,
       fixtureActivePluginsExcluded: activePlugins.excluded,
       fixtureActiveThemeIncluded: activeTheme.record === undefined ? 0 : 1,
@@ -4239,11 +4573,32 @@ function matchesTermScope(record: Record<string, unknown>, scope: NonNullable<Wo
     matchesStringSelector(record, scope.taxonomies, ["taxonomy"])
 }
 
+function matchesUserScope(record: Record<string, unknown>, scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["users"]>): boolean {
+  return matchesNumberSelector(record, scope.ids, ["id", "ID"]) &&
+    matchesStringSelector(record, scope.names, ["user_login", "login", "display_name", "name"]) &&
+    matchesArrayStringSelector(record, scope.roles, ["roles"])
+}
+
+function matchesMediaScope(record: Record<string, unknown>, scope: NonNullable<WorkspaceRecipeSiteSeed["scopes"]["media"]>): boolean {
+  return matchesNumberSelector(record, scope.ids, ["id", "ID"]) &&
+    matchesStringSelector(record, scope.slugs, ["slug", "post_name"]) &&
+    matchesStringSelector(record, scope.names, ["post_title", "title", "name"]) &&
+    matchesStringSelector(record, scope.statuses, ["post_status", "status"])
+}
+
 function matchesStringSelector(record: Record<string, unknown>, allowed: string[] | undefined, keys: string[]): boolean {
   if (!allowed || allowed.length === 0) {
     return true
   }
   const values = keys.map((key) => record[key]).filter((value): value is string => typeof value === "string")
+  return values.some((value) => allowed.includes(value))
+}
+
+function matchesArrayStringSelector(record: Record<string, unknown>, allowed: string[] | undefined, keys: string[]): boolean {
+  if (!allowed || allowed.length === 0) {
+    return true
+  }
+  const values = keys.flatMap((key) => Array.isArray(record[key]) ? record[key] : []).filter((value): value is string => typeof value === "string")
   return values.some((value) => allowed.includes(value))
 }
 
@@ -4464,8 +4819,8 @@ async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recip
   const baselineDirectory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-baseline-`))
   if (workspace.seed.type === "directory") {
     const source = resolve(recipeDirectory, workspace.seed.source ?? "")
-    await cp(source, directory, { recursive: true })
-    await cp(source, baselineDirectory, { recursive: true })
+    await copyWorkspaceSeedDirectory(source, directory)
+    await copyWorkspaceSeedDirectory(source, baselineDirectory)
     await ensureStandaloneGitPrimary(directory)
     return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
   }
