@@ -9,29 +9,14 @@ import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, calculateArtifactManifestFileSha256, checkWorkspacePolicy, createRuntime, validateRuntimePolicy, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, calculateArtifactManifestFileSha256, checkWorkspacePolicy, commandRegistry, createRuntime, recipeCommandDefinitions, validateRuntimePolicy, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type CommandDefinition, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 
-interface CommandMetadata {
-  id: string
-  description: string
-  acceptedArgs: Array<{
-    name: string
-    description: string
-    required?: boolean
-    repeatable?: boolean
-    format?: string
-  }>
-  outputShape: string
-  policyRequirement: string
-  recipe: boolean
-}
-
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
-  commands: CommandMetadata[]
+  commands: Array<Omit<CommandDefinition, "handler">>
 }
 
 interface RecipeSchemaOutput {
@@ -643,167 +628,7 @@ async function copyWorkspaceSeedDirectory(source: string, target: string, exclud
 }
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
-const commandCatalog: CommandMetadata[] = [
-  {
-    id: "inspect-mounted-inputs",
-    description: "List mounted input entries visible inside the Playground runtime.",
-    acceptedArgs: [],
-    outputShape: "JSON array of mounted input descriptors.",
-    policyRequirement: "Runtime policy commands must include inspect-mounted-inputs.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.run-php",
-    description: "Run PHP against WordPress, bootstrapping wp-load.php unless bootstrap=none is supplied.",
-    acceptedArgs: [
-      { name: "code", description: "Inline PHP code to run.", format: "PHP string" },
-      { name: "code-file", description: "Path to a PHP file whose contents should run.", format: "path" },
-      { name: "bootstrap", description: "Use bootstrap=none to skip wp-load.php.", format: "wordpress|none" },
-    ],
-    outputShape: "Raw command stdout from the PHP snippet.",
-    policyRequirement: "Runtime policy commands must include wordpress.run-php.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.wp-cli",
-    description: "Run a WP-CLI command inside the same disposable WordPress runtime.",
-    acceptedArgs: [
-      { name: "command", description: "WP-CLI command line, with or without the leading wp token.", required: true, format: "string" },
-    ],
-    outputShape: "Raw WP-CLI stdout.",
-    policyRequirement: "Runtime policy commands must include wordpress.wp-cli.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.ability",
-    description: "Execute a registered WordPress Ability in the sandbox.",
-    acceptedArgs: [
-      { name: "name", description: "Ability name to execute.", required: true, format: "string" },
-      { name: "input", description: "Ability input payload.", format: "JSON object" },
-    ],
-    outputShape: "JSON object with command, name, input, and result fields.",
-    policyRequirement: "Runtime policy commands must include wordpress.ability.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.bench",
-    description: "Run plugin benchmark workloads and emit a Homeboy-compatible BenchResults envelope.",
-    acceptedArgs: [
-      { name: "component-id", description: "Component id for the BenchResults envelope.", format: "string" },
-      { name: "plugin-slug", description: "Plugin slug containing tests/bench workloads.", required: true, format: "slug" },
-      { name: "iterations", description: "Measured iterations per workload.", format: "positive integer" },
-      { name: "warmup", description: "Warmup iterations before measurement.", format: "non-negative integer" },
-      { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
-      { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
-      { name: "workloads-json", description: "Explicit workload list.", format: "JSON array" },
-    ],
-    outputShape: "BenchResults JSON envelope with component_id, iterations, and scenarios.",
-    policyRequirement: "Runtime policy commands must include wordpress.bench.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.phpunit",
-    description: "Run plugin PHPUnit tests with normalized diagnostics and test-result artifact capture.",
-    acceptedArgs: [
-      { name: "plugin-slug", description: "Plugin slug under wp-content/plugins.", format: "slug" },
-      { name: "code", description: "Inline override PHP runner code.", format: "PHP string" },
-      { name: "code-file", description: "Path to override PHP runner code.", format: "path" },
-      { name: "autoload-file", description: "PHPUnit/vendor autoload path inside the sandbox.", format: "sandbox path" },
-      { name: "tests-dir", description: "WP PHPUnit tests directory inside the sandbox.", format: "sandbox path" },
-      { name: "phpunit-xml", description: "phpunit.xml path inside the plugin.", format: "path" },
-      { name: "test-file", description: "Single test file to run.", format: "path" },
-      { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
-      { name: "env-json", description: "PHPUnit environment values.", format: "JSON object" },
-      { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
-      { name: "dependency-mounts", description: "Comma-separated mounted dependency paths.", format: "comma-separated sandbox paths" },
-      { name: "multisite", description: "Run as multisite.", format: "boolean" },
-    ],
-    outputShape: "Raw PHPUnit runner JSON/log output plus normalized test-results artifact when artifacts are collected.",
-    policyRequirement: "Runtime policy commands must include wordpress.phpunit.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.plugin-check",
-    description: "Run the official WordPress Plugin Check plugin against a mounted plugin and emit normalized findings.",
-    acceptedArgs: [
-      { name: "plugin-slug", description: "Plugin slug under wp-content/plugins to validate.", required: true, format: "slug" },
-      { name: "checks", description: "Optional comma-separated official Plugin Check slugs to run; omit to run the default suite.", format: "comma-separated check slugs" },
-    ],
-    outputShape: "wp-codebox/plugin-check/v1 JSON with command, target plugin, exit code/status, summary counts, and findings; raw and normalized outputs are captured in artifacts.",
-    policyRequirement: "Runtime policy commands must include wordpress.plugin-check.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.core-phpunit",
-    description: "Run WordPress core PHPUnit tests with normalized diagnostics and test-result artifact capture.",
-    acceptedArgs: [
-      { name: "core-root", description: "WordPress develop checkout root inside the sandbox.", format: "sandbox path" },
-      { name: "tests-dir", description: "Core tests directory inside the sandbox.", format: "sandbox path" },
-      { name: "phpunit-xml", description: "phpunit.xml path.", format: "path" },
-      { name: "test-file", description: "Single test file to run.", format: "path" },
-      { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
-      { name: "autoload-file", description: "Autoload path inside the sandbox.", format: "sandbox path" },
-      { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
-      { name: "multisite", description: "Run as multisite.", format: "boolean" },
-    ],
-    outputShape: "Raw PHPUnit runner JSON/log output plus normalized test-results artifact when artifacts are collected.",
-    policyRequirement: "Runtime policy commands must include wordpress.core-phpunit.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.theme-check",
-    description: "Run Theme Check against a mounted WordPress theme inside the disposable Playground runtime.",
-    acceptedArgs: [
-      { name: "theme", description: "Theme slug under wp-content/themes.", required: true, format: "slug" },
-    ],
-    outputShape: "Normalized Theme Check JSON plus files/theme-check raw and normalized artifacts.",
-    policyRequirement: "Runtime policy commands must include wordpress.theme-check.",
-    recipe: true,
-  },
-  {
-    id: "wordpress.browser-probe",
-    description: "Open the live Playground preview in Playwright and capture generic browser replay/audit evidence artifacts.",
-    acceptedArgs: [
-      { name: "url", description: "Preview path or absolute URL to visit.", required: true, format: "path or URL" },
-      { name: "wait-for", description: "Navigation wait condition.", format: "domcontentloaded|load|networkidle|selector:<selector>|duration" },
-      { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
-      { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,html,network,screenshot" },
-    ],
-    outputShape: "JSON summary plus files/browser/console.jsonl, errors.jsonl, network.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
-    policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
-    recipe: true,
-  },
-  {
-    id: "wp-codebox.agent-runtime-probe",
-    description: "Recipe-only probe that boots Agents API, Data Machine, and Data Machine Code and verifies the stack loads.",
-    acceptedArgs: [
-      { name: "provider-plugin-slugs", description: "Comma-separated provider plugin slugs already mounted by recipe inputs.", format: "comma-separated slugs" },
-    ],
-    outputShape: "JSON probe result emitted by the sandbox PHP runner.",
-    policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
-    recipe: true,
-  },
-  {
-    id: "wp-codebox.agent-sandbox-run",
-    description: "Recipe-only helper that runs one natural-language task through the sandboxed agent stack.",
-    acceptedArgs: [
-      { name: "task", description: "Task prompt for the sandbox agent.", required: true, format: "string" },
-      { name: "agent", description: "Agent slug.", format: "string" },
-      { name: "mode", description: "Agent mode.", format: "string" },
-      { name: "provider", description: "AI provider id.", format: "string" },
-      { name: "model", description: "Model id.", format: "string" },
-      { name: "session-id", description: "Conversation session id.", format: "string" },
-      { name: "max-turns", description: "Maximum agent loop turns.", format: "positive integer" },
-      { name: "provider-plugin-slugs", description: "Comma-separated provider plugin slugs already mounted by recipe inputs.", format: "comma-separated slugs" },
-      { name: "code", description: "Inline PHP runner override for operator/debug use.", format: "PHP string" },
-      { name: "code-file", description: "Path to PHP runner override for operator/debug use.", format: "path" },
-    ],
-    outputShape: "JSON agent run result emitted by the sandbox PHP runner.",
-    policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
-    recipe: true,
-  },
-]
-const supportedRecipeCommands = new Set(commandCatalog.filter((command) => command.recipe).map((command) => command.id))
+const supportedRecipeCommands = new Set(recipeCommandDefinitions().map((command) => command.id))
 const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "wp-codebox/workspace-recipe/v1",
@@ -1027,7 +852,7 @@ const workspaceRecipeJsonSchema: RecipeSchemaOutput["jsonSchema"] = {
       additionalProperties: false,
       required: ["command"],
       properties: {
-        command: { enum: commandCatalog.filter((command) => command.recipe).map((command) => command.id) },
+        command: { enum: recipeCommandDefinitions().map((command) => command.id) },
         args: {
           type: "array",
           items: { type: "string" },
@@ -1421,7 +1246,7 @@ function printWorkspacePolicyHumanOutput(output: WorkspacePolicyResult): void {
 function commandCatalogOutput(): CommandCatalogOutput {
   return {
     schema: "wp-codebox/command-catalog/v1",
-    commands: commandCatalog,
+    commands: commandRegistry.map(({ handler, ...metadata }) => metadata),
   }
 }
 
