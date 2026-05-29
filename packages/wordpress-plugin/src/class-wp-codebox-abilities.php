@@ -1834,8 +1834,16 @@ foreach ( $files as $path => $content ) {
 	}
 	file_put_contents( $path, $content );
 }
-' . ( (bool) $theme['activate'] ? 'switch_theme( ' . var_export( $theme['slug'], true ) . ' );' : '' ) . '
+' . ( (bool) $theme['activate'] ? self::browser_theme_activation_php( (string) $theme['slug'] ) : '' ) . '
 ';
+	}
+
+	private static function browser_theme_activation_php( string $slug ): string {
+		return '
+if ( ! function_exists( \'switch_theme\' ) ) {
+	require_once ABSPATH . WPINC . \'/theme.php\';
+}
+switch_theme( ' . var_export( $slug, true ) . ' );';
 	}
 
 	/** @param array<string,mixed> $operation Bootstrap operation spec. */
@@ -1852,7 +1860,7 @@ activate_plugin( ' . var_export( (string) ( $args['plugin'] ?? '' ), true ) . ' 
 ';
 			case 'activate_theme':
 				return '<?php
-switch_theme( ' . var_export( (string) ( $args['slug'] ?? $args['theme'] ?? '' ), true ) . ' );
+' . self::browser_theme_activation_php( (string) ( $args['slug'] ?? $args['theme'] ?? '' ) ) . '
 ';
 			case 'flush_rewrite_rules':
 				return '<?php
