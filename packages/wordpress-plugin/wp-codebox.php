@@ -23,7 +23,8 @@ require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-data-machine-pending-actions.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 
+new WP_Codebox_Abilities();
+
 add_action( 'plugins_loaded', static function (): void {
 	new WP_Codebox_Data_Machine_Pending_Actions();
-	new WP_Codebox_Abilities();
 }, 20 );
