@@ -20,7 +20,8 @@ Disposable Playground sandbox
 ```
 
 The host WP Codebox plugin should not depend on a specific parent job system.
-External orchestrators consume the same abilities and artifact contracts.
+External orchestrators, including Homeboy, consume the same abilities and
+artifact contracts.
 
 ## Browser Playground Permission Model
 

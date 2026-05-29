@@ -25,8 +25,10 @@ chat surface can ask for a change; WP Codebox runs the work in Playground and
 returns evidence that the parent product can review.
 
 Example control planes include hosted WordPress products, local development
-tools, chat surfaces, CI jobs, GitHub Actions, and other host applications. They
-consume WP Codebox; they do not change the sandbox contract.
+tools, chat surfaces, CI jobs, GitHub Actions, Homeboy, and other host
+applications. They consume WP Codebox; they do not change the sandbox contract.
+wp-gym is an example implementation that can build evaluation workflows on top
+of the same generic sandbox contract.
 
 ## Landed Contracts
 
@@ -43,9 +45,9 @@ consume WP Codebox; they do not change the sandbox contract.
   [`external-apply-adapter-contract.md`](./external-apply-adapter-contract.md).
 - **Batch/fan-out primitive:** `wp-codebox/run-agent-task-batch` launches one
   isolated sandbox per task sequentially and returns per-task artifact ids,
-  preview URLs, statuses, and errors. Parent orchestrators own parallelism,
-  track their own jobs, pass correlation metadata into each sandbox run, and
-  store the returned artifact ids as evidence.
+  preview URLs, statuses, and errors. Parent orchestrators such as Homeboy own
+  parallelism, track their own jobs, pass correlation metadata into each sandbox
+  run, and store the returned artifact ids as evidence.
 
 ## Ownership Boundaries
 
