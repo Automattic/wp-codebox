@@ -140,6 +140,10 @@ final class WP_Codebox_Abilities {
 								'type'        => 'integer',
 								'description' => 'Maximum agent loop turns for this sandbox task.',
 							),
+							'task_timeout_seconds'   => array(
+								'type'        => 'integer',
+								'description' => 'Maximum wall-clock seconds for this sandbox task. Zero or omitted disables the host-side timeout.',
+							),
 							'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
 							'preview_port'           => $preview_schema['preview_port'],
 							'preview_bind'           => $preview_schema['preview_bind'],

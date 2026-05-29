@@ -197,6 +197,7 @@ export const commandRegistry = [
       { name: "model", description: "Model id.", format: "string" },
       { name: "session-id", description: "Conversation session id.", format: "string" },
       { name: "max-turns", description: "Maximum agent loop turns.", format: "positive integer" },
+      { name: "timeout-seconds", description: "Maximum wall-clock seconds for the sandbox agent PHP task.", format: "positive integer" },
       { name: "provider-plugin-slugs", description: "Comma-separated provider plugin slugs already mounted by recipe inputs.", format: "comma-separated slugs" },
       { name: "code", description: "Inline PHP runner override for operator/debug use.", format: "PHP string" },
       { name: "code-file", description: "Path to PHP runner override for operator/debug use.", format: "path" },

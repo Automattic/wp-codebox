@@ -92,7 +92,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 		$command .= $preview_args;
 
-		$result    = $this->run_command( $command, $inheritance_payload['secret_env'] );
+		$result    = $this->run_command( $command, $inheritance_payload['secret_env'], $this->task_timeout_seconds( $input ) );
 		@unlink( $recipe_file );
 		foreach ( $recipe_payload['cleanup_paths'] as $cleanup_path ) {
 			@unlink( (string) $cleanup_path );
@@ -1450,6 +1450,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			if ( ! empty( $input['max_turns'] ) ) {
 				$args[] = 'max-turns=' . (string) max( 1, (int) $input['max_turns'] );
 			}
+			if ( ! empty( $input['task_timeout_seconds'] ) ) {
+				$args[] = 'timeout-seconds=' . (string) $this->task_timeout_seconds( $input );
+			}
 
 			$steps[] = array(
 				'command' => 'wp-codebox.agent-sandbox-run',
@@ -1881,20 +1884,26 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return new WP_Error( 'json_decode_failed', json_last_error_msg() );
 	}
 
-	/** @param array<string,string> $secret_env Secret env values for the child process. @return array{exit_code:int,output:string} */
-	private function run_command( string $command, array $secret_env = array() ): array {
+	/** @param array<string,mixed> $input Ability input. */
+	private function task_timeout_seconds( array $input ): int {
+		$timeout = (int) ( $input['task_timeout_seconds'] ?? 0 );
+		return max( 0, $timeout );
+	}
+
+	/** @param array<string,string> $secret_env Secret env values for the child process. @return array{exit_code:int,output:string,timed_out?:bool,timeout_seconds?:int} */
+	private function run_command( string $command, array $secret_env = array(), int $timeout_seconds = 0 ): array {
 		if ( isset( $this->callbacks['command_runner'] ) ) {
-			return ( $this->callbacks['command_runner'] )( $command, $secret_env );
+			return ( $this->callbacks['command_runner'] )( $command, $secret_env, $timeout_seconds );
 		}
 
-		if ( ! empty( $secret_env ) && ! function_exists( 'proc_open' ) ) {
+		if ( ( ! empty( $secret_env ) || $timeout_seconds > 0 ) && ! function_exists( 'proc_open' ) ) {
 			return array(
 				'exit_code' => 1,
-				'output'    => 'WP Codebox inherited secret environment requires proc_open support.',
+				'output'    => 'WP Codebox inherited secret environment or timeout requires proc_open support.',
 			);
 		}
 
-		if ( ! empty( $secret_env ) ) {
+		if ( ! empty( $secret_env ) || $timeout_seconds > 0 ) {
 			$descriptor_spec = array(
 				1 => array( 'pipe', 'w' ),
 				2 => array( 'pipe', 'w' ),
@@ -1902,13 +1911,45 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$current_env = getenv();
 			$process     = proc_open( $command, $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
 			if ( is_resource( $process ) ) {
-				$output = stream_get_contents( $pipes[1] );
-				$error  = stream_get_contents( $pipes[2] );
+				stream_set_blocking( $pipes[1], false );
+				stream_set_blocking( $pipes[2], false );
+				$output    = '';
+				$error     = '';
+				$started   = time();
+				$timed_out = false;
+
+				while ( true ) {
+					$output .= (string) stream_get_contents( $pipes[1] );
+					$error  .= (string) stream_get_contents( $pipes[2] );
+					$status = proc_get_status( $process );
+					if ( ! (bool) ( $status['running'] ?? false ) ) {
+						break;
+					}
+					if ( $timeout_seconds > 0 && time() - $started >= $timeout_seconds ) {
+						$timed_out = true;
+						proc_terminate( $process );
+						break;
+					}
+					usleep( 100000 );
+				}
+
+				$output .= (string) stream_get_contents( $pipes[1] );
+				$error  .= (string) stream_get_contents( $pipes[2] );
 				fclose( $pipes[1] );
 				fclose( $pipes[2] );
+				$exit_code = proc_close( $process );
+
+				if ( $timed_out ) {
+					return array(
+						'exit_code'       => 124,
+						'output'          => trim( (string) $output . "\n" . (string) $error . "\nWP Codebox task timed out after {$timeout_seconds} seconds." ),
+						'timed_out'       => true,
+						'timeout_seconds' => $timeout_seconds,
+					);
+				}
 
 				return array(
-					'exit_code' => proc_close( $process ),
+					'exit_code' => $exit_code,
 					'output'    => trim( (string) $output . "\n" . (string) $error ),
 				);
 			}

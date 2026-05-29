@@ -630,15 +630,17 @@ $captured_commands = array();
 $captured_recipe   = '';
 $captured_recipes  = array();
 $captured_secret_env = array();
+$captured_timeout  = null;
 $command_count     = 0;
 $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 	array(
 		'shell_available' => fn() => true,
-		'command_runner'  => function ( string $command, array $secret_env = array() ) use ( &$captured_command, &$captured_commands, &$captured_recipe, &$captured_recipes, &$captured_secret_env, &$command_count ): array {
+		'command_runner'  => function ( string $command, array $secret_env = array(), int $timeout_seconds = 0 ) use ( &$captured_command, &$captured_commands, &$captured_recipe, &$captured_recipes, &$captured_secret_env, &$captured_timeout, &$command_count ): array {
 			++$command_count;
 			$captured_command    = $command;
 			$captured_commands[] = $command;
 			$captured_secret_env = $secret_env;
+			$captured_timeout    = $timeout_seconds;
 			if ( preg_match( "/--recipe '([^']+)'/", $command, $matches ) && is_readable( $matches[1] ) ) {
 				$captured_recipe   = (string) file_get_contents( $matches[1] );
 				$captured_recipes[] = $captured_recipe;
@@ -700,6 +702,7 @@ $result = $runner->run(
 		'preview_port'   => 45678,
 		'preview_bind'   => '127.0.0.1',
 		'preview_public_url' => 'https://preview.example.test/session-123/',
+		'task_timeout_seconds' => 7200,
 		'mounts'         => array(
 			array(
 				'source'   => $root . '/editable-plugin',
@@ -741,6 +744,7 @@ $assert( 'runner recipe passes default model', str_contains( $captured_recipe, '
 $assert( 'runner recipe passes provider plugin path', str_contains( $captured_recipe, 'ai-provider-test' ) );
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner passes timeout to command runner and recipe', 7200 === $captured_timeout && str_contains( $captured_recipe, 'timeout-seconds=7200' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
 
 $GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';

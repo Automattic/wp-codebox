@@ -10,6 +10,7 @@ export interface AgentSandboxCodeOptions {
   model?: string
   sessionId?: string
   maxTurns?: string
+  timeoutSeconds?: string
   code?: string
   codeFile?: string
 }
@@ -55,9 +56,16 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
     input.max_turns = Number.parseInt(options.maxTurns, 10)
   }
 
+  const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
+  const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
+
   return `
 if (function_exists('wp_set_current_user')) {
     wp_set_current_user(1);
+}
+
+if (${timeoutLimit} > 0 && function_exists('set_time_limit')) {
+    set_time_limit(${timeoutLimit});
 }
 
 if (!defined('DATAMACHINE_WORKSPACE_PATH')) {

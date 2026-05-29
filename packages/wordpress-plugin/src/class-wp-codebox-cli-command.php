@@ -146,7 +146,7 @@ final class WP_Codebox_CLI_Command {
 			return $this->json_or_list( (string) $value, $field );
 		}
 
-		if ( in_array( $field, array( 'max_turns', 'preview_hold_seconds', 'preview_port', 'agent_id', 'user_id' ), true ) ) {
+		if ( in_array( $field, array( 'max_turns', 'task_timeout_seconds', 'preview_hold_seconds', 'preview_port', 'agent_id', 'user_id' ), true ) ) {
 			return (int) $value;
 		}
 

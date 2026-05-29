@@ -575,6 +575,7 @@ interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   model?: string
   sessionId?: string
   maxTurns?: string
+  timeoutSeconds?: string
   code?: string
   codeFile?: string
 }
@@ -2278,6 +2279,7 @@ async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][nu
       model: argValue(args, "model"),
       sessionId: argValue(args, "session-id"),
       maxTurns: argValue(args, "max-turns"),
+      timeoutSeconds: argValue(args, "timeout-seconds"),
     }))
 
     return {
@@ -2398,6 +2400,7 @@ function agentSandboxRunMetadata(options: AgentSandboxRunOptions): Record<string
       input: options.task,
       sessionId: options.sessionId,
       maxTurns: options.maxTurns,
+      timeoutSeconds: options.timeoutSeconds,
       hasCodeOverride: Boolean(options.code || options.codeFile),
       secretEnv: options.secretEnvNames ?? [],
     }),
@@ -2478,7 +2481,7 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
 }
 
 function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -2506,6 +2509,9 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
         break
       case "--max-turns":
         options.maxTurns = value
+        break
+      case "--timeout-seconds":
+        options.timeoutSeconds = value
         break
       case "--code":
         options.code = value
