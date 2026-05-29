@@ -349,6 +349,16 @@ final class WP_Codebox_Abilities {
 								'type'        => 'object',
 								'description' => 'Optional WordPress Playground blueprint for the browser to compile and run.',
 							),
+							'site_blueprint_artifact' => array(
+								'type'        => 'object',
+								'description' => 'Caller-owned pulled-site Playground blueprint artifact to compile into the browser sandbox before Codebox runs.',
+								'properties'  => array(
+									'schema'     => array( 'type' => 'string' ),
+									'id'         => array( 'type' => 'string' ),
+									'blueprint'  => array( 'type' => 'object' ),
+									'provenance' => array( 'type' => 'object' ),
+								),
+							),
 							'artifact_files'     => array(
 								'type'        => 'array',
 								'description' => 'Optional text artifact files the browser should write into Playground.',
@@ -754,6 +764,7 @@ final class WP_Codebox_Abilities {
 				'task_input' => self::task_input_schema(),
 				'playground' => array( 'type' => 'object' ),
 				'runtime'    => array( 'type' => 'object' ),
+				'site_blueprint_artifact' => array( 'type' => 'object' ),
 				'recipe'     => array( 'type' => 'object' ),
 				'signals'    => array( 'type' => 'object' ),
 				'artifacts'  => array( 'type' => 'object' ),
@@ -804,14 +815,20 @@ final class WP_Codebox_Abilities {
 		}
 		$browser_plugins = $runtime['plugins'];
 
-		$blueprint      = self::browser_blueprint_with_runtime( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $runtime, $playground );
+		$site_blueprint_artifact = self::browser_site_blueprint_artifact( $input );
+		if ( is_wp_error( $site_blueprint_artifact ) ) {
+			return $site_blueprint_artifact;
+		}
+
+		$base_blueprint = self::browser_blueprint_with_site_artifact( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $site_blueprint_artifact );
+		$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
 		$artifacts      = self::browser_artifact_files( $input );
 		if ( is_wp_error( $artifacts ) ) {
 			return $artifacts;
 		}
 		$ready_to_code = self::browser_ready_to_code_signal( $input, $runtime );
 		if ( false === ( $ready_to_code['emitted'] ?? false ) ) {
-			return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint );
+			return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
 		}
 
 		$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground );
@@ -831,6 +848,7 @@ final class WP_Codebox_Abilities {
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 			'plugins'    => $browser_plugins,
 			'runtime'    => $runtime,
+			'site_blueprint_artifact' => $site_blueprint_artifact,
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
@@ -869,9 +887,10 @@ final class WP_Codebox_Abilities {
 	 * @param array<int,array<string,string>> $artifacts Browser artifact specs.
 	 * @param array<string,mixed> $playground Playground input.
 	 * @param array<string,mixed> $blueprint Playground blueprint.
+	 * @param array<string,mixed> $site_blueprint_artifact Normalized site blueprint artifact.
 	 * @return array<string,mixed>
 	 */
-	private static function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $runtime, array $artifacts, array $playground, array $blueprint ): array {
+	private static function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $runtime, array $artifacts, array $playground, array $blueprint, array $site_blueprint_artifact ): array {
 		return array(
 			'success'          => false,
 			'schema'           => 'wp-codebox/browser-playground-session/v1',
@@ -890,6 +909,7 @@ final class WP_Codebox_Abilities {
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 			'plugins'    => $browser_plugins,
 			'runtime'    => $runtime,
+			'site_blueprint_artifact' => $site_blueprint_artifact,
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
@@ -1412,6 +1432,45 @@ final class WP_Codebox_Abilities {
 		}
 
 		return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', $value ) ?? '' );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private static function browser_site_blueprint_artifact( array $input ): array|WP_Error {
+		$artifact = is_array( $input['site_blueprint_artifact'] ?? null ) ? $input['site_blueprint_artifact'] : array();
+		if ( empty( $artifact ) ) {
+			return array();
+		}
+
+		$blueprint = $artifact['blueprint'] ?? null;
+		if ( ! is_array( $blueprint ) ) {
+			return new WP_Error( 'wp_codebox_site_blueprint_artifact_invalid', 'site_blueprint_artifact.blueprint must be a Playground blueprint object.', array( 'status' => 400 ) );
+		}
+
+		return array(
+			'schema'     => (string) ( $artifact['schema'] ?? 'wp-codebox/site-blueprint-artifact/v1' ),
+			'id'         => (string) ( $artifact['id'] ?? '' ),
+			'blueprint'  => $blueprint,
+			'provenance' => is_array( $artifact['provenance'] ?? null ) ? $artifact['provenance'] : array(),
+		);
+	}
+
+	/** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $site_blueprint_artifact Normalized site blueprint artifact. @return array<string,mixed> */
+	private static function browser_blueprint_with_site_artifact( array $blueprint, array $site_blueprint_artifact ): array {
+		$site_blueprint = is_array( $site_blueprint_artifact['blueprint'] ?? null ) ? $site_blueprint_artifact['blueprint'] : array();
+		if ( empty( $site_blueprint ) ) {
+			return $blueprint;
+		}
+
+		$site_steps = is_array( $site_blueprint['steps'] ?? null ) ? $site_blueprint['steps'] : array();
+		$base_steps = is_array( $blueprint['steps'] ?? null ) ? $blueprint['steps'] : array();
+		$merged     = array_merge( $site_blueprint, $blueprint );
+		$merged['steps'] = array_values( array_merge( $site_steps, $base_steps ) );
+
+		if ( isset( $site_blueprint['features'] ) && isset( $blueprint['features'] ) && is_array( $site_blueprint['features'] ) && is_array( $blueprint['features'] ) ) {
+			$merged['features'] = array_merge( $site_blueprint['features'], $blueprint['features'] );
+		}
+
+		return $merged;
 	}
 
 	/** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $runtime Runtime dependency specs. @return array<string,mixed> */
