@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { lstat, readdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
 
 export * from "./workspace-policy.js"
@@ -705,7 +705,7 @@ export interface Snapshot {
   schema?: typeof RUNTIME_EPISODE_SNAPSHOT_SCHEMA
   id: string
   createdAt: string
-  semantics?: "metadata-only" | "runtime-state-artifact" | (string & {})
+  semantics?: "metadata-only" | "partial-replay" | "replayable-runtime-state" | "runtime-state-artifact" | (string & {})
   metadata: Record<string, unknown>
   artifactRefs?: RuntimeEpisodeTraceRef[]
   digest?: RuntimeEpisodeContentDigest
@@ -717,6 +717,7 @@ export interface ArtifactSpec {
   includePatch?: boolean
   includeScreenshots?: boolean
   includeObservations?: boolean
+  includeRuntimeSnapshotBundles?: boolean
   previewHoldSeconds?: number
 }
 
@@ -756,7 +757,7 @@ export interface ArtifactContentDigest {
   value: string
 }
 
-export type RuntimeSnapshotReplayStatus = "metadata-only" | "runtime-state-artifact" | "not-replayable" | (string & {})
+export type RuntimeSnapshotReplayStatus = "metadata-only" | "partial-replay" | "replayable-runtime-state" | "runtime-state-artifact" | "not-replayable" | (string & {})
 
 export interface RuntimeReferenceManifestFileRef {
   path: string
@@ -1279,6 +1280,7 @@ function isRuntimeReferenceManifestSnapshotRefShape(value: unknown): value is Ru
     && Array.isArray(value.replay.limitations)
     && value.replay.limitations.every((limitation) => typeof limitation === "string")
     && Array.isArray(value.artifactRefs)
+    && value.artifactRefs.every((ref) => isRecord(ref) && typeof ref.kind === "string" && typeof ref.id === "string" && validDigest(ref.digest))
 }
 
 function isArtifactFileDigestShape(value: unknown): value is ArtifactFileDigest {
@@ -1494,6 +1496,36 @@ async function verifyRuntimeReferenceManifestArtifacts(directory: string, manife
       validateArtifactReference(referenceManifest.events.path, `${file.path}:events.path`, manifestFiles, violations)
       await verifyReferencedFileDigest(directory, referenceManifest.events, `${file.path}:events.sha256`, violations)
     }
+
+    for (const [snapshotIndex, snapshot] of referenceManifest.snapshots.entries()) {
+      for (const [refIndex, ref] of snapshot.artifactRefs.entries()) {
+        if (typeof ref.path !== "string") {
+          continue
+        }
+        validateArtifactReference(ref.path, `${file.path}:snapshots[${snapshotIndex}].artifactRefs[${refIndex}].path`, manifestFiles, violations)
+        await verifyRuntimeEpisodeTraceRefFileDigest(directory, ref, `${file.path}:snapshots[${snapshotIndex}].artifactRefs[${refIndex}].digest`, violations)
+      }
+    }
+  }
+}
+
+async function verifyRuntimeEpisodeTraceRefFileDigest(directory: string, ref: RuntimeEpisodeTraceRef, path: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  if (!validDigest(ref.digest)) {
+    violations.push({ code: "missing-file-hash", path, file: ref.path, message: `Runtime reference artifact ref must include a lowercase SHA-256 digest: ${ref.path ?? ref.id}` })
+    return
+  }
+
+  if (typeof ref.path !== "string") {
+    return
+  }
+
+  try {
+    const value = createHash("sha256").update(await readFile(join(directory, ref.path))).digest("hex")
+    if (value !== ref.digest.value) {
+      violations.push({ code: "file-hash-mismatch", path, file: ref.path, message: `Runtime reference artifact ref hash does not match ${ref.path}: expected ${value}, got ${ref.digest.value}` })
+    }
+  } catch (error) {
+    violations.push({ code: "file-hash-mismatch", path, file: ref.path, message: `Unable to hash runtime reference artifact ${ref.path}: ${errorMessage(error)}` })
   }
 }
 
@@ -1854,8 +1886,22 @@ function runtimeReferenceManifestSnapshotRef(snapshot: Snapshot): RuntimeReferen
 }
 
 function runtimeSnapshotReplaySemantics(semantics: string): RuntimeReferenceManifestSnapshotRef["replay"] {
+  if (semantics === "replayable-runtime-state") {
+    return { status: "replayable-runtime-state", limitations: [] }
+  }
+
   if (semantics === "runtime-state-artifact") {
     return { status: "runtime-state-artifact", limitations: [] }
+  }
+
+  if (semantics === "partial-replay") {
+    return {
+      status: "partial-replay",
+      limitations: [
+        "Snapshot bundle contains replay instructions and artifact references, but not a complete WordPress database checkpoint.",
+        "Replay consumers can restore mounted files and inspect runtime evidence; posts, options, terms, users, uploads, active theme/plugins, and browser/editor state may require external capture.",
+      ],
+    }
   }
 
   if (semantics === "metadata-only") {
@@ -2448,8 +2494,76 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       runtimeEpisodeTracePath: join(artifacts.directory, "files/runtime-episode-trace.json"),
       runtimeEpisodeEventsPath: join(artifacts.directory, "files/runtime-episode.jsonl"),
     }
+    if (spec.includeRuntimeSnapshotBundles) {
+      await this.persistRuntimeSnapshotBundles()
+    }
     await this.persistRuntimeEpisodeTraceArtifacts()
     return this.artifacts
+  }
+
+  private async persistRuntimeSnapshotBundles(): Promise<void> {
+    if (!this.artifacts || this.snapshots.length === 0) {
+      return
+    }
+
+    const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
+    const snapshotDirectory = join(this.artifacts.directory, "files/runtime-snapshots")
+    await mkdir(snapshotDirectory, { recursive: true })
+    const baseRefs = manifest.files
+      .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json"].includes(file.path))
+      .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
+
+    for (const [index, snapshot] of this.snapshots.entries()) {
+      const semantics = snapshot.semantics === "replayable-runtime-state" || snapshot.semantics === "runtime-state-artifact"
+        ? snapshot.semantics
+        : "partial-replay"
+      const replay = runtimeSnapshotReplaySemantics(semantics)
+      const relativePath = `files/runtime-snapshots/${snapshot.id}.json`
+      const bundleId = `${snapshot.id}:runtime-snapshot-bundle`
+      const bundle = {
+        schema: "wp-codebox/runtime-snapshot-bundle/v1",
+        version: 1,
+        id: bundleId,
+        snapshot: {
+          id: snapshot.id,
+          createdAt: snapshot.createdAt,
+          originalSemantics: snapshot.semantics ?? "metadata-only",
+          semantics,
+          metadata: snapshot.metadata,
+        },
+        replay: {
+          status: replay.status,
+          limitations: replay.limitations,
+          instructions: [
+            "Verify every referenced artifact SHA-256 before replay.",
+            "Use blueprint.after.json and blueprint.after-notes.json as generated Playground replay guidance when present.",
+            "Restore mounted file artifacts from files/mounted-files.json where replayable file contents are available.",
+            "Use files/runtime-episode-trace.json and files/runtime-episode.jsonl to inspect actions, observations, and snapshot refs after the episode trace is persisted.",
+          ],
+        },
+        refs: baseRefs,
+      }
+      await writeFile(join(this.artifacts.directory, relativePath), `${JSON.stringify(bundle, null, 2)}\n`)
+      const digest = { algorithm: "sha256" as const, value: createHash("sha256").update(await readFile(join(this.artifacts.directory, relativePath))).digest("hex") }
+      const artifactRef: RuntimeEpisodeTraceRef = {
+        kind: "runtime-snapshot-bundle",
+        id: bundleId,
+        path: relativePath,
+        digest,
+      }
+      this.snapshots[index] = snapshotWithSemantics({
+        ...snapshot,
+        semantics,
+        artifactRefs: [
+          ...(snapshot.artifactRefs ?? []).filter((ref) => ref.path !== relativePath),
+          artifactRef,
+        ],
+      })
+      upsertManifestFile(manifest, artifactManifestFile(relativePath, "runtime-snapshot-bundle", "application/json"))
+    }
+
+    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
   private async persistRuntimeEpisodeTraceArtifacts(): Promise<void> {
