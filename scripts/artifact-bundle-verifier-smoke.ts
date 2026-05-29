@@ -77,7 +77,7 @@ try {
 async function writeValidBundle(directory: string): Promise<void> {
   await mkdir(join(directory, "files"), { recursive: true })
   const changedFiles = `${JSON.stringify({ schema: "wp-codebox/changed-files/v1", files: [{ path: "/wordpress/wp-content/plugins/example/file.txt", status: "added", mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/example", relativePath: "file.txt", patchPath: "files/diffs/0-file.txt.diff" }] }, null, 2)}\n`
-  const patch = "diff --git /dev/null b/wordpress/wp-content/plugins/example/file.txt\n--- /dev/null\n+++ b/wordpress/wp-content/plugins/example/file.txt\n@@ -0,0 +1 @@\n+cooked\n"
+  const patch = "diff --git a/wordpress/wp-content/plugins/example/file.txt b/wordpress/wp-content/plugins/example/file.txt\nnew file mode 100644\n--- /dev/null\n+++ b/wordpress/wp-content/plugins/example/file.txt\n@@ -0,0 +1 @@\n+cooked\n"
   await writeFile(join(directory, "files/changed-files.json"), changedFiles)
   await writeFile(join(directory, "files/patch.diff"), patch)
   await writeFile(join(directory, "metadata.json"), "{}\n")
@@ -183,7 +183,7 @@ async function attachManifestFileHashes(directory: string, manifest: ArtifactMan
 }
 
 function reviewFixture(digest: string) {
-  const patch = "diff --git /dev/null b/wordpress/wp-content/plugins/example/file.txt\n--- /dev/null\n+++ b/wordpress/wp-content/plugins/example/file.txt\n@@ -0,0 +1 @@\n+cooked\n"
+  const patch = "diff --git a/wordpress/wp-content/plugins/example/file.txt b/wordpress/wp-content/plugins/example/file.txt\nnew file mode 100644\n--- /dev/null\n+++ b/wordpress/wp-content/plugins/example/file.txt\n@@ -0,0 +1 @@\n+cooked\n"
   return {
     schema: "wp-codebox/artifact-review/v1",
     artifactId: `artifact-bundle-sha256-${digest}`,

@@ -526,13 +526,19 @@ function stripUndefined<T extends Record<string, unknown>>(record: T): T {
 function fileDiff(path: string, before: string, after: string, isAdded: boolean, isDeleted: boolean): string {
   const beforeLines = splitLines(before)
   const afterLines = splitLines(after)
-  const oldPath = isAdded ? "/dev/null" : `a${path}`
-  const newPath = isDeleted ? "/dev/null" : `b${path}`
+  const gitOldPath = `a${path}`
+  const gitNewPath = `b${path}`
+  const oldPath = isAdded ? "/dev/null" : gitOldPath
+  const newPath = isDeleted ? "/dev/null" : gitNewPath
+  const oldStart = isAdded ? 0 : 1
+  const newStart = isDeleted ? 0 : 1
   const lines = [
-    `diff --git ${oldPath} ${newPath}`,
+    `diff --git ${gitOldPath} ${gitNewPath}`,
+    ...(isAdded ? ["new file mode 100644"] : []),
+    ...(isDeleted ? ["deleted file mode 100644"] : []),
     `--- ${oldPath}`,
     `+++ ${newPath}`,
-    `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+    `@@ -${oldStart},${beforeLines.length} +${newStart},${afterLines.length} @@`,
     ...beforeLines.map((line) => `-${line}`),
     ...afterLines.map((line) => `+${line}`),
   ]
