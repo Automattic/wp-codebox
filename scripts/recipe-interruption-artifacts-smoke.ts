@@ -1,0 +1,130 @@
+import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
+
+const root = resolve(import.meta.dirname, "..")
+const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-recipe-interruption-"))
+
+try {
+  const source = join(workspace, "source")
+  const artifacts = join(workspace, "artifacts")
+  const recipePath = join(workspace, "recipe.json")
+  await mkdir(join(source, "src"), { recursive: true })
+  await writeFile(join(source, "src", "index.php"), "<?php\n")
+  await writeFile(recipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    runtime: { wp: "7.0" },
+    inputs: {
+      workspaces: [
+        {
+          target: "/workspace",
+          mode: "readwrite",
+          seed: { type: "directory", source },
+        },
+      ],
+    },
+    workflow: {
+      steps: [{ command: "inspect-mounted-inputs" }],
+    },
+    artifacts: {
+      directory: artifacts,
+      verify: true,
+      workspacePolicy: { strict: false, writableRoots: ["."], gitBacked: false },
+    },
+  }, null, 2)}\n`)
+
+  const child = spawn(process.execPath, [
+    "packages/cli/dist/index.js",
+    "recipe-run",
+    "--recipe",
+    recipePath,
+    "--preview-hold",
+    "120s",
+    "--json",
+  ], {
+    cwd: root,
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+
+  let stdout = ""
+  let stderr = ""
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString()
+  })
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString()
+  })
+
+  await waitForManifest(artifacts, 60_000)
+  child.kill("SIGTERM")
+
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    child.once("close", (code, signal) => resolveExit({ code, signal }))
+  })
+
+  assert.equal(exit.signal, "SIGTERM", `Interrupted recipe should preserve SIGTERM propagation; stderr: ${stderr}`)
+  assert.ok(stdout.trim(), `Interrupted recipe should emit JSON output before propagating SIGTERM; stderr: ${stderr}`)
+
+  const output = JSON.parse(stdout)
+  assert.equal(output.schema, "wp-codebox/recipe-run/v1")
+  assert.equal(output.success, false)
+  assert.equal(output.error?.code, "recipe-interrupted")
+  assert.equal(output.interruption?.signal, "SIGTERM")
+  assert.equal(output.interruption?.artifactsFinalized, true)
+  assert.ok(output.artifacts?.directory, "Interrupted recipe should report artifact directory")
+
+  const manifest = JSON.parse(await readFile(join(output.artifacts.directory, "manifest.json"), "utf8"))
+  assertManifestFile(manifest, "files/runtime-evidence/run-attestation.json", "run-attestation")
+  assertManifestFile(manifest, "files/runtime-evidence/artifact-bundle-verification.json", "artifact-bundle-verification")
+  assertManifestFile(manifest, "files/runtime-evidence/workspace-policy.json", "workspace-policy-result")
+
+  console.log("Recipe interruption artifact smoke passed")
+} finally {
+  await rm(workspace, { recursive: true, force: true })
+}
+
+async function waitForManifest(directory: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await readFile(join(directory, "manifest.json"), "utf8")
+      return
+    } catch {
+      // Custom artifact directories may be used directly instead of nesting runtime-*.
+    }
+
+    const runtimeDirectory = await latestRuntimeDirectory(directory)
+    if (runtimeDirectory) {
+      try {
+        await readFile(join(runtimeDirectory, "manifest.json"), "utf8")
+        return
+      } catch {
+        // Artifact collection creates the runtime directory before the manifest is ready.
+      }
+    }
+    await delay(250)
+  }
+
+  throw new Error(`Timed out waiting for artifact manifest in ${directory}`)
+}
+
+async function latestRuntimeDirectory(directory: string): Promise<string | undefined> {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true })
+    const runtimeDirectories = entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("runtime-"))
+      .map((entry) => join(directory, entry.name))
+      .sort()
+      .reverse()
+    return runtimeDirectories[0]
+  } catch {
+    return undefined
+  }
+}
+
+function assertManifestFile(manifest: { files: Array<{ path: string; kind: string }> }, path: string, kind: string): void {
+  assert.ok(manifest.files.some((file) => file.path === path && file.kind === kind), `Expected manifest entry ${kind} at ${path}`)
+}
