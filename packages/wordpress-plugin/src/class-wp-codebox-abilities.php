@@ -87,8 +87,8 @@ final class WP_Codebox_Abilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'anyOf'      => array(
-							array( 'required' => array( 'goal' ) ),
-							array( 'required' => array( 'task' ) ),
+							array( 'type' => 'object', 'required' => array( 'goal' ) ),
+							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
 						'properties' => array(
 							'goal'                   => $task_input_schema['properties']['goal'],
@@ -291,8 +291,8 @@ final class WP_Codebox_Abilities {
 					'input_schema'        => array(
 						'type'       => 'object',
 						'anyOf'      => array(
-							array( 'required' => array( 'goal' ) ),
-							array( 'required' => array( 'task' ) ),
+							array( 'type' => 'object', 'required' => array( 'goal' ) ),
+							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
 						'properties' => array(
 							'goal'               => $task_input_schema['properties']['goal'],
@@ -1568,8 +1568,13 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_hash_failed', 'Could not hash browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
+		$data_url = self::browser_plugin_data_url( $zip_path, $slug );
+		if ( is_wp_error( $data_url ) ) {
+			return $data_url;
+		}
+
 		return array(
-			'url'    => $url,
+			'url'    => $data_url,
 			'path'   => $zip_path,
 			'sha256' => $sha256,
 		);
@@ -1622,11 +1627,31 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_url_missing', 'Browser runtime plugin package URL is missing.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
+		$data_url = self::browser_plugin_data_url( $zip_path, $slug );
+		if ( is_wp_error( $data_url ) ) {
+			return $data_url;
+		}
+
 		return array(
-			'url'    => $url,
+			'url'    => $data_url,
 			'path'   => $zip_path,
 			'sha256' => $sha256,
 		);
+	}
+
+	private static function browser_plugin_data_url( string $zip_path, string $slug ): string|WP_Error {
+		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 24 * 1024 * 1024, $zip_path, $slug );
+		$size      = filesize( $zip_path );
+		if ( is_int( $size ) && $size > $max_bytes ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_package_too_large', 'Browser runtime plugin package is too large for inline browser delivery.', array( 'status' => 500, 'slug' => $slug, 'bytes' => $size, 'max_bytes' => $max_bytes ) );
+		}
+
+		$contents = file_get_contents( $zip_path );
+		if ( ! is_string( $contents ) || '' === $contents ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_package_read_failed', 'Could not read browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
+		}
+
+		return 'data:application/zip;base64,' . base64_encode( $contents );
 	}
 
 	private static function browser_download_remote_plugin( string $url, string $zip_path, string $slug ): true|WP_Error {
@@ -1800,6 +1825,14 @@ final class WP_Codebox_Abilities {
 
 	/** @return array{url:string,origin:string,host:string}|WP_Error */
 	private static function browser_local_plugin_url( string $url, int $index ): array|WP_Error {
+		if ( str_starts_with( $url, 'data:application/zip;base64,' ) ) {
+			return array(
+				'url'    => $url,
+				'origin' => 'data:',
+				'host'   => 'data',
+			);
+		}
+
 		$parts = wp_parse_url( $url );
 		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
 			return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be absolute.', array( 'status' => 400, 'index' => $index ) );

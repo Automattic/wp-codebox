@@ -1360,9 +1360,10 @@ class PlaygroundRuntime implements Runtime {
     let scriptResult: unknown
     let memoryArtifact: BrowserProbeMemoryArtifact | undefined
     let performanceArtifact: BrowserProbePerformanceArtifact | undefined
+    let page: Page | null = null
 
     try {
-      const page = await browser.newPage()
+      page = await browser.newPage()
       if (capturesBrowserMetrics) {
         await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
       }
@@ -1398,31 +1399,33 @@ class PlaygroundRuntime implements Runtime {
         }
       }
       finalUrl = page.url()
-
-      if (capturesBrowserMetrics) {
-        checkpoints.push(await browserProbeCheckpoint(page, "final"))
-        if (capture.has("memory")) {
-          memoryArtifact = browserProbeMemoryArtifact(checkpoints)
-        }
-        if (capture.has("performance")) {
-          performanceArtifact = browserProbePerformanceArtifact(checkpoints)
-        }
-      }
-
-      if (capture.has("html")) {
-        const html = await page.content()
-        await writeFile(htmlPath, html)
-        htmlSha256 = sha256(Buffer.from(html, "utf8"))
-      }
-
-      if (capture.has("screenshot")) {
-        await page.screenshot({ path: screenshotPath, fullPage: true })
-        screenshotSha256 = await fileSha256(screenshotPath)
-      }
     } catch (error) {
       errors.push(serializeBrowserError("probe-error", error))
       throw error
     } finally {
+      if (page) {
+        finalUrl = page.url()
+        if (capturesBrowserMetrics) {
+          checkpoints.push(await browserProbeCheckpoint(page, "final"))
+          if (capture.has("memory")) {
+            memoryArtifact = browserProbeMemoryArtifact(checkpoints)
+          }
+          if (capture.has("performance")) {
+            performanceArtifact = browserProbePerformanceArtifact(checkpoints)
+          }
+        }
+
+        if (capture.has("html")) {
+          const html = await page.content()
+          await writeFile(htmlPath, html)
+          htmlSha256 = sha256(Buffer.from(html, "utf8"))
+        }
+
+        if (capture.has("screenshot")) {
+          await page.screenshot({ path: screenshotPath, fullPage: true })
+          screenshotSha256 = await fileSha256(screenshotPath)
+        }
+      }
       await browser.close()
       if (capture.has("console")) {
         await writeFile(consolePath, jsonLines(consoleMessages))

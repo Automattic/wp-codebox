@@ -20,10 +20,12 @@ final class WP_Codebox_Task_Input_Contract {
 			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
+					'type'        => 'string',
 					'const'       => self::SCHEMA,
 					'description' => 'Task input contract schema id.',
 				),
 				'version'            => array(
+					'type'        => 'integer',
 					'const'       => self::VERSION,
 					'description' => 'Task input contract version.',
 				),
