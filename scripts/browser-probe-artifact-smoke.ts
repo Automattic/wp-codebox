@@ -42,7 +42,7 @@ await writeFile(recipePath, `${JSON.stringify({
           "wait-for=load",
           "duration=1s",
           "capture=console,errors,html,network,performance,memory,screenshot",
-          "script=console.info('wp-codebox fixture browser script'); return { title: document.title, hasBody: !!document.body };",
+          "script=window.__wpCodeboxProbeCheckpoint('fixture-before-return', { source: 'smoke' }); console.info('wp-codebox fixture browser script'); return { title: document.title, hasBody: !!document.body };",
         ],
       },
     ],
@@ -97,6 +97,7 @@ assert.match(errorLog, /wp-codebox fixture browser error/)
 assert.match(htmlSnapshot, /Browser Error Fixture|wp-codebox fixture console error/)
 assert.match(networkLog, /"type":"response"/)
 assert.match(checkpointsLog, /"schema":"wp-codebox\/browser-checkpoint\/v1"/)
+assert.match(checkpointsLog, /"name":"fixture-before-return"/)
 
 const memory = JSON.parse(await readFile(memoryPath, "utf8")) as { schema: string; final: { domCounters: { nodes: number | null } }; peak: { domNodes: { final: number | null; peak: number | null } }; checkpoints: unknown[] }
 const performance = JSON.parse(await readFile(performancePath, "utf8")) as { schema: string; final: { resources: { count: number }; dom: { nodes: number } }; peak: { resources: number; domNodes: { final: number | null; peak: number | null } }; checkpoints: unknown[] }

@@ -46,7 +46,15 @@ import type { ConsoleMessage, Page, Request, Response } from "playwright"
 const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
 const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
 (() => {
-  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { longTasks: [] };
+  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [] };
+  state.checkpoints = state.checkpoints || [];
+  globalThis.__wpCodeboxProbeCheckpoint = (name, metadata = {}) => {
+    state.checkpoints.push({
+      name: String(name || ''),
+      metadata,
+      timestamp: new Date().toISOString(),
+    });
+  };
   if (state.longTaskObserverInstalled || typeof PerformanceObserver === 'undefined') {
     return;
   }
@@ -605,6 +613,7 @@ interface BrowserProbePerformanceSummary {
 interface BrowserProbeCheckpointRecord {
   schema: "wp-codebox/browser-checkpoint/v1"
   name: string
+  metadata?: unknown
   timestamp: string
   metrics: BrowserProbeMetricsSnapshot
 }
@@ -1390,6 +1399,7 @@ class PlaygroundRuntime implements Runtime {
           return run()
         }, script)
         if (capturesBrowserMetrics) {
+          checkpoints.push(...await browserProbePendingCheckpoints(page))
           checkpoints.push(await browserProbeCheckpoint(page, "after-script"))
         }
       }
@@ -2934,11 +2944,30 @@ function browserProbeReplayability(capture: Set<string>): BrowserProbeReplayabil
   return "diagnostic-only"
 }
 
-async function browserProbeCheckpoint(page: Page, name: string): Promise<BrowserProbeCheckpointRecord> {
+async function browserProbePendingCheckpoints(page: Page): Promise<BrowserProbeCheckpointRecord[]> {
+  const pending = await page.evaluate(() => {
+    const state = (globalThis as typeof globalThis & { __wpCodeboxBrowserProbe?: { checkpoints?: Array<{ name?: unknown; metadata?: unknown; timestamp?: unknown }> } }).__wpCodeboxBrowserProbe
+    const checkpoints = Array.isArray(state?.checkpoints) ? state.checkpoints.splice(0) : []
+    return checkpoints.map((checkpoint) => ({
+      name: typeof checkpoint.name === "string" ? checkpoint.name : "checkpoint",
+      metadata: checkpoint.metadata,
+      timestamp: typeof checkpoint.timestamp === "string" ? checkpoint.timestamp : undefined,
+    }))
+  })
+
+  const records: BrowserProbeCheckpointRecord[] = []
+  for (const checkpoint of pending) {
+    records.push(await browserProbeCheckpoint(page, checkpoint.name, checkpoint.metadata, checkpoint.timestamp))
+  }
+  return records
+}
+
+async function browserProbeCheckpoint(page: Page, name: string, metadata?: unknown, timestamp?: string): Promise<BrowserProbeCheckpointRecord> {
   return {
     schema: "wp-codebox/browser-checkpoint/v1",
     name,
-    timestamp: now(),
+    ...(typeof metadata !== "undefined" ? { metadata } : {}),
+    timestamp: timestamp ?? now(),
     metrics: await browserProbeMetricsSnapshot(page),
   }
 }

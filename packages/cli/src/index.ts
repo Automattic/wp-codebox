@@ -3626,6 +3626,16 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       addIssue("invalid-duration", `${path}.args`, "wordpress.browser-probe duration must look like 500ms or 2s.")
     }
 
+    const repeat = recipeStepArgValue(step.args ?? [], "repeat")
+    if (repeat && !/^[1-9]\d*$/.test(repeat)) {
+      addIssue("invalid-repeat", `${path}.args`, "wordpress.browser-probe repeat must be a positive integer.")
+    }
+
+    const resetBetween = recipeStepArgValue(step.args ?? [], "reset-between")
+    if (resetBetween && !["none", "reload", "new-page"].includes(resetBetween)) {
+      addIssue("invalid-reset-between", `${path}.args`, "wordpress.browser-probe reset-between must be none, reload, or new-page.")
+    }
+
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {

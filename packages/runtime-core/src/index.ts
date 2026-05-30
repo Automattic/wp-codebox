@@ -170,6 +170,8 @@ export const commandRegistry = [
       { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
       { name: "script", description: "Optional page-side JavaScript to evaluate after navigation and before final capture.", format: "JavaScript function body" },
       { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,html,network,performance,memory,screenshot" },
+      { name: "repeat", description: "Optional repeated probe iterations for leak-oriented recipes.", format: "positive integer" },
+      { name: "reset-between", description: "Requested reset mode between repeated probe iterations.", format: "none|reload|new-page" },
     ],
     outputShape: "JSON summary plus files/browser/console.jsonl, errors.jsonl, network.jsonl, performance.json, memory.json, checkpoints.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
