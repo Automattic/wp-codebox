@@ -20,7 +20,7 @@ import {
 } from "./artifacts.js"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import { playgroundBlueprint } from "./blueprint.js"
-import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, CORE_PHPUNIT_RESULT_FILE, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import type {
   ArtifactBundle,
   ArtifactManifestFile,
@@ -501,6 +501,44 @@ function playgroundFailureMessage(command: string, response: PlaygroundRunRespon
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Extract a human-readable failure message from the structured wordpress.core-phpunit
+ * diagnostics log (.pg-test-result.txt). The PHP runner emits STAGE_FAIL / STAGE_DIE /
+ * STAGE_FATAL markers; when core's bootstrap.php die()s mid-require, the shutdown handler
+ * records STAGE_DIE with whatever the bootstrap printed (e.g. the "PHPUnit 0" notice).
+ * Returns undefined when the log contains no recognizable failure marker (#314).
+ */
+function extractCorePhpunitFailureMessage(log: string): string | undefined {
+  if (!log.trim()) {
+    return undefined
+  }
+
+  const lines = log.split("\n")
+  const stageFail = lines.find((line) => line.startsWith("STAGE_FAIL:"))
+  const stageDie = lines.find((line) => line.startsWith("STAGE_DIE:"))
+  const stageFatal = lines.find((line) => line.startsWith("STAGE_FATAL:"))
+
+  const detail = (marker: string | undefined): string | undefined => {
+    if (!marker) {
+      return undefined
+    }
+    // Format is MARKER:<stage>:<message...>; drop the marker and stage prefix.
+    const withoutMarker = marker.slice(marker.indexOf(":") + 1)
+    const withoutStage = withoutMarker.slice(withoutMarker.indexOf(":") + 1)
+    return withoutStage.trim() || withoutMarker.trim()
+  }
+
+  const messages = [detail(stageFail), detail(stageDie), detail(stageFatal)].filter(
+    (value): value is string => Boolean(value),
+  )
+
+  if (messages.length === 0) {
+    return undefined
+  }
+
+  return messages.join(" | ")
 }
 
 function phpLiteral(value: string | number | boolean | null): string {
@@ -2044,6 +2082,10 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     const args = spec.args ?? []
     const explicitCode = argValue(args, "code") || argValue(args, "code-file")
+    // Write structured diagnostics to a sandbox-internal /tmp path rather than inside
+    // the (often read-only) core mount, so the result survives read-only mounts and a
+    // mid-require die() in core's bootstrap.php and can be read back from the VFS (#314).
+    const resultFile = CORE_PHPUNIT_RESULT_FILE
     const code = explicitCode ? await this.phpCodeFromArgs(args, "wordpress.core-phpunit") : normalizePhpCode(corePhpunitRunCode({
       coreRoot: argValue(args, "core-root")?.trim() || "/wordpress",
       testsDir: argValue(args, "tests-dir")?.trim() || "/wordpress/tests/phpunit",
@@ -2053,12 +2095,59 @@ class PlaygroundRuntime implements Runtime {
       autoloadFile: argValue(args, "autoload-file")?.trim() || "/wordpress/vendor/autoload.php",
       wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
       multisite: booleanArg(args, "multisite"),
+      resultFile,
     }))
-    const response = await this.runPlaygroundCommand("wordpress.core-phpunit", server, { code })
-    await this.persistVfsDiagnosticFile(server, `${argValue(args, "core-root")?.trim() || "/wordpress"}/.pg-test-result.txt`)
+
+    let response: PlaygroundRunResponse
+    try {
+      response = await this.runPlaygroundCommand("wordpress.core-phpunit", server, { code })
+    } catch (error) {
+      // Core's bootstrap can die() mid-require when the Composer test toolchain is
+      // absent, which surfaces here as a PlaygroundCommandCrashError with empty
+      // output. Recover the structured diagnostics the PHP shutdown handler flushed
+      // to the result file and re-throw a clear, actionable error instead (#314).
+      await this.persistCorePhpunitResult(server, resultFile)
+      const structured = await this.readCorePhpunitDiagnostic(server, resultFile)
+      if (structured) {
+        throw new Error(`wordpress.core-phpunit could not run: ${structured}`)
+      }
+      throw error
+    }
+
+    await this.persistCorePhpunitResult(server, resultFile)
     assertPlaygroundResponseOk("wordpress.core-phpunit", response)
 
     return response.text
+  }
+
+  private async persistCorePhpunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
+    if (!server.playground.readFileAsText) {
+      return
+    }
+
+    try {
+      const contents = await server.playground.readFileAsText(vfsPath)
+      const hostPath = join(this.artifactRoot, "files", "core-phpunit", ".pg-test-result.txt")
+      await mkdir(dirname(hostPath), { recursive: true })
+      await writeFile(hostPath, contents)
+    } catch {
+      // The structured result is best-effort; preserve the command outcome if copying fails.
+    }
+  }
+
+  private async readCorePhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {
+    if (!server.playground.readFileAsText) {
+      return undefined
+    }
+
+    let contents: string
+    try {
+      contents = await server.playground.readFileAsText(vfsPath)
+    } catch {
+      return undefined
+    }
+
+    return extractCorePhpunitFailureMessage(contents)
   }
 
   private async persistVfsDiagnosticFile(server: PlaygroundCliServer, vfsPath: string): Promise<void> {

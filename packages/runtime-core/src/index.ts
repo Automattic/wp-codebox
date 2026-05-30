@@ -135,14 +135,14 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.core-phpunit",
-    description: "Run WordPress core PHPUnit tests with normalized diagnostics and test-result artifact capture.",
+    description: "Run WordPress core PHPUnit tests with normalized diagnostics and test-result artifact capture. PRECONDITION: the mounted wordpress-develop checkout MUST already have Composer dev dependencies installed (PHPUnit + yoast/phpunit-polyfills under vendor/) before mounting, because core's tests/phpunit/includes/bootstrap.php die()s without them. Run `composer install` (or `composer update -W`) in the checkout first, or mount one that already has vendor/. When the toolchain is missing the command now fails with a clear structured error instead of crashing silently.",
     acceptedArgs: [
-      { name: "core-root", description: "WordPress develop checkout root inside the sandbox.", format: "sandbox path" },
-      { name: "tests-dir", description: "Core tests directory inside the sandbox.", format: "sandbox path" },
+      { name: "core-root", description: "WordPress develop checkout root inside the sandbox. Must contain vendor/ with Composer dev dependencies (PHPUnit + yoast/phpunit-polyfills) installed before mounting.", format: "sandbox path" },
+      { name: "tests-dir", description: "Core tests directory inside the sandbox (expects includes/bootstrap.php under it).", format: "sandbox path" },
       { name: "phpunit-xml", description: "phpunit.xml path.", format: "path" },
       { name: "test-file", description: "Single test file to run.", format: "path" },
       { name: "changed-tests-json", description: "Changed test files for diagnostics.", format: "JSON array" },
-      { name: "autoload-file", description: "Autoload path inside the sandbox.", format: "sandbox path" },
+      { name: "autoload-file", description: "Autoload path inside the sandbox (typically <core-root>/vendor/autoload.php from a completed composer install).", format: "sandbox path" },
       { name: "wp-config-defines-json", description: "wp-config.php constants for the run.", format: "JSON object" },
       { name: "multisite", description: "Run as multisite.", format: "boolean" },
     ],

@@ -73,7 +73,15 @@ export interface CorePhpunitRunCodeOptions {
   autoloadFile: string
   wpConfigDefines: Record<string, unknown>
   multisite: boolean
+  /**
+   * Sandbox-internal, writable path for the structured diagnostics log. Defaults
+   * to a /tmp path so diagnostics survive read-only core mounts and a mid-require
+   * die() in WordPress core's bootstrap.php (see issue #314).
+   */
+  resultFile?: string
 }
+
+export const CORE_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-core-phpunit-result.txt"
 
 export interface PluginCheckFinding {
   code?: string
@@ -1185,8 +1193,9 @@ $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFil
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $multisite = ${JSON.stringify(options.multisite)};
-$result_file = $core_root . '/.pg-test-result.txt';
+$result_file = ${JSON.stringify(options.resultFile ?? CORE_PHPUNIT_RESULT_FILE)};
 $current_stage = 'preboot';
+@file_put_contents($result_file, '');
 
 function core_pg_log($msg) {
     global $result_file;
@@ -1220,12 +1229,67 @@ function core_pg_install_diagnostics_handlers() {
         return false;
     });
     register_shutdown_function(function () {
-        global $current_stage;
+        global $current_stage, $core_pg_bootstrap_buffering;
+        // WordPress core's tests/phpunit/includes/bootstrap.php can die() mid-require
+        // (e.g. "Looks like you're using PHPUnit 0") when the Composer test toolchain
+        // is absent. die() is not catchable, so capture whatever it printed via the
+        // output buffer started around the bootstrap require and flush it here so the
+        // TS layer always gets a structured diagnostic instead of an empty crash (#314).
+        if (!empty($core_pg_bootstrap_buffering)) {
+            $buffered = '';
+            while (ob_get_level() > 0) {
+                $chunk = ob_get_clean();
+                if ($chunk !== false) {
+                    $buffered = $chunk . $buffered;
+                }
+            }
+            $buffered = trim($buffered);
+            if ($buffered !== '') {
+                core_pg_log('STAGE_DIE:' . $current_stage . ':' . $buffered);
+            }
+        }
         $error = error_get_last();
         if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true)) {
             core_pg_log('STAGE_FATAL:' . $current_stage . ':' . $error['message'] . ' at ' . $error['file'] . ':' . $error['line']);
         }
     });
+}
+
+/**
+ * Pre-flight the Composer test toolchain that WordPress core's
+ * tests/phpunit/includes/bootstrap.php hard-requires. Returns a precise,
+ * human-readable failure message when something is missing, or null when the
+ * required paths are present. Mirrors the polyfills + PHPUnit checks the core
+ * bootstrap performs before it die()s (#314).
+ */
+function core_pg_preflight_core_toolchain(string $core_root, string $tests_dir, string $autoload_file): ?string {
+    $bootstrap = $tests_dir . '/includes/bootstrap.php';
+    if (!is_readable($bootstrap)) {
+        return 'core PHPUnit tests bootstrap not found or unreadable at ' . $bootstrap
+            . '; ensure the mounted checkout is a wordpress-develop tree with tests/phpunit/includes/bootstrap.php.';
+    }
+
+    $vendor_autoload = $core_root . '/vendor/autoload.php';
+    $polyfills_autoload = $core_root . '/vendor/yoast/phpunit-polyfills/phpunitpolyfills-autoload.php';
+    $missing = array();
+    if (!is_readable($vendor_autoload)) {
+        $missing[] = 'Composer autoload (' . $vendor_autoload . ')';
+    }
+    if (!is_readable($polyfills_autoload)) {
+        $missing[] = 'Yoast PHPUnit Polyfills autoload (' . $polyfills_autoload . ')';
+    }
+    if (!is_readable($autoload_file)) {
+        $missing[] = 'configured autoload-file (' . $autoload_file . ')';
+    }
+
+    if (empty($missing)) {
+        return null;
+    }
+
+    return 'core PHPUnit requires Composer dev dependencies (PHPUnit + yoast/phpunit-polyfills) in the mounted checkout, but the following are missing: '
+        . implode('; ', $missing)
+        . '. Run \`composer install\` (or \`composer update -W\`) in the wordpress-develop checkout before mounting it, or mount a checkout that already has vendor/ installed. '
+        . "WordPress core's tests/phpunit/includes/bootstrap.php die()s without these, which is why this fails before any tests run.";
 }
 
 function core_pg_write_tests_config(string $core_root, array $extra_defines): string {
@@ -1419,14 +1483,15 @@ core_pg_install_diagnostics_handlers();
 
 core_pg_stage_begin('boot');
 try {
-    if (!is_readable($autoload_file)) {
-        throw new RuntimeException('core PHPUnit autoload file is not readable: ' . $autoload_file);
-    }
     if (!is_dir($core_root)) {
         throw new RuntimeException('core root is not a directory: ' . $core_root);
     }
     if (!is_dir($tests_dir)) {
         throw new RuntimeException('core tests directory is not a directory: ' . $tests_dir);
+    }
+    $preflight_error = core_pg_preflight_core_toolchain($core_root, $tests_dir, $autoload_file);
+    if ($preflight_error !== null) {
+        throw new RuntimeException($preflight_error);
     }
     if (!is_array($wp_config_defines)) {
         $wp_config_defines = array();
@@ -1454,10 +1519,24 @@ try {
 }
 
 core_pg_stage_begin('bootstrap');
+// WordPress core's bootstrap.php can die() mid-require if the test toolchain is
+// incomplete. die() is not a Throwable, so the catch below never runs; instead the
+// shutdown handler flushes this buffer + the current stage to the result file so we
+// still surface a structured diagnostic rather than an empty crash (#314).
+$core_pg_bootstrap_buffering = true;
+ob_start();
 try {
     require_once $tests_dir . '/includes/bootstrap.php';
+    $core_pg_bootstrap_buffering = false;
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
     core_pg_stage_ok('bootstrap');
 } catch (Throwable $e) {
+    $core_pg_bootstrap_buffering = false;
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
     core_pg_stage_fail('bootstrap', $e);
     exit(1);
 }

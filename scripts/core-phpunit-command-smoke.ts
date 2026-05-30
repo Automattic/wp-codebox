@@ -29,6 +29,38 @@ assert.match(code, /'WP_TESTS_MULTISITE' => true/)
 assert.doesNotMatch(code, /plugin-slug/)
 assert.doesNotMatch(code, /wp-content\/plugins/)
 
+// #314: the structured diagnostics log must default to a sandbox-internal /tmp path
+// (not inside the possibly read-only core mount) so it survives read-only mounts and
+// a mid-require die() in core's bootstrap.php.
+assert.match(code, /\$result_file = "\/tmp\/wp-codebox-core-phpunit-result\.txt"/)
+assert.doesNotMatch(code, /\$result_file = \$core_root \. '\/\.pg-test-result\.txt'/)
+
+// #314: a custom resultFile option must be honored verbatim.
+const customResultCode = corePhpunitRunCode({
+  coreRoot: "/wordpress",
+  testsDir: "/wordpress/tests/phpunit",
+  phpunitXml: "/wordpress/tests/phpunit/phpunit.xml.dist",
+  selectedTestFile: "",
+  changedTestFiles: [],
+  autoloadFile: "/wordpress/vendor/autoload.php",
+  wpConfigDefines: {},
+  multisite: false,
+  resultFile: "/tmp/custom-result.txt",
+})
+assert.match(customResultCode, /\$result_file = "\/tmp\/custom-result\.txt"/)
+
+// #314: pre-flight the Composer test toolchain before requiring core's bootstrap, and
+// fail with a clear message naming PHPUnit + yoast/phpunit-polyfills.
+assert.match(code, /function core_pg_preflight_core_toolchain/)
+assert.match(code, /core_pg_preflight_core_toolchain\(\$core_root, \$tests_dir, \$autoload_file\)/)
+assert.match(code, /vendor\/yoast\/phpunit-polyfills\/phpunitpolyfills-autoload\.php/)
+assert.match(code, /core PHPUnit requires Composer dev dependencies/)
+
+// #314: harden the bootstrap require so a die() mid-require still flushes diagnostics.
+assert.match(code, /\$core_pg_bootstrap_buffering = true;/)
+assert.match(code, /ob_start\(\);/)
+assert.match(code, /STAGE_DIE:/)
+
 const pluginCode = phpunitRunCode({
   pluginSlug: "network-plugin",
   autoloadFile: "/wp-codebox-vendor/autoload.php",
