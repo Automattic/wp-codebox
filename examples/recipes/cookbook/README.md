@@ -232,3 +232,47 @@ WooCommerce shape (variable products, coupons, subscriptions, custom gateways,
 tax classes, shipping zones, or more order statuses), edit
 `woocommerce-store-seed.php` to add them before the JSON output line, or fork
 the recipe entirely.
+
+### `sitemap-paged-404-repro.json`
+
+A **bug-reproduction harness** (the "ship a recipe with an issue" use case) for a
+WordPress core defect: a paginated core XML sitemap sub-page
+(`wp-sitemap-posts-<cpt>-N.xml`) is served with **HTTP 404** once `N` exceeds the
+blog (`post`) sitemap page count, even though `WP_Sitemaps` would render a valid
+`<urlset>` for that page. It is the clean-room proof behind
+[Extra-Chill/data-machine-events#334](https://github.com/Extra-Chill/data-machine-events/issues/334):
+the recipe uses a plain public CPT plus a taxonomy shared on both `post` and the
+CPT, with **none** of that plugin's 404-prevention hooks, so the 404 is provably
+core behavior.
+
+```bash
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/cookbook/sitemap-paged-404-repro.json \
+  --json
+```
+
+The seed step (`sitemap-paged-404-repro-seed.php`) registers the shared CPT +
+taxonomy, seeds a boundary condition where the blog sitemap has **fewer** pages
+than the CPT/taxonomy sitemap, then drives the real core request lifecycle
+(`WP::query_posts()` → `WP::handle_404()`) for each sitemap sub-page URL and
+emits a JSON verdict. A reproducing run shows `bug_reproduced: true` with the
+beyond-boundary CPT page reporting `status_header: 404` while
+`sitemap_renderer_url_count` is non-zero — core 404s a page it has valid URLs
+for.
+
+#### Why this exists
+
+The root cause is core, not any plugin: `wp-sitemap-posts-<cpt>-N.xml` rewrites
+to `index.php?sitemap=posts&sitemap-subtype=<cpt>&paged=N` with **no** `post_type`
+query var, so the dummy main `WP_Query` defaults to `post` at the site's
+`posts_per_page`. `WP::handle_404()` runs against that main query (on the `wp`
+action) **before** `WP_Sitemaps::render_sitemaps()` runs on `template_redirect`,
+and flags `is_404()` once `paged` exceeds the blog page count. This recipe is the
+durable instrument to attach to a WordPress Trac ticket and to re-verify against
+future core versions with `--wp trunk`.
+
+#### Extending
+
+Adjust `posts_per_page`, the seed counts, or `wp_sitemaps_max_urls` in the seed
+to model other boundary ratios, or change `runtime.wp` to test whether a future
+core release fixes the behavior.

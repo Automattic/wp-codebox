@@ -637,6 +637,7 @@ Example recipes:
 - `examples/recipes/cookbook/theme-block-editor.json`: realistic theme/block-editor smoke surface with a mounted theme, seeded block page, and frontend/editor/admin URLs.
 - `examples/recipes/cookbook/seeded-content.json`: realistic fixture content shape with pages, posts, categories, tags, editor/author users, and preview/admin URLs.
 - `examples/recipes/cookbook/bbpress-reply-editor.json`: realistic bbPress dependency shape with a seeded forum/topic and reply form.
+- `examples/recipes/cookbook/sitemap-paged-404-repro.json`: clean-room reproduction harness for a WordPress core paginated-sitemap 404 (a sitemap sub-page is served 404 once its page number exceeds the blog sitemap page count, despite having valid URLs).
 
 Supported workspace seeds:
 
