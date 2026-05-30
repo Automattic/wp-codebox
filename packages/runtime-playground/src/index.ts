@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from "n
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, runtimeEpisodeDigest, validateBrowserInteractionScript, type BrowserInteractionStep } from "@chubes4/wp-codebox-core"
+import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, runtimeEpisodeDigest, type BrowserInteractionStep } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -20,6 +20,7 @@ import {
 } from "./artifacts.js"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import { playgroundBlueprint } from "./blueprint.js"
+import { browserActionLoadState, browserDeepEqual, browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { executePlaygroundCommand, playgroundRuntimeCommandIds } from "./command-router.js"
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, CORE_PHPUNIT_RESULT_FILE, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -1575,7 +1576,7 @@ class PlaygroundRuntime implements Runtime {
   async runBrowserActions(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const args = spec.args ?? []
-    const steps = await this.browserInteractionStepsFromArgs(args)
+    const steps = await browserInteractionStepsFromArgs(args)
     const initialUrl = argValue(args, "url")?.trim()
     if (steps.length === 0 && !initialUrl) {
       throw new Error("wordpress.browser-actions requires steps-json=<array> (or actions-json=<array>) or url=<path-or-url>")
@@ -1786,35 +1787,6 @@ class PlaygroundRuntime implements Runtime {
       summary: this.browserProbes.at(-1)?.summary,
       steps: stepRecords,
     }, null, 2)}\n`
-  }
-
-  private async browserInteractionStepsFromArgs(args: string[]): Promise<BrowserInteractionStep[]> {
-    const stepsRaw = argValue(args, "steps-json")
-    if (typeof stepsRaw === "string" && stepsRaw.trim().length > 0) {
-      const parsed = await this.parseBrowserStepsPayload(stepsRaw.trim(), "steps-json")
-      const result = validateBrowserInteractionScript(parsed)
-      if (!result.valid) {
-        throw new Error(`wordpress.browser-actions steps-json is invalid: ${result.issues.map((issue) => `[${issue.index}] ${issue.message}`).join("; ")}`)
-      }
-      return result.steps
-    }
-
-    // Back-compat: accept the legacy actions-json shape and normalize it to steps.
-    const legacy = browserActionsFromArgs(args)
-    return legacy.map(normalizeLegacyBrowserAction)
-  }
-
-  private async parseBrowserStepsPayload(raw: string, name: string): Promise<unknown> {
-    let text = raw
-    if (raw.startsWith("@")) {
-      const path = raw.slice(1)
-      text = await readFile(resolve(path), "utf8")
-    }
-    try {
-      return JSON.parse(text)
-    } catch (error) {
-      throw new Error(`${name} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
-    }
   }
 
   async runPhp(spec: ExecutionSpec): Promise<string> {
@@ -3158,44 +3130,6 @@ async function browserExpectState(page: Page, selector: string, state: string, t
   }
 }
 
-function browserStepTimeoutMs(step: BrowserInteractionStep, fallbackMs: number): number {
-  if (typeof step.timeout === "string" && step.timeout.length > 0) {
-    return durationStringMs(step.timeout)
-  }
-  return fallbackMs
-}
-
-function durationStringMs(raw: string | undefined): number {
-  if (!raw) {
-    return 0
-  }
-  const match = raw.trim().match(/^(\d+(?:\.\d+)?)(ms|s)$/)
-  if (!match) {
-    throw new Error(`wordpress.browser-actions duration must be a duration like 500ms or 2s: ${raw}`)
-  }
-  const value = Number.parseFloat(match[1])
-  return Math.max(0, Math.round(match[2] === "ms" ? value : value * 1000))
-}
-
-function sanitizeScreenshotName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "step"
-}
-
-function browserDeepEqual(a: unknown, b: unknown): boolean {
-  return stableStringify(a) === stableStringify(b)
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null"
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`
-  }
-  const keys = Object.keys(value as Record<string, unknown>).sort()
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(",")}}`
-}
-
 function browserStepRecord(
   index: number,
   step: BrowserInteractionStep,
@@ -3236,45 +3170,6 @@ function browserAssertionsSummary(records: BrowserStepRecord[]): BrowserAssertio
     failed: results.length - passed,
     results,
   }
-}
-
-/** Normalize a legacy actions-json action into the steps contract. */
-function normalizeLegacyBrowserAction(action: BrowserActionInput): BrowserInteractionStep {
-  const kind = action.type === "wait" ? "waitFor" : (action.type as BrowserInteractionStep["kind"])
-  const step: BrowserInteractionStep = { kind }
-  if (typeof action.url === "string") step.url = action.url
-  if (typeof action.selector === "string") step.selector = action.selector
-  if (typeof action.text === "string") step.text = action.text
-  if (typeof action.value === "string") step.value = action.value
-  if (typeof action.key === "string") step.key = action.key
-  if (typeof action.waitFor === "string") step.waitFor = action.waitFor
-  if (typeof action.duration === "string") step.duration = action.duration
-  return step
-}
-
-type BrowserActionInput = Record<string, unknown> & { type: string }
-
-function browserActionsFromArgs(args: string[]): BrowserActionInput[] {
-  return jsonArrayArg(args, "actions-json").map((action, index) => {
-    if (!action || typeof action !== "object" || Array.isArray(action)) {
-      throw new Error(`wordpress.browser-actions actions-json[${index}] must be an object`)
-    }
-    const typedAction = action as BrowserActionInput
-    if (typeof typedAction.type !== "string" || typedAction.type.length === 0) {
-      throw new Error(`wordpress.browser-actions actions-json[${index}].type is required`)
-    }
-    return typedAction
-  })
-}
-
-function browserActionLoadState(waitFor: unknown): "domcontentloaded" | "load" | "networkidle" {
-  if (waitFor === undefined || waitFor === null || waitFor === "") {
-    return "domcontentloaded"
-  }
-  if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
-    return waitFor
-  }
-  throw new Error(`wordpress.browser-actions navigate waitFor supports domcontentloaded, load, networkidle: ${waitFor}`)
 }
 
 function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {
