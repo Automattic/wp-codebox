@@ -22,6 +22,7 @@ import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import { playgroundBlueprint } from "./blueprint.js"
 import { browserActionLoadState, browserDeepEqual, browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserAssertionsSummary, type BrowserProbeArtifact, type BrowserProbeCheckpointRecord, type BrowserProbeErrorRecord, type BrowserProbeMemoryArtifact, type BrowserProbeMemorySummary, type BrowserProbeMetricDigest, type BrowserProbeMetricsSnapshot, type BrowserProbeNetworkRecord, type BrowserProbeNetworkSizes, type BrowserProbePerformanceArtifact, type BrowserProbePerformanceSummary, type BrowserProbeReplayability, type BrowserProbeViewport, type BrowserStepAssertion, type BrowserStepRecord } from "./browser-artifacts.js"
+import { browserProbeBenchMetrics, browserProbeMemorySummary, browserProbePerformanceSummary, cdpDomCounters, cdpHeapUsage, cdpPerformanceMetrics, jsonLines, promoteBrowserMetricsToBenchResults, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { executePlaygroundCommand, playgroundRuntimeCommandIds } from "./command-router.js"
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, CORE_PHPUNIT_RESULT_FILE, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -44,7 +45,7 @@ import type {
   RuntimeInfo,
   Snapshot,
 } from "@chubes4/wp-codebox-core"
-import type { ConsoleMessage, Page, Request, Response } from "playwright"
+import type { Page } from "playwright"
 
 const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
@@ -3089,225 +3090,6 @@ function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpointReco
   }
 }
 
-function browserProbeMemorySummary(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbeMemorySummary {
-  return {
-    usedJSHeapSize: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.memory.performanceMemory.usedJSHeapSize ?? checkpoint.metrics.memory.cdpHeap.usedSize)),
-    totalJSHeapSize: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.memory.performanceMemory.totalJSHeapSize ?? checkpoint.metrics.memory.cdpHeap.totalSize)),
-    jsHeapSizeLimit: lastNumber(checkpoints.map((checkpoint) => checkpoint.metrics.memory.performanceMemory.jsHeapSizeLimit)),
-    domNodes: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.memory.domCounters.nodes ?? checkpoint.metrics.performance.dom.nodes)),
-    documents: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.memory.domCounters.documents ?? checkpoint.metrics.performance.dom.documents)),
-    jsEventListeners: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.memory.domCounters.jsEventListeners)),
-  }
-}
-
-function browserProbePerformanceSummary(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbePerformanceSummary {
-  const final = checkpoints.at(-1)?.metrics.performance
-  const metricNames = new Set<string>()
-  for (const checkpoint of checkpoints) {
-    for (const key of Object.keys(checkpoint.metrics.performance.cdpMetrics)) {
-      metricNames.add(key)
-    }
-  }
-
-  return {
-    resources: final?.resources.count ?? 0,
-    transferSizeBytes: final?.resources.transferSizeBytes ?? 0,
-    encodedBodySizeBytes: final?.resources.encodedBodySizeBytes ?? 0,
-    decodedBodySizeBytes: final?.resources.decodedBodySizeBytes ?? 0,
-    longTasks: final?.longTasks.count ?? 0,
-    longTaskDurationMs: final?.longTasks.totalDurationMs ?? 0,
-    domNodes: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.performance.dom.nodes)),
-    cdpMetrics: Object.fromEntries([...metricNames].sort().map((name) => [name, metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.performance.cdpMetrics[name]))])),
-  }
-}
-
-function cdpPerformanceMetrics(value: unknown): Record<string, number> {
-  if (!isRecord(value) || !Array.isArray(value.metrics)) {
-    return {}
-  }
-
-  return Object.fromEntries(value.metrics.flatMap((metric) => {
-    if (!isRecord(metric) || typeof metric.name !== "string" || typeof metric.value !== "number" || !Number.isFinite(metric.value)) {
-      return []
-    }
-    return [[metric.name, metric.value]]
-  }))
-}
-
-function cdpDomCounters(value: unknown): { documents: number | null; nodes: number | null; jsEventListeners: number | null } {
-  return {
-    documents: recordNumberOrNull(value, "documents"),
-    nodes: recordNumberOrNull(value, "nodes"),
-    jsEventListeners: recordNumberOrNull(value, "jsEventListeners"),
-  }
-}
-
-function cdpHeapUsage(value: unknown): { usedSize: number | null; totalSize: number | null } {
-  return {
-    usedSize: recordNumberOrNull(value, "usedSize"),
-    totalSize: recordNumberOrNull(value, "totalSize"),
-  }
-}
-
-function recordNumberOrNull(value: unknown, key: string): number | null {
-  if (!isRecord(value)) {
-    return null
-  }
-  const field = value[key]
-  return typeof field === "number" && Number.isFinite(field) ? field : null
-}
-
-function metricDigest(values: Array<number | null | undefined>): BrowserProbeMetricDigest {
-  const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-  return {
-    final: numbers.at(-1) ?? null,
-    peak: numbers.length > 0 ? Math.max(...numbers) : null,
-  }
-}
-
-function lastNumber(values: Array<number | null | undefined>): number | null {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const value = values[index]
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value
-    }
-  }
-
-  return null
-}
-
-function browserProbeBenchMetrics(memoryArtifact?: BrowserProbeMemoryArtifact, performanceArtifact?: BrowserProbePerformanceArtifact): Record<string, number> {
-  const memory = memoryArtifact?.peak
-  const performance = performanceArtifact?.final
-  return {
-    browser_peak_used_js_heap_bytes: memory?.usedJSHeapSize.peak ?? 0,
-    browser_final_used_js_heap_bytes: memory?.usedJSHeapSize.final ?? 0,
-    browser_checkpoint_count: performanceArtifact?.checkpoints.length ?? memoryArtifact?.checkpoints.length ?? 0,
-    browser_dom_node_count: performance?.dom.nodes ?? memory?.domNodes.final ?? 0,
-    browser_iframe_count: performance?.dom.iframes ?? 0,
-    browser_resource_count: performance?.resources.count ?? 0,
-    browser_transfer_size_bytes: performance?.resources.transferSizeBytes ?? 0,
-    browser_long_task_count: performance?.longTasks.count ?? 0,
-    browser_long_task_total_ms: performance?.longTasks.totalDurationMs ?? 0,
-  }
-}
-
-function promoteBrowserMetricsToBenchResults(raw: string, probes: BrowserProbeArtifact[]): string {
-  const metrics = combinedBrowserBenchMetrics(probes)
-  if (!metrics) {
-    return raw
-  }
-
-  const parsed = JSON.parse(raw) as Record<string, unknown>
-  const scenarios = Array.isArray(parsed.scenarios) ? parsed.scenarios : []
-  for (const scenario of scenarios) {
-    if (!isRecord(scenario)) {
-      continue
-    }
-
-    scenario.metrics = {
-      ...(isRecord(scenario.metrics) ? scenario.metrics : {}),
-      ...metrics,
-    }
-  }
-
-  return `${JSON.stringify(parsed, null, 2)}\n`
-}
-
-function combinedBrowserBenchMetrics(probes: BrowserProbeArtifact[]): Record<string, number> | undefined {
-  const metricSets = probes.map((probe) => probe.summary.metrics).filter((metrics): metrics is Record<string, number> => isRecord(metrics))
-  if (metricSets.length === 0) {
-    return undefined
-  }
-
-  const finalMetrics = metricSets.at(-1) ?? {}
-  return {
-    browser_peak_used_js_heap_bytes: Math.max(...metricSets.map((metrics) => metrics.browser_peak_used_js_heap_bytes ?? 0)),
-    browser_final_used_js_heap_bytes: finalMetrics.browser_final_used_js_heap_bytes ?? 0,
-    browser_checkpoint_count: sumMetric(metricSets, "browser_checkpoint_count"),
-    browser_dom_node_count: finalMetrics.browser_dom_node_count ?? 0,
-    browser_iframe_count: finalMetrics.browser_iframe_count ?? 0,
-    browser_resource_count: finalMetrics.browser_resource_count ?? 0,
-    browser_transfer_size_bytes: finalMetrics.browser_transfer_size_bytes ?? 0,
-    browser_long_task_count: sumMetric(metricSets, "browser_long_task_count"),
-    browser_long_task_total_ms: sumMetric(metricSets, "browser_long_task_total_ms"),
-  }
-}
-
-function sumMetric(metricSets: Array<Record<string, number>>, name: string): number {
-  return metricSets.reduce((total, metrics) => total + (metrics[name] ?? 0), 0)
-}
-
-async function serializeBrowserFinishedRequest(request: Request): Promise<BrowserProbeNetworkRecord> {
-  const response = await request.response()
-  if (!response) {
-    return {
-      type: "response",
-      url: request.url(),
-      method: request.method(),
-      resourceType: request.resourceType(),
-      timestamp: now(),
-      timing: browserRequestTiming(request),
-    }
-  }
-
-  return serializeBrowserResponse(response)
-}
-
-async function serializeBrowserResponse(response: Response): Promise<BrowserProbeNetworkRecord> {
-  const request = response.request()
-  const sizes = await browserRequestSizes(request)
-  const transferSize = sizes ? sizes.responseHeadersSize + sizes.responseBodySize : undefined
-  return {
-    type: "response",
-    url: response.url(),
-    method: request.method(),
-    resourceType: request.resourceType(),
-    status: response.status(),
-    statusText: response.statusText(),
-    ok: response.ok(),
-    contentType: response.headers()["content-type"] ?? null,
-    timing: browserRequestTiming(request),
-    ...(sizes ? { sizes } : {}),
-    ...(typeof transferSize === "number" ? { transferSize } : {}),
-    ...(sizes ? { bodySize: sizes.responseBodySize } : {}),
-    ...(sizes ? { requestBodySize: sizes.requestBodySize } : {}),
-    ...(sizes ? { responseBodySize: sizes.responseBodySize } : {}),
-    timestamp: now(),
-  }
-}
-
-function serializeBrowserRequestFailure(request: Request): BrowserProbeNetworkRecord {
-  return {
-    type: "requestfailed",
-    url: request.url(),
-    method: request.method(),
-    resourceType: request.resourceType(),
-    timing: browserRequestTiming(request),
-    failure: request.failure(),
-    timestamp: now(),
-  }
-}
-
-function browserRequestTiming(request: Request): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(request.timing()).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])),
-  )
-}
-
-async function browserRequestSizes(request: Request): Promise<BrowserProbeNetworkSizes | undefined> {
-  const maybeSizedRequest = request as Request & { sizes?: () => Promise<BrowserProbeNetworkSizes> }
-  if (typeof maybeSizedRequest.sizes !== "function") {
-    return undefined
-  }
-
-  try {
-    return await maybeSizedRequest.sizes()
-  } catch {
-    return undefined
-  }
-}
-
 async function fileSha256(path: string): Promise<string> {
   return sha256(await readFile(path))
 }
@@ -3329,27 +3111,6 @@ function durationArg(args: string[], name: string, fallbackMs: number): number {
 
   const value = Number.parseFloat(match[1])
   return Math.max(0, Math.round(match[2] === "ms" ? value : value * 1000))
-}
-
-function serializeBrowserConsoleMessage(message: ConsoleMessage): Record<string, unknown> {
-  return {
-    type: message.type(),
-    text: message.text(),
-    location: message.location(),
-    timestamp: now(),
-  }
-}
-
-function serializeBrowserError(type: BrowserProbeErrorRecord["type"], error: unknown): BrowserProbeErrorRecord {
-  if (error instanceof Error) {
-    return { type, name: error.name, message: error.message, stack: error.stack, timestamp: now() }
-  }
-
-  return { type, name: "Error", message: String(error), timestamp: now() }
-}
-
-function jsonLines(records: unknown[]): string {
-  return records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : ""
 }
 
 async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1"): Promise<PlaygroundCliServer> {
