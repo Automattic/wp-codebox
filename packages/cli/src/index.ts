@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
-import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
+import { recipeExecutionSpec, sandboxWorkspaceContract } from "./agent-sandbox.js"
 import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "./preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "./recipe-dry-run.js"
@@ -212,51 +212,6 @@ interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
   action: "staged"
 }
 
-interface AgentRuntimeProbeOptions {
-  agentsApiPath: string
-  dataMachinePath: string
-  dataMachineCodePath: string
-  providerPluginPaths: string[]
-  mounts: RunOptions["mounts"]
-  wpVersion?: string
-  artifactsDirectory?: string
-  secretEnvNames?: string[]
-  json: boolean
-}
-
-interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
-  task: string
-  agent?: string
-  mode?: string
-  provider?: string
-  model?: string
-  sessionId?: string
-  maxTurns?: string
-  timeoutSeconds?: string
-  code?: string
-  codeFile?: string
-}
-
-interface AgentSandboxBatchOptions extends AgentRuntimeProbeOptions {
-  tasks: string[]
-  agent?: string
-  mode?: string
-  provider?: string
-  model?: string
-  maxTurns?: string
-  concurrency?: string
-}
-
-interface AgentSandboxBatchOutput {
-  success: boolean
-  schema: "wp-codebox/agent-sandbox-batch/v1"
-  concurrency: number
-  total: number
-  completed: number
-  failed: number
-  runs: Array<RunOutput & { index: number; task: string }>
-}
-
 interface BenchResults {
   component_id: string
   iterations: number
@@ -267,11 +222,6 @@ const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
-
-const secretEnvPolicy: RuntimePolicy = {
-  ...defaultPolicy,
-  secrets: "connector-scoped",
-}
 
 async function main(args: string[]): Promise<number> {
   const command = args.shift()
@@ -1024,111 +974,6 @@ async function verifyArtifacts(options: ArtifactVerifyOptions): Promise<Artifact
   return verifyArtifactBundle(resolve(options.bundleDirectory))
 }
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, callback: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let nextIndex = 0
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex++
-      results[index] = await callback(items[index], index)
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
-  return results
-}
-
-function agentRuntimeMounts(options: AgentRuntimeProbeOptions): RunOptions["mounts"] {
-  return [
-    componentMount(options.agentsApiPath, "/wordpress/wp-content/plugins/agents-api", "agents-api"),
-    componentMount(options.dataMachinePath, "/wordpress/wp-content/plugins/data-machine", "data-machine"),
-    componentMount(options.dataMachineCodePath, "/wordpress/wp-content/plugins/data-machine-code", "data-machine-code"),
-    ...providerPluginMounts(options).map((plugin) => ({
-      source: plugin.source,
-      target: `/wordpress/wp-content/plugins/${plugin.slug}`,
-      mode: "readonly" as const,
-      metadata: {
-        kind: "provider-plugin",
-        slug: plugin.slug,
-      },
-    })),
-    ...options.mounts,
-  ]
-}
-
-function componentMount(source: string, target: string, slug: string): RunOptions["mounts"][number] {
-  return {
-    source: resolve(source),
-    target,
-    mode: "readonly",
-    metadata: {
-      kind: "component",
-      slug,
-    },
-  }
-}
-
-async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<{ command: string; args: string[] }> {
-  if (step.command === "wp-codebox.agent-runtime-probe") {
-    return {
-      command: "wordpress.run-php",
-      args: [`code=${agentRuntimeProbeCode(providerPluginSlugs(step.args ?? []).map((slug) => ({ source: "", slug })))}`],
-    }
-  }
-
-  if (step.command === "wp-codebox.agent-sandbox-run") {
-    const args = step.args ?? []
-    const task = argValue(args, "task")
-    if (!task) {
-      throw new Error("wp-codebox.agent-sandbox-run requires task=<task>")
-    }
-
-    const codeFile = argValue(args, "code-file")
-    const code = argValue(args, "code")
-    if (code && codeFile) {
-      throw new Error("Use either code=<php> or code-file=<path>, not both")
-    }
-    const body = codeFile ? await readFile(resolve(recipeDirectory, codeFile), "utf8") : (code ?? await resolveSandboxTaskCode({
-      task,
-      agent: argValue(args, "agent"),
-      mode: argValue(args, "mode"),
-      provider: argValue(args, "provider"),
-      model: argValue(args, "model"),
-      sessionId: argValue(args, "session-id"),
-      maxTurns: argValue(args, "max-turns"),
-      timeoutSeconds: argValue(args, "timeout-seconds"),
-    }))
-
-    return {
-      command: "wordpress.run-php",
-      args: [
-        `code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })))}`,
-        "wp-cli-bridge=1",
-      ],
-    }
-  }
-
-  return { command: step.command, args: step.args ?? [] }
-}
-
-function argValue(args: string[], name: string): string | undefined {
-  const prefix = `${name}=`
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
-}
-
-function providerPluginSlugs(args: string[]): string[] {
-  const csv = argValue(args, "provider-plugin-slugs") ?? ""
-  return csv.split(",").map((slug) => slug.trim()).filter(Boolean)
-}
-
-function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source: string; slug: string }> {
-  return options.providerPluginPaths.map((pluginPath) => {
-    const source = resolve(pluginPath)
-    return { source, slug: basename(source) }
-  })
-}
-
 function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: string): Record<string, unknown> {
   return {
     runtime: {
@@ -1200,160 +1045,6 @@ function blueprintValidationMetadata(options: BlueprintValidateOptions): Record<
   }
 }
 
-function agentRuntimeMetadata(options: AgentRuntimeProbeOptions): Record<string, unknown> {
-  const base = runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION)
-
-  return {
-    ...base,
-    task: {
-      ...(base.task as Record<string, unknown>),
-      kind: "agent-runtime-probe",
-      secretEnv: options.secretEnvNames ?? [],
-    },
-  }
-}
-
-function agentSandboxRunMetadata(options: AgentSandboxRunOptions): Record<string, unknown> {
-  return {
-    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
-    task: stripUndefined({
-      kind: "agent-sandbox-run",
-      input: options.task,
-      sessionId: options.sessionId,
-      maxTurns: options.maxTurns,
-      timeoutSeconds: options.timeoutSeconds,
-      hasCodeOverride: Boolean(options.code || options.codeFile),
-      secretEnv: options.secretEnvNames ?? [],
-    }),
-    agent: stripUndefined({
-      agent: options.agent,
-      mode: options.mode,
-      provider: options.provider,
-      model: options.model,
-    }),
-  }
-}
-
-function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = []): AgentRuntimeProbeOptions {
-  const options: Partial<AgentRuntimeProbeOptions> = { json: false, mounts: [] }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--agents-api":
-        options.agentsApiPath = value
-        break
-      case "--data-machine":
-        options.dataMachinePath = value
-        break
-      case "--data-machine-code":
-        options.dataMachineCodePath = value
-        break
-      case "--provider-plugin":
-        options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
-        break
-      case "--mount":
-        options.mounts = [...(options.mounts ?? []), parseMount(value)]
-        break
-      case "--wp":
-        options.wpVersion = value
-        break
-      case "--artifacts":
-        options.artifactsDirectory = value
-        break
-      case "--secret-env":
-        options.secretEnvNames = [...(options.secretEnvNames ?? []), value]
-        break
-      default:
-        if (extraOptions.includes(name)) {
-          break
-        }
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  for (const [key, option] of [
-    ["--agents-api", options.agentsApiPath],
-    ["--data-machine", options.dataMachinePath],
-    ["--data-machine-code", options.dataMachineCodePath],
-  ] as const) {
-    if (!option) {
-      throw new Error(`Missing required option: ${key}`)
-    }
-  }
-
-  options.providerPluginPaths = options.providerPluginPaths ?? []
-  options.mounts = options.mounts ?? []
-
-  return options as AgentRuntimeProbeOptions
-}
-
-function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[index + 1]
-
-    switch (name) {
-      case "--task":
-        options.task = value
-        break
-      case "--agent":
-        options.agent = value
-        break
-      case "--mode":
-        options.mode = value
-        break
-      case "--provider":
-        options.provider = value
-        break
-      case "--model":
-        options.model = value
-        break
-      case "--session-id":
-        options.sessionId = value
-        break
-      case "--max-turns":
-        options.maxTurns = value
-        break
-      case "--timeout-seconds":
-        options.timeoutSeconds = value
-        break
-      case "--code":
-        options.code = value
-        break
-      case "--code-file":
-        options.codeFile = value
-        break
-    }
-  }
-
-  if (!options.task) {
-    throw new Error("Missing required option: --task")
-  }
-
-  if (options.code && options.codeFile) {
-    throw new Error("Use either --code or --code-file, not both")
-  }
-
-  return options as AgentSandboxRunOptions
-}
-
 function parseBenchResults(raw: string): BenchResults {
   const parsed = JSON.parse(raw) as BenchResults
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
@@ -1361,88 +1052,6 @@ function parseBenchResults(raw: string): BenchResults {
   }
 
   return parsed
-}
-
-async function parseAgentSandboxBatchOptions(args: string[]): Promise<AgentSandboxBatchOptions> {
-  const options = parseAgentRuntimeProbeOptions(args, ["--task", "--tasks-json", "--tasks-file", "--agent", "--mode", "--provider", "--model", "--max-turns", "--concurrency", "--secret-env", "--mount"]) as Partial<AgentSandboxBatchOptions>
-  options.tasks = []
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[index + 1]
-
-    switch (name) {
-      case "--task":
-        if (value) {
-          options.tasks.push(value)
-        }
-        break
-      case "--tasks-json":
-        if (value) {
-          options.tasks.push(...parseTaskList(value))
-        }
-        break
-      case "--tasks-file":
-        if (value) {
-          options.tasks.push(...parseTaskList(await readFile(resolve(value), "utf8")))
-        }
-        break
-      case "--agent":
-        options.agent = value
-        break
-      case "--mode":
-        options.mode = value
-        break
-      case "--provider":
-        options.provider = value
-        break
-      case "--model":
-        options.model = value
-        break
-      case "--max-turns":
-        options.maxTurns = value
-        break
-      case "--concurrency":
-        options.concurrency = value
-        break
-    }
-  }
-
-  options.tasks = options.tasks.map((task) => task.trim()).filter(Boolean)
-  if (options.tasks.length === 0) {
-    throw new Error("Missing required option: --task, --tasks-json, or --tasks-file")
-  }
-
-  return options as AgentSandboxBatchOptions
-}
-
-function parseTaskList(raw: string): string[] {
-  const parsed = JSON.parse(raw)
-  if (!Array.isArray(parsed)) {
-    throw new Error("Task list must be a JSON array")
-  }
-
-  return parsed.map((task) => {
-    if (typeof task === "string") {
-      return task
-    }
-
-    if (task && typeof task === "object" && "task" in task && typeof task.task === "string") {
-      return task.task
-    }
-
-    throw new Error("Task list entries must be strings or objects with a task string")
-  })
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback
-  }
-
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function resolveSecretEnv(names: string[]): Record<string, string> {
@@ -1460,18 +1069,6 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
   }
 
   return secretEnv
-}
-
-async function runSecretEnvOptions(options: AgentRuntimeProbeOptions): Promise<Pick<RunOptions, "policy" | "secretEnv">> {
-  const secretEnv = resolveSecretEnv(options.secretEnvNames ?? [])
-  if (Object.keys(secretEnv).length === 0) {
-    return {}
-  }
-
-  return {
-    policy: secretEnvPolicy,
-    secretEnv,
-  }
 }
 
 async function run(options: RunOptions): Promise<RunOutput> {
@@ -2627,41 +2224,6 @@ function matchesNumberSelector(record: Record<string, unknown>, allowed: number[
   }
   const values = keys.map((key) => record[key]).filter((value): value is number => typeof value === "number")
   return values.some((value) => allowed.includes(value))
-}
-
-function sandboxWorkspaceContract(workspaceMounts: PreparedWorkspaceMount[], mounts: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]): SandboxWorkspaceContract {
-  const mountRefs = [
-    ...workspaceMounts.map((mount) => workspaceMountRef(mount.target, mount.mode, mount.metadata)),
-    ...(Array.isArray(mounts) ? mounts.map((mount) => workspaceMountRef(mount.target, mount.mode ?? "readwrite", mount.metadata ?? {})) : []),
-  ]
-
-  return {
-    schema: "wp-codebox/sandbox-workspace/v1",
-    root: SANDBOX_WORKSPACE_ROOT,
-    defaultMode: "repo-backed",
-    mounts: mountRefs,
-    dmc: {
-      safeAbilities: [...SANDBOX_DMC_SAFE_ABILITIES],
-      parentOnlyAbilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
-    },
-  }
-}
-
-function workspaceMountRef(target: string, mode: "readonly" | "readwrite", metadata: Record<string, unknown> = {}): SandboxWorkspaceContract["mounts"][number] {
-  const sourceMode: SandboxWorkspaceMode = metadata.sourceMode === "site-backed" ? "site-backed" : "repo-backed"
-
-  return stripUndefined({
-    target,
-    mode,
-    sourceMode,
-    workspaceRef: typeof metadata.workspaceRef === "string" ? metadata.workspaceRef : undefined,
-    mountRole: typeof metadata.mountRole === "string" ? metadata.mountRole : typeof metadata.kind === "string" ? metadata.kind : undefined,
-    component: typeof metadata.component === "string" ? metadata.component : typeof metadata.slug === "string" ? metadata.slug : undefined,
-    repo: typeof metadata.repo === "string" ? metadata.repo : undefined,
-    gitRef: typeof metadata.gitRef === "string" ? metadata.gitRef : typeof metadata.default_branch === "string" ? metadata.default_branch : undefined,
-    defaultBranch: typeof metadata.default_branch === "string" ? metadata.default_branch : undefined,
-    wpContentPath: typeof metadata.wpContentPath === "string" ? metadata.wpContentPath : undefined,
-  })
 }
 
 function parseMount(value: string): RunOptions["mounts"][number] {
