@@ -23,21 +23,19 @@ Parent control plane
 ## Product Shape
 
 The core use case is safe code generation for WordPress products without giving
-the agent production access. A site owner, Studio user, CI job, eval runner, or
-chat surface can ask for a change; WP Codebox runs the work in Playground and
-returns evidence that the parent product can review.
+the agent production access. A site owner, CI job, or chat surface can ask for a
+change; WP Codebox runs the work in Playground and returns evidence that the
+parent product can review.
 
 Example control planes include hosted WordPress products, non-WordPress web
-apps, local development tools, chat surfaces, CI jobs, GitHub Actions, Homeboy,
-and other host applications. They consume WP Codebox; they do not change the
-sandbox contract. wp-gym is an example implementation that can build evaluation
-workflows on top of the same generic sandbox contract.
+apps, local development tools, chat surfaces, CI jobs, GitHub Actions, and other
+host applications. They consume WP Codebox; they do not change the sandbox
+contract.
 
-Studio Web is another product control plane: it orchestrates an in-browser WP
-Codebox Data Machine agent by calling WP Codebox's clean ability API. Studio Web
-does not make WP Codebox depend on Studio Web, and Studio Web itself does not
-own or embed Data Machine; Data Machine lives inside the sandboxed WP Codebox
-runtime when that task needs agent tools.
+Browser-based control planes can orchestrate an in-browser WP Codebox runtime by
+calling the clean ability API and passing caller-owned runtime ingredients. That
+does not make WP Codebox depend on any specific product; product policy,
+defaults, and orchestration state stay outside the sandbox contract.
 
 ## Landed Contracts
 
@@ -54,12 +52,12 @@ runtime when that task needs agent tools.
   [`external-apply-adapter-contract.md`](./external-apply-adapter-contract.md).
 - **Batch/fan-out primitive:** `wp-codebox/run-agent-task-batch` launches one
   isolated sandbox per task sequentially and returns per-task artifact ids,
-  preview URLs, statuses, and errors. Parent orchestrators such as Homeboy own
-  parallelism, track their own jobs, pass correlation metadata into each sandbox
-  run, and store the returned artifact ids as evidence.
+  preview URLs, statuses, and errors. Parent orchestrators own parallelism,
+  track their own jobs, pass correlation metadata into each sandbox run, and
+  store the returned artifact ids as evidence.
 - **Transfer-readiness checklist:** package boundaries, artifact lifecycle,
   extension seams, browser runtime dependencies, ability contracts, security
-  gates, and Studio Web integration points are tracked in
+  gates, and host integration points are tracked in
   [`transfer-readiness-checklist.md`](./transfer-readiness-checklist.md).
 
 ## Ownership Boundaries
@@ -92,3 +90,6 @@ lifecycle, command execution, artifact capture, and reviewed apply-back are
 separate contracts. Integrations can add product policy around those seams
 without making WP Codebox depend on a specific queue, review UI, deploy system,
 or agent framework.
+
+For dependency-role classification and browser runtime packaging boundaries, see
+[`browser-runtime-dependency-audit.md`](./browser-runtime-dependency-audit.md).

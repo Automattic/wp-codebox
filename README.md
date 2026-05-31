@@ -9,6 +9,8 @@ WP Codebox is the runtime boundary for agent-built or workflow-built outputs. It
 For the durable architecture boundary, see [`docs/architecture.md`](./docs/architecture.md).
 For the Automattic transfer review surface, see
 [`docs/transfer-readiness-checklist.md`](./docs/transfer-readiness-checklist.md).
+For browser runtime dependency classification and packaging provenance, see
+[`docs/browser-runtime-dependency-audit.md`](./docs/browser-runtime-dependency-audit.md).
 
 ```text
 Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
@@ -139,8 +141,9 @@ unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip
 `npm run package-distribution-smoke` validates both artifact shapes. It checks
 that the CLI pack includes `package.json`, `README.md`, and compiled `dist/`
 files without TypeScript source, then builds the WordPress plugin zip and checks
-that it contains the plugin bootstrap, README, and PHP sources without package
-metadata or generated artifacts.
+that it contains the plugin bootstrap, README, PHP sources, checked-in browser
+runtime asset, and vendored CLI runtime without package metadata or generated
+artifacts.
 
 Versioning and release policy:
 

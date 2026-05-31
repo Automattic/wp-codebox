@@ -45,6 +45,7 @@ const zipEntries = new Set(zipStdout.trim().split("\n").filter(Boolean))
 
 assert.ok(zipEntries.has("wp-codebox/wp-codebox.php"), "Plugin zip should include the main plugin file")
 assert.ok(zipEntries.has("wp-codebox/README.md"), "Plugin zip should include README.md")
+assert.ok(zipEntries.has("wp-codebox/assets/browser-runtime.js"), "Plugin zip should include the checked-in browser runtime asset")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-abilities.php"), "Plugin zip should include ability surface")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-agent-sandbox-runner.php"), "Plugin zip should include sandbox runner")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-artifacts.php"), "Plugin zip should include artifact helpers")
@@ -56,5 +57,10 @@ assert.ok(
 assert.ok(zipEntries.has("wp-codebox/vendor/wp-codebox-cli/packages/cli/dist/index.js"), "Plugin zip should include compiled CLI runtime")
 assert.equal(zipEntries.has("wp-codebox/package.json"), false, "Plugin zip should not include package metadata")
 assert.equal(zipEntries.has("wp-codebox/dist/wp-codebox.zip"), false, "Plugin zip should not include generated artifacts")
+
+const browserRuntimeSource = await readFile(resolve(repoRoot, "packages", "wordpress-plugin", "assets", "browser-runtime.js"), "utf8")
+assert.match(browserRuntimeSource, /window\.wpCodeboxBrowser/, "Browser runtime asset should expose the generic WP Codebox browser helper")
+assert.match(browserRuntimeSource, /\/wp-content\/uploads\/wp-codebox\/runner/, "Browser runtime asset should use the generic WP Codebox runner path")
+assert.equal(/studio/i.test(browserRuntimeSource), false, "Browser runtime asset should not encode host-product defaults")
 
 console.log("Package distribution smoke passed")
