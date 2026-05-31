@@ -37,6 +37,9 @@ Product control plane
   apply-back all have explicit gates.
 - Package names, repository URLs, release artifacts, and dependency ownership are
   ready for the target Automattic namespace before transfer.
+- The namespace transfer plan in `docs/transfer-namespace-plan.md` has been
+  reviewed, and any rename waits for explicit target package and repository
+  decisions rather than product-specific consumer assumptions.
 
 ## Package Boundaries
 
@@ -246,7 +249,9 @@ Transfer checklist:
 - #316: Generate a generic runtime reference index for browser artifacts so
   downstream asset mapping can consume references without AI-authored manifests.
 - #357: Replace personal package namespace and repository URLs once the target
-  Automattic package/repo policy is known.
+  Automattic package/repo policy is known. See
+  `docs/transfer-namespace-plan.md` for the current inventory and mechanical
+  checklist.
 - #358: Classify browser runtime and packaging dependencies so transfer reviewers
   can distinguish runtime-critical, browser-only, build-only, generated, and
   transitive Playground dependencies.
