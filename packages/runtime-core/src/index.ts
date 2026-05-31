@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles } from "./artifact-manifest.js"
 import type { ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile, ArtifactSpec } from "./artifact-manifest.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, buildRuntimeReferenceManifest, buildRuntimeReplayReferenceIndex, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
 import type { RuntimeReferenceManifest, RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef, RuntimeReferenceManifestSnapshotRef, RuntimeReplayReferenceIndex, RuntimeReplayReferenceIndexActionRef, RuntimeReplayReferenceIndexObservationRef } from "./runtime-reference.js"
+import { isPlainObject as isRecord, stableJson } from "./object-utils.js"
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 
@@ -16,6 +17,8 @@ export * from "./command-registry.js"
 export * from "./task-input.js"
 export * from "./browser-interaction.js"
 export * from "./recipe-schema.js"
+export * from "./runtime-reference.js"
+export * from "./object-utils.js"
 export * from "./runtime-reference.js"
 
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
@@ -1398,10 +1401,6 @@ async function listBundleFiles(directory: string, prefix = ""): Promise<string[]
   return files.sort()
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -1900,21 +1899,6 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0
 }
 
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value)
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(",")}]`
-  }
-
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-    .join(",")}}`
-}
-
 function observationRef(observation: ObservationResult, fallbackId: string): RuntimeEpisodeTraceRef {
   return { kind: "observation", id: observation.id || fallbackId, digest: observation.digest ?? runtimeEpisodeDigest(runtimeEpisodeObservationDigestPayload(observation)) }
 }
@@ -2010,31 +1994,8 @@ function runtimeEpisodeJsonLines(trace: RuntimeEpisodeTrace): string {
   return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`
 }
 
-function upsertManifestFile(manifest: ArtifactManifest, file: ArtifactManifestFile): void {
-  const index = manifest.files.findIndex((candidate) => candidate.path === file.path)
-  if (index === -1) {
-    manifest.files.push(file)
-    return
-  }
-
-  manifest.files[index] = file
-}
-
 function artifactManifestFile(path: string, kind: string, contentType: string): ArtifactManifestFile {
   return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
-}
-
-async function refreshArtifactManifestFileHashes(directory: string, manifest: ArtifactManifest): Promise<void> {
-  for (const file of manifest.files) {
-    if (file.path !== "manifest.json") {
-      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
-    }
-  }
-  for (const file of manifest.files) {
-    if (file.path === "manifest.json") {
-      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
-    }
-  }
 }
 
 export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBackend): Promise<Runtime> {
@@ -2535,10 +2496,10 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
           artifactRef,
         ],
       })
-      upsertManifestFile(manifest, artifactManifestFile(relativePath, "runtime-snapshot-bundle", "application/json"))
+      upsertArtifactManifestFiles(manifest, [artifactManifestFile(relativePath, "runtime-snapshot-bundle", "application/json")])
     }
 
-    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
@@ -2584,7 +2545,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       snapshots: this.snapshots,
     })
     await writeFile(this.artifacts.runtimeReferenceManifestPath, `${JSON.stringify(referenceManifest, null, 2)}\n`)
-    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
@@ -2616,7 +2577,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       episodeTrace: trace,
     })
     await writeFile(this.artifacts.runtimeReplayReferenceIndexPath, `${JSON.stringify(replayIndex, null, 2)}\n`)
-    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
@@ -2626,10 +2587,12 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     }
 
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
-    upsertManifestFile(manifest, artifactManifestFile(traceRelativePath, "runtime-episode-trace", "application/json"))
-    upsertManifestFile(manifest, artifactManifestFile(eventsRelativePath, "runtime-episode-events", "application/x-ndjson"))
-    upsertManifestFile(manifest, artifactManifestFile("files/runtime-replay-index.json", "runtime-replay-index", "application/json"))
-    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
+    upsertArtifactManifestFiles(manifest, [
+      artifactManifestFile(traceRelativePath, "runtime-episode-trace", "application/json"),
+      artifactManifestFile(eventsRelativePath, "runtime-episode-events", "application/x-ndjson"),
+      artifactManifestFile("files/runtime-replay-index.json", "runtime-replay-index", "application/json"),
+    ])
+    await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { calculateArtifactManifestFileSha256, checkWorkspacePolicy, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -644,17 +644,7 @@ async function readGitCommit(cwd: string): Promise<string | undefined> {
 }
 
 function sha256Json(value: unknown): string {
-  return createHash("sha256").update(`${stableJson(value)}\n`).digest("hex")
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`
-  }
-  if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`
-  }
-  return JSON.stringify(value)
+  return sha256StableJson(value, true)
 }
 
 export function recipeArtifactEvidenceFailure(evidence: RecipeArtifactEvidenceResult): { name: string; code: string; message: string } | undefined {
@@ -793,16 +783,7 @@ async function writeRecipeEvidenceJson(artifactRoot: string, path: string, value
 
 async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle, evidenceFiles: RecipeArtifactEvidenceFile[]): Promise<void> {
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
-  manifest.files = Array.isArray(manifest.files) ? manifest.files : []
-  for (const file of evidenceFiles) {
-    const existing = manifest.files.find((entry) => entry.path === file.path)
-    const manifestFile = { path: file.path, kind: file.kind, contentType: file.contentType, sha256: { algorithm: "sha256" as const, value: file.sha256 } }
-    if (existing) {
-      Object.assign(existing, manifestFile)
-    } else {
-      manifest.files.push(manifestFile)
-    }
-  }
+  upsertArtifactManifestFiles(manifest, evidenceFiles.map(evidenceFileToManifestFile))
 
   const evidence = Object.fromEntries(evidenceFiles.map((file) => [file.kind, { path: file.path, sha256: file.sha256 }]))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8")) as Record<string, unknown>
@@ -817,17 +798,12 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
   review.evidence = { ...reviewEvidence, runtimeEvidence: { ...(isRecord(reviewEvidence.runtimeEvidence) ? reviewEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
-  for (const file of manifest.files) {
-    if (file.path !== "manifest.json") {
-      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(artifacts.directory, manifest, file) }
-    }
-  }
-  for (const file of manifest.files) {
-    if (file.path === "manifest.json") {
-      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(artifacts.directory, manifest, file) }
-    }
-  }
+  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+function evidenceFileToManifestFile(file: RecipeArtifactEvidenceFile): ArtifactManifestFile {
+  return { path: file.path, kind: file.kind, contentType: file.contentType, sha256: { algorithm: "sha256", value: file.sha256 } }
 }
 
 function markRecipeArtifactsFinalized(interruption: RecipeArtifactsFinalizationController | undefined, artifactsFinalized: boolean): void {
@@ -836,10 +812,6 @@ function markRecipeArtifactsFinalized(interruption: RecipeArtifactsFinalizationC
   }
 
   ;(interruption.metadata as { artifactsFinalized: boolean }).artifactsFinalized = artifactsFinalized
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
 
 function stripUndefined<T extends Record<string, unknown>>(record: T): T {

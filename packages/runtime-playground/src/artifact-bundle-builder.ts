@@ -4,6 +4,7 @@ import {
   buildRuntimeReferenceManifest,
   buildRuntimeReplayReferenceIndex,
   calculateArtifactManifestFileSha256,
+  refreshArtifactManifestFileSha256s,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
@@ -250,20 +251,7 @@ export class ArtifactBundleBuilder {
         path: relative(source.artifactRoot, file.path),
       })),
     }
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    })))
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    })))
+    await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
     const runtimeReferenceIndex = await buildRuntimeReferenceIndex({
       artifactRoot: source.artifactRoot,
       createdAt,
@@ -272,13 +260,7 @@ export class ArtifactBundleBuilder {
       browserProbes: source.browserArtifacts(),
     })
     await writeFile(runtimeReferenceIndexPath, `${JSON.stringify(runtimeReferenceIndex, null, 2)}\n`)
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-index.json" ? ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    }) : file))
+    await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
     const runtimeReferenceManifest = buildRuntimeReferenceManifest({
       createdAt,
       runtime,
@@ -317,27 +299,7 @@ export class ArtifactBundleBuilder {
       snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReplayReferenceIndexPath, `${JSON.stringify(runtimeReplayReferenceIndex, null, 2)}\n`)
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-manifest.json" ? ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    }) : file))
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-replay-index.json" ? ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    }) : file))
-    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path !== "manifest.json" ? file : ({
-      ...file,
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
-      },
-    })))
+    await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
     await writeRedactedArtifact(redactor, manifestPath, source.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
 
     return {

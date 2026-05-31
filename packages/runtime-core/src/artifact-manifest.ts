@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { RuntimeInfo } from "./index.js"
+import { stableJson } from "./object-utils.js"
 
 export interface ArtifactSpec {
   includeFiles?: boolean
@@ -78,6 +79,31 @@ export function calculateArtifactManifestSelfSha256(manifest: ArtifactManifest, 
     .digest("hex")
 }
 
+export function upsertArtifactManifestFiles(manifest: ArtifactManifest, files: ArtifactManifestFile[]): void {
+  manifest.files = Array.isArray(manifest.files) ? manifest.files : []
+  for (const file of files) {
+    const existing = manifest.files.find((entry) => entry.path === file.path)
+    if (existing) {
+      Object.assign(existing, file)
+    } else {
+      manifest.files.push(file)
+    }
+  }
+}
+
+export async function refreshArtifactManifestFileSha256s(directory: string, manifest: ArtifactManifest, manifestFileName = "manifest.json"): Promise<void> {
+  for (const file of manifest.files) {
+    if (file.path !== manifestFileName) {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file, manifestFileName) }
+    }
+  }
+  for (const file of manifest.files) {
+    if (file.path === manifestFileName) {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file, manifestFileName) }
+    }
+  }
+}
+
 function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFileName: string): ArtifactManifest {
   return {
     ...manifest,
@@ -85,19 +111,4 @@ function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFil
       ? { ...file, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
       : file),
   }
-}
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value)
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(",")}]`
-  }
-
-  return `{${Object.keys(value as Record<string, unknown>)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-    .join(",")}}`
 }

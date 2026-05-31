@@ -1,5 +1,26 @@
+import { createHash } from "node:crypto"
+
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`
+  }
+
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+    .join(",")}}`
+}
+
+export function sha256StableJson(value: unknown, trailingNewline = false): string {
+  return createHash("sha256").update(`${stableJson(value)}${trailingNewline ? "\n" : ""}`).digest("hex")
 }
 
 export function stringList(value: unknown): string[] {

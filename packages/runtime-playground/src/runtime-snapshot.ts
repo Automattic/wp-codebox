@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
-import { RUNTIME_EPISODE_SNAPSHOT_SCHEMA, runtimeEpisodeDigest, type MountSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@chubes4/wp-codebox-core"
+import { isPlainObject as isRecord, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, runtimeEpisodeDigest, sha256StableJson, type MountSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@chubes4/wp-codebox-core"
 import { playgroundRuntimeCommandIds } from "./command-router.js"
 
 export interface RuntimeSnapshotArtifact {
@@ -52,7 +51,7 @@ export class PlaygroundSnapshotRestoreError extends Error {
 }
 
 export function contentDigest(value: unknown): { algorithm: "sha256"; value: string } {
-  return { algorithm: "sha256", value: createHash("sha256").update(stableJson(value)).digest("hex") }
+  return { algorithm: "sha256", value: sha256StableJson(value) }
 }
 
 export function snapshotDigest(snapshot: Snapshot): { algorithm: "sha256"; value: string } {
@@ -262,21 +261,6 @@ echo wp_json_encode( array(
 `}`
 }
 
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value)
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(",")}]`
-  }
-
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-    .join(",")}}`
-}
-
 function isRuntimeInfo(value: unknown): value is RuntimeInfo {
   return isRecord(value)
     && value.backend === "wordpress-playground"
@@ -299,8 +283,4 @@ function isRuntimeSnapshotArtifact(value: unknown): value is RuntimeSnapshotArti
     && isRecord(value.database)
     && Array.isArray(value.database.tables)
     && Array.isArray(value.files)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
