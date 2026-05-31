@@ -2,8 +2,8 @@ import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import { refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles } from "./artifact-manifest.js"
-import type { ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
+import { artifactFileDigest, artifactManifestFile, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles } from "./artifact-manifest.js"
+import type { ArtifactManifest } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import {
   RUNTIME_EPISODE_ACTION_SCHEMA,
@@ -138,10 +138,6 @@ function runtimeEpisodeJsonLines(trace: RuntimeEpisodeTrace): string {
   }
 
   return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`
-}
-
-function artifactManifestFile(path: string, kind: string, contentType: string): ArtifactManifestFile {
-  return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
 }
 
 export async function createRuntimeEpisode(spec: RuntimeEpisodeSpec, backend: RuntimeBackend): Promise<RuntimeEpisode> {
@@ -303,7 +299,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
         refs: baseRefs,
       }
       await writeFile(join(this.artifacts.directory, relativePath), `${JSON.stringify(bundle, null, 2)}\n`)
-      const digest = { algorithm: "sha256" as const, value: createHash("sha256").update(await readFile(join(this.artifacts.directory, relativePath))).digest("hex") }
+      const digest = artifactFileDigest(await readFile(join(this.artifacts.directory, relativePath)))
       const artifactRef: RuntimeEpisodeTraceRef = {
         kind: "runtime-snapshot-bundle",
         id: bundleId,

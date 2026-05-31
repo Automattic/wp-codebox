@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
-import type { ArtifactManifestFile } from "@chubes4/wp-codebox-core"
-import { fileEntry, type ArtifactRedactor } from "./artifacts.js"
+import { artifactManifestFile, type ArtifactManifestFile } from "@chubes4/wp-codebox-core"
+import type { ArtifactRedactor } from "./artifacts.js"
 import type { normalizePluginCheckOutput, normalizeThemeCheckOutput } from "./commands.js"
 
 export interface PluginCheckArtifact {
@@ -76,8 +76,8 @@ export async function writeThemeCheckArtifacts(
 
 export function pluginCheckManifestFiles(artifactRoot: string, pluginChecks: PluginCheckArtifact[]): ArtifactManifestFile[] {
   return pluginChecks.flatMap((check) => [
-    fileEntry(join(artifactRoot, check.files.raw), "plugin-check-raw", "application/json"),
-    fileEntry(join(artifactRoot, check.files.normalized), "plugin-check", "application/json"),
+    artifactManifestFile(join(artifactRoot, check.files.raw), "plugin-check-raw", "application/json"),
+    artifactManifestFile(join(artifactRoot, check.files.normalized), "plugin-check", "application/json"),
   ])
 }
 
@@ -92,7 +92,7 @@ export function themeCheckManifestFiles(artifactRoot: string, themeChecks: Theme
     files.set(check.files.normalized, { kind: "theme-check-normalized", contentType: "application/json" })
   }
 
-  return [...files.entries()].map(([path, entry]) => fileEntry(join(artifactRoot, path), entry.kind, entry.contentType))
+  return [...files.entries()].map(([path, entry]) => artifactManifestFile(join(artifactRoot, path), entry.kind, entry.contentType))
 }
 
 export async function redactPluginCheckArtifacts(artifactRoot: string, pluginChecks: PluginCheckArtifact[], redactor: ArtifactRedactor): Promise<void> {

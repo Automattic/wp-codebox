@@ -2,8 +2,8 @@ import { createHash } from "node:crypto"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
+import { artifactFileDigest } from "@chubes4/wp-codebox-core"
 import type {
-  ArtifactManifestFile,
   ArtifactPreview,
   ArtifactProvenance,
   ArtifactRedactionSummary,
@@ -278,7 +278,7 @@ export function buildArtifactReview({
     ],
     evidence: {
       patch: "files/patch.diff",
-      patchSha256: createHash("sha256").update(patch).digest("hex"),
+      patchSha256: artifactFileDigest(patch).value,
       artifactContentDigest: contentDigest,
       changedFiles: "files/changed-files.json",
       testResults: "files/test-results.json",
@@ -408,10 +408,6 @@ export function buildBlueprintAfterNotes({
     ],
     nextCaptureTargets: ["database-export", "active-theme", "active-plugins", "uploads", "binary-file-replay"],
   }
-}
-
-export function fileEntry(path: string, kind: ArtifactManifestFile["kind"], contentType: string): ArtifactManifestFile {
-  return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
 }
 
 export function mountTargetPath(mount: MountSpec, relativePath: string): string {
