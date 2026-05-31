@@ -66,6 +66,7 @@ export async function collectPlaygroundArtifacts({
     info,
     previewInfo,
     browserReviewSummary: () => browserArtifactReviewSummary(browserProbes),
+    browserArtifacts: () => browserProbes,
     captureMountedFiles: (filesDirectory, redactor) => captureMountedFiles(filesDirectory, mounts, redactor),
     captureMountDiffs: (filesDirectory, redactor) => captureMountDiffs(artifactRoot, filesDirectory, mounts, redactor),
     redactBrowserArtifacts: (redactor) => redactBrowserArtifacts(artifactRoot, browserProbes, redactor),

@@ -693,6 +693,7 @@ export interface ArtifactBundle {
   artifactVerificationPath?: string
   workspacePolicyPath?: string
   runtimeReferenceManifestPath?: string
+  runtimeReferenceIndexPath?: string
   runtimeReplayReferenceIndexPath?: string
   preview?: ArtifactPreview
   contentDigest: string

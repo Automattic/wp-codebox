@@ -62,6 +62,7 @@ try {
   const testResults = JSON.parse(await readFile(artifacts.testResultsPath, "utf8"))
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
   const runtimeReferenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath, "utf8"))
+  const runtimeReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReferenceIndexPath, "utf8"))
   const runtimeReplayReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReplayReferenceIndexPath, "utf8"))
   const contentDigest = createHash("sha256")
     .update("wp-codebox/artifact-content/v1\n")
@@ -86,6 +87,7 @@ try {
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/review.json" && file.kind === "review"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
+  assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-index.json" && file.kind === "runtime-reference-index"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-replay-index.json" && file.kind === "runtime-replay-index"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-evidence/run-attestation.json" && file.kind === "run-attestation"))
   const runtimeEvidence = metadata.artifacts.runtimeEvidence
@@ -96,6 +98,7 @@ try {
     testResults: "files/test-results.json",
     review: "files/review.json",
     runtimeReferenceManifest: "files/runtime-reference-manifest.json",
+    runtimeReferenceIndex: "files/runtime-reference-index.json",
     runtimeReplayReferenceIndex: "files/runtime-replay-index.json",
     mountDiffs: "files/diffs.json",
     runtimeEvidence,
@@ -144,6 +147,10 @@ try {
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")
   assert.equal(review.evidence.testResults, "files/test-results.json")
   assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
+  assert.equal(runtimeReferenceIndex.schema, "wp-codebox/runtime-reference-index/v1")
+  assert.equal(runtimeReferenceIndex.summary.references, runtimeReferenceIndex.references.length)
+  assert.equal(runtimeReferenceIndex.summary.present, runtimeReferenceIndex.present.length)
+  assert.equal(runtimeReferenceIndex.summary.missing, runtimeReferenceIndex.missing.length)
   assert.equal(runtimeReplayReferenceIndex.schema, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA)
   assert.equal(runtimeReplayReferenceIndex.artifactBundle.id, artifacts.id)
   assert.equal(runtimeReplayReferenceIndex.artifactBundle.digest.value, artifacts.contentDigest)
@@ -160,6 +167,7 @@ try {
   assert.equal(runtimeReferenceManifest.digest.value, runtimeReferenceManifestDigest(runtimeReferenceManifest).value)
   assert.equal(runtimeReferenceManifest.id, `runtime-reference-manifest-sha256-${runtimeReferenceManifest.digest.value}`)
   assert.equal(runtimeReferenceManifest.snapshots.length, 0)
+  assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/runtime-reference-index.json"))
   assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/changed-files.json"))
   assert.ok(review.changedFiles.some((file: { path: string; status: string }) =>
     file.path === "/wordpress/wp-content/plugins/seeded-helper/generated.txt" && file.status === "added",
