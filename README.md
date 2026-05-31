@@ -668,11 +668,39 @@ Example recipes:
 - `examples/recipes/wp-cli.json`: prove WP-CLI commands mutate the same runtime observed by later steps.
 - `examples/recipes/seeded-plugin-workspace.json`: create a disposable plugin scaffold, mutate it, and capture diffs.
 - `examples/recipes/datamachine-agent-bundle.json`: mount Agents API and Data Machine, then import a bundle through `wordpress.ability`.
+- `examples/recipes/cookbook/headless-browser-agent-task.json`: generic headless browser-agent pattern with browser probes before/after a sandbox agent task, browser action assertions, screenshots, transcript, and artifact evidence.
 - `examples/recipes/cookbook/multisite-network.json`: convert Playground to multisite, mount a plugin under test, seed two child sites, and emit network/site/admin URLs.
 - `examples/recipes/cookbook/woocommerce-store.json`: realistic WooCommerce dependency shape with seeded store pages, products, customer, and order fixtures.
 - `examples/recipes/cookbook/theme-block-editor.json`: realistic theme/block-editor smoke surface with a mounted theme, seeded block page, and frontend/editor/admin URLs.
 - `examples/recipes/cookbook/seeded-content.json`: realistic fixture content shape with pages, posts, categories, tags, editor/author users, and preview/admin URLs.
 - `examples/recipes/cookbook/bbpress-reply-editor.json`: realistic bbPress dependency shape with a seeded forum/topic and reply form.
+
+#### Generic Headless Browser-Agent Recipe
+
+`examples/recipes/cookbook/headless-browser-agent-task.json` is the reusable
+shape for product runners that need a headless browser plus an in-sandbox agent
+task without importing product semantics into WP Codebox:
+
+1. Mount or install the generic runtime dependencies and any code under test.
+2. Capture a browser baseline with `wordpress.browser-probe`.
+3. Run `wp-codebox.agent-sandbox-run` with caller-supplied `task=...` and either a real sandbox agent (`agent=...`, `provider=...`, `model=...`) or a recipe-owned `code-file=...` for deterministic fixtures.
+4. Use `wordpress.browser-actions` to replay browser interactions, assert visible behavior, and capture named screenshots.
+5. Capture a final `wordpress.browser-probe` so the artifact bundle contains before/after browser evidence, action steps, screenshots, transcript, and `agent-result.json`.
+
+Run the example headlessly:
+
+```bash
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/cookbook/headless-browser-agent-task.json \
+  --artifacts ./artifacts \
+  --json
+```
+
+Product eval runners should treat the returned `wp-codebox/recipe-run/v1` output
+and artifact bundle as generic evidence. WP Codebox records runtime commands,
+browser observations, screenshots, transcript, changed files, patch summary, and
+review metadata; callers own scenario ids, scoring, grading, model comparison,
+retry policy, and product reports outside the WP Codebox contract.
 
 Supported workspace seeds:
 

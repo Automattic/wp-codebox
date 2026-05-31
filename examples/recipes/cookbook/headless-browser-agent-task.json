@@ -1,0 +1,65 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "headless-browser-agent-task-lab",
+    "wp": "trunk",
+    "blueprint": {
+      "steps": [
+        {
+          "step": "login",
+          "username": "admin",
+          "password": "password"
+        }
+      ]
+    }
+  },
+  "inputs": {
+    "extraPlugins": [
+      {
+        "source": "./headless-browser-agent-task-plugin",
+        "pluginFile": "headless-browser-agent-task-plugin/headless-browser-agent-task.php",
+        "activate": true
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.browser-probe",
+        "args": [
+          "url=/wp-admin/tools.php?page=wp-codebox-headless-agent-task",
+          "wait-for=selector:.wp-codebox-agent-status[data-status=\"pending\"]",
+          "capture=console,errors,html,screenshot,performance,memory"
+        ]
+      },
+      {
+        "command": "wp-codebox.agent-sandbox-run",
+        "args": [
+          "task=Update the sandbox state so the browser-visible task page reports completion.",
+          "code-file=./headless-browser-agent-task-code.php"
+        ]
+      },
+      {
+        "command": "wordpress.browser-actions",
+        "args": [
+          "timeout=120s",
+          "step-timeout=30s",
+          "capture=steps,console,errors,network,html,screenshot",
+          "steps-json=[{\"kind\":\"navigate\",\"url\":\"/wp-admin/tools.php?page=wp-codebox-headless-agent-task\",\"waitFor\":\"load\"},{\"kind\":\"waitFor\",\"selector\":\".wp-codebox-agent-status[data-status=\\\"completed\\\"]\"},{\"kind\":\"expect\",\"selector\":\".wp-codebox-agent-status[data-status=\\\"completed\\\"]\",\"state\":\"visible\"},{\"kind\":\"expect\",\"selector\":\".wp-codebox-agent-task\",\"state\":\"visible\"},{\"kind\":\"screenshot\",\"name\":\"agent-task-completed\"}]"
+        ]
+      },
+      {
+        "command": "wordpress.browser-probe",
+        "args": [
+          "url=/wp-admin/tools.php?page=wp-codebox-headless-agent-task",
+          "wait-for=selector:.wp-codebox-agent-status[data-status=\"completed\"]",
+          "capture=console,errors,html,screenshot,performance,memory"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts"
+  }
+}
