@@ -69,6 +69,7 @@ export interface ArtifactReview {
     patchSha256: string
     artifactContentDigest: string
     changedFiles: string
+    diagnostics?: string
     testResults?: string
     runtimeEpisodeTrace?: string
     runtimeReferenceManifest?: string
@@ -137,6 +138,44 @@ export interface ArtifactRedactionSummary {
 export interface ArtifactTestResultsRawLogReference {
   path: string
   kind: string
+}
+
+export type ArtifactDiagnosticSeverity = "error" | "warning" | "notice" | "info" | (string & {})
+
+export interface ArtifactDiagnosticRef {
+  path?: string
+  kind?: string
+  id?: string
+  url?: string
+}
+
+export interface ArtifactDiagnostic {
+  id: string
+  type: string
+  severity: ArtifactDiagnosticSeverity
+  message: string
+  category?: string
+  source?: string
+  path?: string
+  selector?: string
+  stage?: string
+  code?: string
+  provenance?: Record<string, unknown>
+  refs?: ArtifactDiagnosticRef[]
+  details?: Record<string, unknown>
+}
+
+export interface ArtifactDiagnostics {
+  schema: "wp-codebox/artifact-diagnostics/v1"
+  status: "clean" | "reported"
+  summary: {
+    total: number
+    error: number
+    warning: number
+    notice: number
+    info: number
+  }
+  diagnostics: ArtifactDiagnostic[]
 }
 
 export interface ArtifactTestResultsSuite {

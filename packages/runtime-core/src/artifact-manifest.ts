@@ -26,6 +26,7 @@ export interface ArtifactManifestFile {
     | "log"
     | "mounts"
     | "file"
+    | "diagnostics"
     | "test-results"
     | (string & {})
   contentType: string

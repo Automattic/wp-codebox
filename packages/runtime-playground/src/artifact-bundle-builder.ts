@@ -25,6 +25,7 @@ import type { BrowserProbeArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
+  buildArtifactDiagnostics,
   buildArtifactProvenance,
   buildArtifactReview,
   buildBlueprintAfter,
@@ -92,6 +93,7 @@ export class ArtifactBundleBuilder {
     const diffsPath = join(filesDirectory, "diffs.json")
     const changedFilesPath = join(filesDirectory, "changed-files.json")
     const patchPath = join(filesDirectory, "patch.diff")
+    const diagnosticsPath = join(filesDirectory, "diagnostics.json")
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
     const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
@@ -140,6 +142,7 @@ export class ArtifactBundleBuilder {
       spec,
     }
     source.recordArtifactsCollected(bundleId, createdAt, spec)
+    const diagnostics = buildArtifactDiagnostics(source.observations)
     const testResults = buildTestResults()
     const review = buildArtifactReview({
       artifactId: bundleId,
@@ -152,10 +155,12 @@ export class ArtifactBundleBuilder {
       mounts: source.mounts,
       preview,
       browser,
+      diagnosticsPath: "files/diagnostics.json",
     })
     const artifactFiles = {
       changedFiles: relative(source.artifactRoot, changedFilesPath),
       patch: relative(source.artifactRoot, patchPath),
+      diagnostics: relative(source.artifactRoot, diagnosticsPath),
       testResults: relative(source.artifactRoot, testResultsPath),
       review: relative(source.artifactRoot, reviewPath),
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
@@ -195,6 +200,7 @@ export class ArtifactBundleBuilder {
       artifactManifestFile(diffsPath, "mount-diffs", "application/json"),
       artifactManifestFile(changedFilesPath, "changed-files", "application/json"),
       artifactManifestFile(patchPath, "patch", "text/x-diff"),
+      artifactManifestFile(diagnosticsPath, "diagnostics", "application/json"),
       artifactManifestFile(testResultsPath, "test-results", "application/json"),
       artifactManifestFile(reviewPath, "review", "application/json"),
       artifactManifestFile(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
@@ -225,6 +231,7 @@ export class ArtifactBundleBuilder {
     await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
     await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, redactedPatch)
+    await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
     await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
@@ -317,6 +324,7 @@ export class ArtifactBundleBuilder {
       diffsPath,
       changedFilesPath,
       patchPath,
+      diagnosticsPath,
       testResultsPath,
       reviewPath,
       runtimeReferenceManifestPath,

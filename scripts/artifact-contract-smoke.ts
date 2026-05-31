@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, createRuntime, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, verifyArtifactBundle } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { buildArtifactDiagnostics, createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 
 const execFileAsync = promisify(execFile)
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-artifacts-"))
@@ -43,6 +43,7 @@ try {
   assert.equal(verification.valid, true, JSON.stringify(verification.violations, null, 2))
   assert.ok(artifacts.changedFilesPath, "artifact bundle should expose changedFilesPath")
   assert.ok(artifacts.patchPath, "artifact bundle should expose patchPath")
+  assert.ok(artifacts.diagnosticsPath, "artifact bundle should expose diagnosticsPath")
   assert.ok(artifacts.testResultsPath, "artifact bundle should expose testResultsPath")
   assert.ok(artifacts.reviewPath, "artifact bundle should expose reviewPath")
   assert.equal(artifacts.preview.status, "available")
@@ -59,6 +60,7 @@ try {
   const changedFiles = JSON.parse(await readFile(artifacts.changedFilesPath, "utf8"))
   const changedFilesJson = await readFile(artifacts.changedFilesPath, "utf8")
   const patch = await readFile(artifacts.patchPath, "utf8")
+  const diagnostics = JSON.parse(await readFile(artifacts.diagnosticsPath, "utf8"))
   const testResults = JSON.parse(await readFile(artifacts.testResultsPath, "utf8"))
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
   const runtimeReferenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath, "utf8"))
@@ -84,6 +86,7 @@ try {
   assert.deepEqual(metadata.preview, artifacts.preview)
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/changed-files.json" && file.kind === "changed-files"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/patch.diff" && file.kind === "patch"))
+  assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/diagnostics.json" && file.kind === "diagnostics"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/review.json" && file.kind === "review"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
@@ -95,6 +98,7 @@ try {
   assert.deepEqual(metadata.artifacts, {
     changedFiles: "files/changed-files.json",
     patch: "files/patch.diff",
+    diagnostics: "files/diagnostics.json",
     testResults: "files/test-results.json",
     review: "files/review.json",
     runtimeReferenceManifest: "files/runtime-reference-manifest.json",
@@ -132,6 +136,10 @@ try {
   )
   assert.match(patch, /generated\.txt/)
   assert.match(patch, /\+cooked/)
+  assert.equal(diagnostics.schema, "wp-codebox/artifact-diagnostics/v1")
+  assert.equal(diagnostics.status, "clean")
+  assert.deepEqual(diagnostics.summary, { total: 0, error: 0, warning: 0, notice: 0, info: 0 })
+  assert.deepEqual(diagnostics.diagnostics, [])
   assert.equal(testResults.schema, "wp-codebox/test-results/v1")
   assert.equal(testResults.status, "unknown")
   assert.deepEqual(testResults.summary, { total: 0, passed: 0, failed: 0, skipped: 0, unknown: 0 })
@@ -145,6 +153,7 @@ try {
   assert.equal(review.evidence.patch, "files/patch.diff")
   assert.equal(review.evidence.artifactContentDigest, contentDigest)
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")
+  assert.equal(review.evidence.diagnostics, "files/diagnostics.json")
   assert.equal(review.evidence.testResults, "files/test-results.json")
   assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
   assert.equal(runtimeReferenceIndex.schema, "wp-codebox/runtime-reference-index/v1")
@@ -175,6 +184,34 @@ try {
   assert.ok(review.actions.some((action: { kind: string; requiresApprovedFiles?: boolean }) => action.kind === "approve" && action.requiresApprovedFiles === true))
   assert.ok(review.actions.some((action: { kind: string }) => action.kind === "discard"))
   assert.ok(review.progress.some((event: { type: string; label: string }) => event.type === "complete" && event.label === "Ready for your review."))
+
+  const reportedDiagnostics = buildArtifactDiagnostics([
+    {
+      id: "observation-fixture",
+      type: "import-report",
+      observedAt: "2026-01-01T00:00:00.000Z",
+      data: {
+        diagnostics: [
+          {
+            diagnostic_id: "layout-gap-1",
+            type: "layout_fidelity_gap",
+            severity: "warning",
+            category: "transformation",
+            message: "Generated artifact lost source grid structure.",
+            path: "index.html",
+            selector: ".hero",
+            refs: [{ path: "files/import-report.json", kind: "import-report" }],
+            source_report: { html: { element_count: 8 }, css: { selector_count: 4 } },
+          },
+        ],
+      },
+    },
+  ])
+  assert.equal(reportedDiagnostics.status, "reported")
+  assert.equal(reportedDiagnostics.summary.warning, 1)
+  assert.equal(reportedDiagnostics.diagnostics[0].id, "layout-gap-1")
+  assert.equal(reportedDiagnostics.diagnostics[0].provenance?.observationType, "import-report")
+  assert.equal(reportedDiagnostics.diagnostics[0].details?.source_report?.html?.element_count, 8)
 
   const { stdout: runStdout } = await execFileAsync(
     process.execPath,

@@ -441,6 +441,7 @@ export interface ArtifactBundle {
   diffsPath: string
   changedFilesPath: string
   patchPath: string
+  diagnosticsPath: string
   testResultsPath: string
   reviewPath: string
   runAttestationPath?: string
