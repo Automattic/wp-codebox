@@ -1,30 +1,24 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
-import {
-  ArtifactRedactor,
-  fileEntry,
-} from "./artifacts.js"
-import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
-import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
+import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
 import { runBrowserActionsCommand, runBrowserProbeCommand } from "./browser-command-runners.js"
-import { pluginCheckManifestFiles, redactPluginCheckArtifacts, redactThemeCheckArtifacts, themeCheckManifestFiles, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
+import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand, playgroundRuntimeCommandIds } from "./command-router.js"
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
-import { captureMountedFiles, captureMountDiffs } from "./mounted-artifact-capture.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import { startPlaygroundCliServer } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
+import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type {
   ArtifactBundle,
-  ArtifactManifestFile,
   ArtifactPreview,
   ArtifactSpec,
   ExecutionResult,
@@ -318,10 +312,10 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async collectArtifacts(spec: ArtifactSpec = {}): Promise<ArtifactBundle> {
-    return new ArtifactBundleBuilder({
+    return collectPlaygroundArtifacts({
       artifactRoot: this.artifactRoot,
       runtimeId: this.runtimeId,
-      runtimeCreatedAt: this.createdAt,
+      createdAt: this.createdAt,
       spec: this.spec,
       mounts: this.mounts,
       commands: this.commands,
@@ -330,27 +324,16 @@ class PlaygroundRuntime implements Runtime {
       events: this.events,
       info: () => this.info(),
       previewInfo: (createdAt, previewHoldSeconds) => this.previewInfo(createdAt, previewHoldSeconds),
-      browserReviewSummary: () => this.browserReviewSummary(),
-      captureMountedFiles: (filesDirectory, redactor) => captureMountedFiles(filesDirectory, this.mounts, redactor),
-      captureMountDiffs: (filesDirectory, redactor) => captureMountDiffs(this.artifactRoot, filesDirectory, this.mounts, redactor),
-      redactBrowserArtifacts: (redactor) => this.redactBrowserArtifacts(redactor),
-      redactPluginCheckArtifacts: (redactor) => redactPluginCheckArtifacts(this.artifactRoot, this.pluginChecks, redactor),
-      redactThemeCheckArtifacts: (redactor) => redactThemeCheckArtifacts(this.artifactRoot, this.themeChecks, redactor),
-      browserManifestFiles: () => this.browserManifestFiles(),
-      pluginCheckArtifactPaths: () => this.pluginChecks.map((check) => check.files.normalized),
-      themeCheckArtifactPaths: () => this.themeChecks.map((check) => check.files.normalized),
-      observationManifestFiles: () => this.observationManifestFiles(),
-      pluginCheckManifestFiles: () => pluginCheckManifestFiles(this.artifactRoot, this.pluginChecks),
-      themeCheckManifestFiles: () => themeCheckManifestFiles(this.artifactRoot, this.themeChecks),
-      formatRuntimeLog: () => this.formatRuntimeLog(),
-      formatCommandsLog: () => this.formatCommandsLog(),
       recordArtifactsCollected: (bundleId, createdAt, artifactSpec) => this.recordEvent("runtime.artifacts.collected", {
         id: bundleId,
         directory: this.artifactRoot,
         createdAt,
         spec: artifactSpec,
       }),
-    }).build(spec)
+      browserProbes: this.browserProbes,
+      pluginChecks: this.pluginChecks,
+      themeChecks: this.themeChecks,
+    }, spec)
   }
 
   async destroy(): Promise<void> {
@@ -402,22 +385,6 @@ class PlaygroundRuntime implements Runtime {
 
     this.events.push(event)
     return event
-  }
-
-  private formatRuntimeLog(): string {
-    return this.events.map((event) => `[${event.timestamp}] ${event.type} ${JSON.stringify(event.data ?? {})}`).join("\n") + "\n"
-  }
-
-  private formatCommandsLog(): string {
-    return (
-      this.commands
-        .map((command) => {
-          const header = `[${command.startedAt}] ${command.command} ${command.args.join(" ")}`.trim()
-          const output = [command.stdout, command.stderr].filter(Boolean).join("\n")
-          return `${header}\nexitCode=${command.exitCode}\n${output}`
-        })
-        .join("\n---\n") + "\n"
-    )
   }
 
   async runBrowserProbe(spec: ExecutionSpec): Promise<string> {
@@ -637,7 +604,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
 
     if (spec.type === "browser-result") {
-      return { data: this.browserReviewSummary() ?? { probes: [] }, artifactRefs }
+      return { data: browserArtifactReviewSummary(this.browserProbes) ?? { probes: [] }, artifactRefs }
     }
 
     if (spec.type === "runtime-events" || spec.type === "runtime-logs") {
@@ -667,35 +634,6 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     const previewUrl = await this.currentPreviewUrl()
     const baseUrl = previewUrl ?? (await this.bootPlayground()).serverUrl
     return new URL(url, baseUrl).toString()
-  }
-
-  private browserReviewSummary() {
-    return browserArtifactReviewSummary(this.browserProbes)
-  }
-
-  private browserManifestFiles(): ArtifactManifestFile[] {
-    return browserArtifactManifestFiles(this.artifactRoot, this.browserProbes)
-  }
-
-  private observationManifestFiles(): ArtifactManifestFile[] {
-    return this.observations.flatMap((observation) =>
-      (observation.artifactRefs ?? [])
-        .filter((ref): ref is RuntimeEpisodeTraceRef & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
-        .map((ref) => fileEntry(join(this.artifactRoot, ref.path), ref.kind, ref.path.endsWith(".json") ? "application/json" : "text/plain")),
-    )
-  }
-
-  private async redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void> {
-    for (const probe of this.browserProbes) {
-      for (const path of browserRedactionPaths(probe)) {
-        const absolutePath = join(this.artifactRoot, path)
-        try {
-          await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
-        } catch {
-          // Browser capture is best-effort; preserve artifact collection if a file vanished.
-        }
-      }
-    }
   }
 
 }
