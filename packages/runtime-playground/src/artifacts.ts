@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest } from "@chubes4/wp-codebox-core"
+import { artifactFileDigest, stripUndefined } from "@chubes4/wp-codebox-core"
 import type {
   ArtifactPreview,
   ArtifactProvenance,
@@ -515,10 +515,6 @@ function provenanceString(context: Record<string, unknown> | undefined, key: str
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function stripUndefined<T extends Record<string, unknown>>(record: T): T {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
 
 function fileDiff(path: string, before: string, after: string, isAdded: boolean, isDeleted: boolean): string {

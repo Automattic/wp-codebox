@@ -23,6 +23,10 @@ export function sha256StableJson(value: unknown, trailingNewline = false): strin
   return createHash("sha256").update(`${stableJson(value)}${trailingNewline ? "\n" : ""}`).digest("hex")
 }
 
+export function stripUndefined<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
+}
+
 export function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
 

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"
 import { defaultPolicy } from "./recipe-validation.js"
@@ -451,8 +451,4 @@ function workspaceMountRef(target: string, mode: "readonly" | "readwrite", metad
     defaultBranch: typeof metadata.default_branch === "string" ? metadata.default_branch : undefined,
     wpContentPath: typeof metadata.wpContentPath === "string" ? metadata.wpContentPath : undefined,
   })
-}
-
-function stripUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)) as T
 }
