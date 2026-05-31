@@ -1,7 +1,6 @@
 import { join } from "node:path"
-import type { ArtifactManifestFile, ArtifactReviewBrowserSummary } from "@chubes4/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactReviewBrowserSummary } from "@chubes4/wp-codebox-core"
 import type { Request } from "playwright"
-import { fileEntry } from "./artifacts.js"
 
 export interface BrowserProbeArtifact {
   requestedUrl: string
@@ -288,7 +287,7 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     files.set(probe.files.summary, { kind: "browser-summary", contentType: "application/json" })
   }
 
-  return [...files.entries()].map(([path, entry]) => fileEntry(join(artifactRoot, path), entry.kind, entry.contentType))
+  return [...files.entries()].map(([path, entry]) => artifactManifestFile(join(artifactRoot, path), entry.kind, entry.contentType))
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {

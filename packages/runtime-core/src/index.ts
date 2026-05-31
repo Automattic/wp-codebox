@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { lstat, readdir, readFile, realpath } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
+import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
 import type { ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile, ArtifactSpec } from "./artifact-manifest.js"
 import { RUNTIME_EPISODE_ACTION_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
@@ -1035,7 +1035,7 @@ async function verifyReviewEvidence(directory: string, manifest: ArtifactManifes
     validateArtifactReference(evidence.patch, "files/review.json:evidence.patch", manifestFiles, violations)
     if (typeof evidence.patchSha256 === "string") {
       try {
-        const patchSha256 = createHash("sha256").update(await readFile(join(directory, evidence.patch))).digest("hex")
+        const patchSha256 = artifactFileDigest(await readFile(join(directory, evidence.patch))).value
         if (patchSha256 !== evidence.patchSha256) {
           violations.push({ code: "review-evidence-mismatch", path: "files/review.json:evidence.patchSha256", file: "files/review.json", message: "Review patchSha256 does not match the referenced patch file." })
         }
@@ -1235,7 +1235,7 @@ async function verifyRuntimeEpisodeTraceRefFileDigest(directory: string, ref: Ru
   }
 
   try {
-    const value = createHash("sha256").update(await readFile(join(directory, ref.path))).digest("hex")
+    const value = artifactFileDigest(await readFile(join(directory, ref.path))).value
     if (value !== ref.digest.value) {
       violations.push({ code: "file-hash-mismatch", path, file: ref.path, message: `Runtime reference artifact ref hash does not match ${ref.path}: expected ${value}, got ${ref.digest.value}` })
     }
@@ -1251,7 +1251,7 @@ async function verifyReferencedFileDigest(directory: string, file: RuntimeRefere
   }
 
   try {
-    const value = createHash("sha256").update(await readFile(join(directory, file.path))).digest("hex")
+    const value = artifactFileDigest(await readFile(join(directory, file.path))).value
     if (value !== file.sha256.value) {
       violations.push({ code: "file-hash-mismatch", path, file: file.path, message: `Runtime reference manifest file ref hash does not match ${file.path}: expected ${value}, got ${file.sha256.value}` })
     }

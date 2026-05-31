@@ -51,6 +51,24 @@ export interface ArtifactContentDigest {
   value: string
 }
 
+const EMPTY_SHA256 = "0".repeat(64)
+
+export function artifactFileDigest(contents: string | Buffer): ArtifactFileDigest {
+  return { algorithm: "sha256", value: createHash("sha256").update(contents).digest("hex") }
+}
+
+export function artifactManifestFile(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: ArtifactFileDigest = placeholderArtifactFileDigest()): ArtifactManifestFile {
+  return { path, kind, contentType, sha256 }
+}
+
+export function artifactManifestFileWithSha256(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: string): ArtifactManifestFile {
+  return artifactManifestFile(path, kind, contentType, { algorithm: "sha256", value: sha256 })
+}
+
+export function placeholderArtifactFileDigest(): ArtifactFileDigest {
+  return { algorithm: "sha256", value: EMPTY_SHA256 }
+}
+
 export async function calculateArtifactContentDigest(directory: string, inputs: string[]): Promise<string> {
   const hash = createHash("sha256").update("wp-codebox/artifact-content/v1\n")
   for (const [index, input] of inputs.entries()) {
@@ -69,7 +87,7 @@ export async function calculateArtifactManifestFileSha256(directory: string, man
     return calculateArtifactManifestSelfSha256(manifest, manifestFileName)
   }
 
-  return createHash("sha256").update(await readFile(join(directory, file.path))).digest("hex")
+  return artifactFileDigest(await readFile(join(directory, file.path))).value
 }
 
 export function calculateArtifactManifestSelfSha256(manifest: ArtifactManifest, manifestFileName = "manifest.json"): string {
@@ -108,7 +126,7 @@ function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFil
   return {
     ...manifest,
     files: manifest.files.map((file) => file.path === manifestFileName
-      ? { ...file, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
+      ? { ...file, sha256: placeholderArtifactFileDigest() }
       : file),
   }
 }
