@@ -57,6 +57,10 @@ runtime when that task needs agent tools.
   preview URLs, statuses, and errors. Parent orchestrators such as Homeboy own
   parallelism, track their own jobs, pass correlation metadata into each sandbox
   run, and store the returned artifact ids as evidence.
+- **Transfer-readiness checklist:** package boundaries, artifact lifecycle,
+  extension seams, browser runtime dependencies, ability contracts, security
+  gates, and Studio Web integration points are tracked in
+  [`transfer-readiness-checklist.md`](./transfer-readiness-checklist.md).
 
 ## Ownership Boundaries
 
