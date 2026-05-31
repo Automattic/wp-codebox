@@ -9,7 +9,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
-} from "./index.js"
+} from "./runtime-contracts.js"
 
 export const RUNTIME_REFERENCE_MANIFEST_SCHEMA = "wp-codebox/runtime-reference-manifest/v1" as const
 export const RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA = "wp-codebox/runtime-replay-reference-index/v1" as const

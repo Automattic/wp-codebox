@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { RuntimeInfo } from "./index.js"
+import type { RuntimeInfo } from "./runtime-contracts.js"
 import { stableJson } from "./object-utils.js"
 
 export interface ArtifactSpec {

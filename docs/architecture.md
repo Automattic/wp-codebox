@@ -90,10 +90,12 @@ product-specific logic belongs in that product's adapter.
 `runtime-core` is the contract package. It should not import a concrete runtime
 backend or host adapter. The important modules are:
 
-- [`src/index.ts`](../packages/runtime-core/src/index.ts): `Runtime`,
-  `RuntimeBackend`, `RuntimeCreateSpec`, `MountSpec`, `ExecutionSpec`,
-  `ObservationSpec`, `Snapshot`, `ArtifactBundle`, runtime episode contracts,
-  reference/replay indexes, `createRuntime()`, and artifact verification helpers.
+- [`src/runtime-contracts.ts`](../packages/runtime-core/src/runtime-contracts.ts):
+  `Runtime`, `RuntimeBackend`, `RuntimeCreateSpec`, `MountSpec`,
+  `ExecutionSpec`, `ObservationSpec`, `Snapshot`, `ArtifactBundle`, runtime
+  episode contracts, and `createRuntime()`.
+- [`src/index.ts`](../packages/runtime-core/src/index.ts): the public barrel for
+  focused core modules plus artifact verification helpers.
 - [`src/runtime-policy.ts`](../packages/runtime-core/src/runtime-policy.ts):
   `RuntimePolicy`, policy validation, and command allow-list enforcement.
 - [`src/command-registry.ts`](../packages/runtime-core/src/command-registry.ts):
@@ -253,8 +255,8 @@ Anti-dumping-ground rules:
 ## Runtime Lifecycle
 
 The generic `Runtime` contract is defined in
-[`runtime-core/src/index.ts`](../packages/runtime-core/src/index.ts). A backend
-implements the same lifecycle regardless of how it boots the runtime.
+[`runtime-core/src/runtime-contracts.ts`](../packages/runtime-core/src/runtime-contracts.ts).
+A backend implements the same lifecycle regardless of how it boots the runtime.
 
 ```text
 create RuntimeCreateSpec

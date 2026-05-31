@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { artifactFileDigest, artifactManifestFile, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles } from "./artifact-manifest.js"
-import type { ArtifactManifest } from "./artifact-manifest.js"
+import type { ArtifactManifest, ArtifactSpec } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import {
   RUNTIME_EPISODE_ACTION_SCHEMA,
@@ -20,8 +20,6 @@ import type { RuntimeReferenceManifestSnapshotRef } from "./runtime-reference.js
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type {
   ArtifactBundle,
-  ArtifactReview,
-  ArtifactSpec,
   ObservationResult,
   ObservationSpec,
   Runtime,
@@ -34,7 +32,8 @@ import type {
   RuntimeEpisodeTrace,
   RuntimeEpisodeTraceRef,
   Snapshot,
-} from "./index.js"
+} from "./runtime-contracts.js"
+import type { ArtifactReview } from "./index.js"
 export {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
