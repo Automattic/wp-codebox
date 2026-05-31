@@ -17,7 +17,6 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
-import { playgroundBlueprint } from "./blueprint.js"
 import { browserInteractionStepsFromArgs } from "./browser-actions.js"
 import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact, type BrowserProbeCheckpointRecord, type BrowserProbeErrorRecord, type BrowserProbeMemoryArtifact, type BrowserProbeNetworkRecord, type BrowserProbePerformanceArtifact, type BrowserProbeViewport, type BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
@@ -26,8 +25,9 @@ import { browserProbeBenchMetrics, jsonLines, promoteBrowserMetricsToBenchResult
 import { executePlaygroundCommand, playgroundRuntimeCommandIds } from "./command-router.js"
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, CORE_PHPUNIT_RESULT_FILE, corePhpunitRunCode, isSafeEnvName, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpBody, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
-import { PlaygroundCommandCrashError, PlaygroundCliExitError, assertPlaygroundResponseOk, errorMessage, extractCorePhpunitFailureMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
-import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
+import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, extractCorePhpunitFailureMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { startPlaygroundCliServer } from "./playground-cli-runner.js"
+import type { PlaygroundCliServer } from "./preview-server.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type {
   ArtifactBundle,
@@ -371,33 +371,6 @@ function phpLiteral(value: string | number | boolean | null): string {
     return "null"
   }
   return String(value)
-}
-
-async function runPlaygroundCliWithoutProcessExit<T>(callback: () => Promise<T>): Promise<T> {
-  const exit = process.exit
-  process.exit = ((code?: string | number | null | undefined): never => {
-    const exitCode = typeof code === "number" ? code : 1
-    throw new PlaygroundCliExitError(exitCode)
-  }) as typeof process.exit
-
-  try {
-    return await callback()
-  } finally {
-    process.exit = exit
-  }
-}
-
-interface PlaygroundCliModule {
-  runCLI(options: {
-    command: "server"
-    port: number
-    quiet: boolean
-    skipBrowser: boolean
-    mount: Array<{ hostPath: string; vfsPath: string }>
-    blueprint?: unknown
-    wp?: string
-    "site-url"?: string
-  }): Promise<PlaygroundCliServer>
 }
 
 interface PluginCheckArtifact {
@@ -1852,38 +1825,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
   }
 
   private async startPlayground(): Promise<PlaygroundCliServer> {
-    const { runCLI } = (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
-    if (this.spec.preview?.port) {
-      await assertPreviewPortAvailable(this.spec.preview.port)
-    }
-
-    try {
-      const server = await runPlaygroundCliWithoutProcessExit(() => runCLI({
-        command: "server",
-        port: 0,
-        quiet: true,
-        skipBrowser: true,
-        mount: this.mounts.map((mount) => ({
-          hostPath: mount.source,
-          vfsPath: mount.target,
-        })),
-        wp: this.spec.environment.version,
-        "site-url": this.spec.preview?.siteUrl,
-        blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy, this.spec.preview?.siteUrl),
-      }))
-
-      if (!this.spec.preview?.port) {
-        return server
-      }
-
-      return await withPreviewProxy(server, this.spec.preview.port, this.spec.preview.bind)
-    } catch (error) {
-      if (this.spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
-        throw new PlaygroundPreviewPortUnavailableError(this.spec.preview.port, error)
-      }
-
-      throw error
-    }
+    return startPlaygroundCliServer(this.spec, this.mounts)
   }
 
   private async observeData(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
