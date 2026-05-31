@@ -17,9 +17,8 @@ the parent control plane for review, replay, or apply-back.
 - WP-CLI wrappers under `wp codebox ...`
 
 The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
-WordPress Playground runtime, mounts the agent stack components, invokes the
-configured sandbox agent through the canonical `agents/chat` ability, and returns
-artifact metadata.
+WordPress Playground runtime, mounts the requested runtime components, invokes
+the configured sandbox-local ability or hook task, and returns artifact metadata.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Legacy callers

@@ -2,6 +2,8 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import type { MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import { randomInt } from "node:crypto"
+import { createServer as createNetServer } from "node:net"
 
 interface PlaygroundCliModule {
   runCLI(options: {
@@ -22,10 +24,12 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     await assertPreviewPortAvailable(spec.preview.port)
   }
 
+  const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
+
   try {
     const server = await runPlaygroundCliWithoutProcessExit(() => runCLI({
       command: "server",
-      port: 0,
+      port,
       quiet: true,
       skipBrowser: true,
       mount: mounts.map((mount) => ({
@@ -48,6 +52,50 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
 
     throw error
+  }
+}
+
+async function availablePlaygroundPortRange(): Promise<number> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const port = randomInt(49152, 65000)
+    if (await portRangeAvailable(port, 8)) {
+      return port
+    }
+  }
+
+  return 0
+}
+
+async function portRangeAvailable(startPort: number, size: number): Promise<boolean> {
+  for (let offset = 0; offset < size; offset++) {
+    if (!await portAvailable(startPort + offset)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+async function portAvailable(port: number): Promise<boolean> {
+  const server = createNetServer()
+  try {
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen)
+      server.listen(port, "127.0.0.1", () => resolveListen())
+    })
+    return true
+  } catch (error) {
+    if (errorHasCode(error, "EADDRINUSE")) {
+      return false
+    }
+
+    throw error
+  } finally {
+    if (server.listening) {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose())
+      })
+    }
   }
 }
 

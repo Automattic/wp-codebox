@@ -326,7 +326,22 @@ final class WP_Codebox_Abilities {
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
-								'description' => 'Optional PHP-WASM runner paths for executing the task inside the browser Playground site.',
+								'description' => 'Optional PHP-WASM runner paths and generic sandbox-local invocation settings for executing the task inside the browser Playground site.',
+								'properties'  => array(
+									'task_path'   => array( 'type' => 'string' ),
+									'result_path' => array( 'type' => 'string' ),
+									'invocation'  => array(
+										'type'        => 'object',
+										'description' => 'Generic sandbox-local invocation. Callers can inject MU plugins that register the named ability or hook task; WP Codebox only invokes it and captures normal artifacts.',
+										'properties'  => array(
+											'type'              => array( 'type' => 'string', 'enum' => array( 'ability', 'task' ) ),
+											'name'              => array( 'type' => 'string' ),
+											'hook'              => array( 'type' => 'string' ),
+											'input'             => array( 'type' => 'object' ),
+											'permission_filter' => array( 'type' => 'string' ),
+										),
+									),
+								),
 							),
 							'browser_plugins'    => array(
 								'type'        => 'array',
@@ -2242,6 +2257,10 @@ flush_rewrite_rules();
 	private static function browser_agent_recipe( array $task_input, string $session_id, array $runner, array $blueprint, array $playground ): array|WP_Error {
 		$task_path   = (string) ( $runner['task_path'] ?? '/tmp/wp-codebox-agent-task.json' );
 		$result_path = (string) ( $runner['result_path'] ?? '/tmp/wp-codebox-agent-result.json' );
+		$invocation  = self::browser_runner_invocation( $runner );
+		if ( is_wp_error( $invocation ) ) {
+			return $invocation;
+		}
 
 		foreach ( array( 'task_path' => $task_path, 'result_path' => $result_path ) as $field => $path ) {
 			if ( '' === $path || str_contains( $path, '..' ) || ! str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
@@ -2270,7 +2289,7 @@ flush_rewrite_rules();
 					array(
 						'command' => 'wordpress.run-php',
 						'args'    => array(
-							'code=' . self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path ),
+							'code=' . self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation ),
 						),
 					),
 				),
@@ -2279,14 +2298,60 @@ flush_rewrite_rules();
 				'directory' => self::browser_artifact_base_path( $playground ),
 			),
 			'browser'  => array(
-				'execution'   => 'php-wasm',
-				'task_path'   => $task_path,
+				'execution'  => 'php-wasm',
+				'task_path'  => $task_path,
 				'result_path' => $result_path,
+				'invocation' => self::browser_runner_invocation_metadata( $invocation ),
 			),
 		);
 	}
 
-	private static function browser_agent_runner_php( array $task_input, string $session_id, string $task_path, string $result_path ): string {
+	/** @param array<string,mixed> $runner Runner overrides. @return array<string,mixed>|WP_Error */
+	private static function browser_runner_invocation( array $runner ): array|WP_Error {
+		$invocation = is_array( $runner['invocation'] ?? null ) ? $runner['invocation'] : array();
+		$type       = self::safe_key( (string) ( $invocation['type'] ?? 'ability' ) );
+		if ( ! in_array( $type, array( 'ability', 'task' ), true ) ) {
+			return new WP_Error( 'wp_codebox_browser_invocation_type_invalid', 'Browser runner invocation type must be ability or task.', array( 'status' => 400 ) );
+		}
+
+		$name = trim( (string) ( $invocation['name'] ?? '' ) );
+		$hook = trim( (string) ( $invocation['hook'] ?? $name ) );
+		if ( 'ability' === $type ) {
+			$name = '' !== $name ? $name : 'agents/chat';
+			if ( ! preg_match( '#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $name ) ) {
+				return new WP_Error( 'wp_codebox_browser_invocation_name_invalid', 'Browser runner ability names must use namespace/name form.', array( 'status' => 400 ) );
+			}
+		} elseif ( '' === $hook || ! preg_match( '#^[A-Za-z0-9_.:-]+$#', $hook ) ) {
+			return new WP_Error( 'wp_codebox_browser_invocation_hook_invalid', 'Browser runner task hooks must be safe WordPress hook names.', array( 'status' => 400 ) );
+		}
+
+		$permission_filter = trim( (string) ( $invocation['permission_filter'] ?? ( 'agents/chat' === $name ? 'agents_chat_permission' : '' ) ) );
+		if ( '' !== $permission_filter && ! preg_match( '#^[A-Za-z0-9_.:-]+$#', $permission_filter ) ) {
+			return new WP_Error( 'wp_codebox_browser_invocation_permission_filter_invalid', 'Browser runner permission filters must be safe WordPress hook names.', array( 'status' => 400 ) );
+		}
+
+		return array(
+			'type'              => $type,
+			'name'              => $name,
+			'hook'              => $hook,
+			'input'             => is_array( $invocation['input'] ?? null ) ? $invocation['input'] : array(),
+			'permission_filter' => $permission_filter,
+		);
+	}
+
+	/** @param array<string,mixed> $invocation Normalized invocation. @return array<string,string> */
+	private static function browser_runner_invocation_metadata( array $invocation ): array {
+		return array_filter(
+			array(
+				'type' => (string) $invocation['type'],
+				'name' => (string) $invocation['name'],
+				'hook' => (string) $invocation['hook'],
+			),
+			static fn( string $value ): bool => '' !== $value
+		);
+	}
+
+	private static function browser_agent_runner_php( array $task_input, string $session_id, string $task_path, string $result_path, array $invocation ): string {
 		$default_payload = array(
 			'agent'      => 'wp-codebox-sandbox',
 			'message'    => (string) $task_input['goal'],
@@ -2294,6 +2359,7 @@ flush_rewrite_rules();
 			'task_input' => $task_input,
 			'artifacts'  => array(),
 		);
+		$default_invocation = $invocation;
 
 		return '<?php
 require_once \'/wordpress/wp-load.php\';
@@ -2301,6 +2367,7 @@ require_once \'/wordpress/wp-load.php\';
 $task_path = ' . var_export( $task_path, true ) . ';
 $result_path = ' . var_export( $result_path, true ) . ';
 $payload = ' . var_export( $default_payload, true ) . ';
+$invocation = ' . var_export( $default_invocation, true ) . ';
 
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'Emscripten\' === PHP_OS_FAMILY && \'/wordpress/\' === $wp_codebox_playground_root;
@@ -2315,7 +2382,7 @@ if ( is_readable( $task_path ) ) {
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
-$input = array(
+$base_input = array(
 	\'agent\' => $agent,
 	\'message\' => $message,
 	\'session_id\' => $session_id,
@@ -2331,8 +2398,8 @@ $input = array(
 		\'task_input\' => $payload[\'task_input\'] ?? array(),
 	),
 );
+$input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
 
-$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( \'agents/chat\' ) : null;
 if ( ! $wp_codebox_is_playground ) {
 	$result = array(
 		\'success\' => false,
@@ -2347,18 +2414,35 @@ if ( ! $wp_codebox_is_playground ) {
 			),
 		),
 	);
-} elseif ( ! $ability instanceof WP_Ability ) {
-	$result = array(
-		\'success\' => false,
-		\'error\' => array(
-			\'code\' => \'wp_codebox_browser_agents_chat_unavailable\',
-			\'message\' => \'The agents/chat ability is not available inside the Playground site.\',
-		),
-	);
 } else {
-	add_filter( \'agents_chat_permission\', \'__return_true\', 999 );
-	$response = $ability->execute( $input );
-	remove_filter( \'agents_chat_permission\', \'__return_true\', 999 );
+	$invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
+	$permission_filter = (string) ( $invocation[\'permission_filter\'] ?? \'\' );
+	if ( \'\' !== $permission_filter ) {
+		add_filter( $permission_filter, \'__return_true\', 999 );
+	}
+
+	try {
+		if ( \'task\' === $invocation_type ) {
+			$hook = (string) ( $invocation[\'hook\'] ?? $invocation[\'name\'] ?? \'\' );
+			if ( \'\' === $hook || ! has_filter( $hook ) ) {
+				$response = new WP_Error( \'wp_codebox_browser_task_unavailable\', \'The requested sandbox task hook is not registered inside the Playground site.\', array( \'hook\' => $hook ) );
+			} else {
+				$response = apply_filters( $hook, null, $input, $payload );
+			}
+		} else {
+			$ability_name = (string) ( $invocation[\'name\'] ?? \'agents/chat\' );
+			$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( $ability_name ) : null;
+			if ( ! $ability instanceof WP_Ability ) {
+				$response = new WP_Error( \'wp_codebox_browser_ability_unavailable\', \'The requested ability is not available inside the Playground site.\', array( \'ability\' => $ability_name ) );
+			} else {
+				$response = $ability->execute( $input );
+			}
+		}
+	} finally {
+		if ( \'\' !== $permission_filter ) {
+			remove_filter( $permission_filter, \'__return_true\', 999 );
+		}
+	}
 
 	if ( is_wp_error( $response ) ) {
 		$result = array(
@@ -2376,6 +2460,11 @@ if ( ! $wp_codebox_is_playground ) {
 			\'session_id\' => $session_id,
 			\'execution_scope\' => \'disposable-playground\',
 			\'permission_model\' => \'sandbox-bypass\',
+			\'invocation\' => array(
+				\'type\' => $invocation_type,
+				\'name\' => (string) ( $invocation[\'name\'] ?? \'\' ),
+				\'hook\' => (string) ( $invocation[\'hook\'] ?? \'\' ),
+			),
 			\'task_input\' => $payload[\'task_input\'] ?? array(),
 			\'response\' => $response,
 			\'artifacts\' => $payload[\'artifacts\'] ?? array(),

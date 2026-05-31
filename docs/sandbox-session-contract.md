@@ -40,17 +40,17 @@ session boundary:
 }
 ```
 
-The `sandbox-bypass` permission model means the generated browser runner
-temporarily bypasses `agents/chat` permission checks inside the disposable
-Playground site so the sandbox agent can run without inheriting host-site user
-state. This is safe only because the browser runner executes in PHP-WASM inside
-the caller-owned Playground filesystem and cannot grant permissions on the host
-WordPress site.
+The `sandbox-bypass` permission model means the generated browser runner can
+temporarily bypass a caller-declared sandbox permission filter inside the
+disposable Playground site so sandbox-local abilities or hook tasks can run
+without inheriting host-site user state. This is safe only because the browser
+runner executes in PHP-WASM inside the caller-owned Playground filesystem and
+cannot grant permissions on the host WordPress site.
 
 The generated PHP runner validates the expected Playground environment before it
-adds the `agents_chat_permission` bypass. If the runner is copied into a normal
-host WordPress install, it fails with `wp_codebox_browser_runner_not_playground`
-instead of executing `agents/chat`.
+adds any permission bypass. If the runner is copied into a normal host WordPress
+install, it fails with `wp_codebox_browser_runner_not_playground` instead of
+executing the requested sandbox invocation.
 
 ## Request Fields
 

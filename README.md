@@ -581,6 +581,33 @@ Dry-run output uses `wp-codebox/recipe-run-dry-run/v1` and includes resolved mou
 
 Set `loadAs` to `mu-plugin` for runtime substrate that should load as must-use infrastructure instead of appearing as a normal user-managed plugin. WP Codebox mounts those plugins under `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and writes a `wp-codebox-runtime-loader.php` setup loader. Use this for sandbox/runtime plumbing such as Agents API, Data Machine, Data Machine Code, and AI provider bridges. Leave user-visible site plugins as the default `plugin` load mode.
 
+Browser Playground callers can provide sandbox-owned MU plugin source through `runtime.mu_plugins` on `wp-codebox/create-browser-playground-session`. Those files are written into `/wordpress/wp-content/mu-plugins/` before the generated runner invokes sandbox-local work. Pair that with `browser_runner.invocation` to call a generic sandbox extension point:
+
+```json
+{
+  "runtime": {
+    "mu_plugins": [
+      {
+        "slug": "caller-runtime",
+        "file": "caller-runtime.php",
+        "content": "<?php add_filter( 'caller_runtime_task', static function ( $result, $input ) { return array( 'summary' => 'done', 'input' => $input ); }, 10, 2 );"
+      }
+    ]
+  },
+  "browser_runner": {
+    "invocation": {
+      "type": "task",
+      "hook": "caller_runtime_task",
+      "input": {
+        "diagnostics": { "status": "ready" }
+      }
+    }
+  }
+}
+```
+
+`browser_runner.invocation.type` supports `ability` for a `namespace/name` WordPress Ability and `task` for a caller-owned WordPress hook. WP Codebox validates the invocation shape, runs it inside the disposable Playground only, and returns normal artifact metadata without encoding product-specific repair semantics.
+
 External sources are explicit and CI-safe. WP Codebox validates URL-shaped sources before Playground boots, but it downloads them only when `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1` is set. Supported first-slice forms are WordPress.org plugin zip URLs and generic HTTPS `.zip` URLs:
 
 ```json
