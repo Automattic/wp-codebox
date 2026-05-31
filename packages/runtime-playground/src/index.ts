@@ -364,6 +364,18 @@ echo wp_json_encode( array(
 `}`
 }
 
+function benchWorkloadsUseWpCli(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(benchWorkloadsUseWpCli)
+  }
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const record = value as { type?: unknown; run?: unknown }
+  return record.type === "wp-cli" || benchWorkloadsUseWpCli(record.run)
+}
+
 interface PluginCheckArtifact {
   targetPlugin: string
   files: {
@@ -1511,10 +1523,18 @@ class PlaygroundRuntime implements Runtime {
     const dependencySlugs = commaListArg(args, "dependency-slugs")
     const env = jsonObjectArg(args, "env-json")
     const workloads = jsonArrayArg(args, "workloads-json")
-    const response = await this.runPlaygroundCommand("wordpress.bench", server, {
-      code: bootstrapPhpCode(this.spec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, workloads }), []),
-    })
-    assertPlaygroundResponseOk("wordpress.bench", response)
+    const bridge = benchWorkloadsUseWpCli(workloads) ? await this.createRuntimeWpCliBridge(server) : undefined
+    let response: PlaygroundRunResponse
+    try {
+      response = await this.runPlaygroundCommand("wordpress.bench", server, {
+        code: bootstrapPhpCode(this.spec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, workloads, wpCliBridge: bridge }), []),
+      })
+      assertPlaygroundResponseOk("wordpress.bench", response)
+    } finally {
+      if (bridge) {
+        await bridge.close()
+      }
+    }
 
     return promoteBrowserMetricsToBenchResults(response.text, this.browserProbes)
   }
