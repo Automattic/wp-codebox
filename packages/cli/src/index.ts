@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "./agent-sandbox.js"
 import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
@@ -11,7 +11,8 @@ import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePrevi
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "./recipe-dry-run.js"
 import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "./recipe-evidence.js"
 import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedStagedFile, type PreparedWorkspaceMount } from "./recipe-sources.js"
-import { defaultPolicy, parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, runPolicy, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
+import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
+import { boot, DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, run, runtimeMetadata, validateBlueprint, type BlueprintValidateOptions, type BlueprintValidateOutput, type BootOptions, type BootOutput, type RunOptions, type RunOutput } from "./runtime-command-wrappers.js"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -22,81 +23,6 @@ interface RecipeSchemaOutput {
   schema: "wp-codebox/json-schema/v1"
   id: "wp-codebox/workspace-recipe/v1"
   jsonSchema: WorkspaceRecipeJsonSchema
-}
-
-interface RunOptions {
-  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
-  command: string
-  args: string[]
-  wpVersion?: string
-  artifactsDirectory?: string
-  policy?: RuntimePolicy
-  secretEnv?: Record<string, string>
-  metadata?: Record<string, unknown>
-  blueprint?: unknown
-  previewHoldSeconds?: number
-  previewPublicUrl?: string
-  previewPort?: number
-  previewBind?: string
-  json: boolean
-}
-
-interface RunOutput {
-  success: boolean
-  runtime?: RuntimeInfo
-  execution?: ExecutionResult
-  artifacts?: ArtifactBundle
-  logs?: string[]
-  error?: {
-    name: string
-    message: string
-    code?: string
-  }
-}
-
-interface BootOptions {
-  mounts: RunOptions["mounts"]
-  wpVersion?: string
-  artifactsDirectory?: string
-  policy?: RuntimePolicy
-  blueprint?: unknown
-  previewHoldSeconds?: number
-  previewPublicUrl?: string
-  previewPort?: number
-  previewBind?: string
-  json: boolean
-}
-
-interface BootOutput {
-  success: boolean
-  schema: "wp-codebox/boot/v1"
-  runtime?: RuntimeInfo
-  artifacts?: ArtifactBundle
-  logs?: string[]
-  error?: RunOutput["error"]
-}
-
-interface BlueprintValidateOptions {
-  blueprint: unknown
-  blueprintPath?: string
-  wpVersion?: string
-  artifactsDirectory?: string
-  policy?: RuntimePolicy
-  previewHoldSeconds?: number
-  previewPublicUrl?: string
-  previewPort?: number
-  previewBind?: string
-  json: boolean
-}
-
-interface BlueprintValidateOutput {
-  success: boolean
-  schema: "wp-codebox/blueprint-validation/v1"
-  blueprintPath?: string
-  runtime?: RuntimeInfo
-  artifacts?: ArtifactBundle
-  logs?: string[]
-  error?: RunOutput["error"]
 }
 
 interface RecipeRunOptions {
@@ -218,8 +144,6 @@ interface BenchResults {
   scenarios: Array<Record<string, unknown>>
 }
 
-const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
-const DEFAULT_WORDPRESS_VERSION = "7.0"
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
 
@@ -974,77 +898,6 @@ async function verifyArtifacts(options: ArtifactVerifyOptions): Promise<Artifact
   return verifyArtifactBundle(resolve(options.bundleDirectory))
 }
 
-function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: string): Record<string, unknown> {
-  return {
-    runtime: {
-      version: WP_CODEBOX_RUNTIME_VERSION,
-      wordpressVersion: wpVersion,
-    },
-    task: {
-      artifactsDirectory,
-    },
-  }
-}
-
-function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string } | undefined {
-  if (bind && port === undefined) {
-    throw new Error("--preview-bind requires --preview-port because upstream Playground does not expose bind-host control yet")
-  }
-
-  if (!publicUrl && port === undefined && !bind) {
-    return undefined
-  }
-
-  return stripUndefined({
-    publicUrl,
-    siteUrl: publicUrl,
-    port,
-    bind,
-  })
-}
-
-function runMetadata(options: RunOptions): Record<string, unknown> {
-  return {
-    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
-    task: stripUndefined({
-      kind: "cli-run",
-      command: options.command,
-      args: options.args,
-      artifactsDirectory: options.artifactsDirectory,
-      previewPublicUrl: options.previewPublicUrl,
-      previewPort: options.previewPort,
-      previewBind: options.previewBind,
-    }),
-  }
-}
-
-function bootMetadata(options: BootOptions): Record<string, unknown> {
-  return {
-    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
-    task: stripUndefined({
-      kind: "cli-boot",
-      artifactsDirectory: options.artifactsDirectory,
-      previewPublicUrl: options.previewPublicUrl,
-      previewPort: options.previewPort,
-      previewBind: options.previewBind,
-    }),
-  }
-}
-
-function blueprintValidationMetadata(options: BlueprintValidateOptions): Record<string, unknown> {
-  return {
-    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
-    task: stripUndefined({
-      kind: "blueprint-validation",
-      blueprintPath: options.blueprintPath,
-      artifactsDirectory: options.artifactsDirectory,
-      previewPublicUrl: options.previewPublicUrl,
-      previewPort: options.previewPort,
-      previewBind: options.previewBind,
-    }),
-  }
-}
-
 function parseBenchResults(raw: string): BenchResults {
   const parsed = JSON.parse(raw) as BenchResults
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
@@ -1069,212 +922,6 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
   }
 
   return secretEnv
-}
-
-async function run(options: RunOptions): Promise<RunOutput> {
-  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
-  let execution: ExecutionResult | undefined
-  let artifacts: ArtifactBundle | undefined
-
-  try {
-    runtime = await createRuntime(
-      {
-        backend: "wordpress-playground",
-        environment: {
-          kind: "wordpress",
-          name: "wp-codebox-cli",
-          version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: options.blueprint ?? { steps: [] },
-        },
-        policy: options.policy ?? runPolicy(options.command),
-        secretEnv: options.secretEnv,
-        artifactsDirectory: options.artifactsDirectory,
-        metadata: options.metadata ?? runMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
-      },
-      createPlaygroundRuntimeBackend(),
-    )
-
-    for (const mount of options.mounts) {
-      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
-    }
-
-    execution = await runtime.execute({ command: options.command, args: options.args })
-    await runtime.observe({ type: "runtime-info" })
-    await runtime.observe({ type: "mounts" })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
-    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds)
-
-    return {
-      success: true,
-      runtime: runtimeInfo ?? await runtime.info(),
-      execution,
-      artifacts,
-    }
-  } catch (error) {
-    if (runtime) {
-      try {
-        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-
-      try {
-        await runtime.destroy()
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-    }
-
-    return {
-      success: false,
-      ...(runtime ? { runtime: await runtime.info() } : {}),
-      ...(execution ? { execution } : {}),
-      ...(artifacts ? { artifacts } : {}),
-      error: serializeError(error),
-    }
-  }
-}
-
-async function boot(options: BootOptions): Promise<BootOutput> {
-  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
-  let artifacts: ArtifactBundle | undefined
-
-  try {
-    runtime = await createRuntime(
-      {
-        backend: "wordpress-playground",
-        environment: {
-          kind: "wordpress",
-          name: "wp-codebox-boot",
-          version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: options.blueprint ?? { steps: [] },
-        },
-        policy: options.policy ?? defaultPolicy,
-        artifactsDirectory: options.artifactsDirectory,
-        metadata: bootMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
-      },
-      createPlaygroundRuntimeBackend(),
-    )
-
-    for (const mount of options.mounts) {
-      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
-    }
-
-    await runtime.observe({ type: "runtime-info" })
-    await runtime.observe({ type: "mounts" })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
-    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds)
-
-    return {
-      success: true,
-      schema: "wp-codebox/boot/v1",
-      runtime: runtimeInfo ?? await runtime.info(),
-      artifacts,
-    }
-  } catch (error) {
-    if (runtime) {
-      try {
-        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-
-      try {
-        await runtime.destroy()
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-    }
-
-    return {
-      success: false,
-      schema: "wp-codebox/boot/v1",
-      ...(runtime ? { runtime: await runtime.info() } : {}),
-      ...(artifacts ? { artifacts } : {}),
-      error: serializeError(error),
-    }
-  }
-}
-
-async function validateBlueprint(options: BlueprintValidateOptions): Promise<BlueprintValidateOutput> {
-  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
-  let artifacts: ArtifactBundle | undefined
-
-  try {
-    runtime = await createRuntime(
-      {
-        backend: "wordpress-playground",
-        environment: {
-          kind: "wordpress",
-          name: "wp-codebox-blueprint-validation",
-          version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: options.blueprint,
-        },
-        policy: options.policy ?? defaultPolicy,
-        artifactsDirectory: options.artifactsDirectory,
-        metadata: blueprintValidationMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
-      },
-      createPlaygroundRuntimeBackend(),
-    )
-
-    await runtime.observe({ type: "runtime-info" })
-    await runtime.observe({ type: "mounts" })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
-    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds)
-
-    return {
-      success: true,
-      schema: "wp-codebox/blueprint-validation/v1",
-      ...(options.blueprintPath ? { blueprintPath: options.blueprintPath } : {}),
-      runtime: runtimeInfo ?? await runtime.info(),
-      artifacts,
-    }
-  } catch (error) {
-    if (runtime) {
-      try {
-        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-
-      try {
-        await runtime.destroy()
-      } catch {
-        // Preserve the original failure as the CLI result.
-      }
-    }
-
-    return {
-      success: false,
-      schema: "wp-codebox/blueprint-validation/v1",
-      ...(options.blueprintPath ? { blueprintPath: options.blueprintPath } : {}),
-      ...(runtime ? { runtime: await runtime.info() } : {}),
-      ...(artifacts ? { artifacts } : {}),
-      error: serializeError(error),
-    }
-  }
-}
-
-async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>, interruption?: RecipeInterruptionController): Promise<void> {
-  const holdSeconds = Math.max(0, Math.floor(previewHoldSeconds))
-  if (holdSeconds === 0) {
-    await runtime.destroy()
-    await afterDestroy?.()
-    return
-  }
-
-  try {
-    await (interruption ? interruption.interruptible(new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000))) : new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000)))
-  } finally {
-    await runtime.destroy()
-    await afterDestroy?.()
-  }
 }
 
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
