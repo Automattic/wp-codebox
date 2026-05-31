@@ -18,6 +18,7 @@ import {
   type RuntimeInfo,
   type Snapshot,
 } from "@chubes4/wp-codebox-core"
+import type { BrowserProbeArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
@@ -31,6 +32,7 @@ import {
   type CapturedMountFiles,
   type MountDiffsResult,
 } from "./artifacts.js"
+import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
 
 export interface ArtifactBundleBuilderSource {
   artifactRoot: string
@@ -45,6 +47,7 @@ export interface ArtifactBundleBuilderSource {
   info(): Promise<RuntimeInfo>
   previewInfo(createdAt: string, previewHoldSeconds?: number): Promise<ArtifactPreview | undefined>
   browserReviewSummary(): ArtifactReviewBrowserSummary | undefined
+  browserArtifacts(): BrowserProbeArtifact[]
   captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles>
   captureMountDiffs(filesDirectory: string, redactor: ArtifactRedactor): Promise<MountDiffsResult>
   redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void>
@@ -90,6 +93,7 @@ export class ArtifactBundleBuilder {
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
     const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
+    const runtimeReferenceIndexPath = join(filesDirectory, "runtime-reference-index.json")
     const runtimeReplayReferenceIndexPath = join(filesDirectory, "runtime-replay-index.json")
     const redactor = new ArtifactRedactor(source.spec.secretEnv)
 
@@ -153,6 +157,7 @@ export class ArtifactBundleBuilder {
       testResults: relative(source.artifactRoot, testResultsPath),
       review: relative(source.artifactRoot, reviewPath),
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
+      runtimeReferenceIndex: relative(source.artifactRoot, runtimeReferenceIndexPath),
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
       mountDiffs: relative(source.artifactRoot, diffsPath),
       ...(runtimeSnapshotFiles.length > 0 ? { runtimeSnapshots: runtimeSnapshotFiles.map((file) => relative(source.artifactRoot, file.path)) } : {}),
@@ -191,6 +196,7 @@ export class ArtifactBundleBuilder {
       fileEntry(testResultsPath, "test-results", "application/json"),
       fileEntry(reviewPath, "review", "application/json"),
       fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
+      fileEntry(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
       fileEntry(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
@@ -225,6 +231,7 @@ export class ArtifactBundleBuilder {
     }
     await writeRedactedArtifact(redactor, reviewPath, source.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
     await writeFile(runtimeReferenceManifestPath, "{}\n")
+    await writeFile(runtimeReferenceIndexPath, "{}\n")
     await writeFile(runtimeReplayReferenceIndexPath, "{}\n")
     metadata.redaction = redactor.summary()
     await writeRedactedArtifact(redactor, metadataPath, source.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
@@ -257,6 +264,21 @@ export class ArtifactBundleBuilder {
         value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
       },
     })))
+    const runtimeReferenceIndex = await buildRuntimeReferenceIndex({
+      artifactRoot: source.artifactRoot,
+      createdAt,
+      manifestFiles: manifest.files,
+      capturedMounts,
+      browserProbes: source.browserArtifacts(),
+    })
+    await writeFile(runtimeReferenceIndexPath, `${JSON.stringify(runtimeReferenceIndex, null, 2)}\n`)
+    manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-index.json" ? ({
+      ...file,
+      sha256: {
+        algorithm: "sha256" as const,
+        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, file),
+      },
+    }) : file))
     const runtimeReferenceManifest = buildRuntimeReferenceManifest({
       createdAt,
       runtime,
@@ -338,6 +360,7 @@ export class ArtifactBundleBuilder {
       testResultsPath,
       reviewPath,
       runtimeReferenceManifestPath,
+      runtimeReferenceIndexPath,
       runtimeReplayReferenceIndexPath,
       ...(preview ? { preview } : {}),
       contentDigest,
