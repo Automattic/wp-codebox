@@ -502,6 +502,7 @@ export interface RuntimePreviewSpec {
 }
 
 export interface WorkspaceRecipeMount {
+  type?: "directory" | "file"
   source: string
   target: string
   mode?: "readonly" | "readwrite"
@@ -848,6 +849,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         additionalProperties: false,
         required: ["source", "target"],
         properties: {
+          type: { enum: ["directory", "file"] },
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },

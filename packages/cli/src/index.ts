@@ -24,7 +24,7 @@ interface RecipeSchemaOutput {
 }
 
 interface RunOptions {
-  mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
+  mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>
   command: string
   args: string[]
   wpVersion?: string
@@ -1159,6 +1159,17 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const stagedFiles = await recipeDryRunStagedFiles(recipe, recipeDirectory)
   const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy)
+  const recipeMounts = await Promise.all((recipe.inputs?.mounts ?? []).map(async (mount) => {
+    const source = resolve(recipeDirectory, mount.source)
+    return {
+      type: await recipeMountType(source, mount.type),
+      source,
+      target: mount.target,
+      mode: mount.mode ?? "readwrite" as const,
+      ...(mount.metadata ? { metadata: mount.metadata } : {}),
+      planned: "existing" as const,
+    }
+  }))
   const mounts: RecipeDryRunMount[] = [
     ...workspaces.map((workspace) => ({
       type: "directory" as const,
@@ -1180,14 +1191,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       },
       planned: "existing" as const,
     })),
-    ...(recipe.inputs?.mounts ?? []).map((mount) => ({
-      type: "directory" as const,
-      source: resolve(recipeDirectory, mount.source),
-      target: mount.target,
-      mode: mount.mode ?? "readwrite" as const,
-      ...(mount.metadata ? { metadata: mount.metadata } : {}),
-      planned: "existing" as const,
-    })),
+    ...recipeMounts,
     ...stagedFiles.map((stagedFile) => ({
       type: stagedFile.type,
       source: stagedFile.source,
@@ -1444,9 +1448,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const mount of recipe.inputs?.mounts ?? []) {
+      const source = resolve(recipeDirectory, mount.source)
       await awaitRecipe(runtime.mount({
-        type: "directory",
-        source: resolve(recipeDirectory, mount.source),
+        type: await recipeMountType(source, mount.type),
+        source,
         target: mount.target,
         mode: mount.mode ?? "readwrite",
         metadata: mount.metadata,
@@ -2733,7 +2738,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
     )
 
     for (const mount of options.mounts) {
-      await runtime.mount({ type: "directory", source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
+      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
     }
 
     execution = await runtime.execute({ command: options.command, args: options.args })
@@ -2797,7 +2802,7 @@ async function boot(options: BootOptions): Promise<BootOutput> {
     )
 
     for (const mount of options.mounts) {
-      await runtime.mount({ type: "directory", source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
+      await runtime.mount({ type: await recipeMountType(mount.source, mount.type), source: mount.source, target: mount.target, mode: mount.mode, metadata: mount.metadata })
     }
 
     await runtime.observe({ type: "runtime-info" })
@@ -3252,6 +3257,10 @@ function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe 
       throw new Error(`Recipe mounts must include source and target: ${recipePath}`)
     }
 
+    if (mount.type && mount.type !== "directory" && mount.type !== "file") {
+      throw new Error(`Recipe mount type must be directory or file: ${recipePath}`)
+    }
+
     if (mount.mode && mount.mode !== "readonly" && mount.mode !== "readwrite") {
       throw new Error(`Recipe mount mode must be readonly or readwrite: ${recipePath}`)
     }
@@ -3393,7 +3402,7 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
 
   for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {
     const path = `$.inputs.mounts[${index}]`
-    await validateExistingDirectory(resolve(recipeDirectory, mount.source), `${path}.source`, addIssue)
+    await validateExistingMountSource(resolve(recipeDirectory, mount.source), mount.type, `${path}.source`, addIssue)
     validateAbsoluteSandboxPath(mount.target, `${path}.target`, addIssue)
   }
 
@@ -3736,6 +3745,20 @@ async function validateExistingFileOrDirectory(path: string, issuePath: string, 
   } catch {
     addIssue("missing-path", issuePath, `File or directory does not exist: ${path}`)
   }
+}
+
+async function validateExistingMountSource(path: string, type: MountSpec["type"] | undefined, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  if (type === "directory") {
+    await validateExistingDirectory(path, issuePath, addIssue)
+    return
+  }
+
+  if (type === "file") {
+    await validateExistingFile(path, issuePath, addIssue)
+    return
+  }
+
+  await validateExistingFileOrDirectory(path, issuePath, addIssue)
 }
 
 function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
@@ -4846,6 +4869,14 @@ async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDirectory
 }
 
 async function stagedFileMountType(source: string): Promise<MountSpec["type"]> {
+  return recipeMountType(source)
+}
+
+async function recipeMountType(source: string, explicitType?: MountSpec["type"]): Promise<MountSpec["type"]> {
+  if (explicitType === "directory" || explicitType === "file") {
+    return explicitType
+  }
+
   const result = await stat(source)
   if (result.isDirectory()) {
     return "directory"
@@ -4854,7 +4885,7 @@ async function stagedFileMountType(source: string): Promise<MountSpec["type"]> {
     return "file"
   }
 
-  throw new Error(`Recipe stagedFiles source must be a file or directory: ${source}`)
+  throw new Error(`Recipe mount source must be a file or directory: ${source}`)
 }
 
 function stagedFileProvenance(stagedFile: WorkspaceRecipeStagedFile, recipeDirectory: string): RecipeStagedFileProvenance {

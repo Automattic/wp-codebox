@@ -15,11 +15,15 @@ const externalUntrustedHostRecipePath = resolve(workspace, "external-untrusted-h
 const externalStrictDigestRecipePath = resolve(workspace, "external-strict-digest-recipe.json")
 const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
 const fixtureSeedPath = resolve(workspace, "fixture-seed.json")
+const fixtureMountPath = resolve(workspace, "fixture-mount.json")
+const fixtureMountDir = resolve(workspace, "fixture-mount-dir")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
 const multisiteCookbookRecipePath = resolve(root, "examples/recipes/cookbook/multisite-network.json")
 
 mkdirSync(workspace, { recursive: true })
+mkdirSync(fixtureMountDir, { recursive: true })
 writeFileSync(fixtureSeedPath, `${JSON.stringify({ posts: [{ slug: "fixture-page" }] }, null, 2)}\n`)
+writeFileSync(fixtureMountPath, `${JSON.stringify({ ok: true }, null, 2)}\n`)
 writeFileSync(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   runtime: {
@@ -73,6 +77,18 @@ writeFileSync(recipePath, `${JSON.stringify({
           activePlugins: true,
           activeTheme: true,
         },
+      },
+    ],
+    mounts: [
+      {
+        type: "file",
+        source: "./fixture-mount.json",
+        target: "/wordpress/wp-content/plugins/example/fixture-mount.json",
+        mode: "readonly",
+      },
+      {
+        source: "./fixture-mount-dir",
+        target: "/wordpress/wp-content/plugins/example/fixture-mount-dir",
       },
     ],
   },
@@ -223,6 +239,8 @@ assert.equal(output.plan.siteSeeds[1].bounded, true)
 assert.equal(output.plan.siteSeeds[1].dryRunOnly, true)
 assert.equal(output.plan.siteSeeds[1].privacy.exportsParentSiteData, false)
 assert.equal(output.plan.siteSeeds[1].privacy.importsIntoSandbox, false)
+assert.equal(output.plan.mounts.some((mount: { type: string; source?: string; target: string; mode: string }) => mount.type === "file" && mount.source === fixtureMountPath && mount.target === "/wordpress/wp-content/plugins/example/fixture-mount.json" && mount.mode === "readonly"), true)
+assert.equal(output.plan.mounts.some((mount: { type: string; source?: string; target: string; mode: string }) => mount.type === "directory" && mount.source === fixtureMountDir && mount.target === "/wordpress/wp-content/plugins/example/fixture-mount-dir" && mount.mode === "readwrite"), true)
 assert.equal(output.plan.secretEnv[0].name, "DRY_RUN_TOKEN")
 assert.equal(Object.prototype.hasOwnProperty.call(output.plan.secretEnv[0], "value"), false)
 assert.equal(output.plan.secretEnv[0].available, true)
