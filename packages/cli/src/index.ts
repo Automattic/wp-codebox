@@ -1,29 +1,22 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { createRuntime, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "./agent-sandbox.js"
 import { routeCliCommand } from "./command-router.js"
-import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+import { runArtifactsVerifyCommand } from "./commands/artifacts.js"
+import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
+import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
+import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
+import { captureStdout, printHelp, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "./preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "./recipe-dry-run.js"
 import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "./recipe-evidence.js"
 import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedStagedFile, type PreparedWorkspaceMount } from "./recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
-import { boot, DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, run, runtimeMetadata, validateBlueprint, type BlueprintValidateOptions, type BlueprintValidateOutput, type BootOptions, type BootOutput, type RunOptions, type RunOutput } from "./runtime-command-wrappers.js"
-
-interface CommandCatalogOutput {
-  schema: "wp-codebox/command-catalog/v1"
-  commands: Array<Omit<CommandDefinition, "handler">>
-}
-
-interface RecipeSchemaOutput {
-  schema: "wp-codebox/json-schema/v1"
-  id: "wp-codebox/workspace-recipe/v1"
-  jsonSchema: WorkspaceRecipeJsonSchema
-}
+import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "./runtime-command-wrappers.js"
 
 interface RecipeRunOptions {
   recipePath: string
@@ -55,19 +48,6 @@ interface RecipeInterruptionController {
 
 interface RecipeValidateOptions {
   recipePath: string
-  json: boolean
-}
-
-interface WorkspacePolicyOptions {
-  workspaceRoot: string
-  writableRoots: string[]
-  hiddenPaths: string[]
-  gitBacked: boolean
-  json: boolean
-}
-
-interface ArtifactVerifyOptions {
-  bundleDirectory: string
   json: boolean
 }
 
@@ -162,40 +142,6 @@ async function runCli(args: string[]): Promise<number> {
   })
 }
 
-async function runBootCommand(args: string[]): Promise<number> {
-  const options = await parseBootOptions(args)
-  const execute = () => boot(options)
-
-  if (!options.json) {
-    const output = await execute()
-    printBootHumanOutput(output)
-    return output.success ? 0 : 1
-  }
-
-  const { result, logs } = await captureStdout(execute)
-  const output = logs.length > 0 ? { ...result, logs } : result
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  printJsonFailureDiagnostic(output)
-  return output.success ? 0 : 1
-}
-
-async function runValidateBlueprintCommand(args: string[]): Promise<number> {
-  const options = await parseBlueprintValidateOptions(args)
-  const execute = () => validateBlueprint(options)
-
-  if (!options.json) {
-    const output = await execute()
-    printBlueprintValidateHumanOutput(output)
-    return output.success ? 0 : 1
-  }
-
-  const { result, logs } = await captureStdout(execute)
-  const output = logs.length > 0 ? { ...result, logs } : result
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  printJsonFailureDiagnostic(output)
-  return output.success ? 0 : 1
-}
-
 async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
@@ -232,175 +178,6 @@ async function runRecipeValidateCommand(args: string[]): Promise<number> {
 
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   return output.success ? 0 : 1
-}
-
-async function runWorkspacePolicyCheckCommand(args: string[]): Promise<number> {
-  const options = parseWorkspacePolicyOptions(args)
-  const output = await checkWorkspacePolicy({
-    workspaceRoot: options.workspaceRoot,
-    writableRoots: options.writableRoots,
-    hiddenPaths: options.hiddenPaths,
-    gitBacked: options.gitBacked,
-  })
-  if (!options.json) {
-    printWorkspacePolicyHumanOutput(output)
-    return output.passed ? 0 : 1
-  }
-
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  return output.passed ? 0 : 1
-}
-
-async function runArtifactsVerifyCommand(args: string[]): Promise<number> {
-  const options = parseArtifactVerifyOptions(args)
-  const output = await verifyArtifacts(options)
-  if (!options.json) {
-    printArtifactVerifyHumanOutput(output)
-    return output.valid ? 0 : 1
-  }
-
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  return output.valid ? 0 : 1
-}
-
-async function runCommandsCommand(args: string[]): Promise<number> {
-  const json = parseDiscoveryJsonOption(args)
-  const output = commandCatalogOutput()
-  if (!json) {
-    printCommandCatalogHumanOutput(output)
-    return 0
-  }
-
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  return 0
-}
-
-async function runRecipeSchemaCommand(args: string[]): Promise<number> {
-  const json = parseDiscoveryJsonOption(args)
-  const output = recipeSchemaOutput()
-  if (!json) {
-    printRecipeSchemaHumanOutput(output)
-    return 0
-  }
-
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  return 0
-}
-
-async function runRunCommand(args: string[]): Promise<number> {
-  const options = await parseRunOptions(args)
-  const execute = () => run(options)
-
-  if (!options.json) {
-    const output = await execute()
-    printHumanOutput(output)
-    return output.success ? 0 : 1
-  }
-
-  const { result, logs } = await captureStdout(execute)
-  const output = logs.length > 0 ? { ...result, logs } : result
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  printJsonFailureDiagnostic(output)
-  return output.success ? 0 : 1
-}
-
-function parseDiscoveryJsonOption(args: string[]): boolean {
-  let json = false
-  for (const arg of args) {
-    if (arg === "--json") {
-      json = true
-      continue
-    }
-
-    throw new Error(`Unknown option: ${arg}`)
-  }
-
-  return json
-}
-
-function parseWorkspacePolicyOptions(args: string[]): WorkspacePolicyOptions {
-  const options: WorkspacePolicyOptions = {
-    workspaceRoot: process.cwd(),
-    writableRoots: [],
-    hiddenPaths: [],
-    gitBacked: false,
-    json: false,
-  }
-
-  while (args.length > 0) {
-    const arg = args.shift()
-    if (!arg) {
-      continue
-    }
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-    if (arg === "--git") {
-      options.gitBacked = true
-      continue
-    }
-
-    const value = args.shift()
-    if (!value) {
-      throw new Error(`Missing value for ${arg}`)
-    }
-
-    switch (arg) {
-      case "--workspace":
-      case "--workspace-root":
-        options.workspaceRoot = resolve(value)
-        break
-      case "--writable-root":
-      case "--writable":
-        options.writableRoots.push(value)
-        break
-      case "--hidden-path":
-      case "--hidden":
-        options.hiddenPaths.push(value)
-        break
-      default:
-        throw new Error(`Unknown option: ${arg}`)
-    }
-  }
-
-  if (options.writableRoots.length === 0) {
-    throw new Error("At least one --writable-root is required")
-  }
-
-  return options
-}
-
-function printWorkspacePolicyHumanOutput(output: WorkspacePolicyResult): void {
-  console.log(output.passed ? "Workspace policy passed" : "Workspace policy failed")
-  console.log(`Policy: ${output.policy_sha256}`)
-  if (output.violations.length === 0) {
-    return
-  }
-
-  console.log("Violations:")
-  for (const violation of output.violations) {
-    console.log(`- ${violation.code}: ${violation.path}`)
-    console.log(`  ${violation.message}`)
-  }
-}
-
-function commandCatalogOutput(): CommandCatalogOutput {
-  return {
-    schema: "wp-codebox/command-catalog/v1",
-    commands: commandRegistry.map(({ handler, ...metadata }) => metadata),
-  }
-}
-
-function recipeSchemaOutput(): RecipeSchemaOutput {
-  return {
-    schema: "wp-codebox/json-schema/v1",
-    id: "wp-codebox/workspace-recipe/v1",
-    jsonSchema: createWorkspaceRecipeJsonSchema({
-      recipeCommandIds: recipeCommandDefinitions().map((command) => command.id),
-    }),
-  }
 }
 
 function printJsonFailureDiagnostic(output: { success: boolean; error?: { message?: string }; logs?: string[] }): void {
@@ -789,10 +566,6 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
   }
 }
 
-async function verifyArtifacts(options: ArtifactVerifyOptions): Promise<ArtifactBundleVerificationResult> {
-  return verifyArtifactBundle(resolve(options.bundleDirectory))
-}
-
 function parseBenchResults(raw: string): BenchResults {
   const parsed = JSON.parse(raw) as BenchResults
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
@@ -817,189 +590,6 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
   }
 
   return secretEnv
-}
-
-async function parseRunOptions(args: string[]): Promise<RunOptions> {
-  const options: RunOptions = {
-    mounts: [],
-    command: "",
-    args: [],
-    json: false,
-  }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--mount":
-        options.mounts.push(parseMount(value))
-        break
-      case "--command":
-        options.command = value
-        break
-      case "--arg":
-        options.args.push(value)
-        break
-      case "--wp":
-        options.wpVersion = value
-        break
-      case "--artifacts":
-        options.artifactsDirectory = value
-        break
-      case "--preview-hold":
-        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
-        break
-      case "--preview-public-url":
-        options.previewPublicUrl = parsePreviewPublicUrl(value)
-        break
-      case "--preview-port":
-        options.previewPort = parsePreviewPort(value)
-        break
-      case "--preview-bind":
-        options.previewBind = parsePreviewBind(value)
-        break
-      case "--policy":
-        options.policy = await parsePolicy(value)
-        break
-      default:
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  if (!options.command) {
-    throw new Error("Missing required option: --command")
-  }
-
-  if (options.mounts.length === 0) {
-    throw new Error("At least one --mount host:vfs value is required")
-  }
-
-  return options
-}
-
-async function parseBootOptions(args: string[]): Promise<BootOptions> {
-  const options: BootOptions = {
-    mounts: [],
-    json: false,
-  }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--mount":
-        options.mounts.push(parseMount(value))
-        break
-      case "--wp":
-        options.wpVersion = value
-        break
-      case "--blueprint":
-        options.blueprint = await parseJsonOption(value)
-        break
-      case "--artifacts":
-        options.artifactsDirectory = value
-        break
-      case "--hold":
-        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
-        break
-      case "--preview-public-url":
-        options.previewPublicUrl = parsePreviewPublicUrl(value)
-        break
-      case "--preview-port":
-        options.previewPort = parsePreviewPort(value)
-        break
-      case "--preview-bind":
-        options.previewBind = parsePreviewBind(value)
-        break
-      case "--policy":
-        options.policy = await parsePolicy(value)
-        break
-      default:
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  return options
-}
-
-async function parseBlueprintValidateOptions(args: string[]): Promise<BlueprintValidateOptions> {
-  const options: Partial<BlueprintValidateOptions> = { json: false }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--blueprint":
-        options.blueprint = await parseJsonOption(value)
-        options.blueprintPath = jsonOptionPath(value)
-        break
-      case "--wp":
-        options.wpVersion = value
-        break
-      case "--artifacts":
-        options.artifactsDirectory = value
-        break
-      case "--preview-hold":
-        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
-        break
-      case "--preview-public-url":
-        options.previewPublicUrl = parsePreviewPublicUrl(value)
-        break
-      case "--preview-port":
-        options.previewPort = parsePreviewPort(value)
-        break
-      case "--preview-bind":
-        options.previewBind = parsePreviewBind(value)
-        break
-      case "--policy":
-        options.policy = await parsePolicy(value)
-        break
-      default:
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  if (options.blueprint === undefined) {
-    throw new Error("Missing required option: --blueprint")
-  }
-
-  return options as BlueprintValidateOptions
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
@@ -1088,41 +678,6 @@ function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
   }
 
   return options as RecipeValidateOptions
-}
-
-function parseArtifactVerifyOptions(args: string[]): ArtifactVerifyOptions {
-  const options: Partial<ArtifactVerifyOptions> = { json: false }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--bundle":
-      case "--artifacts":
-        options.bundleDirectory = value
-        break
-      default:
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  if (!options.bundleDirectory) {
-    throw new Error("Missing required option: --bundle")
-  }
-
-  return options as ArtifactVerifyOptions
 }
 
 function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string): RecipeExecutionResult {
@@ -1766,45 +1321,6 @@ function matchesNumberSelector(record: Record<string, unknown>, allowed: number[
   }
   const values = keys.map((key) => record[key]).filter((value): value is number => typeof value === "number")
   return values.some((value) => allowed.includes(value))
-}
-
-function parseMount(value: string): RunOptions["mounts"][number] {
-  const [source, target, mode = "readwrite"] = value.split(":")
-
-  if (!source || !target) {
-    throw new Error(`Invalid mount, expected host:vfs: ${value}`)
-  }
-
-  if (mode !== "readonly" && mode !== "readwrite") {
-    throw new Error(`Invalid mount mode, expected readonly or readwrite: ${mode}`)
-  }
-
-  return {
-    source: resolve(source),
-    target,
-    mode,
-    metadata: {
-      kind: "cli-mount",
-    },
-  }
-}
-
-async function parsePolicy(value: string): Promise<RuntimePolicy> {
-  return JSON.parse(await readJsonOption(value)) as RuntimePolicy
-}
-
-async function parseJsonOption(value: string): Promise<unknown> {
-  return JSON.parse(await readJsonOption(value))
-}
-
-async function readJsonOption(value: string): Promise<string> {
-  const trimmed = value.trim()
-  return trimmed.startsWith("{") || trimmed.startsWith("[") ? value : await readFile(resolve(value), "utf8")
-}
-
-function jsonOptionPath(value: string): string | undefined {
-  const trimmed = value.trim()
-  return trimmed.startsWith("{") || trimmed.startsWith("[") ? undefined : resolve(value)
 }
 
 function stripUndefined<T extends Record<string, unknown>>(record: T): T {
