@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto"
 import { lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile, ArtifactSpec } from "./artifact-manifest.js"
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 
+export * from "./artifact-manifest.js"
 export * from "./runtime-policy.js"
 export * from "./workspace-policy.js"
 export * from "./sandbox-datamachine-tool-policy.js"
@@ -484,52 +487,6 @@ export interface RuntimeRestoreSpec {
   mounts?: MountSpec[]
 }
 
-export interface ArtifactSpec {
-  includeFiles?: boolean
-  includeLogs?: boolean
-  includePatch?: boolean
-  includeScreenshots?: boolean
-  includeObservations?: boolean
-  includeRuntimeSnapshotBundles?: boolean
-  previewHoldSeconds?: number
-}
-
-export interface ArtifactManifestFile {
-  path: string
-  kind:
-    | "manifest"
-    | "metadata"
-    | "events"
-    | "commands"
-    | "observations"
-    | "log"
-    | "mounts"
-    | "file"
-    | "test-results"
-    | (string & {})
-  contentType: string
-  sha256: ArtifactFileDigest
-}
-
-export interface ArtifactFileDigest {
-  algorithm: "sha256"
-  value: string
-}
-
-export interface ArtifactManifest {
-  id: string
-  contentDigest: ArtifactContentDigest
-  createdAt: string
-  runtime: RuntimeInfo
-  files: ArtifactManifestFile[]
-}
-
-export interface ArtifactContentDigest {
-  algorithm: "sha256"
-  inputs: string[]
-  value: string
-}
-
 export type RuntimeSnapshotReplayStatus = "metadata-only" | "partial-replay" | "replayable-runtime-state" | "runtime-state-artifact" | "not-replayable" | (string & {})
 
 export interface RuntimeReferenceManifestFileRef {
@@ -964,27 +921,6 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
 }
 
-export async function calculateArtifactContentDigest(directory: string, inputs: string[]): Promise<string> {
-  const hash = createHash("sha256").update("wp-codebox/artifact-content/v1\n")
-  for (const [index, input] of inputs.entries()) {
-    if (index > 0) {
-      hash.update("\n")
-    }
-    hash.update(`${input}\n`)
-    hash.update(await readFile(join(directory, input)))
-  }
-
-  return hash.digest("hex")
-}
-
-export async function calculateArtifactManifestFileSha256(directory: string, manifest: ArtifactManifest, file: ArtifactManifestFile, manifestFileName = "manifest.json"): Promise<string> {
-  if (file.path === manifestFileName) {
-    return calculateArtifactManifestSelfSha256(manifest, manifestFileName)
-  }
-
-  return createHash("sha256").update(await readFile(join(directory, file.path))).digest("hex")
-}
-
 async function verifyBundleFileTopology(directory: string, path: string, fieldPath: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
   const absolutePath = join(directory, path)
   const fileStat = await lstat(absolutePath)
@@ -1007,22 +943,6 @@ async function verifyBundleFileTopology(directory: string, path: string, fieldPa
     }
   } catch (error) {
     violations.push({ code: "unsafe-file", path: fieldPath, file: path, message: `Unable to prove artifact file stays inside the bundle directory: ${errorMessage(error)}` })
-  }
-}
-
-export function calculateArtifactManifestSelfSha256(manifest: ArtifactManifest, manifestFileName = "manifest.json"): string {
-  return createHash("sha256")
-    .update("wp-codebox/artifact-manifest-self/v1\n")
-    .update(stableJson(manifestWithPlaceholderSelfHash(manifest, manifestFileName)))
-    .digest("hex")
-}
-
-function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFileName: string): ArtifactManifest {
-  return {
-    ...manifest,
-    files: manifest.files.map((file) => file.path === manifestFileName
-      ? { ...file, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
-      : file),
   }
 }
 
