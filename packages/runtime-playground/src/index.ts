@@ -26,9 +26,10 @@ import { executePlaygroundCommand, playgroundRuntimeCommandIds } from "./command
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 import { abilityInputFromArgs, abilityPhpCode, argValue, benchRunCode, booleanArg, cleanWpCliOutput, commaListArg, CORE_PHPUNIT_RESULT_FILE, corePhpunitRunCode, jsonArrayArg, jsonObjectArg, nonNegativeIntegerArg, normalizePhpCode, normalizePluginCheckOutput, normalizeThemeCheckOutput, phpunitRunCode, positiveIntegerArg, shellArgv, themeCheckRunCode, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
-import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, extractCorePhpunitFailureMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
+import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import { startPlaygroundCliServer } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
+import { persistCorePhpunitResult, persistVfsDiagnosticFile, readCorePhpunitDiagnostic } from "./runtime-diagnostics.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type {
   ArtifactBundle,
@@ -1560,7 +1561,7 @@ class PlaygroundRuntime implements Runtime {
       throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
     }
     const response = await this.runPlaygroundCommand("wordpress.phpunit", server, { code })
-    await this.persistVfsDiagnosticFile(server, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`)
+    await persistVfsDiagnosticFile(server, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, this.mounts)
     assertPlaygroundResponseOk("wordpress.phpunit", response)
 
     return response.text
@@ -1594,67 +1595,18 @@ class PlaygroundRuntime implements Runtime {
       // absent, which surfaces here as a PlaygroundCommandCrashError with empty
       // output. Recover the structured diagnostics the PHP shutdown handler flushed
       // to the result file and re-throw a clear, actionable error instead (#314).
-      await this.persistCorePhpunitResult(server, resultFile)
-      const structured = await this.readCorePhpunitDiagnostic(server, resultFile)
+      await persistCorePhpunitResult(server, resultFile, this.artifactRoot)
+      const structured = await readCorePhpunitDiagnostic(server, resultFile)
       if (structured) {
         throw new Error(`wordpress.core-phpunit could not run: ${structured}`)
       }
       throw error
     }
 
-    await this.persistCorePhpunitResult(server, resultFile)
+    await persistCorePhpunitResult(server, resultFile, this.artifactRoot)
     assertPlaygroundResponseOk("wordpress.core-phpunit", response)
 
     return response.text
-  }
-
-  private async persistCorePhpunitResult(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
-    if (!server.playground.readFileAsText) {
-      return
-    }
-
-    try {
-      const contents = await server.playground.readFileAsText(vfsPath)
-      const hostPath = join(this.artifactRoot, "files", "core-phpunit", ".pg-test-result.txt")
-      await mkdir(dirname(hostPath), { recursive: true })
-      await writeFile(hostPath, contents)
-    } catch {
-      // The structured result is best-effort; preserve the command outcome if copying fails.
-    }
-  }
-
-  private async readCorePhpunitDiagnostic(server: PlaygroundCliServer, vfsPath: string): Promise<string | undefined> {
-    if (!server.playground.readFileAsText) {
-      return undefined
-    }
-
-    let contents: string
-    try {
-      contents = await server.playground.readFileAsText(vfsPath)
-    } catch {
-      return undefined
-    }
-
-    return extractCorePhpunitFailureMessage(contents)
-  }
-
-  private async persistVfsDiagnosticFile(server: PlaygroundCliServer, vfsPath: string): Promise<void> {
-    if (!server.playground.readFileAsText) {
-      return
-    }
-
-    const hostPath = this.hostPathForVfsPath(vfsPath)
-    if (!hostPath) {
-      return
-    }
-
-    try {
-      const contents = await server.playground.readFileAsText(vfsPath)
-      await mkdir(dirname(hostPath), { recursive: true })
-      await writeFile(hostPath, contents)
-    } catch {
-      // The structured result is best-effort; preserve the command failure if copying fails.
-    }
   }
 
   private async runWpCliArgv(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {
@@ -1693,28 +1645,6 @@ class PlaygroundRuntime implements Runtime {
       status: normalized.status,
       exitCode: normalized.exitCode,
     })
-  }
-
-  private hostPathForVfsPath(vfsPath: string): string | undefined {
-    for (const mount of this.mounts) {
-      if (mount.mode !== "readwrite") {
-        continue
-      }
-
-      const target = mount.target.replace(/\/+$/, "")
-      if (vfsPath !== target && !vfsPath.startsWith(`${target}/`)) {
-        continue
-      }
-
-      const relativePath = vfsPath === target ? "" : vfsPath.slice(target.length + 1)
-      if (relativePath.split("/").includes("..")) {
-        continue
-      }
-
-      return join(mount.source, relativePath)
-    }
-
-    return undefined
   }
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
