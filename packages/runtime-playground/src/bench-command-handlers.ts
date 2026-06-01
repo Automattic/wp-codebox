@@ -155,6 +155,10 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
         throw new RuntimeException($activation->get_error_message());
     }
 }
+if (!empty($plugins_to_activate)) {
+    do_action('plugins_loaded');
+    do_action('init');
+}
 if (did_action('rest_api_init')) {
     $GLOBALS['wp_rest_server'] = null;
     do_action('rest_api_init', rest_get_server());
