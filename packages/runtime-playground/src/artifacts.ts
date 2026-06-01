@@ -54,9 +54,12 @@ export interface MountDiff {
   mountIndex: number
   source: string
   target: string
-  baselineSource: string
+  baselineSource?: string
   artifactPath: string
   changed: boolean
+  status: "changed" | "unchanged" | "skipped" | "failed"
+  reason?: string
+  error?: string
 }
 
 export interface ChangedFile {
@@ -82,6 +85,7 @@ export interface MountDiffsResult {
   mountDiffs: MountDiff[]
   changedFiles: CanonicalChangedFiles
   patch: string
+  diagnostics: ArtifactDiagnostic[]
 }
 
 interface RedactionResult {
