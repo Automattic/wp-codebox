@@ -1229,7 +1229,7 @@ final class WP_Codebox_Abilities {
 						'path'   => $source_path,
 					);
 				} else {
-					$package    = self::browser_package_remote_plugin( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
+					$package    = self::browser_remote_mu_plugin_package( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
 					$provenance = array(
 						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
 						'source' => 'runtime-mu-plugin-remote-package',
@@ -1269,6 +1269,25 @@ final class WP_Codebox_Abilities {
 		}
 
 		return $normalized;
+	}
+
+	/** @return array{url:string,path:string,sha256:string} | WP_Error */
+	private static function browser_remote_mu_plugin_package( string $slug, string $url, int $index, string $expected_sha256 = '' ): array|WP_Error {
+		$source = self::browser_remote_plugin_package_url( $url, $index );
+		if ( is_wp_error( $source ) ) {
+			return $source;
+		}
+
+		$sha256 = strtolower( trim( $expected_sha256 ) );
+		if ( '' !== $sha256 && ! preg_match( '/^[a-f0-9]{64}$/', $sha256 ) ) {
+			return new WP_Error( 'wp_codebox_browser_mu_plugin_sha256_invalid', 'Browser mu-plugin sha256 must be a 64-character hex digest.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+		}
+
+		return array(
+			'url'    => $source['url'],
+			'path'   => '',
+			'sha256' => $sha256,
+		);
 	}
 
 	/** @param array<int,mixed> $themes Theme dependency specs. @return array<int,array<string,mixed>>|WP_Error */
