@@ -323,6 +323,11 @@ final class WP_Codebox_Abilities {
 							'playground'         => array(
 								'type'        => 'object',
 								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
+								'properties'  => array(
+									'client_module_url' => array( 'type' => 'string' ),
+									'remote_url'        => array( 'type' => 'string' ),
+									'cors_proxy_url'    => array( 'type' => 'string' ),
+								),
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
@@ -360,6 +365,7 @@ final class WP_Codebox_Abilities {
 								'type'        => 'object',
 								'description' => 'Structured browser Playground runtime dependencies compiled by WP Codebox into the session blueprint.',
 								'properties'  => array(
+									'components' => array( 'type' => 'array' ),
 									'plugins'    => array( 'type' => 'array' ),
 									'mu_plugins' => array( 'type' => 'array' ),
 									'themes'     => array( 'type' => 'array' ),
@@ -876,6 +882,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -937,6 +944,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -1406,12 +1414,29 @@ final class WP_Codebox_Abilities {
 			return $remote;
 		}
 
+		$default_cors_proxy_url = (string) apply_filters( 'wp_codebox_browser_playground_default_cors_proxy_url', 'https://wordpress-playground-cors-proxy.net/?', $playground );
+		$cors_proxy_url         = (string) ( $playground['cors_proxy_url'] ?? $playground['corsProxy'] ?? $default_cors_proxy_url );
+		$cors_proxy             = array( 'url' => '', 'origin' => '', 'host' => '' );
+		if ( '' !== trim( $cors_proxy_url ) ) {
+			$cors_proxy = self::browser_trusted_url(
+				$cors_proxy_url,
+				'cors_proxy_url',
+				'wp_codebox_browser_playground_cors_proxy_allowed_origins',
+				array( 'https://wordpress-playground-cors-proxy.net', 'https://playground.wordpress.net', 'https://playground.automattic.ai' )
+			);
+			if ( is_wp_error( $cors_proxy ) ) {
+				return $cors_proxy;
+			}
+		}
+
 		$playground['client_module_url'] = $client['url'];
 		$playground['remote_url']        = $remote['url'];
+		$playground['cors_proxy_url']    = $cors_proxy['url'];
 		$playground['provenance']        = array(
 			'schema'            => 'wp-codebox/browser-playground-provenance/v1',
 			'client_module_url' => $client,
 			'remote_url'        => $remote,
+			'cors_proxy_url'    => $cors_proxy,
 		);
 
 		return $playground;
@@ -1476,7 +1501,7 @@ final class WP_Codebox_Abilities {
 			return $bootstrap;
 		}
 
-		$component_plugins = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ) );
+		$component_plugins = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ), is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array() );
 		if ( is_wp_error( $component_plugins ) ) {
 			return $component_plugins;
 		}
@@ -1580,57 +1605,127 @@ final class WP_Codebox_Abilities {
 		return $resolved;
 	}
 
-	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @return array<int,array<string,mixed>>|WP_Error */
-	private static function browser_component_plugins( array $input, array $declared_plugins ): array|WP_Error {
-		if ( ! self::browser_component_plugins_required( $input ) ) {
+	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @param array<int,mixed> $declared_components Caller/runtime component refs. @return array<int,array<string,mixed>>|WP_Error */
+	private static function browser_component_plugins( array $input, array $declared_plugins, array $declared_components ): array|WP_Error {
+		$components_required = self::browser_component_plugins_required( $input );
+		if ( ! $components_required && empty( $declared_components ) ) {
 			return array();
 		}
 
 		$paths = self::browser_component_paths( $input );
+		$registry = self::browser_runtime_component_registry();
 		$declared_slugs = array_values(
 			array_filter(
 				array_map( static fn( array $plugin ): string => self::safe_key( (string) ( $plugin['slug'] ?? '' ) ), $declared_plugins )
 			)
 		);
+		$component_slugs = self::browser_runtime_component_slugs( $declared_components, $components_required );
 
 		$plugins = array();
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
+		foreach ( $component_slugs as $slug ) {
 			if ( in_array( $slug, $declared_slugs, true ) ) {
 				continue;
 			}
 
+			$key  = self::browser_runtime_component_key( $slug );
 			$path = (string) ( $paths[ $key ] ?? '' );
-			if ( '' === $path || ! is_dir( $path ) ) {
+			if ( '' !== $path ) {
+				if ( ! is_dir( $path ) ) {
+					return new WP_Error( 'wp_codebox_browser_component_path_missing', 'Browser runtime component path does not exist.', array( 'status' => 400, 'slug' => $slug, 'path' => $path ) );
+				}
+
+				$package = self::browser_package_component_plugin( $slug, $path );
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+
+				$plugins[] = array(
+					'url'                     => $package['url'],
+					'slug'                    => $slug,
+					'activate'                => true,
+					'local_package'           => true,
+					'local_package_fetch_url' => $package['fetch_url'],
+					'sha256'                  => $package['sha256'],
+					'provenance'              => array(
+						'schema' => 'wp-codebox/browser-component-plugin-provenance/v1',
+						'source' => 'host-component-path',
+						'sha256' => $package['sha256'],
+					),
+				);
 				continue;
 			}
 
-			$package = self::browser_package_component_plugin( $slug, $path );
-			if ( is_wp_error( $package ) ) {
-				return $package;
+			$component = is_array( $registry[ $slug ] ?? null ) ? $registry[ $slug ] : array();
+			if ( empty( $component ) ) {
+				continue;
 			}
 
-			$plugins[] = array(
-				'url'           => $package['url'],
-				'slug'          => $slug,
-				'activate'      => true,
-				'local_package' => true,
-				'local_package_fetch_url' => $package['fetch_url'],
-				'sha256'        => $package['sha256'],
-				'provenance'    => array(
-					'schema'       => 'wp-codebox/browser-component-plugin-provenance/v1',
-					'source'       => 'host-component-path',
-					'sha256'       => $package['sha256'],
-				),
-			);
+			$component['slug'] = $slug;
+			$normalized = self::normalize_browser_plugins( array( $component ), 'runtime.components' );
+			if ( is_wp_error( $normalized ) ) {
+				return $normalized;
+			}
+
+			$plugins[] = $normalized[0];
 		}
 
 		return $plugins;
+	}
+
+	/** @return array<int,string> */
+	private static function browser_runtime_component_slugs( array $declared_components, bool $include_required ): array {
+		$slugs = array();
+		if ( $include_required ) {
+			$slugs = array( 'agents-api', 'data-machine', 'data-machine-code' );
+		}
+
+		foreach ( $declared_components as $component ) {
+			$slug = is_array( $component ) ? self::safe_key( (string) ( $component['slug'] ?? $component['component'] ?? $component['name'] ?? '' ) ) : self::safe_key( (string) $component );
+			if ( '' !== $slug ) {
+				$slugs[] = $slug;
+			}
+		}
+
+		return array_values( array_unique( $slugs ) );
+	}
+
+	private static function browser_runtime_component_key( string $slug ): string {
+		return str_replace( '-', '_', self::safe_key( $slug ) );
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function browser_runtime_component_registry(): array {
+		$registry = array(
+			'agents-api'        => array(
+				'resource'         => 'git:directory',
+				'url'              => 'https://github.com/Automattic/agents-api',
+				'ref'              => 'main',
+				'refType'          => 'branch',
+				'targetFolderName' => 'agents-api',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+			'data-machine'      => array(
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip',
+				'targetFolderName' => 'data-machine',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+			'data-machine-code' => array(
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip',
+				'targetFolderName' => 'data-machine-code',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+		);
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$registry = apply_filters( 'wp_codebox_browser_runtime_component_registry', $registry );
+		}
+
+		return is_array( $registry ) ? $registry : array();
 	}
 
 	private static function browser_component_plugins_required( array $input ): bool {
@@ -1644,7 +1739,7 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @return array{agents_api:string,data_machine:string,data_machine_code:string} */
 	private static function browser_component_paths( array $input ): array {
-		$configured = array_merge( self::browser_default_component_paths(), self::browser_configured_component_paths() );
+		$configured = self::browser_configured_component_paths();
 
 		return array(
 			'agents_api'        => self::browser_clean_path( self::browser_component_path_value( $input, 'agents_api_path', $configured['agents_api'] ?? '' ) ),
@@ -1656,35 +1751,6 @@ final class WP_Codebox_Abilities {
 	private static function browser_component_path_value( array $input, string $key, string $fallback ): string {
 		$value = trim( (string) ( $input[ $key ] ?? '' ) );
 		return '' !== $value ? $value : $fallback;
-	}
-
-	/** @return array{agents_api:string,data_machine:string,data_machine_code:string} */
-	private static function browser_default_component_paths(): array {
-		$paths = array(
-			'agents_api'        => '',
-			'data_machine'      => '',
-			'data_machine_code' => '',
-		);
-
-		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
-			return $paths;
-		}
-
-		$plugin_dir = self::browser_clean_path( (string) WP_PLUGIN_DIR );
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
-			$path = $plugin_dir . DIRECTORY_SEPARATOR . $slug;
-			if ( is_dir( $path ) ) {
-				$paths[ $key ] = $path;
-			}
-		}
-
-		return $paths;
 	}
 
 	/** @return array<string,mixed> */
@@ -2098,7 +2164,7 @@ final class WP_Codebox_Abilities {
 		}
 
 		$origin        = self::url_origin( $parts );
-		$default_hosts = self::is_loopback_host( $host ) ? array( 'downloads.wordpress.org', $host ) : array( 'downloads.wordpress.org' );
+		$default_hosts = self::is_loopback_host( $host ) ? array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com', $host ) : array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
 		$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_plugin_allowed_hosts', $default_hosts, $url, $index ) ) );
 		if ( ! in_array( $host, $allowed_hosts, true ) ) {
 			return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );
