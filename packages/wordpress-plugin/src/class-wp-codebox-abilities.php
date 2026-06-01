@@ -1208,18 +1208,64 @@ final class WP_Codebox_Abilities {
 				return new WP_Error( 'wp_codebox_browser_mu_plugin_file_invalid', 'Browser mu-plugin files must be safe PHP filenames.', array( 'status' => 400, 'index' => $index ) );
 			}
 
+			$source_path = self::browser_clean_path( (string) ( $mu_plugin['path'] ?? '' ) );
+			$source_url  = trim( (string) ( $mu_plugin['url'] ?? '' ) );
+			$package     = null;
+			$provenance  = array();
+			if ( '' !== $source_path || '' !== $source_url ) {
+				if ( '' === $slug ) {
+					return new WP_Error( 'wp_codebox_browser_mu_plugin_slug_missing', 'Packaged browser mu-plugin specs require a slug.', array( 'status' => 400, 'index' => $index ) );
+				}
+
+				if ( '' !== $source_path ) {
+					if ( ! is_dir( $source_path ) ) {
+						return new WP_Error( 'wp_codebox_browser_mu_plugin_path_missing', 'Browser mu-plugin path does not exist.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+					}
+
+					$package    = self::browser_package_component_plugin( $slug, $source_path );
+					$provenance = array(
+						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+						'source' => 'runtime-mu-plugin-path',
+						'path'   => $source_path,
+					);
+				} else {
+					$package    = self::browser_package_remote_plugin( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
+					$provenance = array(
+						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+						'source' => 'runtime-mu-plugin-remote-package',
+						'url'    => $source_url,
+					);
+				}
+
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+			}
+
 			$content = (string) ( $mu_plugin['content'] ?? '' );
-			if ( '' === trim( $content ) ) {
+			if ( null === $package && '' === trim( $content ) ) {
 				return new WP_Error( 'wp_codebox_browser_mu_plugin_content_missing', 'Browser mu-plugin content is required.', array( 'status' => 400, 'index' => $index ) );
 			}
 
-			$normalized[] = array(
+			$target_folder = sanitize_key( (string) ( $mu_plugin['targetFolderName'] ?? $slug ) );
+			$entry         = ltrim( str_replace( '\\', '/', (string) ( $mu_plugin['entry'] ?? ( '' !== $target_folder ? $target_folder . '.php' : '' ) ) ), '/' );
+			if ( null !== $package && ( '' === $target_folder || '' === $entry || str_contains( $entry, '..' ) || str_starts_with( $entry, '/' ) || ! str_ends_with( $entry, '.php' ) ) ) {
+				return new WP_Error( 'wp_codebox_browser_mu_plugin_entry_invalid', 'Packaged browser mu-plugins require a safe PHP entry file.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+			}
+
+			$normalized[] = array_filter( array(
 				'slug'            => '' !== $slug ? $slug : self::safe_key( basename( $file, '.php' ) ),
 				'file'            => $file,
 				'path'            => '/wordpress/wp-content/mu-plugins/' . $file,
 				'content'         => $content,
+				'url'             => is_array( $package ) ? $package['url'] : '',
+				'sha256'          => is_array( $package ) ? $package['sha256'] : '',
+				'targetFolderName' => $target_folder,
+				'entry'           => $entry,
+				'local_package'   => null !== $package,
+				'provenance'      => array_filter( array_merge( $provenance, array( 'sha256' => is_array( $package ) ? $package['sha256'] : '' ) ) ),
 				'readiness'       => 'compiled',
-			);
+			), static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value );
 		}
 
 		return $normalized;
@@ -2198,6 +2244,10 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $mu_plugin Mu-plugin spec. */
 	private static function browser_mu_plugin_install_php( array $mu_plugin ): string {
+		if ( ! empty( $mu_plugin['local_package'] ) ) {
+			return self::browser_packaged_mu_plugin_install_php( $mu_plugin );
+		}
+
 		return '<?php
 $path = ' . var_export( $mu_plugin['path'], true ) . ';
 $directory = dirname( $path );
@@ -2205,6 +2255,54 @@ if ( ! is_dir( $directory ) ) {
 	mkdir( $directory, 0777, true );
 }
 file_put_contents( $path, ' . var_export( $mu_plugin['content'], true ) . ' );
+';
+	}
+
+	/** @param array<string,mixed> $mu_plugin Packaged mu-plugin spec. */
+	private static function browser_packaged_mu_plugin_install_php( array $mu_plugin ): string {
+		return '<?php
+$package_url = ' . var_export( (string) $mu_plugin['url'], true ) . ';
+$expected_sha256 = ' . var_export( (string) ( $mu_plugin['sha256'] ?? '' ), true ) . ';
+$target_directory = "/wordpress/wp-content/mu-plugins/" . ' . var_export( (string) $mu_plugin['targetFolderName'], true ) . ';
+$loader_path = ' . var_export( (string) $mu_plugin['path'], true ) . ';
+$entry = ' . var_export( (string) $mu_plugin['entry'], true ) . ';
+
+$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+	? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
+	: file_get_contents( $package_url );
+if ( ! is_string( $archive ) || "" === $archive ) {
+	throw new RuntimeException( "Could not read browser mu-plugin package." );
+}
+if ( "" !== $expected_sha256 && ! hash_equals( $expected_sha256, hash( "sha256", $archive ) ) ) {
+	throw new RuntimeException( "Browser mu-plugin package hash mismatch." );
+}
+
+$tmp_zip = tempnam( sys_get_temp_dir(), "wp-codebox-mu-plugin-" );
+if ( false === $tmp_zip || false === file_put_contents( $tmp_zip, $archive ) ) {
+	throw new RuntimeException( "Could not stage browser mu-plugin package." );
+}
+
+$zip = new ZipArchive();
+if ( true !== $zip->open( $tmp_zip ) ) {
+	@unlink( $tmp_zip );
+	throw new RuntimeException( "Could not open browser mu-plugin package." );
+}
+if ( ! is_dir( $target_directory ) ) {
+	mkdir( $target_directory, 0777, true );
+}
+$zip->extractTo( dirname( $target_directory ) );
+$zip->close();
+@unlink( $tmp_zip );
+
+$entry_path = $target_directory . "/" . $entry;
+if ( ! is_readable( $entry_path ) ) {
+	throw new RuntimeException( "Browser mu-plugin package entry file is missing." );
+}
+$loader_directory = dirname( $loader_path );
+if ( ! is_dir( $loader_directory ) ) {
+	mkdir( $loader_directory, 0777, true );
+}
+file_put_contents( $loader_path, "<?php\nrequire_once " . var_export( $entry_path, true ) . ";\n" );
 ';
 	}
 

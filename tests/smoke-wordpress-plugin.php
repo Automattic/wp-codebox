@@ -383,6 +383,10 @@ $GLOBALS['wp_codebox_remote_responses']['https://github.com/example/static-site-
 	'response' => array( 'code' => 200 ),
 	'body'     => "PK\x03\x04static-site-importer",
 );
+$GLOBALS['wp_codebox_remote_responses']['https://github.com/example/generic-mu-runtime/releases/download/v1.0.0/generic-mu-runtime.zip'] = array(
+	'response' => array( 'code' => 200 ),
+	'body'     => "PK\x03\x04generic-mu-runtime",
+);
 mkdir( $root . '/plugin-root/data-machine', 0777, true );
 mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
 mkdir( $root . '/plugin-root/generic-caller-plugin', 0777, true );
@@ -556,6 +560,28 @@ $assert( 'browser Playground session exposes preview URL', ! is_wp_error( $brows
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 $assert( 'browser Playground session returns canonical task input metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/task-input/v1' === ( $browser_session['task_input']['schema'] ?? '' ) && 1 === ( $browser_session['task_input']['version'] ?? 0 ) );
 $assert( 'browser Playground session exposes canonical task string', ! is_wp_error( $browser_session ) && 'Prepare a browser Playground preview.' === ( $browser_session['task'] ?? '' ) );
+
+$browser_packaged_mu_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'    => 'Prepare a browser Playground with packaged runtime infrastructure.',
+		'runtime' => array(
+			'mu_plugins' => array(
+				array(
+					'slug'             => 'generic-mu-runtime',
+					'file'             => 'generic-mu-runtime-loader.php',
+					'url'              => 'https://github.com/example/generic-mu-runtime/releases/download/v1.0.0/generic-mu-runtime.zip',
+					'targetFolderName' => 'generic-mu-runtime',
+					'entry'            => 'generic-mu-runtime.php',
+				),
+			),
+		),
+	)
+);
+$packaged_mu_steps = ! is_wp_error( $browser_packaged_mu_session ) ? ( $browser_packaged_mu_session['playground']['blueprint']['steps'] ?? array() ) : array();
+$packaged_mu_code  = (string) ( $packaged_mu_steps[1]['code'] ?? '' );
+$assert( 'browser Playground session packages runtime mu-plugin dependencies through safe delivery', ! is_wp_error( $browser_packaged_mu_session ) && 1 === ( $browser_packaged_mu_session['runtime']['summary']['mu_plugins'] ?? 0 ) && str_starts_with( (string) ( $browser_packaged_mu_session['runtime']['mu_plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && 'runtime-mu-plugin-remote-package' === ( $browser_packaged_mu_session['runtime']['mu_plugins'][0]['provenance']['source'] ?? '' ) );
+$assert( 'browser Playground session installs packaged runtime mu-plugin into visible Playground', ! is_wp_error( $browser_packaged_mu_session ) && 'runPHP' === ( $packaged_mu_steps[1]['step'] ?? '' ) && ! in_array( 'installPlugin', array_map( static fn( array $step ): string => (string) ( $step['step'] ?? '' ), $packaged_mu_steps ), true ) && str_contains( $packaged_mu_code, '/wordpress/wp-content/mu-plugins/generic-mu-runtime' ) && str_contains( $packaged_mu_code, '/wordpress/wp-content/mu-plugins/generic-mu-runtime-loader.php' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] = static fn(): int => 1;
 $browser_url_package_session = call_user_func(
