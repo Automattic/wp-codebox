@@ -158,7 +158,7 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
 $root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
-foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
+foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
 $GLOBALS['wp_codebox_upload_dir'] = array(
@@ -947,13 +947,14 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = '';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = '';
-$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ) use ( $root ): array {
 	$resolution['connectors'] = array(
 		array(
 			'name'       => $request['connectors'][0] ?? 'primary-ai',
 			'status'     => 'resolved',
 			'provider'   => 'openai',
 			'model'      => 'gpt-5.5',
+			'provider_plugin_paths' => array( $root . '/ai-provider-inherited' ),
 			'secret_env' => array( 'OPENAI_API_KEY' ),
 			'secret_env_values' => array( 'OPENAI_API_KEY' => 'sk-test-secret-value' ),
 			'credentials' => array(
@@ -1000,6 +1001,7 @@ $inherit_recipe    = json_decode( $captured_recipe, true );
 $inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
 $assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
 $assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
+$assert( 'runner mounts inherited provider plugin path', ! is_wp_error( $inherit_result ) && str_contains( $captured_recipe, 'ai-provider-inherited' ) && in_array( 'provider-plugin-slugs=ai-provider-test,ai-provider-inherited', $inherit_step_args, true ) );
 $assert( 'runner transports inherited secret env name only', ! is_wp_error( $inherit_result ) && in_array( 'OPENAI_API_KEY', $inherit_recipe['inputs']['secretEnv'] ?? array(), true ) && ! str_contains( $captured_recipe, 'OPENAI_API_KEY=' ) );
 $assert( 'runner passes inherited secret env value to command runner', ! is_wp_error( $inherit_result ) && 'sk-test-secret-value' === ( $captured_secret_env['OPENAI_API_KEY'] ?? '' ) );
 $assert( 'runner records connector credential provenance without value', ! is_wp_error( $inherit_result ) && 'wp-codebox/connector-credentials/v1' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) );

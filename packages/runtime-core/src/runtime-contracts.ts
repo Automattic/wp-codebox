@@ -215,6 +215,7 @@ export interface WorkspaceRecipeInheritanceConnector {
   status: "resolved" | "unresolved" | "skipped" | (string & {})
   provider?: string
   model?: string
+  providerPluginPaths?: string[]
   secretEnv?: string[]
   credentials?: ConnectorCredentialEnvelope
 }

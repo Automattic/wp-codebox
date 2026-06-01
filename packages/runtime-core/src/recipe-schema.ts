@@ -309,6 +309,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           status: { type: "string" },
           provider: { type: "string" },
           model: { type: "string" },
+          providerPluginPaths: { type: "array", items: { type: "string" } },
           secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
           credentials: { $ref: "#/$defs/connectorCredentialEnvelope" },
         },

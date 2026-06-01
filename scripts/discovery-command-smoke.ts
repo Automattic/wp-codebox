@@ -76,7 +76,7 @@ const representativeRecipes = [
       secretEnv: ["OPENAI_API_KEY"],
       inherit: { connectors: ["primary-ai"], settings: ["site-defaults"] },
       inheritance: {
-        connectors: [{ name: "primary-ai", status: "resolved", provider: "openai", model: "gpt-5.5", secretEnv: ["OPENAI_API_KEY"] }],
+        connectors: [{ name: "primary-ai", status: "resolved", provider: "openai", model: "gpt-5.5", providerPluginPaths: ["/tmp/ai-provider-test"], secretEnv: ["OPENAI_API_KEY"] }],
         settings: [{ name: "site-defaults", status: "resolved", scope: "site" }],
       },
     },

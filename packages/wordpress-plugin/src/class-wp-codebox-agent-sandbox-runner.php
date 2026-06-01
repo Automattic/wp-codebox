@@ -408,21 +408,24 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
-	private function provider_plugin_paths( array $input ): array {
+	private function provider_plugin_paths( array $input, ?array $inheritance = null ): array {
 		$configured = $this->configured_paths();
 		$paths      = is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : ( $configured['provider_plugins'] ?? array() );
+		$paths      = array_merge( is_array( $paths ) ? $paths : array(), $this->inheritance_provider_plugin_paths( $input, $inheritance ) );
 
 		if ( ! is_array( $paths ) ) {
 			return array();
 		}
 
 		return array_values(
-			array_filter(
-				array_map(
-					fn( $path ): string => $this->clean_path( (string) $path ),
-					$paths
-				),
-				static fn( string $path ): bool => '' !== $path && is_dir( $path )
+			array_unique(
+				array_filter(
+					array_map(
+						fn( $path ): string => $this->clean_path( (string) $path ),
+						$paths
+					),
+					static fn( string $path ): bool => '' !== $path && is_dir( $path )
+				)
 			)
 		);
 	}
@@ -577,6 +580,17 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				if ( '' !== $value ) {
 					$entry[ $field ] = $value;
 				}
+			}
+
+			$provider_plugin_paths = $this->string_list( $connector['provider_plugin_paths'] ?? $connector['providerPluginPaths'] ?? array() );
+			$provider_plugin_paths = array_values(
+				array_filter(
+					array_map( fn( string $path ): string => $this->clean_path( $path ), $provider_plugin_paths ),
+					static fn( string $path ): bool => '' !== $path && is_dir( $path )
+				)
+			);
+			if ( ! empty( $provider_plugin_paths ) ) {
+				$entry['providerPluginPaths'] = array_values( array_unique( $provider_plugin_paths ) );
 			}
 
 			$secret_env = $this->string_list( $connector['secret_env'] ?? $connector['secretEnv'] ?? array() );
@@ -747,6 +761,16 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return '';
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return string[] */
+	private function inheritance_provider_plugin_paths( array $input, ?array $inheritance = null ): array {
+		$paths = array();
+		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
+			$paths = array_merge( $paths, $this->string_list( $connector['providerPluginPaths'] ?? array() ) );
+		}
+
+		return $paths;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
@@ -1430,7 +1454,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'slug'     => basename( $path ),
 				'activate' => false,
 			),
-			$this->provider_plugin_paths( $input )
+			$this->provider_plugin_paths( $input, $inheritance )
 		);
 
 		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );

@@ -85,11 +85,13 @@ connectors or settings by name:
 
 The parent site resolves that declaration through the
 `wp_codebox_resolve_inheritance` filter. The resolver may return connector
-status, `provider`, `model`, and `secret_env` names. WP Codebox records the
-requested names and sanitized resolution status in the generated recipe/artifact
-metadata and merges inherited `secret_env` names into the sandbox secret-env
-allowlist. Secret values and setting values are not serialized into recipe JSON,
-artifact metadata, logs, or patches by this transport slice.
+status, `provider`, `model`, `provider_plugin_paths`, and `secret_env` names. WP
+Codebox records the requested names and sanitized resolution status in the
+generated recipe/artifact metadata, mounts inherited provider plugins, and merges
+inherited `secret_env` names into the sandbox secret-env allowlist. Connector
+secret values are passed to the sandbox process environment only; secret values
+and setting values are not serialized into recipe JSON, artifact metadata, logs,
+or patches by this transport slice.
 
 Product callers may pass `mounts` to add editable or readonly host directories
 to the generated recipe. Each mount may include opaque `metadata` such as
