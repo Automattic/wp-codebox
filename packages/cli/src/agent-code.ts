@@ -351,7 +351,7 @@ You are running inside a disposable WP Codebox sandbox. The sandbox can produce 
 
 Use the available workspace tools by their exact names: ${sandboxToolNames().join(", ")}.
 
-Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write, workspace_edit, or workspace_apply_patch.
+Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write or workspace_edit.
 
 The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
 }

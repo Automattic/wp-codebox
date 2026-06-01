@@ -19,7 +19,8 @@ async function main() {
   assert.match(code, /WP Codebox Sandbox Perception/, "sandbox perception should expose workspace context by default")
   assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")
   assert.match(code, /Do not invent alternate tool names such as read_file/, "sandbox guidance should prevent pseudo-tool aliases")
-  assert.match(code, /workspace_apply_patch/, "sandbox tool policy should include patch application")
+  assert.doesNotMatch(code, /workspace_apply_patch/, "sandbox tool policy should not advertise git-backed patch application")
+  assert.match(code, /For changes use workspace_write or workspace_edit/, "sandbox guidance should steer changes to tools that work without git")
 
   const runCode = agentSandboxRunCode(
     '{"prompt":"Do not interpolate $buckets, $meta, or $state_store."}',
