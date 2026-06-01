@@ -28,6 +28,9 @@ export interface RecipeArtifactEvidenceResult {
   agentResult?: AgentSandboxResultSummary & {
     artifact: RecipeArtifactEvidenceFile
   }
+  completionOutcome?: SandboxCompletionOutcome & {
+    artifact: RecipeArtifactEvidenceFile
+  }
   transcript?: AgentSandboxTranscript & {
     artifact: RecipeArtifactEvidenceFile
   }
@@ -62,6 +65,34 @@ export interface AgentSandboxResultSummary {
   noOpReason?: string
   workspaceTools?: {
     diagnostics: string[]
+  }
+}
+
+export interface SandboxCompletionOutcome {
+  schema: "wp-codebox/sandbox-completion-outcome/v1"
+  status: "succeeded" | "blocked" | "failed" | "partial"
+  summary: string
+  changedFiles: AgentSandboxResultSummary["changedFiles"]
+  patch: AgentSandboxResultSummary["patch"]
+  artifacts: AgentSandboxResultSummary["artifacts"]
+  verification: {
+    transcript: AgentSandboxResultSummary["transcript"]
+    commands: Array<{ command: string; exitCode: number }>
+    artifactBundle?: {
+      artifact: string
+      status: "passed" | "failed" | "unknown"
+      strict: boolean
+    }
+  }
+  blockers: Array<{ kind: string; message: string; retryable: boolean }>
+  riskNotes: string[]
+  confidence: "high" | "medium" | "low"
+  nextAction: "promote" | "retry" | "review" | "fix-blocker"
+  provenance: {
+    artifactBundleId: string
+    artifactDirectory: string
+    runtime?: RuntimeInfo
+    task?: Record<string, unknown>
   }
 }
 
@@ -311,7 +342,7 @@ export async function finalizeRecipeArtifactEvidence(
   return result
 }
 
-export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "transcript">> {
+export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "completionOutcome" | "transcript">> {
   const transcript = buildAgentSandboxTranscript(executions)
   if (transcript.executions.length === 0) {
     return {}
@@ -319,13 +350,17 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
 
   const transcriptPath = join(dirname(artifacts.reviewPath), "transcript.json")
   const agentResultPath = join(dirname(artifacts.reviewPath), "agent-result.json")
+  const completionOutcomePath = join(dirname(artifacts.reviewPath), "completion-outcome.json")
   const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
   const agentResult = await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path)
   const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
-  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, transcriptFile])
+  const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
+  const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, completionOutcomeFile, transcriptFile])
 
   return {
     agentResult: { ...agentResult, artifact: agentResultFile },
+    completionOutcome: { ...completionOutcome, artifact: completionOutcomeFile },
     transcript: { ...transcript, artifact: transcriptFile },
   }
 }
@@ -393,6 +428,43 @@ async function buildAgentSandboxResultSummary(artifacts: ArtifactBundle, transcr
     failures,
     noOpReason,
     workspaceTools: workspaceToolDiagnostics(transcript),
+  })
+}
+
+function buildSandboxCompletionOutcome(artifacts: ArtifactBundle, agentResult: AgentSandboxResultSummary, transcript: AgentSandboxTranscript): SandboxCompletionOutcome {
+  const blockedDiagnostics = new Set(agentResult.workspaceTools?.diagnostics ?? [])
+  const blockers = agentResult.failures.map((failure) => ({
+    kind: blockedDiagnostics.size > 0 ? "runtime-blocker" : "runtime-failure",
+    message: failure.message,
+    retryable: true,
+  }))
+  const status: SandboxCompletionOutcome["status"] = agentResult.status === "failed"
+    ? blockedDiagnostics.size > 0 ? "blocked" : "failed"
+    : agentResult.status === "completed"
+      ? agentResult.actionable ? "succeeded" : "partial"
+      : "partial"
+  const confidence: SandboxCompletionOutcome["confidence"] = status === "succeeded" ? "high" : blockers.length > 0 ? "low" : "medium"
+  const nextAction: SandboxCompletionOutcome["nextAction"] = status === "succeeded" ? "promote" : status === "blocked" ? "fix-blocker" : status === "failed" ? "retry" : "review"
+
+  return stripUndefined({
+    schema: "wp-codebox/sandbox-completion-outcome/v1" as const,
+    status,
+    summary: agentResult.summary,
+    changedFiles: agentResult.changedFiles,
+    patch: agentResult.patch,
+    artifacts: agentResult.artifacts,
+    verification: {
+      transcript: agentResult.transcript,
+      commands: transcript.executions.map((execution) => ({ command: execution.command, exitCode: execution.exitCode })),
+    },
+    blockers,
+    riskNotes: agentResult.noOpReason ? [agentResult.noOpReason] : [],
+    confidence,
+    nextAction,
+    provenance: {
+      artifactBundleId: artifacts.id,
+      artifactDirectory: artifacts.directory,
+    },
   })
 }
 
@@ -512,6 +584,15 @@ export function recipeAgentResultOutput(agentResult: RecipeArtifactEvidenceResul
   }
 
   const { artifact: _artifact, ...result } = agentResult
+  return result
+}
+
+export function recipeCompletionOutcomeOutput(completionOutcome: RecipeArtifactEvidenceResult["completionOutcome"]): SandboxCompletionOutcome | undefined {
+  if (!completionOutcome) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = completionOutcome
   return result
 }
 

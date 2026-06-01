@@ -15,6 +15,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const TASK_INPUT_SCHEMA = WP_Codebox_Agent_Task::INPUT_SCHEMA;
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const REMEDIATION_OUTCOME_SCHEMA = 'wp-codebox/agent-sandbox-remediation-outcome/v1';
+	private const COMPLETION_OUTCOME_SCHEMA = 'wp-codebox/sandbox-completion-outcome/v1';
 	private const SANDBOX_TOOL_POLICY_FILE = __DIR__ . '/generated-sandbox-datamachine-tool-policy.php';
 
 	/** @var array<string, callable> */
@@ -140,6 +141,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'artifacts'    => $artifacts,
 			'exit_code'    => $exit_code,
 			'agent_result' => is_array( $decoded['agentResult'] ?? null ) ? $decoded['agentResult'] : array(),
+			'completion_outcome' => $this->completion_outcome( $decoded ),
 			'run'          => $decoded,
 		);
 
@@ -222,6 +224,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'preview_url' => (string) ( $task_result['session']['artifacts']['preview_url'] ?? '' ),
 				'artifacts'    => $task_result['session']['artifacts'] ?? array(),
 				'agent_result' => $task_result['agent_result'] ?? array(),
+				'completion_outcome' => $task_result['completion_outcome'] ?? array(),
 				'run'          => $task_result['run'] ?? array(),
 			);
 		}
@@ -996,6 +999,16 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		if ( $false_positive ) {
 			$outcome['kind'] = 'noop_artifact';
 			$outcome['false_positive'] = true;
+		}
+
+		return $outcome;
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function completion_outcome( array $run ): array {
+		$outcome = is_array( $run['completionOutcome'] ?? null ) ? $run['completionOutcome'] : array();
+		if ( self::COMPLETION_OUTCOME_SCHEMA !== ( $outcome['schema'] ?? '' ) ) {
+			return array();
 		}
 
 		return $outcome;
@@ -1869,6 +1882,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'path'        => $artifacts,
 					'bundle_id'   => is_array( $run['artifacts'] ?? null ) ? (string) ( $run['artifacts']['id'] ?? '' ) : '',
 					'preview_url' => is_array( $run['artifacts']['preview'] ?? null ) ? (string) ( $run['artifacts']['preview']['url'] ?? '' ) : '',
+					'completion_outcome' => is_array( $run['completionOutcome'] ?? null ) ? 'files/completion-outcome.json' : '',
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			)

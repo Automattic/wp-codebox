@@ -69,6 +69,7 @@ final class WP_Codebox_Abilities {
 			$session_input     = self::sandbox_session_input_schema();
 			$preview_schema    = self::preview_input_schema();
 			$outcome_schema    = self::remediation_outcome_schema();
+			$completion_outcome_schema = self::completion_outcome_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -180,6 +181,7 @@ final class WP_Codebox_Abilities {
 							'artifacts' => array( 'type' => 'string' ),
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
+							'completion_outcome' => $completion_outcome_schema,
 							'run'       => array( 'type' => 'object' ),
 						),
 					),
@@ -271,6 +273,7 @@ final class WP_Codebox_Abilities {
 										'preview_url' => array( 'type' => 'string' ),
 										'artifacts'   => array( 'type' => 'object' ),
 										'outcome'     => $outcome_schema,
+										'completion_outcome' => $completion_outcome_schema,
 										'run'         => array( 'type' => 'object' ),
 										'error'       => array( 'type' => 'object' ),
 									),
@@ -734,6 +737,31 @@ final class WP_Codebox_Abilities {
 				'artifact'              => array( 'type' => 'object' ),
 				'metadata'              => array( 'type' => 'object' ),
 				'diagnostics'           => array( 'type' => 'object' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function completion_outcome_schema(): array {
+		return array(
+			'type'        => 'object',
+			'description' => 'Generic sandbox completion outcome emitted as files/completion-outcome.json and returned for orchestration without parsing prose.',
+			'properties'  => array(
+				'schema'       => array( 'type' => 'string' ),
+				'status'       => array(
+					'type' => 'string',
+					'enum' => array( 'succeeded', 'blocked', 'failed', 'partial' ),
+				),
+				'summary'      => array( 'type' => 'string' ),
+				'changedFiles' => array( 'type' => 'object' ),
+				'patch'        => array( 'type' => 'object' ),
+				'artifacts'    => array( 'type' => 'object' ),
+				'verification' => array( 'type' => 'object' ),
+				'blockers'     => array( 'type' => 'array' ),
+				'riskNotes'    => array( 'type' => 'array' ),
+				'confidence'   => array( 'type' => 'string' ),
+				'nextAction'   => array( 'type' => 'string' ),
+				'provenance'   => array( 'type' => 'object' ),
 			),
 		);
 	}
