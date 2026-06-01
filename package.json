@@ -36,6 +36,7 @@
     "artifact-bundle-verifier-smoke": "tsx scripts/artifact-bundle-verifier-smoke.ts",
     "artifact-redaction-smoke": "tsx scripts/artifact-redaction-smoke.ts",
     "artifact-patch-git-apply-smoke": "tsx scripts/artifact-patch-git-apply-smoke.ts",
+    "mounted-workspace-diff-smoke": "tsx scripts/mounted-workspace-diff-smoke.ts",
     "policy-validation-smoke": "tsx scripts/policy-validation-smoke.ts",
     "workspace-policy-smoke": "tsx scripts/workspace-policy-smoke.ts",
     "artifact-contract-smoke": "tsx scripts/artifact-contract-smoke.ts",

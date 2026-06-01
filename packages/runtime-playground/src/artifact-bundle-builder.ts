@@ -115,7 +115,7 @@ export class ArtifactBundleBuilder {
         .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
     )
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
-    const { mountDiffs, changedFiles, patch } = await source.captureMountDiffs(filesDirectory, redactor)
+    const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
     const redactedPatch = redactor.redact("files/patch.diff", patch)
     const contentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
@@ -143,6 +143,13 @@ export class ArtifactBundleBuilder {
     }
     source.recordArtifactsCollected(bundleId, createdAt, spec)
     const diagnostics = buildArtifactDiagnostics(source.observations)
+    diagnostics.diagnostics.push(...mountDiffDiagnostics)
+    diagnostics.summary.total = diagnostics.diagnostics.length
+    diagnostics.summary.error = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length
+    diagnostics.summary.warning = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length
+    diagnostics.summary.notice = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "notice").length
+    diagnostics.summary.info = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "info").length
+    diagnostics.status = diagnostics.summary.total > 0 ? "reported" : "clean"
     const testResults = buildTestResults()
     const review = buildArtifactReview({
       artifactId: bundleId,

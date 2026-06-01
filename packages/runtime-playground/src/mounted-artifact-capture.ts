@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
-import type { MountSpec } from "@chubes4/wp-codebox-core"
+import type { ArtifactDiagnostic, MountSpec } from "@chubes4/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -52,15 +52,60 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
   const diffs: MountDiff[] = []
   const changedFiles: ChangedFile[] = []
   const patches: string[] = []
+  const diagnostics: ArtifactDiagnostic[] = []
 
   for (const [mountIndex, mount] of mounts.entries()) {
     const baselineSource = typeof mount.metadata?.baselineSource === "string" ? mount.metadata.baselineSource : ""
-    if (mount.mode !== "readwrite" || !baselineSource) {
+    if (mount.mode !== "readwrite") {
       continue
     }
 
-    const diff = await directoryDiff(baselineSource, mount.source, mount.target)
     const artifactPath = `files/diffs/mount-${mountIndex}.patch`
+    if (!baselineSource) {
+      await writeFile(join(artifactRoot, artifactPath), "")
+      diffs.push({
+        mountIndex,
+        source: mount.source,
+        target: mount.target,
+        artifactPath,
+        changed: false,
+        status: "skipped",
+        reason: "missing-baseline-source",
+      })
+      continue
+    }
+
+    let diff: Awaited<ReturnType<typeof directoryDiff>>
+    try {
+      diff = await directoryDiff(baselineSource, mount.source, mount.target)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await writeFile(join(artifactRoot, artifactPath), "")
+      diffs.push({
+        mountIndex,
+        source: mount.source,
+        target: mount.target,
+        baselineSource,
+        artifactPath,
+        changed: false,
+        status: "failed",
+        reason: "diff-extraction-failed",
+        error: message,
+      })
+      diagnostics.push({
+        id: `mount-${mountIndex}-diff-extraction-failed`,
+        type: "mount-diff-extraction-failed",
+        severity: "error",
+        message: `Failed to compare mounted workspace ${mount.target} against its baseline: ${message}`,
+        category: "artifact-capture",
+        source: mount.source,
+        path: mount.target,
+        refs: [{ path: artifactPath, kind: "diff" }],
+        details: { mountIndex, baselineSource, target: mount.target },
+      })
+      continue
+    }
+
     await writeFile(join(artifactRoot, artifactPath), redactor.redact(artifactPath, diff.patch))
     diffs.push({
       mountIndex,
@@ -69,6 +114,7 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
       baselineSource,
       artifactPath,
       changed: diff.patch.trim().length > 0,
+      status: diff.patch.trim().length > 0 ? "changed" : "unchanged",
     })
     patches.push(diff.patch)
     changedFiles.push(
@@ -88,6 +134,7 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
       files: changedFiles,
     },
     patch: patches.filter((patch) => patch.length > 0).join("\n"),
+    diagnostics,
   }
 }
 
