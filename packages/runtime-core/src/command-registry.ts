@@ -74,6 +74,7 @@ export const commandRegistry = [
       { name: "warmup", description: "Warmup iterations before measurement.", format: "non-negative integer" },
       { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
+      { name: "bootstrap-files-json", description: "Component-relative bootstrap file fallbacks; the first existing file is loaded before workloads execute.", format: "JSON array" },
       { name: "workloads-json", description: "Explicit workload list.", format: "JSON array" },
     ],
     outputShape: "Benchmark results JSON envelope with component_id, iterations, and scenarios.",

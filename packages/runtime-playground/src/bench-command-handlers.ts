@@ -5,6 +5,7 @@ export interface BenchRunCodeOptions {
   warmupIterations: number
   dependencySlugs: string[]
   env: Record<string, unknown>
+  bootstrapFiles: string[]
   workloads: unknown[]
   wpCliBridge?: { url: string; token: string }
 }
@@ -19,6 +20,7 @@ $iterations = max(1, (int) ${JSON.stringify(String(options.iterations))});
 $warmup_iterations = max(0, (int) ${JSON.stringify(String(options.warmupIterations))});
 $dependency_slugs = json_decode(${JSON.stringify(JSON.stringify(options.dependencySlugs))}, true);
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
+$bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
 $configured_workloads = json_decode(${JSON.stringify(JSON.stringify(options.workloads))}, true);
 $wp_cli_bridge_url = ${JSON.stringify(options.wpCliBridge?.url ?? null)};
 $wp_cli_bridge_token = ${JSON.stringify(options.wpCliBridge?.token ?? null)};
@@ -154,6 +156,21 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
     if (is_wp_error($activation)) {
         throw new RuntimeException($activation->get_error_message());
     }
+}
+$loaded_bootstrap_file = '';
+foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_file) {
+    if (!is_string($bootstrap_file) || $bootstrap_file === '' || str_contains($bootstrap_file, '..')) {
+        continue;
+    }
+    $bootstrap_path = $plugin_path . '/' . ltrim($bootstrap_file, '/');
+    if (file_exists($bootstrap_path)) {
+        require_once $bootstrap_path;
+        $loaded_bootstrap_file = $bootstrap_file;
+        break;
+    }
+}
+if (is_array($bootstrap_files) && count($bootstrap_files) > 0 && $loaded_bootstrap_file === '') {
+    throw new RuntimeException('No configured wordpress.bench bootstrap files were found.');
 }
 if (!empty($plugins_to_activate)) {
     do_action('plugins_loaded');

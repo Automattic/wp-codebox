@@ -52,6 +52,7 @@
     "theme-check-normalization-smoke": "tsx scripts/theme-check-normalization-smoke.ts",
     "phpunit-diagnostic-artifact-smoke": "tsx scripts/phpunit-diagnostic-artifact-smoke.ts",
     "plugin-check-normalization-smoke": "tsx scripts/plugin-check-normalization-smoke.ts",
+    "bench-bootstrap-files-smoke": "tsx scripts/bench-bootstrap-files-smoke.ts",
     "recipe-bench-smoke": "tsx scripts/recipe-bench-smoke.ts",
     "recipe-browser-bench-metrics-smoke": "tsx scripts/recipe-browser-bench-metrics-smoke.ts",
     "recipe-browser-smoke": "tsx scripts/recipe-browser-smoke.ts",
