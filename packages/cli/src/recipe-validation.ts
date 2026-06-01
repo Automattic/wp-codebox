@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -49,6 +49,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   }
 
   validateRecipeMounts(recipe.runtime?.stack?.mounts, "runtime stack", recipePath)
+  validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
 
   const workspaces = recipe.inputs?.workspaces ?? []
@@ -184,6 +185,33 @@ function validateRecipeMounts(mounts: WorkspaceRecipeMount[] | undefined, label:
   }
 }
 
+function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[] | undefined, recipePath: string): void {
+  if (overlays && !Array.isArray(overlays)) {
+    throw new Error(`Recipe runtime overlays must be an array: ${recipePath}`)
+  }
+
+  for (const overlay of overlays ?? []) {
+    if (overlay.kind !== "bundled-library") {
+      throw new Error(`Recipe runtime overlay kind is unsupported: ${recipePath}`)
+    }
+    if (overlay.library !== "php-ai-client") {
+      throw new Error(`Recipe runtime overlay library is unsupported: ${recipePath}`)
+    }
+    if (overlay.strategy !== "wordpress-scoped-bundle") {
+      throw new Error(`Recipe runtime overlay strategy is unsupported: ${recipePath}`)
+    }
+    if (!overlay.source || typeof overlay.source !== "string") {
+      throw new Error(`Recipe runtime overlays must include source: ${recipePath}`)
+    }
+    if (overlay.target !== undefined && typeof overlay.target !== "string") {
+      throw new Error(`Recipe runtime overlay target must be a string when provided: ${recipePath}`)
+    }
+    if (overlay.metadata !== undefined && (!overlay.metadata || typeof overlay.metadata !== "object" || Array.isArray(overlay.metadata))) {
+      throw new Error(`Recipe runtime overlay metadata must be an object when provided: ${recipePath}`)
+    }
+  }
+}
+
 export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: string): Promise<RecipeValidationIssue[]> {
   const recipeDirectory = dirname(recipePath)
   const issues: RecipeValidationIssue[] = []
@@ -209,6 +237,12 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
     const path = `$.inputs.mounts[${index}]`
     await validateExistingMountSource(resolve(recipeDirectory, mount.source), mount.type, `${path}.source`, addIssue)
     validateAbsoluteSandboxPath(mount.target, `${path}.target`, addIssue)
+  }
+
+  for (const [index, overlay] of (recipe.runtime?.overlays ?? []).entries()) {
+    const path = `$.runtime.overlays[${index}]`
+    await validateExistingDirectory(resolve(recipeDirectory, overlay.source), `${path}.source`, addIssue)
+    validateAbsoluteSandboxPath(overlay.target ?? "/wordpress/wp-includes/php-ai-client", `${path}.target`, addIssue)
   }
 
   for (const [index, workspace] of (recipe.inputs?.workspaces ?? []).entries()) {

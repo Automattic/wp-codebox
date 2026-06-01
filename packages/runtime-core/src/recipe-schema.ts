@@ -27,6 +27,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           wp: { type: "string" },
           blueprint: { type: "object" },
           stack: { $ref: "#/$defs/runtimeStack" },
+          overlays: {
+            type: "array",
+            description: "Typed runtime overlays prepared by WP Codebox before mounting into Playground.",
+            items: { $ref: "#/$defs/runtimeOverlay" },
+          },
         },
       },
       inputs: {
@@ -153,6 +158,19 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/mount" },
           },
+        },
+      },
+      runtimeOverlay: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "library", "source", "strategy"],
+        properties: {
+          kind: { const: "bundled-library" },
+          library: { const: "php-ai-client" },
+          source: { type: "string" },
+          target: { type: "string", pattern: "^/" },
+          strategy: { const: "wordpress-scoped-bundle" },
+          metadata: { $ref: "#/$defs/metadata" },
         },
       },
       workspace: {

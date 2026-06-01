@@ -7,7 +7,7 @@ import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, 
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "../recipe-evidence.js"
-import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 
@@ -91,7 +91,7 @@ type RecipeExecutionResult = ExecutionResult & {
 interface RecipeRuntimeDiagnostic {
   schema: "wp-codebox/plugin-runtime-diagnostic/v1"
   severity: "error"
-  phase: "setup" | "health-probe" | "runtime"
+  phase: "setup" | "health-probe" | "runtime" | "overlay-preparation"
   name?: string
   command?: string
   exitCode?: number
@@ -304,6 +304,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
   let stagedFiles: PreparedStagedFile[] = []
+  let overlays: PreparedRuntimeOverlay[] = []
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
@@ -313,6 +314,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
     extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
+    overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
     interruption?.throwIfInterrupted()
 
     runtime = await awaitRecipe(createRuntime(
@@ -329,7 +331,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, options.previewPublicUrl, options.previewPort, options.previewBind),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, options.previewPublicUrl, options.previewPort, options.previewBind),
         },
         preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
@@ -349,6 +351,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           index,
           ...(mount.metadata ?? {}),
         },
+      }))
+      interruption?.throwIfInterrupted()
+    }
+
+    for (const overlay of overlays) {
+      await awaitRecipe(runtime.mount({
+        type: overlay.type,
+        source: overlay.source,
+        target: overlay.target,
+        mode: overlay.mode,
+        metadata: overlay.metadata,
       }))
       interruption?.throwIfInterrupted()
     }
@@ -441,7 +454,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const agentFailure = recipeAgentResultFailure(evidence.agentResult)
     const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles), interruption)
+    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption)
     interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
@@ -499,7 +512,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     }
 
-    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles)
+    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
 
     return {
       success: false,
@@ -512,6 +525,15 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
       error: serializeError(error),
     }
+  }
+}
+
+async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
+  try {
+    return await prepareRecipeRuntimeOverlays(recipe, recipeDirectory)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Recipe runtime overlay preparation failed: ${message}`, { cause: error })
   }
 }
 
@@ -723,11 +745,11 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
     }))
 
   const message = error instanceof Error ? error.message : String(error)
-  if ((recipe.inputs?.pluginRuntime || message.includes("plugin runtime")) && diagnostics.length === 0) {
+  if ((recipe.inputs?.pluginRuntime || recipe.runtime?.overlays || message.includes("plugin runtime") || message.includes("runtime overlay")) && diagnostics.length === 0) {
     diagnostics.push({
       schema: "wp-codebox/plugin-runtime-diagnostic/v1",
       severity: "error",
-      phase: message.includes("health probe") ? "health-probe" : message.includes("setup") ? "setup" : "runtime",
+      phase: message.includes("runtime overlay") ? "overlay-preparation" : message.includes("health probe") ? "health-probe" : message.includes("setup") ? "setup" : "runtime",
       message,
     })
   }
@@ -747,7 +769,7 @@ function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]):
   return { command: step.command, args: step.args ?? [] }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -815,6 +837,12 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       type: stagedFile.type,
       provenance: stagedFile.provenance,
       metadata: stagedFile.metadata,
+    })),
+    preparedRuntimeOverlays: overlays.map((overlay) => ({
+      target: overlay.target,
+      type: overlay.type,
+      mode: overlay.mode,
+      metadata: overlay.metadata,
     })),
   }
 }

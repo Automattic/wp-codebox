@@ -230,7 +230,24 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       planned: "existing" as const,
     }
   }))
+  const runtimeOverlays = (recipe.runtime?.overlays ?? []).map((overlay, index) => ({
+    type: "directory" as const,
+    target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+    mode: "readonly" as const,
+    metadata: {
+      kind: "runtime-overlay",
+      index,
+      overlayKind: overlay.kind,
+      library: overlay.library,
+      strategy: overlay.strategy,
+      source: overlay.source,
+      target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+      ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
+    },
+    planned: "generated" as const,
+  }))
   const mounts: RecipeDryRunMount[] = [
+    ...runtimeOverlays,
     ...workspaces.map((workspace) => ({
       type: "directory" as const,
       ...(workspace.source ? { source: workspace.source } : {}),
