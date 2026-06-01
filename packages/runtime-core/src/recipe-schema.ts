@@ -26,6 +26,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string" },
           wp: { type: "string" },
           blueprint: { type: "object" },
+          stack: { $ref: "#/$defs/runtimeStack" },
         },
       },
       inputs: {
@@ -141,6 +142,17 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
           metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeStack: {
+        type: "object",
+        additionalProperties: false,
+        description: "Explicit runtime stack overlays mounted before recipe workspaces, plugins, and workflow steps. Use this to test alternate WordPress core or bundled dependency refs without consumer-specific shims.",
+        properties: {
+          mounts: {
+            type: "array",
+            items: { $ref: "#/$defs/mount" },
+          },
         },
       },
       workspace: {

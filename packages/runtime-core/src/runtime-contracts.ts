@@ -47,6 +47,10 @@ export interface WorkspaceRecipeMount {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeRuntimeStack {
+  mounts?: WorkspaceRecipeMount[]
+}
+
 export interface WorkspaceRecipeStagedFile {
   source: string
   target: string
@@ -167,6 +171,7 @@ export interface WorkspaceRecipe {
     name?: string
     wp?: string
     blueprint?: unknown
+    stack?: WorkspaceRecipeRuntimeStack
   }
   inputs?: {
     workspaces?: WorkspaceRecipeWorkspace[]

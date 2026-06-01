@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -48,23 +48,8 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
     }
   }
 
-  for (const mount of recipe.inputs?.mounts ?? []) {
-    if (!mount.source || !mount.target) {
-      throw new Error(`Recipe mounts must include source and target: ${recipePath}`)
-    }
-
-    if (mount.type && mount.type !== "directory" && mount.type !== "file") {
-      throw new Error(`Recipe mount type must be directory or file: ${recipePath}`)
-    }
-
-    if (mount.mode && mount.mode !== "readonly" && mount.mode !== "readwrite") {
-      throw new Error(`Recipe mount mode must be readonly or readwrite: ${recipePath}`)
-    }
-
-    if (mount.metadata !== undefined && (!mount.metadata || typeof mount.metadata !== "object" || Array.isArray(mount.metadata))) {
-      throw new Error(`Recipe mount metadata must be an object when provided: ${recipePath}`)
-    }
-  }
+  validateRecipeMounts(recipe.runtime?.stack?.mounts, "runtime stack", recipePath)
+  validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
 
   const workspaces = recipe.inputs?.workspaces ?? []
   if (!Array.isArray(workspaces)) {
@@ -173,6 +158,30 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   }
 
   return recipe
+}
+
+function validateRecipeMounts(mounts: WorkspaceRecipeMount[] | undefined, label: string, recipePath: string): void {
+  if (mounts && !Array.isArray(mounts)) {
+    throw new Error(`Recipe ${label} mounts must be an array: ${recipePath}`)
+  }
+
+  for (const mount of mounts ?? []) {
+    if (!mount.source || !mount.target) {
+      throw new Error(`Recipe ${label} mounts must include source and target: ${recipePath}`)
+    }
+
+    if (mount.type && mount.type !== "directory" && mount.type !== "file") {
+      throw new Error(`Recipe ${label} mount type must be directory or file: ${recipePath}`)
+    }
+
+    if (mount.mode && mount.mode !== "readonly" && mount.mode !== "readwrite") {
+      throw new Error(`Recipe ${label} mount mode must be readonly or readwrite: ${recipePath}`)
+    }
+
+    if (mount.metadata !== undefined && (!mount.metadata || typeof mount.metadata !== "object" || Array.isArray(mount.metadata))) {
+      throw new Error(`Recipe ${label} mount metadata must be an object when provided: ${recipePath}`)
+    }
+  }
 }
 
 export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: string): Promise<RecipeValidationIssue[]> {

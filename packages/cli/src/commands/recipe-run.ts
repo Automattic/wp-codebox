@@ -337,6 +337,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     ))
     interruption?.throwIfInterrupted()
 
+    for (const [index, mount] of (recipe.runtime?.stack?.mounts ?? []).entries()) {
+      const source = resolve(recipeDirectory, mount.source)
+      await awaitRecipe(runtime.mount({
+        type: await recipeMountType(source, mount.type),
+        source,
+        target: mount.target,
+        mode: mount.mode ?? "readonly",
+        metadata: {
+          kind: "runtime-stack-mount",
+          index,
+          ...(mount.metadata ?? {}),
+        },
+      }))
+      interruption?.throwIfInterrupted()
+    }
+
     for (const workspace of workspaceMounts) {
       await awaitRecipe(runtime.mount({
         type: "directory",
