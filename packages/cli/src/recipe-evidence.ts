@@ -82,6 +82,12 @@ export interface AgentSandboxTranscriptExecution {
   parsed?: unknown
 }
 
+export interface AgentSandboxRuntimeFailure {
+  code?: string
+  message: string
+  data?: unknown
+}
+
 export interface RecipeRunAttestation {
   schema: "wp-codebox/run-attestation/v1"
   createdAt: string
@@ -352,12 +358,13 @@ async function buildAgentSandboxResultSummary(artifacts: ArtifactBundle, transcr
   const changedFiles = await readChangedFileSummary(artifacts.changedFilesPath)
   const patch = await readPatchSummary(artifacts.patchPath)
   const failures = transcript.executions
-    .filter((execution) => execution.exitCode !== 0)
-    .map((execution) => ({
+    .map((execution) => ({ execution, runtimeFailure: agentSandboxRuntimeFailure(execution) }))
+    .filter(({ execution, runtimeFailure }) => execution.exitCode !== 0 || runtimeFailure)
+    .map(({ execution, runtimeFailure }) => ({
       executionIndex: execution.executionIndex,
       command: execution.command,
       exitCode: execution.exitCode,
-      message: firstTranscriptMessage(execution) || `Command exited with ${execution.exitCode}`,
+      message: runtimeFailure?.message || firstTranscriptMessage(execution) || `Command exited with ${execution.exitCode}`,
     }))
   const status: AgentSandboxResultSummary["status"] = failures.length > 0 ? "failed" : transcript.executions.length > 0 ? "completed" : "unknown"
   const actionable = status === "completed" && (changedFiles.count > 0 || patch.bytes > 0)
@@ -424,6 +431,11 @@ async function readPatchSummary(path: string): Promise<AgentSandboxResultSummary
 }
 
 function firstTranscriptMessage(execution: AgentSandboxTranscriptExecution): string {
+  const runtimeFailure = agentSandboxRuntimeFailure(execution)
+  if (runtimeFailure) {
+    return runtimeFailure.message
+  }
+
   const parsed = isRecord(execution.parsed) ? execution.parsed : undefined
   const result = isRecord(parsed?.result) ? parsed.result : parsed
   for (const key of ["message", "error", "error_message", "errorMessage", "answer"]) {
@@ -434,6 +446,48 @@ function firstTranscriptMessage(execution: AgentSandboxTranscriptExecution): str
   }
 
   return boundTranscriptText(execution.stderr || execution.stdout, 500)
+}
+
+export function agentSandboxRuntimeFailure(execution: AgentSandboxTranscriptExecution): AgentSandboxRuntimeFailure | undefined {
+  const parsed = isRecord(execution.parsed) ? execution.parsed : undefined
+  const directFailure = agentRuntimeFailureFromRecord(parsed)
+  if (directFailure) {
+    return directFailure
+  }
+
+  const output = typeof parsed?.output === "string" ? decodeJsonFragment(parsed.output) : undefined
+  return agentRuntimeFailureFromRecord(isRecord(output) ? output : undefined)
+}
+
+function agentRuntimeFailureFromRecord(record: Record<string, unknown> | undefined): AgentSandboxRuntimeFailure | undefined {
+  const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
+  if (!runtime || runtime.success !== false) {
+    return undefined
+  }
+
+  const error = isRecord(runtime.error) ? runtime.error : undefined
+  const message = typeof error?.message === "string" && error.message.trim()
+    ? error.message.trim()
+    : "Agent runtime reported failure."
+
+  return stripUndefined({
+    code: typeof error?.code === "string" && error.code.trim() ? error.code.trim() : undefined,
+    message: boundTranscriptText(message, 500),
+    data: error?.data,
+  })
+}
+
+export function recipeAgentResultFailure(agentResult: RecipeArtifactEvidenceResult["agentResult"]): { name: string; code: string; message: string } | undefined {
+  if (!agentResult || agentResult.status !== "failed") {
+    return undefined
+  }
+
+  const firstFailure = agentResult.failures[0]
+  return {
+    name: "AgentRuntimeError",
+    code: "agent-runtime-failed",
+    message: firstFailure?.message || "Agent sandbox runtime failed.",
+  }
 }
 
 function workspaceToolDiagnostics(transcript: AgentSandboxTranscript): AgentSandboxResultSummary["workspaceTools"] | undefined {

@@ -6,7 +6,7 @@ import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
-import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "../recipe-evidence.js"
+import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "../recipe-evidence.js"
 import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
@@ -423,6 +423,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     Object.assign(evidence, agentEvidence)
     markRecipeArtifactsFinalized(interruption, true)
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
+    const agentFailure = recipeAgentResultFailure(evidence.agentResult)
     const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles), interruption)
     interruption?.throwIfInterrupted()
@@ -431,7 +432,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
       .map((execution) => parseBenchResults(execution.stdout))
 
-    if (strictFailure) {
+    if (strictFailure || agentFailure) {
       return {
         success: false,
         schema: "wp-codebox/recipe-run/v1",
@@ -444,7 +445,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
         artifacts,
-        error: strictFailure,
+        error: strictFailure ?? agentFailure,
       }
     }
 
