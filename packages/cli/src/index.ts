@@ -4,6 +4,7 @@ import { runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
+import { runRunsArtifactsCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
 import { printHelp, serializeError } from "./output.js"
 
@@ -16,6 +17,8 @@ async function runCli(args: string[]): Promise<number> {
     recipeValidate: runRecipeValidateCommand,
     workspacePolicyCheck: runWorkspacePolicyCheckCommand,
     artifactsVerify: runArtifactsVerifyCommand,
+    runsStatus: runRunsStatusCommand,
+    runsArtifacts: runRunsArtifactsCommand,
     commands: runCommandsCommand,
     recipeSchema: runRecipeSchemaCommand,
     run: runRunCommand,

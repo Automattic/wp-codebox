@@ -24,6 +24,14 @@ try {
   const passing = await recipeRun(passingRecipe)
   assert.equal(passing.success, true, passing.error?.message)
   assert.ok(passing.artifacts?.directory, "recipe-run should return an artifact directory")
+  assert.match(passing.run?.runId ?? "", /^run_[a-f0-9]{32}$/)
+  assert.equal(passing.run?.status, "succeeded")
+  assert.equal(passing.run?.artifactRefs?.[0]?.kind, "artifact-bundle")
+  assert.equal(passing.run?.artifactRefs?.[0]?.directory, passing.artifacts.directory)
+
+  const passingRunRegistryEntry = JSON.parse(await readFile(join(passingArtifacts, "runs", `${passing.run.runId}.json`), "utf8"))
+  assert.equal(passingRunRegistryEntry.status, "succeeded")
+  assert.equal(passingRunRegistryEntry.artifactRefs[0].id, passing.artifacts.id)
 
   const passingManifest = JSON.parse(await readFile(join(passing.artifacts.directory, "manifest.json"), "utf8"))
   assertManifestFile(passingManifest, "files/runtime-evidence/run-attestation.json", "run-attestation")
@@ -81,6 +89,7 @@ try {
   const failing = await recipeRun(failingRecipe, false)
   assert.equal(failing.success, false)
   assert.equal(failing.error?.code, "workspace-policy-failed")
+  assert.equal(failing.run?.status, "failed")
   assert.ok(failing.artifacts?.directory, "failing strict policy run should keep artifacts")
   const failingPolicy = JSON.parse(await readFile(join(failing.artifacts.directory, "files/runtime-evidence/workspace-policy.json"), "utf8"))
   assert.equal(failingPolicy.passed, false)

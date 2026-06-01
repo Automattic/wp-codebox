@@ -10,6 +10,8 @@ interface CliCommandRouter {
   recipeRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
+  runsStatus: CliCommandHandler
+  runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
   recipeSchema: CliCommandHandler
   run: CliCommandHandler
@@ -62,6 +64,18 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
         return 1
       }
       return router.artifactsVerify(args)
+    }
+    case "runs": {
+      const subcommand = args.shift()
+      if (subcommand === "status") {
+        return router.runsStatus(args)
+      }
+      if (subcommand === "artifacts") {
+        return router.runsArtifacts(args)
+      }
+      console.error(`Unknown runs command: ${subcommand ?? ""}`)
+      router.printHelp()
+      return 1
     }
     case "commands":
       return router.commands(args)

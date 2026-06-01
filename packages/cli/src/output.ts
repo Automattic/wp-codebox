@@ -243,6 +243,8 @@ export function printHelp(): void {
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
+  wp-codebox runs status --registry <dir> --run-id <id> [--json]
+  wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox recipe-run --recipe <path> [options]
   wp-codebox boot [--mount <host>:<vfs>] [options]
@@ -252,6 +254,10 @@ Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
+  --run-registry <dir>
+                       Durable run registry directory for recipe-run.
+  --registry <dir>    Durable run registry directory for runs lookup commands.
+  --run-id <id>       Run ID for runs lookup commands.
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
   --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.core-phpunit, wordpress.plugin-check, wordpress.wp-cli, wordpress.ability, wordpress.bench, and wordpress.browser-probe.

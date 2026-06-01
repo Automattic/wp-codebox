@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
-import { createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -14,6 +14,7 @@ import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata
 interface RecipeRunOptions {
   recipePath: string
   artifactsDirectory?: string
+  runRegistryDirectory?: string
   previewHoldSeconds?: number
   previewPublicUrl?: string
   previewPort?: number
@@ -75,6 +76,7 @@ interface RecipeRunOutput {
   benchResults?: BenchResults
   benchResultsList?: BenchResults[]
   artifacts?: ArtifactBundle
+  run?: RuntimeRunRecord
   interruption?: RecipeInterruptionMetadata
   logs?: string[]
   error?: RunOutput["error"]
@@ -291,14 +293,37 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
   const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
+  const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
+  const runRegistry = new RuntimeRunRegistry(options.runRegistryDirectory ?? defaultRunRegistryDirectory(configuredArtifactsDirectory))
+  let runRecord = await runRegistry.create({
+    runId: createRuntimeRunId(),
+    status: "queued",
+    metadata: {
+      kind: "recipe-run",
+      recipePath,
+      artifactsDirectory: configuredArtifactsDirectory,
+    },
+    replay: {
+      command: ["wp-codebox", "recipe-run", "--recipe", recipePath],
+      recipePath,
+    },
+  })
   const issues = await validateWorkspaceRecipe(recipe, recipePath)
   if (issues.length > 0) {
+    runRecord = await runRegistry.update(runRecord.runId, {
+      status: "failed",
+      error: {
+        name: "RecipeValidationError",
+        message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
+      },
+    })
     return {
       success: false,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
       executions: [],
       validation: { issues },
+      run: runRecord,
       error: {
         name: "RecipeValidationError",
         message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
@@ -325,6 +350,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
     interruption?.throwIfInterrupted()
 
+    runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
     runtime = await awaitRecipe(createRuntime(
       {
         backend: recipe.runtime?.backend ?? "wordpress-playground",
@@ -336,15 +362,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         },
         policy: effectivePolicy,
         secretEnv,
-        artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
+        artifactsDirectory: configuredArtifactsDirectory,
         metadata: {
-          ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
+          ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
+          run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
           ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, options.previewPublicUrl, options.previewPort, options.previewBind),
         },
         preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       createPlaygroundRuntimeBackend(),
     ))
+    runRecord = await runRegistry.update(runRecord.runId, { status: "running", runtime: await runtime.info() })
     interruption?.throwIfInterrupted()
 
     for (const [index, mount] of (recipe.runtime?.stack?.mounts ?? []).entries()) {
@@ -448,6 +476,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     await awaitRecipe(runtime.observe({ type: "runtime-info" }))
     await awaitRecipe(runtime.observe({ type: "mounts" }))
+    runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime.info() })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
     const evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
     const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
@@ -464,6 +493,13 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       .map((execution) => parseBenchResults(execution.stdout))
 
     if (strictFailure || agentFailure) {
+      runRecord = await runRegistry.update(runRecord.runId, {
+        status: "failed",
+        runtime: runtimeInfo ?? await runtime.info(),
+        preview: artifacts.preview,
+        artifactRefs: artifactBundleRunRef(artifacts),
+        error: strictFailure ?? agentFailure,
+      })
       return {
         success: false,
         schema: "wp-codebox/recipe-run/v1",
@@ -476,10 +512,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
         artifacts,
+        run: runRecord,
         error: strictFailure ?? agentFailure,
       }
     }
 
+    runRecord = await runRegistry.update(runRecord.runId, {
+      status: "succeeded",
+      runtime: runtimeInfo ?? await runtime.info(),
+      preview: artifacts.preview,
+      artifactRefs: artifactBundleRunRef(artifacts),
+    })
     return {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
@@ -492,6 +535,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
       artifacts,
+      run: runRecord,
     }
   } catch (error) {
     if (runtime) {
@@ -515,6 +559,12 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    runRecord = await runRegistry.update(runRecord.runId, {
+      status: interruption?.metadata ? "cancelled" : "failed",
+      ...(runtime ? { runtime: await runtime.info() } : {}),
+      ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
+      error: serializeError(error),
+    })
 
     return {
       success: false,
@@ -524,6 +574,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       executions,
       diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       ...(artifacts ? { artifacts } : {}),
+      run: runRecord,
       ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
       error: serializeError(error),
     }
@@ -633,6 +684,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--artifacts":
         options.artifactsDirectory = value
+        break
+      case "--run-registry":
+        options.runRegistryDirectory = value
         break
       case "--preview-hold":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
