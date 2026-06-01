@@ -327,6 +327,7 @@ $assert( 'session schema pins external orchestrator persistence', array( 'extern
 $assert( 'session schema keeps durable lifecycle external', array( 'ready', 'completed' ) === ( $ability['output_schema']['properties']['session']['properties']['status']['enum'] ?? array() ) && str_contains( $ability['output_schema']['properties']['session']['properties']['status']['description'] ?? '', 'external orchestrator' ) );
 $assert( 'ability exposes preview configuration schema', 'integer' === ( $ability['input_schema']['properties']['preview_port']['type'] ?? '' ) && 'string' === ( $ability['input_schema']['properties']['preview_bind']['type'] ?? '' ) && 'string' === ( $ability['input_schema']['properties']['preview_public_url']['type'] ?? '' ) );
 $assert( 'ability exposes strict remediation outcome schema', isset( $ability['output_schema']['properties']['outcome']['properties']['kind']['enum'] ) && in_array( 'provider_error', $ability['output_schema']['properties']['outcome']['properties']['kind']['enum'], true ) );
+$assert( 'ability exposes generic completion outcome schema', isset( $ability['output_schema']['properties']['completion_outcome']['properties']['status']['enum'] ) && in_array( 'blocked', $ability['output_schema']['properties']['completion_outcome']['properties']['status']['enum'], true ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -942,6 +943,31 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 								'executionCount' => 1,
 							),
 						),
+						'completionOutcome' => array(
+							'schema'       => 'wp-codebox/sandbox-completion-outcome/v1',
+							'status'       => 'partial',
+							'summary'      => 'Agent sandbox completed without actionable file changes.',
+							'changedFiles' => array(
+								'count'    => 0,
+								'paths'    => array(),
+								'artifact' => 'files/changed-files.json',
+							),
+							'patch'        => array(
+								'bytes'    => 0,
+								'artifact' => 'files/patch.diff',
+							),
+							'verification' => array(
+								'transcript' => array( 'artifact' => 'files/transcript.json', 'executionCount' => 1 ),
+								'commands'   => array(
+									array( 'command' => 'wp-codebox.agent-sandbox-run', 'exitCode' => 0 ),
+								),
+							),
+							'blockers'     => array(),
+							'provenance'   => array(
+								'artifactBundleId'  => $artifact_id,
+								'artifactDirectory' => 'artifact-directory-fixture',
+							),
+						),
 					)
 				),
 			);
@@ -991,6 +1017,7 @@ $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_err
 $assert( 'runner returns orchestrator correlation and artifact refs', ! is_wp_error( $result ) && 'job-123' === ( $result['session']['orchestrator']['job_id'] ?? '' ) && 'artifact-bundle-sha256-fixture' === ( $result['session']['artifacts']['bundle_id'] ?? '' ) );
 $assert( 'runner returns public preview URL in session artifact metadata', ! is_wp_error( $result ) && 'https://preview.example.test/session-123/' === ( $result['session']['artifacts']['preview_url'] ?? '' ) && 'https://preview.example.test/session-123/' === ( $result['run']['artifacts']['preview']['url'] ?? '' ) );
 $assert( 'runner surfaces normalized agent result summary', ! is_wp_error( $result ) && 'wp-codebox/agent-result/v1' === ( $result['agent_result']['schema'] ?? '' ) && false === ( $result['agent_result']['actionable'] ?? true ) && 'no_file_changes' === ( $result['agent_result']['noOpReason'] ?? '' ) && 'files/transcript.json' === ( $result['agent_result']['transcript']['artifact'] ?? '' ) );
+$assert( 'runner surfaces generic completion outcome', ! is_wp_error( $result ) && 'wp-codebox/sandbox-completion-outcome/v1' === ( $result['completion_outcome']['schema'] ?? '' ) && 'partial' === ( $result['completion_outcome']['status'] ?? '' ) && 'files/completion-outcome.json' === ( $result['session']['artifacts']['completion_outcome'] ?? '' ) );
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $legacy_task_fixture = $task_input_fixture_by_name['legacy task maps to canonical goal with empty optionals']['normalized'] ?? array();
 $assert( 'runner legacy task matches shared normalization fixture', ! is_wp_error( $result ) && $legacy_task_fixture === ( $result['task_input'] ?? array() ) );

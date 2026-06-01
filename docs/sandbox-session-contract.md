@@ -95,7 +95,39 @@ The ability response includes a `wp-codebox/sandbox-session/v1` envelope:
     "artifacts": {
       "path": "/srv/artifacts/run-123",
       "bundle_id": "artifact-bundle-sha256-...",
-      "preview_url": "https://preview.example.test/abc"
+      "preview_url": "https://preview.example.test/abc",
+      "completion_outcome": "files/completion-outcome.json"
+    }
+  },
+  "completion_outcome": {
+    "schema": "wp-codebox/sandbox-completion-outcome/v1",
+    "status": "succeeded",
+    "summary": "Agent sandbox produced 2 changed files and a 1842-byte patch.",
+    "changedFiles": {
+      "count": 2,
+      "paths": ["plugin.php", "tests/plugin-test.php"],
+      "artifact": "files/changed-files.json"
+    },
+    "patch": {
+      "bytes": 1842,
+      "artifact": "files/patch.diff"
+    },
+    "verification": {
+      "transcript": {
+        "artifact": "files/transcript.json",
+        "executionCount": 1
+      },
+      "commands": [
+        { "command": "wp-codebox.agent-sandbox-run", "exitCode": 0 }
+      ]
+    },
+    "blockers": [],
+    "riskNotes": [],
+    "confidence": "high",
+    "nextAction": "promote",
+    "provenance": {
+      "artifactBundleId": "artifact-bundle-sha256-...",
+      "artifactDirectory": "/srv/artifacts/run-123"
     }
   },
   "agent_result": {
@@ -127,6 +159,12 @@ queued/running/cancelled/expired transitions belong to the external orchestrator
 
 Agent sandbox recipe runs also write these additive artifact files:
 
+- `files/completion-outcome.json` uses
+  `wp-codebox/sandbox-completion-outcome/v1` and is the generic terminal
+  contract for orchestration. It includes status (`succeeded`, `blocked`,
+  `failed`, or `partial`), changed files, patch refs, verification command
+  results, blockers, confidence/risk notes, next action, and artifact
+  provenance.
 - `files/agent-result.json` uses `wp-codebox/agent-result/v1` and summarizes
   actionability, changed-file count, patch bytes, transcript location, failures,
   no-op reason, and workspace-tool diagnostics.
