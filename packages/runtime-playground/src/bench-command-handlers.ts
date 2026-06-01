@@ -155,6 +155,10 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
         throw new RuntimeException($activation->get_error_message());
     }
 }
+if (did_action('rest_api_init')) {
+    $GLOBALS['wp_rest_server'] = null;
+    do_action('rest_api_init', rest_get_server());
+}
 
 function wp_codebox_bench_run_configured_workload(array $workload, string $plugin_path) {
     $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array($workload);

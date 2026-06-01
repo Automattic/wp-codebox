@@ -87,6 +87,7 @@ assert.equal(scenario.id, "noop")
 assert.equal(scenario.file, "tests/bench/noop.php")
 assert.equal(scenario.iterations, 2)
 assert.equal(scenario.metrics.fixture_value_mean, 7)
+assert.equal(scenario.metrics.rest_route_visible_mean, 1)
 assert.equal(scenario.metadata.fixture, "bench-plugin")
 const configured = output.benchResults.scenarios[1]
 assert.equal(configured.id, "configured-env")
