@@ -20,6 +20,9 @@ async function main() {
   assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")
   assert.match(code, /Do not invent alternate tool names such as read_file/, "sandbox guidance should prevent pseudo-tool aliases")
   assert.doesNotMatch(code, /workspace_apply_patch/, "sandbox tool policy should not advertise git-backed patch application")
+  assert.doesNotMatch(code, /workspace_git_status/, "sandbox tool policy should not advertise unbridged git status")
+  assert.doesNotMatch(code, /workspace_git_log/, "sandbox tool policy should not advertise unbridged git log")
+  assert.doesNotMatch(code, /workspace_git_diff/, "sandbox tool policy should not advertise unbridged git diff")
   assert.match(code, /For changes use workspace_write or workspace_edit/, "sandbox guidance should steer changes to tools that work without git")
 
   const runCode = agentSandboxRunCode(

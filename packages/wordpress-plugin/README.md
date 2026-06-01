@@ -223,15 +223,12 @@ Sandbox-safe DMC abilities are an explicit allow-list:
 
 - Workspace read/list/search/edit primitives: `datamachine/workspace-read`,
   `datamachine/workspace-ls`, `datamachine/workspace-grep`,
-  `datamachine/workspace-write`, `datamachine/workspace-edit`, and
-  `datamachine/workspace-apply-patch`.
-- Local evidence primitives: `datamachine/workspace-git-status`,
-  `datamachine/workspace-git-log`, and `datamachine/workspace-git-diff`.
+  `datamachine/workspace-write`, and `datamachine/workspace-edit`.
 - Read-only GitHub context primitives: issue, PR, PR file, check/status, tree,
   file, and repo list/get abilities.
 
 Parent-only DMC abilities include workspace clone/adopt/remove/delete, worktree
-lifecycle and cleanup, git pull/add/commit/push/rebase/reset, GitSync
+lifecycle and cleanup, git status/log/diff/pull/add/commit/push/rebase/reset, GitSync
 bind/pull/submit/push/policy changes, issue/PR creation or mutation, comments,
 review comments, merges, PR cleanup, GitHub file writes, and code-task creation.
 Those abilities must not be exposed through the sandbox agent bundle. The sandbox

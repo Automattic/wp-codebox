@@ -61,6 +61,13 @@ function unique(values: string[]): string[] {
   return [...new Set(values)]
 }
 
+const unbridgedGitTools = [
+  "datamachine/workspace-apply-patch",
+  "datamachine/workspace-git-status",
+  "datamachine/workspace-git-log",
+  "datamachine/workspace-git-diff",
+]
+
 async function main(): Promise<void> {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..")
   const policyPath = join(root, "packages", "sandbox-datamachine-tool-policy.json")
@@ -79,6 +86,10 @@ async function main(): Promise<void> {
 
   const overlap = policy.safeTools.filter((tool) => policy.parentOnlyTools.includes(tool))
   assert(overlap.length === 0, `Sandbox safe and parent-only policies overlap: ${overlap.join(", ")}`)
+  const unsafeGitTools = policy.safeTools.filter((tool) => unbridgedGitTools.includes(tool))
+  assert(unsafeGitTools.length === 0, `Sandbox safe policy includes unbridged git tools: ${unsafeGitTools.join(", ")}`)
+  const missingParentOnlyGitTools = unbridgedGitTools.filter((tool) => !policy.parentOnlyTools.includes(tool))
+  assert(missingParentOnlyGitTools.length === 0, `Unbridged git tools must be parent-only: ${missingParentOnlyGitTools.join(", ")}`)
 
   const expectedTs = renderTypeScript(policy)
   const expectedPhp = renderPhp(policy)
