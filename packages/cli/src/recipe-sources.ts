@@ -104,6 +104,8 @@ const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 const DEFAULT_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
 const DEFAULT_MAX_EXTRACTED_FILES = 2000
 const execFileAsync = promisify(execFile)
+const PHP_SCOPER_VERSION = "0.18.17"
+const PHP_SCOPER_URL = `https://github.com/humbug/php-scoper/releases/download/${PHP_SCOPER_VERSION}/php-scoper.phar`
 
 export function isSha256(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value)
@@ -286,8 +288,13 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
   await mkdir(srcTarget, { recursive: true })
   await mkdir(thirdPartyTarget, { recursive: true })
 
-  await copyPhpDirectoryWithTransform(join(source, "src"), srcTarget, transformPhpAiClientSource)
-  await copyComposerDependencies(source, thirdPartyTarget)
+  const scopedRoot = await scopePhpAiClientSource(source, stagingRoot)
+  const packages = await composerInstalledPackagesFromSource(source)
+  const namespacePrefixes = dependencyNamespacePrefixes(packages)
+  await scopePhpAiClientSourceDependencyReferences(join(scopedRoot, "src"), namespacePrefixes)
+  await cp(join(scopedRoot, "src"), srcTarget, { recursive: true })
+  await copyScopedComposerDependencies(packages, scopedRoot, thirdPartyTarget)
+  await scopePhpAiClientSourceDependencyReferences(thirdPartyTarget, namespacePrefixes)
   await prunePhpAiClientThirdParty(thirdPartyTarget)
   await writePhpAiClientAutoload(bundle)
   const digest = await directoryContentDigest(bundle)
@@ -327,7 +334,91 @@ async function validateExistingDirectoryForOverlay(source: string, sourceRef: st
   throw new Error(`Runtime overlay source must be an existing directory: ${sourceRef}`)
 }
 
-async function copyComposerDependencies(source: string, thirdPartyTarget: string): Promise<void> {
+async function scopePhpAiClientSource(source: string, stagingRoot: string): Promise<string> {
+  const scoperPath = await resolvePhpScoper(stagingRoot)
+  const configPath = join(stagingRoot, "scoper.inc.php")
+  const scopedRoot = join(stagingRoot, "scoped")
+  await writeFile(configPath, phpAiClientScoperConfig())
+  await execFileAsync("php", [scoperPath, "add-prefix", "--working-dir", source, "--config", configPath, "--output-dir", scopedRoot, "--force", "--no-interaction"])
+  return scopedRoot
+}
+
+async function resolvePhpScoper(stagingRoot: string): Promise<string> {
+  const configured = process.env.WP_CODEBOX_PHP_SCOPER_PHAR
+  if (configured) {
+    return configured
+  }
+
+  const scoperPath = join(stagingRoot, "php-scoper.phar")
+  await execFileAsync("curl", ["-fsSL", PHP_SCOPER_URL, "-o", scoperPath])
+  return scoperPath
+}
+
+function phpAiClientScoperConfig(): string {
+  return `<?php
+use Isolated\\Symfony\\Component\\Finder\\Finder;
+
+return array(
+	'prefix' => 'WordPress\\\\AiClientDependencies',
+	'finders' => array(
+		Finder::create()
+			->files()
+			->ignoreVCS( true )
+			->notName( '/LICENSE|.*\\.md|.*\\.dist|Makefile/' )
+			->exclude( array( 'composer', 'doc', 'test', 'test_old', 'tests', 'Tests', 'vendor-bin' ) )
+			->in( 'vendor' ),
+		Finder::create()
+			->files()
+			->ignoreVCS( true )
+			->name( '*.php' )
+			->in( 'src' ),
+	),
+	'exclude-namespaces' => array(
+		'WordPress\\\\AiClient',
+	),
+	'exclude-files' => array(),
+	'exclude-constants' => array(
+		'/^ABSPATH$/',
+		'/^WPINC$/',
+	),
+	'exclude-functions' => array(),
+	'patchers' => array(
+		static function ( string $file_path, string $prefix, string $contents ): string {
+			if ( false === strpos( $file_path, 'php-http/discovery' ) ) {
+				return $contents;
+			}
+
+			$external_namespaces = array(
+				'GuzzleHttp',
+				'Http\\\\Adapter',
+				'Http\\\\Client\\\\Curl',
+				'Http\\\\Client\\\\Socket',
+				'Http\\\\Client\\\\Buzz',
+				'Http\\\\Client\\\\React',
+				'Buzz',
+				'Nyholm',
+				'Laminas',
+				'Symfony\\\\Component\\\\HttpClient',
+				'Phalcon\\\\Http',
+				'Slim\\\\Psr7',
+				'Kriswallsmith',
+			);
+
+			foreach ( $external_namespaces as $ns ) {
+				$escaped_ns     = preg_quote( $ns, '/' );
+				$escaped_prefix = preg_quote( $prefix, '/' );
+				$contents       = preg_replace( '/([\\'\"])' . $escaped_prefix . '\\\\\\\\' . $escaped_ns . '/', '$1' . $ns, $contents );
+				$contents       = preg_replace( '/([\\'\"])' . $escaped_prefix . '\\\\' . $escaped_ns . '/', '$1' . $ns, $contents );
+			}
+
+			return $contents;
+		},
+	),
+);
+`
+}
+
+async function composerInstalledPackagesFromSource(source: string): Promise<ComposerInstalledPackage[]> {
   const installedPath = join(source, "vendor", "composer", "installed.json")
   let installed: unknown
   try {
@@ -336,7 +427,10 @@ async function copyComposerDependencies(source: string, thirdPartyTarget: string
     throw new Error(`php-ai-client overlay requires Composer dependencies at vendor/composer/installed.json: ${error instanceof Error ? error.message : String(error)}`)
   }
 
-  const packages = composerInstalledPackages(installed)
+  return composerInstalledPackages(installed)
+}
+
+async function copyScopedComposerDependencies(packages: ComposerInstalledPackage[], scopedRoot: string, thirdPartyTarget: string): Promise<void> {
   for (const pkg of packages) {
     if (pkg.name === "wordpress/php-ai-client") {
       continue
@@ -344,7 +438,7 @@ async function copyComposerDependencies(source: string, thirdPartyTarget: string
     for (const [namespacePrefix, sourceDirs] of Object.entries(pkg.autoload?.["psr-4"] ?? {})) {
       const namespacePath = namespacePrefix.replace(/\\/g, "/").replace(/\/+$/, "")
       for (const sourceDir of Array.isArray(sourceDirs) ? sourceDirs : [sourceDirs]) {
-        const packageSource = join(source, "vendor", pkg.name, String(sourceDir).replace(/\/+$/, ""))
+        const packageSource = join(scopedRoot, "vendor", pkg.name, String(sourceDir).replace(/\/+$/, ""))
         try {
           const result = await stat(packageSource)
           if (!result.isDirectory()) {
@@ -353,10 +447,64 @@ async function copyComposerDependencies(source: string, thirdPartyTarget: string
         } catch {
           continue
         }
-        await copyPhpDirectoryWithTransform(packageSource, join(thirdPartyTarget, namespacePath), transformPhpAiClientDependency)
+        await cp(packageSource, join(thirdPartyTarget, namespacePath), { recursive: true })
       }
     }
   }
+}
+
+function dependencyNamespacePrefixes(packages: ComposerInstalledPackage[]): string[] {
+  const prefixes = new Set<string>()
+  for (const pkg of packages) {
+    if (pkg.name === "wordpress/php-ai-client") {
+      continue
+    }
+    for (const prefix of Object.keys(pkg.autoload?.["psr-4"] ?? {})) {
+      if (prefix && !prefix.startsWith("WordPress\\AiClient\\")) {
+        prefixes.add(prefix)
+      }
+    }
+  }
+  return [...prefixes].sort((a, b) => b.length - a.length)
+}
+
+async function scopePhpAiClientSourceDependencyReferences(sourceDirectory: string, namespacePrefixes: string[]): Promise<void> {
+  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+    const path = join(sourceDirectory, entry.name)
+    if (entry.isDirectory()) {
+      await scopePhpAiClientSourceDependencyReferences(path, namespacePrefixes)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".php")) {
+      continue
+    }
+    const original = await readFile(path, "utf8")
+    const transformed = scopeNamespaceReferences(original, namespacePrefixes)
+    if (transformed !== original) {
+      await writeFile(path, transformed)
+    }
+  }
+}
+
+function scopeNamespaceReferences(contents: string, namespacePrefixes: string[]): string {
+  let transformed = contents
+  for (const namespacePrefix of namespacePrefixes) {
+    const normalized = namespacePrefix.replace(/\\+$/, "\\")
+    const namespaceName = normalized.replace(/\\+$/, "")
+    const scoped = `WordPress\\AiClientDependencies\\${normalized}`
+    const scopedNamespaceName = `WordPress\\AiClientDependencies\\${namespaceName}`
+    const escaped = escapeRegExp(normalized)
+    const escapedNamespaceName = escapeRegExp(namespaceName)
+    transformed = transformed
+      .replace(new RegExp(`namespace\\s+${escapedNamespaceName}\\s*;`, "g"), `namespace ${scopedNamespaceName};`)
+      .replace(new RegExp(`([^A-Za-z0-9_\\\\])\\\\${escaped}`, "g"), (_match, prefix: string) => `${prefix}\\${scoped}`)
+      .replace(new RegExp(`([^A-Za-z0-9_\\\\])${escaped}`, "g"), (_match, prefix: string) => `${prefix}${scoped}`)
+  }
+  return transformed
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 interface ComposerInstalledPackage {
@@ -374,49 +522,6 @@ function composerInstalledPackages(installed: unknown): ComposerInstalledPackage
     throw new Error("Composer installed.json format is unsupported")
   }
   return packages.filter((pkg): pkg is ComposerInstalledPackage => Boolean(pkg && typeof pkg === "object" && typeof (pkg as ComposerInstalledPackage).name === "string"))
-}
-
-async function copyPhpDirectoryWithTransform(source: string, target: string, transform: (contents: string) => string): Promise<void> {
-  const result = await stat(source)
-  if (!result.isDirectory()) {
-    throw new Error(`Expected directory while preparing runtime overlay: ${source}`)
-  }
-
-  await mkdir(target, { recursive: true })
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    const sourcePath = join(source, entry.name)
-    const targetPath = join(target, entry.name)
-    if (entry.isDirectory()) {
-      await copyPhpDirectoryWithTransform(sourcePath, targetPath, transform)
-      continue
-    }
-    if (!entry.isFile() || !entry.name.endsWith(".php")) {
-      continue
-    }
-    await mkdir(dirname(targetPath), { recursive: true })
-    await writeFile(targetPath, transform(await readFile(sourcePath, "utf8")))
-  }
-}
-
-function transformPhpAiClientSource(contents: string): string {
-  return scopePhpAiClientDependencyReferences(contents)
-}
-
-function transformPhpAiClientDependency(contents: string): string {
-  return scopePhpAiClientDependencyReferences(contents)
-    .replace(/namespace\s+(?!WordPress\\AiClientDependencies\\)(?!WordPress\\AiClient\b)([A-Za-z_][A-Za-z0-9_\\]*);/g, "namespace WordPress\\AiClientDependencies\\$1;")
-}
-
-function scopePhpAiClientDependencyReferences(contents: string): string {
-  const namespaces = ["Psr", "Http"]
-  let transformed = contents
-  for (const namespace of namespaces) {
-    transformed = transformed
-      .replace(new RegExp(`use ${namespace}\\\\`, "g"), `use WordPress\\AiClientDependencies\\${namespace}\\`)
-      .replace(new RegExp(`([^A-Za-z0-9_\\\\])\\\\${namespace}\\\\`, "g"), `$1\\WordPress\\AiClientDependencies\\${namespace}\\`)
-      .replace(new RegExp(`([^A-Za-z0-9_\\\\])${namespace}\\\\`, "g"), `$1WordPress\\AiClientDependencies\\${namespace}\\`)
-  }
-  return transformed
 }
 
 async function prunePhpAiClientThirdParty(thirdPartyTarget: string): Promise<void> {

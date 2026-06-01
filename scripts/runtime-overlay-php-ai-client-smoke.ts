@@ -14,6 +14,7 @@ try {
   await mkdir(join(source, "src"), { recursive: true })
   await mkdir(join(source, "src", "Providers", "Http", "Contracts"), { recursive: true })
   await mkdir(join(source, "vendor", "composer"), { recursive: true })
+  await mkdir(join(source, "vendor", "nyholm", "psr7", "src", "Factory"), { recursive: true })
   await mkdir(join(source, "vendor", "psr", "http-client", "src"), { recursive: true })
   await mkdir(join(source, "vendor", "psr", "http-message", "src"), { recursive: true })
   await mkdir(join(source, "vendor", "psr", "simple-cache", "src"), { recursive: true })
@@ -21,11 +22,16 @@ try {
   await writeFile(join(source, "src", "AdapterProbe.php"), `<?php
 namespace WordPress\\AiClient;
 
+use Nyholm\\Psr7\\Factory\\Psr17Factory;
 use Psr\\Http\\Message\\RequestInterface;
 
 final class AdapterProbe {
 	public function accepts( RequestInterface $request ): RequestInterface {
 		return $request;
+	}
+
+	public function factory( Psr17Factory $factory ): Psr17Factory {
+		return $factory;
 	}
 }
 `)
@@ -34,18 +40,22 @@ namespace WordPress\\AiClient\\Providers\\Http\\Contracts;
 
 interface ClientWithOptionsInterface {}
 `)
-  await writeFile(join(source, "vendor", "composer", "installed.json"), `${JSON.stringify({
-    packages: [{
-      name: "psr/http-client",
-      autoload: { "psr-4": { "Psr\\Http\\Client\\": "src/" } },
-    }, {
-      name: "psr/http-message",
-      autoload: { "psr-4": { "Psr\\Http\\Message\\": "src/" } },
-    }, {
-      name: "psr/simple-cache",
-      autoload: { "psr-4": { "Psr\\SimpleCache\\": "src/" } },
-    }],
+  await writeFile(join(source, "composer.json"), `${JSON.stringify({
+    name: "wordpress/php-ai-client",
+    require: {
+      "nyholm/psr7": "*",
+      "psr/http-client": "*",
+      "psr/http-message": "*",
+      "psr/simple-cache": "*",
+    },
+    autoload: { "psr-4": { "WordPress\\AiClient\\": "src/" } },
   }, null, 2)}\n`)
+  await writeInstalledJson(source)
+  await writeFile(join(source, "vendor", "nyholm", "psr7", "src", "Factory", "Psr17Factory.php"), `<?php
+namespace Nyholm\\Psr7\\Factory;
+
+class Psr17Factory {}
+`)
   await writeFile(join(source, "vendor", "psr", "http-client", "src", "ClientInterface.php"), `<?php
 namespace Psr\\Http\\Client;
 
@@ -80,7 +90,7 @@ interface CacheInterface {}
     workflow: {
       steps: [{
         command: "wordpress.run-php",
-        args: ["code=require WP_CONTENT_DIR . '/uploads/php-ai-client-overlay/autoload.php'; $method = new ReflectionMethod('WordPress\\\\AiClient\\\\AdapterProbe', 'accepts'); $type = (string) $method->getParameters()[0]->getType(); echo $type . PHP_EOL; echo interface_exists('WordPress\\\\AiClientDependencies\\\\Psr\\\\Http\\\\Message\\\\RequestInterface') ? 'scoped-interface' : 'missing-interface';"],
+        args: ["code=require WP_CONTENT_DIR . '/uploads/php-ai-client-overlay/autoload.php'; $accepts = new ReflectionMethod('WordPress\\\\AiClient\\\\AdapterProbe', 'accepts'); $factory = new ReflectionMethod('WordPress\\\\AiClient\\\\AdapterProbe', 'factory'); echo (string) $accepts->getParameters()[0]->getType() . PHP_EOL; echo (string) $factory->getParameters()[0]->getType() . PHP_EOL; echo interface_exists('WordPress\\\\AiClientDependencies\\\\Psr\\\\Http\\\\Message\\\\RequestInterface') ? 'scoped-interface' : 'missing-interface';"],
       }],
     },
     artifacts: { directory: artifacts },
@@ -109,22 +119,11 @@ interface CacheInterface {}
   assert.equal(failing.success, false)
   assert.equal(failing.runtime, undefined, "overlay preparation failures must fail before runtime creation")
   assert.equal(failing.diagnostics[0]?.phase, "overlay-preparation")
-  await writeFile(join(source, "vendor", "composer", "installed.json"), `${JSON.stringify({
-    packages: [{
-      name: "psr/http-client",
-      autoload: { "psr-4": { "Psr\\Http\\Client\\": "src/" } },
-    }, {
-      name: "psr/http-message",
-      autoload: { "psr-4": { "Psr\\Http\\Message\\": "src/" } },
-    }, {
-      name: "psr/simple-cache",
-      autoload: { "psr-4": { "Psr\\SimpleCache\\": "src/" } },
-    }],
-  }, null, 2)}\n`)
+  await writeInstalledJson(source)
 
   const output = await recipeRunJson(recipePath)
   assert.equal(output.success, true, output.error?.message)
-  assert.equal(output.executions[0]?.stdout, "WordPress\\AiClientDependencies\\Psr\\Http\\Message\\RequestInterface\nscoped-interface")
+  assert.equal(output.executions[0]?.stdout, "WordPress\\AiClientDependencies\\Psr\\Http\\Message\\RequestInterface\nWordPress\\AiClientDependencies\\Nyholm\\Psr7\\Factory\\Psr17Factory\nscoped-interface")
 
   const metadata = JSON.parse(await readFile(join(output.artifacts.directory, "metadata.json"), "utf8"))
   const overlay = metadata.context.preparedRuntimeOverlays[0]
@@ -136,6 +135,24 @@ interface CacheInterface {}
   console.log("Runtime overlay php-ai-client smoke passed")
 } finally {
   await rm(workspace, { recursive: true, force: true })
+}
+
+async function writeInstalledJson(source: string): Promise<void> {
+  await writeFile(join(source, "vendor", "composer", "installed.json"), `${JSON.stringify({
+    packages: [{
+      name: "nyholm/psr7",
+      autoload: { "psr-4": { "Nyholm\\Psr7\\": "src/" } },
+    }, {
+      name: "psr/http-client",
+      autoload: { "psr-4": { "Psr\\Http\\Client\\": "src/" } },
+    }, {
+      name: "psr/http-message",
+      autoload: { "psr-4": { "Psr\\Http\\Message\\": "src/" } },
+    }, {
+      name: "psr/simple-cache",
+      autoload: { "psr-4": { "Psr\\SimpleCache\\": "src/" } },
+    }],
+  }, null, 2)}\n`)
 }
 
 async function recipeRunJson(recipePath: string, expectSuccess = true): Promise<any> {
