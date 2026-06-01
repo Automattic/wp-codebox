@@ -602,6 +602,28 @@ $browser_url_package_session = call_user_func(
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] );
 $assert( 'browser Playground session uses stable package URLs when inline budget is exceeded', ! is_wp_error( $browser_url_package_session ) && str_starts_with( (string) ( $browser_url_package_session['plugins'][0]['url'] ?? '' ), 'https://parent.example.test/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) && ! str_starts_with( (string) ( $browser_url_package_session['plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && ( $browser_url_package_session['plugins'][0]['url'] ?? '' ) === ( $browser_url_package_session['playground']['blueprint']['steps'][1]['pluginData']['url'] ?? '' ) && 64 === strlen( (string) ( $browser_url_package_session['plugins'][0]['provenance']['sha256'] ?? '' ) ) );
 
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] = static fn(): int => 1;
+$previous_upload_dir = $GLOBALS['wp_codebox_upload_dir'];
+$GLOBALS['wp_codebox_upload_dir']['baseurl'] = 'http://127.0.0.1:63498/uploads';
+$browser_local_url_package_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'    => 'Prepare browser Playground with local URL-delivered packages.',
+		'runtime' => array(
+			'plugins' => array(
+				array(
+					'slug'    => 'generic-caller-plugin',
+					'package' => 'server',
+					'path'    => $root . '/plugin-root/generic-caller-plugin',
+				),
+			),
+		),
+	)
+);
+$GLOBALS['wp_codebox_upload_dir'] = $previous_upload_dir;
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] );
+$assert( 'browser Playground session rewrites loopback package URLs to localhost', ! is_wp_error( $browser_local_url_package_session ) && str_starts_with( (string) ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ), 'http://localhost:63498/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) && ! str_starts_with( (string) ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ) === ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['pluginData']['url'] ?? '' ) );
+
 $browser_site_blueprint_session = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(

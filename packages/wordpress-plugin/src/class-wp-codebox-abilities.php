@@ -1750,7 +1750,7 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_hash_failed', 'Could not hash browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, self::browser_safe_local_package_url( $url ), $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
@@ -1809,7 +1809,7 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_url_missing', 'Browser runtime plugin package URL is missing.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, self::browser_safe_local_package_url( $url ), $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
@@ -1834,6 +1834,25 @@ final class WP_Codebox_Abilities {
 		}
 
 		return 'data:application/zip;base64,' . base64_encode( $contents );
+	}
+
+	private static function browser_safe_local_package_url( string $url ): string {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || 'http' !== strtolower( (string) ( $parts['scheme'] ?? '' ) ) || ! self::is_loopback_host( (string) ( $parts['host'] ?? '' ) ) ) {
+			return $url;
+		}
+
+		$host = strtolower( trim( (string) $parts['host'], '[]' ) );
+		if ( 'localhost' === $host ) {
+			return $url;
+		}
+
+		$port     = isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '';
+		$path     = (string) ( $parts['path'] ?? '' );
+		$query    = isset( $parts['query'] ) ? '?' . (string) $parts['query'] : '';
+		$fragment = isset( $parts['fragment'] ) ? '#' . (string) $parts['fragment'] : '';
+
+		return 'http://localhost' . $port . $path . $query . $fragment;
 	}
 
 	private static function browser_download_remote_plugin( string $url, string $zip_path, string $slug ): true|WP_Error {
