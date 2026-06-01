@@ -3,7 +3,12 @@ import { PlaygroundCliExitError } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import type { MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
 import { randomInt } from "node:crypto"
+import { existsSync } from "node:fs"
+import { readFile, stat, unlink } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { createServer as createNetServer } from "node:net"
+import { resolveWordPressRelease } from "@wp-playground/wordpress"
 
 interface PlaygroundCliModule {
   runCLI(options: {
@@ -23,6 +28,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   if (spec.preview?.port) {
     await assertPreviewPortAvailable(spec.preview.port)
   }
+
+  await validatePlaygroundWordPressArchiveCache(spec.environment.version)
 
   const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
 
@@ -53,6 +60,71 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     throw error
   }
+}
+
+export interface PlaygroundWordPressArchiveCacheValidation {
+  version: string
+  sourceUrl: string
+  invalidArchives: Array<{
+    path: string
+    size: number
+    reason: string
+    deleted: boolean
+  }>
+}
+
+export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = join(homedir(), ".wordpress-playground")): Promise<PlaygroundWordPressArchiveCacheValidation> {
+  const release = await resolveWordPressRelease(versionQuery)
+  const version = String(release.version)
+  const sourceUrl = String(release.releaseUrl)
+  const archivePaths = [
+    join(cacheDirectory, `${version}.zip`),
+    join(cacheDirectory, `prebuilt-wp-content-for-wp-${version}.zip`),
+  ]
+  const invalidArchives: PlaygroundWordPressArchiveCacheValidation["invalidArchives"] = []
+
+  for (const archivePath of archivePaths) {
+    if (!existsSync(archivePath)) {
+      continue
+    }
+
+    const archiveStat = await stat(archivePath)
+    const reason = await invalidZipReason(archivePath, archiveStat.size)
+    if (!reason) {
+      continue
+    }
+
+    try {
+      await unlink(archivePath)
+      invalidArchives.push({ path: archivePath, size: archiveStat.size, reason, deleted: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Corrupt cached WordPress archive could not be removed: ${archivePath} (size: ${archiveStat.size} bytes, requested WordPress version: ${versionQuery ?? "latest"}, resolved WordPress version: ${version}, source URL: ${sourceUrl}, validation: ${reason}, unlink error: ${message})`)
+    }
+  }
+
+  return { version, sourceUrl, invalidArchives }
+}
+
+async function invalidZipReason(archivePath: string, size: number): Promise<string | undefined> {
+  if (size < 22) {
+    return "too small to be a zip archive"
+  }
+
+  const header = await readFile(archivePath, { encoding: null, flag: "r" }).then((buffer) => buffer.subarray(0, 4))
+  if (header.length < 4) {
+    return "missing zip header"
+  }
+
+  if (header[0] !== 0x50 || header[1] !== 0x4b) {
+    return `unexpected zip header ${header.toString("hex")}`
+  }
+
+  if (![0x03, 0x05, 0x07].includes(header[2])) {
+    return `unexpected zip header ${header.toString("hex")}`
+  }
+
+  return undefined
 }
 
 async function availablePlaygroundPortRange(): Promise<number> {

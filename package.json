@@ -76,6 +76,7 @@
     "recipe-staged-files-smoke": "tsx scripts/recipe-staged-files-smoke.ts",
     "recipe-workspace-seed-excludes-smoke": "tsx scripts/recipe-workspace-seed-excludes-smoke.ts",
     "recipe-runtime-evidence-smoke": "tsx scripts/recipe-runtime-evidence-smoke.ts",
+    "playground-archive-cache-validation-smoke": "tsx scripts/playground-archive-cache-validation-smoke.ts",
     "recipe-playground-boot-failure-smoke": "tsx scripts/recipe-playground-boot-failure-smoke.ts",
     "runtime-stack-mount-smoke": "tsx scripts/runtime-stack-mount-smoke.ts",
     "runtime-overlay-php-ai-client-smoke": "tsx scripts/runtime-overlay-php-ai-client-smoke.ts",
