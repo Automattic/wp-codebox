@@ -323,6 +323,11 @@ final class WP_Codebox_Abilities {
 							'playground'         => array(
 								'type'        => 'object',
 								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
+								'properties'  => array(
+									'client_module_url' => array( 'type' => 'string' ),
+									'remote_url'        => array( 'type' => 'string' ),
+									'cors_proxy_url'    => array( 'type' => 'string' ),
+								),
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
@@ -877,6 +882,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'    => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -938,6 +944,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'    => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -1407,12 +1414,29 @@ final class WP_Codebox_Abilities {
 			return $remote;
 		}
 
+		$default_cors_proxy_url = (string) apply_filters( 'wp_codebox_browser_playground_default_cors_proxy_url', 'https://wordpress-playground-cors-proxy.net/?', $playground );
+		$cors_proxy_url         = (string) ( $playground['cors_proxy_url'] ?? $playground['corsProxy'] ?? $default_cors_proxy_url );
+		$cors_proxy             = array( 'url' => '', 'origin' => '', 'host' => '' );
+		if ( '' !== trim( $cors_proxy_url ) ) {
+			$cors_proxy = self::browser_trusted_url(
+				$cors_proxy_url,
+				'cors_proxy_url',
+				'wp_codebox_browser_playground_cors_proxy_allowed_origins',
+				array( 'https://wordpress-playground-cors-proxy.net', 'https://playground.wordpress.net', 'https://playground.automattic.ai' )
+			);
+			if ( is_wp_error( $cors_proxy ) ) {
+				return $cors_proxy;
+			}
+		}
+
 		$playground['client_module_url'] = $client['url'];
 		$playground['remote_url']        = $remote['url'];
+		$playground['cors_proxy_url']    = $cors_proxy['url'];
 		$playground['provenance']        = array(
 			'schema'            => 'wp-codebox/browser-playground-provenance/v1',
 			'client_module_url' => $client,
 			'remote_url'        => $remote,
+			'cors_proxy_url'    => $cors_proxy,
 		);
 
 		return $playground;

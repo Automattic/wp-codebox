@@ -526,6 +526,7 @@ $assert( 'browser Playground session identifies disposable execution scope', ! i
 $assert( 'browser Playground session identifies sandbox permission model', ! is_wp_error( $browser_session ) && 'sandbox-bypass' === ( $browser_session['permission_model'] ?? '' ) && 'sandbox-bypass' === ( $browser_session['session']['permission_model'] ?? '' ) );
 $assert( 'browser Playground session emits canonical sandbox session envelope', ! is_wp_error( $browser_session ) && 'wp-codebox/sandbox-session/v1' === ( $browser_session['session']['schema'] ?? '' ) && 'browser-session-123' === ( $browser_session['session']['id'] ?? '' ) && 'ready' === ( $browser_session['session']['status'] ?? '' ) && 'external-orchestrator' === ( $browser_session['session']['persistence'] ?? '' ) );
 $assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.automattic.ai' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.automattic.ai' ) );
+$assert( 'browser Playground session includes Playground CORS proxy URL', ! is_wp_error( $browser_session ) && 'https://wordpress-playground-cors-proxy.net/?' === ( $browser_session['playground']['cors_proxy_url'] ?? '' ) && 'https://wordpress-playground-cors-proxy.net' === ( $browser_session['playground']['provenance']['cors_proxy_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session includes default blueprint', ! is_wp_error( $browser_session ) && true === ( $browser_session['playground']['blueprint']['features']['networking'] ?? false ) && is_array( $browser_session['playground']['blueprint']['steps'] ?? null ) );
 $assert( 'browser Playground session defaults to latest WordPress and PHP', ! is_wp_error( $browser_session ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['wp'] ?? '' ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['php'] ?? '' ) );
 $assert( 'browser Playground session logs in before admin workflows', ! is_wp_error( $browser_session ) && 'login' === ( $browser_session['playground']['blueprint']['steps'][0]['step'] ?? '' ) && 'admin' === ( $browser_session['playground']['blueprint']['steps'][0]['username'] ?? '' ) );
@@ -725,6 +726,15 @@ $browser_untrusted_playground_origin = call_user_func(
 	)
 );
 $assert( 'browser Playground session rejects untrusted Playground origins', is_wp_error( $browser_untrusted_playground_origin ) && 'wp_codebox_browser_origin_not_allowed' === $browser_untrusted_playground_origin->get_error_code() );
+
+$browser_untrusted_cors_proxy = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'       => 'Prepare a browser preview with an untrusted Playground CORS proxy.',
+		'playground' => array( 'cors_proxy_url' => 'https://evil.example/cors-proxy?' ),
+	)
+);
+$assert( 'browser Playground session rejects untrusted CORS proxy origins', is_wp_error( $browser_untrusted_cors_proxy ) && 'wp_codebox_browser_origin_not_allowed' === $browser_untrusted_cors_proxy->get_error_code() && 'cors_proxy_url' === ( $browser_untrusted_cors_proxy->get_error_data()['field'] ?? '' ) );
 
 $component_paths_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] ?? null;
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
