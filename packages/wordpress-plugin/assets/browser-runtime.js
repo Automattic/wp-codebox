@@ -373,7 +373,12 @@ try {
 			throw new Error( 'WP Codebox browser recipe missing.' );
 		}
 
-		await client.writeFile( taskPath, JSON.stringify( taskPayload ) );
+		const payload = taskPayload && typeof taskPayload === 'object' ? taskPayload : recipe?.browser?.task_payload;
+		if ( ! payload || typeof payload !== 'object' ) {
+			throw new Error( 'WP Codebox browser recipe task payload missing.' );
+		}
+
+		await client.writeFile( taskPath, JSON.stringify( payload ) );
 
 		let lastResult = null;
 		for ( const step of steps ) {
