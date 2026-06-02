@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { argValue } from "./commands.js"
 
 export interface EditorOpenTarget {
@@ -7,6 +9,12 @@ export interface EditorOpenTarget {
   postType?: string
   waitSelector: string
 }
+
+export type EditorActionStep =
+  | { kind: "open"; timeout?: string }
+  | { kind: "insertBlock"; name?: string; attributes?: Record<string, unknown>; content?: string; select?: boolean; timeout?: string }
+  | { kind: "selectBlock"; clientId?: string; index?: number; timeout?: string }
+  | { kind: "inspectState"; timeout?: string }
 
 const DEFAULT_EDITOR_WAIT_SELECTOR = ".edit-post-visual-editor, .editor-styles-wrapper, .block-editor, .interface-interface-skeleton"
 
@@ -41,4 +49,75 @@ export function editorOpenTargetFromArgs(args: string[]): EditorOpenTarget {
   }
 
   return { url: `/wp-admin/post-new.php?post_type=${encodeURIComponent(postType)}`, kind: "post-new", postType, waitSelector }
+}
+
+export async function editorActionStepsFromArgs(args: string[]): Promise<EditorActionStep[]> {
+  const stepsRaw = argValue(args, "steps-json")?.trim()
+  if (!stepsRaw) {
+    throw new Error("wordpress.editor-actions requires steps-json=<array>")
+  }
+
+  let text = stepsRaw
+  if (stepsRaw.startsWith("@")) {
+    text = await readFile(resolve(stepsRaw.slice(1)), "utf8")
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`wordpress.editor-actions steps-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("wordpress.editor-actions steps-json must be a JSON array")
+  }
+
+  return parsed.map((step, index) => normalizeEditorActionStep(step, index))
+}
+
+function normalizeEditorActionStep(step: unknown, index: number): EditorActionStep {
+  if (!step || typeof step !== "object" || Array.isArray(step)) {
+    throw new Error(`wordpress.editor-actions steps-json[${index}] must be an object`)
+  }
+
+  const input = step as Record<string, unknown>
+  if (input.kind === "open") {
+    return { kind: "open", ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}) }
+  }
+  if (input.kind === "insertBlock") {
+    if (input.name !== undefined && typeof input.name !== "string") {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].name must be a block name string`)
+    }
+    if (input.attributes !== undefined && (!input.attributes || typeof input.attributes !== "object" || Array.isArray(input.attributes))) {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].attributes must be a JSON object`)
+    }
+    return {
+      kind: "insertBlock",
+      name: typeof input.name === "string" && input.name.length > 0 ? input.name : "core/paragraph",
+      ...(typeof input.content === "string" ? { content: input.content } : {}),
+      ...(input.attributes && typeof input.attributes === "object" && !Array.isArray(input.attributes) ? { attributes: input.attributes as Record<string, unknown> } : {}),
+      ...(typeof input.select === "boolean" ? { select: input.select } : {}),
+      ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
+    }
+  }
+  if (input.kind === "selectBlock") {
+    if (input.clientId !== undefined && typeof input.clientId !== "string") {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].clientId must be a string`)
+    }
+    if (input.index !== undefined && (typeof input.index !== "number" || !Number.isInteger(input.index) || input.index < 0)) {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].index must be a non-negative integer`)
+    }
+    return {
+      kind: "selectBlock",
+      ...(typeof input.clientId === "string" ? { clientId: input.clientId } : {}),
+      ...(Number.isInteger(input.index) && (input.index as number) >= 0 ? { index: input.index as number } : {}),
+      ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
+    }
+  }
+  if (input.kind === "inspectState") {
+    return { kind: "inspectState", ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}) }
+  }
+
+  throw new Error(`wordpress.editor-actions step kind is not supported: ${String(input.kind)}`)
 }
