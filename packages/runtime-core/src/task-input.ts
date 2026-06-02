@@ -19,6 +19,15 @@ export interface TaskInputPolicy {
   [key: string]: unknown
 }
 
+export interface TaskInputAgentBundle {
+  source?: string
+  bundle?: Record<string, unknown>
+  slug?: string
+  on_conflict?: "error" | "skip" | "upgrade"
+  owner_id?: number
+  token_env?: string
+}
+
 export interface TaskInput {
   schema: typeof TASK_INPUT_SCHEMA
   version: typeof TASK_INPUT_VERSION
@@ -26,6 +35,7 @@ export interface TaskInput {
   target: Partial<TaskTarget>
   allowed_tools: string[]
   expected_artifacts: string[]
+  agent_bundles: TaskInputAgentBundle[]
   policy: TaskInputPolicy
   context: Record<string, unknown>
 }
@@ -38,7 +48,7 @@ export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "g
 export const TASK_INPUT_JSON_SCHEMA = {
   $id: TASK_INPUT_SCHEMA,
   type: "object",
-  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "policy", "context"],
+  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "policy", "context"],
   properties: {
     schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
@@ -63,6 +73,22 @@ export const TASK_INPUT_JSON_SCHEMA = {
       description: "Artifact kinds the caller wants back, such as patch, review, tests, preview, or package.",
       items: { type: "string" },
     },
+    agent_bundles: {
+      type: "array",
+      description: "Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.",
+      items: {
+        type: "object",
+        anyOf: [{ required: ["source"] }, { required: ["bundle"] }],
+        properties: {
+          source: { type: "string" },
+          bundle: { type: "object" },
+          slug: { type: "string" },
+          on_conflict: { enum: ["error", "skip", "upgrade"] },
+          owner_id: { type: "integer", minimum: 1 },
+          token_env: { type: "string" },
+        },
+      },
+    },
     policy: {
       type: "object",
       description: "Caller policy hints for approvals, apply-back, sandboxing, and risk controls.",
@@ -85,7 +111,28 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     target: isPlainObject(input.target) ? input.target : {},
     allowed_tools: stringList(input.allowed_tools),
     expected_artifacts: stringList(input.expected_artifacts),
+    agent_bundles: normalizeAgentBundles((input as Record<string, unknown>).agent_bundles ?? (input as Record<string, unknown>).agentBundles),
     policy: isPlainObject(input.policy) ? input.policy : {},
     context: isPlainObject(input.context) ? input.context : {},
   }
+}
+
+function normalizeAgentBundles(value: unknown): TaskInputAgentBundle[] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry): TaskInputAgentBundle[] => {
+    if (!isPlainObject(entry)) return []
+    const source = typeof entry.source === "string" ? entry.source.trim() : ""
+    const bundle = isPlainObject(entry.bundle) ? entry.bundle : undefined
+    if (!source && !bundle) return []
+
+    const normalized: TaskInputAgentBundle = {}
+    if (source) normalized.source = source
+    if (bundle) normalized.bundle = bundle
+    if (typeof entry.slug === "string" && entry.slug.trim()) normalized.slug = entry.slug.trim()
+    normalized.on_conflict = ["error", "skip", "upgrade"].includes(String(entry.on_conflict)) ? entry.on_conflict as TaskInputAgentBundle["on_conflict"] : "upgrade"
+    if (Number.isSafeInteger(entry.owner_id) && Number(entry.owner_id) > 0) normalized.owner_id = Number(entry.owner_id)
+    if (typeof entry.token_env === "string" && entry.token_env.trim()) normalized.token_env = entry.token_env.trim()
+    return [normalized]
+  })
 }

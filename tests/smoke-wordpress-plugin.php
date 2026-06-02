@@ -163,7 +163,8 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-preview-op
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
-$root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
+$source_root = dirname( __DIR__ );
+$root        = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
 foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
@@ -361,6 +362,12 @@ $assert( 'browser Playground session output declares browser execution', array( 
 $assert( 'browser Playground session exposes generic sandbox invocation schema', array( 'ability', 'task' ) === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['type']['enum'] ?? array() ) && 'string' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['hook']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes generic capture path schema', 'array' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['type'] ?? '' ) && 'integer' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['items']['properties']['max_bytes']['type'] ?? '' ) && 'object' === ( $browser_session_ability['output_schema']['properties']['materialization']['type'] ?? '' ) );
 
+$browser_materializer_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-materializer-contract'] ?? null;
+$assert( 'browser materializer contract ability registered', is_array( $browser_materializer_ability ) );
+$assert( 'browser materializer contract ability is REST visible', true === ( $browser_materializer_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser materializer contract accepts goal or legacy task', array( 'goal' ) === ( $browser_materializer_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_materializer_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser materializer contract exposes recipe materialization and authorization output', 'object' === ( $browser_materializer_ability['output_schema']['properties']['recipe']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['materialization']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['authorization']['type'] ?? '' ) );
+
 $trusted_browser_authorization = array(
 	'authorization' => array(
 		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
@@ -374,6 +381,7 @@ $assert( 'browser Playground session keeps default protection for untrusted user
 $assert( 'browser Playground session allows trusted orchestrator caller with browser-session scope', true === call_user_func( $browser_session_ability['permission_callback'], $trusted_browser_authorization ) );
 $assert( 'browser Playground session denies untrusted orchestrator caller', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'unknown-product', 'scope' => 'browser-session:create' ) ) ) );
 $assert( 'browser Playground session denies trusted caller without browser-session scope', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
+$assert( 'browser materializer contract reuses trusted browser-session authorization', true === call_user_func( $browser_materializer_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_materializer_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
 $artifact_abilities = array(
@@ -423,6 +431,8 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_model'] = 'gpt-5.5';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI_API_KEY' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org', 'github.com' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_theme_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org' );
+$recipe_run_source = file_get_contents( $source_root . '/packages/cli/src/commands/recipe-run.ts' );
+$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugins_activated', $" . "activated)" ) );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 $GLOBALS['wp_codebox_remote_responses']['https://github.com/example/generic-runtime-helper/releases/download/v1.0.0/generic-runtime-helper.zip'] = array(
 	'response' => array( 'code' => 200 ),
@@ -453,9 +463,7 @@ mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
 mkdir( $root . '/plugin-root/generic-caller-plugin', 0777, true );
 file_put_contents( $root . '/plugin-root/generic-caller-plugin/generic-caller-plugin.php', '<?php /* Plugin Name: Generic Caller Plugin */' );
 
-$browser_session = call_user_func(
-	$browser_session_ability['execute_callback'],
-	array(
+$browser_session_input = array(
 		'goal'                  => 'Prepare a browser Playground preview.',
 		'agents_api_path'       => '',
 		'data_machine_path'     => '',
@@ -592,7 +600,11 @@ $browser_session = call_user_func(
 				'kind'      => 'image',
 			),
 		),
-	)
+	);
+
+$browser_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	$browser_session_input
 );
 $assert( 'browser Playground session returns without shelling out', ! is_wp_error( $browser_session ) && true === ( $browser_session['success'] ?? false ) );
 $assert( 'browser Playground session schema is stable', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_session['schema'] ?? '' ) );
@@ -635,6 +647,16 @@ $assert( 'browser Playground recipe initializes abilities before invocation', ! 
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && ! empty( $browser_step_with_code( 'caller_runtime_task' ) ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe keeps invocation fixed after parent validation', ! is_wp_error( $browser_session ) && ! str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), '$payload[\'invocation\']' ) );
 $assert( 'browser Playground recipe guards permission bypass to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'/wordpress/' === \$wp_codebox_playground_root" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
+
+$browser_materializer_contract = call_user_func(
+	$browser_materializer_ability['execute_callback'],
+	$browser_session_input
+);
+$assert( 'browser materializer contract returns recipe-only envelope', ! is_wp_error( $browser_materializer_contract ) && true === ( $browser_materializer_contract['success'] ?? false ) && 'wp-codebox/browser-materializer-contract/v1' === ( $browser_materializer_contract['schema'] ?? '' ) && ! isset( $browser_materializer_contract['session'] ) && 'browser-session-123' === ( $browser_materializer_contract['session_id'] ?? '' ) );
+$assert( 'browser materializer contract preserves trusted authorization shape', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['session']['authorization'] ?? array() ) === ( $browser_materializer_contract['authorization'] ?? array() ) );
+$assert( 'browser materializer contract returns same runnable recipe as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['recipe'] ?? array() ) === ( $browser_materializer_contract['recipe'] ?? array() ) );
+$assert( 'browser materializer contract returns same materialization descriptor as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['materialization'] ?? array() ) === ( $browser_materializer_contract['materialization'] ?? array() ) );
+$assert( 'browser materializer contract preserves runnable context for existing browser session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['task_payload'] ?? array() ) === ( $browser_materializer_contract['task_payload'] ?? array() ) && ( $browser_session['playground'] ?? array() ) === ( $browser_materializer_contract['playground'] ?? array() ) && ( $browser_session['artifacts'] ?? array() ) === ( $browser_materializer_contract['artifacts'] ?? array() ) );
 
 $runner_report_path = $root . '/browser-materialization-report.json';
 add_filter(
@@ -883,6 +905,23 @@ $browser_inherited_session = call_user_func(
 	array(
 		'goal'    => 'Invoke a browser agent with inherited connector metadata.',
 		'inherit' => array( 'connectors' => array( 'primary-ai' ) ),
+		'agent_bundles' => array(
+			array(
+				'source' => 'https://example.test/site-generator-agent.json',
+				'slug'   => 'site-generator',
+			),
+			array(
+				'bundle' => array(
+					'bundle_version' => '1.0.0',
+					'agent'          => array(
+						'agent_slug'   => 'repair-agent',
+						'agent_name'   => 'Repair Agent',
+						'agent_config' => array(),
+					),
+				),
+				'slug' => 'repair-agent',
+			),
+		),
 	)
 );
 $browser_inherited_encoded = ! is_wp_error( $browser_inherited_session ) ? json_encode( $browser_inherited_session, JSON_UNESCAPED_SLASHES ) : '';
@@ -891,6 +930,8 @@ $assert( 'browser Playground session packages inherited provider plugin path', !
 $assert( 'browser Playground session embeds first-class browser task payload', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/browser-agent-task-payload/v1' === ( $browser_inherited_session['task_payload']['schema'] ?? '' ) && 'openai' === ( $browser_inherited_session['recipe']['browser']['task_payload']['provider'] ?? '' ) && 'gpt-5.5' === ( $browser_inherited_session['recipe']['browser']['task_payload']['model'] ?? '' ) );
 $assert( 'browser Playground session records inherited connector credential provenance without values', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/connector-credentials/v1' === ( $browser_inherited_session['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $browser_inherited_session['task_payload']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) && str_contains( $browser_inherited_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_inherited_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_inherited_encoded, 'secret_env_values' ) );
 $assert( 'browser Playground recipe defaults to agents chat invocation with embedded payload', ! is_wp_error( $browser_inherited_session ) && 'ability' === ( $browser_inherited_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'agents/chat' === ( $browser_inherited_session['recipe']['browser']['invocation']['name'] ?? '' ) && str_contains( (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) );
+$browser_runner_code = (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
+$assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
@@ -1365,6 +1406,24 @@ $homeboy_result = $runner->run(
 			'provider'             => 'openai',
 			'model'                => 'gpt-5.5',
 			'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+			'agent_bundles'        => array(
+				array(
+					'source'      => $root . '/site-generator-agent.json',
+					'slug'        => 'site-generator',
+					'on_conflict' => 'upgrade',
+				),
+				array(
+					'bundle' => array(
+						'bundle_version' => '1.0.0',
+						'agent'          => array(
+							'agent_slug'   => 'repair-agent',
+							'agent_name'   => 'Repair Agent',
+							'agent_config' => array(),
+						),
+					),
+					'slug'   => 'repair-agent',
+				),
+			),
 			'secret_env'           => array( 'GITHUB_TOKEN' ),
 			'mounts'               => array(
 				array(
@@ -1418,6 +1477,7 @@ $homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner preserves multiple Data Machine agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
 $assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
 $assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );

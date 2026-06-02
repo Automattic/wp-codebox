@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
 import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
+import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"
 import { defaultPolicy } from "./recipe-validation.js"
 
@@ -26,6 +27,7 @@ export interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   sessionId?: string
   maxTurns?: string
   timeoutSeconds?: string
+  agentBundles?: AgentBundleSpec[]
   code?: string
   codeFile?: string
 }
@@ -110,6 +112,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       sessionId: argValue(args, "session-id"),
       maxTurns: argValue(args, "max-turns"),
       timeoutSeconds: argValue(args, "timeout-seconds"),
+      agentBundles: parseAgentBundles(args),
     }))
 
     return {
@@ -226,7 +229,7 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 }
 
 export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -264,6 +267,9 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
       case "--code-file":
         options.codeFile = value
         break
+      case "--agent-bundles-json":
+        options.agentBundles = parseAgentBundleList(value)
+        break
     }
   }
 
@@ -276,6 +282,19 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
   }
 
   return options as AgentSandboxRunOptions
+}
+
+function parseAgentBundles(args: string[]): AgentBundleSpec[] {
+  return parseAgentBundleList(argValue(args, "agent-bundles-json") ?? "[]")
+}
+
+function parseAgentBundleList(value: string): AgentBundleSpec[] {
+  if (!value.trim()) return []
+  const parsed = JSON.parse(value)
+  if (!Array.isArray(parsed)) {
+    throw new Error("agent-bundles-json must be an array")
+  }
+  return parsed.filter((entry): entry is AgentBundleSpec => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
 }
 
 export async function parseAgentSandboxBatchOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): Promise<AgentSandboxBatchOptions> {

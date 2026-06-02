@@ -28,6 +28,7 @@ import type {
   ObservationSpec,
   Runtime,
   RuntimeBackend,
+  BrowserStartupProgressEvent,
   RuntimeCreateSpec,
   RuntimeRestoreSpec,
   RuntimeEpisodeTraceRef,
@@ -627,7 +628,14 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
   }
 
   private async startPlayground(): Promise<PlaygroundCliServer> {
-    return startPlaygroundCliServer(this.spec, this.mounts)
+    return startPlaygroundCliServer(this.spec, this.mounts, {
+      onProgress: (event) => this.recordBrowserStartupProgress(event),
+    })
+  }
+
+  private recordBrowserStartupProgress(event: BrowserStartupProgressEvent): void {
+    this.recordEvent("runtime.browser-startup-progress", { event })
+    void Promise.resolve(this.spec.onBrowserStartupProgress?.(event)).catch(() => undefined)
   }
 
   private async observeData(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
