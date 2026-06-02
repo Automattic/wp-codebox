@@ -486,6 +486,56 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/create-browser-materializer-contract',
+				array(
+					'label'               => 'Create Browser Materializer Contract',
+					'description'         => 'Prepare the browser-executed Playground recipe and materialization contract for an already-created parent browser session.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'anyOf'      => array(
+							array( 'type' => 'object', 'required' => array( 'goal' ) ),
+							array( 'type' => 'object', 'required' => array( 'task' ) ),
+						),
+						'properties' => array(
+							'goal'               => $task_input_schema['properties']['goal'],
+							'task'               => array(
+								'type'        => 'string',
+								'description' => 'Legacy task description. Prefer goal for new product callers.',
+							),
+							'target'             => $task_input_schema['properties']['target'],
+							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
+							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
+							'policy'             => $task_input_schema['properties']['policy'],
+							'context'            => $task_input_schema['properties']['context'],
+							'agent'              => array( 'type' => 'string' ),
+							'provider'           => array( 'type' => 'string' ),
+							'model'              => array( 'type' => 'string' ),
+							'mode'               => array( 'type' => 'string' ),
+							'provider_plugin_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+							'agent_bundles'      => self::agent_bundle_schema(),
+							'inherit'            => $inherit_schema,
+							'secret_env'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+							'sandbox_session_id' => $session_input['sandbox_session_id'],
+							'orchestrator'       => $session_input['orchestrator'],
+							'authorization'      => self::browser_session_authorization_schema(),
+							'playground'         => array( 'type' => 'object' ),
+							'browser_runner'     => array( 'type' => 'object' ),
+							'browser_plugins'    => array( 'type' => 'array' ),
+							'runtime'            => array( 'type' => 'object' ),
+							'blueprint'          => array( 'type' => 'object' ),
+							'site_blueprint_artifact' => array( 'type' => 'object' ),
+							'artifact_files'     => array( 'type' => 'array' ),
+						),
+					),
+					'output_schema'       => self::browser_materializer_contract_schema(),
+					'execute_callback'    => array( self::class, 'create_browser_materializer_contract' ),
+					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/list-artifacts',
 				array(
 					'label'               => 'List WP Codebox Artifacts',
@@ -1161,6 +1211,38 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @return array<string,mixed> */
+	private static function browser_materializer_contract_schema(): array {
+		return array(
+			'type'       => 'object',
+			'properties' => array(
+				'success'          => array( 'type' => 'boolean' ),
+				'schema'           => array( 'type' => 'string' ),
+				'execution'        => array(
+					'type' => 'string',
+					'enum' => array( 'browser-playground' ),
+				),
+				'execution_scope'  => array(
+					'type' => 'string',
+					'enum' => array( 'disposable-playground' ),
+				),
+				'permission_model' => array(
+					'type' => 'string',
+					'enum' => array( 'sandbox-bypass' ),
+				),
+				'session_id'       => array( 'type' => 'string' ),
+				'authorization'    => array( 'type' => 'object' ),
+				'task_input'       => self::task_input_schema(),
+				'task_payload'     => array( 'type' => 'object' ),
+				'materialization'  => array( 'type' => 'object' ),
+				'recipe'           => array( 'type' => 'object' ),
+				'playground'       => array( 'type' => 'object' ),
+				'runtime'          => array( 'type' => 'object' ),
+				'artifacts'        => array( 'type' => 'object' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
 	private static function browser_session_authorization_schema(): array {
 		return self::trusted_orchestrator_authorization_schema( self::BROWSER_SESSION_CREATE_SCOPE, 'Explicit trusted orchestrator authorization for browser session creation. Callers must provide a caller id and the browser-session:create scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' );
 	}
@@ -1303,6 +1385,56 @@ final class WP_Codebox_Abilities {
 				'files'              => $artifacts,
 				'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
 				'expected_artifacts' => $task_input['expected_artifacts'],
+			),
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function create_browser_materializer_contract( array $input ): array|WP_Error {
+		$session = self::create_browser_playground_session( $input );
+		if ( is_wp_error( $session ) ) {
+			return $session;
+		}
+
+		if ( true !== ( $session['success'] ?? false ) ) {
+			$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+			return array_filter(
+				array(
+					'success'          => false,
+					'schema'           => 'wp-codebox/browser-materializer-contract/v1',
+					'execution'        => 'browser-playground',
+					'execution_scope'  => 'disposable-playground',
+					'permission_model' => 'sandbox-bypass',
+					'status'           => (string) ( $session['status'] ?? 'blocked' ),
+					'error'            => is_array( $session['error'] ?? null ) ? $session['error'] : array(),
+					'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
+					'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
+					'signals'          => is_array( $session['signals'] ?? null ) ? $session['signals'] : array(),
+				),
+				static fn( mixed $value ): bool => array() !== $value && '' !== $value
+			);
+		}
+
+		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+
+		return array(
+			'success'          => true,
+			'schema'           => 'wp-codebox/browser-materializer-contract/v1',
+			'execution'        => 'browser-playground',
+			'execution_scope'  => 'disposable-playground',
+			'permission_model' => 'sandbox-bypass',
+			'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
+			'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
+			'task_input'       => is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array(),
+			'task_payload'     => is_array( $session['task_payload'] ?? null ) ? $session['task_payload'] : array(),
+			'materialization'  => is_array( $session['materialization'] ?? null ) ? $session['materialization'] : array(),
+			'recipe'           => is_array( $session['recipe'] ?? null ) ? $session['recipe'] : array(),
+			'playground'       => is_array( $session['playground'] ?? null ) ? $session['playground'] : array(),
+			'runtime'          => is_array( $session['runtime'] ?? null ) ? $session['runtime'] : array(),
+			'artifacts'        => is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array(),
+			'provenance'       => array(
+				'generated_by' => 'wp-codebox/browser-materializer-contract',
+				'source'       => 'wp-codebox/create-browser-playground-session',
 			),
 		);
 	}

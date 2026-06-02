@@ -362,6 +362,12 @@ $assert( 'browser Playground session output declares browser execution', array( 
 $assert( 'browser Playground session exposes generic sandbox invocation schema', array( 'ability', 'task' ) === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['type']['enum'] ?? array() ) && 'string' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['hook']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes generic capture path schema', 'array' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['type'] ?? '' ) && 'integer' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['items']['properties']['max_bytes']['type'] ?? '' ) && 'object' === ( $browser_session_ability['output_schema']['properties']['materialization']['type'] ?? '' ) );
 
+$browser_materializer_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-materializer-contract'] ?? null;
+$assert( 'browser materializer contract ability registered', is_array( $browser_materializer_ability ) );
+$assert( 'browser materializer contract ability is REST visible', true === ( $browser_materializer_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser materializer contract accepts goal or legacy task', array( 'goal' ) === ( $browser_materializer_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_materializer_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser materializer contract exposes recipe materialization and authorization output', 'object' === ( $browser_materializer_ability['output_schema']['properties']['recipe']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['materialization']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['authorization']['type'] ?? '' ) );
+
 $trusted_browser_authorization = array(
 	'authorization' => array(
 		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
@@ -375,6 +381,7 @@ $assert( 'browser Playground session keeps default protection for untrusted user
 $assert( 'browser Playground session allows trusted orchestrator caller with browser-session scope', true === call_user_func( $browser_session_ability['permission_callback'], $trusted_browser_authorization ) );
 $assert( 'browser Playground session denies untrusted orchestrator caller', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'unknown-product', 'scope' => 'browser-session:create' ) ) ) );
 $assert( 'browser Playground session denies trusted caller without browser-session scope', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
+$assert( 'browser materializer contract reuses trusted browser-session authorization', true === call_user_func( $browser_materializer_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_materializer_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
 $artifact_abilities = array(
@@ -456,9 +463,7 @@ mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
 mkdir( $root . '/plugin-root/generic-caller-plugin', 0777, true );
 file_put_contents( $root . '/plugin-root/generic-caller-plugin/generic-caller-plugin.php', '<?php /* Plugin Name: Generic Caller Plugin */' );
 
-$browser_session = call_user_func(
-	$browser_session_ability['execute_callback'],
-	array(
+$browser_session_input = array(
 		'goal'                  => 'Prepare a browser Playground preview.',
 		'agents_api_path'       => '',
 		'data_machine_path'     => '',
@@ -595,7 +600,11 @@ $browser_session = call_user_func(
 				'kind'      => 'image',
 			),
 		),
-	)
+	);
+
+$browser_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	$browser_session_input
 );
 $assert( 'browser Playground session returns without shelling out', ! is_wp_error( $browser_session ) && true === ( $browser_session['success'] ?? false ) );
 $assert( 'browser Playground session schema is stable', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_session['schema'] ?? '' ) );
@@ -638,6 +647,16 @@ $assert( 'browser Playground recipe initializes abilities before invocation', ! 
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && ! empty( $browser_step_with_code( 'caller_runtime_task' ) ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe keeps invocation fixed after parent validation', ! is_wp_error( $browser_session ) && ! str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), '$payload[\'invocation\']' ) );
 $assert( 'browser Playground recipe guards permission bypass to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'/wordpress/' === \$wp_codebox_playground_root" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
+
+$browser_materializer_contract = call_user_func(
+	$browser_materializer_ability['execute_callback'],
+	$browser_session_input
+);
+$assert( 'browser materializer contract returns recipe-only envelope', ! is_wp_error( $browser_materializer_contract ) && true === ( $browser_materializer_contract['success'] ?? false ) && 'wp-codebox/browser-materializer-contract/v1' === ( $browser_materializer_contract['schema'] ?? '' ) && ! isset( $browser_materializer_contract['session'] ) && 'browser-session-123' === ( $browser_materializer_contract['session_id'] ?? '' ) );
+$assert( 'browser materializer contract preserves trusted authorization shape', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['session']['authorization'] ?? array() ) === ( $browser_materializer_contract['authorization'] ?? array() ) );
+$assert( 'browser materializer contract returns same runnable recipe as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['recipe'] ?? array() ) === ( $browser_materializer_contract['recipe'] ?? array() ) );
+$assert( 'browser materializer contract returns same materialization descriptor as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['materialization'] ?? array() ) === ( $browser_materializer_contract['materialization'] ?? array() ) );
+$assert( 'browser materializer contract preserves runnable context for existing browser session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['task_payload'] ?? array() ) === ( $browser_materializer_contract['task_payload'] ?? array() ) && ( $browser_session['playground'] ?? array() ) === ( $browser_materializer_contract['playground'] ?? array() ) && ( $browser_session['artifacts'] ?? array() ) === ( $browser_materializer_contract['artifacts'] ?? array() ) );
 
 $runner_report_path = $root . '/browser-materialization-report.json';
 add_filter(
