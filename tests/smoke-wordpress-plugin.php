@@ -63,6 +63,7 @@ if ( ! function_exists( 'is_wp_error' ) ) {
 $GLOBALS['wp_codebox_registered_abilities']         = array();
 $GLOBALS['wp_codebox_registered_ability_categories'] = array();
 $GLOBALS['wp_codebox_actions']                      = array();
+$GLOBALS['wp_codebox_did_actions']                  = array();
 $GLOBALS['wp_codebox_current_action']              = null;
 $GLOBALS['wp_codebox_filters']                      = array();
 $GLOBALS['wp_codebox_mock_abilities']              = array();
@@ -92,12 +93,14 @@ function wp_get_ability( string $name ): mixed { return $GLOBALS['wp_codebox_moc
 function doing_action( string $hook ): bool {
 	return $hook === $GLOBALS['wp_codebox_current_action'];
 }
+function did_action( string $hook ): int { return (int) ( $GLOBALS['wp_codebox_did_actions'][ $hook ] ?? 0 ); }
 function add_action( string $hook, callable $callback, int $priority = 10 ): void {
 	$GLOBALS['wp_codebox_actions'][ $hook ][ $priority ][] = $callback;
 }
 function do_action( string $hook ): void {
 	$previous_action = $GLOBALS['wp_codebox_current_action'];
 	$GLOBALS['wp_codebox_current_action'] = $hook;
+	$GLOBALS['wp_codebox_did_actions'][ $hook ] = (int) ( $GLOBALS['wp_codebox_did_actions'][ $hook ] ?? 0 ) + 1;
 	$callbacks = $GLOBALS['wp_codebox_actions'][ $hook ] ?? array();
 	ksort( $callbacks );
 	foreach ( $callbacks as $priority_callbacks ) {
@@ -108,6 +111,7 @@ function do_action( string $hook ): void {
 	$GLOBALS['wp_codebox_current_action'] = $previous_action;
 }
 function add_filter( string $hook, callable $callback, int $priority = 10 ): void { $GLOBALS['wp_codebox_filters'][ $hook ] = $callback; }
+function has_filter( string $hook ): bool { return array_key_exists( $hook, $GLOBALS['wp_codebox_filters'] ); }
 function current_user_can( string $capability ): bool { return 'manage_options' === $capability; }
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	if ( ! array_key_exists( $hook, $GLOBALS['wp_codebox_filters'] ) ) {
@@ -122,6 +126,7 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	return $filter;
 }
 function wp_parse_url( string $url ): array|false { return parse_url( $url ); }
+function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false { return json_encode( $value, $flags, $depth ); }
 function wp_safe_remote_get( string $url, array $args = array() ): array|WP_Error {
 	$GLOBALS['wp_codebox_remote_gets'][] = array( 'url' => $url, 'args' => $args );
 	return $GLOBALS['wp_codebox_remote_responses'][ $url ] ?? new WP_Error( 'not_found', 'Remote URL not mocked.' );
@@ -136,6 +141,7 @@ function wp_upload_dir(): array { return $GLOBALS['wp_codebox_upload_dir']; }
 function sanitize_key( string $key ): string { return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '', $key ) ?? '' ); }
 function sanitize_title( string $title ): string { return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '-', $title ) ?? '' ); }
 function sanitize_text_field( string $text ): string { return trim( preg_replace( '/[\r\n\t]+/', ' ', $text ) ?? '' ); }
+function wp_normalize_path( string $path ): string { return str_replace( '\\', '/', $path ); }
 function absint( mixed $value ): int { return abs( (int) $value ); }
 function get_stylesheet(): string { return 'twentytwentyfive'; }
 function get_posts( array $args ): array {
@@ -578,12 +584,55 @@ $assert( 'browser Playground recipe uses generic artifact directory', ! is_wp_er
 $assert( 'browser Playground recipe invokes caller task inside site', ! is_wp_error( $browser_session ) && 'task' === ( $browser_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'caller_runtime_task' === ( $browser_session['recipe']['browser']['invocation']['hook'] ?? '' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'has_filter( $hook )' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe captures generic output reports', ! is_wp_error( $browser_session ) && '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json' === ( $browser_session['recipe']['browser']['captures'][0]['path'] ?? '' ) && 'materialization-report' === ( $browser_session['recipe']['browser']['captures'][0]['name'] ?? '' ) && 4096 === ( $browser_session['recipe']['browser']['captures'][0]['max_bytes'] ?? 0 ) );
 $assert( 'browser Playground session exposes materialization descriptor', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-materialization/v1' === ( $browser_session['materialization']['schema'] ?? '' ) && 'pending' === ( $browser_session['materialization']['status'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $browser_session['materialization']['result_path'] ?? '' ) && 'wp-codebox/browser-materialization-error/v1' === ( $browser_session['materialization']['error_schema'] ?? '' ) );
+$assert( 'browser Playground session exposes materialization diagnostics and provenance', ! is_wp_error( $browser_session ) && 1 === ( $browser_session['materialization']['diagnostics']['capture_count'] ?? 0 ) && array() === ( $browser_session['materialization']['errors'] ?? null ) && 'wp-codebox/browser-runner' === ( $browser_session['materialization']['provenance']['generated_by'] ?? '' ) );
 $assert( 'browser Playground recipe normalizes captured runner result', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_capture_file' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp-codebox/browser-capture/v1' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp-codebox/browser-materialization/v1' ) );
+$assert( 'browser Playground recipe emits normalized materialization metadata', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'diagnostics' => \$diagnostics" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'errors' => array()" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'provenance' => \$provenance" ) );
 $assert( 'browser Playground recipe keeps ability invocation path generic', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_ability_unavailable' ) );
 $assert( 'browser Playground recipe initializes abilities before invocation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_categories_init' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_init' ) );
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && ! empty( $browser_step_with_code( 'caller_runtime_task' ) ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe keeps invocation fixed after parent validation', ! is_wp_error( $browser_session ) && ! str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), '$payload[\'invocation\']' ) );
 $assert( 'browser Playground recipe guards permission bypass to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'/wordpress/' === \$wp_codebox_playground_root" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
+
+$runner_report_path = $root . '/browser-materialization-report.json';
+add_filter(
+	'caller_runtime_task',
+	static function ( $result, array $input, array $payload ) use ( $runner_report_path ): array {
+		file_put_contents(
+			$runner_report_path,
+			wp_json_encode(
+				array(
+					'schema'       => 'caller/materialization-report/v1',
+					'summary'      => 'caller-owned sandbox task ran',
+					'diagnostics'  => $input['diagnostics'] ?? array(),
+					'payload_goal' => $payload['task_input']['goal'] ?? '',
+				)
+			)
+		);
+
+		return array(
+			'summary'       => 'caller-owned sandbox task ran',
+			'changed_files' => array( 'example.php' ),
+			'diagnostics'   => $input['diagnostics'] ?? array(),
+		);
+	},
+	10
+);
+$runner_php = (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
+$runner_php = preg_replace( '/^code=/', '', $runner_php ) ?? $runner_php;
+$runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
+$runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );
+$runner_php = str_replace( '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json', $runner_report_path, $runner_php );
+$runner_php = preg_replace( '/\$wp_codebox_is_playground = .*?;\n/', '$wp_codebox_is_playground = true;' . "\n", $runner_php ) ?? $runner_php;
+ob_start();
+eval( $runner_php );
+$runner_output = ob_get_clean();
+$runner_result = json_decode( (string) $runner_output, true );
+$runner_result_path = (string) ( $browser_session['recipe']['browser']['result_path'] ?? '' );
+$runner_result_file = is_readable( $runner_result_path ) ? json_decode( (string) file_get_contents( $runner_result_path ), true ) : null;
+$assert( 'browser Playground generated runner invokes caller task hook', is_array( $runner_result ) && true === ( $runner_result['success'] ?? false ) && 'completed' === ( $runner_result['status'] ?? '' ) && 'caller-owned sandbox task ran' === ( $runner_result['response']['summary'] ?? '' ) );
+$assert( 'browser Playground generated runner captures normalized materialization evidence', is_array( $runner_result ) && 'wp-codebox/browser-materialization/v1' === ( $runner_result['schema'] ?? '' ) && 'wp-codebox/browser-capture/v1' === ( $runner_result['captures'][0]['schema'] ?? '' ) && true === ( $runner_result['captures'][0]['exists'] ?? false ) && 'caller/materialization-report/v1' === ( $runner_result['captures'][0]['json']['schema'] ?? '' ) );
+$assert( 'browser Playground generated runner writes result evidence file', is_array( $runner_result_file ) && $runner_result === $runner_result_file );
+$assert( 'browser Playground generated runner records diagnostics and provenance', is_array( $runner_result ) && 1 === ( $runner_result['diagnostics']['capture_count'] ?? 0 ) && array() === ( $runner_result['errors'] ?? null ) && 'wp-codebox/browser-runner' === ( $runner_result['provenance']['generated_by'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $runner_result['provenance']['result_path'] ?? '' ) );
 $assert( 'browser Playground session emits ready-to-code signal only when blueprint prerequisites are present', ! is_wp_error( $browser_session ) && true === ( $browser_session['signals']['ready_to_code']['emitted'] ?? false ) && 'ready_to_code' === ( $browser_session['signals']['ready_to_code']['name'] ?? '' ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['agents_api'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine_code'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['provider_secret'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['runtime_dependencies'] ?? false ) );
 $assert( 'browser Playground session exposes runtime dependency readiness metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-runtime-readiness/v1' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['schema'] ?? '' ) && 'caller-runtime' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['mu_plugins'][0]['slug'] ?? '' ) && 'example-starter' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['themes'][0]['slug'] ?? '' ) );
 $assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'repair-output/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );

@@ -3130,6 +3130,15 @@ flush_rewrite_rules();
 			'result_path'   => (string) ( $browser['result_path'] ?? '' ),
 			'invocation'    => is_array( $browser['invocation'] ?? null ) ? $browser['invocation'] : array(),
 			'captures'      => is_array( $browser['captures'] ?? null ) ? $browser['captures'] : array(),
+			'diagnostics'   => array(
+				'capture_count' => count( is_array( $browser['captures'] ?? null ) ? $browser['captures'] : array() ),
+			),
+			'errors'        => array(),
+			'provenance'    => array(
+				'generated_by' => 'wp-codebox/browser-runner',
+				'task_path'    => (string) ( $browser['task_path'] ?? '' ),
+				'result_path'  => (string) ( $browser['result_path'] ?? '' ),
+			),
 			'error_schema'  => 'wp-codebox/browser-materialization-error/v1',
 		);
 	}
@@ -3230,6 +3239,7 @@ $result_path = ' . var_export( $result_path, true ) . ';
 $payload = ' . var_export( $default_payload, true ) . ';
 $invocation = ' . var_export( $default_invocation, true ) . ';
 $capture_paths = ' . var_export( $default_captures, true ) . ';
+$started_at = gmdate( \'c\' );
 
 function wp_codebox_browser_normalize_error( $error ) {
 	if ( is_wp_error( $error ) ) {
@@ -3377,7 +3387,33 @@ foreach ( $capture_paths as $capture ) {
 	}
 }
 
+$invocation_metadata = array_filter(
+	array(
+		\'type\' => $invocation_type,
+		\'name\' => (string) ( $invocation[\'name\'] ?? \'\' ),
+		\'hook\' => (string) ( $invocation[\'hook\'] ?? \'\' ),
+	),
+	static fn( $value ) => \'\' !== $value
+);
+$diagnostics = array(
+	\'capture_count\' => count( $captures ),
+	\'captured_paths\' => array_values( array_map( static fn( $capture ) => (string) ( $capture[\'path\'] ?? \'\' ), $captures ) ),
+);
+$provenance = array(
+	\'generated_by\' => \'wp-codebox/browser-runner\',
+	\'session_id\' => $session_id,
+	\'task_path\' => $task_path,
+	\'result_path\' => $result_path,
+	\'started_at\' => $started_at,
+	\'completed_at\' => gmdate( \'c\' ),
+);
+
 if ( is_wp_error( $response ) || $response instanceof Throwable ) {
+	$error = array(
+		\'code\' => wp_codebox_browser_normalize_error( $response )[\'code\'],
+		\'message\' => wp_codebox_browser_normalize_error( $response )[\'message\'],
+		\'data\' => wp_codebox_browser_normalize_error( $response )[\'data\'] ?? null,
+	);
 	$result = array(
 			\'success\' => false,
 			\'schema\' => \'wp-codebox/browser-materialization/v1\',
@@ -3385,17 +3421,12 @@ if ( is_wp_error( $response ) || $response instanceof Throwable ) {
 			\'session_id\' => $session_id,
 			\'execution_scope\' => \'disposable-playground\',
 			\'permission_model\' => \'sandbox-bypass\',
-			\'invocation\' => array(
-				\'type\' => $invocation_type,
-				\'name\' => (string) ( $invocation[\'name\'] ?? \'\' ),
-				\'hook\' => (string) ( $invocation[\'hook\'] ?? \'\' ),
-			),
+			\'invocation\' => $invocation_metadata,
 			\'captures\' => $captures,
-			\'error\' => array(
-				\'code\' => wp_codebox_browser_normalize_error( $response )[\'code\'],
-				\'message\' => wp_codebox_browser_normalize_error( $response )[\'message\'],
-				\'data\' => wp_codebox_browser_normalize_error( $response )[\'data\'] ?? null,
-			),
+			\'diagnostics\' => $diagnostics,
+			\'error\' => $error,
+			\'errors\' => array( $error ),
+			\'provenance\' => $provenance,
 	);
 } else {
 	$result = array(
@@ -3405,14 +3436,13 @@ if ( is_wp_error( $response ) || $response instanceof Throwable ) {
 			\'session_id\' => $session_id,
 			\'execution_scope\' => \'disposable-playground\',
 			\'permission_model\' => \'sandbox-bypass\',
-			\'invocation\' => array(
-				\'type\' => $invocation_type,
-				\'name\' => (string) ( $invocation[\'name\'] ?? \'\' ),
-				\'hook\' => (string) ( $invocation[\'hook\'] ?? \'\' ),
-			),
+			\'invocation\' => $invocation_metadata,
 			\'task_input\' => $payload[\'task_input\'] ?? array(),
 			\'response\' => $response,
 			\'captures\' => $captures,
+			\'diagnostics\' => $diagnostics,
+			\'errors\' => array(),
+			\'provenance\' => $provenance,
 			\'artifacts\' => $payload[\'artifacts\'] ?? array(),
 	);
 }
