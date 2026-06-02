@@ -243,6 +243,7 @@ export function printHelp(): void {
   wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
+  wp-codebox recipe build phpunit --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
@@ -255,6 +256,8 @@ export function printHelp(): void {
 
 Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
+  --options <path>    Recipe builder options JSON file for recipe build.
+  --output <path>     Optional output JSON path for recipe build; defaults to stdout.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>

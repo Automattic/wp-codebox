@@ -7,6 +7,7 @@ interface CliCommandRouter {
   boot: CliCommandHandler
   validateBlueprint: CliCommandHandler
   recipeValidate: CliCommandHandler
+  recipeBuild: CliCommandHandler
   recipeRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
@@ -43,12 +44,17 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       return router.recipeRun(args)
     case "recipe": {
       const subcommand = args.shift()
-      if (subcommand !== "validate") {
+      if (subcommand === "validate") {
+        return router.recipeValidate(args)
+      }
+      if (subcommand === "build") {
+        return router.recipeBuild(args)
+      }
+      {
         console.error(`Unknown recipe command: ${subcommand ?? ""}`)
         router.printHelp()
         return 1
       }
-      return router.recipeValidate(args)
     }
     case "workspace-policy": {
       const subcommand = args.shift()
