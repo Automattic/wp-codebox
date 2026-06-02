@@ -319,7 +319,7 @@ export function buildArtifactReview({
       runtimeReplayReferenceIndex: "files/runtime-replay-index.json",
     },
     ...(browser ? { browser } : {}),
-    riskFlags: [],
+    riskFlags: suspiciousFullFileRewriteRiskFlags(patch),
   }
 }
 
@@ -652,8 +652,8 @@ export async function directoryDiff(baselineDirectory: string, currentDirectory:
   const files: DirectoryDiffResult["files"] = []
 
   for (const relativePath of paths) {
-    const before = baselineFiles.get(relativePath)
-    const after = currentFiles.get(relativePath)
+    const before = normalizePatchText(baselineFiles.get(relativePath))
+    const after = normalizePatchText(currentFiles.get(relativePath))
     if (before === after) {
       continue
     }
@@ -737,20 +737,76 @@ function fileDiff(path: string, before: string, after: string, isAdded: boolean,
   const gitNewPath = `b${path}`
   const oldPath = isAdded ? "/dev/null" : gitOldPath
   const newPath = isDeleted ? "/dev/null" : gitNewPath
-  const oldStart = isAdded ? 0 : 1
-  const newStart = isDeleted ? 0 : 1
   const lines = [
     `diff --git ${gitOldPath} ${gitNewPath}`,
     ...(isAdded ? ["new file mode 100644"] : []),
     ...(isDeleted ? ["deleted file mode 100644"] : []),
     `--- ${oldPath}`,
     `+++ ${newPath}`,
+    ...(isAdded || isDeleted ? fullFileHunk(beforeLines, afterLines, isAdded, isDeleted) : localizedFileHunk(beforeLines, afterLines)),
+  ]
+
+  return `${lines.join("\n")}\n`
+}
+
+function normalizePatchText(text: string | undefined): string | undefined {
+  return text?.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+}
+
+function fullFileHunk(beforeLines: string[], afterLines: string[], isAdded: boolean, isDeleted: boolean): string[] {
+  const oldStart = isAdded ? 0 : 1
+  const newStart = isDeleted ? 0 : 1
+  return [
     `@@ -${oldStart},${beforeLines.length} +${newStart},${afterLines.length} @@`,
     ...beforeLines.map((line) => `-${line}`),
     ...afterLines.map((line) => `+${line}`),
   ]
+}
 
-  return `${lines.join("\n")}\n`
+function localizedFileHunk(beforeLines: string[], afterLines: string[]): string[] {
+  const context = 3
+  let prefix = 0
+  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix]) {
+    prefix++
+  }
+
+  let suffix = 0
+  while (
+    suffix < beforeLines.length - prefix &&
+    suffix < afterLines.length - prefix &&
+    beforeLines[beforeLines.length - suffix - 1] === afterLines[afterLines.length - suffix - 1]
+  ) {
+    suffix++
+  }
+
+  const beforeChangeEnd = beforeLines.length - suffix
+  const afterChangeEnd = afterLines.length - suffix
+  const beforeHunkStart = Math.max(0, prefix - context)
+  const afterHunkStart = Math.max(0, prefix - context)
+  const beforeHunkEnd = Math.min(beforeLines.length, beforeChangeEnd + context)
+  const afterHunkEnd = Math.min(afterLines.length, afterChangeEnd + context)
+  const beforeHunkLength = beforeHunkEnd - beforeHunkStart
+  const afterHunkLength = afterHunkEnd - afterHunkStart
+  const lines = [`@@ -${hunkStartLine(beforeHunkStart, beforeHunkLength)},${beforeHunkLength} +${hunkStartLine(afterHunkStart, afterHunkLength)},${afterHunkLength} @@`]
+
+  for (let index = beforeHunkStart; index < prefix; index++) {
+    lines.push(` ${beforeLines[index]}`)
+  }
+  for (let index = prefix; index < beforeChangeEnd; index++) {
+    lines.push(`-${beforeLines[index]}`)
+  }
+  for (let index = prefix; index < afterChangeEnd; index++) {
+    lines.push(`+${afterLines[index]}`)
+  }
+  for (let index = afterChangeEnd; index < afterHunkEnd; index++) {
+    lines.push(` ${afterLines[index]}`)
+  }
+
+  return lines
+}
+
+function hunkStartLine(startIndex: number, lineCount: number): number {
+  return lineCount === 0 ? 0 : startIndex + 1
 }
 
 function splitLines(text: string): string[] {
@@ -759,4 +815,48 @@ function splitLines(text: string): string[] {
   }
 
   return text.replace(/\n$/, "").split("\n")
+}
+
+function suspiciousFullFileRewriteRiskFlags(patch: string): string[] {
+  const flags = new Set<string>()
+  let currentPath = ""
+  let currentHunkLines = { old: 0, new: 0, added: 0, removed: 0 }
+
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      recordSuspiciousRewrite(flags, currentPath, currentHunkLines)
+      currentPath = line.replace(/^diff --git a/, "").replace(/ b.*$/, "")
+      currentHunkLines = { old: 0, new: 0, added: 0, removed: 0 }
+      continue
+    }
+
+    const hunk = line.match(/^@@ -(?:\d+),(\d+) \+(?:\d+),(\d+) @@/)
+    if (hunk) {
+      recordSuspiciousRewrite(flags, currentPath, currentHunkLines)
+      currentHunkLines = { old: Number(hunk[1]), new: Number(hunk[2]), added: 0, removed: 0 }
+      continue
+    }
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      currentHunkLines.added++
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      currentHunkLines.removed++
+    }
+  }
+
+  recordSuspiciousRewrite(flags, currentPath, currentHunkLines)
+  return [...flags].sort()
+}
+
+function recordSuspiciousRewrite(flags: Set<string>, path: string, hunkLines: { old: number; new: number; added: number; removed: number }): void {
+  const fileLines = Math.max(hunkLines.old, hunkLines.new)
+  const touchedLines = hunkLines.added + hunkLines.removed
+  const hunkLinesTotal = hunkLines.old + hunkLines.new
+  if (!path || fileLines < 50 || hunkLinesTotal === 0) {
+    return
+  }
+
+  if (touchedLines / hunkLinesTotal >= 0.8) {
+    flags.add(`suspicious-full-file-rewrite:${path}`)
+  }
 }
