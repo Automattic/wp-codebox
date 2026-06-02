@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import type { ArtifactFileDigest } from "./artifact-manifest.js"
+import { normalizeObservationArtifactRefs, normalizeRuntimeReferenceManifestFileRef } from "./artifact-references.js"
 import { stableJson } from "./object-utils.js"
 import type {
   ObservationResult,
@@ -242,7 +243,7 @@ function runtimeReplayObservationRefs(trace: RuntimeEpisodeTrace | undefined): R
     id: observation.id ?? `observation:${index}`,
     type: observation.type,
     ref: observationRef(observation, observation.id ?? `observation:${index}`),
-    artifactRefs: [...(observation.artifactRefs ?? [])],
+    artifactRefs: normalizeObservationArtifactRefs(observation),
   }))
 }
 
@@ -290,12 +291,7 @@ function runtimeReferenceManifestDigestPayload(manifest: RuntimeReferenceManifes
 }
 
 function runtimeReferenceManifestFileRef(file: RuntimeReferenceManifestFileRef): RuntimeReferenceManifestFileRef {
-  return {
-    path: file.path,
-    kind: file.kind,
-    contentType: file.contentType,
-    sha256: file.sha256,
-  }
+  return normalizeRuntimeReferenceManifestFileRef(file) ?? file
 }
 
 function runtimeReferenceManifestSnapshotRef(snapshot: Snapshot): RuntimeReferenceManifestSnapshotRef {
@@ -306,7 +302,7 @@ function runtimeReferenceManifestSnapshotRef(snapshot: Snapshot): RuntimeReferen
     semantics,
     digest: snapshot.digest ?? runtimeEpisodeDigest(runtimeEpisodeSnapshotDigestPayload({ ...snapshot, semantics })),
     replay: runtimeSnapshotReplaySemantics(semantics),
-    artifactRefs: [...(snapshot.artifactRefs ?? [])],
+    artifactRefs: normalizeObservationArtifactRefs(snapshot),
   }
 }
 
