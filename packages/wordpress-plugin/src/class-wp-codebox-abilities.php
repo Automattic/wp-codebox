@@ -471,6 +471,54 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/persist-browser-artifact',
+				array(
+					'label'               => 'Persist Browser Artifact',
+					'description'         => 'Persist browser-produced files from a disposable Playground session as a canonical WP Codebox artifact bundle.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'files' ),
+						'properties' => array(
+							'artifacts_path' => $artifact_id_schema['artifacts_path'],
+							'session_id'     => array(
+								'type'        => 'string',
+								'description' => 'Optional browser Playground session id that produced the artifact files.',
+							),
+							'session'        => array(
+								'type'        => 'object',
+								'description' => 'Optional browser session metadata to preserve in artifact runtime provenance.',
+							),
+							'provenance'     => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller provenance describing who requested the browser run and what produced these files.',
+							),
+							'files'          => array(
+								'type'        => 'array',
+								'description' => 'Browser-produced artifact files to store under files/browser/ in a canonical WP Codebox artifact bundle.',
+								'items'       => array(
+									'type'       => 'object',
+									'required'   => array( 'path' ),
+									'properties' => array(
+										'path'           => array( 'type' => 'string' ),
+										'content'        => array( 'type' => 'string' ),
+										'content_base64' => array( 'type' => 'string' ),
+										'encoding'       => array( 'type' => 'string', 'enum' => array( 'utf-8', 'base64' ) ),
+										'mime_type'      => array( 'type' => 'string' ),
+										'kind'           => array( 'type' => 'string' ),
+									),
+								),
+							),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'persist_browser_artifact' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/apply-approved-artifact',
 				array(
 					'label'               => 'Apply Approved WP Codebox Artifact',
@@ -1094,6 +1142,11 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function discard_artifact( array $input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->discard( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function persist_browser_artifact( array $input ): array|WP_Error {
+		return ( new WP_Codebox_Artifacts() )->persist_browser_bundle( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
