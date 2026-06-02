@@ -13,12 +13,25 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
 
+export class BrowserCommandArtifactError extends Error {
+  constructor(message: string, readonly artifact: BrowserProbeArtifact) {
+    super(message)
+    this.name = "BrowserCommandArtifactError"
+  }
+}
+
+export function isBrowserCommandArtifactError(error: unknown): error is BrowserCommandArtifactError {
+  return error instanceof BrowserCommandArtifactError
+}
+
 export async function runBrowserProbeCommand({
   artifactRoot,
+  command = "wordpress.browser-probe",
   server,
   spec,
 }: {
   artifactRoot: string
+  command?: string
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -138,14 +151,22 @@ export async function runBrowserProbeCommand({
       }
 
       if (capture.has("html")) {
-        const html = await page.content()
-        await writeFile(htmlPath, html)
-        htmlSha256 = sha256(Buffer.from(html, "utf8"))
+        try {
+          const html = await page.content()
+          await writeFile(htmlPath, html)
+          htmlSha256 = sha256(Buffer.from(html, "utf8"))
+        } catch (error) {
+          errors.push(serializeBrowserError("probe-error", error))
+        }
       }
 
       if (capture.has("screenshot")) {
-        await page.screenshot({ path: screenshotPath, fullPage: true })
-        screenshotSha256 = await fileSha256(screenshotPath)
+        try {
+          await page.screenshot({ path: screenshotPath, fullPage: true })
+          screenshotSha256 = await fileSha256(screenshotPath)
+        } catch (error) {
+          errors.push(serializeBrowserError("probe-error", error))
+        }
       }
     }
     if (networkTasks.length > 0) {
@@ -222,13 +243,30 @@ export async function runBrowserProbeCommand({
   return {
     artifact,
     output: `${JSON.stringify({
-      command: "wordpress.browser-probe",
+      command,
       requestedUrl: targetUrl,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
       summary: artifact.summary,
     }, null, 2)}\n`,
   }
+}
+
+export async function runHtmlCaptureCommand(input: {
+  artifactRoot: string
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = [...(input.spec.args ?? [])]
+  if (!args.some((arg) => arg.startsWith("capture="))) {
+    args.push("capture=html,console,errors,network")
+  }
+
+  return runBrowserProbeCommand({
+    ...input,
+    command: "wordpress.capture-html",
+    spec: { ...input.spec, args },
+  })
 }
 
 export async function runBrowserActionsCommand({
@@ -351,12 +389,13 @@ export async function runBrowserActionsCommand({
         if (outcome.screenshot && capture.has("screenshot") && outcome.screenshotIsDefault) {
           screenshotSha256 = await fileSha256(screenshotPath)
         }
-        stepRecords.push(browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
         // A failed expect/evaluate assertion is a clean step failure: no silent partial success.
         if (outcome.assertion && !outcome.assertion.passed) {
+          stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
           pendingError = new Error(`wordpress.browser-actions ${step.kind} assertion failed at step ${index}`)
           break
         }
+        stepRecords.push(browserStepRecord(index, step, "ok", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
@@ -367,14 +406,30 @@ export async function runBrowserActionsCommand({
     }
 
     if (capture.has("html")) {
-      const html = await page.content()
-      await writeFile(htmlPath, html)
-      htmlSha256 = sha256(Buffer.from(html, "utf8"))
+      try {
+        const html = await page.content()
+        await writeFile(htmlPath, html)
+        htmlSha256 = sha256(Buffer.from(html, "utf8"))
+      } catch (error) {
+        const serialized = serializeBrowserError("probe-error", error)
+        errors.push(serialized)
+        if (!pendingError) {
+          pendingError = error instanceof Error ? error : new Error(String(error))
+        }
+      }
     }
 
     if (capture.has("screenshot")) {
-      await page.screenshot({ path: screenshotPath, fullPage: true })
-      screenshotSha256 = await fileSha256(screenshotPath)
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true })
+        screenshotSha256 = await fileSha256(screenshotPath)
+      } catch (error) {
+        const serialized = serializeBrowserError("probe-error", error)
+        errors.push(serialized)
+        if (!pendingError) {
+          pendingError = error instanceof Error ? error : new Error(String(error))
+        }
+      }
     }
   } finally {
     if (networkTasks.length > 0) {
@@ -443,7 +498,7 @@ export async function runBrowserActionsCommand({
   }
 
   if (pendingError) {
-    throw new Error(`wordpress.browser-actions failed after ${stepRecords.length} step(s): ${pendingError.message}`)
+    throw new BrowserCommandArtifactError(`wordpress.browser-actions failed after ${stepRecords.length} step(s): ${pendingError.message}`, artifact)
   }
 
   return {

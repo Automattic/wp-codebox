@@ -8,7 +8,9 @@ const repoRoot = resolve(import.meta.dirname, "..")
 const workspace = resolve(repoRoot, "artifacts", "browser-actions-artifact-smoke")
 const pluginDir = join(workspace, "browser-action-fixture")
 const recipePath = join(workspace, "recipe.json")
+const failingRecipePath = join(workspace, "failing-recipe.json")
 const artifactsRoot = join(workspace, "artifacts")
+const failingArtifactsRoot = join(workspace, "failing-artifacts")
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(pluginDir, { recursive: true })
@@ -69,7 +71,7 @@ const output = await runCli([
   "--recipe",
   recipePath,
   "--json",
-])
+], 0)
 
 assert.equal(output.success, true, output.error?.message ?? "recipe-run failed")
 assert.ok(output.artifacts?.directory, "recipe-run should return an artifact directory")
@@ -139,9 +141,92 @@ assert.equal(review.browser?.probes?.[0]?.summaryFile, "files/browser/action-sum
 assert.equal(review.browser?.probes?.[0]?.assertions?.total, 2)
 assert.equal(review.browser?.probes?.[0]?.assertions?.passed, 2)
 
+await writeFile(failingRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    extraPlugins: [
+      {
+        source: "./browser-action-fixture",
+        pluginFile: "browser-action-fixture/browser-action-fixture.php",
+        activate: true,
+      },
+    ],
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.browser-actions",
+        args: [
+          "url=/",
+          `steps-json=${JSON.stringify([
+            { kind: "waitFor", selector: "#wp-codebox-button" },
+            { kind: "fill", selector: "#wp-codebox-name", value: "Failure" },
+            { kind: "expect", selector: "#wp-codebox-result", state: "visible" },
+          ])}`,
+          "capture=steps,console,errors,html,network",
+        ],
+      },
+    ],
+  },
+  artifacts: {
+    directory: failingArtifactsRoot,
+  },
+}, null, 2)}\n`)
+
+const failing = await runCli([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  failingRecipePath,
+  "--json",
+], 1)
+
+assert.equal(failing.success, false, "failing browser action recipe should fail")
+assert.match(failing.error?.message ?? "", /wordpress\.browser-actions failed/)
+assert.ok(failing.artifacts?.directory, "failing recipe should still return an artifact directory")
+
+const failingArtifactDirectory = failing.artifacts.directory
+const failingStepsPath = join(failingArtifactDirectory, "files", "browser", "steps.jsonl")
+const failingHtmlPath = join(failingArtifactDirectory, "files", "browser", "snapshot.html")
+const failingErrorsPath = join(failingArtifactDirectory, "files", "browser", "errors.jsonl")
+const failingSummaryPath = join(failingArtifactDirectory, "files", "browser", "action-summary.json")
+const failingManifestPath = join(failingArtifactDirectory, "manifest.json")
+const failingReviewPath = join(failingArtifactDirectory, "files", "review.json")
+
+assert.equal(existsSync(failingStepsPath), true, "failed run should retain steps.jsonl")
+assert.equal(existsSync(failingHtmlPath), true, "failed run should retain snapshot.html")
+assert.equal(existsSync(failingErrorsPath), true, "failed run should retain errors.jsonl")
+assert.equal(existsSync(failingSummaryPath), true, "failed run should retain action-summary.json")
+
+const failingStepsLog = await readFile(failingStepsPath, "utf8")
+const failingHtmlSnapshot = await readFile(failingHtmlPath, "utf8")
+const failingSummary = JSON.parse(await readFile(failingSummaryPath, "utf8")) as {
+  schema: string
+  files: { steps?: string; html?: string; errors?: string; summary: string }
+  assertions?: { total: number; passed: number; failed: number; results: Array<{ kind: string; passed: boolean }> }
+  summary: { steps: number; htmlSnapshot: boolean; assertions?: { total: number; passed: number; failed: number } }
+}
+assert.match(failingStepsLog, /"status":"failed"/)
+assert.match(failingHtmlSnapshot, /wp-codebox-result/)
+assert.equal(failingSummary.schema, "wp-codebox/browser-actions/v1")
+assert.equal(failingSummary.files.steps, "files/browser/steps.jsonl")
+assert.equal(failingSummary.files.html, "files/browser/snapshot.html")
+assert.equal(failingSummary.assertions?.failed, 1)
+assert.equal(failingSummary.summary.htmlSnapshot, true)
+
+const failingManifest = JSON.parse(await readFile(failingManifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
+assert.ok(failingManifest.files.some((file) => file.path === "files/browser/steps.jsonl" && file.kind === "browser-steps"))
+assert.ok(failingManifest.files.some((file) => file.path === "files/browser/snapshot.html" && file.kind === "browser-html-snapshot"))
+
+const failingReview = JSON.parse(await readFile(failingReviewPath, "utf8")) as { browser?: { probes?: Array<{ steps?: string; html?: string; summaryFile?: string; assertions?: { failed: number } }> } }
+assert.equal(failingReview.browser?.probes?.[0]?.steps, "files/browser/steps.jsonl")
+assert.equal(failingReview.browser?.probes?.[0]?.html, "files/browser/snapshot.html")
+assert.equal(failingReview.browser?.probes?.[0]?.summaryFile, "files/browser/action-summary.json")
+assert.equal(failingReview.browser?.probes?.[0]?.assertions?.failed, 1)
+
 console.log(`Browser actions artifact smoke passed: ${artifactDirectory}`)
 
-async function runCli(args: string[]): Promise<any> {
+async function runCli(args: string[], expectedExitCode: number): Promise<any> {
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
@@ -157,6 +242,6 @@ async function runCli(args: string[]): Promise<any> {
   })
 
   const exitCode = await new Promise<number | null>((resolveExit) => child.once("exit", (code) => resolveExit(code)))
-  assert.equal(exitCode, 0, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
+  assert.equal(exitCode, expectedExitCode, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   return JSON.parse(stdout)
 }

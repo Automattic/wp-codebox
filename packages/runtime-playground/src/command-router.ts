@@ -13,6 +13,7 @@ interface PlaygroundCommandRuntime {
   runCorePhpunit(spec: ExecutionSpec): Promise<string>
   runThemeCheck(spec: ExecutionSpec): Promise<string>
   runBrowserProbe(spec: ExecutionSpec): Promise<string>
+  runHtmlCapture(spec: ExecutionSpec): Promise<string>
   runBrowserActions(spec: ExecutionSpec): Promise<string>
 }
 
@@ -28,6 +29,7 @@ const playgroundCommandHandlers = {
   "wordpress.core-phpunit": (runtime, spec) => runtime.runCorePhpunit(spec),
   "wordpress.theme-check": (runtime, spec) => runtime.runThemeCheck(spec),
   "wordpress.browser-probe": (runtime, spec) => runtime.runBrowserProbe(spec),
+  "wordpress.capture-html": (runtime, spec) => runtime.runHtmlCapture(spec),
   "wordpress.browser-actions": (runtime, spec) => runtime.runBrowserActions(spec),
 } satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<string>>
 

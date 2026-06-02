@@ -179,6 +179,21 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runBrowserProbe" },
   },
   {
+    id: "wordpress.capture-html",
+    description: "Open the live Playground preview in Playwright and capture rendered HTML plus generic browser diagnostics as Codebox artifact refs.",
+    acceptedArgs: [
+      { name: "url", description: "Preview path or absolute URL to visit.", required: true, format: "path or URL" },
+      { name: "wait-for", description: "Navigation wait condition.", format: "domcontentloaded|load|networkidle|selector:<selector>|duration" },
+      { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
+      { name: "script", description: "Optional page-side JavaScript to evaluate after navigation and before final capture.", format: "JavaScript function body" },
+      { name: "capture", description: "Comma-separated artifacts to capture; defaults to html,console,errors,network.", format: "console,errors,html,network,performance,memory,screenshot" },
+    ],
+    outputShape: "JSON summary plus files/browser/snapshot.html, console.jsonl, errors.jsonl, network.jsonl, and summary.json by default; optional screenshot/performance/memory artifacts when requested.",
+    policyRequirement: "Runtime policy commands must include wordpress.capture-html.",
+    recipe: true,
+    handler: { kind: "playground", method: "runHtmlCapture" },
+  },
+  {
     id: "wordpress.browser-actions",
     description: "Drive the live Playground preview with an ordered interaction script and capture replay/audit evidence artifacts, including per-step results and machine-readable assertions.",
     acceptedArgs: [
