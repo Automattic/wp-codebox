@@ -163,7 +163,8 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-preview-op
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
-$root = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
+$source_root = dirname( __DIR__ );
+$root        = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
 foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
@@ -423,6 +424,8 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_model'] = 'gpt-5.5';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI_API_KEY' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org', 'github.com' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_theme_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org' );
+$recipe_run_source = file_get_contents( $source_root . '/packages/cli/src/commands/recipe-run.ts' );
+$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugins_activated', $" . "activated)" ) );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 $GLOBALS['wp_codebox_remote_responses']['https://github.com/example/generic-runtime-helper/releases/download/v1.0.0/generic-runtime-helper.zip'] = array(
 	'response' => array( 'code' => 200 ),

@@ -3321,10 +3321,10 @@ final class WP_Codebox_Abilities {
 			$target_folder = 'wp-codebox-runtime-plugin';
 		}
 
-		$package_fetch_url = (string) ( $plugin['local_package_fetch_url'] ?? $plugin['url'] ?? '' );
+		$package_url = (string) ( $plugin['url'] ?? '' );
 
 		return '<?php
-$package_url = ' . var_export( $package_fetch_url, true ) . ';
+$package_url = ' . var_export( $package_url, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $plugin['sha256'] ?? '' ), true ) . ';
 $target_folder = ' . var_export( $target_folder, true ) . ';
 $activate = ' . ( ! empty( $plugin['activate'] ) ? 'true' : 'false' ) . ';
@@ -3396,10 +3396,10 @@ file_put_contents( $path, ' . var_export( $mu_plugin['content'], true ) . ' );
 
 	/** @param array<string,mixed> $mu_plugin Packaged mu-plugin spec. */
 	private static function browser_packaged_mu_plugin_install_php( array $mu_plugin ): string {
-		$package_fetch_url = (string) ( $mu_plugin['local_package_fetch_url'] ?? $mu_plugin['url'] ?? '' );
+		$package_url = (string) ( $mu_plugin['url'] ?? '' );
 
 		return '<?php
-$package_url = ' . var_export( $package_fetch_url, true ) . ';
+$package_url = ' . var_export( $package_url, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $mu_plugin['sha256'] ?? '' ), true ) . ';
 $target_directory = "/wordpress/wp-content/mu-plugins/" . ' . var_export( (string) $mu_plugin['targetFolderName'], true ) . ';
 $loader_path = ' . var_export( (string) $mu_plugin['path'], true ) . ';
@@ -3766,6 +3766,73 @@ function wp_codebox_browser_capture_file( array $capture ) {
 	return array_filter( $record, static fn( $value ) => \'\' !== $value );
 }
 
+function wp_codebox_browser_safe_artifact_path( $path, $root ) {
+	$path = str_replace( chr( 92 ), "/", (string) $path );
+	$path = ltrim( preg_replace( "#/+#", "/", $path ), "/" );
+	$root = str_replace( chr( 92 ), "/", (string) $root );
+	$root = rtrim( ltrim( preg_replace( "#/+#", "/", $root ), "/" ), "/" ) . "/";
+	$parts = array_filter( explode( "/", $path ), static fn( $part ) => \'\' !== $part );
+	if ( empty( $parts ) || in_array( \'..\', $parts, true ) || in_array( \'.\', $parts, true ) ) {
+		return \'\';
+	}
+	$normalized = implode( "/", $parts );
+	return str_starts_with( $normalized, $root ) ? $normalized : \'\';
+}
+
+function wp_codebox_browser_capture_artifact_bundle( array $payload ) {
+	$contract = is_array( $payload[\'artifacts\'] ?? null ) ? $payload[\'artifacts\'] : array();
+	if ( \'studio-web/website-artifact-bundle/v1\' !== (string) ( $contract[\'schema\'] ?? \'\' ) ) {
+		return array();
+	}
+
+	$root = (string) ( $contract[\'root\'] ?? \'website/\' );
+	$root = rtrim( ltrim( str_replace( chr( 92 ), "/", $root ), "/" ), "/" ) . "/";
+	$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+	$files = array();
+	foreach ( is_array( $contract[\'files\'] ?? null ) ? $contract[\'files\'] : array() as $file ) {
+		if ( ! is_array( $file ) ) {
+			continue;
+		}
+		$path = wp_codebox_browser_safe_artifact_path( $file[\'path\'] ?? \'\', $root );
+		$playground_path = (string) ( $file[\'playground_path\'] ?? \'\' );
+		if ( \'\' === $path || \'\' === $playground_path || str_contains( $playground_path, \'..\' ) || ! str_starts_with( $playground_path, \'/wordpress/\' ) || ! is_readable( $playground_path ) ) {
+			continue;
+		}
+		$contents = file_get_contents( $playground_path );
+		if ( ! is_string( $contents ) ) {
+			continue;
+		}
+		$is_text = preg_match( \'#^[\\x09\\x0A\\x0D\\x20-\\x7E]*$#\', $contents );
+		$record = array(
+			\'path\' => $path,
+			\'role\' => $path === $entrypoint ? \'entrypoint\' : ( (bool) preg_match( \'/\\.(md|markdown|mdx)$/i\', $path ) ? \'source-document\' : \'asset\' ),
+			\'kind\' => (string) ( $file[\'kind\'] ?? ( $path === $entrypoint ? \'html\' : \'\' ) ),
+			\'mime_type\' => (string) ( $file[\'mime_type\'] ?? \'\' ),
+			\'url_path\' => (string) ( $file[\'url_path\'] ?? \'\' ),
+			\'sha256\' => hash( \'sha256\', $contents ),
+		);
+		if ( $is_text ) {
+			$record[\'content\'] = $contents;
+			$record[\'encoding\'] = \'utf-8\';
+		} else {
+			$record[\'content_base64\'] = base64_encode( $contents );
+			$record[\'encoding\'] = \'base64\';
+		}
+		$files[] = array_filter( $record, static fn( $value ) => \'\' !== $value );
+	}
+
+	if ( empty( $files ) || \'\' === $entrypoint ) {
+		return array();
+	}
+
+	return array(
+		\'schema\' => \'studio-web/website-artifact-bundle/v1\',
+		\'root\' => $root,
+		\'entrypoint\' => $entrypoint,
+		\'files\' => $files,
+	);
+}
+
 function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 	if ( empty( $bundle_specs ) ) {
 		return array();
@@ -3922,6 +3989,7 @@ foreach ( $capture_paths as $capture ) {
 		$captures[] = wp_codebox_browser_capture_file( $capture );
 	}
 }
+$artifact_bundle = wp_codebox_browser_capture_artifact_bundle( $payload );
 
 $invocation_metadata = array_filter(
 	array(
@@ -3982,6 +4050,12 @@ if ( is_wp_error( $response ) || $response instanceof Throwable ) {
 			\'provenance\' => $provenance,
 			\'artifacts\' => $payload[\'artifacts\'] ?? array(),
 	);
+	if ( ! empty( $artifact_bundle ) ) {
+		$result[\'artifact_bundle\'] = $artifact_bundle;
+		if ( is_array( $result[\'response\'] ?? null ) && empty( $result[\'response\'][\'artifact_bundle\'] ) ) {
+			$result[\'response\'][\'artifact_bundle\'] = $artifact_bundle;
+		}
+	}
 }
 
 file_put_contents( $result_path, wp_json_encode( $result ) );

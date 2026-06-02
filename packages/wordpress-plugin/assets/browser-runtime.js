@@ -391,7 +391,7 @@ try {
 			throw new Error( 'PHP code is required.' );
 		}
 
-		if ( typeof client.run === 'function' ) {
+		if ( ! options.forceRequest && typeof client.run === 'function' ) {
 			const response = await client.run( { code } );
 			return options.expectJson ? parseJsonResponse( response ) : response;
 		}
@@ -570,6 +570,7 @@ try {
 				code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
 				name: options.name || 'codebox-recipe',
 				expectJson: true,
+				forceRequest: true,
 			} );
 			if ( ! lastResult.success ) {
 				throw new Error( lastResult?.error?.message || 'WP Codebox browser recipe step failed.' );

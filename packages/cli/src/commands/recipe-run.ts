@@ -482,15 +482,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     await awaitRecipe(runtime.observe({ type: "runtime-info" }))
     await awaitRecipe(runtime.observe({ type: "mounts" }))
     runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime.info() })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
-    const evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
-    const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
+    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+    let evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
+    let agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
     Object.assign(evidence, agentEvidence)
     markRecipeArtifactsFinalized(interruption, true)
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const agentFailure = recipeAgentResultFailure(evidence.agentResult)
-    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption)
+    const successfulRecipe = !strictFailure && !agentFailure
+    if (successfulRecipe && options.previewHoldSeconds) {
+      artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+      evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
+      agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
+      Object.assign(evidence, agentEvidence)
+    }
+    const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
+    await releaseRuntime(runtime, successfulRecipe ? options.previewHoldSeconds : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption)
     interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
@@ -814,6 +821,7 @@ foreach ($plugins as $plugin_file) {
     }
     $activated[] = $plugin_file;
 }
+do_action('wp_codebox_runtime_plugins_activated', $activated);
 echo wp_json_encode(array('activated' => $activated));`
 }
 
