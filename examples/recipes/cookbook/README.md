@@ -25,6 +25,44 @@ out of recipe files and dry-run evidence.
 
 ## Available recipes
 
+### `codex-agent-smoke.json`
+
+Runs a headless Data Machine agent inside a disposable WordPress Playground
+sandbox using the Codex provider. This is the smallest end-to-end recipe for
+proving that WP Codebox can mount the agent runtime stack, overlay a
+`php-ai-client` branch with provider-supplied request auth, activate a Codex
+provider plugin branch, and execute `agents/chat` through `wp-codebox.agent-sandbox-run`.
+
+**Replace** these recipe paths before running:
+
+- `/path/to/agents-api`
+- `/path/to/data-machine`
+- `/path/to/data-machine-code`
+- `/path/to/php-ai-client-pr-238-or-newer`
+- `/path/to/ai-provider-for-openai-pr-28-or-newer`
+
+Export Codex OAuth credentials in the shell that runs WP Codebox. Keep token
+values out of recipe files and artifacts:
+
+```bash
+export AI_PROVIDER_OPENAI_CODEX_ACCESS_TOKEN="..."
+export AI_PROVIDER_OPENAI_CODEX_REFRESH_TOKEN="..."
+export AI_PROVIDER_OPENAI_CODEX_EXPIRES_AT="..."
+export AI_PROVIDER_OPENAI_CODEX_ACCOUNT_ID="..."
+export AI_PROVIDER_OPENAI_CODEX_FEDRAMP="false"
+
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/cookbook/codex-agent-smoke.json \
+  --json
+```
+
+The expected successful response is a JSON recipe run whose agent runtime
+reports the Playground site title and active theme. Fleet runners such as
+Homeboy should generate one recipe/run per task and own queueing,
+concurrency, retry policy, durable run records, and PR/comment workflows above
+WP Codebox. WP Codebox owns the sandbox, mounts, overlays, agent invocation,
+and artifact bundle.
+
 ### `multisite-network.json`
 
 Converts the Playground install to multisite with WP-CLI, mounts your plugin
