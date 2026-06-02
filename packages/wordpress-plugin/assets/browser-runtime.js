@@ -61,6 +61,36 @@
 		};
 	};
 
+	const siteOperationEnvelope = ( operation, result, meta = {} ) => {
+		const errors = result?.success === false ? [ result.error ].filter( Boolean ) : [];
+		return {
+			operation,
+			status: result?.success ? 'ok' : 'error',
+			...meta,
+			data: result?.success ? result.data ?? null : null,
+			errors,
+		};
+	};
+
+	const siteOperationValidationError = ( operation, message, meta = {} ) => siteOperationEnvelope( operation, {
+		success: false,
+		error: {
+			code: 'invalid_args',
+			message,
+			data: null,
+		},
+	}, meta );
+
+	const isSafeRelativePath = ( path ) => {
+		if ( typeof path !== 'string' || '' === path || path.startsWith( '/' ) || path.includes( '\\' ) ) {
+			return false;
+		}
+
+		return path.split( '/' ).every( ( part ) => part && part !== '.' && part !== '..' );
+	};
+
+	const isPlainObject = ( value ) => !! value && typeof value === 'object' && ! Array.isArray( value );
+
 const operationPhp = ( operation ) => `<?php
 header( 'Content-Type: application/json; charset=utf-8' );
 
@@ -159,10 +189,82 @@ function wp_codebox_browser_operation_theme_file_path( $theme_dir, $relative_pat
 	return trailingslashit( $theme_dir ) . implode( '/', $parts );
 }
 
+function wp_codebox_browser_operation_safe_relative_path( $relative_path, $label ) {
+	if ( ! is_string( $relative_path ) || '' === $relative_path || '/' === $relative_path[0] ) {
+		throw new InvalidArgumentException( sprintf( '%s path must be relative.', $label ) );
+	}
+
+	$parts = explode( '/', str_replace( chr( 92 ), '/', $relative_path ) );
+	foreach ( $parts as $part ) {
+		if ( '' === $part || '.' === $part || '..' === $part ) {
+			throw new InvalidArgumentException( sprintf( 'Invalid %s path: %s', $label, $relative_path ) );
+		}
+	}
+
+	return implode( '/', $parts );
+}
+
 try {
 	$type = isset( $operation['type'] ) && is_string( $operation['type'] ) ? $operation['type'] : '';
 
 	switch ( $type ) {
+		case 'setFrontendAdminBarVisible':
+			$visible = wp_codebox_browser_operation_arg( $operation, 'visible' );
+			if ( ! is_bool( $visible ) ) {
+				throw new InvalidArgumentException( 'Admin bar visibility must be a boolean.' );
+			}
+
+			$user_id = (int) wp_codebox_browser_operation_arg( $operation, 'userId', 0 );
+			if ( $user_id <= 0 ) {
+				$users = get_users( array(
+					'role__in' => array( 'administrator' ),
+					'number' => 1,
+					'fields' => 'ID',
+				) );
+				$user_id = isset( $users[0] ) ? (int) $users[0] : 1;
+			}
+
+			$user = get_user_by( 'id', $user_id );
+			if ( ! $user ) {
+				throw new RuntimeException( sprintf( 'User does not exist: %d', $user_id ) );
+			}
+
+			$value = $visible ? 'true' : 'false';
+			update_user_meta( $user_id, 'show_admin_bar_front', $value );
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'frontendAdminBar',
+				'key' => 'show_admin_bar_front',
+				'userId' => $user_id,
+				'visible' => $visible,
+				'value' => $value,
+			) );
+
+		case 'writeReviewFile':
+			$relative_path = wp_codebox_browser_operation_safe_relative_path( wp_codebox_browser_operation_arg( $operation, 'path' ), 'Review file' );
+			$content = wp_codebox_browser_operation_arg( $operation, 'content', '' );
+			$encoding = wp_codebox_browser_operation_arg( $operation, 'encoding', 'utf8' );
+			$content = wp_codebox_browser_operation_file_content( $content, $encoding );
+
+			$upload_dir = wp_upload_dir();
+			if ( empty( $upload_dir['basedir'] ) ) {
+				throw new RuntimeException( 'Upload directory is unavailable.' );
+			}
+
+			$base_dir = trailingslashit( $upload_dir['basedir'] ) . 'wp-codebox/reviews';
+			$path = trailingslashit( $base_dir ) . $relative_path;
+			wp_codebox_browser_operation_mkdir( dirname( $path ) );
+			$bytes = file_put_contents( $path, $content );
+			if ( false === $bytes ) {
+				throw new RuntimeException( sprintf( 'Unable to write review file: %s', $relative_path ) );
+			}
+
+			wp_codebox_browser_operation_response( true, array(
+				'target' => 'reviewFile',
+				'path' => $path,
+				'relativePath' => $relative_path,
+				'bytes' => $bytes,
+			) );
+
 		case 'ensureDirectory':
 			$path = wp_codebox_browser_operation_path( wp_codebox_browser_operation_arg( $operation, 'path' ) );
 			wp_codebox_browser_operation_mkdir( $path );
@@ -335,6 +437,65 @@ try {
 		args,
 	}, options );
 
+	const setFrontendAdminBarVisible = async ( client, args = {}, options = {} ) => {
+		const operation = 'setFrontendAdminBarVisible';
+		const meta = {
+			target: 'frontendAdminBar',
+			key: 'show_admin_bar_front',
+		};
+		if ( ! isPlainObject( args ) ) {
+			return siteOperationValidationError( operation, 'Admin bar operation args must be an object.', meta );
+		}
+
+		if ( typeof args?.visible !== 'boolean' ) {
+			return siteOperationValidationError( operation, 'Admin bar visibility must be a boolean.', meta );
+		}
+
+		if ( args.userId !== undefined && ( ! Number.isInteger( args.userId ) || args.userId <= 0 ) ) {
+			return siteOperationValidationError( operation, 'Admin bar userId must be a positive integer when provided.', meta );
+		}
+
+		const result = await runWordPressOperation( client, {
+			type: operation,
+			args,
+		}, options );
+
+		return siteOperationEnvelope( operation, result, meta );
+	};
+
+	const writeReviewFile = async ( client, args = {}, options = {} ) => {
+		const operation = 'writeReviewFile';
+		const meta = {
+			target: 'reviewFile',
+			path: args?.path ?? null,
+		};
+		if ( ! isPlainObject( args ) ) {
+			return siteOperationValidationError( operation, 'Review file operation args must be an object.', meta );
+		}
+
+		if ( ! isSafeRelativePath( args?.path ) ) {
+			return siteOperationValidationError( operation, 'Review file path must be a safe relative path.', meta );
+		}
+
+		if ( typeof args?.content !== 'string' ) {
+			return siteOperationValidationError( operation, 'Review file content must be a string.', meta );
+		}
+
+		if ( args.encoding !== undefined && args.encoding !== 'utf8' && args.encoding !== 'utf-8' && args.encoding !== 'base64' ) {
+			return siteOperationValidationError( operation, 'Review file encoding must be utf8 or base64.', meta );
+		}
+
+		const result = await runWordPressOperation( client, {
+			type: operation,
+			args,
+		}, options );
+
+		return siteOperationEnvelope( operation, result, {
+			...meta,
+			path: result?.data?.path ?? args.path,
+		} );
+	};
+
 	const markBrowserPlaygroundRunner = ( code ) => {
 		const marker = "define( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true );";
 		const source = String( code || '' );
@@ -425,6 +586,8 @@ try {
 		runPhpRequest,
 		runRecipe,
 		runWordPressOperation,
+		setFrontendAdminBarVisible,
 		writeFile,
+		writeReviewFile,
 	};
 } )();

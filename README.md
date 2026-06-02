@@ -52,6 +52,39 @@ What WP Codebox provides for product use cases:
 - Fan out several task descriptions into separate isolated sandboxes.
 - Produce artifact bundles — patches, diffs, test results, live Playground preview URLs — that a parent product can review, replay, apply, or discard.
 
+## Browser Site Operations
+
+The WordPress plugin ships a browser runtime helper at
+`window.wpCodeboxBrowser` for product callers that drive a WordPress Playground
+from the browser. Low-level helpers such as `runPhpRequest`,
+`runWordPressOperation`, `ensureDirectory`, and `writeFile` remain available for
+custom workflows. Prefer the typed site-operation helpers for common safe
+actions because they validate input and return a normalized product envelope:
+
+```js
+{
+  operation: "setFrontendAdminBarVisible",
+  status: "ok",
+  target: "frontendAdminBar",
+  key: "show_admin_bar_front",
+  data: { visible: false },
+  errors: [],
+}
+```
+
+Current safe helpers:
+
+- `setFrontendAdminBarVisible(client, { visible, userId? })` toggles the
+  frontend admin bar preference for a Playground user. `visible` must be a
+  boolean, and `userId` must be a positive integer when supplied.
+- `writeReviewFile(client, { path, content, encoding? })` writes review or
+  artifact notes below the Playground uploads `wp-codebox/reviews` directory.
+  `path` must be a relative path without `.` or `..` segments.
+
+These helpers mutate only the disposable Playground runtime. Parent products
+remain responsible for reviewing artifacts and deciding whether to apply any
+result outside the sandbox.
+
 ## Host Tool Registry
 
 Host products can register generic tools for sandbox agents without adding

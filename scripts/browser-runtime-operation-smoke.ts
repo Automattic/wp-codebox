@@ -25,6 +25,8 @@ assert.equal(typeof runtime.browserSessionRecipe, "function")
 assert.equal(typeof runtime.runWordPressOperation, "function")
 assert.equal(typeof runtime.ensureDirectory, "function")
 assert.equal(typeof runtime.writeFile, "function")
+assert.equal(typeof runtime.setFrontendAdminBarVisible, "function")
+assert.equal(typeof runtime.writeReviewFile, "function")
 assert.equal(typeof runtime.installTheme, "function")
 assert.equal(typeof runtime.activateTheme, "function")
 
@@ -79,6 +81,105 @@ assert.deepEqual(sameRealm(writeResult), {
   },
 })
 assert.match(writeClient.files[0]?.contents ?? "", /case 'writeFile':/)
+
+const adminBarClient = createClient('{"success":true,"data":{"target":"frontendAdminBar","key":"show_admin_bar_front","userId":1,"visible":false,"value":"false"},"error":null}')
+const adminBarResult = await runtime.setFrontendAdminBarVisible(adminBarClient, { visible: false })
+assert.deepEqual(sameRealm(adminBarResult), {
+  operation: "setFrontendAdminBarVisible",
+  status: "ok",
+  target: "frontendAdminBar",
+  key: "show_admin_bar_front",
+  data: {
+    target: "frontendAdminBar",
+    key: "show_admin_bar_front",
+    userId: 1,
+    visible: false,
+    value: "false",
+  },
+  errors: [],
+})
+assert.match(adminBarClient.files[0]?.contents ?? "", /case 'setFrontendAdminBarVisible':/)
+
+const invalidAdminBarResult = await runtime.setFrontendAdminBarVisible(createClient("{}"), { visible: "false" })
+assert.deepEqual(sameRealm(invalidAdminBarResult), {
+  operation: "setFrontendAdminBarVisible",
+  status: "error",
+  target: "frontendAdminBar",
+  key: "show_admin_bar_front",
+  data: null,
+  errors: [
+    {
+      code: "invalid_args",
+      message: "Admin bar visibility must be a boolean.",
+      data: null,
+    },
+  ],
+})
+
+const invalidAdminBarArgsResult = await runtime.setFrontendAdminBarVisible(createClient("{}"), null)
+assert.deepEqual(sameRealm(invalidAdminBarArgsResult), {
+  operation: "setFrontendAdminBarVisible",
+  status: "error",
+  target: "frontendAdminBar",
+  key: "show_admin_bar_front",
+  data: null,
+  errors: [
+    {
+      code: "invalid_args",
+      message: "Admin bar operation args must be an object.",
+      data: null,
+    },
+  ],
+})
+
+const reviewFileClient = createClient('{"success":true,"data":{"target":"reviewFile","path":"/wordpress/wp-content/uploads/wp-codebox/reviews/artifacts/review.md","relativePath":"artifacts/review.md","bytes":9},"error":null}')
+const reviewFileResult = await runtime.writeReviewFile(reviewFileClient, { path: "artifacts/review.md", content: "looks ok\n" })
+assert.deepEqual(sameRealm(reviewFileResult), {
+  operation: "writeReviewFile",
+  status: "ok",
+  target: "reviewFile",
+  path: "/wordpress/wp-content/uploads/wp-codebox/reviews/artifacts/review.md",
+  data: {
+    target: "reviewFile",
+    path: "/wordpress/wp-content/uploads/wp-codebox/reviews/artifacts/review.md",
+    relativePath: "artifacts/review.md",
+    bytes: 9,
+  },
+  errors: [],
+})
+assert.match(reviewFileClient.files[0]?.contents ?? "", /case 'writeReviewFile':/)
+
+const unsafeReviewFileResult = await runtime.writeReviewFile(createClient("{}"), { path: "../escape.md", content: "nope" })
+assert.deepEqual(sameRealm(unsafeReviewFileResult), {
+  operation: "writeReviewFile",
+  status: "error",
+  target: "reviewFile",
+  path: "../escape.md",
+  data: null,
+  errors: [
+    {
+      code: "invalid_args",
+      message: "Review file path must be a safe relative path.",
+      data: null,
+    },
+  ],
+})
+
+const invalidReviewFileArgsResult = await runtime.writeReviewFile(createClient("{}"), null)
+assert.deepEqual(sameRealm(invalidReviewFileArgsResult), {
+  operation: "writeReviewFile",
+  status: "error",
+  target: "reviewFile",
+  path: null,
+  data: null,
+  errors: [
+    {
+      code: "invalid_args",
+      message: "Review file operation args must be an object.",
+      data: null,
+    },
+  ],
+})
 
 const themeClient = createClient("{\"success\":true,\"data\":{\"slug\":\"codebox-theme\",\"activated\":true,\"files\":[]},\"error\":null}")
 const themeResult = await runtime.installTheme(themeClient, {
