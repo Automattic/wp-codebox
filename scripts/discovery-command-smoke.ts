@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const execFileAsync = promisify(execFile)

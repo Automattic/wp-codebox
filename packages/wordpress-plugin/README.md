@@ -42,7 +42,7 @@ agent.
   "allowed_tools": ["workspace.read", "workspace.write", "tests.run"],
   "expected_artifacts": ["patch", "tests", "review"],
   "policy": { "applyBack": "reviewed" },
-  "context": { "issue": "https://github.com/chubes4/wp-codebox/issues/29" }
+  "context": { "issue": "https://github.com/Automattic/wp-codebox/issues/29" }
 }
 ```
 

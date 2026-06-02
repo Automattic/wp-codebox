@@ -6,7 +6,7 @@ reviewable artifact bundles. **Secure coding environments inside WordPress** —
 ## Install
 
 ```bash
-npm install -g @chubes4/wp-codebox-cli
+npm install -g @automattic/wp-codebox-cli
 wp-codebox --help
 ```
 
@@ -39,7 +39,7 @@ wp-codebox schema recipe --json
 descriptions, accepted args, known output shape, and policy requirements.
 `schema recipe` emits the JSON Schema for `wp-codebox/workspace-recipe/v1` from
 the canonical `createWorkspaceRecipeJsonSchema()` contract exported by
-`@chubes4/wp-codebox-core`.
+`@automattic/wp-codebox-core`.
 
 ## Recipe Planning
 

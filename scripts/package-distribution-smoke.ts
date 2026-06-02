@@ -23,7 +23,7 @@ assert.ok(
 
 const { stdout: packStdout } = await execFileAsync(
   "npm",
-  ["pack", "--workspace", "@chubes4/wp-codebox-cli", "--dry-run", "--json"],
+  ["pack", "--workspace", "@automattic/wp-codebox-cli", "--dry-run", "--json"],
   { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 },
 )
 const [pack] = JSON.parse(packStdout) as Array<{ files: Array<{ path: string }>; entryCount: number }>

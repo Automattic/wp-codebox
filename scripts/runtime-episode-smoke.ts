@@ -16,8 +16,8 @@ import {
   createRuntimeEpisode,
   validateRuntimeEpisodeTrace,
   verifyArtifactBundle,
-} from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+} from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-episode-"))
 

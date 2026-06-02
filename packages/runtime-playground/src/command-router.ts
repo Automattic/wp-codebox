@@ -1,5 +1,5 @@
-import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
-import type { ExecutionSpec } from "@chubes4/wp-codebox-core"
+import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
+import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 
 interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { argValue, isSafeEnvName, normalizePhpCode, phpBody } from "./commands.js"
-import type { RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string

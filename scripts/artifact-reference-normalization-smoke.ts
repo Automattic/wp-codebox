@@ -9,7 +9,7 @@ import {
   normalizeRuntimeEpisodeTraceRef,
   normalizeRuntimeReferenceArtifactBundleRef,
   normalizeRuntimeReferenceManifestFileRef,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 
 assert.deepEqual(normalizeArtifactDigest("a".repeat(64)), { algorithm: "sha256", value: "a".repeat(64) })
 assert.deepEqual(normalizeArtifactDigest({ sha256: "b".repeat(64) }), { algorithm: "sha256", value: "b".repeat(64) })

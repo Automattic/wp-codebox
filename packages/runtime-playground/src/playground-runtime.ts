@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
 import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
@@ -34,7 +34,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 function now(): string {
   return new Date().toISOString()
 }

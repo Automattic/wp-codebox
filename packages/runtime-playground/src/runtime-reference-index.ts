@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { dirname, extname, join, posix } from "node:path"
-import type { ArtifactManifestFile } from "@chubes4/wp-codebox-core"
+import type { ArtifactManifestFile } from "@automattic/wp-codebox-core"
 import type { BrowserProbeArtifact } from "./browser-artifacts.js"
 import type { CapturedMountFiles } from "./artifacts.js"
 

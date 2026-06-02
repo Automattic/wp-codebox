@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { artifactManifestFile } from "@chubes4/wp-codebox-core"
+import { artifactManifestFile } from "@automattic/wp-codebox-core"
 import type {
   ArtifactBundle,
   ArtifactManifestFile,
@@ -14,7 +14,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import type { ArtifactRedactor } from "./artifacts.js"
 import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"

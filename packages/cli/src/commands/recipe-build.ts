@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildWordPressPhpunitRecipe, type WorkspaceRecipe, type WorkspaceRecipeMount } from "@chubes4/wp-codebox-core"
+import { buildWordPressPhpunitRecipe, type WorkspaceRecipe, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit"

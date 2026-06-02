@@ -240,9 +240,10 @@ assert.equal(output.siteSeeds[1].provenance.sourceBasename, "custom-seed.fixture
 assert.equal(output.siteSeeds[2].action, "skipped")
 assert.equal(output.siteSeeds[2].bounded, true)
 assert.equal(output.siteSeeds[2].privacy.exportsParentSiteData, false)
-assert.ok(output.executions.length >= 3)
+const workflowExecution = output.executions.find((execution: { command: string, recipePhase?: string }) => execution.command === "wordpress.run-php" && execution.recipePhase === "steps")
+assert.ok(workflowExecution)
 
-const workflowResult = JSON.parse(output.executions.at(-1).stdout)
+const workflowResult = JSON.parse(workflowExecution.stdout)
 assert.equal(workflowResult.page, "site-seed-smoke-page")
 assert.equal(workflowResult.registryPage, "site-seed-smoke-registry-page")
 assert.equal(workflowResult.blogname, "WP Codebox Seeded Sandbox")

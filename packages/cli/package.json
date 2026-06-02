@@ -1,5 +1,5 @@
 {
-  "name": "@chubes4/wp-codebox-cli",
+  "name": "@automattic/wp-codebox-cli",
   "version": "0.3.1",
   "description": "WP Codebox CLI — secure WordPress code execution from anywhere. Run disposable Playground sandboxes from any host: CLI, CI, mobile, Node service, or WP plugin.",
   "type": "module",
@@ -22,7 +22,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@chubes4/wp-codebox-core": "file:../runtime-core",
-    "@chubes4/wp-codebox-playground": "file:../runtime-playground"
+    "@automattic/wp-codebox-core": "file:../runtime-core",
+    "@automattic/wp-codebox-playground": "file:../runtime-playground"
   }
 }

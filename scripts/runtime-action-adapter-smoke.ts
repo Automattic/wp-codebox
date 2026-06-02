@@ -8,8 +8,8 @@ import {
   createRuntimeEpisode,
   runRuntimeAction,
   validateRuntimeEpisodeTrace,
-} from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+} from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const tempRoot = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-action-"))
 const workspaceRoot = join(tempRoot, "workspace")

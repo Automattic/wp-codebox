@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -663,7 +663,7 @@ async function buildRecipeRunAttestation(args: {
     backend: stripUndefined({
       kind: runtime.backend,
       package: stripUndefined({
-        name: typeof backendPackage.name === "string" ? backendPackage.name : "@chubes4/wp-codebox-playground",
+        name: typeof backendPackage.name === "string" ? backendPackage.name : "@automattic/wp-codebox-playground",
         version: typeof backendPackage.version === "string" ? backendPackage.version : undefined,
       }),
       engine: stripUndefined({

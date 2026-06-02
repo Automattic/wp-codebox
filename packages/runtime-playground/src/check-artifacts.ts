@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile } from "@chubes4/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile } from "@automattic/wp-codebox-core"
 import type { ArtifactRedactor } from "./artifacts.js"
 import type { normalizePluginCheckOutput, normalizeThemeCheckOutput } from "./commands.js"
 

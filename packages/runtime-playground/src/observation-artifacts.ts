@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import type { ObservationSpec, RuntimeCreateSpec, RuntimeEpisodeTraceRef } from "@chubes4/wp-codebox-core"
+import type { ObservationSpec, RuntimeCreateSpec, RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"

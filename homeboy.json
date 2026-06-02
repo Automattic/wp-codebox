@@ -1,6 +1,6 @@
 {
   "id": "wp-codebox",
-  "remote_url": "https://github.com/chubes4/wp-codebox.git",
+  "remote_url": "https://github.com/Automattic/wp-codebox.git",
   "changelog_target": "CHANGELOG.md",
   "extensions": {
     "nodejs": {}

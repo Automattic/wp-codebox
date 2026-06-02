@@ -1,7 +1,7 @@
 import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
-import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readFile, stat, unlink } from "node:fs/promises"

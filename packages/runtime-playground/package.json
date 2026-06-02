@@ -1,5 +1,5 @@
 {
-  "name": "@chubes4/wp-codebox-playground",
+  "name": "@automattic/wp-codebox-playground",
   "version": "0.3.1",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@chubes4/wp-codebox-core": "file:../runtime-core",
+    "@automattic/wp-codebox-core": "file:../runtime-core",
     "@wp-playground/cli": "^3.1.35",
     "@wp-playground/wordpress-builds": "^0.9.4",
     "playwright": "^1.60.0"

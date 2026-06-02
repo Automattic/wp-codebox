@@ -1,4 +1,4 @@
-import { RuntimeRunRegistry, type RuntimeRunRecord } from "@chubes4/wp-codebox-core"
+import { RuntimeRunRegistry, type RuntimeRunRecord } from "@automattic/wp-codebox-core"
 
 interface RunLookupOptions {
   registryDirectory: string

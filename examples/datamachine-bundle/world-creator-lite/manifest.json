@@ -2,7 +2,7 @@
   "schema_version": 1,
   "bundle_slug": "world-creator-lite",
   "bundle_version": "0.1.0",
-  "source_ref": "chubes4/wp-codebox/examples/datamachine-bundle/world-creator-lite",
+  "source_ref": "Automattic/wp-codebox/examples/datamachine-bundle/world-creator-lite",
   "source_revision": "example",
   "exported_at": "2026-05-19T00:00:00Z",
   "exported_by": "WP Codebox",

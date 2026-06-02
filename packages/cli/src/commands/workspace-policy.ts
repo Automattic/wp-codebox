@@ -1,5 +1,5 @@
 import { resolve } from "node:path"
-import { checkWorkspacePolicy, type WorkspacePolicyResult } from "@chubes4/wp-codebox-core"
+import { checkWorkspacePolicy, type WorkspacePolicyResult } from "@automattic/wp-codebox-core"
 
 interface WorkspacePolicyOptions {
   workspaceRoot: string

@@ -94,8 +94,8 @@ runtime still gates execution through `RuntimePolicy.commands`, so callers must
 explicitly allow each registered tool name before a sandbox can invoke it.
 
 ```ts
-import { createHostToolRegistry, createRuntime } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createHostToolRegistry, createRuntime } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const hostTools = createHostToolRegistry([
   {
@@ -215,12 +215,12 @@ npm run check
 
 ## Distribution Artifacts
 
-The CLI package is prepared as `@chubes4/wp-codebox-cli` and exposes the
+The CLI package is prepared as `@automattic/wp-codebox-cli` and exposes the
 `wp-codebox` binary from `packages/cli/dist/index.js`.
 
 ```bash
 npm run build
-npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json
+npm pack --workspace @automattic/wp-codebox-cli --dry-run --json
 ```
 
 The WordPress plugin zip is built from `packages/wordpress-plugin` with only the
@@ -241,8 +241,8 @@ artifacts.
 Versioning and release policy:
 
 1. Release the workspace packages together from one git tag so
-   `@chubes4/wp-codebox-cli`, `@chubes4/wp-codebox-core`, and
-   `@chubes4/wp-codebox-playground` stay on the same version.
+   `@automattic/wp-codebox-cli`, `@automattic/wp-codebox-core`, and
+   `@automattic/wp-codebox-playground` stay on the same version.
 2. Keep `packages/wordpress-plugin/wp-codebox.php` `Version:` aligned with the
    package version used for the matching plugin zip.
 3. Treat the npm package and plugin zip as one release unit: publish the CLI,
@@ -274,7 +274,7 @@ options because the executable path is host-level configuration.
 Release checklist:
 
 1. Run `npm run check` from a clean checkout.
-2. Review `npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json` before publishing the CLI package.
+2. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
 3. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with `npm run package:wordpress-plugin` and inspect `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
 4. Confirm package and plugin versions are aligned on the release commit.
 5. Install the CLI in the target environment and configure the WordPress plugin `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
@@ -387,8 +387,8 @@ observations, step executions, optional per-step observations, snapshots, and
 artifact bundles without knowing benchmark, reward, or scenario semantics.
 
 ```ts
-import { createRuntimeEpisode } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createRuntimeEpisode } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const episode = await createRuntimeEpisode(
   {
@@ -437,7 +437,7 @@ Products such as eval harnesses can project this generic episode trace into thei
 own action, observation, reward, and report schemas outside WP Codebox.
 
 The episode trace is a versioned machine-verifiable contract with schema
-`wp-codebox/runtime-episode-trace/v1`. `@chubes4/wp-codebox-core` exports
+`wp-codebox/runtime-episode-trace/v1`. `@automattic/wp-codebox-core` exports
 `RUNTIME_EPISODE_TRACE_JSON_SCHEMA` for schema-aware consumers and
 `validateRuntimeEpisodeTrace()` for lightweight runtime checks. The trace stays
 generic: it carries runtime, reset, step, action, execution, observation,
@@ -562,7 +562,7 @@ JSON output uses `wp-codebox/command-catalog/v1` and includes each command id, d
 ### `schema recipe`
 
 Print the JSON Schema for `wp-codebox/workspace-recipe/v1` without reading a recipe or launching Playground.
-The canonical schema source is `createWorkspaceRecipeJsonSchema()` in `@chubes4/wp-codebox-core`, next to the `WorkspaceRecipe` TypeScript contract; the CLI injects its current recipe command ids into that shared schema factory.
+The canonical schema source is `createWorkspaceRecipeJsonSchema()` in `@automattic/wp-codebox-core`, next to the `WorkspaceRecipe` TypeScript contract; the CLI injects its current recipe command ids into that shared schema factory.
 
 ```bash
 npm run wp-codebox -- schema recipe --json
@@ -1071,7 +1071,7 @@ All three paths use the same `wp-codebox/task-input/v1` task input contract. Hos
     "applyBack": "reviewed"
   },
   "context": {
-    "issue": "https://github.com/chubes4/wp-codebox/issues/29"
+    "issue": "https://github.com/Automattic/wp-codebox/issues/29"
   }
 }
 ```

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { MountSpec } from "@chubes4/wp-codebox-core"
+import type { MountSpec } from "@automattic/wp-codebox-core"
 import { ArtifactRedactor, buildArtifactReview } from "../packages/runtime-playground/src/artifacts.js"
 import { captureMountDiffs } from "../packages/runtime-playground/src/mounted-artifact-capture.js"
 

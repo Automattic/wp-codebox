@@ -6,7 +6,7 @@ import {
   postBrowserReviewDecision,
   renderBrowserReviewOverlay,
   type BrowserReviewBridgeMetadata,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 
 class FakeDocument {
   readonly body = new FakeElement("body")
@@ -58,7 +58,7 @@ const metadata: BrowserReviewBridgeMetadata = {
   sessionId: "session-123",
   approvedFiles: ["/wordpress/wp-content/plugins/example/generated.txt", ""],
   contentDigest: "content-digest-123",
-  applyTarget: { repo: "chubes4/wp-codebox" },
+  applyTarget: { repo: "Automattic/wp-codebox" },
   requester: "agent:test",
   context: { source: "smoke" },
   labels: { title: "Custom review", approve: "Ship it", reject: "Nope" },
@@ -74,7 +74,7 @@ assert.equal(decision.schema, "wp-codebox/browser-review-decision/v1")
 assert.equal(decision.action, "approve")
 assert.equal(decision.artifactId, metadata.artifactId)
 assert.deepEqual(decision.approvedFiles, ["/wordpress/wp-content/plugins/example/generated.txt"])
-assert.deepEqual(decision.applyTarget, { repo: "chubes4/wp-codebox" })
+assert.deepEqual(decision.applyTarget, { repo: "Automattic/wp-codebox" })
 assert.deepEqual(decision.context, { source: "smoke", channel: "browser" })
 
 const messages: Array<{ message: unknown; targetOrigin: string }> = []

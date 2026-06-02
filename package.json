@@ -118,9 +118,9 @@
     "test": "tests"
   },
   "dependencies": {
-    "@chubes4/wp-codebox-cli": "file:packages/cli",
-    "@chubes4/wp-codebox-core": "file:packages/runtime-core",
-    "@chubes4/wp-codebox-playground": "file:packages/runtime-playground",
+    "@automattic/wp-codebox-cli": "file:packages/cli",
+    "@automattic/wp-codebox-core": "file:packages/runtime-core",
+    "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
     "@wp-playground/cli": "^3.1.35",
     "@wp-playground/wordpress-builds": "^0.9.4",
     "abort-controller": "^3.0.0",

@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactReviewBrowserSummary } from "@chubes4/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
 import type { Request } from "playwright"
 
 export interface BrowserProbeArtifact {
