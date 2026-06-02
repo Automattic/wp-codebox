@@ -103,7 +103,7 @@ try {
 
     const fullStateObservation = await episode.observe({
       type: "wordpress-state",
-      sections: ["summary", "posts", "terms", "options", "users", "rest-routes", "abilities"],
+      sections: ["summary", "posts", "terms", "menus", "templates", "media", "options", "users", "rest-routes", "abilities"],
       optionNames: ["blogname"],
       userFields: ["user_login", "roles"],
     })
@@ -112,7 +112,7 @@ try {
       sections?: { posts?: { count?: number }; users?: { count?: number }; options?: { keys?: string[] } }
       artifacts?: Record<string, { artifact?: string; sha256?: string; bytes?: number }>
     }
-    assert.deepEqual(fullStateData.config?.sections, ["summary", "posts", "terms", "options", "users", "rest-routes", "abilities"])
+    assert.deepEqual(fullStateData.config?.sections, ["summary", "posts", "terms", "menus", "templates", "media", "options", "users", "rest-routes", "abilities"])
     assert.ok((fullStateData.sections?.posts?.count ?? 0) >= 2)
     assert.equal(fullStateData.sections?.users?.count, 1)
     assert.deepEqual(fullStateData.sections?.options?.keys, ["blogname"])
@@ -159,7 +159,10 @@ try {
     const snapshotBundleEntry = manifest.files.find((file: { path: string; kind: string }) => file.path.startsWith("files/runtime-snapshots/") && file.kind === "runtime-snapshot-bundle")
     assert.ok(snapshotBundleEntry, "runtime snapshot bundle should be listed in manifest")
 
-    const usersArtifact = JSON.parse(await readFile(join(artifacts.directory, usersArtifactPath), "utf8")) as { data?: Array<Record<string, unknown>> }
+    const usersArtifact = JSON.parse(await readFile(join(artifacts.directory, usersArtifactPath), "utf8")) as { schema?: string; version?: number; section?: string; data?: Array<Record<string, unknown>> }
+    assert.equal(usersArtifact.schema, "wp-codebox/wordpress-state-section/v1")
+    assert.equal(usersArtifact.version, 1)
+    assert.equal(usersArtifact.section, "users")
     assert.equal(usersArtifact.data?.[0]?.redacted, true)
     assert.equal(Object.hasOwn(usersArtifact.data?.[0] ?? {}, "user_login"), false)
     assert.deepEqual(usersArtifact.data?.[0]?.roles, ["administrator"])

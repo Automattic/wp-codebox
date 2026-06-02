@@ -1,0 +1,81 @@
+{
+  "schema": "wp-codebox/wordpress-state-export/v1",
+  "version": 1,
+  "generatedAt": "2026-01-01T00:00:00+00:00",
+  "config": {
+    "sections": [
+      "summary",
+      "posts",
+      "terms",
+      "menus",
+      "templates",
+      "media",
+      "options",
+      "users"
+    ],
+    "redaction": "safe",
+    "includeContent": true,
+    "optionNames": [
+      "blogname"
+    ],
+    "userFields": [
+      "roles"
+    ]
+  },
+  "sections": {
+    "summary": {
+      "siteUrl": "https://example.test",
+      "homeUrl": "https://example.test",
+      "wordpressVersion": "6.8.0",
+      "activeTheme": "twentytwentyfive",
+      "activePlugins": [
+        "hello.php"
+      ],
+      "postCounts": {
+        "post": {
+          "publish": 1
+        },
+        "page": {
+          "publish": 1
+        }
+      }
+    },
+    "posts": {
+      "count": 2
+    },
+    "terms": {
+      "count": 1
+    },
+    "menus": {
+      "count": 1
+    },
+    "templates": {
+      "count": 4,
+      "keys": [
+        "theme",
+        "templates",
+        "templateParts",
+        "globalStyles"
+      ]
+    },
+    "media": {
+      "count": 1
+    },
+    "options": {
+      "count": 1,
+      "keys": [
+        "blogname"
+      ]
+    },
+    "users": {
+      "count": 1
+    }
+  },
+  "artifacts": {
+    "posts": {
+      "artifact": "files/observations/observation-1-wordpress-state-posts.json",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "bytes": 512
+    }
+  }
+}

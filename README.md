@@ -454,6 +454,36 @@ needed. Options require `optionNames`; users are redacted by default, expose onl
 allowed role/capability fields, and include identity fields only with
 `redaction: "none"` plus an explicit `userFields` allowlist.
 
+The canonical replayable WordPress state artifact contracts are:
+
+- `wp-codebox/wordpress-state-export/v1`: the inline observation data. It is an
+  object with `schema`, `version: 1`, `generatedAt`, the normalized request
+  `config`, compact `sections` summaries, and an `artifacts` map keyed by section
+  name. Each artifact entry contains `artifact`, `sha256`, and `bytes`.
+- `wp-codebox/wordpress-state-section/v1`: the artifact-backed full section. It
+  is an object with `schema`, `version: 1`, `section`, and `data`. The `section`
+  value matches the key in the export `artifacts` map and the artifact filename.
+
+Stable `wordpress-state-section/v1` section fields are intentionally generic
+WordPress state, not replay/grader semantics:
+
+| Section | Stable fields |
+| --- | --- |
+| `summary` | `siteUrl`, `homeUrl`, `wordpressVersion`, `activeTheme`, `activePlugins`, `postCounts` keyed by post type and status. |
+| `posts` | Array of public post types ordered by ascending `ID`. Entries include `id`, `type`, `slug`, `status`, `title`, `contentHash`, `modifiedGmt`, and `content` when `includeContent: true`. This covers posts, pages, and public custom post types. |
+| `templates` | `theme`, `templates`, `templateParts`, and `globalStyles`. Template entries include `id`, `slug`, `theme`, `type`, `source`, and `contentHash`; template part entries include `id`, `slug`, `theme`, `area`, `source`, and `contentHash`; global styles expose `stylesheetHash` when available. |
+| `options` | Object keyed by explicitly requested `optionNames`; no options are exported implicitly. |
+| `terms` | Array of terms with `id`, `taxonomy`, `slug`, `name`, `parent`, and `count`. |
+| `menus` | Array of menus with `id`, `slug`, `name`, and `items`; menu items include `id`, `title`, `url`, `parentId`, `object`, and `type`. |
+| `media` | Array of attachments ordered by ascending `ID`. Entries include `id`, `slug`, `title`, `status`, `mimeType`, `sourceUrl`, `altText`, and `metadataHash`. |
+| `users` | Array ordered by ascending `ID`. Entries always include `id` and `redacted`; `roles` and `caps` are allowed safe fields. Identity fields such as `user_login` and `display_name` are emitted only when requested and `redaction: "none"`. |
+
+Redaction is part of the contract. The default `redaction: "safe"` avoids user
+identity fields and requires explicit allowlists for options and users.
+`redaction: "none"` is an opt-in export mode for trusted callers that need identity fields.
+Consumers should verify artifact SHA-256 values before replay and should branch
+on `schema` and `version` instead of projecting per-consumer legacy state shapes.
+
 Replay is bounded to the generic runtime contract. A consumer can replay a step
 by creating a compatible backend runtime, applying the same mounts/artifact
 inputs, and executing the action envelope in order. WP Codebox intentionally

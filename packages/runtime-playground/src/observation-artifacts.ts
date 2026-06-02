@@ -40,7 +40,7 @@ export async function observeWordPressState({
   const sections = stateExport.sections ?? {}
 
   for (const [section, contents] of Object.entries(sections)) {
-    const serialized = `${JSON.stringify({ schema: "wp-codebox/wordpress-state-section/v1", section, data: contents }, null, 2)}\n`
+    const serialized = `${JSON.stringify({ schema: "wp-codebox/wordpress-state-section/v1", version: 1, section, data: contents }, null, 2)}\n`
     const digest = createHash("sha256").update(serialized).digest("hex")
     const relativePath = `files/observations/${observationId}-wordpress-state-${safeArtifactSegment(section)}.json`
     await mkdir(dirname(join(artifactRoot, relativePath)), { recursive: true })
@@ -247,13 +247,17 @@ if ( in_array( 'media', $sections, true ) ) {
         'orderby'        => 'ID',
         'order'          => 'ASC',
     ) );
-    $exports['media'] = array_map( function ( $attachment ) {
+    $exports['media'] = array_map( function ( $attachment ) use ( $hash_value ) {
+        $metadata = wp_get_attachment_metadata( $attachment->ID );
         return array(
-            'id'       => (int) $attachment->ID,
-            'slug'     => $attachment->post_name,
-            'title'    => get_the_title( $attachment ),
-            'mimeType' => $attachment->post_mime_type,
-            'metadata' => wp_get_attachment_metadata( $attachment->ID ),
+            'id'           => (int) $attachment->ID,
+            'slug'         => $attachment->post_name,
+            'title'        => get_the_title( $attachment ),
+            'status'       => $attachment->post_status,
+            'mimeType'     => $attachment->post_mime_type,
+            'sourceUrl'    => wp_get_attachment_url( $attachment->ID ) ?: '',
+            'altText'      => (string) get_post_meta( $attachment->ID, '_wp_attachment_image_alt', true ),
+            'metadataHash' => $hash_value( $metadata ),
         );
     }, $attachments );
 }

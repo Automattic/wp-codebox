@@ -1,0 +1,27 @@
+{
+  "schema": "wp-codebox/wordpress-state-section/v1",
+  "version": 1,
+  "section": "posts",
+  "data": [
+    {
+      "id": 42,
+      "type": "page",
+      "slug": "sample-page",
+      "status": "publish",
+      "title": "Sample Page",
+      "contentHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "content": "<!-- wp:paragraph --><p>Hello from Codebox.</p><!-- /wp:paragraph -->",
+      "modifiedGmt": "2026-01-01 00:00:00"
+    },
+    {
+      "id": 43,
+      "type": "book",
+      "slug": "custom-post-type-entry",
+      "status": "draft",
+      "title": "Custom Post Type Entry",
+      "contentHash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "content": "Custom post body",
+      "modifiedGmt": "2026-01-02 00:00:00"
+    }
+  ]
+}
