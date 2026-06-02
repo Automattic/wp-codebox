@@ -75,7 +75,7 @@ export const commandRegistry = [
       { name: "body", description: "Optional raw request body.", format: "string" },
       { name: "body-json", description: "Optional JSON request body string; takes precedence over body.", format: "JSON string" },
     ],
-    outputShape: "JSON object with command, method, path, route, status, headers, and REST response data.",
+    outputShape: "JSON object with command, method, path, route, status, headers, body/data, timing, and diagnostics.",
     policyRequirement: "Runtime policy commands must include wordpress.rest-request.",
     recipe: true,
     handler: { kind: "playground", method: "runRestRequest" },

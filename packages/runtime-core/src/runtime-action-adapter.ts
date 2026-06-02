@@ -160,24 +160,66 @@ async function runRuntimeRestRequestAction(episode: RuntimeEpisode, action: Runt
   } catch {
     // Keep raw stdout when a backend returns non-JSON diagnostics.
   }
+  const normalized = normalizeRuntimeRestRequestResult(action, step, stdout)
 
   return runtimeActionObservation({
     type: action.type,
     action,
     step,
-    data: {
-      method: action.method ?? "GET",
-      path: action.path,
-      mappedCommand: step.execution.command,
-      args: step.execution.args,
-      exitCode: step.execution.exitCode,
-      stdout,
-      stderr: step.execution.stderr,
-      executionId: step.execution.id,
-      stepId: step.id,
-    },
+    data: normalized,
     artifactRefs: step.observation?.artifactRefs,
   })
+}
+
+function normalizeRuntimeRestRequestResult(
+  action: RuntimeRestRequestAction,
+  step: RuntimeEpisodeStepResult,
+  stdout: unknown,
+): Record<string, unknown> {
+  const response = stdout && typeof stdout === "object" && !Array.isArray(stdout) ? stdout as Record<string, unknown> : {}
+  const startedAt = Date.parse(step.execution.startedAt)
+  const finishedAt = Date.parse(step.execution.finishedAt)
+  const durationMs = Number.isFinite(startedAt) && Number.isFinite(finishedAt) ? Math.max(0, finishedAt - startedAt) : undefined
+  const method = stringValue(response.method) ?? action.method ?? "GET"
+  const path = stringValue(response.path) ?? action.path
+  const route = stringValue(response.route) ?? path
+  const headers = recordValue(response.headers) ?? {}
+  const body = response.body ?? response.data ?? null
+  const diagnostics = {
+    exitCode: step.execution.exitCode,
+    stderr: step.execution.stderr,
+    ...(recordValue(response.diagnostics) ?? {}),
+  }
+
+  return {
+    method,
+    path,
+    route,
+    status: typeof response.status === "number" ? response.status : undefined,
+    headers,
+    body,
+    timing: {
+      startedAt: step.execution.startedAt,
+      finishedAt: step.execution.finishedAt,
+      ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(recordValue(response.timing) ?? {}),
+    },
+    diagnostics,
+    mappedCommand: step.execution.command,
+    args: step.execution.args,
+    stdout,
+    stderr: step.execution.stderr,
+    executionId: step.execution.id,
+    stepId: step.id,
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 async function runRuntimeFilesystemAction(

@@ -28,6 +28,7 @@ export function restRequestInputFromArgs(args: string[]): RestRequestCommandInpu
 
 export function restRequestPhpCode(input: RestRequestCommandInput): string {
   return `define( 'REST_REQUEST', true );
+$wp_codebox_started_at = microtime( true );
 $wp_codebox_method = ${JSON.stringify(input.method)};
 $wp_codebox_path = ${JSON.stringify(input.path)};
 $wp_codebox_headers = json_decode( ${JSON.stringify(JSON.stringify(input.headers))}, true );
@@ -56,6 +57,7 @@ if ( $wp_codebox_body !== '' ) {
 $wp_codebox_response = rest_do_request( $wp_codebox_request );
 $wp_codebox_server = rest_get_server();
 $wp_codebox_data = $wp_codebox_server->response_to_data( $wp_codebox_response, false );
+$wp_codebox_finished_at = microtime( true );
 
 echo wp_json_encode( array(
     'command' => 'wordpress.rest-request',
@@ -64,6 +66,11 @@ echo wp_json_encode( array(
     'route' => $wp_codebox_route,
     'status' => $wp_codebox_response->get_status(),
     'headers' => $wp_codebox_response->get_headers(),
+    'body' => $wp_codebox_data,
     'data' => $wp_codebox_data,
+    'timing' => array(
+        'duration_ms' => (int) round( ( $wp_codebox_finished_at - $wp_codebox_started_at ) * 1000 ),
+    ),
+    'diagnostics' => (object) array(),
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
 }
