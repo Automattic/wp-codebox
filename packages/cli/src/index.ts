@@ -2,6 +2,7 @@
 import { routeCliCommand } from "./command-router.js"
 import { runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
+import { runCleanupCommand, runDoctorCommand } from "./commands/doctor.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
 import { runRunsArtifactsCommand, runRunsStatusCommand } from "./commands/runs.js"
@@ -22,6 +23,8 @@ async function runCli(args: string[]): Promise<number> {
     runsArtifacts: runRunsArtifactsCommand,
     commands: runCommandsCommand,
     recipeSchema: runRecipeSchemaCommand,
+    doctor: runDoctorCommand,
+    cleanup: runCleanupCommand,
     run: runRunCommand,
   })
 }

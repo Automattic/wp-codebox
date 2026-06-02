@@ -15,6 +15,8 @@ interface CliCommandRouter {
   runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
   recipeSchema: CliCommandHandler
+  doctor: CliCommandHandler
+  cleanup: CliCommandHandler
   run: CliCommandHandler
 }
 
@@ -83,6 +85,10 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
     }
     case "commands":
       return router.commands(args)
+    case "doctor":
+      return router.doctor(args)
+    case "cleanup":
+      return router.cleanup(args)
     case "schema": {
       const subcommand = args.shift()
       if (subcommand !== "recipe") {

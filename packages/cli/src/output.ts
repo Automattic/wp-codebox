@@ -240,6 +240,8 @@ export function printHelp(): void {
   console.log(`Usage:
   wp-codebox commands [--json]
   wp-codebox schema recipe [--json]
+  wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--stale-after-seconds <n>]
+  wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
@@ -278,6 +280,14 @@ Options:
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --dry-run            Validate recipe-run and emit a resolved JSON plan without booting Playground or writing temp workspaces.
   --json               Emit machine-readable JSON.
+
+Doctor and cleanup:
+  doctor               Report binary/source fingerprint, Node/npm availability, stale recipe-run processes, and corrupt archives.
+  cleanup              Run doctor checks and remove safe stale/corrupt runtime state.
+  --fix                Allow mutating cleanup when command is doctor.
+  --stale-after-seconds <n>
+                       Age threshold for stale recipe-run processes. Defaults to 3600.
+  --archive-root <dir> Additional archive/cache root to scan for invalid .zip files. Repeatable.
 
 Workspace policy:
   --workspace-root <dir>

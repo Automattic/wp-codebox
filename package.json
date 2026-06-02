@@ -79,6 +79,7 @@
     "blueprint-validation-smoke": "tsx scripts/blueprint-validation-smoke.ts",
     "ability-login-blueprint-smoke": "tsx scripts/ability-login-blueprint-smoke.ts",
     "discovery-command-smoke": "tsx scripts/discovery-command-smoke.ts",
+    "doctor-command-smoke": "tsx scripts/doctor-command-smoke.ts",
     "agent-sandbox-code-smoke": "tsx scripts/agent-sandbox-code-smoke.ts",
     "agent-runtime-failure-smoke": "tsx scripts/agent-runtime-failure-smoke.ts",
     "recipe-dry-run-smoke": "tsx scripts/recipe-dry-run-smoke.ts",

@@ -73,7 +73,11 @@ export interface PlaygroundWordPressArchiveCacheValidation {
   }>
 }
 
-export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = join(homedir(), ".wordpress-playground")): Promise<PlaygroundWordPressArchiveCacheValidation> {
+export interface PlaygroundWordPressArchiveCacheValidationOptions {
+  deleteInvalid?: boolean
+}
+
+export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = join(homedir(), ".wordpress-playground"), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
   const release = await resolveWordPressRelease(versionQuery)
   const version = String(release.version)
   const sourceUrl = String(release.releaseUrl)
@@ -91,6 +95,11 @@ export async function validatePlaygroundWordPressArchiveCache(versionQuery: stri
     const archiveStat = await stat(archivePath)
     const reason = await invalidZipReason(archivePath, archiveStat.size)
     if (!reason) {
+      continue
+    }
+
+    if (!options.deleteInvalid) {
+      invalidArchives.push({ path: archivePath, size: archiveStat.size, reason, deleted: false })
       continue
     }
 
