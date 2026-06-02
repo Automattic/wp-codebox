@@ -12,6 +12,7 @@ final class WP_Codebox_Abilities {
 	private const BROWSER_ARTIFACT_MAX_BYTES = 5242880;
 	private const BROWSER_CAPTURE_MAX_BYTES  = 262144;
 	private const BROWSER_SESSION_CREATE_SCOPE = 'browser-session:create';
+	private const BROWSER_ARTIFACT_WRITE_SCOPE = 'artifact:write';
 
 	private static bool $registered = false;
 
@@ -575,6 +576,7 @@ final class WP_Codebox_Abilities {
 						'required'   => array( 'files' ),
 						'properties' => array(
 							'artifacts_path' => $artifact_id_schema['artifacts_path'],
+							'authorization'  => self::trusted_orchestrator_authorization_schema( self::BROWSER_ARTIFACT_WRITE_SCOPE, 'Explicit trusted orchestrator authorization for browser artifact persistence. Callers must provide a caller id and the artifact:write scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' ),
 							'session_id'     => array(
 								'type'        => 'string',
 								'description' => 'Optional browser Playground session id that produced the artifact files.',
@@ -639,7 +641,7 @@ final class WP_Codebox_Abilities {
 					),
 					'output_schema'       => array( 'type' => 'object' ),
 					'execute_callback'    => array( self::class, 'persist_browser_artifact' ),
-					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'permission_callback' => array( self::class, 'can_persist_browser_artifact' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
@@ -1061,9 +1063,14 @@ final class WP_Codebox_Abilities {
 
 	/** @return array<string,mixed> */
 	private static function browser_session_authorization_schema(): array {
+		return self::trusted_orchestrator_authorization_schema( self::BROWSER_SESSION_CREATE_SCOPE, 'Explicit trusted orchestrator authorization for browser session creation. Callers must provide a caller id and the browser-session:create scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' );
+	}
+
+	/** @return array<string,mixed> */
+	private static function trusted_orchestrator_authorization_schema( string $scope, string $description ): array {
 		return array(
 			'type'        => 'object',
-			'description' => 'Explicit trusted orchestrator authorization for browser session creation. Callers must provide a caller id and the browser-session:create scope; sites grant trust through wp_codebox_trusted_browser_session_callers.',
+			'description' => $description,
 			'properties'  => array(
 				'schema' => array(
 					'type'        => 'string',
@@ -1075,8 +1082,8 @@ final class WP_Codebox_Abilities {
 				),
 				'scope'  => array(
 					'type'        => 'string',
-					'enum'        => array( self::BROWSER_SESSION_CREATE_SCOPE ),
-					'description' => 'Required capability scope for creating a browser Playground session.',
+					'enum'        => array( $scope ),
+					'description' => 'Required trusted-orchestrator capability scope.',
 				),
 			),
 		);
@@ -1376,7 +1383,17 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function persist_browser_artifact( array $input ): array|WP_Error {
-		return ( new WP_Codebox_Artifacts() )->persist_browser_bundle( $input );
+		$result = ( new WP_Codebox_Artifacts() )->persist_browser_bundle( $input );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_ARTIFACT_WRITE_SCOPE );
+		if ( ! empty( $authorization['caller'] ) || ! empty( $authorization['scope'] ) ) {
+			$result['authorization'] = $authorization;
+		}
+
+		return $result;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -1417,7 +1434,23 @@ final class WP_Codebox_Abilities {
 			return false;
 		}
 
-		$authorization = self::browser_session_authorization( $input );
+		$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_SESSION_CREATE_SCOPE );
+
+		return true === ( $authorization['authorized'] ?? false );
+	}
+
+	/** @param mixed $input Ability input or request-like object. */
+	public static function can_persist_browser_artifact( mixed $input = null ): bool {
+		if ( current_user_can( 'manage_options' ) ) {
+			return true;
+		}
+
+		$input = self::permission_input_array( $input );
+		if ( empty( $input ) ) {
+			return false;
+		}
+
+		$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_ARTIFACT_WRITE_SCOPE );
 
 		return true === ( $authorization['authorized'] ?? false );
 	}
@@ -1443,6 +1476,11 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
 	private static function browser_session_authorization( array $input ): array {
+		return self::trusted_orchestrator_authorization( $input, self::BROWSER_SESSION_CREATE_SCOPE );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private static function trusted_orchestrator_authorization( array $input, string $required_scope ): array {
 		$authorization = is_array( $input['authorization'] ?? null ) ? $input['authorization'] : array();
 		$caller        = trim( (string) ( $authorization['caller'] ?? '' ) );
 		$scope         = trim( (string) ( $authorization['scope'] ?? '' ) );
@@ -1462,7 +1500,7 @@ final class WP_Codebox_Abilities {
 			return $result;
 		}
 
-		if ( self::BROWSER_SESSION_CREATE_SCOPE !== $scope ) {
+		if ( $required_scope !== $scope ) {
 			$result['reason'] = 'missing-scope';
 			return $result;
 		}
