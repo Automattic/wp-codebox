@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 
 import type { ArtifactBundle, ArtifactPreview, RuntimeInfo } from "./runtime-contracts.js"
+import { normalizeArtifactDigest } from "./artifact-references.js"
 import { stripUndefined } from "./object-utils.js"
 
 export type RuntimeRunStatus = "queued" | "booting" | "running" | "collecting_artifacts" | "succeeded" | "failed" | "timed_out" | "cancelled"
@@ -161,7 +162,7 @@ export function artifactBundleRunRef(bundle: ArtifactBundle | undefined): Runtim
       kind: "artifact-bundle" as const,
       directory: bundle.directory,
       id: bundle.id,
-      digest: bundle.contentDigest ? { algorithm: "sha256" as const, value: bundle.contentDigest } : undefined,
+      digest: normalizeArtifactDigest(bundle.contentDigest),
     }),
   ]
 }
