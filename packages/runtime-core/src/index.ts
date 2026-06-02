@@ -17,6 +17,7 @@ export * from "./runtime-action-adapter.js"
 export * from "./artifact-bundle-verifier.js"
 export * from "./host-tool-registry.js"
 export * from "./run-registry.js"
+export * from "./playground-site-sync.js"
 
 export type ArtifactReviewProgressEventType =
   | "boot"
