@@ -368,8 +368,21 @@ try {
 }
 `;
 
+	const playgroundRequestHandler = ( client ) => {
+		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
+			return client.requestHandler;
+		}
+
+		if ( client && typeof client.request === 'function' ) {
+			return client;
+		}
+
+		return null;
+	};
+
 	const runPhpRequest = async ( client, options = {} ) => {
-		if ( ! client || typeof client.request !== 'function' ) {
+		const requestHandler = playgroundRequestHandler( client );
+		if ( ! requestHandler ) {
 			throw new Error( 'Playground request handler is unavailable.' );
 		}
 
@@ -394,7 +407,7 @@ try {
 		}
 		await client.writeFile( scriptPath, code );
 
-		const response = await client.request( {
+		const response = await requestHandler.request( {
 			method: 'GET',
 			url: requestUrl,
 		} );

@@ -71,6 +71,13 @@ assert.match(successClient.files[0]?.contents ?? "", /wp-load\.php/)
 assert.match(successClient.files[0]?.contents ?? "", /case 'ensureDirectory':/)
 assert.match(successClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-ensuredirectory-/)
 
+const handlerClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"handler\"},\"error\":null} suffix", false, true)
+const handlerResult = await runtime.runPhpRequest(handlerClient, { code: "<?php echo 'ok';", expectJson: true })
+assert.deepEqual(sameRealm(handlerResult), { success: true, data: { runner: "handler" }, error: null })
+assert.equal(handlerClient.handlerRequests.length, 1)
+assert.equal(handlerClient.requests.length, 0)
+assert.match(handlerClient.handlerRequests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/task-/)
+
 const writeClient = createClient("{\"success\":true,\"data\":{\"path\":\"/wordpress/wp-content/example.txt\",\"bytes\":11},\"error\":null}")
 const writeResult = await runtime.writeFile(writeClient, { path: "/wordpress/wp-content/example.txt", content: "hello world" })
 assert.deepEqual(sameRealm(writeResult), {
@@ -298,13 +305,15 @@ function sameRealm<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-function createClient(response: unknown, supportsRun = false) {
+function createClient(response: unknown, supportsRun = false, supportsRequestHandler = false) {
   const client = {
     mkdirs: [] as string[],
     files: [] as Array<{ path: string; contents: string }>,
     requests: [] as Array<{ method: string; url: string }>,
+    handlerRequests: [] as Array<{ method: string; url: string }>,
     runs: [] as Array<{ code: string }>,
     runResponse: undefined as unknown,
+    requestHandler: undefined as undefined | { request: (request: { method: string; url: string }) => Promise<unknown> },
     async mkdir(path: string) {
       this.mkdirs.push(path)
     },
@@ -323,6 +332,15 @@ function createClient(response: unknown, supportsRun = false) {
 
   if (!supportsRun) {
     delete (client as { run?: unknown }).run
+  }
+
+  if (supportsRequestHandler) {
+    client.requestHandler = {
+      request: async (request: { method: string; url: string }) => {
+        client.handlerRequests.push(request)
+        return response
+      },
+    }
   }
 
   return client
