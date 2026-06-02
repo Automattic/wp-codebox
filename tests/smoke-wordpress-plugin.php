@@ -725,11 +725,39 @@ $persisted_browser_artifact       = is_array( $persist_browser_artifact_ability 
 	array(
 		'artifacts_path' => $root . '/artifacts',
 		'session_id'     => 'browser-session-123',
+		'session'        => array(
+			'id'              => 'browser-session-123',
+			'createdAt'       => '2026-06-02T00:00:00+00:00',
+			'metadata'        => array(
+				'tab_id' => 'tab-abc',
+			),
+			'materialization' => array(
+				'run_id' => 'materialization-run-123',
+			),
+		),
 		'provenance'     => array(
 			'task' => array(
 				'id'     => 'issue-437-smoke',
 				'source' => 'wordpress-plugin-smoke',
 			),
+		),
+		'caller_schema'  => 'example/browser-artifact/v1',
+		'caller_schema_id' => 'example-browser-artifact',
+		'caller_kind'    => 'browser-preview',
+		'caller_metadata' => array(
+			'project_id' => 'project-123',
+			'labels'     => array( 'canonical', 'browser' ),
+		),
+		'materialization' => array(
+			'status' => 'ready',
+			'paths'  => array( 'index' => 'site/index.html' ),
+		),
+		'review_hints'   => array(
+			'severity' => 'low',
+		),
+		'apply_target'   => array(
+			'type' => 'project-artifact',
+			'id'   => 'target-123',
 		),
 		'files'          => array(
 			array(
@@ -750,7 +778,34 @@ $persisted_browser_artifact       = is_array( $persist_browser_artifact_ability 
 $assert( 'persist-browser-artifact stores canonical artifact bundle', ! is_wp_error( $persisted_browser_artifact ) && true === ( $persisted_browser_artifact['success'] ?? false ) && 'wp-codebox/browser-artifact-persistence/v1' === ( $persisted_browser_artifact['schema'] ?? '' ) && str_starts_with( (string) ( $persisted_browser_artifact['artifact_id'] ?? '' ), 'artifact-bundle-sha256-' ) );
 $assert( 'persist-browser-artifact writes manifest and metadata', ! is_wp_error( $persisted_browser_artifact ) && is_file( (string) ( $persisted_browser_artifact['artifact']['paths']['manifest'] ?? '' ) ) && is_file( (string) ( $persisted_browser_artifact['artifact']['paths']['metadata'] ?? '' ) ) );
 $assert( 'persist-browser-artifact records browser file metadata', ! is_wp_error( $persisted_browser_artifact ) && 'site/assets/photo.png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['path'] ?? '' ) && 'files/browser/site/assets/photo.png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['artifactPath'] ?? '' ) && 'image/png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['mimeType'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\nparent-persisted" ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['sha256']['value'] ?? '' ) );
+$assert( 'persist-browser-artifact preserves caller schema metadata', ! is_wp_error( $persisted_browser_artifact ) && 'example/browser-artifact/v1' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['schema'] ?? '' ) && 'example-browser-artifact' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['schemaId'] ?? '' ) && 'browser-preview' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['kind'] ?? '' ) && 'project-123' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['metadata']['project_id'] ?? '' ) );
+$assert( 'persist-browser-artifact preserves provenance and review hints', ! is_wp_error( $persisted_browser_artifact ) && 'wordpress-plugin-smoke' === ( $persisted_browser_artifact['artifact']['metadata']['provenance']['task']['source'] ?? '' ) && 'wordpress-plugin-smoke' === ( $persisted_browser_artifact['artifact']['review']['provenance']['task']['source'] ?? '' ) && 'low' === ( $persisted_browser_artifact['artifact']['review']['reviewHints']['severity'] ?? '' ) );
+$assert( 'persist-browser-artifact preserves materialization and session metadata', ! is_wp_error( $persisted_browser_artifact ) && 'ready' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['materialization']['status'] ?? '' ) && 'project-artifact' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['applyTarget']['type'] ?? '' ) && 'tab-abc' === ( $persisted_browser_artifact['artifact']['metadata']['runtime']['metadata']['tab_id'] ?? '' ) && 'materialization-run-123' === ( $persisted_browser_artifact['artifact']['metadata']['runtime']['materialization']['run_id'] ?? '' ) );
+$assert( 'persist-browser-artifact preserves text and binary files', ! is_wp_error( $persisted_browser_artifact ) && 'utf-8' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['encoding'] ?? '' ) && strlen( '<main>Persisted</main>' ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][0]['size'] ?? 0 ) && strlen( "\x89PNG\r\n\x1a\nparent-persisted" ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['size'] ?? 0 ) );
 $assert( 'persist-browser-artifact lists persisted bundle', ! is_wp_error( $persisted_browser_artifact ) && ! is_wp_error( call_user_func( $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/list-artifacts']['execute_callback'], array( 'artifacts_path' => $root . '/artifacts' ) ) ) );
+$persisted_browser_duplicate = is_array( $persist_browser_artifact_ability ) ? call_user_func(
+	$persist_browser_artifact_ability['execute_callback'],
+	array(
+		'artifacts_path' => $root . '/artifacts',
+		'caller_schema'  => 'example/browser-artifact/v2',
+		'caller_metadata' => array( 'project_id' => 'project-456' ),
+		'files'          => array(
+			array(
+				'path'      => 'site/index.html',
+				'content'   => '<main>Persisted</main>',
+				'mime_type' => 'text/html',
+				'kind'      => 'html',
+			),
+			array(
+				'path'           => 'site/assets/photo.png',
+				'content_base64' => base64_encode( "\x89PNG\r\n\x1a\nparent-persisted" ),
+				'encoding'       => 'base64',
+				'kind'           => 'image',
+			),
+		),
+	)
+) : null;
+$assert( 'persist-browser-artifact rejects duplicate content digest independently of caller metadata', is_wp_error( $persisted_browser_duplicate ) && 'wp_codebox_artifact_already_exists' === $persisted_browser_duplicate->get_error_code() && ( $persisted_browser_artifact['artifact_id'] ?? '' ) === ( $persisted_browser_duplicate->get_error_data()['artifact_id'] ?? null ) );
 $persisted_browser_traversal = is_array( $persist_browser_artifact_ability ) ? call_user_func(
 	$persist_browser_artifact_ability['execute_callback'],
 	array(
