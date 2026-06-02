@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { routeCliCommand } from "./command-router.js"
-import { runArtifactsVerifyCommand } from "./commands/artifacts.js"
+import { runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
@@ -17,6 +17,7 @@ async function runCli(args: string[]): Promise<number> {
     recipeValidate: runRecipeValidateCommand,
     workspacePolicyCheck: runWorkspacePolicyCheckCommand,
     artifactsVerify: runArtifactsVerifyCommand,
+    artifactsBrowserMetrics: runArtifactsBrowserMetricsCommand,
     runsStatus: runRunsStatusCommand,
     runsArtifacts: runRunsArtifactsCommand,
     commands: runCommandsCommand,

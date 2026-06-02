@@ -8,9 +8,11 @@ const repoRoot = resolve(import.meta.dirname, "..")
 const workspace = resolve(repoRoot, "artifacts", "recipe-browser-bench-metrics-smoke")
 const recipePath = join(workspace, "recipe.json")
 const artifactsRoot = join(workspace, "artifacts")
+const emptyArtifactsRoot = join(workspace, "empty-artifacts")
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(workspace, { recursive: true })
+await mkdir(emptyArtifactsRoot, { recursive: true })
 
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
@@ -62,6 +64,17 @@ assert.ok(output.benchResults, "recipe-run should expose benchResults")
 assert.equal(output.benchResults.scenarios.length, 1)
 
 const metrics = output.benchResults.scenarios[0].metrics
+const expectedBrowserMetrics = {
+  browser_peak_used_js_heap_bytes: metrics.browser_peak_used_js_heap_bytes,
+  browser_final_used_js_heap_bytes: metrics.browser_final_used_js_heap_bytes,
+  browser_checkpoint_count: metrics.browser_checkpoint_count,
+  browser_dom_node_count: metrics.browser_dom_node_count,
+  browser_iframe_count: metrics.browser_iframe_count,
+  browser_resource_count: metrics.browser_resource_count,
+  browser_transfer_size_bytes: metrics.browser_transfer_size_bytes,
+  browser_long_task_count: metrics.browser_long_task_count,
+  browser_long_task_total_ms: metrics.browser_long_task_total_ms,
+}
 assert.ok(metrics.browser_checkpoint_count >= 3, "browser_checkpoint_count should include probe checkpoints")
 assert.ok(metrics.browser_dom_node_count > 0, "browser_dom_node_count should be numeric")
 assert.equal(metrics.browser_iframe_count, 1)
@@ -82,6 +95,37 @@ const performance = JSON.parse(await readFile(performancePath, "utf8"))
 assert.equal(performance.schema, "wp-codebox/browser-performance/v1")
 assert.ok(performance.checkpoints.length >= 3, "performance artifact should include probe checkpoints")
 assert.match(await readFile(checkpointsPath, "utf8"), /"name":"after-navigation"/)
+
+const browserMetrics = await runCli([
+  "packages/cli/dist/index.js",
+  "artifacts",
+  "browser-metrics",
+  "--bundle",
+  artifactDirectory,
+  "--json",
+])
+
+assert.equal(browserMetrics.schema, "wp-codebox/browser-metrics/v1")
+assert.equal(browserMetrics.hasBrowserMetrics, true)
+assert.deepEqual(browserMetrics.metrics, expectedBrowserMetrics)
+assert.equal(browserMetrics.artifacts.summary.path, "files/browser/summary.json")
+assert.equal(browserMetrics.artifacts.memory.path, "files/browser/memory.json")
+assert.equal(browserMetrics.artifacts.performance.path, "files/browser/performance.json")
+assert.equal(browserMetrics.artifacts.checkpoints.path, "files/browser/checkpoints.jsonl")
+
+const emptyBrowserMetrics = await runCli([
+  "packages/cli/dist/index.js",
+  "artifacts",
+  "browser-metrics",
+  "--bundle",
+  emptyArtifactsRoot,
+  "--json",
+])
+
+assert.equal(emptyBrowserMetrics.schema, "wp-codebox/browser-metrics/v1")
+assert.equal(emptyBrowserMetrics.hasBrowserMetrics, false)
+assert.deepEqual(emptyBrowserMetrics.metrics, {})
+assert.deepEqual(emptyBrowserMetrics.artifacts, {})
 
 console.log(`Recipe browser bench metrics smoke passed: ${artifactDirectory}`)
 

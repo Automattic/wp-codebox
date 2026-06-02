@@ -1,3 +1,5 @@
+import { access, readFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
   BrowserProbeArtifact,
@@ -11,6 +13,14 @@ import type {
   BrowserProbePerformanceArtifact,
   BrowserProbePerformanceSummary,
 } from "./browser-artifacts.js"
+
+export interface BrowserArtifactMetricsResult {
+  schema: "wp-codebox/browser-metrics/v1"
+  bundleDirectory: string
+  hasBrowserMetrics: boolean
+  metrics: Record<string, number>
+  artifacts: Record<string, { path: string; kind: "json" | "jsonl" }>
+}
 
 function now(): string {
   return new Date().toISOString()
@@ -143,6 +153,61 @@ export function promoteBrowserMetricsToBenchResults(raw: string, probes: Browser
   }
 
   return `${JSON.stringify(parsed, null, 2)}\n`
+}
+
+export async function browserArtifactMetrics(bundleDirectory: string): Promise<BrowserArtifactMetricsResult> {
+  const summaryPath = join(bundleDirectory, "files", "browser", "summary.json")
+  const artifacts: BrowserArtifactMetricsResult["artifacts"] = {}
+
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "summary", "summary.json", "json")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "memory", "memory.json", "json")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "performance", "performance.json", "json")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "checkpoints", "checkpoints.jsonl", "jsonl")
+
+  let metrics: Record<string, number> = {}
+  try {
+    const summary = JSON.parse(await readFile(summaryPath, "utf8")) as Record<string, unknown>
+    const browserSummary = isRecord(summary.summary) ? summary.summary : {}
+    metrics = isNumericMetricRecord(browserSummary.metrics) ? browserSummary.metrics : {}
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error
+    }
+  }
+
+  return {
+    schema: "wp-codebox/browser-metrics/v1",
+    bundleDirectory,
+    hasBrowserMetrics: Object.keys(metrics).length > 0,
+    metrics,
+    artifacts,
+  }
+}
+
+async function addBrowserArtifactIfPresent(artifacts: BrowserArtifactMetricsResult["artifacts"], bundleDirectory: string, name: string, file: string, kind: "json" | "jsonl"): Promise<void> {
+  const relativePath = `files/browser/${file}`
+  try {
+    await access(join(bundleDirectory, relativePath))
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return
+    }
+    throw error
+  }
+
+  artifacts[name] = { path: relativePath, kind }
+}
+
+function isNumericMetricRecord(value: unknown): value is Record<string, number> {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return Object.values(value).every((metric) => typeof metric === "number" && Number.isFinite(metric))
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return isRecord(error) && error.code === "ENOENT"
 }
 
 function combinedBrowserBenchMetrics(probes: BrowserProbeArtifact[]): Record<string, number> | undefined {

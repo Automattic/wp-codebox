@@ -243,6 +243,7 @@ export function printHelp(): void {
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
+  wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
