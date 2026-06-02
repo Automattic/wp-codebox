@@ -10,6 +10,7 @@ defined( 'ABSPATH' ) || exit;
 final class WP_Codebox_Abilities {
 
 	private const BROWSER_ARTIFACT_MAX_BYTES = 5242880;
+	private const BROWSER_CAPTURE_MAX_BYTES  = 262144;
 
 	private static bool $registered = false;
 
@@ -338,6 +339,21 @@ final class WP_Codebox_Abilities {
 								'properties'  => array(
 									'task_path'   => array( 'type' => 'string' ),
 									'result_path' => array( 'type' => 'string' ),
+									'capture_paths' => array(
+										'type'        => 'array',
+										'description' => 'Sandbox-local files or reports the generated browser runner should include in its normalized result after invocation.',
+										'items'       => array(
+											'type'       => 'object',
+											'required'   => array( 'path' ),
+											'properties' => array(
+												'path'       => array( 'type' => 'string' ),
+												'name'       => array( 'type' => 'string' ),
+												'kind'       => array( 'type' => 'string' ),
+												'mime_type'  => array( 'type' => 'string' ),
+												'max_bytes'  => array( 'type' => 'integer' ),
+											),
+										),
+									),
 									'invocation'  => array(
 										'type'        => 'object',
 										'description' => 'Generic sandbox-local invocation. Callers can inject MU plugins that register the named ability or hook task; WP Codebox only invokes it and captures normal artifacts.',
@@ -823,6 +839,10 @@ final class WP_Codebox_Abilities {
 				'playground' => array( 'type' => 'object' ),
 				'runtime'    => array( 'type' => 'object' ),
 				'site_blueprint_artifact' => array( 'type' => 'object' ),
+				'materialization' => array(
+					'type'        => 'object',
+					'description' => 'Generic browser materialization invocation contract and result capture shape produced by the generated Playground runner.',
+				),
 				'recipe'     => array( 'type' => 'object' ),
 				'signals'    => array( 'type' => 'object' ),
 				'artifacts'  => array( 'type' => 'object' ),
@@ -893,6 +913,7 @@ final class WP_Codebox_Abilities {
 		if ( is_wp_error( $recipe ) ) {
 			return $recipe;
 		}
+		$materialization = self::browser_materialization_contract( $recipe );
 
 		return array(
 			'success'          => true,
@@ -907,6 +928,7 @@ final class WP_Codebox_Abilities {
 			'plugins'    => $browser_plugins,
 			'runtime'    => $runtime,
 			'site_blueprint_artifact' => $site_blueprint_artifact,
+			'materialization' => $materialization,
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
@@ -969,6 +991,11 @@ final class WP_Codebox_Abilities {
 			'plugins'    => $browser_plugins,
 			'runtime'    => $runtime,
 			'site_blueprint_artifact' => $site_blueprint_artifact,
+			'materialization' => array(
+				'schema' => 'wp-codebox/browser-materialization/v1',
+				'status' => 'blocked',
+				'captures' => array(),
+			),
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
@@ -2633,6 +2660,10 @@ flush_rewrite_rules();
 		if ( is_wp_error( $invocation ) ) {
 			return $invocation;
 		}
+		$captures = self::browser_runner_capture_paths( $runner );
+		if ( is_wp_error( $captures ) ) {
+			return $captures;
+		}
 
 		foreach ( array( 'task_path' => $task_path, 'result_path' => $result_path ) as $field => $path ) {
 			if ( '' === $path || str_contains( $path, '..' ) || ! str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
@@ -2661,7 +2692,7 @@ flush_rewrite_rules();
 					array(
 						'command' => 'wordpress.run-php',
 						'args'    => array(
-							'code=' . self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation ),
+							'code=' . self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation, $captures ),
 						),
 					),
 				),
@@ -2674,7 +2705,22 @@ flush_rewrite_rules();
 				'task_path'  => $task_path,
 				'result_path' => $result_path,
 				'invocation' => self::browser_runner_invocation_metadata( $invocation ),
+				'captures'   => $captures,
 			),
+		);
+	}
+
+	/** @param array<string,mixed> $recipe Browser recipe. @return array<string,mixed> */
+	private static function browser_materialization_contract( array $recipe ): array {
+		$browser = is_array( $recipe['browser'] ?? null ) ? $recipe['browser'] : array();
+		return array(
+			'schema'        => 'wp-codebox/browser-materialization/v1',
+			'status'        => 'pending',
+			'execution'     => (string) ( $browser['execution'] ?? 'php-wasm' ),
+			'result_path'   => (string) ( $browser['result_path'] ?? '' ),
+			'invocation'    => is_array( $browser['invocation'] ?? null ) ? $browser['invocation'] : array(),
+			'captures'      => is_array( $browser['captures'] ?? null ) ? $browser['captures'] : array(),
+			'error_schema'  => 'wp-codebox/browser-materialization-error/v1',
 		);
 	}
 
@@ -2711,6 +2757,38 @@ flush_rewrite_rules();
 		);
 	}
 
+	/** @param array<string,mixed> $runner Runner overrides. @return array<int,array<string,mixed>>|WP_Error */
+	private static function browser_runner_capture_paths( array $runner ): array|WP_Error {
+		$captures = is_array( $runner['capture_paths'] ?? null ) ? $runner['capture_paths'] : array();
+		$normalized = array();
+		foreach ( $captures as $index => $capture ) {
+			if ( ! is_array( $capture ) ) {
+				return new WP_Error( 'wp_codebox_browser_capture_invalid', 'Each browser runner capture path must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+			$path = (string) ( $capture['path'] ?? '' );
+			if ( '' === $path || str_contains( $path, '..' ) || ! str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
+				return new WP_Error( 'wp_codebox_browser_capture_path_invalid', 'Browser runner capture paths must be safe absolute Playground paths.', array( 'status' => 400, 'index' => $index ) );
+			}
+			$max_bytes = (int) ( $capture['max_bytes'] ?? self::BROWSER_CAPTURE_MAX_BYTES );
+			if ( $max_bytes < 0 || $max_bytes > self::BROWSER_ARTIFACT_MAX_BYTES ) {
+				return new WP_Error( 'wp_codebox_browser_capture_max_bytes_invalid', 'Browser runner capture max_bytes must be between 0 and the browser artifact byte limit.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$normalized[] = array_filter(
+				array(
+					'path'      => $path,
+					'name'      => sanitize_key( (string) ( $capture['name'] ?? '' ) ),
+					'kind'      => sanitize_key( (string) ( $capture['kind'] ?? 'report' ) ),
+					'mime_type' => sanitize_text_field( (string) ( $capture['mime_type'] ?? '' ) ),
+					'max_bytes' => $max_bytes,
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			);
+		}
+
+		return $normalized;
+	}
+
 	/** @param array<string,mixed> $invocation Normalized invocation. @return array<string,string> */
 	private static function browser_runner_invocation_metadata( array $invocation ): array {
 		return array_filter(
@@ -2723,7 +2801,7 @@ flush_rewrite_rules();
 		);
 	}
 
-	private static function browser_agent_runner_php( array $task_input, string $session_id, string $task_path, string $result_path, array $invocation ): string {
+	private static function browser_agent_runner_php( array $task_input, string $session_id, string $task_path, string $result_path, array $invocation, array $captures ): string {
 		$default_payload = array(
 			'agent'      => 'wp-codebox-sandbox',
 			'message'    => (string) $task_input['goal'],
@@ -2732,6 +2810,7 @@ flush_rewrite_rules();
 			'artifacts'  => array(),
 		);
 		$default_invocation = $invocation;
+		$default_captures   = $captures;
 
 		return '<?php
 require_once \'/wordpress/wp-load.php\';
@@ -2740,6 +2819,62 @@ $task_path = ' . var_export( $task_path, true ) . ';
 $result_path = ' . var_export( $result_path, true ) . ';
 $payload = ' . var_export( $default_payload, true ) . ';
 $invocation = ' . var_export( $default_invocation, true ) . ';
+$capture_paths = ' . var_export( $default_captures, true ) . ';
+
+function wp_codebox_browser_normalize_error( $error ) {
+	if ( is_wp_error( $error ) ) {
+		return array(
+			\'schema\' => \'wp-codebox/browser-materialization-error/v1\',
+			\'code\' => $error->get_error_code(),
+			\'message\' => $error->get_error_message(),
+			\'data\' => $error->get_error_data(),
+		);
+	}
+
+	return array(
+		\'schema\' => \'wp-codebox/browser-materialization-error/v1\',
+		\'code\' => \'wp_codebox_browser_runner_exception\',
+		\'message\' => $error instanceof Throwable ? $error->getMessage() : (string) $error,
+	);
+}
+
+function wp_codebox_browser_capture_file( array $capture ) {
+	$path = (string) ( $capture[\'path\'] ?? \'\' );
+	$record = array(
+		\'schema\' => \'wp-codebox/browser-capture/v1\',
+		\'path\' => $path,
+		\'name\' => (string) ( $capture[\'name\'] ?? \'\' ),
+		\'kind\' => (string) ( $capture[\'kind\'] ?? \'report\' ),
+		\'mime_type\' => (string) ( $capture[\'mime_type\'] ?? \'\' ),
+		\'exists\' => is_readable( $path ),
+	);
+	if ( ! $record[\'exists\'] ) {
+		return $record;
+	}
+	$contents = file_get_contents( $path );
+	if ( ! is_string( $contents ) ) {
+		$record[\'error\'] = array( \'code\' => \'wp_codebox_browser_capture_read_failed\', \'message\' => \'Could not read captured browser materialization file.\' );
+		return $record;
+	}
+	$size = strlen( $contents );
+	$max_bytes = isset( $capture[\'max_bytes\'] ) ? (int) $capture[\'max_bytes\'] : ' . self::BROWSER_CAPTURE_MAX_BYTES . ';
+	$record[\'size\'] = $size;
+	$record[\'sha256\'] = hash( \'sha256\', $contents );
+	$record[\'truncated\'] = $size > $max_bytes;
+	if ( $max_bytes > 0 ) {
+		$body = $record[\'truncated\'] ? substr( $contents, 0, $max_bytes ) : $contents;
+		$json = json_decode( $body, true );
+		if ( JSON_ERROR_NONE === json_last_error() ) {
+			$record[\'json\'] = $json;
+		} elseif ( preg_match( \'#^[\\x09\\x0A\\x0D\\x20-\\x7E]*$#\', $body ) ) {
+			$record[\'content\'] = $body;
+		} else {
+			$record[\'content_base64\'] = base64_encode( $body );
+			$record[\'encoding\'] = \'base64\';
+		}
+	}
+	return array_filter( $record, static fn( $value ) => \'\' !== $value );
+}
 
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
@@ -2780,24 +2915,21 @@ $base_input = array(
 	),
 );
 $input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
+$invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
+$permission_filter = (string) ( $invocation[\'permission_filter\'] ?? \'\' );
 
 if ( ! $wp_codebox_is_playground ) {
-	$result = array(
-		\'success\' => false,
-		\'error\' => array(
-			\'code\' => \'wp_codebox_browser_runner_not_playground\',
-			\'message\' => \'The browser agent runner permission bypass is only allowed inside the disposable WordPress Playground sandbox.\',
-			\'data\' => array(
-				\'execution_scope\' => \'disposable-playground\',
-				\'permission_model\' => \'sandbox-bypass\',
-				\'detected_root\' => $wp_codebox_playground_root,
-				\'detected_php_os_family\' => PHP_OS_FAMILY,
-			),
-		),
+	$response = new WP_Error(
+		\'wp_codebox_browser_runner_not_playground\',
+		\'The browser agent runner permission bypass is only allowed inside the disposable WordPress Playground sandbox.\',
+		array(
+			\'execution_scope\' => \'disposable-playground\',
+			\'permission_model\' => \'sandbox-bypass\',
+			\'detected_root\' => $wp_codebox_playground_root,
+			\'detected_php_os_family\' => PHP_OS_FAMILY,
+		)
 	);
 } else {
-	$invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
-	$permission_filter = (string) ( $invocation[\'permission_filter\'] ?? \'\' );
 	if ( \'\' !== $permission_filter ) {
 		add_filter( $permission_filter, \'__return_true\', 999 );
 	}
@@ -2819,25 +2951,47 @@ if ( ! $wp_codebox_is_playground ) {
 				$response = $ability->execute( $input );
 			}
 		}
+	} catch ( Throwable $exception ) {
+		$response = $exception;
 	} finally {
 		if ( \'\' !== $permission_filter ) {
 			remove_filter( $permission_filter, \'__return_true\', 999 );
 		}
 	}
+}
 
-	if ( is_wp_error( $response ) ) {
-		$result = array(
+$captures = array();
+foreach ( $capture_paths as $capture ) {
+	if ( is_array( $capture ) ) {
+		$captures[] = wp_codebox_browser_capture_file( $capture );
+	}
+}
+
+if ( is_wp_error( $response ) || $response instanceof Throwable ) {
+	$result = array(
 			\'success\' => false,
-			\'error\' => array(
-				\'code\' => $response->get_error_code(),
-				\'message\' => $response->get_error_message(),
-				\'data\' => $response->get_error_data(),
+			\'schema\' => \'wp-codebox/browser-materialization/v1\',
+			\'status\' => \'error\',
+			\'session_id\' => $session_id,
+			\'execution_scope\' => \'disposable-playground\',
+			\'permission_model\' => \'sandbox-bypass\',
+			\'invocation\' => array(
+				\'type\' => $invocation_type,
+				\'name\' => (string) ( $invocation[\'name\'] ?? \'\' ),
+				\'hook\' => (string) ( $invocation[\'hook\'] ?? \'\' ),
 			),
-		);
-	} else {
-		$result = array(
+			\'captures\' => $captures,
+			\'error\' => array(
+				\'code\' => wp_codebox_browser_normalize_error( $response )[\'code\'],
+				\'message\' => wp_codebox_browser_normalize_error( $response )[\'message\'],
+				\'data\' => wp_codebox_browser_normalize_error( $response )[\'data\'] ?? null,
+			),
+	);
+} else {
+	$result = array(
 			\'success\' => true,
-			\'schema\' => \'wp-codebox/browser-agent-run/v1\',
+			\'schema\' => \'wp-codebox/browser-materialization/v1\',
+			\'status\' => \'completed\',
 			\'session_id\' => $session_id,
 			\'execution_scope\' => \'disposable-playground\',
 			\'permission_model\' => \'sandbox-bypass\',
@@ -2848,9 +3002,9 @@ if ( ! $wp_codebox_is_playground ) {
 			),
 			\'task_input\' => $payload[\'task_input\'] ?? array(),
 			\'response\' => $response,
+			\'captures\' => $captures,
 			\'artifacts\' => $payload[\'artifacts\'] ?? array(),
-		);
-	}
+	);
 }
 
 file_put_contents( $result_path, wp_json_encode( $result ) );

@@ -348,6 +348,7 @@ $assert( 'browser Playground session exposes site blueprint artifact schema', 'o
 $assert( 'browser Playground session declares site blueprint artifact output', 'object' === ( $browser_session_ability['output_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) );
 $assert( 'browser Playground session output declares browser execution', array( 'browser-playground' ) === ( $browser_session_ability['output_schema']['properties']['execution']['enum'] ?? array() ) );
 $assert( 'browser Playground session exposes generic sandbox invocation schema', array( 'ability', 'task' ) === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['type']['enum'] ?? array() ) && 'string' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['hook']['type'] ?? '' ) );
+$assert( 'browser Playground session exposes generic capture path schema', 'array' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['type'] ?? '' ) && 'integer' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['items']['properties']['max_bytes']['type'] ?? '' ) && 'object' === ( $browser_session_ability['output_schema']['properties']['materialization']['type'] ?? '' ) );
 
 $artifact_abilities = array(
 	'wp-codebox/list-artifacts',
@@ -481,6 +482,15 @@ $browser_session = call_user_func(
 			),
 		),
 		'browser_runner'       => array(
+			'capture_paths' => array(
+				array(
+					'path'      => '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json',
+					'name'      => 'materialization-report',
+					'kind'      => 'report',
+					'mime_type' => 'application/json',
+					'max_bytes' => 4096,
+				),
+			),
 			'invocation' => array(
 				'type'  => 'task',
 				'hook'  => 'caller_runtime_task',
@@ -558,6 +568,9 @@ $assert( 'browser Playground session records browser plugin provenance', ! is_wp
 $assert( 'browser Playground session includes recipe', ! is_wp_error( $browser_session ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_session['recipe']['schema'] ?? '' ) );
 $assert( 'browser Playground recipe uses generic artifact directory', ! is_wp_error( $browser_session ) && '/wordpress/wp-content/uploads/wp-codebox/artifacts' === ( $browser_session['recipe']['artifacts']['directory'] ?? '' ) );
 $assert( 'browser Playground recipe invokes caller task inside site', ! is_wp_error( $browser_session ) && 'task' === ( $browser_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'caller_runtime_task' === ( $browser_session['recipe']['browser']['invocation']['hook'] ?? '' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'has_filter( $hook )' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
+$assert( 'browser Playground recipe captures generic output reports', ! is_wp_error( $browser_session ) && '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json' === ( $browser_session['recipe']['browser']['captures'][0]['path'] ?? '' ) && 'materialization-report' === ( $browser_session['recipe']['browser']['captures'][0]['name'] ?? '' ) && 4096 === ( $browser_session['recipe']['browser']['captures'][0]['max_bytes'] ?? 0 ) );
+$assert( 'browser Playground session exposes materialization descriptor', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-materialization/v1' === ( $browser_session['materialization']['schema'] ?? '' ) && 'pending' === ( $browser_session['materialization']['status'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $browser_session['materialization']['result_path'] ?? '' ) && 'wp-codebox/browser-materialization-error/v1' === ( $browser_session['materialization']['error_schema'] ?? '' ) );
+$assert( 'browser Playground recipe normalizes captured runner result', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_capture_file' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp-codebox/browser-capture/v1' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp-codebox/browser-materialization/v1' ) );
 $assert( 'browser Playground recipe keeps ability invocation path generic', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_ability_unavailable' ) );
 $assert( 'browser Playground recipe initializes abilities before invocation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_categories_init' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_init' ) );
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && 8 < count( $browser_session['playground']['blueprint']['steps'] ?? array() ) && str_contains( (string) ( $browser_session['playground']['blueprint']['steps'][8]['code'] ?? '' ), 'caller_runtime_task' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
