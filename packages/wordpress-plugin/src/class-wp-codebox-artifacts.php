@@ -160,6 +160,7 @@ final class WP_Codebox_Artifacts {
 		}
 
 		$provenance = is_array( $input['provenance'] ?? null ) ? $input['provenance'] : array();
+		$caller     = $this->browser_caller_metadata( $input );
 		$metadata   = array(
 			'id'            => $bundle_id,
 			'contentDigest' => array(
@@ -170,6 +171,7 @@ final class WP_Codebox_Artifacts {
 			'createdAt'     => $created_at,
 			'runtime'       => $this->browser_runtime_metadata( $input ),
 			'provenance'    => $provenance,
+			'caller'        => $caller,
 			'artifacts'     => array(
 				'browser'      => 'files/browser',
 				'changedFiles' => 'files/changed-files.json',
@@ -184,6 +186,7 @@ final class WP_Codebox_Artifacts {
 			'createdAt'    => $created_at,
 			'summary'      => 'Browser-produced artifact files persisted as a canonical WP Codebox artifact bundle.',
 			'provenance'   => $provenance,
+			'reviewHints'  => is_array( $caller['reviewHints'] ?? null ) ? $caller['reviewHints'] : array(),
 			'changedFiles' => $changed_files['files'],
 			'evidence'     => array(
 				'artifactContentDigest' => $content_digest,
@@ -589,13 +592,52 @@ final class WP_Codebox_Artifacts {
 	private function browser_runtime_metadata( array $input ): array {
 		$session = is_array( $input['session'] ?? null ) ? $input['session'] : array();
 
-		return array(
+		$runtime = array(
 			'id'          => (string) ( $session['id'] ?? $input['session_id'] ?? 'browser-playground' ),
 			'kind'        => 'browser-playground',
 			'execution'   => 'browser-playground',
 			'createdAt'   => (string) ( $session['created_at'] ?? $session['createdAt'] ?? '' ),
 			'provenance'  => is_array( $session['provenance'] ?? null ) ? $session['provenance'] : array(),
 		);
+
+		foreach ( array( 'metadata', 'materialization' ) as $key ) {
+			if ( is_array( $session[ $key ] ?? null ) ) {
+				$runtime[ $key ] = $session[ $key ];
+			}
+		}
+
+		return $runtime;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function browser_caller_metadata( array $input ): array {
+		$caller = is_array( $input['caller'] ?? null ) ? $input['caller'] : array();
+
+		$scalar_fields = array(
+			'caller_schema'    => 'schema',
+			'caller_schema_id' => 'schemaId',
+			'caller_kind'      => 'kind',
+		);
+		foreach ( $scalar_fields as $input_key => $caller_key ) {
+			$value = trim( (string) ( $input[ $input_key ] ?? '' ) );
+			if ( '' !== $value ) {
+				$caller[ $caller_key ] = $value;
+			}
+		}
+
+		$array_fields = array(
+			'caller_metadata' => 'metadata',
+			'materialization' => 'materialization',
+			'review_hints'    => 'reviewHints',
+			'apply_target'    => 'applyTarget',
+		);
+		foreach ( $array_fields as $input_key => $caller_key ) {
+			if ( is_array( $input[ $input_key ] ?? null ) ) {
+				$caller[ $caller_key ] = $input[ $input_key ];
+			}
+		}
+
+		return $caller;
 	}
 
 	/** @return array<string,mixed> */

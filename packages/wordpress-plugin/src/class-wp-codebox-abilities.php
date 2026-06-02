@@ -525,6 +525,38 @@ final class WP_Codebox_Abilities {
 								'type'        => 'object',
 								'description' => 'Opaque caller provenance describing who requested the browser run and what produced these files.',
 							),
+							'caller'         => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller-owned schema and metadata to preserve in the canonical artifact bundle.',
+							),
+							'caller_schema'  => array(
+								'type'        => 'string',
+								'description' => 'Optional caller schema URI or id preserved under metadata.caller.schema.',
+							),
+							'caller_schema_id' => array(
+								'type'        => 'string',
+								'description' => 'Optional caller schema id preserved under metadata.caller.schemaId.',
+							),
+							'caller_kind'    => array(
+								'type'        => 'string',
+								'description' => 'Optional caller artifact kind preserved under metadata.caller.kind.',
+							),
+							'caller_metadata' => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller-owned artifact bundle metadata preserved under metadata.caller.metadata.',
+							),
+							'materialization' => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller materialization metadata preserved under metadata.caller.materialization.',
+							),
+							'review_hints'   => array(
+								'type'        => 'object',
+								'description' => 'Optional caller review hints preserved in bundle metadata and review metadata.',
+							),
+							'apply_target'   => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller apply target metadata preserved under metadata.caller.applyTarget.',
+							),
 							'files'          => array(
 								'type'        => 'array',
 								'description' => 'Browser-produced artifact files to store under files/browser/ in a canonical WP Codebox artifact bundle.',
