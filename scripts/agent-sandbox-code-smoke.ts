@@ -8,6 +8,7 @@ async function main() {
     mode: "sandbox",
     provider: "opencode",
     model: "opencode-go/kimi-k2.6",
+    sessionId: "codebox-smoke-session",
     agentBundles: [
       { source: "/tmp/site-generator-agent.json", slug: "site-generator" },
       {
@@ -21,6 +22,8 @@ async function main() {
   })
 
   assert.match(code, /\\"modes\\":\[\\"sandbox\\",\\"chat\\"\]/, "sandbox chat input should inherit chat tool surface")
+  assert.doesNotMatch(code, /\\"session_id\\":\\"codebox-smoke-session\\"/, "fresh sandbox chats should not continue a nonexistent transcript session")
+  assert.match(code, /\\"codebox_session_id\\":\\"codebox-smoke-session\\"/, "Codebox session id should remain orchestration metadata")
   assert.match(code, /\\"agent_modes\\":\[\\"sandbox\\",\\"chat\\"\]/, "client context should report additive sandbox modes without pipeline completion semantics")
   assert.doesNotMatch(code, /\\"pipeline\\"/, "sandbox agents should not use pipeline mode because it completes after handler tools")
   assert.match(code, /\\"tool_policy\\":\{\\"mode\\":\\"allow\\",\\"tools\\":\[.*\\"workspace_read\\"/, "sandbox agent should allow workspace tools")

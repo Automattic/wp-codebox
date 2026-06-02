@@ -48,13 +48,13 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const input: Record<string, unknown> = {
     agent: options.agent,
     message: options.task,
-    session_id: options.sessionId ?? null,
     mode,
     modes: agentModes,
     client_context: {
       source: "bridge",
       client_name: "wp-codebox",
       connector_id: "wp-codebox-cli",
+      codebox_session_id: options.sessionId ?? null,
       mode,
       agent_modes: agentModes,
       workspace_root: SANDBOX_WORKSPACE_ROOT,
