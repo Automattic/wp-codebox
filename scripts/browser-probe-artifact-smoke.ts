@@ -41,6 +41,7 @@ await writeFile(recipePath, `${JSON.stringify({
           "url=/",
           "wait-for=load",
           "duration=1s",
+          "viewport=390x844",
           "capture=console,errors,html,network,performance,memory,screenshot",
           "script=window.__wpCodeboxProbeCheckpoint('fixture-before-return', { source: 'smoke' }); console.info('wp-codebox fixture browser script'); return { title: document.title, hasBody: !!document.body };",
         ],
@@ -151,6 +152,8 @@ assert.equal(summary.files.network, "files/browser/network.jsonl")
 assert.equal(summary.files.performance, "files/browser/performance.json")
 assert.match(summary.hashes.html?.value ?? "", /^[a-f0-9]{64}$/)
 assert.match(summary.hashes.screenshot?.value ?? "", /^[a-f0-9]{64}$/)
+assert.equal(summary.viewport.width, 390, "summary should record requested viewport width")
+assert.equal(summary.viewport.height, 844, "summary should record requested viewport height")
 assert.equal(summary.summary.replayability, "artifact-backed")
 assert.equal(summary.summary.htmlSnapshot, true)
 assert.equal(summary.summary.scriptResult?.title, "My WordPress Website")
@@ -159,8 +162,6 @@ assert.ok(summary.summary.networkEvents >= 1, "summary should count network even
 assert.ok((summary.summary.memory?.domNodes.final ?? 0) > 0, "summary should include memory DOM node counts")
 assert.ok((summary.summary.performance?.resources ?? 0) >= 1, "summary should include performance resource counts")
 assert.ok((summary.summary.performance?.domNodes.final ?? 0) > 0, "summary should include performance DOM node counts")
-assert.ok(summary.viewport.width > 0, "summary should include viewport width")
-assert.ok(summary.viewport.height > 0, "summary should include viewport height")
 assert.ok(summary.viewport.userAgent.length > 0, "summary should include user agent")
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
@@ -173,7 +174,7 @@ assert.ok(manifest.files.some((file) => file.path === "files/browser/network.jso
 assert.ok(manifest.files.some((file) => file.path === "files/browser/performance.json" && file.kind === "browser-performance"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/screenshot.png" && file.kind === "browser-screenshot"))
 
-const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; finalUrl?: string; replayability?: string }> } }
+const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; finalUrl?: string; replayability?: string; viewport?: { width: number; height: number } }> } }
 assert.ok(review.browser?.probes?.[0], "review should include browser probe summary")
 assert.ok(review.browser.probes[0].consoleMessages >= 1, "review should count console messages")
 assert.ok(review.browser.probes[0].errors >= 1, "review should count browser errors")
@@ -183,6 +184,8 @@ assert.equal(review.browser.probes[0].memory, "files/browser/memory.json")
 assert.equal(review.browser.probes[0].network, "files/browser/network.jsonl")
 assert.equal(review.browser.probes[0].performance, "files/browser/performance.json")
 assert.equal(review.browser.probes[0].replayability, "artifact-backed")
+assert.equal(review.browser.probes[0].viewport?.width, 390, "review should record requested viewport width")
+assert.equal(review.browser.probes[0].viewport?.height, 844, "review should record requested viewport height")
 assert.equal(review.browser.probes[0].finalUrl?.endsWith("/"), true, "review should include final URL")
 
 console.log(`Browser probe artifact smoke passed: ${artifactDirectory}`)
