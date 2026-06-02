@@ -1,0 +1,69 @@
+import { argValue, jsonObjectArg } from "./command-args.js"
+
+export interface RestRequestCommandInput {
+  method: string
+  path: string
+  headers: Record<string, unknown>
+  params: Record<string, unknown>
+  body: string
+}
+
+export function restRequestInputFromArgs(args: string[]): RestRequestCommandInput {
+  const path = argValue(args, "path")?.trim() || argValue(args, "route")?.trim()
+  if (!path) {
+    throw new Error("wordpress.rest-request requires path=<rest-route>")
+  }
+
+  const bodyJson = argValue(args, "body-json")
+  const body = bodyJson !== undefined ? bodyJson : (argValue(args, "body") ?? "")
+
+  return {
+    method: (argValue(args, "method")?.trim() || "GET").toUpperCase(),
+    path,
+    headers: jsonObjectArg(args, "headers-json"),
+    params: jsonObjectArg(args, "params-json"),
+    body,
+  }
+}
+
+export function restRequestPhpCode(input: RestRequestCommandInput): string {
+  return `define( 'REST_REQUEST', true );
+$wp_codebox_method = ${JSON.stringify(input.method)};
+$wp_codebox_path = ${JSON.stringify(input.path)};
+$wp_codebox_headers = json_decode( ${JSON.stringify(JSON.stringify(input.headers))}, true );
+$wp_codebox_params = json_decode( ${JSON.stringify(JSON.stringify(input.params))}, true );
+$wp_codebox_body = ${JSON.stringify(input.body)};
+
+if ( ! class_exists( 'WP_REST_Request' ) || ! function_exists( 'rest_do_request' ) ) {
+    throw new RuntimeException( 'The WordPress REST API is not available in this runtime.' );
+}
+
+$wp_codebox_route = '/' . ltrim( preg_replace( '#^/wp-json#', '', $wp_codebox_path ), '/' );
+$wp_codebox_request = new WP_REST_Request( $wp_codebox_method, $wp_codebox_route );
+
+foreach ( $wp_codebox_headers as $wp_codebox_name => $wp_codebox_value ) {
+    $wp_codebox_request->set_header( $wp_codebox_name, $wp_codebox_value );
+}
+
+foreach ( $wp_codebox_params as $wp_codebox_name => $wp_codebox_value ) {
+    $wp_codebox_request->set_param( $wp_codebox_name, $wp_codebox_value );
+}
+
+if ( $wp_codebox_body !== '' ) {
+    $wp_codebox_request->set_body( $wp_codebox_body );
+}
+
+$wp_codebox_response = rest_do_request( $wp_codebox_request );
+$wp_codebox_server = rest_get_server();
+$wp_codebox_data = $wp_codebox_server->response_to_data( $wp_codebox_response, false );
+
+echo wp_json_encode( array(
+    'command' => 'wordpress.rest-request',
+    'method' => $wp_codebox_method,
+    'path' => $wp_codebox_path,
+    'route' => $wp_codebox_route,
+    'status' => $wp_codebox_response->get_status(),
+    'headers' => $wp_codebox_response->get_headers(),
+    'data' => $wp_codebox_data,
+), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
+}

@@ -65,6 +65,22 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runAbility" },
   },
   {
+    id: "wordpress.rest-request",
+    description: "Execute an in-process WordPress REST request with WP_REST_Request and rest_do_request().",
+    acceptedArgs: [
+      { name: "method", description: "HTTP method for the REST request; defaults to GET.", format: "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS" },
+      { name: "path", description: "REST route path, with or without the /wp-json prefix.", required: true, format: "REST route path" },
+      { name: "headers-json", description: "Optional request headers object.", format: "JSON object" },
+      { name: "params-json", description: "Optional request parameters object.", format: "JSON object" },
+      { name: "body", description: "Optional raw request body.", format: "string" },
+      { name: "body-json", description: "Optional JSON request body string; takes precedence over body.", format: "JSON string" },
+    ],
+    outputShape: "JSON object with command, method, path, route, status, headers, and REST response data.",
+    policyRequirement: "Runtime policy commands must include wordpress.rest-request.",
+    recipe: true,
+    handler: { kind: "playground", method: "runRestRequest" },
+  },
+  {
     id: "wordpress.bench",
     description: "Run plugin benchmark workloads and emit a normalized benchmark results envelope.",
     acceptedArgs: [

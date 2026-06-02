@@ -8,11 +8,22 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimeFilesystemAction | RuntimeBrowserAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
   command: string
+  timeout_ms?: number
+}
+
+export interface RuntimeRestRequestAction {
+  type: "rest_request"
+  method?: string
+  path: string
+  headers?: Record<string, unknown>
+  params?: Record<string, unknown>
+  body?: string
+  body_json?: unknown
   timeout_ms?: number
 }
 
@@ -74,6 +85,10 @@ export async function runRuntimeAction(
     return runRuntimeWpCliAction(episode, action)
   }
 
+  if (action.type === "rest_request") {
+    return runRuntimeRestRequestAction(episode, action)
+  }
+
   if (action.type === "browser") {
     return runRuntimeBrowserAction(episode, action)
   }
@@ -102,6 +117,61 @@ async function runRuntimeWpCliAction(episode: RuntimeEpisode, action: RuntimeWpC
       args: step.execution.args,
       exitCode: step.execution.exitCode,
       stdout: step.execution.stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+async function runRuntimeRestRequestAction(episode: RuntimeEpisode, action: RuntimeRestRequestAction): Promise<RuntimeActionObservation> {
+  const args = [`path=${action.path}`]
+  if (action.method) {
+    args.push(`method=${action.method}`)
+  }
+  if (action.headers) {
+    args.push(`headers-json=${JSON.stringify(action.headers)}`)
+  }
+  if (action.params) {
+    args.push(`params-json=${JSON.stringify(action.params)}`)
+  }
+  if (action.body_json !== undefined) {
+    args.push(`body-json=${JSON.stringify(action.body_json)}`)
+  } else if (action.body !== undefined) {
+    args.push(`body=${action.body}`)
+  }
+
+  const step = await episode.step(
+    {
+      kind: "http",
+      command: "wordpress.rest-request",
+      args,
+      method: action.method ?? "GET",
+      path: action.path,
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+    },
+    { type: "command-result" },
+  )
+
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      method: action.method ?? "GET",
+      path: action.path,
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout,
       stderr: step.execution.stderr,
       executionId: step.execution.id,
       stepId: step.id,

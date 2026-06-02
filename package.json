@@ -49,6 +49,7 @@
     "runtime-episode-smoke": "tsx scripts/runtime-episode-smoke.ts",
     "runtime-snapshot-restore-smoke": "tsx scripts/runtime-snapshot-restore-smoke.ts",
     "runtime-action-adapter-smoke": "tsx scripts/runtime-action-adapter-smoke.ts",
+    "rest-request-runtime-smoke": "tsx scripts/rest-request-runtime-smoke.ts",
     "runtime-reference-index-smoke": "tsx scripts/runtime-reference-index-smoke.ts",
     "core-phpunit-command-smoke": "tsx scripts/core-phpunit-command-smoke.ts",
     "theme-check-normalization-smoke": "tsx scripts/theme-check-normalization-smoke.ts",

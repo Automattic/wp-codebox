@@ -13,7 +13,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type {
@@ -498,6 +498,16 @@ class PlaygroundRuntime implements Runtime {
   async runAbility(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runAbilityCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
+  async runRestRequest(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRestRequestCommand({
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
       runtimeSpec: this.spec,
       server,
