@@ -1,4 +1,4 @@
-import { createRuntime, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@chubes4/wp-codebox-core"
+import { createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { serializeError } from "./output.js"
 import { recipeMountType } from "./recipe-sources.js"
@@ -361,8 +361,4 @@ export async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, a
     await runtime.destroy()
     await afterDestroy?.()
   }
-}
-
-function stripUndefined<T extends Record<string, unknown>>(record: T): T {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }

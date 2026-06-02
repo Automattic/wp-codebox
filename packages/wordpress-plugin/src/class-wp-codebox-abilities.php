@@ -1445,7 +1445,8 @@ final class WP_Codebox_Abilities {
 			}
 
 			$resource = (string) ( $plugin['resource'] ?? 'url' );
-			if ( 'server' === (string) ( $plugin['package'] ?? '' ) ) {
+			$path     = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
+			if ( 'server' === (string) ( $plugin['package'] ?? '' ) && '' === $path ) {
 				$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
 				if ( '' === $slug ) {
 					return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Server-packaged browser plugin specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
@@ -1473,7 +1474,6 @@ final class WP_Codebox_Abilities {
 				continue;
 			}
 
-			$path = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
 			if ( '' === $path ) {
 				$resolved[] = $plugin;
 				continue;
@@ -1514,6 +1514,10 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @return array<int,array<string,mixed>>|WP_Error */
 	private static function browser_component_plugins( array $input, array $declared_plugins ): array|WP_Error {
+		if ( ! self::browser_component_plugins_required( $input ) ) {
+			return array();
+		}
+
 		$paths = self::browser_component_paths( $input );
 		$declared_slugs = array_values(
 			array_filter(
@@ -1558,15 +1562,29 @@ final class WP_Codebox_Abilities {
 		return $plugins;
 	}
 
+	private static function browser_component_plugins_required( array $input ): bool {
+		$provider_plugin_paths = is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : array();
+		$inherit               = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
+		$connectors            = is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array();
+		$secret_env            = is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array();
+
+		return ! empty( $input['browser_runner'] ) || ! empty( $provider_plugin_paths ) || ! empty( $connectors ) || ! empty( $secret_env );
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array{agents_api:string,data_machine:string,data_machine_code:string} */
 	private static function browser_component_paths( array $input ): array {
 		$configured = array_merge( self::browser_default_component_paths(), self::browser_configured_component_paths() );
 
 		return array(
-			'agents_api'        => self::browser_clean_path( (string) ( $input['agents_api_path'] ?? $configured['agents_api'] ?? '' ) ),
-			'data_machine'      => self::browser_clean_path( (string) ( $input['data_machine_path'] ?? $configured['data_machine'] ?? '' ) ),
-			'data_machine_code' => self::browser_clean_path( (string) ( $input['data_machine_code_path'] ?? $configured['data_machine_code'] ?? '' ) ),
+			'agents_api'        => self::browser_clean_path( self::browser_component_path_value( $input, 'agents_api_path', $configured['agents_api'] ?? '' ) ),
+			'data_machine'      => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_path', $configured['data_machine'] ?? '' ) ),
+			'data_machine_code' => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_code_path', $configured['data_machine_code'] ?? '' ) ),
 		);
+	}
+
+	private static function browser_component_path_value( array $input, string $key, string $fallback ): string {
+		$value = trim( (string) ( $input[ $key ] ?? '' ) );
+		return '' !== $value ? $value : $fallback;
 	}
 
 	/** @return array{agents_api:string,data_machine:string,data_machine_code:string} */
@@ -1666,13 +1684,13 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_hash_failed', 'Could not hash browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$data_url = self::browser_plugin_data_url( $zip_path, $slug );
-		if ( is_wp_error( $data_url ) ) {
-			return $data_url;
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		if ( is_wp_error( $delivery_url ) ) {
+			return $delivery_url;
 		}
 
 		return array(
-			'url'    => $data_url,
+			'url'    => $delivery_url,
 			'path'   => $zip_path,
 			'sha256' => $sha256,
 		);
@@ -1725,23 +1743,23 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_url_missing', 'Browser runtime plugin package URL is missing.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$data_url = self::browser_plugin_data_url( $zip_path, $slug );
-		if ( is_wp_error( $data_url ) ) {
-			return $data_url;
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		if ( is_wp_error( $delivery_url ) ) {
+			return $delivery_url;
 		}
 
 		return array(
-			'url'    => $data_url,
+			'url'    => $delivery_url,
 			'path'   => $zip_path,
 			'sha256' => $sha256,
 		);
 	}
 
-	private static function browser_plugin_data_url( string $zip_path, string $slug ): string|WP_Error {
-		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 24 * 1024 * 1024, $zip_path, $slug );
+	private static function browser_plugin_delivery_url( string $zip_path, string $public_url, string $slug ): string|WP_Error {
+		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 512 * 1024, $zip_path, $slug );
 		$size      = filesize( $zip_path );
 		if ( is_int( $size ) && $size > $max_bytes ) {
-			return new WP_Error( 'wp_codebox_browser_plugin_package_too_large', 'Browser runtime plugin package is too large for inline browser delivery.', array( 'status' => 500, 'slug' => $slug, 'bytes' => $size, 'max_bytes' => $max_bytes ) );
+			return $public_url;
 		}
 
 		$contents = file_get_contents( $zip_path );

@@ -29,6 +29,14 @@ assert.equal(typeof runtime.activateTheme, "function")
 const parsed = runtime.parseJsonResponse("notice before {\"success\":true,\"data\":{\"ok\":true}} warning after")
 assert.deepEqual(sameRealm(parsed), { success: true, data: { ok: true } })
 
+const runClient = createClient("unused", true)
+runClient.runResponse = { text: "prefix {\"success\":true,\"data\":{\"runner\":\"direct\"},\"error\":null} suffix" }
+const directRunResult = await runtime.runPhpRequest(runClient, { code: "<?php echo 'ok';", expectJson: true })
+assert.deepEqual(sameRealm(directRunResult), { success: true, data: { runner: "direct" }, error: null })
+assert.equal(runClient.runs[0]?.code, "<?php echo 'ok';")
+assert.equal(runClient.files.length, 0)
+assert.equal(runClient.requests.length, 0)
+
 assert.deepEqual(sameRealm(runtime.normalizeOperationResult({ success: true, data: { path: "/tmp/example" } })), {
   success: true,
   data: { path: "/tmp/example" },
@@ -54,6 +62,7 @@ assert.deepEqual(sameRealm(directoryResult), {
 })
 assert.equal(successClient.mkdirs[0], "/wordpress/wp-content/uploads/wp-codebox/runner")
 assert.match(successClient.files[0]?.path ?? "", /\/wordpress\/wp-content\/uploads\/wp-codebox\/runner\/codebox-ensuredirectory-/)
+assert.match(successClient.files[0]?.contents ?? "", /\/wordpress\/wp-load\.php/)
 assert.match(successClient.files[0]?.contents ?? "", /wp-load\.php/)
 assert.match(successClient.files[0]?.contents ?? "", /case 'ensureDirectory':/)
 assert.match(successClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-ensuredirectory-/)
@@ -133,11 +142,13 @@ function sameRealm<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-function createClient(response: unknown) {
-  return {
+function createClient(response: unknown, supportsRun = false) {
+  const client = {
     mkdirs: [] as string[],
     files: [] as Array<{ path: string; contents: string }>,
     requests: [] as Array<{ method: string; url: string }>,
+    runs: [] as Array<{ code: string }>,
+    runResponse: undefined as unknown,
     async mkdir(path: string) {
       this.mkdirs.push(path)
     },
@@ -148,5 +159,15 @@ function createClient(response: unknown) {
       this.requests.push(request)
       return response
     },
+    async run(options: { code: string }) {
+      this.runs.push(options)
+      return this.runResponse
+    },
   }
+
+  if (!supportsRun) {
+    delete (client as { run?: unknown }).run
+  }
+
+  return client
 }

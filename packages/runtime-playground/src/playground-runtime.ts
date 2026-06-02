@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
 import { runBrowserActionsCommand, runBrowserProbeCommand } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
@@ -45,13 +45,19 @@ function id(prefix: string): string {
 export class PlaygroundRuntimeBackend implements RuntimeBackend {
   readonly kind = "wordpress-playground" as const
 
+  constructor(private readonly options: PlaygroundRuntimeBackendOptions = {}) {}
+
   async create(spec: RuntimeCreateSpec): Promise<Runtime> {
-    return PlaygroundRuntime.create(spec)
+    return PlaygroundRuntime.create(spec, this.options)
   }
 
   async restore(snapshot: Snapshot, spec: RuntimeRestoreSpec = {}): Promise<Runtime> {
-    return PlaygroundRuntime.restore(snapshot, spec)
+    return PlaygroundRuntime.restore(snapshot, spec, this.options)
   }
+}
+
+export interface PlaygroundRuntimeBackendOptions {
+  hostTools?: HostToolRegistry
 }
 
 class PlaygroundRuntime implements Runtime {
@@ -67,31 +73,38 @@ class PlaygroundRuntime implements Runtime {
   private readonly pluginChecks: PluginCheckArtifact[] = []
   private readonly themeChecks: ThemeCheckArtifact[] = []
   private readonly artifactRoot: string
+  private readonly hostTools?: HostToolRegistry
   private cliServerPromise?: Promise<PlaygroundCliServer>
 
-  private constructor(private readonly spec: RuntimeCreateSpec) {
+  private constructor(private readonly spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}) {
     this.artifactRoot = resolve(spec.artifactsDirectory ?? "artifacts", this.runtimeId)
+    this.hostTools = spec.hostTools instanceof HostToolRegistry
+      ? spec.hostTools
+      : Array.isArray(spec.hostTools)
+        ? createHostToolRegistry(spec.hostTools)
+        : options.hostTools
   }
 
-  static async create(spec: RuntimeCreateSpec): Promise<PlaygroundRuntime> {
-    const runtime = new PlaygroundRuntime(spec)
+  static async create(spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
+    const runtime = new PlaygroundRuntime(spec, options)
     await mkdir(runtime.artifactRoot, { recursive: true })
     runtime.recordEvent("runtime.created", {
       backend: "wordpress-playground",
       environment: spec.environment,
       policy: spec.policy,
+      hostTools: runtime.hostTools?.list() ?? [],
     })
     return runtime
   }
 
-  static async restore(snapshot: Snapshot, spec: RuntimeRestoreSpec = {}): Promise<PlaygroundRuntime> {
+  static async restore(snapshot: Snapshot, spec: RuntimeRestoreSpec = {}, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
     const payload = await runtimeSnapshotPayload(snapshot)
     if (payload.compatibility.backend !== "wordpress-playground") {
       throw new PlaygroundSnapshotRestoreError(`Snapshot backend is not compatible with WordPress Playground: ${payload.compatibility.backend}`)
     }
 
     const runtimeSpec = spec.runtime ?? runtimeSpecFromSnapshot(snapshot)
-    const runtime = await PlaygroundRuntime.create(runtimeSpec)
+    const runtime = await PlaygroundRuntime.create(runtimeSpec, options)
     for (const mount of spec.mounts ?? mountsFromSnapshot(snapshot)) {
       await runtime.mount(mount)
     }
@@ -149,7 +162,7 @@ class PlaygroundRuntime implements Runtime {
         command: spec.command,
         args: spec.args ?? [],
         exitCode: 0,
-        stdout: await executePlaygroundCommand(this, spec),
+        stdout: await executePlaygroundCommand(this, spec, this.hostTools),
         stderr: "",
         startedAt,
         finishedAt: now(),
@@ -637,8 +650,8 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
 }
 
-export function createPlaygroundRuntimeBackend(): RuntimeBackend {
-  return new PlaygroundRuntimeBackend()
+export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackendOptions = {}): RuntimeBackend {
+  return new PlaygroundRuntimeBackend(options)
 }
 
 function sha256(contents: Buffer): string {

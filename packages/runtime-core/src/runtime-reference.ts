@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import type { ArtifactFileDigest } from "./artifact-manifest.js"
+import { stableJson } from "./object-utils.js"
 import type {
   ObservationResult,
   RuntimeEpisodeContentDigest,
@@ -8,7 +9,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
-} from "./index.js"
+} from "./runtime-contracts.js"
 
 export const RUNTIME_REFERENCE_MANIFEST_SCHEMA = "wp-codebox/runtime-reference-manifest/v1" as const
 export const RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA = "wp-codebox/runtime-replay-reference-index/v1" as const
@@ -374,21 +375,6 @@ function runtimeEpisodeSnapshotDigestPayload(snapshot: Snapshot): Record<string,
     metadata: snapshot.metadata,
     artifactRefs: snapshot.artifactRefs ?? [],
   }
-}
-
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value)
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(",")}]`
-  }
-
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-    .join(",")}}`
 }
 
 function compactUndefined<T extends object>(value: T): T {

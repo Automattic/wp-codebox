@@ -2,8 +2,10 @@ import { createHash } from "node:crypto"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
+import { artifactFileDigest, stripUndefined } from "@chubes4/wp-codebox-core"
 import type {
-  ArtifactManifestFile,
+  ArtifactDiagnostic,
+  ArtifactDiagnostics,
   ArtifactPreview,
   ArtifactProvenance,
   ArtifactRedactionSummary,
@@ -11,6 +13,7 @@ import type {
   ArtifactReviewBrowserSummary,
   ArtifactTestResults,
   MountSpec,
+  ObservationResult,
   RuntimeCreateSpec,
   RuntimeInfo,
   SandboxWorkspaceContract,
@@ -194,6 +197,7 @@ export function buildArtifactReview({
   mounts,
   preview,
   browser,
+  diagnosticsPath,
 }: {
   artifactId: string
   createdAt: string
@@ -205,6 +209,7 @@ export function buildArtifactReview({
   mounts: MountSpec[]
   preview?: ArtifactPreview
   browser?: ArtifactReviewBrowserSummary
+  diagnosticsPath?: string
 }): ArtifactReview {
   const stats = {
     added: changedFiles.files.filter((file) => file.status === "added").length,
@@ -278,9 +283,10 @@ export function buildArtifactReview({
     ],
     evidence: {
       patch: "files/patch.diff",
-      patchSha256: createHash("sha256").update(patch).digest("hex"),
+      patchSha256: artifactFileDigest(patch).value,
       artifactContentDigest: contentDigest,
       changedFiles: "files/changed-files.json",
+      ...(diagnosticsPath ? { diagnostics: diagnosticsPath } : {}),
       testResults: "files/test-results.json",
       runtimeReferenceManifest: "files/runtime-reference-manifest.json",
       runtimeReplayReferenceIndex: "files/runtime-replay-index.json",
@@ -288,6 +294,125 @@ export function buildArtifactReview({
     ...(browser ? { browser } : {}),
     riskFlags: [],
   }
+}
+
+export function buildArtifactDiagnostics(observations: ObservationResult[]): ArtifactDiagnostics {
+  const diagnostics = observations.flatMap((observation, observationIndex) => diagnosticsFromObservation(observation, observationIndex))
+  const summary = {
+    total: diagnostics.length,
+    error: diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+    warning: diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length,
+    notice: diagnostics.filter((diagnostic) => diagnostic.severity === "notice").length,
+    info: diagnostics.filter((diagnostic) => diagnostic.severity === "info").length,
+  }
+
+  return {
+    schema: "wp-codebox/artifact-diagnostics/v1",
+    status: diagnostics.length > 0 ? "reported" : "clean",
+    summary,
+    diagnostics,
+  }
+}
+
+function diagnosticsFromObservation(observation: ObservationResult, observationIndex: number): ArtifactDiagnostic[] {
+  const payload = observation.data && typeof observation.data === "object" ? observation.data as Record<string, unknown> : {}
+  const rawDiagnostics = [
+    ...arrayPayload(payload.diagnostics),
+    ...arrayPayload(payload.findings),
+    ...arrayPayload(payload.issues),
+    ...arrayPayload(payload.diagnostic),
+  ]
+
+  return rawDiagnostics
+    .map((raw, diagnosticIndex) => normalizeArtifactDiagnostic(raw, observation, observationIndex, diagnosticIndex))
+    .filter((diagnostic): diagnostic is ArtifactDiagnostic => diagnostic !== null)
+}
+
+function normalizeArtifactDiagnostic(raw: unknown, observation: ObservationResult, observationIndex: number, diagnosticIndex: number): ArtifactDiagnostic | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null
+  }
+
+  const value = raw as Record<string, unknown>
+  const type = stringField(value.type) || stringField(value.kind) || stringField(value.code) || "diagnostic"
+  const message = stringField(value.message) || stringField(value.summary) || stringField(value.reason) || type
+  const details = stripUndefined(Object.fromEntries(Object.entries(value).filter(([key]) => ![
+    "id",
+    "diagnostic_id",
+    "type",
+    "kind",
+    "code",
+    "message",
+    "summary",
+    "reason",
+    "severity",
+    "category",
+    "source",
+    "path",
+    "source_path",
+    "selector",
+    "stage",
+    "refs",
+    "references",
+    "artifactRefs",
+  ].includes(key))))
+
+  return stripUndefined({
+    id: stringField(value.id) || stringField(value.diagnostic_id) || `${observation.id ?? `observation-${observationIndex}`}-diagnostic-${diagnosticIndex + 1}`,
+    type,
+    severity: normalizeSeverity(value.severity),
+    message,
+    category: stringField(value.category),
+    source: stringField(value.source),
+    path: stringField(value.path) || stringField(value.source_path),
+    selector: stringField(value.selector),
+    stage: stringField(value.stage),
+    code: stringField(value.code),
+    provenance: stripUndefined({
+      observationId: observation.id,
+      observationType: observation.type,
+      observedAt: observation.observedAt,
+    }),
+    refs: artifactDiagnosticRefs(value.refs ?? value.references ?? value.artifactRefs),
+    details: Object.keys(details).length > 0 ? details : undefined,
+  }) as ArtifactDiagnostic
+}
+
+function artifactDiagnosticRefs(raw: unknown): ArtifactDiagnostic["refs"] {
+  return arrayPayload(raw)
+    .filter((value) => value && typeof value === "object" && !Array.isArray(value))
+    .map((value) => {
+      const record = value as Record<string, unknown>
+      return stripUndefined({
+        path: stringField(record.path),
+        kind: stringField(record.kind),
+        id: stringField(record.id),
+        url: stringField(record.url),
+      })
+    })
+    .filter((value) => Object.keys(value).length > 0)
+}
+
+function arrayPayload(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value
+  }
+  return value && typeof value === "object" ? [value] : []
+}
+
+function stringField(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim() !== "") {
+    return value
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value)
+  }
+  return undefined
+}
+
+function normalizeSeverity(value: unknown): ArtifactDiagnostic["severity"] {
+  const severity = stringField(value)?.toLowerCase()
+  return severity === "error" || severity === "warning" || severity === "notice" || severity === "info" ? severity : "warning"
 }
 
 export function buildTestResults(): ArtifactTestResults {
@@ -410,10 +535,6 @@ export function buildBlueprintAfterNotes({
   }
 }
 
-export function fileEntry(path: string, kind: ArtifactManifestFile["kind"], contentType: string): ArtifactManifestFile {
-  return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
-}
-
 export function mountTargetPath(mount: MountSpec, relativePath: string): string {
   return `${mount.target.replace(/\/+$/, "")}/${relativePath}`
 }
@@ -519,10 +640,6 @@ function provenanceString(context: Record<string, unknown> | undefined, key: str
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function stripUndefined<T extends Record<string, unknown>>(record: T): T {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
 
 function fileDiff(path: string, before: string, after: string, isAdded: boolean, isDeleted: boolean): string {

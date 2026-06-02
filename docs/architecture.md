@@ -90,10 +90,12 @@ product-specific logic belongs in that product's adapter.
 `runtime-core` is the contract package. It should not import a concrete runtime
 backend or host adapter. The important modules are:
 
-- [`src/index.ts`](../packages/runtime-core/src/index.ts): `Runtime`,
-  `RuntimeBackend`, `RuntimeCreateSpec`, `MountSpec`, `ExecutionSpec`,
-  `ObservationSpec`, `Snapshot`, `ArtifactBundle`, runtime episode contracts,
-  reference/replay indexes, `createRuntime()`, and artifact verification helpers.
+- [`src/runtime-contracts.ts`](../packages/runtime-core/src/runtime-contracts.ts):
+  `Runtime`, `RuntimeBackend`, `RuntimeCreateSpec`, `MountSpec`,
+  `ExecutionSpec`, `ObservationSpec`, `Snapshot`, `ArtifactBundle`, runtime
+  episode contracts, and `createRuntime()`.
+- [`src/index.ts`](../packages/runtime-core/src/index.ts): the public barrel for
+  focused core modules plus artifact verification helpers.
 - [`src/runtime-policy.ts`](../packages/runtime-core/src/runtime-policy.ts):
   `RuntimePolicy`, policy validation, and command allow-list enforcement.
 - [`src/command-registry.ts`](../packages/runtime-core/src/command-registry.ts):
@@ -191,11 +193,70 @@ artifact lookup, pending approval integration when available, and apply-back
 adapter hooks. It should call the generic CLI/runtime boundary and keep
 parent-site persistence or approval mechanics outside the sandbox.
 
+## Package Ownership Rules
+
+Use the current module map as the placement guide for new code. A change should
+usually extend the focused module that already owns the nearest contract instead
+of adding another export to an entrypoint or creating a broad helper module.
+
+Examples:
+
+- **New runtime contract:** add backend-agnostic types, schemas, validation, or
+  digest/verification primitives to `runtime-core`. For example, a new artifact
+  manifest field belongs near `artifact-manifest.ts` or the runtime contract in
+  `runtime-core/src/index.ts`; the Playground writer that populates it belongs in
+  `runtime-playground`.
+- **New command:** add discoverable command metadata to
+  `runtime-core/src/command-registry.ts`, add the concrete Playground dispatch in
+  `runtime-playground/src/command-router.ts`, and put WordPress/PHP/WP-CLI
+  mechanics in the relevant runtime runner module such as
+  `wordpress-command-runners.ts` or `browser-command-runners.ts`. Only add CLI
+  parsing when the command needs a direct CLI surface beyond recipe execution.
+- **New CLI workflow:** put argument parsing and command orchestration in `cli`,
+  with source preparation in `recipe-sources.ts`, validation in
+  `recipe-validation.ts`, dry-run planning in `recipe-dry-run.ts`, and stable
+  output formatting in `output.ts`.
+- **New artifact, evidence, or reference helper:** put portable contracts,
+  manifest hashing, and verification in `runtime-core`; put captured files,
+  diffs, review summaries, browser evidence, and Playground-specific bundle
+  writing in `runtime-playground`; put final CLI run evidence summaries in
+  `cli/src/recipe-evidence.ts`.
+- **New WordPress parent-site behavior:** put Abilities, WP-CLI wrappers, host
+  options, pending-action integration, artifact lookup, and apply adapter hooks
+  in `packages/wordpress-plugin`. Do not move parent-site persistence or approval
+  policy into the runtime packages.
+
+Package entrypoints are public surfaces, not implementation buckets:
+
+- `runtime-core/src/index.ts` may define truly central runtime contracts and
+  re-export focused contract modules.
+- `runtime-playground/src/index.ts` should stay a thin backend factory/export
+  surface.
+- `cli/src/index.ts` may remain the executable command orchestrator, but reusable
+  parsing, recipe, evidence, output, and runtime wrapper logic should stay in
+  focused CLI modules.
+
+Anti-dumping-ground rules:
+
+- Do not add vague `utils.ts`, `helpers.ts`, or `common.ts` modules. Name modules
+  after the contract or lifecycle slice they own, such as `runtime-reference`,
+  `recipe-sources`, `browser-actions`, or `workspace-policy`.
+- Do not grow large `index.ts` files by adding unrelated implementation detail.
+  If a block can be named by a lifecycle step, command family, artifact surface,
+  or validation contract, move it to a focused module and export only the public
+  pieces needed by consumers.
+- Do not mix host-product policy with sandbox execution. PR creation, deploys,
+  scoring, durable jobs, review UI, auth, billing, and queue semantics belong in
+  parent products or adapter packages that call WP Codebox.
+- Do not create a new module for one-off indirection. Extend the existing owner
+  when the behavior is part of that owner; split only when the new code has a
+  clear reusable contract or lifecycle boundary.
+
 ## Runtime Lifecycle
 
 The generic `Runtime` contract is defined in
-[`runtime-core/src/index.ts`](../packages/runtime-core/src/index.ts). A backend
-implements the same lifecycle regardless of how it boots the runtime.
+[`runtime-core/src/runtime-contracts.ts`](../packages/runtime-core/src/runtime-contracts.ts).
+A backend implements the same lifecycle regardless of how it boots the runtime.
 
 ```text
 create RuntimeCreateSpec

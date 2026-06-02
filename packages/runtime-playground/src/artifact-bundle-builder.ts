@@ -3,6 +3,8 @@ import { join, relative } from "node:path"
 import {
   buildRuntimeReferenceManifest,
   buildRuntimeReplayReferenceIndex,
+  artifactManifestFile,
+  artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
   type ArtifactBundle,
@@ -23,12 +25,12 @@ import type { BrowserProbeArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
+  buildArtifactDiagnostics,
   buildArtifactProvenance,
   buildArtifactReview,
   buildBlueprintAfter,
   buildBlueprintAfterNotes,
   buildTestResults,
-  fileEntry,
   serializeCapturedMountFiles,
   type CapturedMountFiles,
   type MountDiffsResult,
@@ -91,6 +93,7 @@ export class ArtifactBundleBuilder {
     const diffsPath = join(filesDirectory, "diffs.json")
     const changedFilesPath = join(filesDirectory, "changed-files.json")
     const patchPath = join(filesDirectory, "patch.diff")
+    const diagnosticsPath = join(filesDirectory, "diagnostics.json")
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
     const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
@@ -109,7 +112,7 @@ export class ArtifactBundleBuilder {
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])
         .filter((ref): ref is typeof ref & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
-        .map((ref) => fileEntry(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
+        .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
     )
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch } = await source.captureMountDiffs(filesDirectory, redactor)
@@ -139,6 +142,7 @@ export class ArtifactBundleBuilder {
       spec,
     }
     source.recordArtifactsCollected(bundleId, createdAt, spec)
+    const diagnostics = buildArtifactDiagnostics(source.observations)
     const testResults = buildTestResults()
     const review = buildArtifactReview({
       artifactId: bundleId,
@@ -151,10 +155,12 @@ export class ArtifactBundleBuilder {
       mounts: source.mounts,
       preview,
       browser,
+      diagnosticsPath: "files/diagnostics.json",
     })
     const artifactFiles = {
       changedFiles: relative(source.artifactRoot, changedFilesPath),
       patch: relative(source.artifactRoot, patchPath),
+      diagnostics: relative(source.artifactRoot, diagnosticsPath),
       testResults: relative(source.artifactRoot, testResultsPath),
       review: relative(source.artifactRoot, reviewPath),
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
@@ -180,33 +186,34 @@ export class ArtifactBundleBuilder {
     })
 
     const manifestFiles: ArtifactManifestFile[] = [
-      fileEntry(manifestPath, "manifest", "application/json"),
-      fileEntry(metadataPath, "metadata", "application/json"),
-      fileEntry(blueprintAfterPath, "blueprint-after", "application/json"),
-      fileEntry(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
-      fileEntry(eventsPath, "events", "application/x-ndjson"),
-      fileEntry(commandsPath, "commands", "application/x-ndjson"),
-      fileEntry(observationsPath, "observations", "application/x-ndjson"),
-      fileEntry(runtimeLogPath, "log", "text/plain"),
-      fileEntry(commandsLogPath, "log", "text/plain"),
-      fileEntry(mountsPath, "mounts", "application/json"),
-      fileEntry(capturedMountsPath, "mounted-files", "application/json"),
-      fileEntry(diffsPath, "mount-diffs", "application/json"),
-      fileEntry(changedFilesPath, "changed-files", "application/json"),
-      fileEntry(patchPath, "patch", "text/x-diff"),
-      fileEntry(testResultsPath, "test-results", "application/json"),
-      fileEntry(reviewPath, "review", "application/json"),
-      fileEntry(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
-      fileEntry(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
-      fileEntry(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
+      artifactManifestFile(manifestPath, "manifest", "application/json"),
+      artifactManifestFile(metadataPath, "metadata", "application/json"),
+      artifactManifestFile(blueprintAfterPath, "blueprint-after", "application/json"),
+      artifactManifestFile(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
+      artifactManifestFile(eventsPath, "events", "application/x-ndjson"),
+      artifactManifestFile(commandsPath, "commands", "application/x-ndjson"),
+      artifactManifestFile(observationsPath, "observations", "application/x-ndjson"),
+      artifactManifestFile(runtimeLogPath, "log", "text/plain"),
+      artifactManifestFile(commandsLogPath, "log", "text/plain"),
+      artifactManifestFile(mountsPath, "mounts", "application/json"),
+      artifactManifestFile(capturedMountsPath, "mounted-files", "application/json"),
+      artifactManifestFile(diffsPath, "mount-diffs", "application/json"),
+      artifactManifestFile(changedFilesPath, "changed-files", "application/json"),
+      artifactManifestFile(patchPath, "patch", "text/x-diff"),
+      artifactManifestFile(diagnosticsPath, "diagnostics", "application/json"),
+      artifactManifestFile(testResultsPath, "test-results", "application/json"),
+      artifactManifestFile(reviewPath, "review", "application/json"),
+      artifactManifestFile(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
+      artifactManifestFile(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
+      artifactManifestFile(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
       ...runtimeSnapshotFiles,
-      ...mountDiffs.map((diff) => fileEntry(join(source.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
+      ...mountDiffs.map((diff) => artifactManifestFile(join(source.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
-        fileEntry(join(source.artifactRoot, file.artifactPath), "file", file.contentType),
+        artifactManifestFile(join(source.artifactRoot, file.artifactPath), "file", file.contentType),
       ),
     ]
 
@@ -224,6 +231,7 @@ export class ArtifactBundleBuilder {
     await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
     await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, redactedPatch)
+    await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
     await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
@@ -275,15 +283,12 @@ export class ArtifactBundleBuilder {
       snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
-    const runtimeReferenceManifestRef = {
-      path: "files/runtime-reference-manifest.json",
-      kind: "runtime-reference-manifest",
-      contentType: "application/json",
-      sha256: {
-        algorithm: "sha256" as const,
-        value: await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, { path: "files/runtime-reference-manifest.json", kind: "runtime-reference-manifest", contentType: "application/json", sha256: { algorithm: "sha256", value: "0".repeat(64) } }),
-      },
-    }
+    const runtimeReferenceManifestRef = artifactManifestFileWithSha256(
+      "files/runtime-reference-manifest.json",
+      "runtime-reference-manifest",
+      "application/json",
+      await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, artifactManifestFile("files/runtime-reference-manifest.json", "runtime-reference-manifest", "application/json")),
+    )
     const runtimeReplayReferenceIndex = buildRuntimeReplayReferenceIndex({
       createdAt,
       runtime,
@@ -319,6 +324,7 @@ export class ArtifactBundleBuilder {
       diffsPath,
       changedFilesPath,
       patchPath,
+      diagnosticsPath,
       testResultsPath,
       reviewPath,
       runtimeReferenceManifestPath,

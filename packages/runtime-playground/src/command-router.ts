@@ -1,4 +1,4 @@
-import { getCommandDefinition, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
+import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
 import type { ExecutionSpec } from "@chubes4/wp-codebox-core"
 
 interface PlaygroundCommandRuntime {
@@ -33,7 +33,35 @@ export function playgroundRuntimeCommandIds(): string[] {
   return Object.keys(playgroundCommandHandlers)
 }
 
-export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime, spec: ExecutionSpec): Promise<string> {
+export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime, spec: ExecutionSpec, hostTools?: HostToolRegistry): Promise<string> {
+  const hostTool = hostTools?.get(spec.command)
+  if (hostTool) {
+    const startedAt = new Date().toISOString()
+    let input: JsonValue
+    try {
+      input = hostToolInput(spec.args ?? [])
+    } catch (error) {
+      return JSON.stringify({
+        schema: HOST_TOOL_RESULT_SCHEMA,
+        tool: hostTool.name,
+        status: "error",
+        error: {
+          code: "host-tool-invalid-input-json",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      })
+    }
+
+    const result = await executeHostTool(hostTool, input, {
+      tool: hostTool.name,
+      policyCommand: spec.command,
+      metadata: { cwd: spec.cwd ?? null, timeoutMs: spec.timeoutMs ?? null },
+    })
+    return JSON.stringify(result)
+  }
+
   const definition = getCommandDefinition(spec.command)
   if (definition?.handler.kind === "playground") {
     const handler = playgroundCommandHandlers[definition.id as PlaygroundRuntimeCommandId]
@@ -43,4 +71,26 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
   }
 
   throw new Error(`No Playground command handler is registered for: ${spec.command}`)
+}
+
+function hostToolInput(args: string[]): JsonValue {
+  const explicit = argValue(args, "input-json")
+  if (explicit !== undefined) {
+    const parsed = JSON.parse(explicit) as JsonValue
+    return parsed
+  }
+
+  const input: Record<string, string> = {}
+  for (const arg of args) {
+    const separator = arg.indexOf("=")
+    if (separator > 0) {
+      input[arg.slice(0, separator)] = arg.slice(separator + 1)
+    }
+  }
+  return input
+}
+
+function argValue(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
 }

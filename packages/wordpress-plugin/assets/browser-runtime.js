@@ -65,7 +65,10 @@ const operationPhp = ( operation ) => `<?php
 header( 'Content-Type: application/json; charset=utf-8' );
 
 if ( ! defined( 'ABSPATH' ) ) {
-	$wp_load = dirname( __DIR__, 4 ) . '/wp-load.php';
+	$wp_load = '/wordpress/wp-load.php';
+	if ( ! file_exists( $wp_load ) ) {
+		$wp_load = dirname( __DIR__, 4 ) . '/wp-load.php';
+	}
 	if ( ! file_exists( $wp_load ) ) {
 		$wp_load = rtrim( $_SERVER['DOCUMENT_ROOT'] ?? '', '/' ) . '/wp-load.php';
 	}
@@ -271,6 +274,11 @@ try {
 		const code = String( options.code || '' );
 		if ( ! code ) {
 			throw new Error( 'PHP code is required.' );
+		}
+
+		if ( typeof client.run === 'function' ) {
+			const response = await client.run( { code } );
+			return options.expectJson ? parseJsonResponse( response ) : response;
 		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );

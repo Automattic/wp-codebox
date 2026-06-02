@@ -52,6 +52,66 @@ What WP Codebox provides for product use cases:
 - Fan out several task descriptions into separate isolated sandboxes.
 - Produce artifact bundles — patches, diffs, test results, live Playground preview URLs — that a parent product can review, replay, apply, or discard.
 
+## Host Tool Registry
+
+Host products can register generic tools for sandbox agents without adding
+product-specific logic to WP Codebox core. A tool definition declares a stable
+name, JSON input/output schemas, policy metadata, and a host-side handler. The
+runtime still gates execution through `RuntimePolicy.commands`, so callers must
+explicitly allow each registered tool name before a sandbox can invoke it.
+
+```ts
+import { createHostToolRegistry, createRuntime } from "@chubes4/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+
+const hostTools = createHostToolRegistry([
+  {
+    name: "host.echo",
+    description: "Echo a structured payload from the host bridge.",
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      properties: { message: { type: "string" } },
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      required: ["message"],
+      properties: { message: { type: "string" } },
+      additionalProperties: false,
+    },
+    policy: { capability: "host.echo", risk: "read" },
+    handler: (input) => input,
+  },
+])
+
+const runtime = await createRuntime({
+  backend: "wordpress-playground",
+  environment: { kind: "wordpress", version: "latest" },
+  policy: {
+    network: "deny",
+    filesystem: "sandbox",
+    commands: ["host.echo"],
+    secrets: "none",
+    approvals: "never",
+  },
+  hostTools,
+}, createPlaygroundRuntimeBackend())
+
+const result = await runtime.execute({
+  command: "host.echo",
+  args: ['input-json={"message":"hello"}'],
+})
+```
+
+Host tool output is always a JSON envelope with schema
+`wp-codebox/host-tool-result/v1`. Successful calls return `status: "ok"` and an
+`output` value validated against the tool's output schema. Invalid input,
+invalid output, and handler failures return `status: "error"` with a stable error
+code and message instead of terminal-shaped stderr. Product-specific tools such
+as Homeboy evidence commands should live in product extensions that register
+tools through this surface.
+
 ## In-Sandbox Workspace Contract
 
 WP Codebox reserves `/workspace` as the stable editable workspace root inside a

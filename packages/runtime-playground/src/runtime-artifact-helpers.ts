@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { artifactManifestFile } from "@chubes4/wp-codebox-core"
 import type {
   ArtifactBundle,
   ArtifactManifestFile,
@@ -15,7 +16,7 @@ import type {
   Snapshot,
 } from "@chubes4/wp-codebox-core"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
-import { fileEntry, type ArtifactRedactor } from "./artifacts.js"
+import type { ArtifactRedactor } from "./artifacts.js"
 import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
 import { pluginCheckManifestFiles, redactPluginCheckArtifacts, redactThemeCheckArtifacts, themeCheckManifestFiles, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
 import { captureMountDiffs, captureMountedFiles } from "./mounted-artifact-capture.js"
@@ -104,7 +105,7 @@ function observationManifestFiles(artifactRoot: string, observations: Observatio
   return observations.flatMap((observation) =>
     (observation.artifactRefs ?? [])
       .filter((ref): ref is RuntimeEpisodeTraceRef & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
-      .map((ref) => fileEntry(join(artifactRoot, ref.path), ref.kind, ref.path.endsWith(".json") ? "application/json" : "text/plain")),
+      .map((ref) => artifactManifestFile(join(artifactRoot, ref.path), ref.kind, ref.path.endsWith(".json") ? "application/json" : "text/plain")),
   )
 }
 

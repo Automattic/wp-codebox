@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -415,11 +415,11 @@ async function readPatchSummary(path: string): Promise<AgentSandboxResultSummary
     const patch = await readFile(path, "utf8")
     return {
       bytes: Buffer.byteLength(patch),
-      sha256: createHash("sha256").update(patch).digest("hex"),
+      sha256: artifactFileDigest(patch).value,
       artifact: "files/patch.diff",
     }
   } catch {
-    return { bytes: 0, sha256: createHash("sha256").update("").digest("hex"), artifact: "files/patch.diff" }
+    return { bytes: 0, sha256: artifactFileDigest("").value, artifact: "files/patch.diff" }
   }
 }
 
@@ -775,7 +775,7 @@ async function writeRecipeEvidenceJson(artifactRoot: string, path: string, value
   await writeFile(path, json)
   return {
     path: relative(artifactRoot, path),
-    sha256: createHash("sha256").update(json).digest("hex"),
+    sha256: artifactFileDigest(json).value,
     kind,
     contentType: "application/json",
   }
@@ -803,7 +803,7 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
 }
 
 function evidenceFileToManifestFile(file: RecipeArtifactEvidenceFile): ArtifactManifestFile {
-  return { path: file.path, kind: file.kind, contentType: file.contentType, sha256: { algorithm: "sha256", value: file.sha256 } }
+  return artifactManifestFileWithSha256(file.path, file.kind, file.contentType, file.sha256)
 }
 
 function markRecipeArtifactsFinalized(interruption: RecipeArtifactsFinalizationController | undefined, artifactsFinalized: boolean): void {
@@ -812,8 +812,4 @@ function markRecipeArtifactsFinalized(interruption: RecipeArtifactsFinalizationC
   }
 
   ;(interruption.metadata as { artifactsFinalized: boolean }).artifactsFinalized = artifactsFinalized
-}
-
-function stripUndefined<T extends Record<string, unknown>>(record: T): T {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
