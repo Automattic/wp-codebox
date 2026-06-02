@@ -415,6 +415,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'provider'               => (string) ( $input['provider'] ?? $request['provider'] ?? '' ),
 					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
 					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
+					'agent_bundles'          => $this->agent_bundles( $input, $request ),
 					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
 					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
 					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $workspaces ),
@@ -957,6 +958,47 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $merged;
+	}
+
+	/** @param array<string,mixed> $input Direct ability input. @param array<string,mixed> $request Parent request input. @return array<int,array<string,mixed>> */
+	private function agent_bundles( array $input, array $request = array() ): array {
+		$bundles = $this->merge_array_lists( $input['agent_bundles'] ?? $input['agentBundles'] ?? array(), $request['agent_bundles'] ?? $request['agentBundles'] ?? array() );
+		$normalized = array();
+		foreach ( $bundles as $bundle ) {
+			$source = isset( $bundle['source'] ) ? trim( (string) $bundle['source'] ) : '';
+			$inline = is_array( $bundle['bundle'] ?? null ) ? $bundle['bundle'] : null;
+			if ( '' === $source && null === $inline ) {
+				continue;
+			}
+
+			$entry = array();
+			if ( '' !== $source ) {
+				$entry['source'] = $source;
+			}
+			if ( null !== $inline ) {
+				$entry['bundle'] = $inline;
+			}
+			foreach ( array( 'slug', 'token_env' ) as $field ) {
+				$value = isset( $bundle[ $field ] ) ? trim( (string) $bundle[ $field ] ) : '';
+				if ( '' !== $value ) {
+					$entry[ $field ] = $value;
+				}
+			}
+			$on_conflict = (string) ( $bundle['on_conflict'] ?? 'upgrade' );
+			$entry['on_conflict'] = in_array( $on_conflict, array( 'error', 'skip', 'upgrade' ), true ) ? $on_conflict : 'upgrade';
+			if ( isset( $bundle['owner_id'] ) && (int) $bundle['owner_id'] > 0 ) {
+				$entry['owner_id'] = (int) $bundle['owner_id'];
+			}
+
+			$normalized[] = $entry;
+		}
+
+		return $normalized;
+	}
+
+	private function json_encode( mixed $value ): string {
+		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+		return is_string( $encoded ) ? $encoded : '[]';
 	}
 
 	/** @param string[] $paths @return array<int,array<string,mixed>> */
@@ -1645,6 +1687,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 
 		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
+		$agent_bundles  = $this->agent_bundles( $input );
 		$steps          = array();
 		foreach ( $task_prompts as $task_prompt ) {
 			$args = array(
@@ -1655,6 +1698,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'model=' . $this->model( $input, $inheritance ),
 				'provider-plugin-slugs=' . implode( ',', $provider_slugs ),
 			);
+			if ( ! empty( $agent_bundles ) ) {
+				$args[] = 'agent-bundles-json=' . $this->json_encode( $agent_bundles );
+			}
 			if ( ! empty( $input['session_id'] ) ) {
 				$args[] = 'session-id=' . (string) $input['session_id'];
 			}
@@ -1697,6 +1743,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'extraPlugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
 			'secretEnv'    => $this->secret_env_names( $input, $inheritance ),
 		);
+		if ( ! empty( $agent_bundles ) ) {
+			$recipe_inputs['agent_bundles'] = $agent_bundles;
+		}
 		if ( ! empty( $site_seed_payload['siteSeeds'] ) ) {
 			$recipe_inputs['siteSeeds'] = $site_seed_payload['siteSeeds'];
 		}
