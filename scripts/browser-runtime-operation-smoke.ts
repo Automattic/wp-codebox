@@ -130,6 +130,7 @@ const recipeResult = await runtime.runRecipe(recipeClient, {
 }, { goal: "Smoke test browser recipe marker." })
 assert.equal(recipeResult.success, true)
 assert.equal(recipeClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
+assert.deepEqual(JSON.parse(recipeClient.files[0]?.contents ?? "{}"), { goal: "Smoke test browser recipe marker." })
 assert.match(recipeClient.files[1]?.contents ?? "", /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
 assert.match(recipeClient.files[1]?.contents ?? "", /<\?php\ndefine\( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true \);/)
 
@@ -167,6 +168,23 @@ await assert.rejects(
   () => runtime.runBrowserSessionRecipe(createClient("{}"), { ...sessionOutput, success: false, error: { message: "not ready" } }),
   /not ready/
 )
+
+const embeddedPayloadClient = createClient('{"success":true,"schema":"wp-codebox/browser-agent-run/v1"}')
+await runtime.runRecipe(embeddedPayloadClient, {
+  browser: {
+    task_path: "/tmp/wp-codebox-agent-task.json",
+    task_payload: { schema: "wp-codebox/browser-agent-task-payload/v1", goal: "embedded" },
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=<?php echo wp_json_encode( array( 'success' => true ) );"],
+      },
+    ],
+  },
+})
+assert.deepEqual(JSON.parse(embeddedPayloadClient.files[0]?.contents ?? "{}"), { schema: "wp-codebox/browser-agent-task-payload/v1", goal: "embedded" })
 
 await assert.rejects(
   () => runtime.runWordPressOperation(createClient("{}"), { args: {} }),
