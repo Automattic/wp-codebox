@@ -688,6 +688,61 @@ $runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
 $runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );
 $runner_php = str_replace( '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json', $runner_report_path, $runner_php );
 $runner_php = preg_replace( '/\$wp_codebox_is_playground = .*?;\n/', '$wp_codebox_is_playground = true;' . "\n", $runner_php ) ?? $runner_php;
+$runner_artifact_root = rtrim( ABSPATH, '/' ) . '/wp-content/uploads/wp-codebox/artifacts/generic-output';
+if ( ! is_dir( $runner_artifact_root . '/assets' ) ) {
+	mkdir( $runner_artifact_root . '/assets', 0777, true );
+}
+file_put_contents( $runner_artifact_root . '/index.html', '<main>Generic caller artifact</main>' );
+file_put_contents( $runner_artifact_root . '/assets/logo.png', "\x89PNG\r\n\x1a\ngeneric" );
+$runner_task_payload = $browser_session['recipe']['browser']['task_payload'] ?? array();
+$runner_task_payload['artifacts'] = array(
+	'schema'     => 'caller/generic-browser-artifact-bundle/v1',
+	'root'       => 'generic-output',
+	'entrypoint' => 'generic-output/index.html',
+	'roles'      => array(
+		'preview' => 'generic-output/index.html',
+	),
+	'metadata'   => array(
+		'caller' => 'wordpress-plugin-smoke',
+		'labels' => array( 'non-studio-web' ),
+	),
+	'files'      => array(
+		array(
+			'path'            => 'generic-output/index.html',
+			'playground_path' => $runner_artifact_root . '/index.html',
+			'url_path'        => '/wp-content/uploads/wp-codebox/artifacts/generic-output/index.html',
+			'kind'            => 'html',
+			'mime_type'       => 'text/html',
+			'roles'           => array( 'preview' ),
+			'metadata'        => array( 'opaque' => 'entrypoint' ),
+		),
+		array(
+			'path'            => 'generic-output/assets/logo.png',
+			'playground_path' => $runner_artifact_root . '/assets/logo.png',
+			'url_path'        => '/wp-content/uploads/wp-codebox/artifacts/generic-output/assets/logo.png',
+			'kind'            => 'image',
+			'mime_type'       => 'image/png',
+			'metadata'        => array( 'opaque' => 'binary' ),
+		),
+		array(
+			'path'            => '../escape.html',
+			'playground_path' => $runner_artifact_root . '/index.html',
+			'kind'            => 'html',
+		),
+		array(
+			'path'            => 'generic-output/missing.txt',
+			'playground_path' => $runner_artifact_root . '/missing.txt',
+			'kind'            => 'text',
+		),
+	),
+);
+$runner_task_path = (string) ( $browser_session['recipe']['browser']['task_path'] ?? '' );
+if ( '' !== $runner_task_path ) {
+	if ( ! is_dir( dirname( $runner_task_path ) ) ) {
+		mkdir( dirname( $runner_task_path ), 0777, true );
+	}
+	file_put_contents( $runner_task_path, wp_json_encode( $runner_task_payload ) );
+}
 ob_start();
 eval( $runner_php );
 $runner_output = ob_get_clean();
@@ -698,6 +753,11 @@ $assert( 'browser Playground generated runner invokes caller task hook', is_arra
 $assert( 'browser Playground generated runner captures normalized materialization evidence', is_array( $runner_result ) && 'wp-codebox/browser-materialization/v1' === ( $runner_result['schema'] ?? '' ) && 'wp-codebox/browser-capture/v1' === ( $runner_result['captures'][0]['schema'] ?? '' ) && true === ( $runner_result['captures'][0]['exists'] ?? false ) && 'caller/materialization-report/v1' === ( $runner_result['captures'][0]['json']['schema'] ?? '' ) );
 $assert( 'browser Playground generated runner writes result evidence file', is_array( $runner_result_file ) && $runner_result === $runner_result_file );
 $assert( 'browser Playground generated runner records diagnostics and provenance', is_array( $runner_result ) && 1 === ( $runner_result['diagnostics']['capture_count'] ?? 0 ) && array() === ( $runner_result['errors'] ?? null ) && 'wp-codebox/browser-runner' === ( $runner_result['provenance']['generated_by'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $runner_result['provenance']['result_path'] ?? '' ) );
+$assert( 'browser Playground generated runner captures caller-owned artifact schema', is_array( $runner_result ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['artifact_bundle']['schema'] ?? '' ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['response']['artifact_bundle']['schema'] ?? '' ) );
+$assert( 'browser Playground generated runner preserves caller artifact metadata and roles', is_array( $runner_result ) && array( 'non-studio-web' ) === ( $runner_result['artifact_bundle']['metadata']['labels'] ?? array() ) && array( 'preview' => 'generic-output/index.html' ) === ( $runner_result['artifact_bundle']['roles'] ?? array() ) && array( 'preview' ) === ( $runner_result['artifact_bundle']['files'][0]['roles'] ?? array() ) && 'entrypoint' === ( $runner_result['artifact_bundle']['files'][0]['metadata']['opaque'] ?? '' ) );
+$assert( 'browser Playground generated runner captures text and base64 artifact files', is_array( $runner_result ) && 2 === count( $runner_result['artifact_bundle']['files'] ?? array() ) && '<main>Generic caller artifact</main>' === ( $runner_result['artifact_bundle']['files'][0]['content'] ?? '' ) && 'utf-8' === ( $runner_result['artifact_bundle']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $runner_result['artifact_bundle']['files'][1]['encoding'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\ngeneric" ) === ( $runner_result['artifact_bundle']['files'][1]['sha256'] ?? '' ) );
+$runner_missing_entrypoint = function_exists( 'wp_codebox_browser_capture_artifact_bundle' ) ? wp_codebox_browser_capture_artifact_bundle( array( 'artifacts' => array_merge( $runner_task_payload['artifacts'], array( 'entrypoint' => 'generic-output/missing.html' ) ) ) ) : array( 'missing_function' => true );
+$assert( 'browser Playground generated runner skips missing artifact entrypoints safely', array() === $runner_missing_entrypoint );
 $assert( 'browser Playground session emits ready-to-code signal only when blueprint prerequisites are present', ! is_wp_error( $browser_session ) && true === ( $browser_session['signals']['ready_to_code']['emitted'] ?? false ) && 'ready_to_code' === ( $browser_session['signals']['ready_to_code']['name'] ?? '' ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['agents_api'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine_code'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['provider_secret'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['runtime_dependencies'] ?? false ) );
 $assert( 'browser Playground session exposes runtime dependency readiness metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-runtime-readiness/v1' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['schema'] ?? '' ) && 'caller-runtime' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['mu_plugins'][0]['slug'] ?? '' ) && 'example-starter' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['themes'][0]['slug'] ?? '' ) );
 $assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'repair-output/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );

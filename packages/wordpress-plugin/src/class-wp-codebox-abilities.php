@@ -3911,38 +3911,55 @@ function wp_codebox_browser_safe_artifact_path( $path, $root ) {
 	return str_starts_with( $normalized, $root ) ? $normalized : \'\';
 }
 
+function wp_codebox_browser_safe_playground_read_path( $path ) {
+	$path = str_replace( chr( 92 ), "/", (string) $path );
+	$root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'/wordpress/\';
+	$root = rtrim( str_replace( chr( 92 ), "/", $root ), "/" ) . "/";
+	if ( \'\' === $path || str_contains( $path, \'..\' ) || ! str_starts_with( $path, $root ) || ! is_readable( $path ) ) {
+		return \'\';
+	}
+
+	return $path;
+}
+
 function wp_codebox_browser_capture_artifact_bundle( array $payload ) {
 	$contract = is_array( $payload[\'artifacts\'] ?? null ) ? $payload[\'artifacts\'] : array();
-	if ( \'studio-web/website-artifact-bundle/v1\' !== (string) ( $contract[\'schema\'] ?? \'\' ) ) {
+	$schema = trim( (string) ( $contract[\'schema\'] ?? \'\' ) );
+	if ( \'\' === $schema ) {
 		return array();
 	}
 
-	$root = (string) ( $contract[\'root\'] ?? \'website/\' );
+	$root = (string) ( $contract[\'root\'] ?? \'\' );
 	$root = rtrim( ltrim( str_replace( chr( 92 ), "/", $root ), "/" ), "/" ) . "/";
+	if ( \'/\' === $root ) {
+		return array();
+	}
 	$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+	if ( \'\' === $entrypoint ) {
+		return array();
+	}
+
 	$files = array();
 	foreach ( is_array( $contract[\'files\'] ?? null ) ? $contract[\'files\'] : array() as $file ) {
 		if ( ! is_array( $file ) ) {
 			continue;
 		}
 		$path = wp_codebox_browser_safe_artifact_path( $file[\'path\'] ?? \'\', $root );
-		$playground_path = (string) ( $file[\'playground_path\'] ?? \'\' );
-		if ( \'\' === $path || \'\' === $playground_path || str_contains( $playground_path, \'..\' ) || ! str_starts_with( $playground_path, \'/wordpress/\' ) || ! is_readable( $playground_path ) ) {
+		$playground_path = wp_codebox_browser_safe_playground_read_path( $file[\'playground_path\'] ?? \'\' );
+		if ( \'\' === $path || \'\' === $playground_path ) {
 			continue;
 		}
 		$contents = file_get_contents( $playground_path );
 		if ( ! is_string( $contents ) ) {
 			continue;
 		}
-		$is_text = preg_match( \'#^[\\x09\\x0A\\x0D\\x20-\\x7E]*$#\', $contents );
-		$record = array(
-			\'path\' => $path,
-			\'role\' => $path === $entrypoint ? \'entrypoint\' : ( (bool) preg_match( \'/\\.(md|markdown|mdx)$/i\', $path ) ? \'source-document\' : \'asset\' ),
-			\'kind\' => (string) ( $file[\'kind\'] ?? ( $path === $entrypoint ? \'html\' : \'\' ) ),
-			\'mime_type\' => (string) ( $file[\'mime_type\'] ?? \'\' ),
-			\'url_path\' => (string) ( $file[\'url_path\'] ?? \'\' ),
-			\'sha256\' => hash( \'sha256\', $contents ),
-		);
+		$is_text = 1 === preg_match( \'#^[\\x09\\x0A\\x0D\\x20-\\x7E]*$#\', $contents );
+		$record = array_diff_key( $file, array( \'playground_path\' => true, \'content\' => true, \'content_base64\' => true, \'encoding\' => true, \'sha256\' => true ) );
+		$record[\'path\'] = $path;
+		$record[\'kind\'] = (string) ( $file[\'kind\'] ?? \'\' );
+		$record[\'mime_type\'] = (string) ( $file[\'mime_type\'] ?? \'\' );
+		$record[\'url_path\'] = (string) ( $file[\'url_path\'] ?? \'\' );
+		$record[\'sha256\'] = hash( \'sha256\', $contents );
 		if ( $is_text ) {
 			$record[\'content\'] = $contents;
 			$record[\'encoding\'] = \'utf-8\';
@@ -3953,15 +3970,19 @@ function wp_codebox_browser_capture_artifact_bundle( array $payload ) {
 		$files[] = array_filter( $record, static fn( $value ) => \'\' !== $value );
 	}
 
-	if ( empty( $files ) || \'\' === $entrypoint ) {
+	$entrypoint_captured = in_array( $entrypoint, array_column( $files, \'path\' ), true );
+	if ( empty( $files ) || ! $entrypoint_captured ) {
 		return array();
 	}
 
-	return array(
-		\'schema\' => \'studio-web/website-artifact-bundle/v1\',
-		\'root\' => $root,
-		\'entrypoint\' => $entrypoint,
-		\'files\' => $files,
+	return array_merge(
+		array_diff_key( $contract, array( \'files\' => true ) ),
+		array(
+			\'schema\' => $schema,
+			\'root\' => $root,
+			\'entrypoint\' => $entrypoint,
+			\'files\' => $files,
+		)
 	);
 }
 
