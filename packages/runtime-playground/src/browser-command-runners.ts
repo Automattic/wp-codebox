@@ -61,6 +61,7 @@ export async function runBrowserProbeCommand({
 
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
+  const requestedViewport = viewportArg(args, "viewport")
   const script = argValue(args, "script")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
   const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
@@ -96,6 +97,9 @@ export async function runBrowserProbeCommand({
 
   try {
     page = await browser.newPage()
+    if (requestedViewport) {
+      await page.setViewportSize(requestedViewport)
+    }
     if (capturesBrowserMetrics) {
       await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
     }
@@ -1202,4 +1206,24 @@ function durationArg(args: string[], name: string, fallbackMs: number): number {
 
   const value = Number.parseFloat(match[1])
   return Math.max(0, Math.round(match[2] === "ms" ? value : value * 1000))
+}
+
+function viewportArg(args: string[], name: string): { width: number; height: number } | undefined {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) {
+    return undefined
+  }
+
+  const match = raw.match(/^(\d+)x(\d+)$/i)
+  if (!match) {
+    throw new Error(`${name} must use <width>x<height>, for example 390x844: ${raw}`)
+  }
+
+  const width = Number.parseInt(match[1] ?? "", 10)
+  const height = Number.parseInt(match[2] ?? "", 10)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`${name} width and height must be positive integers: ${raw}`)
+  }
+
+  return { width, height }
 }
