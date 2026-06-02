@@ -1,7 +1,7 @@
 import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
-import type { MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readFile, stat, unlink } from "node:fs/promises"
@@ -23,17 +23,51 @@ interface PlaygroundCliModule {
   }): Promise<PlaygroundCliServer>
 }
 
-export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[]): Promise<PlaygroundCliServer> {
-  const { runCLI } = (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
-  if (spec.preview?.port) {
-    await assertPreviewPortAvailable(spec.preview.port)
+export interface PlaygroundCliStartupOptions {
+  onProgress?: (event: BrowserStartupProgressEvent) => void | Promise<void>
+}
+
+export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
+  const startedAt = Date.now()
+  const emitProgress = (phase: BrowserStartupProgressPhase, status: BrowserStartupProgressStatus, label: string, detail?: Record<string, unknown>) => {
+    void Promise.resolve(options.onProgress?.({
+      schema: "wp-codebox/browser-startup-progress/v1",
+      phase,
+      status,
+      label,
+      elapsed_ms: Date.now() - startedAt,
+      ...(detail ? { detail } : {}),
+    })).catch(() => undefined)
   }
 
-  await validatePlaygroundWordPressArchiveCache(spec.environment.version)
-
-  const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
-
+  emitProgress("preview:start", "running", "Preparing your site", {
+    backend: spec.backend,
+    preview: previewDetail(spec),
+    mounts: mounts.length,
+  })
+  emitProgress("preview:loading-client", "running", "Loading preview")
   try {
+    const { runCLI } = (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
+    if (spec.preview?.port) {
+      await assertPreviewPortAvailable(spec.preview.port)
+    }
+
+    emitProgress("preview:loading-wordpress", "running", "Loading your site", {
+      wordpressVersion: spec.environment.version,
+    })
+    const cacheValidation = await validatePlaygroundWordPressArchiveCache(spec.environment.version)
+    const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
+    const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
+    if (blueprintSummary.steps > 0) {
+      emitProgress("preview:applying-blueprint", "running", "Applying site setup", blueprintSummary)
+    }
+    if (blueprintSummary.dependencySteps > 0) {
+      emitProgress("preview:installing-dependencies", "running", "Installing required resources", blueprintSummary)
+    }
+    if (blueprintSummary.activationSteps > 0) {
+      emitProgress("preview:activating-dependencies", "running", "Activating site features", blueprintSummary)
+    }
+
     const server = await runPlaygroundCliWithoutProcessExit(() => runCLI({
       command: "server",
       port,
@@ -48,18 +82,83 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
     }))
 
+    emitProgress("preview:connecting-client", "running", "Connecting preview", {
+      localUrl: server.serverUrl,
+      cacheValidation,
+      fixedPreviewPort: spec.preview?.port ?? null,
+    })
+
     if (!spec.preview?.port) {
+      emitProgress("preview:ready", "complete", "Preview ready", {
+        localUrl: server.serverUrl,
+      })
       return server
     }
 
-    return await withPreviewProxy(server, spec.preview.port, spec.preview.bind)
+    const proxiedServer = await withPreviewProxy(server, spec.preview.port, spec.preview.bind)
+    emitProgress("preview:ready", "complete", "Preview ready", {
+      localUrl: proxiedServer.serverUrl,
+      upstreamUrl: server.serverUrl,
+    })
+    return proxiedServer
   } catch (error) {
+    emitProgress("preview:error", "failed", "Preview failed to start", {
+      error: errorDetail(error),
+    })
+
     if (spec.preview?.port && errorHasCode(error, "EADDRINUSE")) {
       throw new PlaygroundPreviewPortUnavailableError(spec.preview.port, error)
     }
 
     throw error
   }
+}
+
+function previewDetail(spec: RuntimeCreateSpec): Record<string, unknown> {
+  return {
+    hasPublicUrl: Boolean(spec.preview?.publicUrl),
+    hasSiteUrl: Boolean(spec.preview?.siteUrl),
+    hasFixedPort: spec.preview?.port !== undefined,
+    bind: spec.preview?.bind ?? null,
+  }
+}
+
+function summarizeBlueprint(blueprint: unknown): { steps: number; dependencySteps: number; activationSteps: number; stepTypes: string[] } {
+  const steps = blueprint && typeof blueprint === "object" && "steps" in blueprint && Array.isArray(blueprint.steps) ? blueprint.steps : []
+  const stepTypes = steps.map((step) => stepType(step)).filter((step): step is string => Boolean(step))
+  return {
+    steps: steps.length,
+    dependencySteps: stepTypes.filter((step) => /install|import|download|package/i.test(step)).length,
+    activationSteps: stepTypes.filter((step) => /activate|enable/i.test(step)).length,
+    stepTypes,
+  }
+}
+
+function stepType(step: unknown): string | undefined {
+  if (!step || typeof step !== "object") {
+    return undefined
+  }
+
+  const candidate = step as Record<string, unknown>
+  for (const key of ["step", "type", "command", "name"]) {
+    if (typeof candidate[key] === "string") {
+      return candidate[key]
+    }
+  }
+
+  return undefined
+}
+
+function errorDetail(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+    }
+  }
+
+  return { message: String(error) }
 }
 
 export interface PlaygroundWordPressArchiveCacheValidation {

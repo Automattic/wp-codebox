@@ -128,6 +128,7 @@ final class WP_Codebox_Abilities {
 								'description' => 'AI provider plugin directories to mount and activate inside the sandbox.',
 								'items'       => array( 'type' => 'string' ),
 							),
+							'agent_bundles'          => self::agent_bundle_schema(),
 							'parent_request'         => array(
 								'type'        => 'object',
 								'description' => 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.',
@@ -241,6 +242,7 @@ final class WP_Codebox_Abilities {
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
+							'agent_bundles'          => self::agent_bundle_schema(),
 							'parent_request'         => array( 'type' => 'object' ),
 							'mounts'                 => $mount_schema,
 							'workspaces'             => array(
@@ -366,6 +368,7 @@ final class WP_Codebox_Abilities {
 								'description' => 'AI provider plugin directories the browser sandbox should have available before code execution.',
 								'items'       => array( 'type' => 'string' ),
 							),
+							'agent_bundles'      => self::agent_bundle_schema(),
 							'inherit'            => $inherit_schema,
 							'secret_env'         => array(
 								'type'        => 'array',
@@ -917,6 +920,35 @@ final class WP_Codebox_Abilities {
 							'activeTheme'   => array( 'type' => 'boolean' ),
 						),
 					),
+				),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
+	private static function agent_bundle_schema(): array {
+		return array(
+			'type'        => 'array',
+			'description' => 'Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.',
+			'items'       => array(
+				'type'       => 'object',
+				'anyOf'      => array(
+					array( 'required' => array( 'source' ) ),
+					array( 'required' => array( 'bundle' ) ),
+				),
+				'properties' => array(
+					'source'      => array(
+						'type'        => 'string',
+						'description' => 'Bundle source accepted by datamachine/import-agent: local directory, .zip, .json, or remote URL.',
+					),
+					'bundle'      => array(
+						'type'        => 'object',
+						'description' => 'Inline Data Machine agent bundle JSON staged in the sandbox and imported through datamachine/import-agent.',
+					),
+					'slug'        => array( 'type' => 'string' ),
+					'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
+					'owner_id'    => array( 'type' => 'integer' ),
+					'token_env'   => array( 'type' => 'string' ),
 				),
 			),
 		);
@@ -1697,6 +1729,7 @@ final class WP_Codebox_Abilities {
 				'message'     => (string) $task_input['goal'],
 				'session_id'  => $session_id,
 				'task_input'  => $task_input,
+				'agent_bundles' => self::normalize_agent_bundles( $input['agent_bundles'] ?? $input['agentBundles'] ?? array() ),
 				'inheritance' => $inheritance,
 				'secret_env'  => self::browser_secret_env_names( $input ),
 				'artifacts'   => array(
@@ -1766,6 +1799,44 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return string[] */
 	private static function browser_secret_env_names( array $input ): array {
 		return array_values( array_unique( array_filter( self::string_list( $input['secret_env'] ?? array() ), static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) ) );
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function normalize_agent_bundles( mixed $bundles ): array {
+		$normalized = array();
+		foreach ( is_array( $bundles ) ? $bundles : array() as $bundle ) {
+			if ( ! is_array( $bundle ) ) {
+				continue;
+			}
+			$source = isset( $bundle['source'] ) ? trim( (string) $bundle['source'] ) : '';
+			$inline = is_array( $bundle['bundle'] ?? null ) ? $bundle['bundle'] : null;
+			if ( '' === $source && null === $inline ) {
+				continue;
+			}
+
+			$entry = array();
+			if ( '' !== $source ) {
+				$entry['source'] = $source;
+			}
+			if ( null !== $inline ) {
+				$entry['bundle'] = $inline;
+			}
+			foreach ( array( 'slug', 'token_env' ) as $field ) {
+				$value = isset( $bundle[ $field ] ) ? trim( (string) $bundle[ $field ] ) : '';
+				if ( '' !== $value ) {
+					$entry[ $field ] = $value;
+				}
+			}
+			$on_conflict = (string) ( $bundle['on_conflict'] ?? 'upgrade' );
+			$entry['on_conflict'] = in_array( $on_conflict, array( 'error', 'skip', 'upgrade' ), true ) ? $on_conflict : 'upgrade';
+			if ( isset( $bundle['owner_id'] ) && (int) $bundle['owner_id'] > 0 ) {
+				$entry['owner_id'] = (int) $bundle['owner_id'];
+			}
+
+			$normalized[] = $entry;
+		}
+
+		return $normalized;
 	}
 
 	/** @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return string[] */
@@ -3493,6 +3564,7 @@ flush_rewrite_rules();
 						'target' => $task_path,
 					),
 				),
+				'agent_bundles' => is_array( $task_payload['agent_bundles'] ?? null ) ? $task_payload['agent_bundles'] : array(),
 			),
 			'workflow' => array(
 				'steps' => array(
@@ -3761,6 +3833,67 @@ function wp_codebox_browser_capture_artifact_bundle( array $payload ) {
 	);
 }
 
+function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
+	if ( empty( $bundle_specs ) ) {
+		return array();
+	}
+	$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( \'datamachine/import-agent\' ) : null;
+	if ( ! $ability instanceof WP_Ability ) {
+		return array( array(
+			\'success\' => false,
+			\'error\' => array(
+				\'code\' => \'datamachine_import_agent_unavailable\',
+				\'message\' => \'The canonical datamachine/import-agent ability is not available inside the Playground site.\',
+			),
+		) );
+	}
+
+	$imports = array();
+	foreach ( $bundle_specs as $index => $spec ) {
+		if ( ! is_array( $spec ) ) {
+			$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_spec_invalid\', \'message\' => \'Agent bundle spec must be an object.\' ) );
+			continue;
+		}
+		$source = isset( $spec[\'source\'] ) ? trim( (string) $spec[\'source\'] ) : \'\';
+		$temp_source = \'\';
+		if ( \'\' === $source && isset( $spec[\'bundle\'] ) && is_array( $spec[\'bundle\'] ) ) {
+			$temp_source = tempnam( sys_get_temp_dir(), \'wp-codebox-agent-bundle-\' );
+			if ( false === $temp_source ) {
+				$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_temp_failed\', \'message\' => \'Could not create a temporary agent bundle JSON file.\' ) );
+				continue;
+			}
+			$json_source = wp_json_encode( $spec[\'bundle\'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+			if ( ! is_string( $json_source ) || false === file_put_contents( $temp_source, $json_source ) ) {
+				@unlink( $temp_source );
+				$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_write_failed\', \'message\' => \'Could not stage inline agent bundle JSON.\' ) );
+				continue;
+			}
+			$source = $temp_source;
+		}
+		if ( \'\' === $source ) {
+			$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_source_missing\', \'message\' => \'Agent bundle spec requires source or bundle.\' ) );
+			continue;
+		}
+
+		$input = array( \'source\' => $source, \'on_conflict\' => (string) ( $spec[\'on_conflict\'] ?? \'upgrade\' ) );
+		foreach ( array( \'slug\', \'token_env\' ) as $field ) {
+			if ( isset( $spec[ $field ] ) && \'\' !== trim( (string) $spec[ $field ] ) ) {
+				$input[ $field ] = trim( (string) $spec[ $field ] );
+			}
+		}
+		$input[\'owner_id\'] = isset( $spec[\'owner_id\'] ) && (int) $spec[\'owner_id\'] > 0 ? (int) $spec[\'owner_id\'] : ( get_current_user_id() ?: 1 );
+		$result = $ability->execute( $input );
+		if ( \'\' !== $temp_source ) {
+			@unlink( $temp_source );
+		}
+		$imports[] = is_wp_error( $result )
+			? array( \'success\' => false, \'index\' => $index, \'source\' => isset( $spec[\'source\'] ) ? $source : \'inline\', \'error\' => array( \'code\' => $result->get_error_code(), \'message\' => $result->get_error_message(), \'data\' => $result->get_error_data() ) )
+			: array_merge( array( \'index\' => $index, \'source\' => isset( $spec[\'source\'] ) ? $source : \'inline\' ), is_array( $result ) ? $result : array( \'result\' => $result ) );
+	}
+
+	return $imports;
+}
+
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
 
@@ -3783,6 +3916,7 @@ if ( is_readable( $task_path ) ) {
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
+$agent_bundle_imports = array();
 $base_input = array(
 	\'agent\' => $agent,
 	\'message\' => $message,
@@ -3815,12 +3949,16 @@ if ( ! $wp_codebox_is_playground ) {
 		)
 	);
 } else {
+	$agent_bundle_imports = wp_codebox_browser_import_agent_bundles( is_array( $payload[\'agent_bundles\'] ?? null ) ? $payload[\'agent_bundles\'] : array() );
 	if ( \'\' !== $permission_filter ) {
 		add_filter( $permission_filter, \'__return_true\', 999 );
 	}
 
 	try {
-		if ( \'task\' === $invocation_type ) {
+		$failed_imports = array_filter( $agent_bundle_imports, static fn( $import ) => is_array( $import ) && empty( $import[\'success\'] ) );
+		if ( ! empty( $failed_imports ) ) {
+			$response = new WP_Error( \'wp_codebox_agent_bundle_import_failed\', \'One or more Data Machine agent bundles failed to import before sandbox invocation.\', array( \'agent_bundle_imports\' => array_values( $failed_imports ) ) );
+		} elseif ( \'task\' === $invocation_type ) {
 			$hook = (string) ( $invocation[\'hook\'] ?? $invocation[\'name\'] ?? \'\' );
 			if ( \'\' === $hook || ! has_filter( $hook ) ) {
 				$response = new WP_Error( \'wp_codebox_browser_task_unavailable\', \'The requested sandbox task hook is not registered inside the Playground site.\', array( \'hook\' => $hook ) );
@@ -3864,6 +4002,7 @@ $invocation_metadata = array_filter(
 $diagnostics = array(
 	\'capture_count\' => count( $captures ),
 	\'captured_paths\' => array_values( array_map( static fn( $capture ) => (string) ( $capture[\'path\'] ?? \'\' ), $captures ) ),
+	\'agent_bundle_imports\' => $agent_bundle_imports,
 );
 $provenance = array(
 	\'generated_by\' => \'wp-codebox/browser-runner\',

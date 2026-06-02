@@ -886,6 +886,23 @@ $browser_inherited_session = call_user_func(
 	array(
 		'goal'    => 'Invoke a browser agent with inherited connector metadata.',
 		'inherit' => array( 'connectors' => array( 'primary-ai' ) ),
+		'agent_bundles' => array(
+			array(
+				'source' => 'https://example.test/site-generator-agent.json',
+				'slug'   => 'site-generator',
+			),
+			array(
+				'bundle' => array(
+					'bundle_version' => '1.0.0',
+					'agent'          => array(
+						'agent_slug'   => 'repair-agent',
+						'agent_name'   => 'Repair Agent',
+						'agent_config' => array(),
+					),
+				),
+				'slug' => 'repair-agent',
+			),
+		),
 	)
 );
 $browser_inherited_encoded = ! is_wp_error( $browser_inherited_session ) ? json_encode( $browser_inherited_session, JSON_UNESCAPED_SLASHES ) : '';
@@ -894,6 +911,8 @@ $assert( 'browser Playground session packages inherited provider plugin path', !
 $assert( 'browser Playground session embeds first-class browser task payload', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/browser-agent-task-payload/v1' === ( $browser_inherited_session['task_payload']['schema'] ?? '' ) && 'openai' === ( $browser_inherited_session['recipe']['browser']['task_payload']['provider'] ?? '' ) && 'gpt-5.5' === ( $browser_inherited_session['recipe']['browser']['task_payload']['model'] ?? '' ) );
 $assert( 'browser Playground session records inherited connector credential provenance without values', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/connector-credentials/v1' === ( $browser_inherited_session['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $browser_inherited_session['task_payload']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) && str_contains( $browser_inherited_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_inherited_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_inherited_encoded, 'secret_env_values' ) );
 $assert( 'browser Playground recipe defaults to agents chat invocation with embedded payload', ! is_wp_error( $browser_inherited_session ) && 'ability' === ( $browser_inherited_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'agents/chat' === ( $browser_inherited_session['recipe']['browser']['invocation']['name'] ?? '' ) && str_contains( (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) );
+$browser_runner_code = (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
+$assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
@@ -1368,6 +1387,24 @@ $homeboy_result = $runner->run(
 			'provider'             => 'openai',
 			'model'                => 'gpt-5.5',
 			'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+			'agent_bundles'        => array(
+				array(
+					'source'      => $root . '/site-generator-agent.json',
+					'slug'        => 'site-generator',
+					'on_conflict' => 'upgrade',
+				),
+				array(
+					'bundle' => array(
+						'bundle_version' => '1.0.0',
+						'agent'          => array(
+							'agent_slug'   => 'repair-agent',
+							'agent_name'   => 'Repair Agent',
+							'agent_config' => array(),
+						),
+					),
+					'slug'   => 'repair-agent',
+				),
+			),
 			'secret_env'           => array( 'GITHUB_TOKEN' ),
 			'mounts'               => array(
 				array(
@@ -1421,6 +1458,7 @@ $homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner preserves multiple Data Machine agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
 $assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
 $assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );
