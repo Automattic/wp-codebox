@@ -71,9 +71,10 @@ final class WP_Codebox_Agent_Task {
 		if ( isset( $input['orchestrator'] ) && is_array( $input['orchestrator'] ) ) {
 			$session['orchestrator'] = array_filter(
 				array(
-					'id'     => isset( $input['orchestrator']['id'] ) ? (string) $input['orchestrator']['id'] : '',
-					'type'   => isset( $input['orchestrator']['type'] ) ? (string) $input['orchestrator']['type'] : '',
-					'job_id' => isset( $input['orchestrator']['job_id'] ) ? (string) $input['orchestrator']['job_id'] : '',
+					'id'            => isset( $input['orchestrator']['id'] ) ? (string) $input['orchestrator']['id'] : '',
+					'type'          => isset( $input['orchestrator']['type'] ) ? (string) $input['orchestrator']['type'] : '',
+					'job_id'        => isset( $input['orchestrator']['job_id'] ) ? (string) $input['orchestrator']['job_id'] : '',
+					'agent_task_id' => isset( $input['orchestrator']['agent_task_id'] ) ? (string) $input['orchestrator']['agent_task_id'] : '',
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			);

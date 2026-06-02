@@ -39,6 +39,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
+		$input = $this->normalize_parent_task_request( $input );
+		if ( is_wp_error( $input ) ) {
+			return $input;
+		}
+
 		$task_input = $this->task_input( $input );
 		if ( is_wp_error( $task_input ) ) {
 			return $task_input;
@@ -161,6 +166,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	public function run_batch( array $input ): array|WP_Error {
 		if ( ! $this->shell_available() ) {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
+		}
+
+		$input = $this->normalize_parent_task_request( $input );
+		if ( is_wp_error( $input ) ) {
+			return $input;
 		}
 
 		$task_inputs = $this->task_inputs( $input );
@@ -353,6 +363,80 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return true;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function normalize_parent_task_request( array $input ): array|WP_Error {
+		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
+		$schema  = (string) ( $request['schema'] ?? '' );
+		if ( 'homeboy/wp-codebox-task-request/v1' !== $schema ) {
+			return $input;
+		}
+
+		$task = is_array( $request['task'] ?? null ) ? $request['task'] : array();
+		$goal = trim( (string) ( $task['goal'] ?? $task['prompt'] ?? $request['goal'] ?? $request['task_prompt'] ?? '' ) );
+		if ( '' === $goal ) {
+			return new WP_Error( 'wp_codebox_parent_task_missing', 'parent_request.task.prompt or parent_request.task.goal is required.', array( 'status' => 400 ) );
+		}
+
+		$workspace_paths = array_filter(
+			array(
+				(string) ( $input['agents_api_path'] ?? $request['agents_api'] ?? '' ),
+				(string) ( $request['homeboy'] ?? '' ),
+				(string) ( $request['homeboy_extensions'] ?? '' ),
+			),
+			static fn( string $path ): bool => '' !== trim( $path )
+		);
+		$workspaces      = $this->workspace_entries_for_paths( $workspace_paths );
+		$workspace_slugs = array_map( static fn( array $workspace ): string => (string) ( $workspace['seed']['slug'] ?? '' ), $workspaces );
+		$workspace_slugs = array_values( array_filter( $workspace_slugs, static fn( string $slug ): bool => '' !== $slug ) );
+
+		if ( ! empty( $workspace_slugs ) ) {
+			$goal .= "\n\nUse Data Machine Code workspace repos " . implode( ', ', array_map( static fn( string $slug ): string => '`' . $slug . '`', $workspace_slugs ) ) . ' for workspace_* tool calls.';
+		}
+
+		$context = is_array( $task['context'] ?? null ) ? $task['context'] : array();
+		foreach ( array( 'sandbox_session_id', 'group_key', 'audit_findings', 'orchestrator' ) as $context_key ) {
+			if ( array_key_exists( $context_key, $request ) ) {
+				$context[ $context_key ] = $request[ $context_key ];
+			}
+		}
+
+		$normalized = array_merge(
+			$input,
+			array_filter(
+				array(
+					'goal'                   => $goal,
+					'target'                 => is_array( $task['target'] ?? null ) ? $task['target'] : array(),
+					'allowed_tools'          => is_array( $task['allowed_tools'] ?? null ) ? $task['allowed_tools'] : array(),
+					'expected_artifacts'     => is_array( $task['expected_artifacts'] ?? null ) ? $task['expected_artifacts'] : array(),
+					'policy'                 => is_array( $task['policy'] ?? null ) ? $task['policy'] : array(),
+					'context'                => $context,
+					'provider'               => (string) ( $input['provider'] ?? $request['provider'] ?? '' ),
+					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
+					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
+					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
+					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
+					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $workspaces ),
+					'runtime_stack_mounts'   => $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array(), $request['runtime_stack_mounts'] ?? array() ),
+					'runtime_overlays'       => $this->merge_array_lists( $input['runtime_overlays'] ?? array(), $request['runtime_overlays'] ?? array() ),
+					'task_timeout_seconds'   => (int) ( $input['task_timeout_seconds'] ?? $request['task_timeout_seconds'] ?? $request['taskTimeoutSeconds'] ?? 0 ),
+					'max_turns'              => (int) ( $input['max_turns'] ?? $request['max_turns'] ?? $request['maxTurns'] ?? 0 ),
+					'sandbox_session_id'     => (string) ( $input['sandbox_session_id'] ?? $request['sandbox_session_id'] ?? '' ),
+					'orchestrator'           => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : ( is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array() ),
+					'artifacts_path'         => (string) ( $input['artifacts_path'] ?? $request['artifacts'] ?? '' ),
+					'wp_codebox_bin'         => (string) ( $input['wp_codebox_bin'] ?? $request['wp_codebox_bin'] ?? '' ),
+					'agents_api_path'        => (string) ( $input['agents_api_path'] ?? $request['agents_api'] ?? '' ),
+					'data_machine_path'      => (string) ( $input['data_machine_path'] ?? $request['data_machine'] ?? '' ),
+					'data_machine_code_path' => (string) ( $input['data_machine_code_path'] ?? $request['data_machine_code'] ?? '' ),
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value && 0 !== $value
+			)
+		);
+
+		unset( $normalized['parent_request'] );
+
+		return $normalized;
 	}
 
 	private function agent_slug( array $input ): string {
@@ -849,6 +933,61 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				)
 			)
 		);
+	}
+
+	/** @return string[] */
+	private function merge_string_lists( mixed ...$lists ): array {
+		$merged = array();
+		foreach ( $lists as $list ) {
+			$merged = array_merge( $merged, $this->string_list( $list ) );
+		}
+
+		return array_values( array_unique( $merged ) );
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private function merge_array_lists( mixed ...$lists ): array {
+		$merged = array();
+		foreach ( $lists as $list ) {
+			foreach ( is_array( $list ) ? $list : array() as $entry ) {
+				if ( is_array( $entry ) ) {
+					$merged[] = $entry;
+				}
+			}
+		}
+
+		return $merged;
+	}
+
+	/** @param string[] $paths @return array<int,array<string,mixed>> */
+	private function workspace_entries_for_paths( array $paths ): array {
+		$workspaces = array();
+		foreach ( $paths as $path ) {
+			$path = $this->clean_path( $path );
+			if ( '' === $path || ! is_dir( $path ) ) {
+				continue;
+			}
+
+			$slug = preg_replace( '/[^A-Za-z0-9_-]/', '-', explode( '@', basename( $path ) )[0] );
+			$slug = is_string( $slug ) ? trim( $slug, '-' ) : '';
+			if ( '' === $slug ) {
+				continue;
+			}
+
+			$workspaces[] = array(
+				'seed'       => array(
+					'type'         => 'directory',
+					'source'       => $path,
+					'slug'         => $slug,
+					'excludePaths' => array( '.git', '.homeboy', '.homeboy-bin', '.homeboy-build', '.datamachine', '.DS_Store', '._*', '.env*', 'node_modules', 'target', 'vendor' ),
+				),
+				'target'     => '/workspace/' . $slug,
+				'mode'       => 'readwrite',
+				'sourceMode' => 'repo-backed',
+			);
+		}
+
+		return $workspaces;
 	}
 
 	/** @param string[] $tools */
@@ -1364,6 +1503,41 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $normalized;
 	}
 
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
+	private function recipe_workspaces( array $input ): array|WP_Error {
+		$workspaces = is_array( $input['workspaces'] ?? null ) ? $input['workspaces'] : array();
+		foreach ( $workspaces as $index => $workspace ) {
+			if ( ! is_array( $workspace ) || ! is_array( $workspace['seed'] ?? null ) ) {
+				return new WP_Error( 'wp_codebox_workspace_invalid', 'Each WP Codebox workspace must include a seed object.', array( 'status' => 400, 'index' => $index ) );
+			}
+			if ( 'directory' === (string) ( $workspace['seed']['type'] ?? '' ) && empty( $workspace['seed']['source'] ) ) {
+				return new WP_Error( 'wp_codebox_workspace_source_missing', 'Directory workspaces require seed.source.', array( 'status' => 400, 'index' => $index ) );
+			}
+		}
+
+		return $workspaces;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function recipe_runtime( array $input, string $wp_version ): array|WP_Error {
+		$runtime = array(
+			'wp'        => $wp_version,
+			'blueprint' => array( 'steps' => array() ),
+		);
+
+		$stack_mounts = $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array() );
+		if ( ! empty( $stack_mounts ) ) {
+			$runtime['stack'] = array( 'mounts' => $stack_mounts );
+		}
+
+		$overlays = $this->merge_array_lists( $input['runtime_overlays'] ?? array() );
+		if ( ! empty( $overlays ) ) {
+			$runtime['overlays'] = $overlays;
+		}
+
+		return $runtime;
+	}
+
 	private function command_prefix( string $bin ): string|WP_Error {
 		if ( str_ends_with( $bin, '.js' ) && is_file( $bin ) ) {
 			$node = $this->node_binary();
@@ -1501,6 +1675,14 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		if ( is_wp_error( $mounts ) ) {
 			return $mounts;
 		}
+		$workspaces = $this->recipe_workspaces( $input );
+		if ( is_wp_error( $workspaces ) ) {
+			return $workspaces;
+		}
+		$runtime = $this->recipe_runtime( $input, $wp_version );
+		if ( is_wp_error( $runtime ) ) {
+			return $runtime;
+		}
 
 		$site_seed_payload = $this->parent_site_seed_recipe_entries( $input );
 		if ( is_wp_error( $site_seed_payload ) ) {
@@ -1509,6 +1691,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		$recipe_inputs = array(
 			'mounts'       => $mounts,
+			'workspaces'   => $workspaces,
 			'inherit'      => $this->inheritance_request( $input ),
 			'inheritance'  => $inheritance,
 			'extraPlugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
@@ -1520,10 +1703,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		$recipe = array(
 			'schema'   => 'wp-codebox/workspace-recipe/v1',
-			'runtime'  => array(
-				'wp'        => $wp_version,
-				'blueprint' => array( 'steps' => array() ),
-			),
+			'runtime'  => $runtime,
 			'inputs'   => $recipe_inputs,
 			'workflow' => array( 'steps' => $steps ),
 		);

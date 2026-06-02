@@ -1358,6 +1358,71 @@ $assert( 'runner recipe passes secret env name only', str_contains( $captured_re
 $assert( 'runner passes timeout to command runner and recipe', 7200 === $captured_timeout && str_contains( $captured_recipe, 'timeout-seconds=7200' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
 
+$homeboy_result = $runner->run(
+	array(
+		'parent_request' => array(
+			'schema'               => 'homeboy/wp-codebox-task-request/v1',
+			'provider'             => 'openai',
+			'model'                => 'gpt-5.5',
+			'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+			'secret_env'           => array( 'GITHUB_TOKEN' ),
+			'mounts'               => array(
+				array(
+					'source'   => $root . '/editable-plugin',
+					'target'   => '/workspace/editable-plugin',
+					'mode'     => 'readwrite',
+					'metadata' => array( 'kind' => 'homeboy-audit-fanout' ),
+				),
+			),
+			'runtime_stack_mounts' => array(
+				array(
+					'source' => $root . '/agents-api',
+					'target' => '/runtime/agents-api',
+					'mode'   => 'readonly',
+				),
+			),
+			'runtime_overlays'     => array(
+				array(
+					'id'     => 'homeboy-runtime-overlay',
+					'source' => $root . '/data-machine-code',
+				),
+			),
+			'task_timeout_seconds' => 3600,
+			'max_turns'            => 8,
+			'sandbox_session_id'   => 'homeboy-sandbox-session-123',
+			'group_key'            => 'homeboy-group-key',
+			'audit_findings'       => array( array( 'id' => 'finding-1', 'summary' => 'Finding one' ) ),
+			'artifacts'            => $root . '/artifacts/homeboy',
+			'orchestrator'         => array(
+				'type'          => 'homeboy',
+				'id'            => 'homeboy-agent-task',
+				'job_id'        => 'homeboy-job-123',
+				'agent_task_id' => 'agent-task-123',
+			),
+			'agents_api'           => $root . '/agents-api',
+			'data_machine'         => $root . '/data-machine',
+			'data_machine_code'    => $root . '/data-machine-code',
+			'homeboy'              => $root . '/editable-plugin',
+			'homeboy_extensions'   => $root . '/plugin-root/agents-api',
+			'task'                 => array(
+				'prompt'             => 'Run the Homeboy-shaped Codebox task.',
+				'expected_artifacts' => array( 'patch' ),
+				'policy'             => array( 'kind' => 'audit-remediation' ),
+				'context'            => array( 'group_key' => 'smoke' ),
+			),
+		),
+	)
+);
+$homeboy_recipe = json_decode( $captured_recipe, true );
+$homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
+$assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
+$assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
+$assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
+$assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
+$assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );
+$assert( 'runner passes Homeboy task context to sandbox agent', str_contains( $captured_recipe, 'homeboy-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
+
 $GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';
 $GLOBALS['wp_codebox_options']['active_plugins'] = array( 'agents-api/agents-api.php' );
 $seed_result = $runner->run(

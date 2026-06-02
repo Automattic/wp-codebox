@@ -128,7 +128,26 @@ final class WP_Codebox_Abilities {
 								'description' => 'AI provider plugin directories to mount and activate inside the sandbox.',
 								'items'       => array( 'type' => 'string' ),
 							),
+							'parent_request'         => array(
+								'type'        => 'object',
+								'description' => 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.',
+							),
 							'mounts'                 => $mount_schema,
+							'workspaces'             => array(
+								'type'        => 'array',
+								'description' => 'Recipe workspace entries to seed as policy-checked writable repositories.',
+								'items'       => array( 'type' => 'object' ),
+							),
+							'runtime_stack_mounts'   => array(
+								'type'        => 'array',
+								'description' => 'Runtime stack mounts to pass through to recipe.runtime.stack.mounts.',
+								'items'       => array( 'type' => 'object' ),
+							),
+							'runtime_overlays'       => array(
+								'type'        => 'array',
+								'description' => 'Runtime overlays to pass through to recipe.runtime.overlays.',
+								'items'       => array( 'type' => 'object' ),
+							),
 							'site_seeds'             => $site_seed_schema,
 							'inherit'                => $inherit_schema,
 							'sandbox_session_id'     => $session_input['sandbox_session_id'],
@@ -222,7 +241,20 @@ final class WP_Codebox_Abilities {
 								'type'  => 'array',
 								'items' => array( 'type' => 'string' ),
 							),
+							'parent_request'         => array( 'type' => 'object' ),
 							'mounts'                 => $mount_schema,
+							'workspaces'             => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'object' ),
+							),
+							'runtime_stack_mounts'   => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'object' ),
+							),
+							'runtime_overlays'       => array(
+								'type'  => 'array',
+								'items' => array( 'type' => 'object' ),
+							),
 							'inherit'                => $inherit_schema,
 							'sandbox_session_id'     => $session_input['sandbox_session_id'],
 							'orchestrator'           => $session_input['orchestrator'],
