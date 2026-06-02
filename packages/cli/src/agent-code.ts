@@ -470,6 +470,16 @@ Use the available workspace tools by their exact names: ${sandboxToolNames().joi
 
 Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write or workspace_edit.
 
+If the provider returns tool calls as text instead of native function calls, use Data Machine's XML fallback exactly like this:
+
+<function_calls>
+<invoke name="workspace_ls">
+<parameter name="path">${SANDBOX_WORKSPACE_ROOT}</parameter>
+</invoke>
+</function_calls>
+
+Do not emit direct XML tags such as <workspace_ls path="..." />; those are plain text and will not execute.
+
 The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
 }
 
