@@ -358,6 +358,7 @@ $artifact_abilities = array(
 	'wp-codebox/get-artifact',
 	'wp-codebox/discard-artifact',
 	'wp-codebox/persist-browser-artifact',
+	'wp-codebox/review-artifact',
 	'wp-codebox/apply-approved-artifact',
 	'wp-codebox/stage-artifact-apply',
 );
@@ -1851,6 +1852,75 @@ $reference_failure = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifa
 	)
 );
 $assert( 'pending artifact apply rejects malformed references before staging', is_wp_error( $reference_failure ) && 'wp_codebox_artifact_verification_failed' === $reference_failure->get_error_code() && in_array( 'malformed-reference', $violation_codes( $reference_failure ), true ) && 'https://github.com/chubes4/wp-codebox/issues/176' === ( $reference_failure->get_error_data()['issue_url'] ?? '' ) );
+
+$review_fixture_root = $root . '/artifact-review-fixture';
+$copy_directory( $bundle_dir, $review_fixture_root . '/runtime-test' );
+$review_apply_payloads = array();
+$GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ) use ( &$review_apply_payloads ): array {
+	$review_apply_payloads[] = $payload;
+	return array(
+		'schema'          => 'wp-codebox/apply-result/v1',
+		'adapter'         => 'review-approve-adapter',
+		'status'          => 'queued',
+		'target'          => is_array( $payload['apply_target'] ?? null ) ? $payload['apply_target'] : array(),
+		'applied_files'   => $payload['approved_files'] ?? array(),
+		'audit_reference' => 'review-approve:test',
+	);
+};
+$approved_review = $artifacts->review_artifact(
+	array(
+		'artifacts_path'  => $review_fixture_root,
+		'artifact_id'     => $artifact_id,
+		'action'          => 'approve',
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '' ),
+		'approver'        => 'site-user:reviewer',
+		'reason'          => 'Ship the generated fix.',
+		'decided_at'      => '2026-05-20T00:00:00Z',
+		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+		'context'         => array( 'product' => 'studio-web' ),
+	)
+);
+$assert( 'artifact review approve returns generic decision result', ! is_wp_error( $approved_review ) && 'wp-codebox/artifact-review-result/v1' === ( $approved_review['schema'] ?? '' ) && 'approve' === ( $approved_review['action'] ?? '' ) && 'wp-codebox/artifact-apply/v1' === ( $approved_review['result']['schema'] ?? '' ) );
+$assert( 'artifact review approve preserves approved files and provenance', ! is_wp_error( $approved_review ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $approved_review['decision']['approved_files'] ?? array() ) && 'chat:user-7' === ( $approved_review['decision']['requester'] ?? '' ) && 'chat:user-7' === ( $approved_review['decision']['provenance']['artifact']['task']['requester'] ?? '' ) );
+$assert( 'artifact review approve returns browser decision message shape', ! is_wp_error( $approved_review ) && 'wp-codebox:artifact-review-decision' === ( $approved_review['message']['type'] ?? '' ) && 'wp-codebox/artifact-review-decision/v1' === ( $approved_review['message']['payload']['schema'] ?? '' ) && 'wp-codebox/wordpress-plugin' === ( $approved_review['message']['payload']['source'] ?? '' ) );
+$assert( 'artifact review approve delegates approval consequence to adapter', 1 === count( $review_apply_payloads ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $review_apply_payloads[0]['apply_target'] ?? array() ) );
+
+$captured_review_decisions = array();
+$GLOBALS['wp_codebox_filters']['wp_codebox_review_artifact_decision'] = function ( mixed $value, array $payload ) use ( &$captured_review_decisions ): array {
+	$captured_review_decisions[] = $payload['decision'];
+	return array(
+		'schema'          => 'wp-codebox/artifact-review-result/v1',
+		'adapter'         => 'review-state-adapter',
+		'status'          => $payload['decision']['action'],
+		'audit_reference' => 'review-state:' . $payload['decision']['action'],
+	);
+};
+$rejected_review = $artifacts->review_artifact(
+	array(
+		'artifacts_path' => $review_fixture_root,
+		'artifact_id'    => $artifact_id,
+		'action'         => 'reject',
+		'approver'       => 'site-user:reviewer',
+		'reason'         => 'Wrong target.',
+	)
+);
+$changes_review = $artifacts->review_artifact(
+	array(
+		'artifacts_path' => $review_fixture_root,
+		'artifact_id'    => $artifact_id,
+		'action'         => 'request-changes',
+		'approver'       => 'site-user:reviewer',
+		'reason'         => 'Limit the patch to generated.txt.',
+	)
+);
+$assert( 'artifact review reject normalizes decision without approved files', ! is_wp_error( $rejected_review ) && 'reject' === ( $rejected_review['decision']['action'] ?? '' ) && array() === ( $rejected_review['decision']['approved_files'] ?? array() ) && 'Wrong target.' === ( $rejected_review['decision']['reason'] ?? '' ) );
+$assert( 'artifact review request-changes normalizes decision message', ! is_wp_error( $changes_review ) && 'request-changes' === ( $changes_review['message']['payload']['action'] ?? '' ) && 'review-state-adapter' === ( $changes_review['result']['adapter'] ?? '' ) );
+$assert( 'artifact review hook receives reject and request-changes decisions', array( 'reject', 'request-changes' ) === array_map( static fn( array $decision ): string => (string) $decision['action'], $captured_review_decisions ) );
+$review_audit_path = $review_fixture_root . '/review-audit.jsonl';
+$review_audit_lines = is_file( $review_audit_path ) ? array_values( array_filter( explode( "\n", trim( (string) file_get_contents( $review_audit_path ) ) ) ) ) : array();
+$review_audit_first = isset( $review_audit_lines[0] ) ? json_decode( $review_audit_lines[0], true ) : array();
+$assert( 'artifact review audit records decisions separately from apply consequences', 3 === count( $review_audit_lines ) && 'wp-codebox/artifact-review-audit/v1' === ( $review_audit_first['schema'] ?? '' ) && 'approve' === ( $review_audit_first['action'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_review_artifact_decision'] );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ): array {
 	return array(

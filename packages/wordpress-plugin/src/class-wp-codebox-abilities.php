@@ -551,6 +551,55 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/review-artifact',
+				array(
+					'label'               => 'Review WP Codebox Artifact',
+					'description'         => 'Normalize an artifact review decision from a browser or parent product, then delegate only approval consequences through product-owned adapters.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'artifact_id', 'action' ),
+						'properties' => array_merge(
+							$artifact_id_schema,
+							array(
+								'action'         => array(
+									'type'        => 'string',
+									'description' => 'Review decision action.',
+									'enum'        => array( 'approve', 'reject', 'request-changes' ),
+								),
+								'approved_files' => array(
+									'type'        => 'array',
+									'description' => 'Explicit sandbox file paths approved by the reviewer. Required for approve decisions.',
+									'items'       => array( 'type' => 'string' ),
+								),
+								'approver'       => array(
+									'type'        => 'string',
+									'description' => 'Parent-site reviewer principal for decision and audit records.',
+								),
+								'reason'         => array(
+									'type'        => 'string',
+									'description' => 'Optional reviewer note for reject or request-changes decisions.',
+								),
+								'decided_at'     => array( 'type' => 'string' ),
+								'apply_target'   => array(
+									'type'        => 'object',
+									'description' => 'Optional parent-control-plane target metadata passed through to approval adapters.',
+								),
+								'context'        => array(
+									'type'        => 'object',
+									'description' => 'Opaque caller-owned context preserved on the normalized decision.',
+								),
+							)
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'review_artifact' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/apply-approved-artifact',
 				array(
 					'label'               => 'Apply Approved WP Codebox Artifact',
@@ -1201,6 +1250,11 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function persist_browser_artifact( array $input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->persist_browser_bundle( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function review_artifact( array $input ): array|WP_Error {
+		return ( new WP_Codebox_Artifacts() )->review_artifact( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

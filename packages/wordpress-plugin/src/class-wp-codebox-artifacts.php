@@ -14,6 +14,10 @@ final class WP_Codebox_Artifacts {
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
 	private const APPLY_AUDIT_SCHEMA = 'wp-codebox/apply-audit/v1';
+	private const REVIEW_DECISION_SCHEMA = 'wp-codebox/artifact-review-decision/v1';
+	private const REVIEW_DECISION_MESSAGE_TYPE = 'wp-codebox:artifact-review-decision';
+	private const REVIEW_DECISION_RESULT_SCHEMA = 'wp-codebox/artifact-review-result/v1';
+	private const REVIEW_AUDIT_SCHEMA = 'wp-codebox/artifact-review-audit/v1';
 	private const VERIFICATION_SCHEMA = 'wp-codebox/artifact-bundle-verification/v1';
 	private const BROWSER_PERSIST_SCHEMA = 'wp-codebox/browser-artifact-persistence/v1';
 	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/chubes4/wp-codebox/issues/176';
@@ -244,6 +248,91 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function review_artifact( array $input ): array|WP_Error {
+		$bundle = $this->resolve_bundle( $input );
+		if ( is_wp_error( $bundle ) ) {
+			return $bundle;
+		}
+
+		$root = $this->artifact_root( $input );
+		if ( is_wp_error( $root ) ) {
+			return $root;
+		}
+
+		$action = $this->review_action( $input );
+		if ( is_wp_error( $action ) ) {
+			return $action;
+		}
+
+		$verification = $this->verify_artifact_bundle( $bundle, $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
+		}
+
+		$approved_files = $this->approved_files( $input );
+		if ( 'approve' === $action && empty( $approved_files ) ) {
+			return new WP_Error( 'wp_codebox_approved_files_missing', 'approved_files must include at least one sandbox path for approve decisions.', array( 'status' => 400 ) );
+		}
+
+		$content_digest = $this->artifact_content_digest( $bundle );
+		if ( is_wp_error( $content_digest ) ) {
+			return $content_digest;
+		}
+
+		$decision = $this->review_decision_payload( $bundle, $input, $action, $approved_files, $content_digest );
+		$message  = array(
+			'type'    => self::REVIEW_DECISION_MESSAGE_TYPE,
+			'payload' => $decision,
+		);
+		$adapter_payload = array(
+			'decision'              => $decision,
+			'message'               => $message,
+			'artifact'              => $bundle,
+			'artifact_verification' => $verification,
+		);
+
+		$result = apply_filters( 'wp_codebox_review_artifact_decision', null, $adapter_payload );
+		if ( null === $result && 'approve' === $action ) {
+			$apply_input = array(
+				'artifacts_path'  => $root,
+				'artifact_id'     => (string) $bundle['id'],
+				'approved_files'  => $approved_files,
+				'approver'        => $decision['approver'] ?? null,
+				'apply_target'    => $decision['apply_target'] ?? null,
+			);
+			$result = $this->apply_approved( $apply_input );
+		}
+
+		$error = null;
+		if ( is_wp_error( $result ) ) {
+			$error = $result;
+			$this->record_review_audit( $root, $bundle, $decision, null, $error );
+			return $result;
+		}
+
+		$normalized_result = null === $result ? $this->default_review_result( $decision ) : $this->normalize_review_result( $result );
+		if ( is_wp_error( $normalized_result ) ) {
+			$this->record_review_audit( $root, $bundle, $decision, null, $normalized_result );
+			return $normalized_result;
+		}
+
+		$this->record_review_audit( $root, $bundle, $decision, $normalized_result, null );
+
+		return array(
+			'success'        => true,
+			'schema'         => self::REVIEW_DECISION_RESULT_SCHEMA,
+			'artifact_id'    => (string) $bundle['id'],
+			'action'         => $action,
+			'approved_files' => $approved_files,
+			'content_digest' => $content_digest,
+			'verification'   => $verification,
+			'decision'       => $decision,
+			'message'        => $message,
+			'result'         => $normalized_result,
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function apply_approved( array $input ): array|WP_Error {
 		$bundle = $this->resolve_bundle( $input );
 		if ( is_wp_error( $bundle ) ) {
@@ -348,6 +437,101 @@ final class WP_Codebox_Artifacts {
 			'verification'   => $verification,
 			'result'         => $result,
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. */
+	private function review_action( array $input ): string|WP_Error {
+		$action = trim( (string) ( $input['action'] ?? $input['decision'] ?? '' ) );
+		if ( '' === $action ) {
+			return new WP_Error( 'wp_codebox_review_action_missing', 'Review action is required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! in_array( $action, array( 'approve', 'reject', 'request-changes' ), true ) ) {
+			return new WP_Error( 'wp_codebox_review_action_invalid', 'Review action must be approve, reject, or request-changes.', array( 'status' => 400, 'action' => $action ) );
+		}
+
+		return $action;
+	}
+
+	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $input Ability input. @param string[] $approved_files Approved sandbox paths. @return array<string,mixed> */
+	private function review_decision_payload( array $bundle, array $input, string $action, array $approved_files, string $content_digest ): array {
+		$context      = is_array( $input['context'] ?? null ) ? $input['context'] : array();
+		$apply_target = is_array( $input['apply_target'] ?? null ) ? $input['apply_target'] : null;
+		$provenance   = array(
+			'artifact' => is_array( $bundle['metadata']['provenance'] ?? null ) ? $bundle['metadata']['provenance'] : array(),
+			'review'   => is_array( $bundle['review']['provenance'] ?? null ) ? $bundle['review']['provenance'] : array(),
+		);
+
+		$decision = array(
+			'schema'         => self::REVIEW_DECISION_SCHEMA,
+			'action'         => $action,
+			'artifact_id'    => (string) $bundle['id'],
+			'approved_files' => $approved_files,
+			'approver'       => $this->approver_principal( $input['approver'] ?? null ),
+			'reason'         => $this->optional_string( $input['reason'] ?? null ),
+			'decided_at'     => $this->optional_string( $input['decided_at'] ?? null ) ?? gmdate( 'c' ),
+			'source'         => 'wp-codebox/wordpress-plugin',
+			'provenance'     => $provenance,
+			'content_digest' => $content_digest,
+			'apply_target'   => $apply_target,
+			'requester'      => $this->requester_principal( $bundle ),
+			'context'        => empty( $context ) ? null : $context,
+		);
+
+		return $this->strip_null_values( $decision );
+	}
+
+	/** @param array<string,mixed> $decision Normalized decision. @return array<string,mixed> */
+	private function default_review_result( array $decision ): array {
+		return array(
+			'schema'          => self::REVIEW_DECISION_RESULT_SCHEMA,
+			'adapter'         => 'wp-codebox/default-review-decision',
+			'status'          => (string) $decision['action'],
+			'audit_reference' => (string) $decision['artifact_id'] . '#' . (string) $decision['decided_at'],
+		);
+	}
+
+	/** @return array<string,mixed>|WP_Error */
+	private function normalize_review_result( mixed $result ): array|WP_Error {
+		if ( ! is_array( $result ) ) {
+			return new WP_Error( 'wp_codebox_review_result_invalid', 'Review decision adapter returned an invalid result: result must be an object.', array( 'status' => 502 ) );
+		}
+
+		if ( isset( $result['schema'] ) && self::REVIEW_DECISION_RESULT_SCHEMA !== $result['schema'] && self::APPLY_SCHEMA !== $result['schema'] ) {
+			return new WP_Error( 'wp_codebox_review_result_invalid', 'Review decision adapter returned an invalid result: schema is not supported.', array( 'status' => 502 ) );
+		}
+
+		if ( self::APPLY_SCHEMA === ( $result['schema'] ?? null ) ) {
+			return $result;
+		}
+
+		$adapter = trim( (string) ( $result['adapter'] ?? '' ) );
+		if ( '' === $adapter ) {
+			return new WP_Error( 'wp_codebox_review_result_invalid', 'Review decision adapter returned an invalid result: result.adapter is required.', array( 'status' => 502 ) );
+		}
+
+		$status = trim( (string) ( $result['status'] ?? '' ) );
+		if ( '' === $status ) {
+			return new WP_Error( 'wp_codebox_review_result_invalid', 'Review decision adapter returned an invalid result: result.status is required.', array( 'status' => 502, 'adapter' => $adapter ) );
+		}
+
+		$normalized = array(
+			'schema'  => self::REVIEW_DECISION_RESULT_SCHEMA,
+			'adapter' => $adapter,
+			'status'  => $status,
+		);
+
+		foreach ( array( 'audit_reference', 'url', 'pr_url', 'comment_url' ) as $key ) {
+			if ( isset( $result[ $key ] ) && '' !== trim( (string) $result[ $key ] ) ) {
+				$normalized[ $key ] = (string) $result[ $key ];
+			}
+		}
+
+		if ( isset( $result['target'] ) && is_array( $result['target'] ) ) {
+			$normalized['target'] = $result['target'];
+		}
+
+		return $normalized;
 	}
 
 	/** @return array<string,mixed>|WP_Error */
@@ -1081,11 +1265,58 @@ final class WP_Codebox_Artifacts {
 		file_put_contents( $this->apply_audit_path( $root ), $line . "\n", FILE_APPEND | LOCK_EX );
 	}
 
+	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $decision Normalized decision. @param mixed $result Review adapter result. */
+	private function record_review_audit( string $root, array $bundle, array $decision, mixed $result, ?WP_Error $error ): void {
+		$record = array(
+			'schema'         => self::REVIEW_AUDIT_SCHEMA,
+			'timestamp'      => gmdate( 'c' ),
+			'artifact_id'    => (string) $bundle['id'],
+			'action'         => (string) ( $decision['action'] ?? '' ),
+			'content_digest' => (string) ( $decision['content_digest'] ?? $bundle['content_digest'] ?? '' ),
+			'requester'      => $decision['requester'] ?? $this->requester_principal( $bundle ),
+			'approver'       => $decision['approver'] ?? null,
+			'approved_files' => is_array( $decision['approved_files'] ?? null ) ? $decision['approved_files'] : array(),
+			'adapter'        => is_array( $result ) ? ( $result['adapter'] ?? null ) : $this->adapter_from_error( $error ),
+			'status'         => null === $error ? 'success' : 'failure',
+			'decision'       => $this->redact_audit_metadata( $decision ),
+		);
+
+		if ( is_array( $result ) ) {
+			$record['result'] = $this->redact_audit_metadata( $result );
+		}
+
+		if ( null !== $error ) {
+			$record['error'] = array(
+				'code'    => $error->get_error_code(),
+				'message' => $error->get_error_message(),
+				'data'    => $this->redact_audit_metadata( $error->get_error_data() ),
+			);
+		}
+
+		$record = $this->strip_null_values( $record );
+		$line   = function_exists( 'wp_json_encode' ) ? wp_json_encode( $record, JSON_UNESCAPED_SLASHES ) : json_encode( $record, JSON_UNESCAPED_SLASHES );
+		if ( false === $line ) {
+			return;
+		}
+
+		file_put_contents( $this->review_audit_path( $root ), $line . "\n", FILE_APPEND | LOCK_EX );
+	}
+
 	private function apply_audit_path( string $root ): string {
 		$path = $root . DIRECTORY_SEPARATOR . 'apply-audit.jsonl';
 
 		if ( function_exists( 'apply_filters' ) ) {
 			$path = (string) apply_filters( 'wp_codebox_apply_audit_path', $path, $root );
+		}
+
+		return $path;
+	}
+
+	private function review_audit_path( string $root ): string {
+		$path = $root . DIRECTORY_SEPARATOR . 'review-audit.jsonl';
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$path = (string) apply_filters( 'wp_codebox_review_audit_path', $path, $root );
 		}
 
 		return $path;
@@ -1123,6 +1354,12 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return null;
+	}
+
+	private function optional_string( mixed $value ): ?string {
+		$trimmed = trim( (string) $value );
+
+		return '' === $trimmed ? null : $trimmed;
 	}
 
 	private function adapter_from_error( ?WP_Error $error ): mixed {
