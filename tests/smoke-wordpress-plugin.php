@@ -367,7 +367,7 @@ $trusted_browser_authorization = array(
 		'scope'  => 'browser-session:create',
 	),
 );
-$GLOBALS['wp_codebox_filters']['wp_codebox_trusted_browser_session_callers'] = array( 'studio-web' => array( 'browser-session:create' ) );
+$GLOBALS['wp_codebox_filters']['wp_codebox_trusted_browser_session_callers'] = array( 'studio-web' => array( 'browser-session:create', 'artifact:write' ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = false;
 $assert( 'browser Playground session keeps default protection for untrusted users', false === call_user_func( $browser_session_ability['permission_callback'], array( 'goal' => 'Denied without trusted caller.' ) ) );
 $assert( 'browser Playground session allows trusted orchestrator caller with browser-session scope', true === call_user_func( $browser_session_ability['permission_callback'], $trusted_browser_authorization ) );
@@ -389,6 +389,24 @@ foreach ( $artifact_abilities as $artifact_ability_name ) {
 	$assert( $artifact_ability_name . ' ability registered', is_array( $artifact_ability ) );
 	$assert( $artifact_ability_name . ' is REST visible', true === ( $artifact_ability['meta']['show_in_rest'] ?? false ) );
 }
+$persist_browser_artifact_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/persist-browser-artifact'] ?? null;
+$assert( 'persist-browser-artifact exposes explicit trusted orchestrator authorization schema', is_array( $persist_browser_artifact_ability ) && 'object' === ( $persist_browser_artifact_ability['input_schema']['properties']['authorization']['type'] ?? '' ) && array( 'artifact:write' ) === ( $persist_browser_artifact_ability['input_schema']['properties']['authorization']['properties']['scope']['enum'] ?? array() ) );
+$trusted_artifact_authorization = array(
+	'authorization' => array(
+		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+		'caller' => 'studio-web',
+		'scope'  => 'artifact:write',
+	),
+);
+$GLOBALS['wp_codebox_current_user_can_manage_options'] = false;
+$assert( 'persist-browser-artifact keeps default protection for untrusted users', false === call_user_func( $persist_browser_artifact_ability['permission_callback'], array( 'files' => array() ) ) );
+$GLOBALS['wp_codebox_filters']['wp_codebox_can_run_agent_task'] = true;
+$assert( 'persist-browser-artifact ignores global agent-task bypass without artifact authorization', false === call_user_func( $persist_browser_artifact_ability['permission_callback'], array( 'files' => array() ) ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_can_run_agent_task'] );
+$assert( 'persist-browser-artifact allows trusted orchestrator caller with artifact write scope', true === call_user_func( $persist_browser_artifact_ability['permission_callback'], $trusted_artifact_authorization ) );
+$assert( 'persist-browser-artifact denies untrusted orchestrator caller', false === call_user_func( $persist_browser_artifact_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'unknown-product', 'scope' => 'artifact:write' ) ) ) );
+$assert( 'persist-browser-artifact denies trusted caller without artifact write scope', false === call_user_func( $persist_browser_artifact_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'browser-session:create' ) ) ) );
+$GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
 	'agents_api'        => $root . '/agents-api',
@@ -719,11 +737,15 @@ $assert( 'normalize-browser-artifact-bundle rejects missing entrypoint', is_wp_e
 $normalized_browser_duplicate = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], array_merge( $browser_bundle_input, array( 'files' => array( array( 'path' => 'index.html', 'content' => 'one' ), array( 'path' => 'site/index.html', 'content' => 'two' ) ) ) ) ) : null;
 $assert( 'normalize-browser-artifact-bundle rejects duplicate files', is_wp_error( $normalized_browser_duplicate ) && 'wp_codebox_browser_artifact_path_duplicate' === $normalized_browser_duplicate->get_error_code() );
 
-$persist_browser_artifact_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/persist-browser-artifact'] ?? null;
 $persisted_browser_artifact       = is_array( $persist_browser_artifact_ability ) ? call_user_func(
 	$persist_browser_artifact_ability['execute_callback'],
 	array(
 		'artifacts_path' => $root . '/artifacts',
+		'authorization'  => array(
+			'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+			'caller' => 'studio-web',
+			'scope'  => 'artifact:write',
+		),
 		'session_id'     => 'browser-session-123',
 		'session'        => array(
 			'id'              => 'browser-session-123',
@@ -782,6 +804,7 @@ $assert( 'persist-browser-artifact preserves caller schema metadata', ! is_wp_er
 $assert( 'persist-browser-artifact preserves provenance and review hints', ! is_wp_error( $persisted_browser_artifact ) && 'wordpress-plugin-smoke' === ( $persisted_browser_artifact['artifact']['metadata']['provenance']['task']['source'] ?? '' ) && 'wordpress-plugin-smoke' === ( $persisted_browser_artifact['artifact']['review']['provenance']['task']['source'] ?? '' ) && 'low' === ( $persisted_browser_artifact['artifact']['review']['reviewHints']['severity'] ?? '' ) );
 $assert( 'persist-browser-artifact preserves materialization and session metadata', ! is_wp_error( $persisted_browser_artifact ) && 'ready' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['materialization']['status'] ?? '' ) && 'project-artifact' === ( $persisted_browser_artifact['artifact']['metadata']['caller']['applyTarget']['type'] ?? '' ) && 'tab-abc' === ( $persisted_browser_artifact['artifact']['metadata']['runtime']['metadata']['tab_id'] ?? '' ) && 'materialization-run-123' === ( $persisted_browser_artifact['artifact']['metadata']['runtime']['materialization']['run_id'] ?? '' ) );
 $assert( 'persist-browser-artifact preserves text and binary files', ! is_wp_error( $persisted_browser_artifact ) && 'utf-8' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['encoding'] ?? '' ) && strlen( '<main>Persisted</main>' ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][0]['size'] ?? 0 ) && strlen( "\x89PNG\r\n\x1a\nparent-persisted" ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['size'] ?? 0 ) );
+$assert( 'persist-browser-artifact returns trusted authorization provenance', ! is_wp_error( $persisted_browser_artifact ) && 'studio-web' === ( $persisted_browser_artifact['authorization']['caller'] ?? '' ) && 'artifact:write' === ( $persisted_browser_artifact['authorization']['scope'] ?? '' ) && true === ( $persisted_browser_artifact['authorization']['authorized'] ?? false ) && 'trusted-caller-grant' === ( $persisted_browser_artifact['authorization']['reason'] ?? '' ) );
 $assert( 'persist-browser-artifact lists persisted bundle', ! is_wp_error( $persisted_browser_artifact ) && ! is_wp_error( call_user_func( $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/list-artifacts']['execute_callback'], array( 'artifacts_path' => $root . '/artifacts' ) ) ) );
 $persisted_browser_duplicate = is_array( $persist_browser_artifact_ability ) ? call_user_func(
 	$persist_browser_artifact_ability['execute_callback'],
