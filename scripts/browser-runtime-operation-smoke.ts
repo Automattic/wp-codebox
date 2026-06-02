@@ -20,6 +20,8 @@ const runtime = context.window.wpCodeboxBrowser
 assert.ok(runtime, "browser runtime should attach window.wpCodeboxBrowser")
 assert.equal(typeof runtime.runPhpRequest, "function")
 assert.equal(typeof runtime.runRecipe, "function")
+assert.equal(typeof runtime.runBrowserSessionRecipe, "function")
+assert.equal(typeof runtime.browserSessionRecipe, "function")
 assert.equal(typeof runtime.runWordPressOperation, "function")
 assert.equal(typeof runtime.ensureDirectory, "function")
 assert.equal(typeof runtime.writeFile, "function")
@@ -130,6 +132,41 @@ assert.equal(recipeResult.success, true)
 assert.equal(recipeClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
 assert.match(recipeClient.files[1]?.contents ?? "", /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
 assert.match(recipeClient.files[1]?.contents ?? "", /<\?php\ndefine\( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true \);/)
+
+const sessionClient = createClient("prefix {\"success\":true,\"data\":{\"summary\":\"session runner\"},\"error\":null} suffix")
+const sessionOutput = {
+  schema: "wp-codebox/browser-playground-session/v1",
+  success: true,
+  session: { id: "browser-session-smoke", status: "ready" },
+  task_input: { goal: "Run session smoke", expected_artifacts: ["summary"] },
+  recipe: {
+    schema: "wp-codebox/workspace-recipe/v1",
+    browser: {
+      task_path: "/tmp/wp-codebox-agent-task.json",
+      result_path: "/tmp/wp-codebox-agent-result.json",
+    },
+    workflow: {
+      steps: [
+        {
+          command: "wordpress.run-php",
+          args: ["code=<?php echo wp_json_encode(array('success' => true, 'data' => array('summary' => 'session runner'), 'error' => null));"],
+        },
+      ],
+    },
+  },
+}
+const sessionResult = await runtime.runBrowserSessionRecipe(sessionClient, sessionOutput)
+assert.deepEqual(sameRealm(sessionResult), { success: true, data: { summary: "session runner" }, error: null })
+assert.equal(sessionClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
+assert.equal(JSON.parse(sessionClient.files[0]?.contents).goal, "Run session smoke")
+assert.match(sessionClient.files[1]?.path ?? "", /\/wordpress\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
+assert.match(sessionClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
+
+assert.equal(runtime.browserSessionRecipe(sessionOutput), sessionOutput.recipe)
+await assert.rejects(
+  () => runtime.runBrowserSessionRecipe(createClient("{}"), { ...sessionOutput, success: false, error: { message: "not ready" } }),
+  /not ready/
+)
 
 await assert.rejects(
   () => runtime.runWordPressOperation(createClient("{}"), { args: {} }),

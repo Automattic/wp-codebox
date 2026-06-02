@@ -345,6 +345,27 @@ try {
 		return `<?php\n${ marker }\n?>\n${ source }`;
 	};
 
+	const browserSessionRecipe = ( session ) => {
+		if ( ! session || typeof session !== 'object' ) {
+			throw new Error( 'WP Codebox browser session output is required.' );
+		}
+
+		if ( session.schema && session.schema !== 'wp-codebox/browser-playground-session/v1' ) {
+			throw new Error( `Unsupported WP Codebox browser session schema: ${ session.schema }` );
+		}
+
+		if ( session.success === false || session.status === 'blocked' ) {
+			throw new Error( session?.error?.message || 'WP Codebox browser session is not ready.' );
+		}
+
+		const recipe = session.recipe && typeof session.recipe === 'object' ? session.recipe : null;
+		if ( ! recipe ) {
+			throw new Error( 'WP Codebox browser session is missing a recipe.' );
+		}
+
+		return recipe;
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -379,12 +400,23 @@ try {
 		return lastResult;
 	};
 
+	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
+		const recipe = browserSessionRecipe( session );
+		const payload = taskPayload === undefined ? ( session.task_input ?? {} ) : taskPayload;
+		return runRecipe( client, recipe, payload, {
+			...options,
+			name: options.name || 'codebox-browser-session',
+		} );
+	};
+
 	window.wpCodeboxBrowser = {
 		activateTheme,
+		browserSessionRecipe,
 		ensureDirectory,
 		installTheme,
 		normalizeOperationResult,
 		parseJsonResponse,
+		runBrowserSessionRecipe,
 		runPhpRequest,
 		runRecipe,
 		runWordPressOperation,

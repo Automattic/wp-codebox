@@ -668,6 +668,8 @@ Browser Playground callers can provide sandbox-owned MU plugin source through `r
 
 `browser_runner.invocation.type` supports `ability` for a `namespace/name` WordPress Ability and `task` for a caller-owned WordPress hook. WP Codebox validates the invocation shape, runs it inside the disposable Playground only, and returns normal artifact metadata without encoding product-specific repair semantics.
 
+The packaged browser runtime exposes `window.wpCodeboxBrowser.runBrowserSessionRecipe( client, sessionOutput, taskPayload?, options? )` for executing the `wp-codebox/create-browser-playground-session` response. Pass the full ability output as `sessionOutput`; WP Codebox resolves `sessionOutput.recipe`, stages `taskPayload` or `sessionOutput.task_input` at the recipe's browser task path, runs the generated PHP request step through Playground, and returns the parsed runner result. Product callers should use this helper instead of reading `recipe.workflow.steps` or extracting `code=` arguments themselves.
+
 External sources are explicit and CI-safe. WP Codebox validates URL-shaped sources before Playground boots, but it downloads them only when `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1` is set. Supported first-slice forms are WordPress.org plugin zip URLs and generic HTTPS `.zip` URLs:
 
 ```json
