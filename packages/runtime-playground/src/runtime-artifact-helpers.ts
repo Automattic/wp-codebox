@@ -47,7 +47,7 @@ export async function collectPlaygroundArtifacts({
   mounts: MountSpec[]
   observations: ObservationResult[]
   pluginChecks: PluginCheckArtifact[]
-  previewInfo: (createdAt: string, holdSeconds: number) => Promise<ArtifactPreview>
+  previewInfo: (createdAt: string, holdSeconds: number) => Promise<ArtifactPreview | undefined>
   recordArtifactsCollected: (bundleId: string, createdAt: string, artifactSpec: ArtifactSpec) => void
   runtimeId: string
   snapshots: Snapshot[]

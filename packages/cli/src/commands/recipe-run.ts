@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { RuntimeRunRegistry, artifactBundleRunRef, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -19,6 +20,7 @@ interface RecipeRunOptions {
   previewPublicUrl?: string
   previewPort?: number
   previewBind?: string
+  timeoutMs: number
   json: boolean
   dryRun: boolean
 }
@@ -84,6 +86,8 @@ interface RecipeRunOutput {
 
 type RecipeRunCommandOutput = RecipeRunOutput | RecipeDryRunOutput
 
+const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
+
 type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
@@ -130,6 +134,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
       const output = interruptedRecipeOutput(await execute(), interruption)
       printRecipeHumanOutput(output)
       interruption?.propagateIfInterrupted()
+      exitAfterRecipeRunTimeout(output)
       exitAfterPlaygroundCliBootFailure(output)
       return output.success ? 0 : 1
     }
@@ -140,6 +145,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
+    exitAfterRecipeRunTimeout(output)
     exitAfterPlaygroundCliBootFailure(output)
     return output.success ? 0 : 1
   } finally {
@@ -149,6 +155,12 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
 
 function exitAfterPlaygroundCliBootFailure(output: RecipeRunCommandOutput): void {
   if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "wp-codebox-playground-cli-exited") {
+    process.exit(output.success ? 0 : 1)
+  }
+}
+
+function exitAfterRecipeRunTimeout(output: RecipeRunCommandOutput): void {
+  if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "recipe-run-timeout") {
     process.exit(output.success ? 0 : 1)
   }
 }
@@ -189,6 +201,21 @@ class RecipeInterruptedError extends Error {
   constructor(readonly signal: RecipeInterruptionSignal, readonly receivedAt: string) {
     super(`Recipe run interrupted by ${signal}`)
     this.name = "RecipeInterruptedError"
+  }
+}
+
+class RecipeRunTimeoutError extends Error {
+  readonly code = "recipe-run-timeout"
+  readonly activeOperation: string
+  readonly elapsedMs: number
+  readonly timeoutMs: number
+
+  constructor(activeOperation: string, elapsedMs: number, timeoutMs: number) {
+    super(`Recipe run timed out after ${elapsedMs}ms while waiting for ${activeOperation}`)
+    this.name = "RecipeRunTimeoutError"
+    this.activeOperation = activeOperation
+    this.elapsedMs = elapsedMs
+    this.timeoutMs = timeoutMs
   }
 }
 
@@ -289,6 +316,53 @@ function interruptedRecipeOutput<T extends RecipeRunCommandOutput>(output: T, in
   } as T
 }
 
+function remainingRecipeTimeoutMs(startedAtMs: number, timeoutMs: number): number {
+  return Math.max(1, timeoutMs - (Date.now() - startedAtMs))
+}
+
+async function watchRecipeOperation<T>(operation: string, promise: Promise<T>, startedAtMs: number, timeoutMs: number, configuredTimeoutMs = timeoutMs): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined
+  promise.catch(() => undefined)
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new RecipeRunTimeoutError(operation, Date.now() - startedAtMs, configuredTimeoutMs))
+        }, timeoutMs)
+        timeout.unref()
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
+async function bestEffortTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  promise.catch(() => undefined)
+  return Promise.race([
+    promise,
+    delay(timeoutMs).then(() => undefined),
+  ])
+}
+
+function serializeRecipeRunError(error: unknown): RunOutput["error"] {
+  const serialized = serializeError(error)
+  if (error instanceof RecipeRunTimeoutError) {
+    return {
+      ...serialized,
+      activeOperation: error.activeOperation,
+      elapsedMs: error.elapsedMs,
+      timeoutMs: error.timeoutMs,
+    }
+  }
+
+  return serialized
+}
+
 async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
@@ -341,7 +415,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
-  const awaitRecipe = <T>(promise: Promise<T>): Promise<T> => interruption ? interruption.interruptible(promise) : promise
+  const startedAtMs = Date.now()
+  const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
+    const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
+    return interruption ? interruption.interruptible(guarded) : guarded
+  }
 
   try {
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
@@ -351,7 +429,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
-    runtime = await awaitRecipe(createRuntime(
+    runtime = await awaitRecipe("runtime.create", createRuntime(
       {
         backend: recipe.runtime?.backend ?? "wordpress-playground",
         environment: {
@@ -377,7 +455,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     for (const [index, mount] of (recipe.runtime?.stack?.mounts ?? []).entries()) {
       const source = resolve(recipeDirectory, mount.source)
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`runtime.stack.mount[${index}]`, runtime.mount({
         type: await recipeMountType(source, mount.type),
         source,
         target: mount.target,
@@ -392,7 +470,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const overlay of overlays) {
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`runtime.overlay.mount:${overlay.target}`, runtime.mount({
         type: overlay.type,
         source: overlay.source,
         target: overlay.target,
@@ -403,7 +481,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const workspace of workspaceMounts) {
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`workspace.mount:${workspace.target}`, runtime.mount({
         type: "directory",
         source: workspace.source,
         target: workspace.target,
@@ -414,7 +492,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const plugin of extraPlugins) {
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime.mount({
         type: "directory",
         source: plugin.source,
         target: plugin.target,
@@ -430,7 +508,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     for (const mount of recipe.inputs?.mounts ?? []) {
       const source = resolve(recipeDirectory, mount.source)
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`input.mount:${mount.target}`, runtime.mount({
         type: await recipeMountType(source, mount.type),
         source,
         target: mount.target,
@@ -441,7 +519,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const stagedFile of stagedFiles) {
-      await awaitRecipe(runtime.mount({
+      await awaitRecipe(`staged-file.mount:${stagedFile.target}`, runtime.mount({
         type: stagedFile.type,
         source: stagedFile.source,
         target: stagedFile.target,
@@ -462,27 +540,27 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
-      executions.push(await awaitRecipe(executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index)))
+      executions.push(await awaitRecipe(`plugin-runtime.setup[${index}]`, executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index)))
       interruption?.throwIfInterrupted()
     }
 
     for (const [index, probe] of (recipe.inputs?.pluginRuntime?.healthProbes ?? []).entries()) {
-      executions.push(await awaitRecipe(executeRecipePluginRuntimeHealthProbe(runtime, probe, recipeDirectory, index)))
+      executions.push(await awaitRecipe(`plugin-runtime.health:${probe.name}`, executeRecipePluginRuntimeHealthProbe(runtime, probe, recipeDirectory, index)))
       interruption?.throwIfInterrupted()
     }
 
-    const siteSeeds = await awaitRecipe(importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions))
+    const siteSeeds = await awaitRecipe("site-seeds.import", importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions))
     interruption?.throwIfInterrupted()
 
     for (const workflowStep of recipeWorkflowSteps(recipe)) {
-      executions.push(await awaitRecipe(executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory)))
+      executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory)))
       interruption?.throwIfInterrupted()
     }
 
-    await awaitRecipe(runtime.observe({ type: "runtime-info" }))
-    await awaitRecipe(runtime.observe({ type: "mounts" }))
+    await awaitRecipe("runtime.observe:runtime-info", runtime.observe({ type: "runtime-info" }))
+    await awaitRecipe("runtime.observe:mounts", runtime.observe({ type: "mounts" }))
     runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime.info() })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+    artifacts = await awaitRecipe("runtime.collect-artifacts", runtime.collectArtifacts({ includeLogs: true, includeObservations: true }))
     let evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
     let agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
     Object.assign(evidence, agentEvidence)
@@ -491,13 +569,13 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const agentFailure = recipeAgentResultFailure(evidence.agentResult)
     const successfulRecipe = !strictFailure && !agentFailure
     if (successfulRecipe && options.previewHoldSeconds) {
-      artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }))
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, agentEvidence)
     }
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
-    await releaseRuntime(runtime, successfulRecipe ? options.previewHoldSeconds : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption)
+    await awaitRecipe("runtime.release", releaseRuntime(runtime, successfulRecipe ? options.previewHoldSeconds : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption))
     interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
@@ -553,6 +631,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
   } catch (error) {
     if (runtime) {
+      if (error instanceof RecipeRunTimeoutError) {
+        void runtime.destroy().catch(() => undefined)
+      }
+
       artifacts = await collectAndFinalizeFailedRecipeArtifacts({
         runtime,
         existingArtifacts: artifacts,
@@ -565,10 +647,12 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption,
       })
 
-      try {
-        await runtime.destroy()
-      } catch {
-        // Preserve the original failure as the CLI result.
+      if (!(error instanceof RecipeRunTimeoutError)) {
+        try {
+          await bestEffortTimeout(runtime.destroy(), 2_000)
+        } catch {
+          // Preserve the original failure as the CLI result.
+        }
       }
     }
 
@@ -577,7 +661,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       status: interruption?.metadata ? "cancelled" : "failed",
       ...(runtime ? { runtime: await runtime.info() } : {}),
       ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
-      error: serializeError(error),
+      error: serializeRecipeRunError(error),
     })
 
     return {
@@ -590,7 +674,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(artifacts ? { artifacts } : {}),
       run: runRecord,
       ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
-      error: serializeError(error),
+      error: serializeRecipeRunError(error),
     }
   }
 }
@@ -670,7 +754,7 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false }
+  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false, timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -714,6 +798,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--preview-bind":
         options.previewBind = parsePreviewBind(value)
         break
+      case "--timeout":
+        options.timeoutMs = parseRecipeRunTimeoutMs(value)
+        break
       default:
         throw new Error(`Unknown option: ${name}`)
     }
@@ -724,6 +811,24 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
   }
 
   return options as RecipeRunOptions
+}
+
+function parseRecipeRunTimeoutMs(value: unknown): number {
+  const raw = String(value).trim()
+  const match = raw.match(/^(\d+)(ms|s|m)?$/)
+  if (!match) {
+    throw new Error("--timeout must be a positive duration such as 5000ms, 30s, or 25m")
+  }
+
+  const amount = Number.parseInt(match[1], 10)
+  const unit = match[2] ?? "ms"
+  const multiplier = unit === "m" ? 60_000 : unit === "s" ? 1000 : 1
+  const timeoutMs = amount * multiplier
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("--timeout must be a positive duration")
+  }
+
+  return timeoutMs
 }
 
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {

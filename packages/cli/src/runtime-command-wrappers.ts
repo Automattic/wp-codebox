@@ -34,6 +34,7 @@ export interface RunOutput {
     name: string
     message: string
     code?: string
+    [key: string]: unknown
   }
 }
 

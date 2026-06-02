@@ -350,11 +350,15 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async destroy(): Promise<void> {
+    if (this.status === "destroyed") {
+      return
+    }
+
+    this.status = "destroyed"
     try {
       const cliServer = await this.cliServerPromise
       await cliServer?.[Symbol.asyncDispose]()
     } finally {
-      this.status = "destroyed"
       this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
     }
   }
@@ -376,7 +380,11 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
-  private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview> {
+  private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview | undefined> {
+    if (this.status === "destroyed") {
+      return undefined
+    }
+
     const server = await this.bootPlayground()
     const normalizedHoldSeconds = Math.max(0, Math.floor(holdSeconds))
     const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined

@@ -15,6 +15,7 @@ interface PlaygroundCliModule {
     command: "server"
     port: number
     quiet: boolean
+    verbosity?: "quiet"
     skipBrowser: boolean
     mount: Array<{ hostPath: string; vfsPath: string }>
     blueprint?: unknown
@@ -72,6 +73,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       command: "server",
       port,
       quiet: true,
+      verbosity: "quiet",
       skipBrowser: true,
       mount: mounts.map((mount) => ({
         hostPath: mount.source,

@@ -4,6 +4,7 @@ interface CliError {
   name: string
   message: string
   code?: string
+  [key: string]: unknown
 }
 
 interface RunOutputLike {
@@ -278,8 +279,9 @@ Options:
                        Host/IP for the fixed-port WP Codebox preview proxy. Requires --preview-port.
                        Defaults to 127.0.0.1; use 0.0.0.0 only behind trusted network controls.
   --preview-public-url <url>
-                       Public tunnel/proxy URL to report in preview artifacts and pass to Playground as site-url.
-                       Upstream Playground remains loopback-bound; this only changes the WP Codebox proxy bind.
+                        Public tunnel/proxy URL to report in preview artifacts and pass to Playground as site-url.
+                        Upstream Playground remains loopback-bound; this only changes the WP Codebox proxy bind.
+  --timeout <duration>  Maximum live recipe-run duration before emitting a structured timeout failure. Defaults to 25m.
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --dry-run            Validate recipe-run and emit a resolved JSON plan without booting Playground or writing temp workspaces.
   --json               Emit machine-readable JSON.

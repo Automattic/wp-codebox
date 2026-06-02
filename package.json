@@ -90,6 +90,7 @@
     "recipe-staged-files-smoke": "tsx scripts/recipe-staged-files-smoke.ts",
     "recipe-workspace-seed-excludes-smoke": "tsx scripts/recipe-workspace-seed-excludes-smoke.ts",
     "recipe-runtime-evidence-smoke": "tsx scripts/recipe-runtime-evidence-smoke.ts",
+    "recipe-run-timeout-smoke": "tsx scripts/recipe-run-timeout-smoke.ts",
     "playground-archive-cache-validation-smoke": "tsx scripts/playground-archive-cache-validation-smoke.ts",
     "playground-sqlite-alias-smoke": "tsx scripts/playground-sqlite-alias-smoke.ts",
     "recipe-playground-boot-failure-smoke": "tsx scripts/recipe-playground-boot-failure-smoke.ts",
