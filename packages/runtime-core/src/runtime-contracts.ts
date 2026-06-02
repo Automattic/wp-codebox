@@ -121,6 +121,15 @@ export interface WorkspaceRecipePluginRuntime {
   healthProbes?: WorkspaceRecipePluginRuntimeHealthProbe[]
 }
 
+export interface WorkspaceRecipeAgentBundle {
+  source?: string
+  bundle?: Record<string, unknown>
+  slug?: string
+  on_conflict?: "error" | "skip" | "upgrade"
+  owner_id?: number
+  token_env?: string
+}
+
 export interface WorkspaceRecipeExtraPlugin {
   source: string
   slug?: string
@@ -222,6 +231,7 @@ export interface WorkspaceRecipe {
     pluginRuntime?: WorkspaceRecipePluginRuntime
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
+    agent_bundles?: WorkspaceRecipeAgentBundle[]
     inherit?: WorkspaceRecipeInheritanceRequest
     inheritance?: WorkspaceRecipeInheritanceResolution
   }

@@ -8,6 +8,16 @@ async function main() {
     mode: "sandbox",
     provider: "opencode",
     model: "opencode-go/kimi-k2.6",
+    agentBundles: [
+      { source: "/tmp/site-generator-agent.json", slug: "site-generator" },
+      {
+        bundle: {
+          bundle_version: "1.0.0",
+          agent: { agent_slug: "repair-agent", agent_name: "Repair Agent", agent_config: {} },
+        },
+        slug: "repair-agent",
+      },
+    ],
   })
 
   assert.match(code, /\\"modes\\":\[\\"sandbox\\",\\"chat\\"\]/, "sandbox chat input should inherit chat tool surface")
@@ -24,6 +34,15 @@ async function main() {
   assert.doesNotMatch(code, /workspace_git_log/, "sandbox tool policy should not advertise unbridged git log")
   assert.doesNotMatch(code, /workspace_git_diff/, "sandbox tool policy should not advertise unbridged git diff")
   assert.match(code, /For changes use workspace_write or workspace_edit/, "sandbox guidance should steer changes to tools that work without git")
+  assert.match(code, /wp_codebox_import_sandbox_agent_bundles/, "sandbox setup should import declared Data Machine agent bundles")
+  assert.match(code, /wp_get_ability\('datamachine\/import-agent'\)/, "sandbox setup should use the canonical Data Machine import ability")
+  assert.match(code, /agent_bundle_imports/, "sandbox setup should report agent bundle import results")
+  assert.match(code, /agent_bundle_import_failed/, "sandbox setup should fail before chat when bundle imports fail")
+  assert.ok(code.indexOf("wp_codebox_import_sandbox_agent_bundles") < code.indexOf("wp_get_ability('agents/chat')"), "agent bundles should import before agents/chat is resolved")
+  const fallbackGateIndex = code.indexOf("if (empty($sandbox_agent_bundle_imports) && class_exists")
+  const createIfMissingIndex = code.indexOf("create_if_missing")
+  assert.ok(fallbackGateIndex > code.indexOf("wp_codebox_import_sandbox_agent_bundles") && createIfMissingIndex > fallbackGateIndex, "legacy create_if_missing should be gated behind the no-bundle fallback")
+  assert.match(code, /repair-agent/, "inline bundle specs should be embedded in sandbox setup")
 
   const runCode = agentSandboxRunCode(
     '{"prompt":"Do not interpolate $buckets, $meta, or $state_store."}',

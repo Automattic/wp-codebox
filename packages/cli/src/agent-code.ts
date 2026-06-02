@@ -2,6 +2,15 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT } from "@chubes4/wp-codebox-core"
 
+export interface AgentBundleSpec {
+  source?: string
+  bundle?: Record<string, unknown>
+  slug?: string
+  on_conflict?: "error" | "skip" | "upgrade"
+  owner_id?: number
+  token_env?: string
+}
+
 export interface AgentSandboxCodeOptions {
   task: string
   agent?: string
@@ -11,6 +20,7 @@ export interface AgentSandboxCodeOptions {
   sessionId?: string
   maxTurns?: string
   timeoutSeconds?: string
+  agentBundles?: AgentBundleSpec[]
   code?: string
   codeFile?: string
 }
@@ -58,6 +68,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
 
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
+  const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
 
   return `
 if (function_exists('wp_set_current_user')) {
@@ -100,7 +111,12 @@ if (function_exists('wp_get_ability')) {
 }
 $sandbox_stack['workspace_adoptions'] = $sandbox_workspace_adoptions;
 
-if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
+$sandbox_agent_bundles = json_decode(${JSON.stringify(JSON.stringify(agentBundles))}, true);
+$sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array($sandbox_agent_bundles) ? $sandbox_agent_bundles : array());
+$sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
+$sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
+
+if (empty($sandbox_agent_bundle_imports) && class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
     $sandbox_agent_slug = sanitize_title((string) (${JSON.stringify(input.agent)}));
     if ('' !== $sandbox_agent_slug) {
         $sandbox_agents = new DataMachine\\Core\\Database\\Agents\\Agents();
@@ -147,6 +163,78 @@ add_filter('datamachine_agent_mode_sandbox', static function (string $content): 
     $guidance = ${JSON.stringify(sandboxModeGuidance())};
     return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
 }, 100, 1);
+
+function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
+    if (empty($bundle_specs)) {
+        return array();
+    }
+
+    $ability = function_exists('wp_get_ability') ? wp_get_ability('datamachine/import-agent') : null;
+    if (!$ability || !method_exists($ability, 'execute')) {
+        return array(array(
+            'success' => false,
+            'error' => array(
+                'code' => 'datamachine_import_agent_unavailable',
+                'message' => 'The canonical datamachine/import-agent ability is not available inside the sandbox.',
+            ),
+        ));
+    }
+
+    $imports = array();
+    foreach ($bundle_specs as $index => $spec) {
+        if (!is_array($spec)) {
+            $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_spec_invalid', 'message' => 'Agent bundle spec must be an object.'));
+            continue;
+        }
+
+        $source = isset($spec['source']) ? trim((string) $spec['source']) : '';
+        $temp_source = '';
+        if ('' === $source && isset($spec['bundle']) && is_array($spec['bundle'])) {
+            $temp_source = tempnam(sys_get_temp_dir(), 'wp-codebox-agent-bundle-');
+            if (false === $temp_source) {
+                $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_temp_failed', 'message' => 'Could not create a temporary agent bundle JSON file.'));
+                continue;
+            }
+            $json_source = wp_json_encode($spec['bundle'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if (!is_string($json_source) || false === file_put_contents($temp_source, $json_source)) {
+                @unlink($temp_source);
+                $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_write_failed', 'message' => 'Could not stage inline agent bundle JSON.'));
+                continue;
+            }
+            $source = $temp_source;
+        }
+
+        if ('' === $source) {
+            $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_source_missing', 'message' => 'Agent bundle spec requires source or bundle.'));
+            continue;
+        }
+
+        $input = array('source' => $source, 'on_conflict' => (string) ($spec['on_conflict'] ?? 'upgrade'));
+        foreach (array('slug', 'token_env') as $field) {
+            if (isset($spec[$field]) && '' !== trim((string) $spec[$field])) {
+                $input[$field] = trim((string) $spec[$field]);
+            }
+        }
+        if (isset($spec['owner_id']) && (int) $spec['owner_id'] > 0) {
+            $input['owner_id'] = (int) $spec['owner_id'];
+        } else {
+            $input['owner_id'] = get_current_user_id() ?: 1;
+        }
+
+        $execute = static fn() => $ability->execute($input);
+        $result = class_exists('DataMachine\\Abilities\\PermissionHelper')
+            ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($execute, (int) $input['owner_id'])
+            : $execute();
+        if ('' !== $temp_source) {
+            @unlink($temp_source);
+        }
+        $imports[] = is_wp_error($result)
+            ? array('success' => false, 'index' => $index, 'source' => isset($spec['source']) ? $source : 'inline', 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data()))
+            : array_merge(array('index' => $index, 'source' => isset($spec['source']) ? $source : 'inline'), is_array($result) ? $result : array('result' => $result));
+    }
+
+    return $imports;
+}
 
 if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') && !class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
     final class WP_Codebox_Sandbox_Perception_Directive implements DataMachine\\Engine\\AI\\Directives\\DirectiveInterface {
@@ -285,8 +373,19 @@ add_filter('datamachine_directives', static function (array $directives): array 
     return $directives;
 });
 
-$ability = function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
-if (!$ability || !method_exists($ability, 'execute')) {
+$ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
+if (!empty($sandbox_agent_bundle_import_failures)) {
+    $sandbox_agent_runtime = array(
+        'agent_runtime' => array(
+            'success' => false,
+            'error' => array(
+                'code' => 'agent_bundle_import_failed',
+                'message' => 'One or more Data Machine agent bundles failed to import before sandbox invocation.',
+                'data' => array('agent_bundle_imports' => array_values($sandbox_agent_bundle_import_failures)),
+            ),
+        ),
+    );
+} elseif (!$ability || !method_exists($ability, 'execute')) {
     $sandbox_agent_runtime = array(
         'agent_runtime' => array(
             'success' => false,
@@ -342,6 +441,24 @@ function sandboxToolNames(): string[] {
 
 function sandboxAgentModes(mode: string): string[] {
   return Array.from(new Set([mode, "chat"].filter(Boolean)))
+}
+
+function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] {
+  return specs.flatMap((spec) => {
+    if (!spec || typeof spec !== "object") return []
+    const source = typeof spec.source === "string" ? spec.source.trim() : ""
+    const bundle = spec.bundle && typeof spec.bundle === "object" && !Array.isArray(spec.bundle) ? spec.bundle : undefined
+    if (!source && !bundle) return []
+
+    const normalized: AgentBundleSpec = {}
+    if (source) normalized.source = source
+    if (bundle) normalized.bundle = bundle
+    if (typeof spec.slug === "string" && spec.slug.trim()) normalized.slug = spec.slug.trim()
+    normalized.on_conflict = spec.on_conflict && ["error", "skip", "upgrade"].includes(spec.on_conflict) ? spec.on_conflict : "upgrade"
+    if (Number.isSafeInteger(spec.owner_id) && Number(spec.owner_id) > 0) normalized.owner_id = Number(spec.owner_id)
+    if (typeof spec.token_env === "string" && spec.token_env.trim()) normalized.token_env = spec.token_env.trim()
+    return [normalized]
+  })
 }
 
 function sandboxModeGuidance(): string {

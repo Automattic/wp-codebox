@@ -69,6 +69,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Local recipe-owned files or directories copied into absolute sandbox paths before workflow steps execute.",
             items: { $ref: "#/$defs/stagedFile" },
           },
+          agent_bundles: {
+            type: "array",
+            description: "Data Machine agent bundles to import into the sandbox before invoking the selected runtime agent.",
+            items: { $ref: "#/$defs/agentBundle" },
+          },
           inherit: { $ref: "#/$defs/inheritanceRequest" },
           inheritance: { $ref: "#/$defs/inheritanceResolution" },
         },
@@ -238,6 +243,31 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           healthProbes: {
             type: "array",
             items: { $ref: "#/$defs/pluginRuntimeHealthProbe" },
+          },
+        },
+      },
+      agentBundle: {
+        type: "object",
+        additionalProperties: false,
+        anyOf: [
+          { required: ["source"] },
+          { required: ["bundle"] },
+        ],
+        properties: {
+          source: {
+            type: "string",
+            description: "Bundle source accepted by datamachine/import-agent: local directory, .zip, .json, or remote URL.",
+          },
+          bundle: {
+            type: "object",
+            description: "Inline Data Machine agent bundle JSON staged into the sandbox and imported through datamachine/import-agent.",
+          },
+          slug: { type: "string" },
+          on_conflict: { enum: ["error", "skip", "upgrade"] },
+          owner_id: { type: "integer", minimum: 1 },
+          token_env: {
+            type: "string",
+            description: "Environment variable or PHP constant name used by datamachine/import-agent for private source resolution.",
           },
         },
       },

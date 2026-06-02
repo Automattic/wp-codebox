@@ -11,6 +11,7 @@
       "target": {},
       "allowed_tools": [],
       "expected_artifacts": [],
+      "agent_bundles": [],
       "policy": {},
       "context": {}
     }
@@ -25,6 +26,26 @@
       },
       "allowed_tools": ["workspace.read", "workspace.write", "workspace.read", ""],
       "expected_artifacts": ["patch", "tests", "patch"],
+      "agent_bundles": [
+        {
+          "source": "/tmp/site-generator-agent.json",
+          "slug": "site-generator",
+          "on_conflict": "upgrade",
+          "owner_id": 1
+        },
+        {
+          "bundle": {
+            "bundle_version": "1.0.0",
+            "agent": {
+              "agent_slug": "repair-agent",
+              "agent_name": "Repair Agent",
+              "agent_config": {}
+            }
+          },
+          "slug": "repair-agent",
+          "token_env": "AGENT_BUNDLE_TOKEN"
+        }
+      ],
       "policy": {
         "applyBack": "reviewed"
       },
@@ -42,6 +63,27 @@
       },
       "allowed_tools": ["workspace.read", "workspace.write"],
       "expected_artifacts": ["patch", "tests"],
+      "agent_bundles": [
+        {
+          "source": "/tmp/site-generator-agent.json",
+          "slug": "site-generator",
+          "on_conflict": "upgrade",
+          "owner_id": 1
+        },
+        {
+          "bundle": {
+            "bundle_version": "1.0.0",
+            "agent": {
+              "agent_slug": "repair-agent",
+              "agent_name": "Repair Agent",
+              "agent_config": {}
+            }
+          },
+          "slug": "repair-agent",
+          "on_conflict": "upgrade",
+          "token_env": "AGENT_BUNDLE_TOKEN"
+        }
+      ],
       "policy": {
         "applyBack": "reviewed"
       },

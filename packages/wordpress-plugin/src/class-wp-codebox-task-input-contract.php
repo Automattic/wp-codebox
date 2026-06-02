@@ -17,7 +17,7 @@ final class WP_Codebox_Task_Input_Contract {
 		return array(
 			'$id'        => self::SCHEMA,
 			'type'       => 'object',
-			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'policy', 'context' ),
+			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
 					'type'        => 'string',
@@ -53,6 +53,25 @@ final class WP_Codebox_Task_Input_Contract {
 					'description' => 'Artifact kinds the caller wants back, such as patch, review, tests, preview, or package.',
 					'items'       => array( 'type' => 'string' ),
 				),
+				'agent_bundles'      => array(
+					'type'        => 'array',
+					'description' => 'Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.',
+					'items'       => array(
+						'type'       => 'object',
+						'anyOf'      => array(
+							array( 'required' => array( 'source' ) ),
+							array( 'required' => array( 'bundle' ) ),
+						),
+						'properties' => array(
+							'source'      => array( 'type' => 'string' ),
+							'bundle'      => array( 'type' => 'object' ),
+							'slug'        => array( 'type' => 'string' ),
+							'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
+							'owner_id'    => array( 'type' => 'integer' ),
+							'token_env'   => array( 'type' => 'string' ),
+						),
+					),
+				),
 				'policy'             => array(
 					'type'        => 'object',
 					'description' => 'Caller policy hints for approvals, apply-back, sandboxing, and risk controls.',
@@ -79,9 +98,46 @@ final class WP_Codebox_Task_Input_Contract {
 			'target'             => is_array( $input['target'] ?? null ) ? $input['target'] : array(),
 			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
 			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
+			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? $input['agentBundles'] ?? array() ),
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
 		);
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function agent_bundles( mixed $value ): array {
+		$bundles = array();
+		foreach ( is_array( $value ) ? $value : array() as $entry ) {
+			if ( ! is_array( $entry ) ) {
+				continue;
+			}
+			$source = isset( $entry['source'] ) ? trim( (string) $entry['source'] ) : '';
+			$inline = is_array( $entry['bundle'] ?? null ) ? $entry['bundle'] : null;
+			if ( '' === $source && null === $inline ) {
+				continue;
+			}
+			$bundle = array();
+			if ( '' !== $source ) {
+				$bundle['source'] = $source;
+			}
+			if ( null !== $inline ) {
+				$bundle['bundle'] = $inline;
+			}
+			foreach ( array( 'slug', 'token_env' ) as $field ) {
+				$value = isset( $entry[ $field ] ) ? trim( (string) $entry[ $field ] ) : '';
+				if ( '' !== $value ) {
+					$bundle[ $field ] = $value;
+				}
+			}
+			$on_conflict = (string) ( $entry['on_conflict'] ?? 'upgrade' );
+			$bundle['on_conflict'] = in_array( $on_conflict, array( 'error', 'skip', 'upgrade' ), true ) ? $on_conflict : 'upgrade';
+			if ( isset( $entry['owner_id'] ) && (int) $entry['owner_id'] > 0 ) {
+				$bundle['owner_id'] = (int) $entry['owner_id'];
+			}
+			$bundles[] = $bundle;
+		}
+
+		return $bundles;
 	}
 
 	/** @return string[] */
