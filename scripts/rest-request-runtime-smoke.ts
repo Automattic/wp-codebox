@@ -40,10 +40,13 @@ try {
       { type: "command-result" },
     )
     assert.equal(direct.execution.exitCode, 0)
-    const directBody = JSON.parse(direct.execution.stdout) as { command: string; status: number; data: Record<string, unknown> }
+    const directBody = JSON.parse(direct.execution.stdout) as { command: string; status: number; body: Record<string, unknown>; data: Record<string, unknown>; timing: { duration_ms: number }; diagnostics: Record<string, unknown> }
     assert.equal(directBody.command, "wordpress.rest-request")
     assert.equal(directBody.status, 200)
+    assert.ok(directBody.body.post)
     assert.ok(directBody.data.post)
+    assert.equal(typeof directBody.timing.duration_ms, "number")
+    assert.deepEqual(directBody.diagnostics, {})
 
     const action = await runRuntimeAction(episode, { type: "rest_request", method: "GET", path: "/wp-json/wp/v2/types", params: { context: "view" } })
     assert.equal(action.schema, RUNTIME_ACTION_OBSERVATION_SCHEMA)
@@ -51,6 +54,15 @@ try {
     assert.equal(action.step?.action.kind, "http")
     assert.equal(action.step?.execution.command, "wordpress.rest-request")
     assert.deepEqual(action.step?.execution.args, ["path=/wp-json/wp/v2/types", "method=GET", 'params-json={"context":"view"}'])
+    assert.equal(action.data.method, "GET")
+    assert.equal(action.data.path, "/wp-json/wp/v2/types")
+    assert.equal(action.data.route, "/wp/v2/types")
+    assert.equal(action.data.status, 200)
+    assert.equal(typeof action.data.headers, "object")
+    assert.ok((action.data.body as { post?: unknown }).post)
+    assert.equal(typeof (action.data.timing as { durationMs?: number }).durationMs, "number")
+    assert.equal((action.data.diagnostics as { exitCode?: number; stderr?: string }).exitCode, 0)
+    assert.equal((action.data.diagnostics as { exitCode?: number; stderr?: string }).stderr, "")
     assert.equal((action.data.stdout as { status: number }).status, 200)
 
     const trace = await episode.trace()
