@@ -15,6 +15,7 @@ final class WP_Codebox_Artifacts {
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
 	private const APPLY_AUDIT_SCHEMA = 'wp-codebox/apply-audit/v1';
 	private const VERIFICATION_SCHEMA = 'wp-codebox/artifact-bundle-verification/v1';
+	private const BROWSER_NORMALIZATION_SCHEMA = 'wp-codebox/browser-artifact-bundle-normalization/v1';
 	private const BROWSER_PERSIST_SCHEMA = 'wp-codebox/browser-artifact-persistence/v1';
 	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/chubes4/wp-codebox/issues/176';
 	private const CONTENT_DIGEST_PREFIX = "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n";
@@ -91,20 +92,104 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function normalize_browser_bundle( array $input, bool $include_bytes = false ): array|WP_Error {
+		$schema_id = trim( (string) ( $input['schema_id'] ?? $input['caller_schema'] ?? $input['callerSchema'] ?? '' ) );
+		if ( '' === $schema_id ) {
+			return new WP_Error( 'wp_codebox_browser_artifact_schema_missing', 'schema_id is required for browser artifact bundle normalization.', array( 'status' => 400 ) );
+		}
+
+		$root = $this->normalize_browser_bundle_root( (string) ( $input['root'] ?? '' ) );
+		if ( is_wp_error( $root ) ) {
+			return $root;
+		}
+
+		$entrypoint = $this->normalize_browser_bundle_scoped_path( (string) ( $input['entrypoint'] ?? '' ), $root, -1, 'entrypoint' );
+		if ( is_wp_error( $entrypoint ) ) {
+			return $entrypoint;
+		}
+
+		$files = $this->browser_bundle_files( $input, $root );
+		if ( is_wp_error( $files ) ) {
+			return $files;
+		}
+		if ( empty( $files ) ) {
+			return new WP_Error( 'wp_codebox_browser_artifact_files_missing', 'files must include at least one browser-produced artifact file.', array( 'status' => 400 ) );
+		}
+
+		$persistence_files = $files;
+		usort( $files, static fn( array $a, array $b ): int => strcmp( (string) $a['path'], (string) $b['path'] ) );
+		$entrypoint_found = false;
+		$output_files      = array();
+		foreach ( $files as $file ) {
+			if ( $entrypoint === $file['path'] ) {
+				$entrypoint_found = true;
+			}
+
+			$output_file = array(
+				'path'      => $file['path'],
+				'encoding'  => $file['encoding'],
+				'mime_type' => $file['mime_type'],
+				'size'      => strlen( $file['bytes'] ),
+				'sha256'    => hash( 'sha256', $file['bytes'] ),
+				'kind'      => $file['kind'],
+			);
+			if ( ! empty( $file['roles'] ) ) {
+				$output_file['roles'] = $file['roles'];
+			}
+			if ( 'base64' === $file['encoding'] ) {
+				$output_file['content_base64'] = base64_encode( $file['bytes'] );
+			} else {
+				$output_file['content'] = $file['bytes'];
+			}
+
+			$output_files[] = $output_file;
+		}
+
+		if ( ! $entrypoint_found ) {
+			return new WP_Error( 'wp_codebox_browser_artifact_entrypoint_missing', 'Browser artifact bundle entrypoint must match one normalized file path.', array( 'status' => 400, 'entrypoint' => $entrypoint ) );
+		}
+
+		$bundle = array(
+			'success'       => true,
+			'schema'        => self::BROWSER_NORMALIZATION_SCHEMA,
+			'caller_schema' => $schema_id,
+			'root'          => $root,
+			'entrypoint'    => $entrypoint,
+			'files'         => $output_files,
+			'roles'         => is_array( $input['roles'] ?? null ) ? $this->stable_assoc_array( $input['roles'] ) : array(),
+			'provenance'    => is_array( $input['provenance'] ?? null ) ? $this->stable_assoc_array( $input['provenance'] ) : array(),
+			'metadata'      => is_array( $input['metadata'] ?? null ) ? $this->stable_assoc_array( $input['metadata'] ) : array(),
+		);
+		$bundle['content_digest'] = hash( 'sha256', "wp-codebox/browser-artifact-bundle/v1\n" . $this->stable_json( $bundle ) );
+
+		if ( $include_bytes ) {
+			$bundle['_files'] = $persistence_files;
+		}
+
+		return $bundle;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function persist_browser_bundle( array $input ): array|WP_Error {
 		$root = $this->artifact_root( $input, true );
 		if ( is_wp_error( $root ) ) {
 			return $root;
 		}
 
-		$files = $this->browser_bundle_files( $input );
-		if ( is_wp_error( $files ) ) {
-			return $files;
+		$normalization = $this->normalize_browser_bundle(
+			array_merge(
+				array(
+					'schema_id'  => self::BROWSER_PERSIST_SCHEMA,
+					'entrypoint' => (string) ( $input['entrypoint'] ?? ( is_array( $input['files'] ?? null ) && is_array( $input['files'][0] ?? null ) ? (string) ( $input['files'][0]['path'] ?? '' ) : '' ) ),
+				),
+				$input
+			),
+			true
+		);
+		if ( is_wp_error( $normalization ) ) {
+			return $normalization;
 		}
-
-		if ( empty( $files ) ) {
-			return new WP_Error( 'wp_codebox_browser_artifact_files_missing', 'files must include at least one browser-produced artifact file.', array( 'status' => 400 ) );
-		}
+		$files = is_array( $normalization['_files'] ?? null ) ? $normalization['_files'] : array();
 
 		$created_at = gmdate( 'c' );
 		$tmp        = $root . DIRECTORY_SEPARATOR . '.browser-artifact-' . bin2hex( random_bytes( 8 ) );
@@ -492,7 +577,7 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
-	private function browser_bundle_files( array $input ): array|WP_Error {
+	private function browser_bundle_files( array $input, string $root = '' ): array|WP_Error {
 		$files      = is_array( $input['files'] ?? null ) ? $input['files'] : array();
 		$normalized = array();
 		$seen       = array();
@@ -502,7 +587,7 @@ final class WP_Codebox_Artifacts {
 				return new WP_Error( 'wp_codebox_browser_artifact_file_invalid', 'Each browser artifact file must be an object.', array( 'status' => 400, 'index' => $index ) );
 			}
 
-			$path = $this->validate_browser_bundle_file_path( trim( (string) ( $file['path'] ?? '' ) ), (int) $index );
+			$path = $this->normalize_browser_bundle_scoped_path( (string) ( $file['path'] ?? '' ), $root, (int) $index, 'file' );
 			if ( is_wp_error( $path ) ) {
 				return $path;
 			}
@@ -544,10 +629,39 @@ final class WP_Codebox_Artifacts {
 				'encoding'  => $encoding,
 				'mime_type' => $mime_type,
 				'kind'      => trim( (string) ( $file['kind'] ?? 'browser-artifact' ) ),
+				'roles'     => array_values( array_filter( array_map( 'strval', is_array( $file['roles'] ?? null ) ? $file['roles'] : array() ), static fn( string $role ): bool => '' !== trim( $role ) ) ),
 			);
 		}
 
 		return $normalized;
+	}
+
+	private function normalize_browser_bundle_root( string $root ): string|WP_Error {
+		$root = rtrim( trim( str_replace( '\\', '/', $root ) ), '/' );
+		if ( '' === $root ) {
+			return '';
+		}
+
+		return $this->validate_browser_bundle_file_path( $root, -1 );
+	}
+
+	private function normalize_browser_bundle_scoped_path( string $path, string $root, int $index, string $field ): string|WP_Error {
+		$path = trim( str_replace( '\\', '/', $path ) );
+		$path = $this->validate_browser_bundle_file_path( $path, $index );
+		if ( is_wp_error( $path ) ) {
+			return $path;
+		}
+
+		if ( '' === $root || $root === $path || str_starts_with( $path, $root . '/' ) ) {
+			return $path;
+		}
+
+		$scoped = $this->validate_browser_bundle_file_path( $root . '/' . $path, $index );
+		if ( is_wp_error( $scoped ) ) {
+			return new WP_Error( $scoped->get_error_code(), $scoped->get_error_message(), array_merge( (array) $scoped->get_error_data(), array( 'field' => $field ) ) );
+		}
+
+		return $scoped;
 	}
 
 	private function validate_browser_bundle_file_path( string $path, int $index ): string|WP_Error {
@@ -635,6 +749,22 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return '{' . implode( ',', $parts ) . '}';
+	}
+
+	/** @param array<mixed> $value Input array. @return array<mixed> */
+	private function stable_assoc_array( array $value ): array {
+		if ( array_is_list( $value ) ) {
+			return array_map( fn( mixed $item ): mixed => is_array( $item ) ? $this->stable_assoc_array( $item ) : $item, $value );
+		}
+
+		ksort( $value, SORT_STRING );
+		foreach ( $value as $key => $item ) {
+			if ( is_array( $item ) ) {
+				$value[ $key ] = $this->stable_assoc_array( $item );
+			}
+		}
+
+		return $value;
 	}
 
 	private function json_encode_pretty( mixed $value ): string {
