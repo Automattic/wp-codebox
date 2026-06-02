@@ -949,6 +949,10 @@ not trust artifact evidence that may alias protected content outside the bundle.
 
 Review actions are declarative. Frontends call `wp-codebox/apply-approved-artifact` with `artifact_id` and an explicit `approved_files[]` list for approve actions, call `wp-codebox/discard-artifact` for discard, and start a new sandbox task for iterate/request-changes flows.
 
+Browser preview sessions can reuse the core browser review bridge instead of inventing product-specific postMessage contracts. Pass sandbox-visible metadata with schema `wp-codebox/browser-review-bridge/v1` and at least `artifactId`; include `sessionId`, `provenance`, `contentDigest`, `approvedFiles`, `applyTarget`, `requester`, and `context` when the parent needs audit or apply-back correlation. The bridge posts decisions to the parent as `{ type: "wp-codebox:artifact-review-decision", payload }`, where `payload.schema` is `wp-codebox/browser-review-decision/v1` and includes the action, artifact/session identifiers, approved files, provenance/content digest, apply target, approver/reason, and merged context.
+
+Products can render their own UI and call `postBrowserReviewDecision()`, or use the small default overlay from `renderBrowserReviewOverlay()` with caller-supplied labels. Keep product copy outside Codebox by setting labels in metadata. Parent hosts that receive an approve decision can pass `artifactId`, `approvedFiles`, `approver`, `applyTarget`, and `context` into `wp-codebox/stage-artifact-apply`, preserving the existing Data Machine pending-action review path before `apply-approved-artifact` resolves the approved artifact.
+
 Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, parsed test command output, and redaction guarantees are still future artifact targets.
 
 ## WordPress Plugin
