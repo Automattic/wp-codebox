@@ -353,6 +353,7 @@ $artifact_abilities = array(
 	'wp-codebox/list-artifacts',
 	'wp-codebox/get-artifact',
 	'wp-codebox/discard-artifact',
+	'wp-codebox/persist-browser-artifact',
 	'wp-codebox/apply-approved-artifact',
 	'wp-codebox/stage-artifact-apply',
 );
@@ -575,6 +576,55 @@ $assert( 'browser Playground session exposes preview URL', ! is_wp_error( $brows
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 $assert( 'browser Playground session returns canonical task input metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/task-input/v1' === ( $browser_session['task_input']['schema'] ?? '' ) && 1 === ( $browser_session['task_input']['version'] ?? 0 ) );
 $assert( 'browser Playground session exposes canonical task string', ! is_wp_error( $browser_session ) && 'Prepare a browser Playground preview.' === ( $browser_session['task'] ?? '' ) );
+
+$persist_browser_artifact_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/persist-browser-artifact'] ?? null;
+$persisted_browser_artifact       = is_array( $persist_browser_artifact_ability ) ? call_user_func(
+	$persist_browser_artifact_ability['execute_callback'],
+	array(
+		'artifacts_path' => $root . '/artifacts',
+		'session_id'     => 'browser-session-123',
+		'provenance'     => array(
+			'task' => array(
+				'id'     => 'issue-437-smoke',
+				'source' => 'wordpress-plugin-smoke',
+			),
+		),
+		'files'          => array(
+			array(
+				'path'      => 'site/index.html',
+				'content'   => '<main>Persisted</main>',
+				'mime_type' => 'text/html',
+				'kind'      => 'html',
+			),
+			array(
+				'path'           => 'site/assets/photo.png',
+				'content_base64' => base64_encode( "\x89PNG\r\n\x1a\nparent-persisted" ),
+				'encoding'       => 'base64',
+				'kind'           => 'image',
+			),
+		),
+	)
+) : new WP_Error( 'missing_ability', 'persist-browser-artifact missing.' );
+$assert( 'persist-browser-artifact stores canonical artifact bundle', ! is_wp_error( $persisted_browser_artifact ) && true === ( $persisted_browser_artifact['success'] ?? false ) && 'wp-codebox/browser-artifact-persistence/v1' === ( $persisted_browser_artifact['schema'] ?? '' ) && str_starts_with( (string) ( $persisted_browser_artifact['artifact_id'] ?? '' ), 'artifact-bundle-sha256-' ) );
+$assert( 'persist-browser-artifact writes manifest and metadata', ! is_wp_error( $persisted_browser_artifact ) && is_file( (string) ( $persisted_browser_artifact['artifact']['paths']['manifest'] ?? '' ) ) && is_file( (string) ( $persisted_browser_artifact['artifact']['paths']['metadata'] ?? '' ) ) );
+$assert( 'persist-browser-artifact records browser file metadata', ! is_wp_error( $persisted_browser_artifact ) && 'site/assets/photo.png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['path'] ?? '' ) && 'files/browser/site/assets/photo.png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['artifactPath'] ?? '' ) && 'image/png' === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['mimeType'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\nparent-persisted" ) === ( $persisted_browser_artifact['artifact']['changed_files']['files'][1]['sha256']['value'] ?? '' ) );
+$assert( 'persist-browser-artifact lists persisted bundle', ! is_wp_error( $persisted_browser_artifact ) && ! is_wp_error( call_user_func( $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/list-artifacts']['execute_callback'], array( 'artifacts_path' => $root . '/artifacts' ) ) ) );
+$persisted_browser_traversal = is_array( $persist_browser_artifact_ability ) ? call_user_func(
+	$persist_browser_artifact_ability['execute_callback'],
+	array(
+		'artifacts_path' => $root . '/artifacts',
+		'files'          => array( array( 'path' => '../escape.html', 'content' => 'nope' ) ),
+	)
+) : null;
+$assert( 'persist-browser-artifact rejects traversal paths', is_wp_error( $persisted_browser_traversal ) && 'wp_codebox_browser_artifact_path_invalid' === $persisted_browser_traversal->get_error_code() );
+$persisted_browser_php = is_array( $persist_browser_artifact_ability ) ? call_user_func(
+	$persist_browser_artifact_ability['execute_callback'],
+	array(
+		'artifacts_path' => $root . '/artifacts',
+		'files'          => array( array( 'path' => 'site/shell.php', 'content' => '<?php echo "nope";' ) ),
+	)
+) : null;
+$assert( 'persist-browser-artifact rejects server executable extensions', is_wp_error( $persisted_browser_php ) && 'wp_codebox_browser_artifact_extension_blocked' === $persisted_browser_php->get_error_code() );
 
 $browser_packaged_mu_session = call_user_func(
 	$browser_session_ability['execute_callback'],
