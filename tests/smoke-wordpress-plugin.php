@@ -598,6 +598,56 @@ $assert( 'browser Playground session normalizes task input lists', ! is_wp_error
 $assert( 'browser Playground session returns canonical task input metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/task-input/v1' === ( $browser_session['task_input']['schema'] ?? '' ) && 1 === ( $browser_session['task_input']['version'] ?? 0 ) );
 $assert( 'browser Playground session exposes canonical task string', ! is_wp_error( $browser_session ) && 'Prepare a browser Playground preview.' === ( $browser_session['task'] ?? '' ) );
 
+$normalize_browser_bundle_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/normalize-browser-artifact-bundle'] ?? null;
+$browser_bundle_input            = array(
+	'schema_id'  => 'caller/browser-bundle/v1',
+	'root'       => 'site',
+	'entrypoint' => 'index.html',
+	'roles'      => array(
+		'preview' => 'index.html',
+		'assets'  => array( 'assets/logo.png' ),
+	),
+	'provenance' => array(
+		'caller' => 'wordpress-plugin-smoke',
+	),
+	'metadata'   => array(
+		'opaque' => array( 'product' => 'fixture' ),
+	),
+	'files'      => array(
+		array(
+			'path'    => 'assets/app.css',
+			'content' => 'body{color:#111}',
+			'kind'    => 'stylesheet',
+			'roles'   => array( 'style' ),
+		),
+		array(
+			'path'           => 'assets/logo.png',
+			'content_base64' => base64_encode( "\x89PNG\r\n\x1a\nbundle" ),
+			'encoding'       => 'base64',
+			'kind'           => 'image',
+		),
+		array(
+			'path'      => 'index.html',
+			'content'   => '<main>Normalized</main>',
+			'mime_type' => 'text/html',
+			'kind'      => 'html',
+		),
+	),
+);
+$normalized_browser_bundle       = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], $browser_bundle_input ) : new WP_Error( 'missing_ability', 'normalize-browser-artifact-bundle missing.' );
+$normalized_browser_bundle_again = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], $browser_bundle_input ) : null;
+$assert( 'normalize-browser-artifact-bundle returns caller-owned schema envelope', ! is_wp_error( $normalized_browser_bundle ) && true === ( $normalized_browser_bundle['success'] ?? false ) && 'wp-codebox/browser-artifact-bundle-normalization/v1' === ( $normalized_browser_bundle['schema'] ?? '' ) && 'caller/browser-bundle/v1' === ( $normalized_browser_bundle['caller_schema'] ?? '' ) );
+$assert( 'normalize-browser-artifact-bundle scopes root and entrypoint', ! is_wp_error( $normalized_browser_bundle ) && 'site' === ( $normalized_browser_bundle['root'] ?? '' ) && 'site/index.html' === ( $normalized_browser_bundle['entrypoint'] ?? '' ) );
+$assert( 'normalize-browser-artifact-bundle supports mixed text and base64 files', ! is_wp_error( $normalized_browser_bundle ) && 'site/assets/logo.png' === ( $normalized_browser_bundle['files'][1]['path'] ?? '' ) && 'base64' === ( $normalized_browser_bundle['files'][1]['encoding'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\nbundle" ) === ( $normalized_browser_bundle['files'][1]['sha256'] ?? '' ) && 'site/index.html' === ( $normalized_browser_bundle['files'][2]['path'] ?? '' ) && '<main>Normalized</main>' === ( $normalized_browser_bundle['files'][2]['content'] ?? '' ) );
+$assert( 'normalize-browser-artifact-bundle preserves opaque roles', ! is_wp_error( $normalized_browser_bundle ) && array( 'assets' => array( 'assets/logo.png' ), 'preview' => 'index.html' ) === ( $normalized_browser_bundle['roles'] ?? array() ) && array( 'style' ) === ( $normalized_browser_bundle['files'][0]['roles'] ?? array() ) );
+$assert( 'normalize-browser-artifact-bundle output is stable', ! is_wp_error( $normalized_browser_bundle ) && $normalized_browser_bundle === $normalized_browser_bundle_again );
+$normalized_browser_invalid_path = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], array_merge( $browser_bundle_input, array( 'files' => array( array( 'path' => '/escape.html', 'content' => 'nope' ) ) ) ) ) : null;
+$assert( 'normalize-browser-artifact-bundle rejects invalid paths', is_wp_error( $normalized_browser_invalid_path ) && 'wp_codebox_browser_artifact_path_invalid' === $normalized_browser_invalid_path->get_error_code() );
+$normalized_browser_missing_entrypoint = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], array_merge( $browser_bundle_input, array( 'entrypoint' => 'missing.html' ) ) ) : null;
+$assert( 'normalize-browser-artifact-bundle rejects missing entrypoint', is_wp_error( $normalized_browser_missing_entrypoint ) && 'wp_codebox_browser_artifact_entrypoint_missing' === $normalized_browser_missing_entrypoint->get_error_code() );
+$normalized_browser_duplicate = is_array( $normalize_browser_bundle_ability ) ? call_user_func( $normalize_browser_bundle_ability['execute_callback'], array_merge( $browser_bundle_input, array( 'files' => array( array( 'path' => 'index.html', 'content' => 'one' ), array( 'path' => 'site/index.html', 'content' => 'two' ) ) ) ) ) : null;
+$assert( 'normalize-browser-artifact-bundle rejects duplicate files', is_wp_error( $normalized_browser_duplicate ) && 'wp_codebox_browser_artifact_path_duplicate' === $normalized_browser_duplicate->get_error_code() );
+
 $persist_browser_artifact_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/persist-browser-artifact'] ?? null;
 $persisted_browser_artifact       = is_array( $persist_browser_artifact_ability ) ? call_user_func(
 	$persist_browser_artifact_ability['execute_callback'],

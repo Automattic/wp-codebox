@@ -503,6 +503,66 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/normalize-browser-artifact-bundle',
+				array(
+					'label'               => 'Normalize Browser Artifact Bundle',
+					'description'         => 'Normalize and verify a caller-owned browser artifact bundle without interpreting product-specific roles or metadata.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'schema_id', 'entrypoint', 'files' ),
+						'properties' => array(
+							'schema_id'  => array(
+								'type'        => 'string',
+								'description' => 'Caller-owned schema id for the product artifact contract being normalized.',
+							),
+							'root'       => array(
+								'type'        => 'string',
+								'description' => 'Optional safe relative artifact root applied to entrypoint and file paths.',
+							),
+							'entrypoint' => array(
+								'type'        => 'string',
+								'description' => 'Safe relative entrypoint path that must exist in the normalized files.',
+							),
+							'roles'      => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller role metadata preserved without product-specific interpretation.',
+							),
+							'provenance' => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller provenance preserved on the normalized bundle.',
+							),
+							'metadata'   => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller metadata preserved on the normalized bundle.',
+							),
+							'files'      => array(
+								'type'        => 'array',
+								'description' => 'Browser-produced artifact files to normalize.',
+								'items'       => array(
+									'type'       => 'object',
+									'required'   => array( 'path' ),
+									'properties' => array(
+										'path'           => array( 'type' => 'string' ),
+										'content'        => array( 'type' => 'string' ),
+										'content_base64' => array( 'type' => 'string' ),
+										'encoding'       => array( 'type' => 'string', 'enum' => array( 'utf-8', 'base64' ) ),
+										'mime_type'      => array( 'type' => 'string' ),
+										'kind'           => array( 'type' => 'string' ),
+										'roles'          => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+									),
+								),
+							),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'normalize_browser_artifact_bundle' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/persist-browser-artifact',
 				array(
 					'label'               => 'Persist Browser Artifact',
@@ -1245,6 +1305,11 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function discard_artifact( array $input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->discard( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function normalize_browser_artifact_bundle( array $input ): array|WP_Error {
+		return ( new WP_Codebox_Artifacts() )->normalize_browser_bundle( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
