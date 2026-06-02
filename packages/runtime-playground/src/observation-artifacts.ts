@@ -213,10 +213,11 @@ if ( in_array( 'menus', $sections, true ) ) {
 }
 
 if ( in_array( 'templates', $sections, true ) ) {
+    $global_stylesheet = function_exists( 'wp_get_global_stylesheet' ) ? (string) wp_get_global_stylesheet() : null;
     $exports['templates'] = array(
         'theme'         => wp_get_theme()->get_stylesheet(),
-        'templates'     => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $hash_value ) {
-            return array(
+        'templates'     => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $include_content, $hash_value ) {
+            $entry = array(
                 'id'          => $template->id ?? '',
                 'slug'        => $template->slug ?? '',
                 'theme'       => $template->theme ?? '',
@@ -224,9 +225,13 @@ if ( in_array( 'templates', $sections, true ) ) {
                 'source'      => $template->source ?? '',
                 'contentHash' => $hash_value( (string) ( $template->content ?? '' ) ),
             );
+            if ( $include_content ) {
+                $entry['content'] = (string) ( $template->content ?? '' );
+            }
+            return $entry;
         }, get_block_templates( array(), 'wp_template' ) ) : array(),
-        'templateParts' => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $hash_value ) {
-            return array(
+        'templateParts' => function_exists( 'get_block_templates' ) ? array_map( function ( $template ) use ( $include_content, $hash_value ) {
+            $entry = array(
                 'id'          => $template->id ?? '',
                 'slug'        => $template->slug ?? '',
                 'theme'       => $template->theme ?? '',
@@ -234,8 +239,17 @@ if ( in_array( 'templates', $sections, true ) ) {
                 'source'      => $template->source ?? '',
                 'contentHash' => $hash_value( (string) ( $template->content ?? '' ) ),
             );
+            if ( $include_content ) {
+                $entry['content'] = (string) ( $template->content ?? '' );
+            }
+            return $entry;
         }, get_block_templates( array(), 'wp_template_part' ) ) : array(),
-        'globalStyles'  => function_exists( 'wp_get_global_stylesheet' ) ? array( 'stylesheetHash' => $hash_value( wp_get_global_stylesheet() ) ) : null,
+        'globalStyles'  => null !== $global_stylesheet ? array_filter( array(
+            'stylesheetHash' => $hash_value( $global_stylesheet ),
+            'stylesheet'     => $include_content ? $global_stylesheet : null,
+        ), function ( $value ) {
+            return null !== $value;
+        } ) : null,
     );
 }
 

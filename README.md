@@ -448,11 +448,13 @@ await episode.observe({
 Each exported section is written as a bundle-relative artifact under
 `files/observations/`, with a SHA-256 digest in both the observation data and the
 observation `artifactRefs`. The inline observation data summarizes non-summary
-sections by count/key metadata so traces stay compact. Posts include content
-hashes by default; pass `includeContent: true` only when full post content is
-needed. Options require `optionNames`; users are redacted by default, expose only
-allowed role/capability fields, and include identity fields only with
-`redaction: "none"` plus an explicit `userFields` allowlist.
+sections by count/key metadata so traces stay compact. Posts, templates,
+template parts, and global styles include content hashes by default; pass
+`includeContent: true` only when full post content, template content, template
+part content, or the raw global-style stylesheet is needed. Options require
+`optionNames`; users are redacted by default, expose only allowed
+role/capability fields, and include identity fields only with `redaction: "none"`
+plus an explicit `userFields` allowlist.
 
 Replay is bounded to the generic runtime contract. A consumer can replay a step
 by creating a compatible backend runtime, applying the same mounts/artifact

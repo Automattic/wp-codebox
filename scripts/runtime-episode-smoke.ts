@@ -123,6 +123,16 @@ try {
     assert.ok(usersArtifactRef?.path, "users state export should be artifact-backed")
     const usersArtifactPath = usersArtifactRef.path
 
+    const templateHashesObservation = await episode.observe({ type: "wordpress-state", sections: ["templates"] })
+    const templateHashesArtifactRef = templateHashesObservation.artifactRefs?.find((ref) => ref.path?.endsWith("wordpress-state-templates.json"))
+    assert.ok(templateHashesArtifactRef?.path, "template state export should be artifact-backed")
+    const templateHashesArtifactPath = templateHashesArtifactRef.path
+
+    const templateContentObservation = await episode.observe({ type: "wordpress-state", sections: ["templates"], includeContent: true })
+    const templateContentArtifactRef = templateContentObservation.artifactRefs?.find((ref) => ref.path?.endsWith("wordpress-state-templates.json"))
+    assert.ok(templateContentArtifactRef?.path, "template content state export should be artifact-backed")
+    const templateContentArtifactPath = templateContentArtifactRef.path
+
     const httpObservation = await episode.observe({ type: "http-response", url: "/" })
     assert.equal(httpObservation.type, "http-response")
     assert.equal(httpObservation.digest?.algorithm, "sha256")
@@ -148,6 +158,34 @@ try {
     assert.equal(metadata.artifacts.runtimeEpisodeTrace, "files/runtime-episode-trace.json")
     assert.equal(metadata.artifacts.runtimeEpisodeEvents, "files/runtime-episode.jsonl")
     assert.equal(metadata.artifacts.runtimeReplayReferenceIndex, "files/runtime-replay-index.json")
+
+    const templateHashesArtifact = JSON.parse(await readFile(join(artifacts.directory, templateHashesArtifactPath), "utf8")) as {
+      data?: {
+        templates?: Array<Record<string, unknown>>
+        templateParts?: Array<Record<string, unknown>>
+        globalStyles?: Record<string, unknown> | null
+      }
+    }
+    assert.equal(Object.hasOwn(templateHashesArtifact.data?.globalStyles ?? {}, "stylesheetHash"), true)
+    assert.equal(Object.hasOwn(templateHashesArtifact.data?.globalStyles ?? {}, "stylesheet"), false)
+    assert.equal(templateHashesArtifact.data?.templates?.some((template) => Object.hasOwn(template, "content")), false)
+    assert.equal(templateHashesArtifact.data?.templateParts?.some((templatePart) => Object.hasOwn(templatePart, "content")), false)
+
+    const templateContentArtifact = JSON.parse(await readFile(join(artifacts.directory, templateContentArtifactPath), "utf8")) as {
+      data?: {
+        templates?: Array<Record<string, unknown>>
+        templateParts?: Array<Record<string, unknown>>
+        globalStyles?: Record<string, unknown> | null
+      }
+    }
+    assert.equal(typeof templateContentArtifact.data?.globalStyles?.stylesheetHash, "string")
+    assert.equal(typeof templateContentArtifact.data?.globalStyles?.stylesheet, "string")
+    if ((templateContentArtifact.data?.templates?.length ?? 0) > 0) {
+      assert.equal(typeof templateContentArtifact.data?.templates?.[0]?.content, "string")
+    }
+    if ((templateContentArtifact.data?.templateParts?.length ?? 0) > 0) {
+      assert.equal(typeof templateContentArtifact.data?.templateParts?.[0]?.content, "string")
+    }
 
     const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode-trace.json" && file.kind === "runtime-episode-trace"))
