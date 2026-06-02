@@ -15,6 +15,7 @@ final class WP_Codebox_CLI_Command {
 
 		\WP_CLI::add_command( 'codebox artifacts list', array( $command, 'artifacts_list' ) );
 		\WP_CLI::add_command( 'codebox artifacts get', array( $command, 'artifacts_get' ) );
+		\WP_CLI::add_command( 'codebox artifacts preflight-apply', array( $command, 'artifacts_preflight_apply' ) );
 		\WP_CLI::add_command( 'codebox artifacts stage-apply', array( $command, 'artifacts_stage_apply' ) );
 		\WP_CLI::add_command( 'codebox artifacts apply', array( $command, 'artifacts_apply' ) );
 		\WP_CLI::add_command( 'codebox browser-session create', array( $command, 'browser_session_create' ) );
@@ -40,6 +41,16 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function artifacts_get( array $args, array $assoc_args ): void {
 		$this->emit( WP_Codebox_Abilities::get_artifact( $this->artifact_input( $args, $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Preflight a reviewed artifact apply without mutating the parent control plane.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function artifacts_preflight_apply( array $args, array $assoc_args ): void {
+		$this->emit( WP_Codebox_Abilities::apply_artifact_preflight( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
 	}
 
 	/**

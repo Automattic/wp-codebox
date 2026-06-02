@@ -313,6 +313,7 @@ $assert( 'category exposes label and description', isset( $category['label'] ) &
 $cli_commands = $GLOBALS['wp_codebox_cli_commands'];
 $assert( 'wp codebox artifacts list command registered', is_callable( $cli_commands['codebox artifacts list'] ?? null ) );
 $assert( 'wp codebox artifacts get command registered', is_callable( $cli_commands['codebox artifacts get'] ?? null ) );
+$assert( 'wp codebox artifacts preflight-apply command registered', is_callable( $cli_commands['codebox artifacts preflight-apply'] ?? null ) );
 $assert( 'wp codebox artifacts stage-apply command registered', is_callable( $cli_commands['codebox artifacts stage-apply'] ?? null ) );
 $assert( 'wp codebox artifacts apply command registered', is_callable( $cli_commands['codebox artifacts apply'] ?? null ) );
 $assert( 'wp codebox browser-session create command registered', is_callable( $cli_commands['codebox browser-session create'] ?? null ) );
@@ -381,6 +382,7 @@ $artifact_abilities = array(
 	'wp-codebox/discard-artifact',
 	'wp-codebox/persist-browser-artifact',
 	'wp-codebox/review-artifact',
+	'wp-codebox/apply-artifact-preflight',
 	'wp-codebox/apply-approved-artifact',
 	'wp-codebox/stage-artifact-apply',
 );
@@ -2016,6 +2018,37 @@ $assert( 'artifact get verifies content digest', ! is_wp_error( $read_artifact )
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] = dirname( __DIR__ ) . '/packages/cli/dist/index.js';
 
+$preflight_apply_payloads = array();
+$GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ) use ( &$preflight_apply_payloads ): mixed {
+	$preflight_apply_payloads[] = $payload;
+	return $value;
+};
+$apply_preflight = $artifacts->apply_preflight(
+	array(
+		'artifacts_path'  => $artifact_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ),
+		'approver'        => 'site-user:preflight',
+		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+	)
+);
+$assert( 'artifact apply preflight returns verified adapter payload without delegation', ! is_wp_error( $apply_preflight ) && 'wp-codebox/artifact-apply-preflight/v1' === ( $apply_preflight['schema'] ?? '' ) && true === ( $apply_preflight['verification']['valid'] ?? false ) && $content_digest === ( $apply_preflight['content_digest'] ?? '' ) && hash( 'sha256', $patch_diff ) === ( $apply_preflight['patch_sha256'] ?? '' ) && array() === $preflight_apply_payloads );
+$assert( 'artifact apply preflight payload preserves apply target and approved files', ! is_wp_error( $apply_preflight ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $apply_preflight['payload']['apply_target'] ?? array() ) && array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ) === ( $apply_preflight['payload']['approved_files'] ?? array() ) && $patch_diff === ( $apply_preflight['payload']['patch'] ?? '' ) );
+
+call_user_func( $GLOBALS['wp_codebox_cli_commands']['codebox artifacts preflight-apply'], array( $artifact_id ), array( 'artifacts-path' => $artifact_root, 'approved-files' => '/wordpress/wp-content/plugins/example/generated.txt,/wordpress/wp-content/plugins/example/unapproved.txt', 'format' => 'json' ) );
+$cli_preflight_output = json_decode( end( $GLOBALS['wp_codebox_cli_lines'] ), true );
+$assert( 'wp codebox artifacts preflight-apply emits JSON service result', is_array( $cli_preflight_output ) && 'wp-codebox/artifact-apply-preflight/v1' === ( $cli_preflight_output['schema'] ?? '' ) && $artifact_id === ( $cli_preflight_output['artifact_id'] ?? '' ) );
+
+$missing_approval_preflight = $artifacts->apply_preflight(
+	array(
+		'artifacts_path'  => $artifact_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
+	)
+);
+$assert( 'artifact apply preflight requires every changed file approval', is_wp_error( $missing_approval_preflight ) && 'wp_codebox_approved_files_incomplete' === $missing_approval_preflight->get_error_code() && array( '/wordpress/wp-content/plugins/example/unapproved.txt' ) === ( $missing_approval_preflight->get_error_data()['files'] ?? array() ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] );
+
 $malformed_manifest_root = $root . '/artifact-malformed-manifest';
 mkdir( $malformed_manifest_root . '/broken', 0777, true );
 file_put_contents( $malformed_manifest_root . '/broken/manifest.json', "{\n" );
@@ -2024,6 +2057,30 @@ $verify_exit   = 0;
 exec( 'node ' . escapeshellarg( $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] ) . ' artifacts verify --bundle ' . escapeshellarg( $malformed_manifest_root . '/broken' ) . ' --json 2>&1', $verify_output, $verify_exit );
 $verify_result = json_decode( implode( "\n", $verify_output ), true );
 $assert( 'generic verifier reports malformed manifest fixtures', 1 === $verify_exit && false === ( $verify_result['valid'] ?? true ) && 'malformed-manifest' === ( $verify_result['violations'][0]['code'] ?? '' ) );
+
+$digest_fixture_root = $root . '/artifact-digest-fixture';
+$copy_directory( $bundle_dir, $digest_fixture_root . '/runtime-test' );
+file_put_contents( $digest_fixture_root . '/runtime-test/files/patch.diff', $patch_diff . "diff --git a/tampered.txt b/tampered.txt\n+tampered\n" );
+$digest_failure = $artifacts->apply_preflight(
+	array(
+		'artifacts_path'  => $digest_fixture_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ),
+	)
+);
+$assert( 'artifact apply preflight rejects digest mismatch before payload creation', is_wp_error( $digest_failure ) && 'wp_codebox_artifact_digest_mismatch' === $digest_failure->get_error_code() );
+
+$missing_patch_fixture_root = $root . '/artifact-missing-patch-fixture';
+$copy_directory( $bundle_dir, $missing_patch_fixture_root . '/runtime-test' );
+unlink( $missing_patch_fixture_root . '/runtime-test/files/patch.diff' );
+$missing_patch_failure = $artifacts->apply_preflight(
+	array(
+		'artifacts_path'  => $missing_patch_fixture_root,
+		'artifact_id'     => $artifact_id,
+		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ),
+	)
+);
+$assert( 'artifact apply preflight rejects missing patch before payload creation', is_wp_error( $missing_patch_failure ) && 'wp_codebox_patch_missing' === $missing_patch_failure->get_error_code() );
 
 $hash_fixture_root = $root . '/artifact-hash-fixture';
 $copy_directory( $bundle_dir, $hash_fixture_root . '/runtime-test' );

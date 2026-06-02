@@ -11,6 +11,7 @@ final class WP_Codebox_Artifacts {
 
 	private const LIST_SCHEMA  = 'wp-codebox/artifact-list/v1';
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
+	private const APPLY_PREFLIGHT_SCHEMA = 'wp-codebox/artifact-apply-preflight/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
 	private const APPLY_AUDIT_SCHEMA = 'wp-codebox/apply-audit/v1';
@@ -421,80 +422,38 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
-	public function apply_approved( array $input ): array|WP_Error {
-		$bundle = $this->resolve_bundle( $input );
-		if ( is_wp_error( $bundle ) ) {
-			return $bundle;
+	public function apply_preflight( array $input ): array|WP_Error {
+		$preflight = $this->approved_artifact_apply_preflight( $input, true );
+		if ( is_wp_error( $preflight ) ) {
+			return $preflight;
 		}
+
+		return array_merge(
+			array(
+				'success' => true,
+				'schema'  => self::APPLY_PREFLIGHT_SCHEMA,
+			),
+			$preflight
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function apply_approved( array $input ): array|WP_Error {
+		$preflight = $this->approved_artifact_apply_preflight( $input, false );
+		if ( is_wp_error( $preflight ) ) {
+			return $preflight;
+		}
+
+		$bundle         = $preflight['artifact'];
+		$approved_files = $preflight['approved_files'];
+		$payload        = $preflight['payload'];
+		$content_digest = (string) $preflight['content_digest'];
+		$verification   = $preflight['verification'];
 
 		$root = $this->artifact_root( $input );
 		if ( is_wp_error( $root ) ) {
 			return $root;
 		}
-
-		$verification = $this->verify_artifact_bundle( $bundle, $input );
-		if ( is_wp_error( $verification ) ) {
-			return $verification;
-		}
-
-		$approved_files = $this->approved_files( $input );
-		if ( empty( $approved_files ) ) {
-			return new WP_Error( 'wp_codebox_approved_files_missing', 'approved_files must include at least one sandbox path.', array( 'status' => 400 ) );
-		}
-
-		$changed_files = $bundle['changed_files']['files'] ?? array();
-		if ( ! is_array( $changed_files ) ) {
-			return new WP_Error( 'wp_codebox_changed_files_invalid', 'Artifact changed-files payload is invalid.', array( 'status' => 400 ) );
-		}
-
-		$changed_paths = array_values(
-			array_filter(
-				array_map(
-					static fn( $file ): string => is_array( $file ) ? (string) ( $file['path'] ?? '' ) : '',
-					$changed_files
-				)
-			)
-		);
-
-		$unknown_files = array_values( array_diff( $approved_files, $changed_paths ) );
-		if ( ! empty( $unknown_files ) ) {
-			return new WP_Error(
-				'wp_codebox_approved_files_invalid',
-				'approved_files contains paths that are not present in changed-files.json.',
-				array(
-					'status' => 400,
-					'files'  => $unknown_files,
-				)
-			);
-		}
-
-		$patch_path = (string) ( $bundle['paths']['patch'] ?? '' );
-		$patch      = '' !== $patch_path && is_file( $patch_path ) ? file_get_contents( $patch_path ) : false;
-		if ( false === $patch || '' === trim( $patch ) ) {
-			return new WP_Error( 'wp_codebox_patch_missing', 'Artifact patch.diff is missing or empty.', array( 'status' => 400 ) );
-		}
-
-		$patch = $this->filter_patch_to_approved_files( $patch, $changed_files, $approved_files );
-		if ( is_wp_error( $patch ) ) {
-			return $patch;
-		}
-
-		$content_digest = $this->artifact_content_digest( $bundle );
-		if ( is_wp_error( $content_digest ) ) {
-			return $content_digest;
-		}
-
-		$payload = array(
-			'artifact_id'             => (string) $bundle['id'],
-			'artifact'                => $bundle,
-			'approved_files'          => $approved_files,
-			'approver'                => $input['approver'] ?? null,
-			'apply_target'            => is_array( $input['apply_target'] ?? null ) ? $input['apply_target'] : null,
-			'patch'                   => $patch,
-			'patch_sha256'            => hash( 'sha256', $patch ),
-			'artifact_content_digest' => $content_digest,
-			'artifact_verification'   => $verification,
-		);
 
 		$result = apply_filters( 'wp_codebox_apply_approved_artifact', null, $payload );
 		if ( null === $result ) {
@@ -702,6 +661,93 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function approved_artifact_apply_preflight( array $input, bool $require_all_changed_files_approved ): array|WP_Error {
+		$bundle = $this->resolve_bundle( $input );
+		if ( is_wp_error( $bundle ) ) {
+			return $bundle;
+		}
+
+		$verification = $this->verify_artifact_bundle( $bundle, $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
+		}
+
+		$approved_files = $this->approved_files( $input );
+		if ( empty( $approved_files ) ) {
+			return new WP_Error( 'wp_codebox_approved_files_missing', 'approved_files must include at least one sandbox path.', array( 'status' => 400 ) );
+		}
+
+		$changed_files = $bundle['changed_files']['files'] ?? array();
+		if ( ! is_array( $changed_files ) ) {
+			return new WP_Error( 'wp_codebox_changed_files_invalid', 'Artifact changed-files payload is invalid.', array( 'status' => 400 ) );
+		}
+
+		$changed_paths = $this->changed_file_paths( $changed_files );
+		$unknown_files = array_values( array_diff( $approved_files, $changed_paths ) );
+		if ( ! empty( $unknown_files ) ) {
+			return new WP_Error(
+				'wp_codebox_approved_files_invalid',
+				'approved_files contains paths that are not present in changed-files.json.',
+				array(
+					'status' => 400,
+					'files'  => $unknown_files,
+				)
+			);
+		}
+
+		$missing_approved_files = $require_all_changed_files_approved ? array_values( array_diff( $changed_paths, $approved_files ) ) : array();
+		if ( ! empty( $missing_approved_files ) ) {
+			return new WP_Error(
+				'wp_codebox_approved_files_incomplete',
+				'approved_files must include every changed file for apply preflight.',
+				array(
+					'status' => 400,
+					'files'  => $missing_approved_files,
+				)
+			);
+		}
+
+		$patch_path = (string) ( $bundle['paths']['patch'] ?? '' );
+		$patch      = '' !== $patch_path && is_file( $patch_path ) ? file_get_contents( $patch_path ) : false;
+		if ( false === $patch || '' === trim( $patch ) ) {
+			return new WP_Error( 'wp_codebox_patch_missing', 'Artifact patch.diff is missing or empty.', array( 'status' => 400 ) );
+		}
+
+		$patch = $this->filter_patch_to_approved_files( $patch, $changed_files, $approved_files );
+		if ( is_wp_error( $patch ) ) {
+			return $patch;
+		}
+
+		$content_digest = $this->artifact_content_digest( $bundle );
+		if ( is_wp_error( $content_digest ) ) {
+			return $content_digest;
+		}
+
+		$payload = array(
+			'artifact_id'             => (string) $bundle['id'],
+			'artifact'                => $bundle,
+			'approved_files'          => $approved_files,
+			'approver'                => $input['approver'] ?? null,
+			'apply_target'            => is_array( $input['apply_target'] ?? null ) ? $input['apply_target'] : null,
+			'patch'                   => $patch,
+			'patch_sha256'            => hash( 'sha256', $patch ),
+			'artifact_content_digest' => $content_digest,
+			'artifact_verification'   => $verification,
+		);
+
+		return array(
+			'artifact_id'    => (string) $bundle['id'],
+			'artifact'       => $bundle,
+			'approved_files' => $approved_files,
+			'changed_files'  => $changed_paths,
+			'patch_sha256'   => $payload['patch_sha256'],
+			'content_digest' => $content_digest,
+			'verification'   => $verification,
+			'payload'        => $payload,
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function resolve_bundle( array $input ): array|WP_Error {
 		$artifact_id = trim( (string) ( $input['artifact_id'] ?? '' ) );
 		if ( '' === $artifact_id ) {
@@ -717,6 +763,13 @@ final class WP_Codebox_Artifacts {
 			$bundle = $this->read_bundle_at_manifest( $manifest_path, true );
 			if ( ! is_wp_error( $bundle ) && $artifact_id === (string) $bundle['id'] ) {
 				return $bundle;
+			}
+
+			if ( is_wp_error( $bundle ) ) {
+				$manifest = $this->read_json_file( $manifest_path );
+				if ( ! is_wp_error( $manifest ) && $artifact_id === (string) ( $manifest['id'] ?? '' ) ) {
+					return $bundle;
+				}
 			}
 		}
 
@@ -1263,6 +1316,18 @@ final class WP_Codebox_Artifacts {
 				array_filter(
 					array_map( static fn( $path ): string => trim( (string) $path ), $files ),
 					static fn( string $path ): bool => '' !== $path
+				)
+			)
+		);
+	}
+
+	/** @param array<int,mixed> $changed_files Artifact changed file entries. @return string[] */
+	private function changed_file_paths( array $changed_files ): array {
+		return array_values(
+			array_filter(
+				array_map(
+					static fn( $file ): string => is_array( $file ) ? (string) ( $file['path'] ?? '' ) : '',
+					$changed_files
 				)
 			)
 		);

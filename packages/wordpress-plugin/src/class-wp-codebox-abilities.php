@@ -696,6 +696,41 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/apply-artifact-preflight',
+				array(
+					'label'               => 'Preflight WP Codebox Artifact Apply',
+					'description'         => 'Validate a canonical artifact bundle and return the apply adapter payload without mutating parent-side git, pull requests, or deployments.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'artifact_id', 'approved_files' ),
+						'properties' => array_merge(
+							$artifact_id_schema,
+							array(
+								'approved_files' => array(
+									'type'        => 'array',
+									'description' => 'Explicit sandbox file paths approved by the parent-site reviewer. Preflight requires every changed file to be approved.',
+									'items'       => array( 'type' => 'string' ),
+								),
+								'approver'       => array(
+									'type'        => 'string',
+									'description' => 'Parent-site approver principal preserved in the returned payload.',
+								),
+								'apply_target'   => array(
+									'type'        => 'object',
+									'description' => 'Optional parent-control-plane target metadata preserved in the returned payload.',
+								),
+							)
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'apply_artifact_preflight' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/apply-approved-artifact',
 				array(
 					'label'               => 'Apply Approved WP Codebox Artifact',
@@ -1399,6 +1434,11 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function review_artifact( array $input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->review_artifact( $input );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public static function apply_artifact_preflight( array $input ): array|WP_Error {
+		return ( new WP_Codebox_Artifacts() )->apply_preflight( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
