@@ -23,6 +23,8 @@ try {
 
   await copyIfPresent("README.md")
   await copyIfPresent("LICENSE")
+  await mkdir(join(packageRoot, "scripts"), { recursive: true })
+  await cp(resolve(repoRoot, "scripts", "normalize-playground-sqlite-package.mjs"), join(packageRoot, "scripts", "normalize-playground-sqlite-package.mjs"))
   await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
   await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
 
@@ -37,6 +39,10 @@ try {
   await execFileAsync("npm", ["install", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
     cwd: packageRoot,
     maxBuffer: 1024 * 1024 * 20,
+  })
+  await execFileAsync("node", ["scripts/normalize-playground-sqlite-package.mjs"], {
+    cwd: packageRoot,
+    maxBuffer: 1024 * 1024 * 10,
   })
   await bundleNodeRuntime(packageRoot, platformName, archName)
 
