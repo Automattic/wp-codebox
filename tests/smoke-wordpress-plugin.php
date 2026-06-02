@@ -112,7 +112,7 @@ function do_action( string $hook ): void {
 }
 function add_filter( string $hook, callable $callback, int $priority = 10 ): void { $GLOBALS['wp_codebox_filters'][ $hook ] = $callback; }
 function has_filter( string $hook ): bool { return array_key_exists( $hook, $GLOBALS['wp_codebox_filters'] ); }
-function current_user_can( string $capability ): bool { return 'manage_options' === $capability; }
+function current_user_can( string $capability ): bool { return 'manage_options' === $capability && ( $GLOBALS['wp_codebox_current_user_can_manage_options'] ?? true ); }
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 	if ( ! array_key_exists( $hook, $GLOBALS['wp_codebox_filters'] ) ) {
 		return $value;
@@ -355,9 +355,25 @@ $assert( 'browser Playground session accepts goal or legacy task', array( 'goal'
 $assert( 'browser Playground session exposes artifact file schema', 'array' === ( $browser_session_ability['input_schema']['properties']['artifact_files']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes site blueprint artifact schema', 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) && 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['properties']['blueprint']['type'] ?? '' ) );
 $assert( 'browser Playground session declares site blueprint artifact output', 'object' === ( $browser_session_ability['output_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) );
+$assert( 'browser Playground session exposes explicit trusted orchestrator authorization schema', 'object' === ( $browser_session_ability['input_schema']['properties']['authorization']['type'] ?? '' ) && array( 'browser-session:create' ) === ( $browser_session_ability['input_schema']['properties']['authorization']['properties']['scope']['enum'] ?? array() ) );
 $assert( 'browser Playground session output declares browser execution', array( 'browser-playground' ) === ( $browser_session_ability['output_schema']['properties']['execution']['enum'] ?? array() ) );
 $assert( 'browser Playground session exposes generic sandbox invocation schema', array( 'ability', 'task' ) === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['type']['enum'] ?? array() ) && 'string' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['hook']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes generic capture path schema', 'array' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['type'] ?? '' ) && 'integer' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['items']['properties']['max_bytes']['type'] ?? '' ) && 'object' === ( $browser_session_ability['output_schema']['properties']['materialization']['type'] ?? '' ) );
+
+$trusted_browser_authorization = array(
+	'authorization' => array(
+		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+		'caller' => 'studio-web',
+		'scope'  => 'browser-session:create',
+	),
+);
+$GLOBALS['wp_codebox_filters']['wp_codebox_trusted_browser_session_callers'] = array( 'studio-web' => array( 'browser-session:create' ) );
+$GLOBALS['wp_codebox_current_user_can_manage_options'] = false;
+$assert( 'browser Playground session keeps default protection for untrusted users', false === call_user_func( $browser_session_ability['permission_callback'], array( 'goal' => 'Denied without trusted caller.' ) ) );
+$assert( 'browser Playground session allows trusted orchestrator caller with browser-session scope', true === call_user_func( $browser_session_ability['permission_callback'], $trusted_browser_authorization ) );
+$assert( 'browser Playground session denies untrusted orchestrator caller', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'unknown-product', 'scope' => 'browser-session:create' ) ) ) );
+$assert( 'browser Playground session denies trusted caller without browser-session scope', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
+$GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
 $artifact_abilities = array(
 	'wp-codebox/list-artifacts',
@@ -431,6 +447,11 @@ $browser_session = call_user_func(
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'inherit'               => array( 'connectors' => array( 'openai' ) ),
 		'orchestrator'          => array( 'id' => 'example-orchestrator' ),
+		'authorization'         => array(
+			'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+			'caller' => 'studio-web',
+			'scope'  => 'browser-session:create',
+		),
 		'browser_plugins'       => array(
 			array(
 				'slug'   => 'agents-api',
@@ -559,6 +580,7 @@ $assert( 'browser Playground session pins browser execution', ! is_wp_error( $br
 $assert( 'browser Playground session identifies disposable execution scope', ! is_wp_error( $browser_session ) && 'disposable-playground' === ( $browser_session['execution_scope'] ?? '' ) && 'disposable-playground' === ( $browser_session['session']['execution_scope'] ?? '' ) );
 $assert( 'browser Playground session identifies sandbox permission model', ! is_wp_error( $browser_session ) && 'sandbox-bypass' === ( $browser_session['permission_model'] ?? '' ) && 'sandbox-bypass' === ( $browser_session['session']['permission_model'] ?? '' ) );
 $assert( 'browser Playground session emits canonical sandbox session envelope', ! is_wp_error( $browser_session ) && 'wp-codebox/sandbox-session/v1' === ( $browser_session['session']['schema'] ?? '' ) && 'browser-session-123' === ( $browser_session['session']['id'] ?? '' ) && 'ready' === ( $browser_session['session']['status'] ?? '' ) && 'external-orchestrator' === ( $browser_session['session']['persistence'] ?? '' ) );
+$assert( 'browser Playground session returns trusted authorization provenance in session envelope', ! is_wp_error( $browser_session ) && 'studio-web' === ( $browser_session['session']['authorization']['caller'] ?? '' ) && 'browser-session:create' === ( $browser_session['session']['authorization']['scope'] ?? '' ) && true === ( $browser_session['session']['authorization']['authorized'] ?? false ) && 'trusted-caller-grant' === ( $browser_session['session']['authorization']['reason'] ?? '' ) );
 $assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.automattic.ai' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.automattic.ai' ) );
 $assert( 'browser Playground session includes Playground CORS proxy URL', ! is_wp_error( $browser_session ) && 'https://wordpress-playground-cors-proxy.net/?' === ( $browser_session['playground']['cors_proxy_url'] ?? '' ) && 'https://wordpress-playground-cors-proxy.net' === ( $browser_session['playground']['provenance']['cors_proxy_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session includes default blueprint', ! is_wp_error( $browser_session ) && true === ( $browser_session['playground']['blueprint']['features']['networking'] ?? false ) && is_array( $browser_session['playground']['blueprint']['steps'] ?? null ) );
