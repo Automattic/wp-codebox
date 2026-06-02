@@ -30,7 +30,33 @@ export interface RuntimeCreateSpec {
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
   preview?: RuntimePreviewSpec
+  onBrowserStartupProgress?: BrowserStartupProgressListener
 }
+
+export type BrowserStartupProgressPhase =
+  | "preview:start"
+  | "preview:loading-client"
+  | "preview:loading-wordpress"
+  | "preview:applying-blueprint"
+  | "preview:installing-dependencies"
+  | "preview:activating-dependencies"
+  | "preview:connecting-client"
+  | "preview:ready"
+  | "preview:error"
+  | (string & {})
+
+export type BrowserStartupProgressStatus = "running" | "complete" | "failed"
+
+export interface BrowserStartupProgressEvent {
+  schema: "wp-codebox/browser-startup-progress/v1"
+  phase: BrowserStartupProgressPhase
+  status: BrowserStartupProgressStatus
+  label?: string
+  elapsed_ms?: number
+  detail?: Record<string, unknown>
+}
+
+export type BrowserStartupProgressListener = (event: BrowserStartupProgressEvent) => void | Promise<void>
 
 export interface RuntimePreviewSpec {
   publicUrl?: string
@@ -394,6 +420,7 @@ export interface LifecycleEvent {
     | "runtime.observed"
     | "runtime.snapshot.created"
     | "runtime.artifacts.collected"
+    | "runtime.browser-startup-progress"
     | "runtime.destroyed"
     | (string & {})
   timestamp: string
