@@ -3756,7 +3756,7 @@ flush_rewrite_rules();
 		$name = trim( (string) ( $invocation['name'] ?? '' ) );
 		$hook = trim( (string) ( $invocation['hook'] ?? $name ) );
 		if ( 'ability' === $type ) {
-			$name = '' !== $name ? $name : 'agents/chat';
+			$name = '' !== $name ? $name : 'wp-codebox/browser-agent-task';
 			if ( ! preg_match( '#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $name ) ) {
 				return new WP_Error( 'wp_codebox_browser_invocation_name_invalid', 'Browser runner ability names must use namespace/name form.', array( 'status' => 400 ) );
 			}
@@ -3969,6 +3969,25 @@ function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 	if ( empty( $bundle_specs ) ) {
 		return array();
 	}
+	$agent_abilities = \'/wordpress/wp-content/plugins/data-machine/inc/Abilities/AgentAbilities.php\';
+	if ( ! class_exists( \'\\DataMachine\\Abilities\\AgentAbilities\' ) ) {
+		if ( is_readable( $agent_abilities ) ) {
+			require_once $agent_abilities;
+		}
+	}
+	$agent_abilities_retry = array( \'attempted\' => false, \'threw\' => false, \'message\' => null );
+	if ( class_exists( \'\\DataMachine\\Abilities\\AgentAbilities\' ) ) {
+		$agent_abilities_instance = new \\DataMachine\\Abilities\\AgentAbilities();
+		if ( function_exists( \'wp_get_ability\' ) && ! wp_get_ability( \'datamachine/import-agent\' ) && method_exists( $agent_abilities_instance, \'registerAbilities\' ) ) {
+			$agent_abilities_retry[\'attempted\'] = true;
+			try {
+				$agent_abilities_instance->registerAbilities();
+			} catch ( \\Throwable $throwable ) {
+				$agent_abilities_retry[\'threw\'] = true;
+				$agent_abilities_retry[\'message\'] = $throwable->getMessage();
+			}
+		}
+	}
 	$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( \'datamachine/import-agent\' ) : null;
 	if ( ! $ability instanceof WP_Ability ) {
 		return array( array(
@@ -3976,6 +3995,14 @@ function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 			\'error\' => array(
 				\'code\' => \'datamachine_import_agent_unavailable\',
 				\'message\' => \'The canonical datamachine/import-agent ability is not available inside the Playground site.\',
+				\'data\' => array(
+					\'agent_abilities_file_readable\' => is_readable( $agent_abilities ),
+					\'agent_abilities_class_exists\' => class_exists( \'\\DataMachine\\Abilities\\AgentAbilities\' ),
+					\'agent_abilities_retry\' => $agent_abilities_retry,
+					\'import_agent_after_retry\' => function_exists( \'wp_get_ability\' ) ? (bool) wp_get_ability( \'datamachine/import-agent\' ) : null,
+					\'wp_abilities_api_categories_init_fired\' => function_exists( \'did_action\' ) ? did_action( \'wp_abilities_api_categories_init\' ) : null,
+					\'wp_abilities_api_init_fired\' => function_exists( \'did_action\' ) ? did_action( \'wp_abilities_api_init\' ) : null,
+				),
 			),
 		) );
 	}
@@ -3989,11 +4016,13 @@ function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 		$source = isset( $spec[\'source\'] ) ? trim( (string) $spec[\'source\'] ) : \'\';
 		$temp_source = \'\';
 		if ( \'\' === $source && isset( $spec[\'bundle\'] ) && is_array( $spec[\'bundle\'] ) ) {
-			$temp_source = tempnam( sys_get_temp_dir(), \'wp-codebox-agent-bundle-\' );
-			if ( false === $temp_source ) {
+			$temp_source_base = tempnam( sys_get_temp_dir(), \'wp-codebox-agent-bundle-\' );
+			if ( false === $temp_source_base ) {
 				$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_temp_failed\', \'message\' => \'Could not create a temporary agent bundle JSON file.\' ) );
 				continue;
 			}
+			$temp_source = $temp_source_base . \'.json\';
+			@unlink( $temp_source_base );
 			$json_source = wp_json_encode( $spec[\'bundle\'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
 			if ( ! is_string( $json_source ) || false === file_put_contents( $temp_source, $json_source ) ) {
 				@unlink( $temp_source );
@@ -4014,7 +4043,12 @@ function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 			}
 		}
 		$input[\'owner_id\'] = isset( $spec[\'owner_id\'] ) && (int) $spec[\'owner_id\'] > 0 ? (int) $spec[\'owner_id\'] : ( get_current_user_id() ?: 1 );
-		$result = $ability->execute( $input );
+		add_filter( \'wp_ability_permission_result\', \'wp_codebox_browser_agent_bundle_permission\', 999, 4 );
+		try {
+			$result = $ability->execute( $input );
+		} finally {
+			remove_filter( \'wp_ability_permission_result\', \'wp_codebox_browser_agent_bundle_permission\', 999 );
+		}
 		if ( \'\' !== $temp_source ) {
 			@unlink( $temp_source );
 		}
@@ -4024,6 +4058,26 @@ function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 	}
 
 	return $imports;
+}
+
+function wp_codebox_browser_agent_bundle_permission( $permission, string $ability_name, $input, $ability ) {
+	if ( \'datamachine/import-agent\' === $ability_name ) {
+		return true;
+	}
+
+	return $permission;
+}
+
+function wp_codebox_browser_register_agent_handler(): void {
+	static $registered = false;
+	if ( $registered ) {
+		return;
+	}
+
+	if ( class_exists( \'\\DataMachine\\Abilities\\Chat\\AgentsChatHandler\' ) && function_exists( \'\\AgentsAPI\\AI\\Channels\\register_chat_handler\' ) ) {
+		new \\DataMachine\\Abilities\\Chat\\AgentsChatHandler();
+		$registered = true;
+	}
 }
 
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
@@ -4036,6 +4090,44 @@ if ( function_exists( \'wp_register_ability\' ) ) {
 	if ( ! did_action( \'wp_abilities_api_init\' ) ) {
 		do_action( \'wp_abilities_api_init\' );
 	}
+	if ( ! wp_get_ability( \'wp-codebox/browser-agent-task\' ) ) {
+		wp_register_ability(
+			\'wp-codebox/browser-agent-task\',
+			array(
+				\'label\' => \'Run WP Codebox Browser Agent Task\',
+				\'description\' => \'Run the selected sandbox agent inside the WP Codebox browser runtime.\',
+				\'input_schema\' => array( \'type\' => \'object\' ),
+				\'output_schema\' => array( \'type\' => \'object\' ),
+				\'execute_callback\' => \'wp_codebox_browser_agent_task\',
+				\'permission_callback\' => \'__return_true\',
+			)
+		);
+	}
+}
+
+function wp_codebox_browser_agent_task( array $input ) {
+	wp_codebox_browser_register_agent_handler();
+
+	$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( \'agents/chat\' ) : null;
+	if ( $ability instanceof WP_Ability ) {
+		add_filter( \'agents_chat_permission\', \'__return_true\', 999 );
+		try {
+			return $ability->execute( $input );
+		} finally {
+			remove_filter( \'agents_chat_permission\', \'__return_true\', 999 );
+		}
+	}
+
+	$handler = apply_filters( \'wp_agent_chat_handler\', null, $input );
+	if ( is_callable( $handler ) ) {
+		return call_user_func( $handler, $input );
+	}
+
+	return new WP_Error(
+		\'wp_codebox_browser_agent_task_unavailable\',
+		\'No browser agent task runner is available inside the Playground site.\',
+		array( \'agent\' => (string) ( $input[\'agent\'] ?? \'\' ) )
+	);
 }
 
 if ( is_readable( $task_path ) ) {
@@ -4051,8 +4143,10 @@ $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id
 $agent_bundle_imports = array();
 $base_input = array(
 	\'agent\' => $agent,
+	\'provider\' => (string) ( $payload[\'provider\'] ?? \'\' ),
+	\'model\' => (string) ( $payload[\'model\'] ?? \'\' ),
 	\'message\' => $message,
-	\'session_id\' => $session_id,
+	\'request_id\' => $session_id,
 	\'session_owner\' => array(
 		\'type\' => \'browser-playground\',
 		\'key\' => $session_id,
@@ -4081,6 +4175,10 @@ if ( ! $wp_codebox_is_playground ) {
 		)
 	);
 } else {
+	$previous_user_id = function_exists( \'get_current_user_id\' ) ? (int) get_current_user_id() : 0;
+	if ( function_exists( \'wp_set_current_user\' ) ) {
+		wp_set_current_user( 1 );
+	}
 	$agent_bundle_imports = wp_codebox_browser_import_agent_bundles( is_array( $payload[\'agent_bundles\'] ?? null ) ? $payload[\'agent_bundles\'] : array() );
 	if ( \'\' !== $permission_filter ) {
 		add_filter( $permission_filter, \'__return_true\', 999 );
@@ -4099,11 +4197,15 @@ if ( ! $wp_codebox_is_playground ) {
 			}
 		} else {
 			$ability_name = (string) ( $invocation[\'name\'] ?? \'agents/chat\' );
-			$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( $ability_name ) : null;
-			if ( ! $ability instanceof WP_Ability ) {
-				$response = new WP_Error( \'wp_codebox_browser_ability_unavailable\', \'The requested ability is not available inside the Playground site.\', array( \'ability\' => $ability_name ) );
+			if ( \'wp-codebox/browser-agent-task\' === $ability_name ) {
+				$response = wp_codebox_browser_agent_task( $input );
 			} else {
-				$response = $ability->execute( $input );
+				$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( $ability_name ) : null;
+				if ( ! $ability instanceof WP_Ability ) {
+				$response = new WP_Error( \'wp_codebox_browser_ability_unavailable\', \'The requested ability is not available inside the Playground site.\', array( \'ability\' => $ability_name ) );
+				} else {
+					$response = $ability->execute( $input );
+				}
 			}
 		}
 	} catch ( Throwable $exception ) {
@@ -4111,6 +4213,9 @@ if ( ! $wp_codebox_is_playground ) {
 	} finally {
 		if ( \'\' !== $permission_filter ) {
 			remove_filter( $permission_filter, \'__return_true\', 999 );
+		}
+		if ( function_exists( \'wp_set_current_user\' ) ) {
+			wp_set_current_user( $previous_user_id );
 		}
 	}
 }

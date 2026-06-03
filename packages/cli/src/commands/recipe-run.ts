@@ -219,6 +219,15 @@ class RecipeRunTimeoutError extends Error {
   }
 }
 
+class RecipeRuntimeCreateError extends Error {
+  readonly code = "recipe-runtime-create-failed"
+
+  constructor(message: string, readonly context: Record<string, unknown>, cause: unknown) {
+    super(message, { cause })
+    this.name = "RecipeRuntimeCreateError"
+  }
+}
+
 function createRecipeInterruptionController(): RecipeInterruptionController {
   let metadata: RecipeInterruptionMetadata | undefined
   let rejectInterrupted: ((error: RecipeInterruptedError) => void) | undefined
@@ -429,27 +438,52 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
-    runtime = await awaitRecipe("runtime.create", createRuntime(
-      {
-        backend: recipe.runtime?.backend ?? "wordpress-playground",
-        environment: {
-          kind: "wordpress",
-          name: recipe.runtime?.name ?? "wp-codebox-recipe",
-          version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
-        },
-        policy: effectivePolicy,
-        secretEnv,
-        artifactsDirectory: configuredArtifactsDirectory,
-        metadata: {
-          ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, options.previewPublicUrl, options.previewPort, options.previewBind),
-        },
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+    const runtimeEnvironment = {
+      kind: "wordpress" as const,
+      name: recipe.runtime?.name ?? "wp-codebox-recipe",
+      version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
+      blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
+    }
+    const runtimeCreateSpec = {
+      backend: recipe.runtime?.backend ?? "wordpress-playground",
+      environment: runtimeEnvironment,
+      policy: effectivePolicy,
+      secretEnv,
+      artifactsDirectory: configuredArtifactsDirectory,
+      metadata: {
+        ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
+        run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
+        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, options.previewPublicUrl, options.previewPort, options.previewBind),
       },
-      createPlaygroundRuntimeBackend(),
-    ))
+      preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+    }
+    try {
+      runtime = await awaitRecipe("runtime.create", createRuntime(
+        runtimeCreateSpec,
+        createPlaygroundRuntimeBackend(),
+      ))
+    } catch (error) {
+      throw new RecipeRuntimeCreateError("Runtime creation failed before recipe workflow execution.", {
+        operation: "runtime.create",
+        backend: runtimeCreateSpec.backend,
+        environment: runtimeEnvironment,
+        extraPlugins: extraPlugins.map(recipeRunExtraPlugin),
+        workspaces: workspaceMounts.map((workspace) => ({
+          source: workspace.source,
+          target: workspace.target,
+          mode: workspace.mode,
+          metadata: workspace.metadata,
+        })),
+        stagedFiles: stagedFiles.map(recipeRunStagedFile),
+        overlays: overlays.map((overlay) => ({
+          source: overlay.source,
+          target: overlay.target,
+          type: overlay.type,
+          mode: overlay.mode,
+          metadata: overlay.metadata,
+        })),
+      }, error)
+    }
     runRecord = await runRegistry.update(runRecord.runId, { status: "running", runtime: await runtime.info() })
     interruption?.throwIfInterrupted()
 
@@ -1058,6 +1092,18 @@ function recipeRunStagedFile(stagedFile: PreparedStagedFile): RecipeRunStagedFil
     type: stagedFile.type,
     provenance: stagedFile.provenance,
     action: "staged",
+  }
+}
+
+function recipeRunExtraPlugin(plugin: PreparedExtraPlugin): Record<string, unknown> {
+  return {
+    source: plugin.source,
+    slug: plugin.slug,
+    target: plugin.target,
+    pluginFile: plugin.pluginFile,
+    activate: plugin.activate,
+    loadAs: plugin.loadAs,
+    provenance: plugin.provenance,
   }
 }
 

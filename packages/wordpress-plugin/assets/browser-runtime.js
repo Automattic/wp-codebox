@@ -570,10 +570,11 @@ try {
 				code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
 				name: options.name || 'codebox-recipe',
 				expectJson: true,
-				forceRequest: true,
 			} );
 			if ( ! lastResult.success ) {
-				throw new Error( lastResult?.error?.message || 'WP Codebox browser recipe step failed.' );
+				const error = lastResult?.error || {};
+				const details = [ error.code, error.message || 'WP Codebox browser recipe step failed.' ].filter( Boolean ).join( ': ' );
+				throw new Error( error.data ? `${ details } ${ JSON.stringify( error.data ) }` : details );
 			}
 		}
 
