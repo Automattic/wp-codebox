@@ -586,8 +586,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const siteSeeds = await awaitRecipe("site-seeds.import", importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions))
     interruption?.throwIfInterrupted()
 
+    const sandboxWorkspace = sandboxWorkspaceContract(workspaceMounts, recipe.inputs?.mounts ?? [])
     for (const workflowStep of recipeWorkflowSteps(recipe)) {
-      executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory)))
+      executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory, sandboxWorkspace)))
       interruption?.throwIfInterrupted()
     }
 
@@ -908,9 +909,9 @@ function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: Recip
   }
 }
 
-async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string): Promise<RecipeExecutionResult> {
+async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>): Promise<RecipeExecutionResult> {
   try {
-    const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory))
+    const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
     return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

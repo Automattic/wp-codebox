@@ -30,6 +30,7 @@ export interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   agentBundles?: AgentBundleSpec[]
   code?: string
   codeFile?: string
+  sandboxWorkspace?: SandboxWorkspaceContract
 }
 
 export interface AgentSandboxBatchOptions extends AgentRuntimeProbeOptions {
@@ -83,7 +84,7 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
   ]
 }
 
-export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<{ command: string; args: string[] }> {
+export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<{ command: string; args: string[] }> {
   if (step.command === "wp-codebox.agent-runtime-probe") {
     return {
       command: "wordpress.run-php",
@@ -113,6 +114,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       maxTurns: argValue(args, "max-turns"),
       timeoutSeconds: argValue(args, "timeout-seconds"),
       agentBundles: parseAgentBundles(args),
+      sandboxWorkspace: parseSandboxWorkspace(args) ?? sandboxWorkspace,
     }))
 
     return {
@@ -229,7 +231,7 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 }
 
 export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--code", "--code-file", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -270,6 +272,9 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
       case "--agent-bundles-json":
         options.agentBundles = parseAgentBundleList(value)
         break
+      case "--workspace-context-json":
+        options.sandboxWorkspace = parseSandboxWorkspaceValue(value)
+        break
     }
   }
 
@@ -286,6 +291,20 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
 
 function parseAgentBundles(args: string[]): AgentBundleSpec[] {
   return parseAgentBundleList(argValue(args, "agent-bundles-json") ?? "[]")
+}
+
+function parseSandboxWorkspace(args: string[]): SandboxWorkspaceContract | undefined {
+  const value = argValue(args, "workspace-context-json")
+  return value ? parseSandboxWorkspaceValue(value) : undefined
+}
+
+function parseSandboxWorkspaceValue(value: string): SandboxWorkspaceContract | undefined {
+  if (!value.trim()) return undefined
+  const parsed = JSON.parse(value)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed.schema !== "wp-codebox/sandbox-workspace/v1") {
+    throw new Error("workspace-context-json must be a wp-codebox/sandbox-workspace/v1 object")
+  }
+  return parsed as SandboxWorkspaceContract
 }
 
 function parseAgentBundleList(value: string): AgentBundleSpec[] {
