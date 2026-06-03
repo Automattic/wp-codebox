@@ -18,6 +18,18 @@ export interface HostToolPolicyMetadata {
   description?: string
 }
 
+export type HostToolRuntimeMetadata = JsonObject
+
+export interface HostToolCanonicalDeclaration {
+  name: string
+  source?: string
+  description: string
+  parameters?: HostToolJsonSchema
+  executor?: "client"
+  scope?: "run"
+  runtime?: HostToolRuntimeMetadata
+}
+
 export interface HostToolCallContext {
   tool: string
   policyCommand: string
@@ -27,19 +39,46 @@ export interface HostToolCallContext {
 export type HostToolHandler = (input: JsonValue, context: HostToolCallContext) => Promise<JsonValue> | JsonValue
 
 export interface HostToolDefinition {
+  /**
+   * Canonical per-run tool declaration supplied by the caller. Codebox treats
+   * this as transport input; Agents API owns the generic declaration contract.
+   */
+  declaration?: HostToolCanonicalDeclaration
   name: string
   description: string
-  inputSchema: HostToolJsonSchema
+  parameters?: HostToolJsonSchema
+  inputSchema?: HostToolJsonSchema
   outputSchema: HostToolJsonSchema
   policy: HostToolPolicyMetadata
+  runtime?: HostToolRuntimeMetadata
   handler: HostToolHandler
 }
+
+export interface HostToolCanonicalResultOk {
+  success: true
+  tool_name: string
+  result: JsonValue
+  metadata: JsonObject
+  runtime?: HostToolRuntimeMetadata
+}
+
+export interface HostToolCanonicalResultError {
+  success: false
+  tool_name: string
+  error: string
+  metadata: JsonObject
+  runtime?: HostToolRuntimeMetadata
+}
+
+export type HostToolCanonicalResult = HostToolCanonicalResultOk | HostToolCanonicalResultError
 
 export interface HostToolResultOk {
   schema: typeof HOST_TOOL_RESULT_SCHEMA
   tool: string
   status: "ok"
   output: JsonValue
+  toolResult: HostToolCanonicalResultOk
+  diagnostics: HostToolTransportDiagnostics
   startedAt: string
   finishedAt: string
 }
@@ -53,6 +92,8 @@ export interface HostToolResultError {
     message: string
     details?: JsonValue
   }
+  toolResult: HostToolCanonicalResultError
+  diagnostics: HostToolTransportDiagnostics
   startedAt: string
   finishedAt: string
 }
@@ -60,8 +101,20 @@ export interface HostToolResultError {
 export type HostToolResult = HostToolResultOk | HostToolResultError
 
 export interface HostToolCatalogEntry {
+  /** Agents API-shaped declaration exposed to sandbox agents. */
+  declaration: HostToolCanonicalDeclaration
   name: string
   description: string
+  parameters: HostToolJsonSchema
+  inputSchema: HostToolJsonSchema
+  outputSchema: HostToolJsonSchema
+  policy: HostToolPolicyMetadata
+}
+
+export interface HostToolTransportDiagnostics {
+  transport: "wp-codebox-host-tool"
+  resultSchema: typeof HOST_TOOL_RESULT_SCHEMA
+  policyCommand: string
   inputSchema: HostToolJsonSchema
   outputSchema: HostToolJsonSchema
   policy: HostToolPolicyMetadata
@@ -93,13 +146,18 @@ export class HostToolRegistry {
   }
 
   list(): HostToolCatalogEntry[] {
-    return [...this.tools.values()].map(({ name, description, inputSchema, outputSchema, policy }) => ({
-      name,
-      description,
-      inputSchema,
-      outputSchema,
-      policy,
-    }))
+    return [...this.tools.values()].map((definition) => {
+      const declaration = canonicalDeclarationForHostTool(definition)
+      return {
+        declaration,
+        name: declaration.name,
+        description: declaration.description,
+        parameters: declaration.parameters ?? {},
+        inputSchema: inputSchemaForHostTool(definition),
+        outputSchema: definition.outputSchema,
+        policy: definition.policy,
+      }
+    })
   }
 }
 
@@ -109,16 +167,16 @@ export function createHostToolRegistry(definitions: HostToolDefinition[] = []): 
 
 export async function executeHostTool(definition: HostToolDefinition, input: JsonValue, context: HostToolCallContext): Promise<HostToolResult> {
   const startedAt = new Date().toISOString()
-  const inputIssue = validateJsonValueAgainstSchema(input, definition.inputSchema, "input")
+  const inputIssue = validateJsonValueAgainstSchema(input, inputSchemaForHostTool(definition), "input")
   if (inputIssue) {
-    return hostToolError(definition.name, startedAt, "host-tool-invalid-input", inputIssue)
+    return hostToolError(definition, context.policyCommand, startedAt, "host-tool-invalid-input", inputIssue)
   }
 
   try {
     const output = await definition.handler(input, context)
     const outputIssue = validateJsonValueAgainstSchema(output, definition.outputSchema, "output")
     if (outputIssue) {
-      return hostToolError(definition.name, startedAt, "host-tool-invalid-output", outputIssue)
+      return hostToolError(definition, context.policyCommand, startedAt, "host-tool-invalid-output", outputIssue)
     }
 
     return {
@@ -126,15 +184,22 @@ export async function executeHostTool(definition: HostToolDefinition, input: Jso
       tool: definition.name,
       status: "ok",
       output,
+      toolResult: hostToolCanonicalSuccess(definition, output),
+      diagnostics: hostToolDiagnostics(definition, context.policyCommand),
       startedAt,
       finishedAt: new Date().toISOString(),
     }
   } catch (error) {
-    return hostToolError(definition.name, startedAt, "host-tool-handler-error", error instanceof Error ? error.message : String(error))
+    return hostToolError(definition, context.policyCommand, startedAt, "host-tool-handler-error", error instanceof Error ? error.message : String(error))
   }
 }
 
-function hostToolError(tool: string, startedAt: string, code: string, message: string, details?: JsonValue): HostToolResultError {
+export function createHostToolTransportError(definition: HostToolDefinition | string, policyCommand: string, startedAt: string, code: string, message: string, details?: JsonValue): HostToolResultError {
+  return hostToolError(definition, policyCommand, startedAt, code, message, details)
+}
+
+function hostToolError(definition: HostToolDefinition | string, policyCommand: string, startedAt: string, code: string, message: string, details?: JsonValue): HostToolResultError {
+  const tool = typeof definition === "string" ? definition : definition.name
   return {
     schema: HOST_TOOL_RESULT_SCHEMA,
     tool,
@@ -144,21 +209,111 @@ function hostToolError(tool: string, startedAt: string, code: string, message: s
       message,
       ...(details === undefined ? {} : { details }),
     },
+    toolResult: typeof definition === "string"
+      ? hostToolCanonicalError(tool, message, code, details)
+      : hostToolCanonicalError(definition, message, code, details),
+    diagnostics: typeof definition === "string"
+      ? hostToolDiagnosticsForUnknown(policyCommand)
+      : hostToolDiagnostics(definition, policyCommand),
     startedAt,
     finishedAt: new Date().toISOString(),
   }
 }
 
 function assertValidHostToolDefinition(definition: HostToolDefinition): void {
-  if (!definition.name || !/^[a-z0-9][a-z0-9._-]*$/i.test(definition.name)) {
-    throw new Error("Host tool name must be a stable non-empty tool id")
+  const declaration = canonicalDeclarationForHostTool(definition)
+  if (!declaration.name || !/^[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*$/i.test(declaration.name)) {
+    throw new Error("Host tool name must be a stable canonical tool id such as client/search_docs")
   }
-  if (!definition.description) {
-    throw new Error(`Host tool ${definition.name} is missing a description`)
+  if (declaration.source !== sourceFromToolName(declaration.name)) {
+    throw new Error(`Host tool ${declaration.name} source must match its canonical name prefix`)
+  }
+  if (declaration.executor !== "client") {
+    throw new Error(`Host tool ${declaration.name} executor must be client`)
+  }
+  if (declaration.scope !== "run") {
+    throw new Error(`Host tool ${declaration.name} scope must be run`)
+  }
+  if (!declaration.description) {
+    throw new Error(`Host tool ${declaration.name} is missing a description`)
   }
   if (typeof definition.handler !== "function") {
-    throw new Error(`Host tool ${definition.name} is missing a handler`)
+    throw new Error(`Host tool ${declaration.name} is missing a handler`)
   }
+  definition.name = declaration.name
+  definition.description = declaration.description
+  definition.inputSchema = inputSchemaForHostTool(definition)
+}
+
+function canonicalDeclarationForHostTool(definition: HostToolDefinition): HostToolCanonicalDeclaration {
+  const name = definition.declaration?.name ?? definition.name
+  const parameters = definition.declaration?.parameters ?? definition.parameters ?? definition.inputSchema
+  const runtime = definition.declaration?.runtime ?? definition.runtime
+  return {
+    name,
+    source: definition.declaration?.source ?? sourceFromToolName(name),
+    description: definition.declaration?.description ?? definition.description,
+    parameters,
+    executor: definition.declaration?.executor ?? "client",
+    scope: definition.declaration?.scope ?? "run",
+    ...(runtime ? { runtime } : {}),
+  }
+}
+
+function hostToolCanonicalSuccess(definition: HostToolDefinition, result: JsonValue): HostToolCanonicalResultOk {
+  const runtime = canonicalDeclarationForHostTool(definition).runtime
+  return {
+    success: true,
+    tool_name: definition.name,
+    result,
+    metadata: {},
+    ...(runtime ? { runtime } : {}),
+  }
+}
+
+function hostToolCanonicalError(definition: HostToolDefinition | string, error: string, code: string, details?: JsonValue): HostToolCanonicalResultError {
+  const toolName = typeof definition === "string" ? definition : definition.name
+  const runtime = typeof definition === "string" ? undefined : canonicalDeclarationForHostTool(definition).runtime
+  return {
+    success: false,
+    tool_name: toolName,
+    error,
+    metadata: {
+      code,
+      ...(details === undefined ? {} : { details }),
+    },
+    ...(runtime ? { runtime } : {}),
+  }
+}
+
+function hostToolDiagnostics(definition: HostToolDefinition, policyCommand: string): HostToolTransportDiagnostics {
+  return {
+    transport: "wp-codebox-host-tool",
+    resultSchema: HOST_TOOL_RESULT_SCHEMA,
+    policyCommand,
+    inputSchema: inputSchemaForHostTool(definition),
+    outputSchema: definition.outputSchema,
+    policy: definition.policy,
+  }
+}
+
+function hostToolDiagnosticsForUnknown(policyCommand: string): HostToolTransportDiagnostics {
+  return {
+    transport: "wp-codebox-host-tool",
+    resultSchema: HOST_TOOL_RESULT_SCHEMA,
+    policyCommand,
+    inputSchema: {},
+    outputSchema: {},
+    policy: {},
+  }
+}
+
+function sourceFromToolName(name: string): string {
+  return name.includes("/") ? name.split("/", 1)[0] : "client"
+}
+
+function inputSchemaForHostTool(definition: HostToolDefinition): HostToolJsonSchema {
+  return definition.declaration?.parameters ?? definition.parameters ?? definition.inputSchema ?? {}
 }
 
 function validateJsonValueAgainstSchema(value: JsonValue, schema: HostToolJsonSchema, path: string): string | undefined {

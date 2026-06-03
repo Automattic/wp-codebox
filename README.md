@@ -87,11 +87,19 @@ result outside the sandbox.
 
 ## Host Tool Registry
 
-Host products can register generic tools for sandbox agents without adding
-product-specific logic to WP Codebox core. A tool definition declares a stable
-name, JSON input/output schemas, policy metadata, and a host-side handler. The
+`HostToolRegistry` is a WP Codebox transport adapter, not a generic tool
+contract. Agents API owns canonical tool declarations, tool calls, execution
+results, pending external-tool states, and product-neutral runtime metadata.
+Data Machine or another host owns the concrete tool sources and product policy.
+WP Codebox only exposes caller-provided per-run tool declarations to sandbox
+agents, routes allowed calls across the browser/host boundary, and records
+transport diagnostics.
+
+Host products can register a caller-provided canonical tool declaration plus a
+host-side handler without adding product-specific logic to WP Codebox core. The
 runtime still gates execution through `RuntimePolicy.commands`, so callers must
-explicitly allow each registered tool name before a sandbox can invoke it.
+explicitly allow each registered canonical tool name before a sandbox can invoke
+it.
 
 ```ts
 import { createHostToolRegistry, createRuntime } from "@automattic/wp-codebox-core"
@@ -99,21 +107,28 @@ import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playgroun
 
 const hostTools = createHostToolRegistry([
   {
-    name: "host.echo",
-    description: "Echo a structured payload from the host bridge.",
-    inputSchema: {
-      type: "object",
-      required: ["message"],
-      properties: { message: { type: "string" } },
-      additionalProperties: false,
+    declaration: {
+      name: "client/echo",
+      description: "Echo a structured payload from the host bridge.",
+      parameters: {
+        type: "object",
+        required: ["message"],
+        properties: { message: { type: "string" } },
+        additionalProperties: false,
+      },
+      executor: "client",
+      scope: "run",
+      runtime: { completion_signal: "progress" },
     },
+    name: "client/echo",
+    description: "Echo a structured payload from the host bridge.",
     outputSchema: {
       type: "object",
       required: ["message"],
       properties: { message: { type: "string" } },
       additionalProperties: false,
     },
-    policy: { capability: "host.echo", risk: "read" },
+    policy: { capability: "client/echo", risk: "read" },
     handler: (input) => input,
   },
 ])
@@ -124,7 +139,7 @@ const runtime = await createRuntime({
   policy: {
     network: "deny",
     filesystem: "sandbox",
-    commands: ["host.echo"],
+    commands: ["client/echo"],
     secrets: "none",
     approvals: "never",
   },
@@ -132,18 +147,25 @@ const runtime = await createRuntime({
 }, createPlaygroundRuntimeBackend())
 
 const result = await runtime.execute({
-  command: "host.echo",
+  command: "client/echo",
   args: ['input-json={"message":"hello"}'],
 })
 ```
 
-Host tool output is always a JSON envelope with schema
-`wp-codebox/host-tool-result/v1`. Successful calls return `status: "ok"` and an
-`output` value validated against the tool's output schema. Invalid input,
-invalid output, and handler failures return `status: "error"` with a stable error
-code and message instead of terminal-shaped stderr. Product-specific evidence
-commands should live in product extensions that register tools through this
-surface.
+Host tool output is a Codebox transport diagnostic envelope with schema
+`wp-codebox/host-tool-result/v1`. Successful calls return `status: "ok"`, an
+`output` value validated against the transport output schema, and `toolResult`
+using the canonical Agents API result shape: `success`, `tool_name`, `result`,
+`metadata`, and optional `runtime`. Invalid input, invalid output, malformed
+JSON, and handler failures return `status: "error"` with a stable transport error
+code while `toolResult` maps the same failure to a canonical tool error. The
+`diagnostics` object is the Codebox-owned portion of the envelope and preserves
+the transport, policy command, validation schemas, and resolved policy metadata.
+
+Product-specific tools such as Homeboy evidence commands should live in product
+extensions that provide canonical tool declarations and handlers through this
+transport surface. Codebox should not encode Data Machine policy semantics,
+product tool names, or cross-product tool mediation rules in this layer.
 
 Trusted worker hosts that need repo-local commands can use the playground
 package's `createHostCommandTool()` adapter instead of exposing arbitrary shell.
