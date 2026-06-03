@@ -259,6 +259,7 @@ try {
 				'visible' => $visible,
 				'value' => $value,
 			) );
+			break;
 
 		case 'writeReviewFile':
 			$relative_path = wp_codebox_browser_operation_safe_relative_path( wp_codebox_browser_operation_arg( $operation, 'path' ), 'Review file' );

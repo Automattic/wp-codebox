@@ -163,8 +163,9 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-preview-op
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-command.php';
 
-$source_root = dirname( __DIR__ );
-$root        = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
+$source_root            = dirname( __DIR__ );
+$browser_runtime_source = (string) file_get_contents( $source_root . '/packages/wordpress-plugin/assets/browser-runtime.js' );
+$root                   = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
 foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
@@ -608,6 +609,7 @@ $browser_session = call_user_func(
 	$browser_session_input
 );
 $assert( 'browser Playground session returns without shelling out', ! is_wp_error( $browser_session ) && true === ( $browser_session['success'] ?? false ) );
+$assert( 'browser runtime admin bar operation does not fall through', str_contains( $browser_runtime_source, "'target' => 'frontendAdminBar'" ) && str_contains( $browser_runtime_source, "\n\t\t\tbreak;\n\n\t\tcase 'writeReviewFile':" ) );
 $assert( 'browser Playground session schema is stable', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_session['schema'] ?? '' ) );
 $assert( 'browser Playground session pins browser execution', ! is_wp_error( $browser_session ) && 'browser-playground' === ( $browser_session['execution'] ?? '' ) );
 $assert( 'browser Playground session identifies disposable execution scope', ! is_wp_error( $browser_session ) && 'disposable-playground' === ( $browser_session['execution_scope'] ?? '' ) && 'disposable-playground' === ( $browser_session['session']['execution_scope'] ?? '' ) );
