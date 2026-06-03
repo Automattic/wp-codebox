@@ -46,6 +46,7 @@
     "external-adapter-contract-smoke": "tsx scripts/external-adapter-contract-smoke.ts",
     "command-registry-smoke": "tsx scripts/command-registry-smoke.ts",
     "host-tool-registry-smoke": "tsx scripts/host-tool-registry-smoke.ts",
+    "host-command-tool-smoke": "tsx scripts/host-command-tool-smoke.ts",
     "sandbox-tool-policy-smoke": "tsx scripts/sandbox-tool-policy-smoke.ts",
     "task-input-contract-smoke": "tsx scripts/task-input-contract-smoke.ts",
     "run-registry-smoke": "tsx scripts/run-registry-smoke.ts",
