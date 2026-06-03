@@ -210,8 +210,8 @@ function hostToolError(definition: HostToolDefinition | string, policyCommand: s
       ...(details === undefined ? {} : { details }),
     },
     toolResult: typeof definition === "string"
-      ? hostToolCanonicalError(tool, message)
-      : hostToolCanonicalError(definition, message),
+      ? hostToolCanonicalError(tool, message, code, details)
+      : hostToolCanonicalError(definition, message, code, details),
     diagnostics: typeof definition === "string"
       ? hostToolDiagnosticsForUnknown(policyCommand)
       : hostToolDiagnostics(definition, policyCommand),
@@ -271,14 +271,17 @@ function hostToolCanonicalSuccess(definition: HostToolDefinition, result: JsonVa
   }
 }
 
-function hostToolCanonicalError(definition: HostToolDefinition | string, error: string): HostToolCanonicalResultError {
+function hostToolCanonicalError(definition: HostToolDefinition | string, error: string, code: string, details?: JsonValue): HostToolCanonicalResultError {
   const toolName = typeof definition === "string" ? definition : definition.name
   const runtime = typeof definition === "string" ? undefined : canonicalDeclarationForHostTool(definition).runtime
   return {
     success: false,
     tool_name: toolName,
     error,
-    metadata: {},
+    metadata: {
+      code,
+      ...(details === undefined ? {} : { details }),
+    },
     ...(runtime ? { runtime } : {}),
   }
 }

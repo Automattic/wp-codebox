@@ -64,6 +64,7 @@ async function main(): Promise<void> {
   assert(invalidBody.status === "error", "invalid host tool input should return a structured error")
   assert(invalidBody.error.code === "host-tool-invalid-input", "invalid input should use the stable input error code")
   assert(invalidBody.toolResult.success === false, "transport errors map to canonical tool errors")
+  assert(invalidBody.toolResult.metadata.code === "host-tool-invalid-input", "canonical tool error metadata preserves transport error classification")
 
   let denied = false
   try {
