@@ -85,7 +85,7 @@ private static function site_seed_schema(): array {
 private static function agent_bundle_schema(): array {
 	return array(
 		'type'        => 'array',
-		'description' => 'Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.',
+		'description' => 'Runtime agent bundles to import into the disposable sandbox before invoking the selected runtime agent. Installed runtime plugins provide importer implementations.',
 		'items'       => array(
 			'type'       => 'object',
 			'anyOf'      => array(
@@ -95,11 +95,11 @@ private static function agent_bundle_schema(): array {
 			'properties' => array(
 				'source'      => array(
 					'type'        => 'string',
-					'description' => 'Bundle source accepted by datamachine/import-agent: local directory, .zip, .json, or remote URL.',
+					'description' => 'Bundle source accepted by the runtime importer, such as a local directory, .zip, .json, or remote URL.',
 				),
 				'bundle'      => array(
 					'type'        => 'object',
-					'description' => 'Inline Data Machine agent bundle JSON staged in the sandbox and imported through datamachine/import-agent.',
+					'description' => 'Inline runtime agent bundle JSON staged in the sandbox and passed to the registered importer.',
 				),
 				'slug'        => array( 'type' => 'string' ),
 				'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
@@ -107,7 +107,7 @@ private static function agent_bundle_schema(): array {
 				'token_env'   => array( 'type' => 'string' ),
 				'import_principal' => array(
 					'type'        => 'object',
-					'description' => 'Non-secret Data Machine principal context used only for the datamachine/import-agent call inside the sandbox.',
+					'description' => 'Optional non-secret importer principal context. Runtime importers define the shape they accept.',
 				),
 			),
 		),
