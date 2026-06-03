@@ -96,4 +96,67 @@ assert.deepEqual(pendingToolsFailure, {
   },
 })
 
+const rawPendingToolsFailure = agentSandboxRuntimeFailure({
+  executionIndex: 2,
+  command: "wordpress.run-php",
+  exitCode: 0,
+  recipeCommand: "wp-codebox.agent-sandbox-run",
+  stdout: JSON.stringify({
+    command: "agent-sandbox.run",
+    output: JSON.stringify({
+      status: "processing",
+      current_turn: 20,
+      has_pending_tools: true,
+    }),
+  }),
+  stderr: "",
+  parsed: {
+    command: "agent-sandbox.run",
+    output: JSON.stringify({
+      status: "processing",
+      current_turn: 20,
+      has_pending_tools: true,
+    }),
+  },
+})
+
+assert.equal(rawPendingToolsFailure?.code, "agent_runtime_incomplete")
+assert.equal(rawPendingToolsFailure?.message, "Agent sandbox runtime ended before the nested agent completed pending tool work.")
+assert.deepEqual(rawPendingToolsFailure?.data, {
+  status: "processing",
+  current_turn: 20,
+  has_pending_tools: true,
+})
+
+const maxTurnsFailure = agentSandboxRuntimeFailure({
+  executionIndex: 3,
+  command: "wordpress.run-php",
+  exitCode: 0,
+  recipeCommand: "wp-codebox.agent-sandbox-run",
+  stdout: JSON.stringify({
+    command: "agent-sandbox.run",
+    output: JSON.stringify({
+      status: "completed",
+      current_turn: 20,
+      max_turns: 20,
+    }),
+  }),
+  stderr: "",
+  parsed: {
+    command: "agent-sandbox.run",
+    output: JSON.stringify({
+      status: "completed",
+      current_turn: 20,
+      max_turns: 20,
+    }),
+  },
+})
+
+assert.equal(maxTurnsFailure?.code, "agent_runtime_incomplete")
+assert.deepEqual(maxTurnsFailure?.data, {
+  status: "completed",
+  current_turn: 20,
+  max_turns: 20,
+})
+
 console.log("Agent runtime failure smoke passed")

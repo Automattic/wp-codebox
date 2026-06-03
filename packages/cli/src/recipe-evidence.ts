@@ -556,34 +556,101 @@ function agentRuntimeFailureFromRecord(record: Record<string, unknown> | undefin
 }
 
 function agentRuntimeIncompleteFromRecord(record: Record<string, unknown> | undefined): AgentSandboxRuntimeFailure | undefined {
+  if (!record) {
+    return undefined
+  }
+
   const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
-  if (!runtime || runtime.success !== true) {
-    return undefined
+  const runtimeResult = runtime?.success === true && isRecord(runtime.result) ? runtime.result : undefined
+  const candidates = [...(runtimeResult ? [runtimeResult] : []), ...collectRecords(record)]
+
+  for (const result of candidates) {
+    if (!isIncompleteAgentResult(result)) {
+      continue
+    }
+
+    return {
+      code: "agent_runtime_incomplete",
+      message: "Agent sandbox runtime ended before the nested agent completed pending tool work.",
+      data: incompleteAgentResultData(result),
+    }
   }
 
-  const result = isRecord(runtime.result) ? runtime.result : undefined
-  if (!result || !isIncompleteAgentResult(result)) {
-    return undefined
-  }
-
-  return {
-    code: "agent_runtime_incomplete",
-    message: "Agent sandbox runtime ended before the nested agent completed pending tool work.",
-    data: stripUndefined({
-      status: typeof result.status === "string" ? result.status : undefined,
-      completed: typeof result.completed === "boolean" ? result.completed : undefined,
-      current_turn: typeof result.current_turn === "number" ? result.current_turn : undefined,
-      has_pending_tools: typeof result.has_pending_tools === "boolean" ? result.has_pending_tools : undefined,
-    }),
-  }
+  return undefined
 }
 
 function isIncompleteAgentResult(result: Record<string, unknown>): boolean {
-  const status = typeof result.status === "string" ? result.status.toLowerCase() : ""
+  const status = stringKey(result, ["status", "state"]) ?? ""
   const completed = typeof result.completed === "boolean" ? result.completed : undefined
-  const hasPendingTools = result.has_pending_tools === true
+  const hasPendingTools = truthyKey(result, ["has_pending_tools", "hasPendingTools"])
+  const maxTurnsReached = truthyKey(result, ["max_turns_reached", "maxTurnsReached"])
 
-  return (status === "processing" || completed === false) && hasPendingTools
+  return hasPendingTools || status === "processing" || completed === false || maxTurnsReached || reachedMaxTurnsWithoutAnswer(result)
+}
+
+function reachedMaxTurnsWithoutAnswer(payload: Record<string, unknown>): boolean {
+  const currentTurn = numberKey(payload, ["current_turn", "currentTurn"])
+  const maxTurns = numberKey(payload, ["max_turns", "maxTurns"])
+  return currentTurn !== undefined && maxTurns !== undefined && maxTurns > 0 && currentTurn >= maxTurns && !hasTerminalAnswer(payload)
+}
+
+function hasTerminalAnswer(payload: Record<string, unknown>): boolean {
+  return ["answer", "final_answer", "finalAnswer", "message", "content"].some((key) => {
+    const value = payload[key]
+    return typeof value === "string" && value.trim().length > 0
+  })
+}
+
+function incompleteAgentResultData(payload: Record<string, unknown>): Record<string, unknown> {
+  return stripUndefined({
+    status: stringKey(payload, ["status", "state"]),
+    completed: typeof payload.completed === "boolean" ? payload.completed : undefined,
+    current_turn: numberKey(payload, ["current_turn", "currentTurn"]),
+    max_turns: numberKey(payload, ["max_turns", "maxTurns"]),
+    has_pending_tools: truthyKey(payload, ["has_pending_tools", "hasPendingTools"]) || undefined,
+    max_turns_reached: truthyKey(payload, ["max_turns_reached", "maxTurnsReached"]) || undefined,
+  })
+}
+
+function collectRecords(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectRecords)
+  }
+
+  if (!isRecord(value)) {
+    return []
+  }
+
+  return [value, ...Object.values(value).flatMap(collectRecords)]
+}
+
+function truthyKey(record: Record<string, unknown>, keys: string[]): boolean {
+  return keys.some((key) => record[key] === true || record[key] === 1 || record[key] === "1" || record[key] === "true")
+}
+
+function stringKey(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === "string" && value.trim()) {
+      return value.trim().toLowerCase()
+    }
+  }
+
+  return undefined
+}
+
+function numberKey(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value
+    }
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value)
+    }
+  }
+
+  return undefined
 }
 
 export function recipeAgentResultFailure(agentResult: RecipeArtifactEvidenceResult["agentResult"]): { name: string; code: string; message: string } | undefined {
