@@ -349,7 +349,7 @@ machine contract for orchestrators:
 }
 ```
 
-Consumers should use `lifecycle.terminal`, `lifecycle.outcome`, and
+Orchestrators should use `lifecycle.terminal`, `lifecycle.outcome`, and
 `lifecycle.cleanup.status` instead of scraping human logs. Timeout and signal
 interruptions settle as `timed_out` and `cancelled` outcomes respectively.
 
