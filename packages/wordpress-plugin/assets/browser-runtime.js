@@ -614,7 +614,7 @@ try {
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
 		const recipe = browserSessionRecipe( session );
-		const payload = taskPayload === undefined ? ( session.task_input ?? {} ) : taskPayload;
+		const payload = taskPayload === undefined ? ( session.task_payload ?? session.task_input ?? {} ) : taskPayload;
 		return runRecipe( client, recipe, payload, {
 			...options,
 			name: options.name || 'codebox-browser-session',

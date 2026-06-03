@@ -264,6 +264,16 @@ const sessionOutput = {
   success: true,
   session: { id: "browser-session-smoke", status: "ready" },
   task_input: { goal: "Run session smoke", expected_artifacts: ["summary"] },
+  task_payload: {
+    schema: "wp-codebox/browser-agent-task-payload/v1",
+    goal: "Run session smoke from task payload",
+    provider: "openai",
+    model: "gpt-5.5",
+    inherited: {
+      provider_plugin_paths: ["/wordpress/wp-content/plugins/ai-provider-for-openai"],
+      env_names: ["AI_PROVIDER_OPENAI_CODEX_REFRESH_TOKEN"],
+    },
+  },
   recipe: {
     schema: "wp-codebox/workspace-recipe/v1",
     browser: {
@@ -287,11 +297,22 @@ assert.deepEqual(extractBrowserOperation(sessionClient.files[0]?.contents ?? "")
   type: "writeFile",
   args: {
     path: "/tmp/wp-codebox-agent-task.json",
-    content: JSON.stringify({ goal: "Run session smoke", expected_artifacts: ["summary"] }),
+    content: JSON.stringify(sessionOutput.task_payload),
   },
 })
 assert.match(sessionClient.files[1]?.path ?? "", /\/wordpress\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
 assert.match(sessionClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
+
+const overridePayload = { goal: "Explicit payload override", provider: "test-provider", model: "override-model" }
+const overrideSessionClient = createClient("prefix {\"success\":true,\"data\":{\"summary\":\"override runner\"},\"error\":null} suffix")
+await runtime.runBrowserSessionRecipe(overrideSessionClient, sessionOutput, overridePayload)
+assert.deepEqual(extractBrowserOperation(overrideSessionClient.files[0]?.contents ?? ""), {
+  type: "writeFile",
+  args: {
+    path: "/tmp/wp-codebox-agent-task.json",
+    content: JSON.stringify(overridePayload),
+  },
+})
 
 assert.equal(runtime.browserSessionRecipe(sessionOutput), sessionOutput.recipe)
 await assert.rejects(
