@@ -989,8 +989,31 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			if ( isset( $bundle['owner_id'] ) && (int) $bundle['owner_id'] > 0 ) {
 				$entry['owner_id'] = (int) $bundle['owner_id'];
 			}
+			if ( is_array( $bundle['import_principal'] ?? null ) ) {
+				$entry['import_principal'] = $this->agent_bundle_import_principal( $bundle['import_principal'] );
+			}
 
 			$normalized[] = $entry;
+		}
+
+		return $normalized;
+	}
+
+	/** @param array<string,mixed> $principal Raw import principal. @return array<string,mixed> */
+	private function agent_bundle_import_principal( array $principal ): array {
+		$normalized = array();
+		foreach ( array( 'agent_id', 'owner_id', 'token_id' ) as $field ) {
+			if ( isset( $principal[ $field ] ) && (int) $principal[ $field ] > 0 ) {
+				$normalized[ $field ] = (int) $principal[ $field ];
+			}
+		}
+
+		$capabilities = $this->string_list( $principal['capabilities'] ?? array() );
+		if ( ! empty( $capabilities ) ) {
+			$normalized['capabilities'] = $capabilities;
+		}
+		if ( is_array( $principal['scope'] ?? null ) ) {
+			$normalized['scope'] = $principal['scope'];
 		}
 
 		return $normalized;

@@ -69,6 +69,7 @@ final class WP_Codebox_Task_Input_Contract {
 							'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
 							'owner_id'    => array( 'type' => 'integer' ),
 							'token_env'   => array( 'type' => 'string' ),
+							'import_principal' => array( 'type' => 'object' ),
 						),
 					),
 				),
@@ -134,10 +135,33 @@ final class WP_Codebox_Task_Input_Contract {
 			if ( isset( $entry['owner_id'] ) && (int) $entry['owner_id'] > 0 ) {
 				$bundle['owner_id'] = (int) $entry['owner_id'];
 			}
+			if ( is_array( $entry['import_principal'] ?? null ) ) {
+				$bundle['import_principal'] = self::import_principal( $entry['import_principal'] );
+			}
 			$bundles[] = $bundle;
 		}
 
 		return $bundles;
+	}
+
+	/** @param array<string,mixed> $principal Raw import principal. @return array<string,mixed> */
+	private static function import_principal( array $principal ): array {
+		$normalized = array();
+		foreach ( array( 'agent_id', 'owner_id', 'token_id' ) as $field ) {
+			if ( isset( $principal[ $field ] ) && (int) $principal[ $field ] > 0 ) {
+				$normalized[ $field ] = (int) $principal[ $field ];
+			}
+		}
+
+		$capabilities = self::string_list( $principal['capabilities'] ?? array() );
+		if ( ! empty( $capabilities ) ) {
+			$normalized['capabilities'] = $capabilities;
+		}
+		if ( is_array( $principal['scope'] ?? null ) ) {
+			$normalized['scope'] = $principal['scope'];
+		}
+
+		return $normalized;
 	}
 
 	/** @return string[] */

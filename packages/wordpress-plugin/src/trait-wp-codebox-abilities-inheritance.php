@@ -185,8 +185,47 @@ private static function normalize_agent_bundles( mixed $bundles ): array {
 		if ( isset( $bundle['owner_id'] ) && (int) $bundle['owner_id'] > 0 ) {
 			$entry['owner_id'] = (int) $bundle['owner_id'];
 		}
+		if ( is_array( $bundle['import_principal'] ?? null ) ) {
+			$entry['import_principal'] = self::normalize_agent_bundle_import_principal( $bundle['import_principal'] );
+		}
 
 		$normalized[] = $entry;
+	}
+
+	return $normalized;
+}
+
+/** @param array<string,mixed> $principal Raw import principal. @return array<string,mixed> */
+private static function normalize_agent_bundle_import_principal( array $principal ): array {
+	$normalized = array();
+	foreach ( array( 'agent_id', 'owner_id', 'token_id' ) as $field ) {
+		if ( isset( $principal[ $field ] ) && (int) $principal[ $field ] > 0 ) {
+			$normalized[ $field ] = (int) $principal[ $field ];
+		}
+	}
+
+	$capabilities = self::string_list( $principal['capabilities'] ?? array() );
+	if ( ! empty( $capabilities ) ) {
+		$normalized['capabilities'] = $capabilities;
+	}
+
+	if ( is_array( $principal['scope'] ?? null ) ) {
+		$scope = array();
+		foreach ( array( 'scope', 'label' ) as $field ) {
+			$value = isset( $principal['scope'][ $field ] ) ? trim( (string) $principal['scope'][ $field ] ) : '';
+			if ( '' !== $value ) {
+				$scope[ $field ] = $value;
+			}
+		}
+		foreach ( array( 'ability_categories', 'ability_allow', 'ability_deny', 'capabilities' ) as $field ) {
+			$values = self::string_list( $principal['scope'][ $field ] ?? array() );
+			if ( ! empty( $values ) ) {
+				$scope[ $field ] = $values;
+			}
+		}
+		if ( ! empty( $scope ) ) {
+			$normalized['scope'] = $scope;
+		}
 	}
 
 	return $normalized;

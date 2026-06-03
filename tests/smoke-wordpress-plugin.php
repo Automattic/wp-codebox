@@ -358,6 +358,7 @@ $assert( 'browser Playground session exposes artifact file schema', 'array' === 
 $assert( 'browser Playground session exposes site blueprint artifact schema', 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) && 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['properties']['blueprint']['type'] ?? '' ) );
 $assert( 'browser Playground session declares site blueprint artifact output', 'object' === ( $browser_session_ability['output_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes explicit trusted orchestrator authorization schema', 'object' === ( $browser_session_ability['input_schema']['properties']['authorization']['type'] ?? '' ) && array( 'browser-session:create' ) === ( $browser_session_ability['input_schema']['properties']['authorization']['properties']['scope']['enum'] ?? array() ) );
+$assert( 'browser Playground session exposes non-secret agent bundle import principal schema', 'object' === ( $browser_session_ability['input_schema']['properties']['agent_bundles']['items']['properties']['import_principal']['type'] ?? '' ) );
 $assert( 'browser Playground session output declares browser execution', array( 'browser-playground' ) === ( $browser_session_ability['output_schema']['properties']['execution']['enum'] ?? array() ) );
 $assert( 'browser Playground session exposes generic sandbox invocation schema', array( 'ability', 'task' ) === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['type']['enum'] ?? array() ) && 'string' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['invocation']['properties']['hook']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes generic capture path schema', 'array' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['type'] ?? '' ) && 'integer' === ( $browser_session_ability['input_schema']['properties']['browser_runner']['properties']['capture_paths']['items']['properties']['max_bytes']['type'] ?? '' ) && 'object' === ( $browser_session_ability['output_schema']['properties']['materialization']['type'] ?? '' ) );
@@ -968,8 +969,17 @@ $browser_inherited_session = call_user_func(
 		'inherit' => array( 'connectors' => array( 'primary-ai' ) ),
 		'agent_bundles' => array(
 			array(
-				'source' => 'https://example.test/site-generator-agent.json',
-				'slug'   => 'site-generator',
+				'source'           => 'https://example.test/site-generator-agent.json',
+				'slug'             => 'site-generator',
+				'import_principal' => array(
+					'agent_id'     => 123,
+					'owner_id'     => 1,
+					'token_id'     => 456,
+					'capabilities' => array( 'datamachine_manage_agents' ),
+					'scope'        => array(
+						'ability_allow' => array( 'datamachine/import-agent' ),
+					),
+				),
 			),
 			array(
 				'bundle' => array(
@@ -996,7 +1006,8 @@ $assert( 'browser Playground recipe provides bounded user context to agents chat
 $assert( 'browser Playground recipe passes inherited provider and model to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'provider' => (string) ( \$payload['provider'] ?? '' )" ) && str_contains( $browser_runner_code, "'model' => (string) ( \$payload['model'] ?? '' )" ) );
 $assert( 'browser Playground recipe keeps sandbox id in client context instead of transcript session id', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'caller_session_id' => \$session_id" ) && ! str_contains( $browser_runner_code, "'message' => \$message,\n\t'session_id' => \$session_id" ) );
 $assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
-$assert( 'browser Playground recipe imports Data Machine bundles through scoped pre-authenticated context', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::run_as_authenticated' ) );
+$assert( 'browser Playground recipe preserves non-secret Data Machine import principal', ! is_wp_error( $browser_inherited_session ) && 123 === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['agent_id'] ?? null ) && array( 'datamachine/import-agent' ) === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['scope']['ability_allow'] ?? array() ) );
+$assert( 'browser Playground recipe imports Data Machine bundles through scoped agent context', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, 'wp_codebox_browser_agent_bundle_import_principal' ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::set_agent_context' ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::clear_agent_context' ) );
 $assert( 'browser Playground recipe stages inline Data Machine bundles as JSON files', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '$temp_source = $temp_base . \'.json\';' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
