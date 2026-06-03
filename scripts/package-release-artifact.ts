@@ -15,6 +15,7 @@ const archName = process.env.WP_CODEBOX_RELEASE_ARCH ?? normalizeArch(arch())
 const nodeRuntimeVersion = process.env.WP_CODEBOX_NODE_RUNTIME_VERSION ?? "24.16.0"
 const artifactName = `wp-codebox-cli-${platformName}-${archName}.tar.gz`
 const artifactPath = resolve(repoRoot, "dist", artifactName)
+const recursiveRmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }
 
 try {
   await execFileAsync("npm", ["run", "build"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
@@ -69,7 +70,7 @@ exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
 `)
   await chmod(binPath, 0o755)
 
-  await rm(releaseRoot, { recursive: true, force: true })
+  await rm(releaseRoot, recursiveRmOptions)
   await mkdir(releaseRoot, { recursive: true })
   await cp(packageRoot, join(releaseRoot, "wp-codebox-cli"), { recursive: true })
 
@@ -80,7 +81,7 @@ exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
 
   process.stdout.write(JSON.stringify([{ path: `dist/${artifactName}`, type: "node-cli-tarball", platform: `${platformName}-${archName}` }]) + "\n")
 } finally {
-  await rm(stagingReleaseRoot, { recursive: true, force: true })
+  await rm(stagingReleaseRoot, recursiveRmOptions)
 }
 
 async function copyIfPresent(relativePath: string): Promise<void> {
@@ -96,7 +97,7 @@ async function copyIfPresent(relativePath: string): Promise<void> {
 async function bundleNodeRuntime(root: string, platformName: string, archName: string): Promise<void> {
   const nodePackageName = nodeRuntimePackageName(platformName, archName)
   const runtimeRoot = join(root, "vendor", "node")
-  await rm(runtimeRoot, { recursive: true, force: true })
+  await rm(runtimeRoot, recursiveRmOptions)
   await mkdir(join(runtimeRoot, "bin"), { recursive: true })
 
   if (nodePackageName) {
@@ -116,7 +117,7 @@ async function bundleNodeRuntime(root: string, platformName: string, archName: s
       await cp(join(tempRoot, "package", "bin", "node"), join(runtimeRoot, "bin", "node"))
       await chmod(join(runtimeRoot, "bin", "node"), 0o755)
     } finally {
-      await rm(tempRoot, { recursive: true, force: true })
+      await rm(tempRoot, recursiveRmOptions)
     }
   } else if (platformName === normalizePlatform(platform()) && archName === normalizeArch(arch())) {
     await cp(process.execPath, join(runtimeRoot, "bin", "node"))

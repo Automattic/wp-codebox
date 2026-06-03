@@ -50,6 +50,7 @@ try {
   ])
   assert.equal(recipeOutput.success, true)
   assert.equal(new URL(recipeOutput.artifacts.preview.url).port, String(recipePort))
+  assert.equal(recipeOutput.artifacts.preview.siteUrl, recipeOutput.artifacts.preview.url)
   assert.equal(recipeOutput.artifacts.preview.status, "expired-on-completion")
 
   await assert.rejects(

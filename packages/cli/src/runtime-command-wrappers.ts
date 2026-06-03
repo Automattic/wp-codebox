@@ -108,12 +108,18 @@ export function previewSpec(publicUrl: string | undefined, port: number | undefi
     return undefined
   }
 
+  const localUrl = port === undefined ? undefined : `http://${formatPreviewHost(bind === "0.0.0.0" || !bind ? "127.0.0.1" : bind)}:${port}`
+
   return stripUndefined({
     publicUrl,
-    siteUrl: publicUrl,
+    siteUrl: publicUrl ?? localUrl,
     port,
     bind,
   })
+}
+
+function formatPreviewHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
 function runMetadata(options: RunOptions): Record<string, unknown> {

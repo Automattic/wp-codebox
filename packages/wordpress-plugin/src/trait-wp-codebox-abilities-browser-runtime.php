@@ -304,7 +304,7 @@ private static function browser_runtime_dependencies( array $input, array $legac
 		return $component_plugins;
 	}
 
-	$plugins = self::dedupe_browser_plugins( array_merge( $legacy_plugins, $component_plugins, $runtime_plugins ) );
+	$plugins = self::dedupe_browser_plugins( array_merge( $legacy_plugins, $runtime_plugins, $component_plugins ) );
 
 	return array(
 		'schema'                 => 'wp-codebox/browser-runtime-dependencies/v1',

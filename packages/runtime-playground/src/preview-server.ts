@@ -60,7 +60,7 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
         port: target.port,
         method: incoming.method,
         path: incoming.url ?? "/",
-        headers: proxyRequestHeaders(incoming.headers, target),
+        headers: proxyRequestHeaders(incoming.headers),
       },
       (targetResponse) => {
         outgoing.writeHead(targetResponse.statusCode ?? 502, targetResponse.statusMessage, proxyResponseHeaders(targetResponse.headers))
@@ -101,15 +101,13 @@ function formatPreviewHost(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
-function proxyRequestHeaders(headers: IncomingHttpHeaders, target: URL): IncomingHttpHeaders {
+function proxyRequestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const forwarded = { ...headers }
   delete forwarded.connection
-  delete forwarded.host
   delete forwarded["transfer-encoding"]
 
   return {
     ...forwarded,
-    host: target.host,
   }
 }
 

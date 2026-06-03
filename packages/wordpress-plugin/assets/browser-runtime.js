@@ -4,20 +4,41 @@
 
 	const safeName = ( name ) => String( name || 'task' ).replace( /[^a-z0-9_-]/gi, '-' ).toLowerCase();
 
-	const responseText = ( response ) => {
+	const responseText = async ( response ) => {
 		if ( typeof response === 'string' ) {
 			return response;
 		}
 
-		return typeof response?.text === 'string' ? response.text : '';
+		if ( typeof response?.text === 'string' ) {
+			return response.text;
+		}
+
+		if ( typeof response?.text === 'function' ) {
+			return await response.text();
+		}
+
+		for ( const field of [ 'stdout', 'output', 'body' ] ) {
+			if ( typeof response?.[ field ] === 'string' ) {
+				return response[ field ];
+			}
+		}
+
+		if ( ArrayBuffer.isView( response?.bytes ) || Array.isArray( response?.bytes ) ) {
+			return new TextDecoder().decode( new Uint8Array( response.bytes ) );
+		}
+
+		return '';
 	};
 
-	const parseJsonResponse = ( response ) => {
-		const text = responseText( response );
+	const parseJsonResponse = async ( response ) => {
+		const text = await responseText( response );
 		const start = text.indexOf( '{' );
 		const end = text.lastIndexOf( '}' );
 		if ( start === -1 || end === -1 || end < start ) {
-			throw new Error( 'WP Codebox browser runner did not return JSON.' );
+			const keys = response && typeof response === 'object' ? Object.keys( response ).join( ',' ) : typeof response;
+			const status = response && typeof response === 'object' ? ` httpStatusCode: ${ response.httpStatusCode ?? 'n/a' }. exitCode: ${ response.exitCode ?? 'n/a' }.` : '';
+			const errors = response?.errors === undefined ? '' : ` Response errors: ${ JSON.stringify( response.errors ).slice( 0, 500 ) }.`;
+			throw new Error( `WP Codebox browser runner did not return JSON. Response keys: ${ keys }.${ status }${ errors } Response preview: ${ text.slice( 0, 500 ) }` );
 		}
 
 		return JSON.parse( text.slice( start, end + 1 ) );
@@ -393,7 +414,7 @@ try {
 
 		if ( ! options.forceRequest && typeof client.run === 'function' ) {
 			const response = await client.run( { code } );
-			return options.expectJson ? parseJsonResponse( response ) : response;
+			return options.expectJson ? await parseJsonResponse( response ) : response;
 		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );
@@ -412,7 +433,7 @@ try {
 			url: requestUrl,
 		} );
 
-		return options.expectJson ? parseJsonResponse( response ) : response;
+		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
 
 	const runWordPressOperation = async ( client, operation, options = {} ) => {
@@ -552,7 +573,15 @@ try {
 			throw new Error( 'WP Codebox browser recipe task payload missing.' );
 		}
 
-		await client.writeFile( taskPath, JSON.stringify( payload ) );
+		const writeResult = await writeFile( client, {
+			path: taskPath,
+			content: JSON.stringify( payload ),
+		}, {
+			name: options.name || 'codebox-recipe-task',
+		} );
+		if ( ! writeResult.success ) {
+			throw new Error( writeResult?.error?.message || 'WP Codebox browser recipe task write failed.' );
+		}
 
 		let lastResult = null;
 		for ( const step of steps ) {
@@ -570,10 +599,10 @@ try {
 				code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
 				name: options.name || 'codebox-recipe',
 				expectJson: true,
-				forceRequest: true,
 			} );
 			if ( ! lastResult.success ) {
-				throw new Error( lastResult?.error?.message || 'WP Codebox browser recipe step failed.' );
+				const detail = lastResult?.error?.data ? ` ${ JSON.stringify( lastResult.error.data ) }` : '';
+				throw new Error( `${ lastResult?.error?.message || 'WP Codebox browser recipe step failed.' }${ detail }` );
 			}
 		}
 

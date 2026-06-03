@@ -2,14 +2,15 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import vm from "node:vm"
 import { resolve } from "node:path"
-import { TextEncoder } from "node:util"
+import { TextDecoder, TextEncoder } from "node:util"
 
 const repoRoot = resolve(import.meta.dirname, "..")
 const runtimePath = resolve(repoRoot, "packages/wordpress-plugin/assets/browser-runtime.js")
 const runtimeSource = await readFile(runtimePath, "utf8")
 
 const context = {
-  TextEncoder,
+	TextEncoder,
+	TextDecoder,
   window: {} as { wpCodeboxBrowser?: any },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
 }
@@ -30,8 +31,11 @@ assert.equal(typeof runtime.writeReviewFile, "function")
 assert.equal(typeof runtime.installTheme, "function")
 assert.equal(typeof runtime.activateTheme, "function")
 
-const parsed = runtime.parseJsonResponse("notice before {\"success\":true,\"data\":{\"ok\":true}} warning after")
+const parsed = await runtime.parseJsonResponse("notice before {\"success\":true,\"data\":{\"ok\":true}} warning after")
 assert.deepEqual(sameRealm(parsed), { success: true, data: { ok: true } })
+
+const parsedBytes = await runtime.parseJsonResponse({ bytes: new TextEncoder().encode("prefix {\"success\":true,\"data\":{\"bytes\":true}} suffix") })
+assert.deepEqual(sameRealm(parsedBytes), { success: true, data: { bytes: true } })
 
 const runClient = createClient("unused", true)
 runClient.runResponse = { text: "prefix {\"success\":true,\"data\":{\"runner\":\"direct\"},\"error\":null} suffix" }
@@ -237,8 +241,14 @@ const recipeResult = await runtime.runRecipe(recipeClient, {
   },
 }, { goal: "Smoke test browser recipe marker." })
 assert.equal(recipeResult.success, true)
-assert.equal(recipeClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
-assert.deepEqual(JSON.parse(recipeClient.files[0]?.contents ?? "{}"), { goal: "Smoke test browser recipe marker." })
+assert.match(recipeClient.files[0]?.contents ?? "", /case 'writeFile':/)
+assert.deepEqual(extractBrowserOperation(recipeClient.files[0]?.contents ?? ""), {
+  type: "writeFile",
+  args: {
+    path: "/tmp/wp-codebox-agent-task.json",
+    content: JSON.stringify({ goal: "Smoke test browser recipe marker." }),
+  },
+})
 assert.match(recipeClient.files[1]?.contents ?? "", /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
 assert.match(recipeClient.files[1]?.contents ?? "", /<\?php\ndefine\( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true \);/)
 
@@ -266,8 +276,14 @@ const sessionOutput = {
 }
 const sessionResult = await runtime.runBrowserSessionRecipe(sessionClient, sessionOutput)
 assert.deepEqual(sameRealm(sessionResult), { success: true, data: { summary: "session runner" }, error: null })
-assert.equal(sessionClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
-assert.equal(JSON.parse(sessionClient.files[0]?.contents).goal, "Run session smoke")
+assert.match(sessionClient.files[0]?.contents ?? "", /case 'writeFile':/)
+assert.deepEqual(extractBrowserOperation(sessionClient.files[0]?.contents ?? ""), {
+  type: "writeFile",
+  args: {
+    path: "/tmp/wp-codebox-agent-task.json",
+    content: JSON.stringify({ goal: "Run session smoke", expected_artifacts: ["summary"] }),
+  },
+})
 assert.match(sessionClient.files[1]?.path ?? "", /\/wordpress\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
 assert.match(sessionClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-browser-session-/)
 
@@ -292,7 +308,14 @@ await runtime.runRecipe(embeddedPayloadClient, {
     ],
   },
 })
-assert.deepEqual(JSON.parse(embeddedPayloadClient.files[0]?.contents ?? "{}"), { schema: "wp-codebox/browser-agent-task-payload/v1", goal: "embedded" })
+assert.match(embeddedPayloadClient.files[0]?.contents ?? "", /case 'writeFile':/)
+assert.deepEqual(extractBrowserOperation(embeddedPayloadClient.files[0]?.contents ?? ""), {
+  type: "writeFile",
+  args: {
+    path: "/tmp/wp-codebox-agent-task.json",
+    content: JSON.stringify({ schema: "wp-codebox/browser-agent-task-payload/v1", goal: "embedded" }),
+  },
+})
 
 await assert.rejects(
   () => runtime.runWordPressOperation(createClient("{}"), { args: {} }),
@@ -303,6 +326,12 @@ console.log("Browser runtime operation smoke passed")
 
 function sameRealm<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function extractBrowserOperation(source: string): unknown {
+  const match = source.match(/base64_decode\( '([^']+)' \)/)
+  assert.ok(match, "Browser operation PHP should contain a base64 operation payload")
+  return JSON.parse(Buffer.from(match[1], "base64").toString("utf8"))
 }
 
 function createClient(response: unknown, supportsRun = false, supportsRequestHandler = false) {
