@@ -145,6 +145,35 @@ code and message instead of terminal-shaped stderr. Product-specific tools such
 as Homeboy evidence commands should live in product extensions that register
 tools through this surface.
 
+Trusted worker hosts that need repo-local commands can use the playground
+package's `createHostCommandTool()` adapter instead of exposing arbitrary shell.
+Each adapter is still a named host tool such as `host.pnpm-test`,
+`host.cargo-test`, or `host.homeboy-check`; the runtime denies it unless that
+exact name appears in `policy.commands`. The adapter runs one configured
+executable with `child_process.spawn()` and `shell: false`, appends only
+structured string-array arguments from the input, enforces allowed cwd roots,
+uses an explicit timeout, captures bounded stdout/stderr, and passes only
+configured environment variables plus explicitly allowlisted input env keys.
+
+```ts
+import { createHostToolRegistry } from "@automattic/wp-codebox-core"
+import { createHostCommandTool } from "@automattic/wp-codebox-playground"
+
+const hostTools = createHostToolRegistry([
+  createHostCommandTool({
+    name: "host.pnpm-test",
+    description: "Run repo-local tests from a trusted worker host.",
+    command: "pnpm",
+    args: ["test"],
+    cwd: repoRoot,
+    allowedCwdRoots: [repoRoot],
+    timeoutMs: 120_000,
+    maxOutputBytes: 256 * 1024,
+    inheritedEnv: ["CI"],
+  }),
+])
+```
+
 ## In-Sandbox Workspace Contract
 
 WP Codebox reserves `/workspace` as the stable editable workspace root inside a
