@@ -865,6 +865,8 @@ add_filter(
 	10
 );
 $runner_php = (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
+$assert( 'browser Playground generated runner has no Studio Web-specific artifact paths', ! str_contains( $runner_php, '/wordpress/wp-content/uploads/studio-web' ) && ! str_contains( $runner_php, 'studio-web/website' ) );
+$assert( 'browser Playground generated runner defaults to generic Codebox artifacts path', str_contains( $runner_php, '/wordpress/wp-content/uploads/wp-codebox/artifacts' ) && str_contains( $runner_php, 'wp-codebox-output/' ) );
 $runner_php = preg_replace( '/^code=/', '', $runner_php ) ?? $runner_php;
 $runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
 $runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );
@@ -938,6 +940,22 @@ $assert( 'browser Playground generated runner records diagnostics and provenance
 $assert( 'browser Playground generated runner captures caller-owned artifact schema', is_array( $runner_result ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['artifact_bundle']['schema'] ?? '' ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['response']['artifact_bundle']['schema'] ?? '' ) );
 $assert( 'browser Playground generated runner preserves caller artifact metadata and roles', is_array( $runner_result ) && array( 'non-studio-web' ) === ( $runner_result['artifact_bundle']['metadata']['labels'] ?? array() ) && array( 'preview' => 'generic-output/index.html' ) === ( $runner_result['artifact_bundle']['roles'] ?? array() ) && array( 'preview' ) === ( $runner_result['artifact_bundle']['files'][0]['roles'] ?? array() ) && 'entrypoint' === ( $runner_result['artifact_bundle']['files'][0]['metadata']['opaque'] ?? '' ) );
 $assert( 'browser Playground generated runner captures text and base64 artifact files', is_array( $runner_result ) && 2 === count( $runner_result['artifact_bundle']['files'] ?? array() ) && '<main>Generic caller artifact</main>' === ( $runner_result['artifact_bundle']['files'][0]['content'] ?? '' ) && 'utf-8' === ( $runner_result['artifact_bundle']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $runner_result['artifact_bundle']['files'][1]['encoding'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\ngeneric" ) === ( $runner_result['artifact_bundle']['files'][1]['sha256'] ?? '' ) );
+$tool_artifact_base = rtrim( ABSPATH, '/' ) . '/wp-content/uploads/wp-codebox/artifacts';
+$tool_task_payload  = array(
+	'artifacts' => array(
+		'schema'     => 'caller/tool-written-browser-artifact-bundle/v1',
+		'root'       => 'tool-output',
+		'entrypoint' => 'tool-output/index.html',
+		'base_path'  => $tool_artifact_base,
+		'base_url'   => '/wp-content/uploads/wp-codebox/artifacts',
+	),
+);
+$GLOBALS['wp_codebox_browser_artifact_environment'] = function_exists( 'wp_codebox_browser_artifact_environment' ) ? wp_codebox_browser_artifact_environment( $tool_task_payload ) : array();
+$filesystem_write_tool = class_exists( 'WP_Codebox_Browser_Filesystem_Write_Tool' ) ? new WP_Codebox_Browser_Filesystem_Write_Tool() : null;
+$tool_write_result = $filesystem_write_tool ? $filesystem_write_tool->handle_tool_call( array( 'path' => 'tool-output/index.html', 'content' => '<main>Tool Output</main>' ) ) : array();
+$tool_capture = function_exists( 'wp_codebox_browser_capture_artifact_bundle' ) ? wp_codebox_browser_capture_artifact_bundle( $tool_task_payload ) : array();
+$assert( 'browser Playground filesystem-write uses caller artifact base and root', true === ( $tool_write_result['success'] ?? false ) && $tool_artifact_base . '/tool-output/index.html' === ( $tool_write_result['playground_path'] ?? '' ) );
+$assert( 'browser Playground artifact capture discovers caller-rooted files', 'caller/tool-written-browser-artifact-bundle/v1' === ( $tool_capture['schema'] ?? '' ) && 'tool-output/index.html' === ( $tool_capture['files'][0]['path'] ?? '' ) && '<main>Tool Output</main>' === ( $tool_capture['files'][0]['content'] ?? '' ) );
 $runner_missing_entrypoint = function_exists( 'wp_codebox_browser_capture_artifact_bundle' ) ? wp_codebox_browser_capture_artifact_bundle( array( 'artifacts' => array_merge( $runner_task_payload['artifacts'], array( 'entrypoint' => 'generic-output/missing.html' ) ) ) ) : array( 'missing_function' => true );
 $assert( 'browser Playground generated runner skips missing artifact entrypoints safely', array() === $runner_missing_entrypoint );
 $assert( 'browser Playground session emits ready-to-code signal only when blueprint prerequisites are present', ! is_wp_error( $browser_session ) && true === ( $browser_session['signals']['ready_to_code']['emitted'] ?? false ) && 'ready_to_code' === ( $browser_session['signals']['ready_to_code']['name'] ?? '' ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['agents_api'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine_code'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['provider_secret'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['runtime_dependencies'] ?? false ) );

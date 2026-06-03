@@ -406,8 +406,79 @@ foreach ( $candidates as $candidate ) {
 return array();
 }
 
-function wp_codebox_browser_discover_artifact_files( array $contract, string $root ): array {
-$base = \'/wordpress/wp-content/uploads/studio-web/\' . $root;
+function wp_codebox_browser_normalize_artifact_root( $root ): string {
+$root = rtrim( ltrim( str_replace( chr( 92 ), "/", (string) $root ), "/" ), "/" );
+if ( \'\' === $root || str_contains( $root, \'..\' ) ) {
+	return \'\';
+}
+
+return $root . \'/\';
+}
+
+function wp_codebox_browser_artifact_root( array $contract ): string {
+$root = wp_codebox_browser_normalize_artifact_root( $contract[\'root\'] ?? \'\' );
+return \'\' !== $root ? $root : \'wp-codebox-output/\';
+}
+
+function wp_codebox_browser_artifact_base_path( array $payload, array $contract, string $root ): string {
+$candidates = array(
+	$contract[\'artifact_base_path\'] ?? null,
+	$contract[\'base_path\'] ?? null,
+	$payload[\'task_input\'][\'context\'][\'output\'][\'artifact_base_path\'] ?? null,
+	$payload[\'task_input\'][\'context\'][\'output\'][\'base_path\'] ?? null,
+	$payload[\'playground\'][\'artifact_base_path\'] ?? null,
+);
+$bundle_root = (string) ( $payload[\'task_input\'][\'context\'][\'output\'][\'bundle_root\'] ?? \'\' );
+if ( \'\' !== $bundle_root ) {
+	$candidates[] = preg_replace( \'#/?\' . preg_quote( rtrim( $root, \'/\' ), \'#\' ) . \'/?$#\', \'\', $bundle_root );
+}
+
+foreach ( $candidates as $candidate ) {
+	$base = rtrim( str_replace( chr( 92 ), \'/\', (string) $candidate ), \'/\' );
+	if ( \'\' !== $base && str_starts_with( $base, \'/\' ) && ! str_contains( $base, \'..\' ) && preg_match( \'#^[A-Za-z0-9_./-]+$#\', $base ) ) {
+		return $base;
+	}
+}
+
+return \'/wordpress/wp-content/uploads/wp-codebox/artifacts\';
+}
+
+function wp_codebox_browser_artifact_base_url( array $payload, array $contract ): string {
+$candidates = array(
+	$contract[\'artifact_base_url\'] ?? null,
+	$contract[\'base_url\'] ?? null,
+	$payload[\'task_input\'][\'context\'][\'output\'][\'artifact_base_url\'] ?? null,
+	$payload[\'task_input\'][\'context\'][\'output\'][\'base_url\'] ?? null,
+	$payload[\'playground\'][\'artifact_base_url\'] ?? null,
+);
+foreach ( $candidates as $candidate ) {
+	$base = rtrim( str_replace( chr( 92 ), \'/\', (string) $candidate ), \'/\' );
+	if ( \'\' !== $base && str_starts_with( $base, \'/\' ) && ! str_contains( $base, \'..\' ) ) {
+		return $base;
+	}
+}
+
+return \'/wp-content/uploads/wp-codebox/artifacts\';
+}
+
+function wp_codebox_browser_artifact_environment( array $payload ): array {
+$contract = wp_codebox_browser_artifact_contract( $payload );
+$root = wp_codebox_browser_artifact_root( $contract );
+$base_path = wp_codebox_browser_artifact_base_path( $payload, $contract, $root );
+$base_url = wp_codebox_browser_artifact_base_url( $payload, $contract );
+$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+
+return array(
+	\'contract\' => $contract,
+	\'root\' => $root,
+	\'base_path\' => $base_path,
+	\'base_url\' => $base_url,
+	\'entrypoint\' => $entrypoint,
+);
+}
+
+function wp_codebox_browser_discover_artifact_files( array $contract, string $root, string $base_path, string $base_url ): array {
+$base = rtrim( $base_path, \'/\' ) . \'/\' . $root;
 if ( ! is_dir( $base ) ) {
 	return array();
 }
@@ -423,6 +494,7 @@ foreach ( $iterator as $file ) {
 	$files[] = array(
 		\'path\'            => $relative,
 		\'playground_path\' => $absolute,
+		\'url_path\'        => rtrim( $base_url, \'/\' ) . \'/\' . $relative,
 	);
 }
 
@@ -430,24 +502,21 @@ return $files;
 }
 
 function wp_codebox_browser_capture_artifact_bundle( array $payload ) {
-$contract = wp_codebox_browser_artifact_contract( $payload );
+$environment = wp_codebox_browser_artifact_environment( $payload );
+$contract = $environment[\'contract\'];
 $schema = trim( (string) ( $contract[\'schema\'] ?? \'\' ) );
 if ( \'\' === $schema ) {
 	return array();
 }
 
-$root = (string) ( $contract[\'root\'] ?? \'\' );
-$root = rtrim( ltrim( str_replace( chr( 92 ), "/", $root ), "/" ), "/" ) . "/";
-if ( \'/\' === $root ) {
-	return array();
-}
-$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+$root = $environment[\'root\'];
+$entrypoint = $environment[\'entrypoint\'];
 if ( \'\' === $entrypoint ) {
 	return array();
 }
 $contract_files = is_array( $contract[\'files\'] ?? null ) ? $contract[\'files\'] : array();
 if ( empty( $contract_files ) ) {
-	$contract_files = wp_codebox_browser_discover_artifact_files( $contract, $root );
+	$contract_files = wp_codebox_browser_discover_artifact_files( $contract, $root, $environment[\'base_path\'], $environment[\'base_url\'] );
 }
 
 $files = array();
@@ -498,19 +567,20 @@ return array_merge(
 }
 
 function wp_codebox_browser_artifact_capture_diagnostics( array $payload, array $artifact_bundle ) {
-$contract = wp_codebox_browser_artifact_contract( $payload );
-$root = (string) ( $contract[\'root\'] ?? \'\' );
-$root = rtrim( ltrim( str_replace( chr( 92 ), "/", $root ), "/" ), "/" ) . "/";
-$base = \'/wordpress/wp-content/uploads/studio-web/\' . $root;
-$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+$environment = wp_codebox_browser_artifact_environment( $payload );
+$contract = $environment[\'contract\'];
+$root = $environment[\'root\'];
+$base = rtrim( $environment[\'base_path\'], \'/\' ) . \'/\' . $root;
+$entrypoint = $environment[\'entrypoint\'];
 $contract_files = is_array( $contract[\'files\'] ?? null ) ? $contract[\'files\'] : array();
 
 return array_filter( array(
 	\'contract_schema\' => (string) ( $contract[\'schema\'] ?? \'\' ),
-	\'root\' => \'/\' === $root ? \'\' : $root,
-	\'base_exists\' => \'/\' !== $root && is_dir( $base ),
+	\'root\' => $root,
+	\'base_path\' => $environment[\'base_path\'],
+	\'base_exists\' => is_dir( $base ),
 	\'entrypoint\' => $entrypoint,
-	\'entrypoint_exists\' => \'\' !== $entrypoint && is_readable( \'/wordpress/wp-content/uploads/studio-web/\' . $entrypoint ),
+	\'entrypoint_exists\' => \'\' !== $entrypoint && is_readable( rtrim( $environment[\'base_path\'], \'/\' ) . \'/\' . $entrypoint ),
 	\'contract_file_count\' => count( $contract_files ),
 	\'captured_file_count\' => is_array( $artifact_bundle[\'files\'] ?? null ) ? count( $artifact_bundle[\'files\'] ) : 0,
 	\'captured\' => ! empty( $artifact_bundle ),
@@ -602,10 +672,14 @@ return $imports;
 
 class WP_Codebox_Browser_Filesystem_Write_Tool {
 	public function handle_tool_call( array $parameters, array $tool_def = array() ): array {
+		global $wp_codebox_browser_artifact_environment;
+		$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
+		$root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
+		$base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
 		$path = str_replace( chr( 92 ), \'/\', (string) ( $parameters[\'path\'] ?? \'\' ) );
 		$path = ltrim( preg_replace( \'#/+#\', \'/\', $path ), \'/\' );
-		if ( \'\' === $path || str_contains( $path, \'..\' ) || ! str_starts_with( $path, \'website/\' ) ) {
-			return array( \'success\' => false, \'error\' => \'Path must stay inside the website artifact bundle root.\' );
+		if ( \'\' === $path || str_contains( $path, \'..\' ) || ! str_starts_with( $path, $root ) ) {
+			return array( \'success\' => false, \'error\' => \'Path must stay inside the configured artifact bundle root.\', \'root\' => $root );
 		}
 
 		$content = (string) ( $parameters[\'content\'] ?? \'\' );
@@ -617,7 +691,7 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 			$content = $decoded;
 		}
 
-		$absolute = \'/wordpress/wp-content/uploads/studio-web/\' . $path;
+		$absolute = $base_path . \'/\' . $path;
 		$directory = dirname( $absolute );
 		if ( ! is_dir( $directory ) && ! mkdir( $directory, 0777, true ) ) {
 			return array( \'success\' => false, \'error\' => \'Could not create artifact directory.\', \'path\' => $path );
@@ -635,6 +709,31 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 		);
 	}
 }
+
+add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode, array $args ) {
+	global $wp_codebox_browser_artifact_environment;
+	$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
+	$root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
+	$base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
+	$tools[\'filesystem-write\'] = array(
+		\'name\'        => \'filesystem-write\',
+		\'description\' => sprintf( \'Write one generated artifact file inside %s/%s. Call this once per file required by the caller artifact contract.\', $base_path, $root ),
+		\'class\'       => \'WP_Codebox_Browser_Filesystem_Write_Tool\',
+		\'method\'      => \'handle_tool_call\',
+		\'parameters\'  => array(
+			\'type\'       => \'object\',
+			\'required\'   => array( \'path\', \'content\' ),
+			\'properties\' => array(
+				\'path\'     => array( \'type\' => \'string\', \'description\' => sprintf( \'Relative artifact path under %s, for example %sindex.html.\', $root, $root ) ),
+				\'content\'  => array( \'type\' => \'string\', \'description\' => \'Full file contents. Use UTF-8 text unless encoding is base64.\' ),
+				\'encoding\' => array( \'type\' => \'string\', \'enum\' => array( \'utf-8\', \'base64\' ) ),
+			),
+		),
+		\'access_level\' => \'public\',
+		\'modes\'        => is_array( $mode ) ? $mode : array( (string) $mode ),
+	);
+	return $tools;
+}, 20, 3 );
 
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
@@ -655,6 +754,7 @@ if ( is_array( $raw_payload ) ) {
 }
 }
 
+$wp_codebox_browser_artifact_environment = wp_codebox_browser_artifact_environment( $payload );
 wp_codebox_browser_install_provider_proxy( $payload );
 
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
