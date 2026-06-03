@@ -156,8 +156,9 @@ Transfer checklist:
   ability input fields; avoid product-specific defaults that assume any caller.
 - Treat browser action results, screenshots, console logs, HTTP observations,
   and generated files as artifacts with redaction and manifest entries.
-- Keep the Playground permission bypass bounded to disposable browser runtimes;
-  the generated runner must continue to fail when copied into a normal host site.
+- Keep Playground runtime-principal authorization bounded to disposable browser
+  runtimes; the generated runner must continue to fail when copied into a normal
+  host site.
 - Audit package dependencies and generated browser assets before transfer so the
   target owner knows which dependencies are runtime-critical, build-only,
   browser-only, or inherited from `@wp-playground/cli`.

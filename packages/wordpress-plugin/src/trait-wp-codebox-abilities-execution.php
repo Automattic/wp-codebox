@@ -79,7 +79,7 @@ public static function create_browser_playground_session( array $input ): array|
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
-		'permission_model' => 'sandbox-bypass',
+		'permission_model' => 'runtime-principal',
 		'session'          => self::browser_session_envelope( $session_id, 'ready', $input ),
 		'task'             => (string) $task_input['goal'],
 		'task_input' => $task_input,
@@ -137,7 +137,7 @@ public static function create_browser_materializer_contract( array $input ): arr
 				'schema'           => 'wp-codebox/browser-materializer-contract/v1',
 				'execution'        => 'browser-playground',
 				'execution_scope'  => 'disposable-playground',
-				'permission_model' => 'sandbox-bypass',
+				'permission_model' => 'runtime-principal',
 				'status'           => (string) ( $session['status'] ?? 'blocked' ),
 				'error'            => is_array( $session['error'] ?? null ) ? $session['error'] : array(),
 				'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
@@ -155,7 +155,7 @@ public static function create_browser_materializer_contract( array $input ): arr
 		'schema'           => 'wp-codebox/browser-materializer-contract/v1',
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
-		'permission_model' => 'sandbox-bypass',
+		'permission_model' => 'runtime-principal',
 		'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
 		'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
 		'task_input'       => is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array(),
@@ -187,7 +187,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 				'schema'           => 'wp-codebox/browser-task-contract/v1',
 				'execution'        => 'browser-playground',
 				'execution_scope'  => 'disposable-playground',
-				'permission_model' => 'sandbox-bypass',
+				'permission_model' => 'runtime-principal',
 				'status'           => (string) ( $primary['status'] ?? 'blocked' ),
 				'error'            => is_array( $primary['error'] ?? null ) ? $primary['error'] : array(),
 				'session'          => $session_envelope,
@@ -208,7 +208,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 		'schema'           => 'wp-codebox/browser-task-contract/v1',
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
-		'permission_model' => 'sandbox-bypass',
+		'permission_model' => 'runtime-principal',
 		'session'          => $session_envelope,
 		'primary'          => $primary,
 		'phases'           => $phases,
@@ -285,7 +285,7 @@ private static function blocked_browser_playground_session( string $session_id, 
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
 		'execution'        => 'browser-playground',
 		'execution_scope'  => 'disposable-playground',
-		'permission_model' => 'sandbox-bypass',
+		'permission_model' => 'runtime-principal',
 		'status'           => 'blocked',
 		'error'            => array(
 			'code'    => 'wp_codebox_browser_prerequisites_missing',
@@ -337,7 +337,7 @@ private static function blocked_browser_playground_session( string $session_id, 
 private static function browser_session_envelope( string $session_id, string $status, array $input ): array {
 	$session = WP_Codebox_Agent_Task::session( $session_id, $status, $input );
 	$session['execution_scope']  = 'disposable-playground';
-	$session['permission_model'] = 'sandbox-bypass';
+	$session['permission_model'] = 'runtime-principal';
 	$authorization               = self::browser_session_authorization( $input );
 	if ( ! empty( $authorization['caller'] ) || ! empty( $authorization['scope'] ) ) {
 		$session['authorization'] = $authorization;

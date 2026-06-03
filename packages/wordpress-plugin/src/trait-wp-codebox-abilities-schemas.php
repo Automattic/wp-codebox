@@ -300,8 +300,8 @@ private static function browser_playground_session_schema(): array {
 			),
 			'permission_model' => array(
 				'type'        => 'string',
-				'enum'        => array( 'sandbox-bypass' ),
-				'description' => 'The generated browser runner bypasses agents/chat permission checks only inside the disposable Playground sandbox.',
+				'enum'        => array( 'runtime-principal' ),
+				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
 			'task_input' => self::task_input_schema(),
@@ -337,7 +337,7 @@ private static function browser_materializer_contract_schema(): array {
 			),
 			'permission_model' => array(
 				'type' => 'string',
-				'enum' => array( 'sandbox-bypass' ),
+				'enum' => array( 'runtime-principal' ),
 			),
 			'session_id'       => array( 'type' => 'string' ),
 			'authorization'    => array( 'type' => 'object' ),
@@ -369,7 +369,7 @@ private static function browser_task_contract_schema(): array {
 			),
 			'permission_model' => array(
 				'type' => 'string',
-				'enum' => array( 'sandbox-bypass' ),
+				'enum' => array( 'runtime-principal' ),
 			),
 			'session'          => array( 'type' => 'object' ),
 			'primary'          => self::browser_playground_session_schema(),
