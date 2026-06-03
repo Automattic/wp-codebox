@@ -348,6 +348,7 @@ private static function browser_materializer_contract_schema(): array {
 			'playground'       => array( 'type' => 'object' ),
 			'runtime'          => array( 'type' => 'object' ),
 			'artifacts'        => array( 'type' => 'object' ),
+			'compact'          => self::browser_product_dto_schema(),
 		),
 	);
 }
@@ -379,6 +380,33 @@ private static function browser_task_contract_schema(): array {
 				'items'       => array( 'type' => 'object' ),
 			),
 			'provenance'       => array( 'type' => 'object' ),
+			'compact'          => self::browser_product_dto_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_product_dto_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Compact product-facing browser task/session DTO for durable product records and REST responses. It preserves runner fields used by runBrowserSessionRecipe while omitting raw runtime plugin payloads, source paths, inline content, and secret values.',
+		'properties'  => array(
+			'success'          => array( 'type' => 'boolean' ),
+			'schema'           => array( 'type' => 'string' ),
+			'dto_schema'       => array( 'type' => 'string' ),
+			'source_schema'    => array( 'type' => 'string' ),
+			'execution'        => array( 'type' => 'string' ),
+			'execution_scope'  => array( 'type' => 'string' ),
+			'permission_model' => array( 'type' => 'string' ),
+			'session'          => array( 'type' => 'object' ),
+			'primary'          => array( 'type' => 'object' ),
+			'phases'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'task_input'       => array( 'type' => 'object' ),
+			'task_payload'     => array( 'type' => 'object' ),
+			'materialization'  => array( 'type' => 'object' ),
+			'playground'       => array( 'type' => 'object' ),
+			'recipe'           => array( 'type' => 'object' ),
+			'artifacts'        => array( 'type' => 'object' ),
 		),
 	);
 }
