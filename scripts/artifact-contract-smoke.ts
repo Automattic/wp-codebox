@@ -44,6 +44,7 @@ try {
   assert.equal(verification.valid, true, JSON.stringify(verification.violations, null, 2))
   assert.ok(artifacts.changedFilesPath, "artifact bundle should expose changedFilesPath")
   assert.ok(artifacts.patchPath, "artifact bundle should expose patchPath")
+  assert.ok(artifacts.workspacePatchPath, "artifact bundle should expose workspacePatchPath")
   assert.ok(artifacts.diagnosticsPath, "artifact bundle should expose diagnosticsPath")
   assert.ok(artifacts.testResultsPath, "artifact bundle should expose testResultsPath")
   assert.ok(artifacts.reviewPath, "artifact bundle should expose reviewPath")
@@ -59,6 +60,7 @@ try {
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8"))
   const changedFiles = JSON.parse(await readFile(artifacts.changedFilesPath, "utf8"))
+  const workspacePatch = JSON.parse(await readFile(artifacts.workspacePatchPath, "utf8"))
   const changedFilesJson = await readFile(artifacts.changedFilesPath, "utf8")
   const patch = await readFile(artifacts.patchPath, "utf8")
   const diagnostics = JSON.parse(await readFile(artifacts.diagnosticsPath, "utf8"))
@@ -86,6 +88,7 @@ try {
   assert.deepEqual(metadata.contentDigest, manifest.contentDigest)
   assert.deepEqual(metadata.preview, artifacts.preview)
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/changed-files.json" && file.kind === "changed-files"))
+  assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/workspace-patch.json" && file.kind === "workspace-patch"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/patch.diff" && file.kind === "patch"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/diagnostics.json" && file.kind === "diagnostics"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
@@ -97,6 +100,7 @@ try {
   const runtimeEvidence = metadata.artifacts.runtimeEvidence
   assert.match(runtimeEvidence["run-attestation"].sha256, /^[a-f0-9]{64}$/)
   assert.deepEqual(metadata.artifacts, {
+    workspacePatch: "files/workspace-patch.json",
     changedFiles: "files/changed-files.json",
     patch: "files/patch.diff",
     diagnostics: "files/diagnostics.json",
@@ -146,6 +150,16 @@ try {
     mount.target === "/wordpress/wp-content/plugins/seeded-helper" && mount.mode === "readwrite" && mount.metadata?.kind === "recipe-workspace",
   ))
   assert.equal(changedFiles.schema, "wp-codebox/changed-files/v1")
+  assert.equal(workspacePatch.schema, "wp-codebox/workspace-patch/v1")
+  assert.equal(workspacePatch.contentDigest.value, contentDigest)
+  assert.equal(workspacePatch.workspace.schema, "wp-codebox/sandbox-workspace/v1")
+  assert.equal(workspacePatch.workspace.root, "/workspace")
+  assert.equal(workspacePatch.promotion.patch, "files/patch.diff")
+  assert.equal(workspacePatch.promotion.changedFiles, "files/changed-files.json")
+  assert.ok(workspacePatch.promotion.files.every((file: { intent: string }) => file.intent === "promotion"))
+  assert.ok(workspacePatch.workspaces.some((workspace: { target: string; sourceMode: string; mountRole?: string; patch: string }) =>
+    workspace.target === "/wordpress/wp-content/plugins/seeded-helper" && workspace.sourceMode === "repo-backed" && workspace.mountRole === "recipe-workspace" && workspace.patch === "files/diffs/mount-0.patch",
+  ))
   assert.ok(
     changedFiles.files.some((file: { path: string; status: string }) =>
       file.path === "/wordpress/wp-content/plugins/seeded-helper/generated.txt" && file.status === "added",
@@ -168,6 +182,7 @@ try {
   assert.equal(review.provenance.task.kind, "recipe-run")
   assert.equal(review.provenance.runtime.wordpressVersion, "latest")
   assert.deepEqual(review.provenance.packages, metadata.provenance.packages)
+  assert.equal(review.evidence.workspacePatch, "files/workspace-patch.json")
   assert.equal(review.evidence.patch, "files/patch.diff")
   assert.equal(review.evidence.artifactContentDigest, contentDigest)
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")

@@ -73,6 +73,10 @@ export interface ChangedFile {
   mountTarget: string
   relativePath: string
   patchPath: string
+  beforeSha256?: string
+  afterSha256?: string
+  beforeMode?: string
+  afterMode?: string
 }
 
 export interface CanonicalChangedFiles {
@@ -90,6 +94,50 @@ export interface MountDiffsResult {
   changedFiles: CanonicalChangedFiles
   patch: string
   diagnostics: ArtifactDiagnostic[]
+}
+
+export interface WorkspacePatchArtifact {
+  schema: "wp-codebox/workspace-patch/v1"
+  createdAt: string
+  contentDigest: {
+    algorithm: "sha256"
+    inputs: string[]
+    value: string
+  }
+  summary: {
+    changed: boolean
+    files: number
+    added: number
+    modified: number
+    deleted: number
+  }
+  workspace?: SandboxWorkspaceContract
+  workspaces: Array<{
+    mountIndex: number
+    target: string
+    source: string
+    baselineSource?: string
+    status: MountDiff["status"]
+    changed: boolean
+    sourceMode?: string
+    workspaceRef?: string
+    mountRole?: string
+    component?: string
+    repo?: string
+    gitRef?: string
+    defaultBranch?: string
+    patch: string
+  }>
+  promotion: {
+    changedFiles: string
+    patch: string
+    files: Array<ChangedFile & { intent: "promotion" }>
+  }
+  evidence: {
+    mountDiffs: string
+    diagnostics: string
+    testResults: string
+  }
 }
 
 interface RedactionResult {
@@ -309,6 +357,7 @@ export function buildArtifactReview({
       },
     ],
     evidence: {
+      workspacePatch: "files/workspace-patch.json",
       patch: "files/patch.diff",
       patchSha256: artifactFileDigest(patch).value,
       artifactContentDigest: contentDigest,
@@ -320,6 +369,73 @@ export function buildArtifactReview({
     },
     ...(browser ? { browser } : {}),
     riskFlags: suspiciousFullFileRewriteRiskFlags(patch),
+  }
+}
+
+export function buildWorkspacePatchArtifact({
+  createdAt,
+  provenance,
+  mounts,
+  mountDiffs,
+  changedFiles,
+  contentDigest,
+}: {
+  createdAt: string
+  provenance: ArtifactProvenance
+  mounts: MountSpec[]
+  mountDiffs: MountDiff[]
+  changedFiles: CanonicalChangedFiles
+  contentDigest: string
+}): WorkspacePatchArtifact {
+  const stats = {
+    changed: changedFiles.files.length > 0,
+    files: changedFiles.files.length,
+    added: changedFiles.files.filter((file) => file.status === "added").length,
+    modified: changedFiles.files.filter((file) => file.status === "modified").length,
+    deleted: changedFiles.files.filter((file) => file.status === "deleted").length,
+  }
+
+  return {
+    schema: "wp-codebox/workspace-patch/v1",
+    createdAt,
+    contentDigest: {
+      algorithm: "sha256",
+      inputs: ["files/changed-files.json", "files/patch.diff"],
+      value: contentDigest,
+    },
+    summary: stats,
+    workspace: provenance.workspace,
+    workspaces: mountDiffs.map((diff) => {
+      const mount = mounts[diff.mountIndex]
+      const metadata = mount?.metadata ?? {}
+
+      return stripUndefined({
+        mountIndex: diff.mountIndex,
+        target: diff.target,
+        source: diff.source,
+        baselineSource: diff.baselineSource,
+        status: diff.status,
+        changed: diff.changed,
+        sourceMode: stringMetadata(metadata, "sourceMode"),
+        workspaceRef: stringMetadata(metadata, "workspaceRef"),
+        mountRole: stringMetadata(metadata, "mountRole") ?? stringMetadata(metadata, "kind"),
+        component: stringMetadata(metadata, "component") ?? stringMetadata(metadata, "slug"),
+        repo: stringMetadata(metadata, "repo"),
+        gitRef: stringMetadata(metadata, "gitRef") ?? stringMetadata(metadata, "default_branch"),
+        defaultBranch: stringMetadata(metadata, "default_branch"),
+        patch: diff.artifactPath,
+      })
+    }),
+    promotion: {
+      changedFiles: "files/changed-files.json",
+      patch: "files/patch.diff",
+      files: changedFiles.files.map((file) => ({ ...file, intent: "promotion" as const })),
+    },
+    evidence: {
+      mountDiffs: "files/diffs.json",
+      diagnostics: "files/diagnostics.json",
+      testResults: "files/test-results.json",
+    },
   }
 }
 
@@ -435,6 +551,11 @@ function stringField(value: unknown): string | undefined {
     return String(value)
   }
   return undefined
+}
+
+function stringMetadata(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key]
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 function normalizeSeverity(value: unknown): ArtifactDiagnostic["severity"] {
@@ -664,6 +785,8 @@ export async function directoryDiff(baselineDirectory: string, currentDirectory:
       path,
       relativePath,
       status: before === undefined ? "added" : after === undefined ? "deleted" : "modified",
+      ...(before !== undefined ? { beforeSha256: artifactFileDigest(before).value, beforeMode: "100644" } : {}),
+      ...(after !== undefined ? { afterSha256: artifactFileDigest(after).value, afterMode: "100644" } : {}),
     })
   }
 

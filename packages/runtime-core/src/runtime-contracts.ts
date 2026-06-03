@@ -525,6 +525,7 @@ export interface ArtifactBundle {
   mountsPath: string
   capturedMountsPath: string
   diffsPath: string
+  workspacePatchPath: string
   changedFilesPath: string
   patchPath: string
   diagnosticsPath: string

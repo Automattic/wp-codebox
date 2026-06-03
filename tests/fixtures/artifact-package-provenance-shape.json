@@ -2,15 +2,15 @@
   "schema": "wp-codebox/package-provenance/v1",
   "wpCodebox": {
     "name": "wp-codebox-workspace",
-    "version": "0.3.1"
+    "version": "0.4.0"
   },
   "runtimeCore": {
     "name": "@automattic/wp-codebox-core",
-    "version": "0.3.1"
+    "version": "0.4.0"
   },
   "runtimePlayground": {
     "name": "@automattic/wp-codebox-playground",
-    "version": "0.3.1"
+    "version": "0.4.0"
   },
   "playground": {
     "cli": {

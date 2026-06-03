@@ -28,6 +28,7 @@ import {
   buildArtifactDiagnostics,
   buildArtifactProvenance,
   buildArtifactReview,
+  buildWorkspacePatchArtifact,
   buildBlueprintAfter,
   buildBlueprintAfterNotes,
   buildTestResults,
@@ -93,6 +94,7 @@ export class ArtifactBundleBuilder {
     const diffsPath = join(filesDirectory, "diffs.json")
     const changedFilesPath = join(filesDirectory, "changed-files.json")
     const patchPath = join(filesDirectory, "patch.diff")
+    const workspacePatchPath = join(filesDirectory, "workspace-patch.json")
     const diagnosticsPath = join(filesDirectory, "diagnostics.json")
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
@@ -164,7 +166,16 @@ export class ArtifactBundleBuilder {
       browser,
       diagnosticsPath: "files/diagnostics.json",
     })
+    const workspacePatch = buildWorkspacePatchArtifact({
+      createdAt,
+      provenance,
+      mounts: source.mounts,
+      mountDiffs,
+      changedFiles,
+      contentDigest,
+    })
     const artifactFiles = {
+      workspacePatch: relative(source.artifactRoot, workspacePatchPath),
       changedFiles: relative(source.artifactRoot, changedFilesPath),
       patch: relative(source.artifactRoot, patchPath),
       diagnostics: relative(source.artifactRoot, diagnosticsPath),
@@ -205,6 +216,7 @@ export class ArtifactBundleBuilder {
       artifactManifestFile(mountsPath, "mounts", "application/json"),
       artifactManifestFile(capturedMountsPath, "mounted-files", "application/json"),
       artifactManifestFile(diffsPath, "mount-diffs", "application/json"),
+      artifactManifestFile(workspacePatchPath, "workspace-patch", "application/json"),
       artifactManifestFile(changedFilesPath, "changed-files", "application/json"),
       artifactManifestFile(patchPath, "patch", "text/x-diff"),
       artifactManifestFile(diagnosticsPath, "diagnostics", "application/json"),
@@ -236,6 +248,7 @@ export class ArtifactBundleBuilder {
     await writeRedactedArtifact(redactor, mountsPath, source.artifactRoot, `${JSON.stringify(source.mounts, null, 2)}\n`)
     await writeRedactedArtifact(redactor, capturedMountsPath, source.artifactRoot, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
     await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, workspacePatchPath, source.artifactRoot, `${JSON.stringify(workspacePatch, null, 2)}\n`)
     await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, redactedPatch)
     await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
@@ -329,6 +342,7 @@ export class ArtifactBundleBuilder {
       mountsPath,
       capturedMountsPath,
       diffsPath,
+      workspacePatchPath,
       changedFilesPath,
       patchPath,
       diagnosticsPath,

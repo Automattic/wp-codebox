@@ -70,6 +70,7 @@ export interface ArtifactReview {
   progress: ArtifactReviewProgressEvent[]
   actions: ArtifactReviewAction[]
   evidence: {
+    workspacePatch: string
     patch: string
     patchSha256: string
     artifactContentDigest: string
