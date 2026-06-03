@@ -16,6 +16,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const REMEDIATION_OUTCOME_SCHEMA = 'wp-codebox/agent-sandbox-remediation-outcome/v1';
 	private const COMPLETION_OUTCOME_SCHEMA = 'wp-codebox/sandbox-completion-outcome/v1';
+	private const AGENTS_API_RUN_OUTCOME_SCHEMA = 'agents-api.run-outcome';
 	private const SANDBOX_TOOL_POLICY_SCHEMA = 'wp-codebox/sandbox-tool-policy/v1';
 	private const AGENTS_API_RUNTIME_ENVIRONMENT = 'environment';
 	private const AGENTS_API_RUNTIME_CAPABILITY_SCOPE = 'capability_scope';
@@ -1141,9 +1142,14 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
 	private function remediation_outcome( array $run, int $exit_code, string $output ): array {
-		$datamachine = $this->first_datamachine_metadata( $run );
-		$max_turns_reached = $this->recursive_truthy_key( $run, 'max_turns_reached' ) || true === ( $datamachine['max_turns_reached'] ?? false );
-		$provider_error = $this->provider_error_details( $run, $output );
+		$run_outcome = $this->agents_api_run_outcome( $run );
+		$has_run_outcome = ! empty( $run_outcome );
+		$datamachine = $has_run_outcome ? array() : $this->first_datamachine_metadata( $run );
+		$run_status = (string) ( $run_outcome['status'] ?? '' );
+		$stop_reason = (string) ( $run_outcome['stop_reason'] ?? '' );
+		$max_turns_reached = $has_run_outcome ? 'max_turns' === $stop_reason : ( $this->recursive_truthy_key( $run, 'max_turns_reached' ) || true === ( $datamachine['max_turns_reached'] ?? false ) );
+		$pending_runtime_tool = $has_run_outcome && ( 'runtime_tool_pending' === $run_status || 'runtime_tool_pending' === $stop_reason );
+		$provider_error = $has_run_outcome ? $this->agents_api_provider_error_details( $run_outcome ) : $this->provider_error_details( $run, $output );
 		$pr_url = $this->first_url_for_keys( $run, array( 'pr_url', 'pull_request_url', 'pullRequestUrl' ) );
 		$false_positive_pr_url = $this->first_url_for_keys( $run, array( 'false_positive_pr_url', 'falsePositivePrUrl' ) );
 		$artifact = $this->remediation_artifact_details( $run );
@@ -1159,6 +1165,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'retryable'   => false,
 			'diagnostics' => array_filter(
 				array(
+					'agents_api_status'      => $has_run_outcome ? $run_status : null,
+					'agents_api_stop_reason' => $has_run_outcome ? $stop_reason : null,
+					'agents_api_completed'   => $has_run_outcome && array_key_exists( 'completed', $run_outcome ) ? (bool) $run_outcome['completed'] : null,
+					'pending_runtime_tool'   => $has_run_outcome ? $pending_runtime_tool : null,
 					'datamachine_completed' => array_key_exists( 'completed', $datamachine ) ? (bool) $datamachine['completed'] : null,
 					'max_turns_reached'     => $max_turns_reached,
 				),
@@ -1166,7 +1176,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			),
 		);
 
-		if ( ! empty( $datamachine ) ) {
+		if ( $has_run_outcome ) {
+			$outcome['metadata'] = array( 'agents_api' => array( 'run_outcome' => $run_outcome ) );
+		} elseif ( ! empty( $datamachine ) ) {
 			$outcome['metadata'] = array( 'datamachine' => $datamachine );
 		}
 
@@ -1209,20 +1221,28 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $outcome;
 		}
 
+		if ( $pending_runtime_tool ) {
+			$outcome['success'] = false;
+			$outcome['kind'] = 'runtime_tool_pending';
+			$outcome['failure'] = 'runtime_tool_pending';
+			$outcome['retryable'] = (bool) ( $run_outcome['retryable'] ?? false );
+			return $outcome;
+		}
+
 		if ( $max_turns_reached ) {
 			$outcome['success'] = false;
 			$outcome['kind'] = 'max_turns_exceeded';
 			$outcome['failure'] = 'max_turns_exceeded';
-			$outcome['retryable'] = true;
+			$outcome['retryable'] = $has_run_outcome ? (bool) ( $run_outcome['retryable'] ?? true ) : true;
 			return $outcome;
 		}
 
-		if ( 0 !== $exit_code || ! empty( $provider_error ) ) {
+		if ( ( $has_run_outcome && 'failed' === $run_status ) || 0 !== $exit_code || ! empty( $provider_error ) ) {
 			$outcome['success'] = false;
 			$outcome['kind'] = 'provider_error';
 			$outcome['failure'] = 'provider_error';
 			$outcome['provider_error'] = $provider_error;
-			$outcome['retryable'] = (bool) ( $provider_error['retryable'] ?? true );
+			$outcome['retryable'] = $has_run_outcome ? (bool) ( $run_outcome['retryable'] ?? true ) : (bool) ( $provider_error['retryable'] ?? true );
 			return $outcome;
 		}
 
@@ -1232,6 +1252,33 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $outcome;
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function agents_api_run_outcome( array $run ): array {
+		foreach ( array_merge( array( $run ), $this->agent_payloads( $run ) ) as $payload ) {
+			$outcome = is_array( $payload['run_outcome'] ?? null ) ? $payload['run_outcome'] : array();
+			if ( self::AGENTS_API_RUN_OUTCOME_SCHEMA === ( $outcome['schema'] ?? '' ) ) {
+				return $outcome;
+			}
+		}
+
+		return array();
+	}
+
+	/** @param array<string,mixed> $run_outcome Stable Agents API run outcome. @return array<string,mixed> */
+	private function agents_api_provider_error_details( array $run_outcome ): array {
+		$provider_error = is_array( $run_outcome['provider_error'] ?? null ) ? $run_outcome['provider_error'] : array();
+		if ( empty( $provider_error ) && is_array( $run_outcome['failure'] ?? null ) ) {
+			$provider_error = $run_outcome['failure'];
+		}
+
+		if ( empty( $provider_error ) ) {
+			return array();
+		}
+
+		$provider_error['retryable'] = (bool) ( $run_outcome['retryable'] ?? ( $provider_error['retryable'] ?? true ) );
+		return $provider_error;
 	}
 
 	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
