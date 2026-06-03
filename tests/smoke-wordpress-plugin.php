@@ -2206,21 +2206,37 @@ $remediation_run = function ( array $agent_payload, int $exit_code = 0, array $r
 
 $provider_error_result = $remediation_run(
 	array(
-		'error'    => array(
-			'message' => 'Provider timeout after OpenAI 429 Too Many Requests.',
-			'code'    => 'provider_rate_limited',
-		),
-		'metadata' => array(
-			'datamachine' => array(
-				'completed'         => false,
-				'max_turns_reached' => false,
+		'run_outcome' => array(
+			'schema'         => 'agents-api.run-outcome',
+			'version'        => 1,
+			'status'         => 'failed',
+			'completed'      => false,
+			'stop_reason'    => 'provider_error',
+			'retryable'      => true,
+			'provider_error' => array(
+				'message' => 'Provider timeout after OpenAI 429 Too Many Requests.',
+				'type'    => 'provider_rate_limited',
 			),
 		),
 	),
 	1
 );
 $assert( 'strict remediation outcome classifies provider timeout and 429', ! is_wp_error( $provider_error_result ) && false === ( $provider_error_result['success'] ?? true ) && 'provider_error' === ( $provider_error_result['outcome']['kind'] ?? '' ) && true === ( $provider_error_result['outcome']['retryable'] ?? false ) );
-$assert( 'strict remediation outcome preserves provider and Data Machine diagnostics', ! is_wp_error( $provider_error_result ) && str_contains( $provider_error_result['outcome']['provider_error']['message'] ?? '', 'Provider timeout' ) && false === ( $provider_error_result['outcome']['metadata']['datamachine']['completed'] ?? true ) );
+$assert( 'strict remediation outcome preserves provider and Agents API diagnostics', ! is_wp_error( $provider_error_result ) && str_contains( $provider_error_result['outcome']['provider_error']['message'] ?? '', 'Provider timeout' ) && false === ( $provider_error_result['outcome']['metadata']['agents_api']['run_outcome']['completed'] ?? true ) && 'provider_error' === ( $provider_error_result['outcome']['diagnostics']['agents_api_stop_reason'] ?? '' ) );
+
+$pending_runtime_tool_result = $remediation_run(
+	array(
+		'run_outcome' => array(
+			'schema'      => 'agents-api.run-outcome',
+			'version'     => 1,
+			'status'      => 'runtime_tool_pending',
+			'completed'   => false,
+			'stop_reason' => 'runtime_tool_pending',
+			'retryable'   => false,
+		),
+	)
+);
+$assert( 'strict remediation outcome preserves pending runtime tools', ! is_wp_error( $pending_runtime_tool_result ) && false === ( $pending_runtime_tool_result['success'] ?? true ) && 'runtime_tool_pending' === ( $pending_runtime_tool_result['outcome']['kind'] ?? '' ) && false === ( $pending_runtime_tool_result['outcome']['retryable'] ?? true ) && true === ( $pending_runtime_tool_result['outcome']['diagnostics']['pending_runtime_tool'] ?? false ) );
 
 $text_false_positive_result = $remediation_run(
 	array(
@@ -2237,6 +2253,21 @@ $normal_no_pr_result = $remediation_run(
 	)
 );
 $assert( 'strict remediation outcome returns unable-to-remediate terminal outcome without artifact', ! is_wp_error( $normal_no_pr_result ) && true === ( $normal_no_pr_result['success'] ?? false ) && 'unable_to_remediate' === ( $normal_no_pr_result['outcome']['kind'] ?? '' ) );
+
+$completed_run_outcome_result = $remediation_run(
+	array(
+		'answer'      => 'Done.',
+		'run_outcome' => array(
+			'schema'      => 'agents-api.run-outcome',
+			'version'     => 1,
+			'status'      => 'completed',
+			'completed'   => true,
+			'stop_reason' => 'natural',
+			'retryable'   => false,
+		),
+	)
+);
+$assert( 'strict remediation outcome preserves completed Agents API outcome', ! is_wp_error( $completed_run_outcome_result ) && true === ( $completed_run_outcome_result['success'] ?? false ) && 'unable_to_remediate' === ( $completed_run_outcome_result['outcome']['kind'] ?? '' ) && true === ( $completed_run_outcome_result['outcome']['diagnostics']['agents_api_completed'] ?? false ) && 'natural' === ( $completed_run_outcome_result['outcome']['diagnostics']['agents_api_stop_reason'] ?? '' ) );
 
 $fix_artifact_result = $remediation_run(
 	array(
@@ -2259,11 +2290,18 @@ $assert( 'strict remediation outcome accepts changed false-positive artifact', !
 
 $max_turns_result = $remediation_run(
 	array(
-		'answer'   => 'Still working.',
-		'metadata' => array( 'datamachine' => array( 'completed' => false, 'max_turns_reached' => true ) ),
+		'answer'      => 'Still working.',
+		'run_outcome' => array(
+			'schema'      => 'agents-api.run-outcome',
+			'version'     => 1,
+			'status'      => 'incomplete',
+			'completed'   => false,
+			'stop_reason' => 'max_turns',
+			'retryable'   => true,
+		),
 	)
 );
-$assert( 'strict remediation outcome preserves max turns exhaustion', ! is_wp_error( $max_turns_result ) && false === ( $max_turns_result['success'] ?? true ) && 'max_turns_exceeded' === ( $max_turns_result['outcome']['kind'] ?? '' ) && true === ( $max_turns_result['outcome']['diagnostics']['max_turns_reached'] ?? false ) );
+$assert( 'strict remediation outcome preserves max turns exhaustion from Agents API outcome', ! is_wp_error( $max_turns_result ) && false === ( $max_turns_result['success'] ?? true ) && 'max_turns_exceeded' === ( $max_turns_result['outcome']['kind'] ?? '' ) && true === ( $max_turns_result['outcome']['diagnostics']['max_turns_reached'] ?? false ) && 'max_turns' === ( $max_turns_result['outcome']['diagnostics']['agents_api_stop_reason'] ?? '' ) );
 
 $parent_only_tool = $runner->run(
 	array(
