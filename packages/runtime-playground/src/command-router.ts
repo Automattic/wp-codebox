@@ -1,4 +1,4 @@
-import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
+import { createHostToolTransportError, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 
 interface PlaygroundCommandRuntime {
@@ -49,17 +49,7 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
     try {
       input = hostToolInput(spec.args ?? [])
     } catch (error) {
-      return JSON.stringify({
-        schema: HOST_TOOL_RESULT_SCHEMA,
-        tool: hostTool.name,
-        status: "error",
-        error: {
-          code: "host-tool-invalid-input-json",
-          message: error instanceof Error ? error.message : String(error),
-        },
-        startedAt,
-        finishedAt: new Date().toISOString(),
-      })
+      return JSON.stringify(createHostToolTransportError(hostTool, spec.command, startedAt, "host-tool-invalid-input-json", error instanceof Error ? error.message : String(error)))
     }
 
     const result = await executeHostTool(hostTool, input, {
