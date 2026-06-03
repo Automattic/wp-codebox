@@ -55,7 +55,7 @@ final class WP_Codebox_Task_Input_Contract {
 				),
 				'agent_bundles'      => array(
 					'type'        => 'array',
-					'description' => 'Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.',
+					'description' => 'Runtime agent bundles to import into the disposable sandbox before invoking the selected runtime agent.',
 					'items'       => array(
 						'type'       => 'object',
 						'anyOf'      => array(

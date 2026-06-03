@@ -396,7 +396,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$workspace_slugs = array_values( array_filter( $workspace_slugs, static fn( string $slug ): bool => '' !== $slug ) );
 
 		if ( ! empty( $workspace_slugs ) ) {
-			$goal .= "\n\nUse Data Machine Code workspace repos " . implode( ', ', array_map( static fn( string $slug ): string => '`' . $slug . '`', $workspace_slugs ) ) . ' for workspace_* tool calls.';
+			$goal .= "\n\nUse mounted workspace repos " . implode( ', ', array_map( static fn( string $slug ): string => '`' . $slug . '`', $workspace_slugs ) ) . ' for workspace_* tool calls.';
 		}
 
 		$context = is_array( $task['context'] ?? null ) ? $task['context'] : array();

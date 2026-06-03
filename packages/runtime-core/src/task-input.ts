@@ -78,7 +78,7 @@ export const TASK_INPUT_JSON_SCHEMA = {
     },
     agent_bundles: {
       type: "array",
-      description: "Data Machine agent bundles to import into the disposable sandbox before invoking the selected runtime agent.",
+      description: "Runtime agent bundles to import into the disposable sandbox before invoking the selected runtime agent.",
       items: {
         type: "object",
         anyOf: [{ required: ["source"] }, { required: ["bundle"] }],

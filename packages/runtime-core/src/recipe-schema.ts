@@ -71,7 +71,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           },
           agent_bundles: {
             type: "array",
-            description: "Data Machine agent bundles to import into the sandbox before invoking the selected runtime agent.",
+            description: "Runtime agent bundles to import into the sandbox before invoking the selected runtime agent.",
             items: { $ref: "#/$defs/agentBundle" },
           },
           inherit: { $ref: "#/$defs/inheritanceRequest" },
@@ -256,18 +256,18 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         properties: {
           source: {
             type: "string",
-            description: "Bundle source accepted by datamachine/import-agent: local directory, .zip, .json, or remote URL.",
+            description: "Runtime agent bundle source: local directory, .zip, .json, or remote URL.",
           },
           bundle: {
             type: "object",
-            description: "Inline Data Machine agent bundle JSON staged into the sandbox and imported through datamachine/import-agent.",
+            description: "Inline runtime agent bundle JSON staged into the sandbox and imported through the runtime bundle importer.",
           },
           slug: { type: "string" },
           on_conflict: { enum: ["error", "skip", "upgrade"] },
           owner_id: { type: "integer", minimum: 1 },
           token_env: {
             type: "string",
-            description: "Environment variable or PHP constant name used by datamachine/import-agent for private source resolution.",
+            description: "Environment variable or PHP constant name used by the runtime bundle importer for private source resolution.",
           },
         },
       },

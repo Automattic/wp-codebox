@@ -681,7 +681,7 @@ foreach ( $permission_filters as $permission_filter ) {
 try {
 	$failed_imports = array_filter( $agent_bundle_imports, static fn( $import ) => is_array( $import ) && empty( $import[\'success\'] ) );
 	if ( ! empty( $failed_imports ) ) {
-		$response = new WP_Error( \'wp_codebox_agent_bundle_import_failed\', \'One or more Data Machine agent bundles failed to import before sandbox invocation.\', array( \'agent_bundle_imports\' => array_values( $failed_imports ) ) );
+		$response = new WP_Error( \'wp_codebox_agent_bundle_import_failed\', \'One or more runtime agent bundles failed to import before sandbox invocation.\', array( \'agent_bundle_imports\' => array_values( $failed_imports ) ) );
 	} elseif ( \'task\' === $invocation_type ) {
 		$hook = (string) ( $invocation[\'hook\'] ?? $invocation[\'name\'] ?? \'\' );
 		if ( \'\' === $hook || ! has_filter( $hook ) ) {

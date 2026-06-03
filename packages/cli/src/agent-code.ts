@@ -9,6 +9,7 @@ export interface AgentBundleSpec {
   on_conflict?: "error" | "skip" | "upgrade"
   owner_id?: number
   token_env?: string
+  import_principal?: Record<string, unknown>
 }
 
 export interface AgentSandboxCodeOptions {
@@ -51,7 +52,6 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
     throw new Error("wp-codebox.agent-sandbox-run requires sandbox-tool-policy-json for agent runs")
   }
   const runtimeToolIds = sandboxAllowedRuntimeToolIds(sandboxToolPolicy)
-  const agentConfig = scopedAgentConfig(mode, options.provider, options.model, runtimeToolIds)
   const input: Record<string, unknown> = {
     agent: options.agent,
     message: options.task,
@@ -74,6 +74,17 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
 
   if (options.maxTurns) {
     input.max_turns = Number.parseInt(options.maxTurns, 10)
+  }
+  if (options.provider) {
+    input.provider = options.provider
+  }
+  if (options.model) {
+    input.model = options.model
+  }
+  if (runtimeToolIds.length) {
+    const toolPolicy = { mode: "allow", tools: runtimeToolIds }
+    input.tool_policy = toolPolicy
+    input.allow_only = runtimeToolIds
   }
 
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
@@ -135,23 +146,6 @@ $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array
 $sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
 $sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
 
-if (empty($sandbox_agent_bundle_imports) && class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
-    $sandbox_agent_slug = sanitize_title((string) (${JSON.stringify(input.agent)}));
-    if ('' !== $sandbox_agent_slug) {
-        $sandbox_agents = new DataMachine\\Core\\Database\\Agents\\Agents();
-        $sandbox_agent_config = json_decode(${JSON.stringify(JSON.stringify(agentConfig))}, true);
-        $sandbox_agent_id = $sandbox_agents->create_if_missing(
-            $sandbox_agent_slug,
-            'Sandbox Agent',
-            1,
-            $sandbox_agent_config
-        );
-        if ($sandbox_agent_id > 0 && method_exists($sandbox_agents, 'update_agent')) {
-            $sandbox_agents->update_agent($sandbox_agent_id, array('agent_config' => $sandbox_agent_config));
-        }
-    }
-}
-
 $sandbox_model_settings = json_decode(${JSON.stringify(JSON.stringify(scopedSettings(mode, options.provider, options.model)))}, true);
 if (is_array($sandbox_model_settings) && !empty($sandbox_model_settings)) {
     update_option('datamachine_settings', array_merge(get_option('datamachine_settings', array()), $sandbox_model_settings));
@@ -178,17 +172,6 @@ add_filter('datamachine_agent_mode_sandbox', static function (string $content): 
 function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     if (empty($bundle_specs)) {
         return array();
-    }
-
-    $ability = function_exists('wp_get_ability') ? wp_get_ability('datamachine/import-agent') : null;
-    if (!$ability || !method_exists($ability, 'execute')) {
-        return array(array(
-            'success' => false,
-            'error' => array(
-                'code' => 'datamachine_import_agent_unavailable',
-                'message' => 'The canonical datamachine/import-agent ability is not available inside the sandbox.',
-            ),
-        ));
     }
 
     $imports = array();
@@ -231,11 +214,14 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
         } else {
             $input['owner_id'] = get_current_user_id() ?: 1;
         }
+        if (isset($spec['import_principal']) && is_array($spec['import_principal'])) {
+            $input['import_principal'] = $spec['import_principal'];
+        }
 
-        $execute = static fn() => $ability->execute($input);
-        $result = class_exists('DataMachine\\Abilities\\PermissionHelper')
-            ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($execute, (int) $input['owner_id'])
-            : $execute();
+        $result = apply_filters('wp_agent_runtime_import_bundle', null, $spec, $input, $index);
+        if (null === $result) {
+            $result = new WP_Error('wp_codebox_agent_bundle_importer_unavailable', 'No runtime agent bundle importer handled this bundle spec.', array('index' => $index));
+        }
         if ('' !== $temp_source) {
             @unlink($temp_source);
         }
@@ -456,7 +442,7 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
             'success' => false,
             'error' => array(
                 'code' => 'agent_bundle_import_failed',
-                'message' => 'One or more Data Machine agent bundles failed to import before sandbox invocation.',
+                'message' => 'One or more runtime agent bundles failed to import before sandbox invocation.',
                 'data' => array('agent_bundle_imports' => array_values($sandbox_agent_bundle_import_failures)),
             ),
         ),
@@ -559,6 +545,7 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
     normalized.on_conflict = spec.on_conflict && ["error", "skip", "upgrade"].includes(spec.on_conflict) ? spec.on_conflict : "upgrade"
     if (Number.isSafeInteger(spec.owner_id) && Number(spec.owner_id) > 0) normalized.owner_id = Number(spec.owner_id)
     if (typeof spec.token_env === "string" && spec.token_env.trim()) normalized.token_env = spec.token_env.trim()
+    if (spec.import_principal && typeof spec.import_principal === "object" && !Array.isArray(spec.import_principal)) normalized.import_principal = spec.import_principal
     return [normalized]
   })
 }
@@ -573,29 +560,6 @@ Use the available tools by their exact names: ${runtimeToolIds.join(", ")}.
 Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write or workspace_edit.
 
 The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
-}
-
-function scopedAgentConfig(mode: string, provider: string | undefined, model: string | undefined, runtimeToolIds: string[]): Record<string, unknown> {
-  const toolPolicy = {
-    mode: "allow",
-    tools: runtimeToolIds,
-  }
-
-  if (!provider && !model) {
-    return { tool_policy: toolPolicy }
-  }
-
-  return {
-    ...(provider ? { default_provider: provider } : {}),
-    ...(model ? { default_model: model } : {}),
-    tool_policy: toolPolicy,
-    mode_models: {
-      [mode]: {
-        ...(provider ? { provider } : {}),
-        ...(model ? { model } : {}),
-      },
-    },
-  }
 }
 
 function scopedSettings(mode: string, provider: string | undefined, model: string | undefined): Record<string, unknown> {
