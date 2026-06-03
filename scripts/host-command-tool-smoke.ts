@@ -18,7 +18,7 @@ async function main(): Promise<void> {
 
   const registry = createHostToolRegistry([
     createHostCommandTool({
-      name: "host.node-smoke",
+      name: "host/node_smoke",
       description: "Runs a bounded Node.js host command for smoke coverage.",
       command: process.execPath,
       args: ["-e", "console.log(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(1), token: process.env.SMOKE_TOKEN || null }))", "--"],
@@ -33,12 +33,12 @@ async function main(): Promise<void> {
   const runtime = await createRuntime({
     backend: "wordpress-playground",
     environment: { kind: "wordpress", version: "latest" },
-    policy: { network: "deny", filesystem: "sandbox", commands: ["host.node-smoke"], secrets: "none", approvals: "never" },
+    policy: { network: "deny", filesystem: "sandbox", commands: ["host/node_smoke"], secrets: "none", approvals: "never" },
     hostTools: registry,
   }, createPlaygroundRuntimeBackend())
 
   const ok = await runtime.execute({
-    command: "host.node-smoke",
+    command: "host/node_smoke",
     args: [`input-json=${JSON.stringify({ args: ["--flag"], cwd: nested, env: { SMOKE_TOKEN: "allowed" } })}`],
   })
   const okBody = JSON.parse(ok.stdout) as HostToolResult
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   assert(typeof okBody.output.stdout === "string" && okBody.output.stdout.includes("allowed"), "host command should pass explicitly allowed env")
 
   const deniedCwd = await runtime.execute({
-    command: "host.node-smoke",
+    command: "host/node_smoke",
     args: [`input-json=${JSON.stringify({ cwd: tmpdir() })}`],
   })
   const deniedCwdBody = JSON.parse(deniedCwd.stdout) as HostToolResult
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   assert(deniedCwdBody.error.message.includes("outside allowed roots"), "host command cwd errors should be explicit")
 
   const deniedEnv = await runtime.execute({
-    command: "host.node-smoke",
+    command: "host/node_smoke",
     args: [`input-json=${JSON.stringify({ env: { SECRET_TOKEN: "blocked" } })}`],
   })
   const deniedEnvBody = JSON.parse(deniedEnv.stdout) as HostToolResult
