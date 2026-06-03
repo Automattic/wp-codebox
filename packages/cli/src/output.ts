@@ -94,10 +94,16 @@ export async function captureStdout<T>(callback: () => Promise<T>): Promise<{ re
 
 export function serializeError(error: unknown): CliError {
   if (error instanceof Error) {
+    const extras = Object.fromEntries(
+      Object.entries(error).filter(([key]) => !["name", "message", "stack"].includes(key)),
+    )
+    const cause = "cause" in error && error.cause !== undefined ? serializeError(error.cause) : undefined
     return {
       name: error.name,
       message: error.message,
       ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+      ...extras,
+      ...(cause ? { cause } : {}),
     }
   }
 
