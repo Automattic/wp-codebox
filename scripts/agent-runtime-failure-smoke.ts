@@ -55,4 +55,45 @@ assert.equal(agentFailure?.code, "agent-runtime-failed")
 assert.equal(agentFailure?.message, "Provider codex is not registered in wp-ai-client")
 assert.equal(agentFailure?.name, "AgentRuntimeError")
 
+const pendingToolsFailure = agentSandboxRuntimeFailure({
+  executionIndex: 1,
+  command: "wordpress.run-php",
+  exitCode: 0,
+  recipeCommand: "wp-codebox.agent-sandbox-run",
+  stdout: JSON.stringify({
+    agent_runtime: {
+      success: true,
+      result: {
+        status: "processing",
+        completed: false,
+        current_turn: 20,
+        has_pending_tools: true,
+      },
+    },
+  }),
+  stderr: "",
+  parsed: {
+    agent_runtime: {
+      success: true,
+      result: {
+        status: "processing",
+        completed: false,
+        current_turn: 20,
+        has_pending_tools: true,
+      },
+    },
+  },
+})
+
+assert.deepEqual(pendingToolsFailure, {
+  code: "agent_runtime_incomplete",
+  message: "Agent sandbox runtime ended before the nested agent completed pending tool work.",
+  data: {
+    status: "processing",
+    completed: false,
+    current_turn: 20,
+    has_pending_tools: true,
+  },
+})
+
 console.log("Agent runtime failure smoke passed")

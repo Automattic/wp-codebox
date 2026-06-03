@@ -527,8 +527,14 @@ export function agentSandboxRuntimeFailure(execution: AgentSandboxTranscriptExec
     return directFailure
   }
 
+  const directIncomplete = agentRuntimeIncompleteFromRecord(parsed)
+  if (directIncomplete) {
+    return directIncomplete
+  }
+
   const output = typeof parsed?.output === "string" ? decodeJsonFragment(parsed.output) : undefined
-  return agentRuntimeFailureFromRecord(isRecord(output) ? output : undefined)
+  const outputRecord = isRecord(output) ? output : undefined
+  return agentRuntimeFailureFromRecord(outputRecord) ?? agentRuntimeIncompleteFromRecord(outputRecord)
 }
 
 function agentRuntimeFailureFromRecord(record: Record<string, unknown> | undefined): AgentSandboxRuntimeFailure | undefined {
@@ -547,6 +553,37 @@ function agentRuntimeFailureFromRecord(record: Record<string, unknown> | undefin
     message: boundTranscriptText(message, 500),
     data: error?.data,
   })
+}
+
+function agentRuntimeIncompleteFromRecord(record: Record<string, unknown> | undefined): AgentSandboxRuntimeFailure | undefined {
+  const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
+  if (!runtime || runtime.success !== true) {
+    return undefined
+  }
+
+  const result = isRecord(runtime.result) ? runtime.result : undefined
+  if (!result || !isIncompleteAgentResult(result)) {
+    return undefined
+  }
+
+  return {
+    code: "agent_runtime_incomplete",
+    message: "Agent sandbox runtime ended before the nested agent completed pending tool work.",
+    data: stripUndefined({
+      status: typeof result.status === "string" ? result.status : undefined,
+      completed: typeof result.completed === "boolean" ? result.completed : undefined,
+      current_turn: typeof result.current_turn === "number" ? result.current_turn : undefined,
+      has_pending_tools: typeof result.has_pending_tools === "boolean" ? result.has_pending_tools : undefined,
+    }),
+  }
+}
+
+function isIncompleteAgentResult(result: Record<string, unknown>): boolean {
+  const status = typeof result.status === "string" ? result.status.toLowerCase() : ""
+  const completed = typeof result.completed === "boolean" ? result.completed : undefined
+  const hasPendingTools = result.has_pending_tools === true
+
+  return (status === "processing" || completed === false) && hasPendingTools
 }
 
 export function recipeAgentResultFailure(agentResult: RecipeArtifactEvidenceResult["agentResult"]): { name: string; code: string; message: string } | undefined {
