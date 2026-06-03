@@ -85,6 +85,9 @@ function parseRunLookupOptions(args: string[]): RunLookupOptions {
 function printRunStatusHumanOutput(record: RuntimeRunRecord): void {
   console.log(`WP Codebox run: ${record.runId}`)
   console.log(`Status: ${record.status}`)
+  console.log(`Lifecycle: ${record.lifecycle.phase}${record.lifecycle.terminal ? ` (${record.lifecycle.outcome})` : ""}`)
+  console.log(`Cancellable: ${record.lifecycle.cancellable ? "yes" : "no"}`)
+  console.log(`Cleanup: ${record.lifecycle.cleanup.status} (${record.lifecycle.cleanup.attempts} attempts)`)
   console.log(`Heartbeat: ${record.heartbeatAt}`)
   console.log(`Artifacts: ${record.artifactRefs.length}`)
   if (record.preview?.url) {

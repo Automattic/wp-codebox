@@ -610,7 +610,12 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       Object.assign(evidence, agentEvidence)
     }
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
-    await awaitRecipe("runtime.release", releaseRuntime(runtime, successfulRecipe ? options.previewHoldSeconds : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption))
+    const activeRuntime = runtime
+    await runRecipeCleanup(runRegistry, runRecord, async () => {
+      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0, undefined, interruption))
+      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    })
+    runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
@@ -666,12 +671,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
   } catch (error) {
     if (runtime) {
-      if (error instanceof RecipeRunTimeoutError) {
-        void runtime.destroy().catch(() => undefined)
-      }
-
+      const activeRuntime = runtime
       artifacts = await collectAndFinalizeFailedRecipeArtifacts({
-        runtime,
+        runtime: activeRuntime,
         existingArtifacts: artifacts,
         recipe,
         workspaceMounts,
@@ -682,18 +684,24 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption,
       })
 
-      if (!(error instanceof RecipeRunTimeoutError)) {
-        try {
-          await bestEffortTimeout(runtime.destroy(), 2_000)
-        } catch {
-          // Preserve the original failure as the CLI result.
-        }
+      if (error instanceof RecipeRunTimeoutError) {
+        void activeRuntime.destroy().catch(() => undefined)
+      } else {
+        await runRecipeCleanup(runRegistry, runRecord, async () => {
+          try {
+            await bestEffortTimeout(activeRuntime.destroy(), 2_000)
+          } catch {
+            // Preserve the original failure as the CLI result.
+          }
+        })
+        runRecord = await runRegistry.read(runRecord.runId)
       }
     }
 
-    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    await runRecipeCleanup(runRegistry, runRecord, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays))
+    runRecord = await runRegistry.read(runRecord.runId)
     runRecord = await runRegistry.update(runRecord.runId, {
-      status: interruption?.metadata ? "cancelled" : "failed",
+      status: recipeRunFailureStatus(error, interruption),
       ...(runtime ? { runtime: await runtime.info() } : {}),
       ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
       error: serializeRecipeRunError(error),
@@ -712,6 +720,29 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       error: serializeRecipeRunError(error),
     }
   }
+}
+
+async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecord: RuntimeRunRecord, cleanup: () => Promise<void>): Promise<void> {
+  await runRegistry.update(runRecord.runId, { cleanup: { status: "running" } })
+  try {
+    await cleanup()
+    await runRegistry.update(runRecord.runId, { cleanup: { status: "succeeded" } })
+  } catch (error) {
+    await runRegistry.update(runRecord.runId, { cleanup: { status: "failed", error: serializeError(error) } })
+    throw error
+  }
+}
+
+function recipeRunFailureStatus(error: unknown, interruption?: RecipeInterruptionController): RuntimeRunRecord["status"] {
+  if (interruption?.metadata) {
+    return "cancelled"
+  }
+
+  if (error instanceof RecipeRunTimeoutError) {
+    return "timed_out"
+  }
+
+  return "failed"
 }
 
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {

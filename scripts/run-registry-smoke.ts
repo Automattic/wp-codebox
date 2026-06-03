@@ -27,6 +27,12 @@ try {
 
   assert.equal(run.schema, "wp-codebox/run-registry-entry/v1")
   assert.equal(run.status, "queued")
+  assert.equal(run.lifecycle.schema, "wp-codebox/run-lifecycle/v1")
+  assert.equal(run.lifecycle.phase, "pending")
+  assert.equal(run.lifecycle.cancellable, true)
+  assert.equal(run.lifecycle.terminal, false)
+  assert.equal(run.lifecycle.cleanup.status, "not_started")
+  assert.equal(run.lifecycle.cleanup.attempts, 0)
   assert.equal(run.metadata?.secretEnv, "[redacted]")
   assert.equal((run.metadata?.nested as { token?: string }).token, "[redacted]")
 
@@ -34,8 +40,15 @@ try {
   await mkdir(artifactDirectory, { recursive: true })
   await writeFile(join(artifactDirectory, "manifest.json"), "{}\n")
 
+  await registry.update(run.runId, {
+    status: "collecting_artifacts",
+    cleanup: { status: "running" },
+    now: new Date("2026-01-01T00:00:00.500Z"),
+  })
+
   const updated = await registry.update(run.runId, {
     status: "succeeded",
+    cleanup: { status: "succeeded" },
     artifactRefs: artifactBundleRunRef({
       id: "artifact-smoke",
       directory: artifactDirectory,
@@ -45,6 +58,12 @@ try {
     now: new Date("2026-01-01T00:00:01.000Z"),
   })
   assert.equal(updated.status, "succeeded")
+  assert.equal(updated.lifecycle.phase, "terminal")
+  assert.equal(updated.lifecycle.outcome, "succeeded")
+  assert.equal(updated.lifecycle.successful, true)
+  assert.equal(updated.lifecycle.cancellable, false)
+  assert.equal(updated.lifecycle.cleanup.status, "succeeded")
+  assert.equal(updated.lifecycle.cleanup.attempts, 1)
   assert.equal(updated.artifactRefs[0]?.kind, "artifact-bundle")
   assert.equal(updated.artifactRefs[0]?.digest?.value, "a".repeat(64))
   assert.equal(updated.heartbeatAt, "2026-01-01T00:00:01.000Z")
@@ -56,6 +75,12 @@ try {
   const status = JSON.parse(statusStdout)
   assert.equal(status.runId, run.runId)
   assert.equal(status.status, "succeeded")
+  assert.equal(status.lifecycle.cleanup.status, "succeeded")
+
+  const timedOut = await registry.create({ runId: "run_timeout", status: "timed_out" })
+  assert.equal(timedOut.lifecycle.failed, true)
+  assert.equal(timedOut.lifecycle.outcome, "timed_out")
+  assert.equal(timedOut.lifecycle.cancellable, false)
 
   const { stdout: artifactsStdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "runs", "artifacts", "--registry", registryDirectory, "--run-id", run.runId, "--json"], { cwd: root })
   const artifacts = JSON.parse(artifactsStdout)

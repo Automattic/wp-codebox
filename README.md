@@ -323,6 +323,36 @@ Expected shape:
 
 WP Codebox boots Playground lazily on the first command, captures artifacts after execution, and disposes the runtime when the run completes.
 
+Recipe runs also write a registry entry under the run registry directory
+(`artifacts/runs` by default, or `--run-registry <dir>`). Poll it with
+`wp-codebox runs status --registry <dir> --run-id <id> --json`. The returned
+record keeps the existing flat `status` field and adds `lifecycle`, a concise
+machine contract for orchestrators:
+
+```json
+{
+  "status": "succeeded",
+  "lifecycle": {
+    "schema": "wp-codebox/run-lifecycle/v1",
+    "phase": "terminal",
+    "terminal": true,
+    "cancellable": false,
+    "successful": true,
+    "failed": false,
+    "cancelled": false,
+    "outcome": "succeeded",
+    "cleanup": {
+      "status": "succeeded",
+      "attempts": 1
+    }
+  }
+}
+```
+
+Orchestrators should use `lifecycle.terminal`, `lifecycle.outcome`, and
+`lifecycle.cleanup.status` instead of scraping human logs. Timeout and signal
+interruptions settle as `timed_out` and `cancelled` outcomes respectively.
+
 ## Runtime Evidence
 
 Recipe runs write runtime evidence under `files/runtime-evidence/`. Every recipe
