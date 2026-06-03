@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"

@@ -1,5 +1,5 @@
-import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@chubes4/wp-codebox-core"
-import type { ExecutionSpec } from "@chubes4/wp-codebox-core"
+import { HOST_TOOL_RESULT_SCHEMA, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
+import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 
 interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>
@@ -16,6 +16,7 @@ interface PlaygroundCommandRuntime {
   runHtmlCapture(spec: ExecutionSpec): Promise<string>
   runBrowserActions(spec: ExecutionSpec): Promise<string>
   runEditorOpen(spec: ExecutionSpec): Promise<string>
+  runEditorActions(spec: ExecutionSpec): Promise<string>
 }
 
 const playgroundCommandHandlers = {
@@ -33,6 +34,7 @@ const playgroundCommandHandlers = {
   "wordpress.capture-html": (runtime, spec) => runtime.runHtmlCapture(spec),
   "wordpress.browser-actions": (runtime, spec) => runtime.runBrowserActions(spec),
   "wordpress.editor-open": (runtime, spec) => runtime.runEditorOpen(spec),
+  "wordpress.editor-actions": (runtime, spec) => runtime.runEditorActions(spec),
 } satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<string>>
 
 export function playgroundRuntimeCommandIds(): string[] {

@@ -1,12 +1,12 @@
 <?php
 /**
  * Plugin Name: WP Codebox
- * Plugin URI: https://github.com/chubes4/wp-codebox
+ * Plugin URI: https://github.com/Automattic/wp-codebox
  * Description: Secure coding environments inside WordPress. WordPress ability surface for launching disposable WP Codebox Playground sandboxes that can't touch your host site.
- * Version: 0.3.1
+ * Version: 0.4.0
  * Requires at least: 6.9
  * Requires PHP: 8.2
- * Author: Chris Huber
+ * Author: Automattic
  * License: GPL-2.0-or-later
  * Text Domain: wp-codebox
  */
@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'WP_CODEBOX_PLUGIN_VERSION', '0.3.1' );
+define( 'WP_CODEBOX_PLUGIN_VERSION', '0.4.0' );
 define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 

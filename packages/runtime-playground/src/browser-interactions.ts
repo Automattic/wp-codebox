@@ -1,5 +1,5 @@
 import { basename, join } from "node:path"
-import type { BrowserInteractionStep } from "@chubes4/wp-codebox-core"
+import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import type { Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepRecord } from "./browser-artifacts.js"

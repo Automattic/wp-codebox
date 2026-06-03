@@ -20,7 +20,7 @@ import {
   type RuntimeCreateSpec,
   type RuntimeInfo,
   type Snapshot,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 import type { BrowserProbeArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,

@@ -1,5 +1,5 @@
-import { createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { serializeError } from "./output.js"
 import { recipeMountType } from "./recipe-sources.js"
 import { defaultPolicy, runPolicy } from "./recipe-validation.js"
@@ -108,12 +108,18 @@ export function previewSpec(publicUrl: string | undefined, port: number | undefi
     return undefined
   }
 
+  const localUrl = port === undefined ? undefined : `http://${formatPreviewHost(bind === "0.0.0.0" || !bind ? "127.0.0.1" : bind)}:${port}`
+
   return stripUndefined({
     publicUrl,
-    siteUrl: publicUrl,
+    siteUrl: publicUrl ?? localUrl,
     port,
     bind,
   })
+}
+
+function formatPreviewHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
 }
 
 function runMetadata(options: RunOptions): Record<string, unknown> {

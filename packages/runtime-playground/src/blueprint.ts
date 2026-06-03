@@ -1,4 +1,4 @@
-import type { RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 export function normalizeBlueprint(blueprint: unknown): { extraLibraries?: unknown; landingPage?: unknown; preferredVersions?: unknown; steps: unknown[] } {
   if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {

@@ -22,7 +22,7 @@ final class WP_Codebox_Artifacts {
 	private const VERIFICATION_SCHEMA = 'wp-codebox/artifact-bundle-verification/v1';
 	private const BROWSER_NORMALIZATION_SCHEMA = 'wp-codebox/browser-artifact-bundle-normalization/v1';
 	private const BROWSER_PERSIST_SCHEMA = 'wp-codebox/browser-artifact-persistence/v1';
-	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/chubes4/wp-codebox/issues/176';
+	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/Automattic/wp-codebox/issues/176';
 	private const CONTENT_DIGEST_PREFIX = "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n";
 	private const CONTENT_DIGEST_SEPARATOR = "\nfiles/patch.diff\n";
 	private const BROWSER_ARTIFACT_MAX_BYTES = 5242880;

@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import { captureStdout, printBlueprintValidateHumanOutput, printBootHumanOutput, printHumanOutput } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { boot, run, validateBlueprint, type BlueprintValidateOptions, type BootOptions, type RunOptions } from "../runtime-command-wrappers.js"
-import type { RuntimePolicy } from "@chubes4/wp-codebox-core"
+import type { RuntimePolicy } from "@automattic/wp-codebox-core"
 
 export async function runBootCommand(args: string[]): Promise<number> {
   const options = await parseBootOptions(args)

@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -610,6 +610,43 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
         if (!["steps", "actions", "console", "errors", "html", "network", "screenshot"].includes(item)) {
           addIssue("invalid-capture", `${path}.args`, `wordpress.browser-actions capture does not support: ${item}`)
+        }
+      }
+    }
+    return
+  }
+
+  if (step.command === "wordpress.editor-actions") {
+    const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
+    if (!stepsJson) {
+      addIssue("missing-steps", `${path}.args`, "wordpress.editor-actions requires steps-json=<array>.")
+    }
+
+    if (stepsJson && !stepsJson.startsWith("@")) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(stepsJson)
+      } catch (error) {
+        addIssue("invalid-steps-json", `${path}.args`, `wordpress.editor-actions steps-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+        parsed = undefined
+      }
+      if (parsed !== undefined && !Array.isArray(parsed)) {
+        addIssue("invalid-steps-json", `${path}.args`, "wordpress.editor-actions steps-json must be a JSON array.")
+      }
+    }
+
+    for (const name of ["wait-timeout", "step-timeout", "timeout"] as const) {
+      const value = recipeStepArgValue(step.args ?? [], name)
+      if (value && /^\d+(?:\.\d+)?(?:ms|s)$/.test(value) === false) {
+        addIssue("invalid-duration", `${path}.args`, `wordpress.editor-actions ${name} must look like 500ms or 2s.`)
+      }
+    }
+
+    const capture = recipeStepArgValue(step.args ?? [], "capture")
+    if (capture) {
+      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
+        if (!["steps", "console", "errors", "html", "screenshot", "editor-state"].includes(item)) {
+          addIssue("invalid-capture", `${path}.args`, `wordpress.editor-actions capture does not support: ${item}`)
         }
       }
     }

@@ -6,7 +6,7 @@ import {
   assertRuntimePolicy,
   validateRuntimePolicy,
   type RuntimePolicy,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 
 const policy: RuntimePolicy = {
   network: "deny",

@@ -50,7 +50,7 @@
         "applyBack": "reviewed"
       },
       "context": {
-        "issue": "https://github.com/chubes4/wp-codebox/issues/231"
+        "issue": "https://github.com/Automattic/wp-codebox/issues/231"
       }
     },
     "normalized": {
@@ -88,7 +88,7 @@
         "applyBack": "reviewed"
       },
       "context": {
-        "issue": "https://github.com/chubes4/wp-codebox/issues/231"
+        "issue": "https://github.com/Automattic/wp-codebox/issues/231"
       }
     }
   }

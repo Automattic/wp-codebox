@@ -10,9 +10,9 @@ needs.
 
 | Package | Role | Shipped Surface |
 | --- | --- | --- |
-| `@chubes4/wp-codebox-core` | Runtime contract substrate. Defines backend-neutral policies, command registry, recipes, artifacts, task input, browser interaction shapes, and workspace policy helpers. | Published package and bundled CLI release artifact. No WordPress or browser backend dependency. |
-| `@chubes4/wp-codebox-playground` | Playground backend. Starts WordPress Playground, runs controlled WordPress commands, browser commands, previews, snapshots, and artifact capture. | Published package and bundled CLI release artifact. Depends on `@wp-playground/cli` and `playwright`. |
-| `@chubes4/wp-codebox-cli` | Runtime CLI. Parses recipes and command inputs, invokes the runtime packages, and writes artifact evidence. | Published package, bundled CLI release artifact, and WordPress plugin vendor CLI bundle. |
+| `@automattic/wp-codebox-core` | Runtime contract substrate. Defines backend-neutral policies, command registry, recipes, artifacts, task input, browser interaction shapes, and workspace policy helpers. | Published package and bundled CLI release artifact. No WordPress or browser backend dependency. |
+| `@automattic/wp-codebox-playground` | Playground backend. Starts WordPress Playground, runs controlled WordPress commands, browser commands, previews, snapshots, and artifact capture. | Published package and bundled CLI release artifact. Depends on `@wp-playground/cli` and `playwright`. |
+| `@automattic/wp-codebox-cli` | Runtime CLI. Parses recipes and command inputs, invokes the runtime packages, and writes artifact evidence. | Published package, bundled CLI release artifact, and WordPress plugin vendor CLI bundle. |
 | `wp-codebox-wordpress-plugin` | WordPress plugin packaging. Registers parent-site abilities and the optional browser runtime script. | Plugin zip only; not an npm runtime package. |
 
 ## Root Dependencies By Role
@@ -24,7 +24,7 @@ the WordPress plugin zip.
 
 | Role | Dependencies | Why They Belong In WP Codebox |
 | --- | --- | --- |
-| Runtime CLI | `@chubes4/wp-codebox-cli`, `@chubes4/wp-codebox-core`, `@chubes4/wp-codebox-playground` | Local workspace package links and the package graph shipped in the CLI release artifact. |
+| Runtime CLI | `@automattic/wp-codebox-cli`, `@automattic/wp-codebox-core`, `@automattic/wp-codebox-playground` | Local workspace package links and the package graph shipped in the CLI release artifact. |
 | Playground backend | `@wp-playground/cli` | The Node backend that boots disposable WordPress Playground runtimes for CLI execution, previews, mounts, blueprints, and WP command execution. |
 | Browser actions | `playwright` | Drives browser-backed runtime commands such as browser actions, probes, screenshots, and page metrics against a Playground preview. |
 | WordPress plugin packaging | `node-linux-x64` and `node-linux-arm64` fetched by `scripts/package-release-artifact.ts`; root production dependencies installed with `npm install --omit=dev --omit=optional --ignore-scripts` inside the release staging directory | The plugin zip vendors a CLI bundle and a Node runtime fallback so a parent WordPress site can execute WP Codebox without relying on host package-manager setup. |
@@ -67,7 +67,7 @@ task payloads, dependencies, and artifact files at runtime.
 Packaging coverage is intentional:
 
 1. `npm run build` compiles the runtime packages and CLI package.
-2. `npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json` proves the CLI package includes compiled `dist` files and omits TypeScript source.
+2. `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` proves the CLI package includes compiled `dist` files and omits TypeScript source.
 3. `npm run package:wordpress-plugin` builds the plugin zip from source files, checked-in plugin assets, and the staged CLI release bundle.
 4. `npm run package-distribution-smoke` asserts the CLI pack shape and plugin zip shape, including the browser runtime asset and vendored CLI/Node runtime path.
 5. `npm run browser-runtime-operation-smoke` executes the checked-in browser runtime asset in a VM and verifies the generic operation helpers.

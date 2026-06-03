@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
-import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@chubes4/wp-codebox-core"
-import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@chubes4/wp-codebox-playground"
+import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 
 interface ArtifactVerifyOptions {

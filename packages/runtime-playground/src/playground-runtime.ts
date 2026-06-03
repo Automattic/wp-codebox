@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
+import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runEditorActionsCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -34,7 +34,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   Snapshot,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 function now(): string {
   return new Date().toISOString()
 }
@@ -453,6 +453,27 @@ class PlaygroundRuntime implements Runtime {
       server,
       spec,
     })
+    this.browserProbes.push(result.artifact)
+    return result.output
+  }
+
+  async runEditorActions(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    let result: Awaited<ReturnType<typeof runEditorActionsCommand>>
+    try {
+      result = await runEditorActionsCommand({
+        artifactRoot: this.artifactRoot,
+        runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+        runtimeSpec: this.spec,
+        server,
+        spec,
+      })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }

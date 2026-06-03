@@ -644,6 +644,7 @@ $assert( 'browser Playground recipe normalizes captured runner result', ! is_wp_
 $assert( 'browser Playground recipe emits normalized materialization metadata', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'diagnostics' => \$diagnostics" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'errors' => array()" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'provenance' => \$provenance" ) );
 $assert( 'browser Playground recipe keeps ability invocation path generic', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_ability_unavailable' ) );
 $assert( 'browser Playground recipe initializes abilities before invocation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_categories_init' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_abilities_api_init' ) );
+$assert( 'browser Playground recipe loads WordPress as internal REST runner request', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "\$_GET['rest_route'] = '/wp-codebox/browser-runner';" ) );
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && ! empty( $browser_step_with_code( 'caller_runtime_task' ) ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe keeps invocation fixed after parent validation', ! is_wp_error( $browser_session ) && ! str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), '$payload[\'invocation\']' ) );
 $assert( 'browser Playground recipe guards permission bypass to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'/wordpress/' === \$wp_codebox_playground_root" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
@@ -688,6 +689,61 @@ $runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
 $runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );
 $runner_php = str_replace( '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json', $runner_report_path, $runner_php );
 $runner_php = preg_replace( '/\$wp_codebox_is_playground = .*?;\n/', '$wp_codebox_is_playground = true;' . "\n", $runner_php ) ?? $runner_php;
+$runner_artifact_root = rtrim( ABSPATH, '/' ) . '/wp-content/uploads/wp-codebox/artifacts/generic-output';
+if ( ! is_dir( $runner_artifact_root . '/assets' ) ) {
+	mkdir( $runner_artifact_root . '/assets', 0777, true );
+}
+file_put_contents( $runner_artifact_root . '/index.html', '<main>Generic caller artifact</main>' );
+file_put_contents( $runner_artifact_root . '/assets/logo.png', "\x89PNG\r\n\x1a\ngeneric" );
+$runner_task_payload = $browser_session['recipe']['browser']['task_payload'] ?? array();
+$runner_task_payload['artifacts'] = array(
+	'schema'     => 'caller/generic-browser-artifact-bundle/v1',
+	'root'       => 'generic-output',
+	'entrypoint' => 'generic-output/index.html',
+	'roles'      => array(
+		'preview' => 'generic-output/index.html',
+	),
+	'metadata'   => array(
+		'caller' => 'wordpress-plugin-smoke',
+		'labels' => array( 'non-studio-web' ),
+	),
+	'files'      => array(
+		array(
+			'path'            => 'generic-output/index.html',
+			'playground_path' => $runner_artifact_root . '/index.html',
+			'url_path'        => '/wp-content/uploads/wp-codebox/artifacts/generic-output/index.html',
+			'kind'            => 'html',
+			'mime_type'       => 'text/html',
+			'roles'           => array( 'preview' ),
+			'metadata'        => array( 'opaque' => 'entrypoint' ),
+		),
+		array(
+			'path'            => 'generic-output/assets/logo.png',
+			'playground_path' => $runner_artifact_root . '/assets/logo.png',
+			'url_path'        => '/wp-content/uploads/wp-codebox/artifacts/generic-output/assets/logo.png',
+			'kind'            => 'image',
+			'mime_type'       => 'image/png',
+			'metadata'        => array( 'opaque' => 'binary' ),
+		),
+		array(
+			'path'            => '../escape.html',
+			'playground_path' => $runner_artifact_root . '/index.html',
+			'kind'            => 'html',
+		),
+		array(
+			'path'            => 'generic-output/missing.txt',
+			'playground_path' => $runner_artifact_root . '/missing.txt',
+			'kind'            => 'text',
+		),
+	),
+);
+$runner_task_path = (string) ( $browser_session['recipe']['browser']['task_path'] ?? '' );
+if ( '' !== $runner_task_path ) {
+	if ( ! is_dir( dirname( $runner_task_path ) ) ) {
+		mkdir( dirname( $runner_task_path ), 0777, true );
+	}
+	file_put_contents( $runner_task_path, wp_json_encode( $runner_task_payload ) );
+}
 ob_start();
 eval( $runner_php );
 $runner_output = ob_get_clean();
@@ -698,6 +754,11 @@ $assert( 'browser Playground generated runner invokes caller task hook', is_arra
 $assert( 'browser Playground generated runner captures normalized materialization evidence', is_array( $runner_result ) && 'wp-codebox/browser-materialization/v1' === ( $runner_result['schema'] ?? '' ) && 'wp-codebox/browser-capture/v1' === ( $runner_result['captures'][0]['schema'] ?? '' ) && true === ( $runner_result['captures'][0]['exists'] ?? false ) && 'caller/materialization-report/v1' === ( $runner_result['captures'][0]['json']['schema'] ?? '' ) );
 $assert( 'browser Playground generated runner writes result evidence file', is_array( $runner_result_file ) && $runner_result === $runner_result_file );
 $assert( 'browser Playground generated runner records diagnostics and provenance', is_array( $runner_result ) && 1 === ( $runner_result['diagnostics']['capture_count'] ?? 0 ) && array() === ( $runner_result['errors'] ?? null ) && 'wp-codebox/browser-runner' === ( $runner_result['provenance']['generated_by'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $runner_result['provenance']['result_path'] ?? '' ) );
+$assert( 'browser Playground generated runner captures caller-owned artifact schema', is_array( $runner_result ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['artifact_bundle']['schema'] ?? '' ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['response']['artifact_bundle']['schema'] ?? '' ) );
+$assert( 'browser Playground generated runner preserves caller artifact metadata and roles', is_array( $runner_result ) && array( 'non-studio-web' ) === ( $runner_result['artifact_bundle']['metadata']['labels'] ?? array() ) && array( 'preview' => 'generic-output/index.html' ) === ( $runner_result['artifact_bundle']['roles'] ?? array() ) && array( 'preview' ) === ( $runner_result['artifact_bundle']['files'][0]['roles'] ?? array() ) && 'entrypoint' === ( $runner_result['artifact_bundle']['files'][0]['metadata']['opaque'] ?? '' ) );
+$assert( 'browser Playground generated runner captures text and base64 artifact files', is_array( $runner_result ) && 2 === count( $runner_result['artifact_bundle']['files'] ?? array() ) && '<main>Generic caller artifact</main>' === ( $runner_result['artifact_bundle']['files'][0]['content'] ?? '' ) && 'utf-8' === ( $runner_result['artifact_bundle']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $runner_result['artifact_bundle']['files'][1]['encoding'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\ngeneric" ) === ( $runner_result['artifact_bundle']['files'][1]['sha256'] ?? '' ) );
+$runner_missing_entrypoint = function_exists( 'wp_codebox_browser_capture_artifact_bundle' ) ? wp_codebox_browser_capture_artifact_bundle( array( 'artifacts' => array_merge( $runner_task_payload['artifacts'], array( 'entrypoint' => 'generic-output/missing.html' ) ) ) ) : array( 'missing_function' => true );
+$assert( 'browser Playground generated runner skips missing artifact entrypoints safely', array() === $runner_missing_entrypoint );
 $assert( 'browser Playground session emits ready-to-code signal only when blueprint prerequisites are present', ! is_wp_error( $browser_session ) && true === ( $browser_session['signals']['ready_to_code']['emitted'] ?? false ) && 'ready_to_code' === ( $browser_session['signals']['ready_to_code']['name'] ?? '' ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['agents_api'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['data_machine_code'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['provider_secret'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['runtime_dependencies'] ?? false ) );
 $assert( 'browser Playground session exposes runtime dependency readiness metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-runtime-readiness/v1' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['schema'] ?? '' ) && 'caller-runtime' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['mu_plugins'][0]['slug'] ?? '' ) && 'example-starter' === ( $browser_session['signals']['ready_to_code']['requirement_metadata']['runtime_dependencies']['themes'][0]['slug'] ?? '' ) );
 $assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'repair-output/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );
@@ -931,7 +992,12 @@ $assert( 'browser Playground session embeds first-class browser task payload', !
 $assert( 'browser Playground session records inherited connector credential provenance without values', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/connector-credentials/v1' === ( $browser_inherited_session['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $browser_inherited_session['task_payload']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) && str_contains( $browser_inherited_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_inherited_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_inherited_encoded, 'secret_env_values' ) );
 $assert( 'browser Playground recipe defaults to Codebox browser-agent invocation with embedded payload', ! is_wp_error( $browser_inherited_session ) && 'ability' === ( $browser_inherited_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'wp-codebox/browser-agent-task' === ( $browser_inherited_session['recipe']['browser']['invocation']['name'] ?? '' ) && str_contains( (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_agent_task' ) );
 $browser_runner_code = (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
-$assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before Codebox browser-agent task', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && str_contains( $browser_runner_code, 'wp_codebox_browser_register_agent_handler' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_codebox_browser_agent_task' ) );
+$assert( 'browser Playground recipe provides bounded user context to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0" ) );
+$assert( 'browser Playground recipe passes inherited provider and model to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'provider' => (string) ( \$payload['provider'] ?? '' )" ) && str_contains( $browser_runner_code, "'model' => (string) ( \$payload['model'] ?? '' )" ) );
+$assert( 'browser Playground recipe keeps sandbox id in client context instead of transcript session id', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'caller_session_id' => \$session_id" ) && ! str_contains( $browser_runner_code, "'message' => \$message,\n\t'session_id' => \$session_id" ) );
+$assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
+$assert( 'browser Playground recipe imports Data Machine bundles through scoped pre-authenticated context', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::run_as_authenticated' ) );
+$assert( 'browser Playground recipe stages inline Data Machine bundles as JSON files', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '$temp_source = $temp_base . \'.json\';' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
@@ -1743,7 +1809,7 @@ $structured_result = $runner->run(
 		'allowed_tools'      => array( 'workspace.read', 'workspace.write', 'datamachine/workspace-read', '' ),
 		'expected_artifacts' => array( 'patch', 'tests', 'patch' ),
 		'policy'             => array( 'applyBack' => 'reviewed' ),
-		'context'            => array( 'issue' => 'https://github.com/chubes4/wp-codebox/issues/29' ),
+		'context'            => array( 'issue' => 'https://github.com/Automattic/wp-codebox/issues/29' ),
 		'artifacts_path'     => $root . '/artifacts',
 	)
 );
@@ -2154,11 +2220,11 @@ $apply_preflight = $artifacts->apply_preflight(
 		'artifact_id'     => $artifact_id,
 		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ),
 		'approver'        => 'site-user:preflight',
-		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+		'apply_target'    => array( 'repo' => 'Automattic/wp-codebox' ),
 	)
 );
 $assert( 'artifact apply preflight returns verified adapter payload without delegation', ! is_wp_error( $apply_preflight ) && 'wp-codebox/artifact-apply-preflight/v1' === ( $apply_preflight['schema'] ?? '' ) && true === ( $apply_preflight['verification']['valid'] ?? false ) && $content_digest === ( $apply_preflight['content_digest'] ?? '' ) && hash( 'sha256', $patch_diff ) === ( $apply_preflight['patch_sha256'] ?? '' ) && array() === $preflight_apply_payloads );
-$assert( 'artifact apply preflight payload preserves apply target and approved files', ! is_wp_error( $apply_preflight ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $apply_preflight['payload']['apply_target'] ?? array() ) && array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ) === ( $apply_preflight['payload']['approved_files'] ?? array() ) && $patch_diff === ( $apply_preflight['payload']['patch'] ?? '' ) );
+$assert( 'artifact apply preflight payload preserves apply target and approved files', ! is_wp_error( $apply_preflight ) && array( 'repo' => 'Automattic/wp-codebox' ) === ( $apply_preflight['payload']['apply_target'] ?? array() ) && array( '/wordpress/wp-content/plugins/example/generated.txt', '/wordpress/wp-content/plugins/example/unapproved.txt' ) === ( $apply_preflight['payload']['approved_files'] ?? array() ) && $patch_diff === ( $apply_preflight['payload']['patch'] ?? '' ) );
 
 call_user_func( $GLOBALS['wp_codebox_cli_commands']['codebox artifacts preflight-apply'], array( $artifact_id ), array( 'artifacts-path' => $artifact_root, 'approved-files' => '/wordpress/wp-content/plugins/example/generated.txt,/wordpress/wp-content/plugins/example/unapproved.txt', 'format' => 'json' ) );
 $cli_preflight_output = json_decode( end( $GLOBALS['wp_codebox_cli_lines'] ), true );
@@ -2232,7 +2298,7 @@ $reference_failure = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifa
 		'approved_files' => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
 	)
 );
-$assert( 'pending artifact apply rejects malformed references before staging', is_wp_error( $reference_failure ) && 'wp_codebox_artifact_verification_failed' === $reference_failure->get_error_code() && in_array( 'malformed-reference', $violation_codes( $reference_failure ), true ) && 'https://github.com/chubes4/wp-codebox/issues/176' === ( $reference_failure->get_error_data()['issue_url'] ?? '' ) );
+$assert( 'pending artifact apply rejects malformed references before staging', is_wp_error( $reference_failure ) && 'wp_codebox_artifact_verification_failed' === $reference_failure->get_error_code() && in_array( 'malformed-reference', $violation_codes( $reference_failure ), true ) && 'https://github.com/Automattic/wp-codebox/issues/176' === ( $reference_failure->get_error_data()['issue_url'] ?? '' ) );
 
 $review_fixture_root = $root . '/artifact-review-fixture';
 $copy_directory( $bundle_dir, $review_fixture_root . '/runtime-test' );
@@ -2257,14 +2323,14 @@ $approved_review = $artifacts->review_artifact(
 		'approver'        => 'site-user:reviewer',
 		'reason'          => 'Ship the generated fix.',
 		'decided_at'      => '2026-05-20T00:00:00Z',
-		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+		'apply_target'    => array( 'repo' => 'Automattic/wp-codebox' ),
 		'context'         => array( 'product' => 'studio-web' ),
 	)
 );
 $assert( 'artifact review approve returns generic decision result', ! is_wp_error( $approved_review ) && 'wp-codebox/artifact-review-result/v1' === ( $approved_review['schema'] ?? '' ) && 'approve' === ( $approved_review['action'] ?? '' ) && 'wp-codebox/artifact-apply/v1' === ( $approved_review['result']['schema'] ?? '' ) );
 $assert( 'artifact review approve preserves approved files and provenance', ! is_wp_error( $approved_review ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $approved_review['decision']['approved_files'] ?? array() ) && 'chat:user-7' === ( $approved_review['decision']['requester'] ?? '' ) && 'chat:user-7' === ( $approved_review['decision']['provenance']['artifact']['task']['requester'] ?? '' ) );
 $assert( 'artifact review approve returns browser decision message shape', ! is_wp_error( $approved_review ) && 'wp-codebox:artifact-review-decision' === ( $approved_review['message']['type'] ?? '' ) && 'wp-codebox/artifact-review-decision/v1' === ( $approved_review['message']['payload']['schema'] ?? '' ) && 'wp-codebox/wordpress-plugin' === ( $approved_review['message']['payload']['source'] ?? '' ) );
-$assert( 'artifact review approve delegates approval consequence to adapter', 1 === count( $review_apply_payloads ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $review_apply_payloads[0]['apply_target'] ?? array() ) );
+$assert( 'artifact review approve delegates approval consequence to adapter', 1 === count( $review_apply_payloads ) && array( 'repo' => 'Automattic/wp-codebox' ) === ( $review_apply_payloads[0]['apply_target'] ?? array() ) );
 
 $captured_review_decisions = array();
 $GLOBALS['wp_codebox_filters']['wp_codebox_review_artifact_decision'] = function ( mixed $value, array $payload ) use ( &$captured_review_decisions ): array {
@@ -2308,10 +2374,10 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function 
 		'schema'          => 'wp-codebox/apply-result/v1',
 		'adapter'         => 'test-adapter',
 		'status'          => 'pr-opened',
-		'target'          => is_array( $payload['apply_target'] ?? null ) ? $payload['apply_target'] : array( 'repo' => 'chubes4/wp-codebox' ),
+		'target'          => is_array( $payload['apply_target'] ?? null ) ? $payload['apply_target'] : array( 'repo' => 'Automattic/wp-codebox' ),
 		'applied_files'   => array( 'generated.txt' ),
 		'commit'          => 'abc1234',
-		'pr_url'          => 'https://github.com/chubes4/wp-codebox/pull/999',
+		'pr_url'          => 'https://github.com/Automattic/wp-codebox/pull/999',
 		'audit_reference' => 'external-apply-record:test-999',
 		'patch'           => $payload['patch'],
 		'access_token'    => 'secret-token-value',
@@ -2324,12 +2390,12 @@ $applied = $artifacts->apply_approved(
 		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
 		'approver'        => 'site-user:1',
 		'apply_target'    => array(
-			'repo'   => 'chubes4/wp-codebox',
+			'repo'   => 'Automattic/wp-codebox',
 			'branch' => 'codebox/test-adapter',
 		),
 	)
 );
-$assert( 'approved artifact apply returns typed adapter result', ! is_wp_error( $applied ) && 'wp-codebox/apply-result/v1' === ( $applied['result']['schema'] ?? '' ) && 'test-adapter' === ( $applied['result']['adapter'] ?? '' ) && 'pr-opened' === ( $applied['result']['status'] ?? '' ) && array( 'generated.txt' ) === ( $applied['result']['applied_files'] ?? array() ) && array( 'repo' => 'chubes4/wp-codebox', 'branch' => 'codebox/test-adapter' ) === ( $applied['result']['target'] ?? array() ) && hash( 'sha256', $approved_patch_diff ) === ( $applied['patch_sha256'] ?? '' ) && $content_digest === ( $applied['content_digest'] ?? '' ) );
+$assert( 'approved artifact apply returns typed adapter result', ! is_wp_error( $applied ) && 'wp-codebox/apply-result/v1' === ( $applied['result']['schema'] ?? '' ) && 'test-adapter' === ( $applied['result']['adapter'] ?? '' ) && 'pr-opened' === ( $applied['result']['status'] ?? '' ) && array( 'generated.txt' ) === ( $applied['result']['applied_files'] ?? array() ) && array( 'repo' => 'Automattic/wp-codebox', 'branch' => 'codebox/test-adapter' ) === ( $applied['result']['target'] ?? array() ) && hash( 'sha256', $approved_patch_diff ) === ( $applied['patch_sha256'] ?? '' ) && $content_digest === ( $applied['content_digest'] ?? '' ) );
 
 $captured_stage_args = array();
 $GLOBALS['wp_codebox_filters']['wp_codebox_stage_pending_apply_artifact'] = function ( mixed $value, array $stage_args ) use ( &$captured_stage_args ): array {
@@ -2352,12 +2418,12 @@ $staged = WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact(
 		'artifact_id'     => $artifact_id,
 		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt', '' ),
 		'approver'        => 'site-user:1',
-		'apply_target'    => array( 'repo' => 'chubes4/wp-codebox' ),
+		'apply_target'    => array( 'repo' => 'Automattic/wp-codebox' ),
 		'context'         => array( 'session_id' => 'chat-123' ),
 	)
 );
 $assert( 'pending artifact apply can be staged', ! is_wp_error( $staged ) && true === ( $staged['staged'] ?? false ) && WP_Codebox_Data_Machine_Pending_Actions::KIND === ( $captured_stage_args['kind'] ?? '' ) );
-$assert( 'pending artifact apply stores exact apply input', $artifact_id === ( $captured_stage_args['apply_input']['artifact_id'] ?? '' ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $captured_stage_args['apply_input']['approved_files'] ?? array() ) && array( 'repo' => 'chubes4/wp-codebox' ) === ( $captured_stage_args['apply_input']['apply_target'] ?? array() ) );
+$assert( 'pending artifact apply stores exact apply input', $artifact_id === ( $captured_stage_args['apply_input']['artifact_id'] ?? '' ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $captured_stage_args['apply_input']['approved_files'] ?? array() ) && array( 'repo' => 'Automattic/wp-codebox' ) === ( $captured_stage_args['apply_input']['apply_target'] ?? array() ) );
 $assert( 'pending artifact apply preview includes review and changed files', 'wp-codebox/pending-apply-preview/v1' === ( $captured_stage_args['preview_data']['schema'] ?? '' ) && 'wp-codebox/artifact-review/v1' === ( $captured_stage_args['preview_data']['review']['schema'] ?? '' ) && 'wp-codebox/changed-files/v1' === ( $captured_stage_args['preview_data']['changed_files']['schema'] ?? '' ) );
 $assert( 'pending artifact apply preview includes successful bundle verification', true === ( $captured_stage_args['preview_data']['verification']['valid'] ?? false ) && 'wp-codebox/artifact-bundle-verification/v1' === ( $captured_stage_args['preview_data']['verification']['schema'] ?? '' ) );
 
@@ -2380,13 +2446,13 @@ $success_audit   = isset( $audit_lines[0] ) ? json_decode( $audit_lines[0], true
 $success_encoded = isset( $audit_lines[0] ) ? $audit_lines[0] : '';
 $assert( 'approved artifact apply writes success audit record', is_array( $success_audit ) && 'wp-codebox/apply-audit/v1' === ( $success_audit['schema'] ?? '' ) && 'success' === ( $success_audit['status'] ?? '' ) );
 $assert( 'success audit records reviewed principals and files', 'chat:user-7' === ( $success_audit['requester'] ?? '' ) && 'site-user:1' === ( $success_audit['approver'] ?? '' ) && array( '/wordpress/wp-content/plugins/example/generated.txt' ) === ( $success_audit['approved_files'] ?? array() ) );
-$assert( 'success audit records applied patch digest and adapter metadata', $artifact_id === ( $success_audit['artifact_id'] ?? '' ) && $content_digest === ( $success_audit['content_digest'] ?? '' ) && hash( 'sha256', $approved_patch_diff ) === ( $success_audit['patch_sha256'] ?? '' ) && 'test-adapter' === ( $success_audit['adapter'] ?? '' ) && 'https://github.com/chubes4/wp-codebox/pull/999' === ( $success_audit['result']['pr_url'] ?? '' ) );
+$assert( 'success audit records applied patch digest and adapter metadata', $artifact_id === ( $success_audit['artifact_id'] ?? '' ) && $content_digest === ( $success_audit['content_digest'] ?? '' ) && hash( 'sha256', $approved_patch_diff ) === ( $success_audit['patch_sha256'] ?? '' ) && 'test-adapter' === ( $success_audit['adapter'] ?? '' ) && 'https://github.com/Automattic/wp-codebox/pull/999' === ( $success_audit['result']['pr_url'] ?? '' ) );
 $assert( 'success audit excludes raw patch body and secrets', ! str_contains( $success_encoded, 'diff --git' ) && ! str_contains( $success_encoded, 'secret-token-value' ) && ! array_key_exists( 'patch', $success_audit['result'] ?? array() ) && ! array_key_exists( 'access_token', $success_audit['result'] ?? array() ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function (): array {
 	return array(
 		'adapter' => 'malformed-adapter',
-		'pr_url'  => 'https://github.com/chubes4/wp-codebox/pull/998',
+		'pr_url'  => 'https://github.com/Automattic/wp-codebox/pull/998',
 	);
 };
 $malformed_apply = $artifacts->apply_approved(

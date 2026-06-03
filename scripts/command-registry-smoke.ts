@@ -1,5 +1,5 @@
-import { commandRegistry, runtimeCommandDefinitions } from "@chubes4/wp-codebox-core"
-import { playgroundRuntimeCommandIds } from "@chubes4/wp-codebox-playground"
+import { commandRegistry, runtimeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { playgroundRuntimeCommandIds } from "@automattic/wp-codebox-playground"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {

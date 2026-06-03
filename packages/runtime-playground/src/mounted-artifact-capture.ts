@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
-import type { ArtifactDiagnostic, MountSpec } from "@chubes4/wp-codebox-core"
+import type { ArtifactDiagnostic, MountSpec } from "@automattic/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,

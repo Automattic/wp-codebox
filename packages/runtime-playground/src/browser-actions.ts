@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { validateBrowserInteractionScript, type BrowserInteractionStep } from "@chubes4/wp-codebox-core"
+import { validateBrowserInteractionScript, type BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import { argValue, jsonArrayArg } from "./commands.js"
 
 export type BrowserActionInput = Record<string, unknown> & { type: string }

@@ -12,6 +12,7 @@ const outputZip = join(outputDirectory, "wp-codebox.zip")
 const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-plugin-"))
 const stagingPlugin = join(stagingRoot, "wp-codebox")
 const cliPackageRoot = join(repoRoot, "dist", "release", "wp-codebox-cli")
+const recursiveRmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }
 
 try {
 	await execFileAsync("npm", ["run", "release:package"], {
@@ -36,7 +37,7 @@ try {
   await execFileAsync("zip", ["-qr", outputZip, "wp-codebox"], { cwd: stagingRoot })
   console.log(`Built ${outputZip}`)
 } finally {
-  await rm(stagingRoot, { recursive: true, force: true })
+  await rm(stagingRoot, recursiveRmOptions)
 }
 
 async function exists(path: string): Promise<boolean> {

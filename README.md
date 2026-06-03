@@ -94,8 +94,8 @@ runtime still gates execution through `RuntimePolicy.commands`, so callers must
 explicitly allow each registered tool name before a sandbox can invoke it.
 
 ```ts
-import { createHostToolRegistry, createRuntime } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createHostToolRegistry, createRuntime } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const hostTools = createHostToolRegistry([
   {
@@ -215,12 +215,12 @@ npm run check
 
 ## Distribution Artifacts
 
-The CLI package is prepared as `@chubes4/wp-codebox-cli` and exposes the
+The CLI package is prepared as `@automattic/wp-codebox-cli` and exposes the
 `wp-codebox` binary from `packages/cli/dist/index.js`.
 
 ```bash
 npm run build
-npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json
+npm pack --workspace @automattic/wp-codebox-cli --dry-run --json
 ```
 
 The WordPress plugin zip is built from `packages/wordpress-plugin` with only the
@@ -241,8 +241,8 @@ artifacts.
 Versioning and release policy:
 
 1. Release the workspace packages together from one git tag so
-   `@chubes4/wp-codebox-cli`, `@chubes4/wp-codebox-core`, and
-   `@chubes4/wp-codebox-playground` stay on the same version.
+   `@automattic/wp-codebox-cli`, `@automattic/wp-codebox-core`, and
+   `@automattic/wp-codebox-playground` stay on the same version.
 2. Keep `packages/wordpress-plugin/wp-codebox.php` `Version:` aligned with the
    package version used for the matching plugin zip.
 3. Treat the npm package and plugin zip as one release unit: publish the CLI,
@@ -274,7 +274,7 @@ options because the executable path is host-level configuration.
 Release checklist:
 
 1. Run `npm run check` from a clean checkout.
-2. Review `npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json` before publishing the CLI package.
+2. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
 3. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with `npm run package:wordpress-plugin` and inspect `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
 4. Confirm package and plugin versions are aligned on the release commit.
 5. Install the CLI in the target environment and configure the WordPress plugin `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
@@ -387,8 +387,8 @@ observations, step executions, optional per-step observations, snapshots, and
 artifact bundles without knowing benchmark, reward, or scenario semantics.
 
 ```ts
-import { createRuntimeEpisode } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createRuntimeEpisode } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const episode = await createRuntimeEpisode(
   {
@@ -437,7 +437,7 @@ Products such as eval harnesses can project this generic episode trace into thei
 own action, observation, reward, and report schemas outside WP Codebox.
 
 The episode trace is a versioned machine-verifiable contract with schema
-`wp-codebox/runtime-episode-trace/v1`. `@chubes4/wp-codebox-core` exports
+`wp-codebox/runtime-episode-trace/v1`. `@automattic/wp-codebox-core` exports
 `RUNTIME_EPISODE_TRACE_JSON_SCHEMA` for schema-aware consumers and
 `validateRuntimeEpisodeTrace()` for lightweight runtime checks. The trace stays
 generic: it carries runtime, reset, step, action, execution, observation,
@@ -562,7 +562,7 @@ JSON output uses `wp-codebox/command-catalog/v1` and includes each command id, d
 ### `schema recipe`
 
 Print the JSON Schema for `wp-codebox/workspace-recipe/v1` without reading a recipe or launching Playground.
-The canonical schema source is `createWorkspaceRecipeJsonSchema()` in `@chubes4/wp-codebox-core`, next to the `WorkspaceRecipe` TypeScript contract; the CLI injects its current recipe command ids into that shared schema factory.
+The canonical schema source is `createWorkspaceRecipeJsonSchema()` in `@automattic/wp-codebox-core`, next to the `WorkspaceRecipe` TypeScript contract; the CLI injects its current recipe command ids into that shared schema factory.
 
 ```bash
 npm run wp-codebox -- schema recipe --json
@@ -602,7 +602,7 @@ Supported runtime commands today:
 
 `wordpress.core-phpunit` **requires the mounted `wordpress-develop` checkout to already have its Composer dev dependencies installed** before you mount it. WordPress core's `tests/phpunit/includes/bootstrap.php` hard-requires the test toolchain (PHPUnit plus the Yoast PHPUnit Polyfills at `vendor/yoast/phpunit-polyfills/phpunitpolyfills-autoload.php`) and `die()`s if it is absent — a freshly cloned `wordpress-develop` tree has **no `vendor/`**. Run `composer install` (or `composer update -W`) inside the checkout first, or mount a checkout that already has `vendor/`. WP Codebox does **not** silently fetch these dependencies for you (sandbox network downloads remain gated behind `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1`). When the toolchain is missing, the command now fails with a clear, structured error naming the missing paths instead of crashing with an opaque "crashed before producing a structured response" — the pre-flight check runs before core's bootstrap, and a mid-`require` `die()` is captured via output buffering + a shutdown handler so diagnostics always reach `files/core-phpunit/.pg-test-result.txt`.
 
-`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, and `capture=console,errors,html,network,performance,memory,screenshot`. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/performance.json`, `files/browser/memory.json`, `files/browser/checkpoints.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, viewport/device metadata, HTML and screenshot hashes, network event counts, optional final/peak browser memory and performance summaries, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. Performance and memory captures use generic browser/CDP data only: JS heap when available, CDP `Performance.getMetrics`, CDP DOM counters, DOM/resource counts and byte totals, and long task counts/duration. Probe scripts may call `window.__wpCodeboxProbeCheckpoint(name, metadata)` when `performance` or `memory` capture is enabled to record named generic checkpoint snapshots. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
+`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, `viewport=<width>x<height>` (for example `viewport=390x844`), and `capture=console,errors,html,network,performance,memory,screenshot`. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/performance.json`, `files/browser/memory.json`, `files/browser/checkpoints.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, effective viewport/device metadata, HTML and screenshot hashes, network event counts, optional final/peak browser memory and performance summaries, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. Performance and memory captures use generic browser/CDP data only: JS heap when available, CDP `Performance.getMetrics`, CDP DOM counters, DOM/resource counts and byte totals, and long task counts/duration. Probe scripts may call `window.__wpCodeboxProbeCheckpoint(name, metadata)` when `performance` or `memory` capture is enabled to record named generic checkpoint snapshots. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
 
 `wordpress.browser-actions` drives the preview with an ordered interaction script so Codebox can prove a plugin still *works* under interaction, not just that it renders. Pass the script as `steps-json=<array>` (inline JSON, or `@<path>` to read it from a file); the legacy `actions-json=<array>` shape is still accepted and normalized to steps. Each step is a thin, stable mapping over a Playwright locator action — this is not a test-runner DSL.
 
@@ -1071,7 +1071,7 @@ All three paths use the same `wp-codebox/task-input/v1` task input contract. Hos
     "applyBack": "reviewed"
   },
   "context": {
-    "issue": "https://github.com/chubes4/wp-codebox/issues/29"
+    "issue": "https://github.com/Automattic/wp-codebox/issues/29"
   }
 }
 ```

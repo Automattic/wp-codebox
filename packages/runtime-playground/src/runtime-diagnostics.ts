@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import type { MountSpec } from "@chubes4/wp-codebox-core"
+import type { MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractCorePhpunitFailureMessage } from "./playground-command-errors.js"
 

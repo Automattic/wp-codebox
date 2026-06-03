@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@chubes4/wp-codebox-core"
+import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const recipeCommandIds = recipeCommandDefinitions().filter((command) => command.recipe).map((command) => command.id)

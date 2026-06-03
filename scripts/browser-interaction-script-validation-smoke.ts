@@ -3,7 +3,7 @@ import {
   BROWSER_INTERACTION_STEP_KINDS,
   browserInteractionScriptUsesEvaluate,
   validateBrowserInteractionScript,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 
 // Backend-agnostic step-schema validation unit smoke (issue #310). Exercises the
 // contract declared in runtime-core without booting a browser, so the parsing/

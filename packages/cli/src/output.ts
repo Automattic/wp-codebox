@@ -1,4 +1,4 @@
-import type { ArtifactBundle, ArtifactBundleVerificationResult, ExecutionResult, RuntimeInfo } from "@chubes4/wp-codebox-core"
+import type { ArtifactBundle, ArtifactBundleVerificationResult, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
 
 interface CliError {
   name: string

@@ -1,6 +1,6 @@
-import { createRuntime } from "@chubes4/wp-codebox-core"
-import { createHostToolRegistry, HOST_TOOL_RESULT_SCHEMA, type HostToolResult } from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+import { createRuntime } from "@automattic/wp-codebox-core"
+import { createHostToolRegistry, HOST_TOOL_RESULT_SCHEMA, type HostToolResult } from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {

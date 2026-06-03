@@ -1,6 +1,6 @@
 {
-  "name": "@chubes4/wp-codebox-core",
-  "version": "0.3.1",
+  "name": "@automattic/wp-codebox-core",
+  "version": "0.4.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

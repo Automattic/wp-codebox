@@ -1,6 +1,6 @@
 {
   "name": "wp-codebox-workspace",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -70,6 +70,7 @@
     "browser-actions-artifact-smoke": "tsx scripts/browser-actions-artifact-smoke.ts",
     "browser-html-capture-smoke": "tsx scripts/browser-html-capture-smoke.ts",
     "editor-open-artifact-smoke": "tsx scripts/editor-open-artifact-smoke.ts",
+    "editor-actions-artifact-smoke": "tsx scripts/editor-actions-artifact-smoke.ts",
     "browser-review-bridge-smoke": "tsx scripts/browser-review-bridge-smoke.ts",
     "browser-interaction-script-validation-smoke": "tsx scripts/browser-interaction-script-validation-smoke.ts",
     "preview-port-smoke": "tsx scripts/preview-port-smoke.ts",
@@ -118,9 +119,9 @@
     "test": "tests"
   },
   "dependencies": {
-    "@chubes4/wp-codebox-cli": "file:packages/cli",
-    "@chubes4/wp-codebox-core": "file:packages/runtime-core",
-    "@chubes4/wp-codebox-playground": "file:packages/runtime-playground",
+    "@automattic/wp-codebox-cli": "file:packages/cli",
+    "@automattic/wp-codebox-core": "file:packages/runtime-core",
+    "@automattic/wp-codebox-playground": "file:packages/runtime-playground",
     "@wp-playground/cli": "^3.1.35",
     "@wp-playground/wordpress-builds": "^0.9.4",
     "abort-controller": "^3.0.0",

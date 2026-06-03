@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { ArtifactManifestFile } from "@chubes4/wp-codebox-core"
+import type { ArtifactManifestFile } from "@automattic/wp-codebox-core"
 import { buildRuntimeReferenceIndex } from "../packages/runtime-playground/src/runtime-reference-index.js"
 import type { CapturedMountFiles } from "../packages/runtime-playground/src/artifacts.js"
 

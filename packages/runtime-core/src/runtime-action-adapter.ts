@@ -8,7 +8,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeEditorOpenAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -44,6 +44,17 @@ export interface RuntimeBrowserAction {
   key?: string
   wait_for?: string
   duration?: string
+  capture?: string[]
+  timeout_ms?: number
+}
+
+export interface RuntimeEditorOpenAction {
+  type: "editor_open"
+  target?: "post-new" | "site"
+  post_id?: number
+  post_type?: string
+  url?: string
+  wait_selector?: string
   capture?: string[]
   timeout_ms?: number
 }
@@ -91,6 +102,10 @@ export async function runRuntimeAction(
 
   if (action.type === "browser") {
     return runRuntimeBrowserAction(episode, action)
+  }
+
+  if (action.type === "editor_open") {
+    return runRuntimeEditorOpenAction(episode, action)
   }
 
   return runRuntimeFilesystemAction(episode, action, policy)
@@ -323,6 +338,82 @@ function runtimeBrowserCommandAction(action: RuntimeBrowserAction): Record<strin
     commandAction.capture = action.capture
   }
   return commandAction
+}
+
+async function runRuntimeEditorOpenAction(episode: RuntimeEpisode, action: RuntimeEditorOpenAction): Promise<RuntimeActionObservation> {
+  const args = runtimeEditorOpenArgs(action)
+  const step = await episode.step(
+    {
+      kind: "browser",
+      command: "wordpress.editor-open",
+      args,
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+      ...(action.url ? { url: action.url } : {}),
+      ...(action.target ? { target: action.target } : {}),
+      operation: "editor_open",
+    },
+    { type: "browser-result" },
+  )
+
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+  const summary = recordValue(stdout)
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+      diagnostics: {
+        exitCode: step.execution.exitCode,
+        stderr: step.execution.stderr,
+      },
+      ...(summary?.target ? { target: summary.target } : {}),
+      ...(summary?.finalUrl ? { finalUrl: summary.finalUrl } : {}),
+      ...(summary?.files ? { files: summary.files } : {}),
+      ...(summary?.summary ? { summary: summary.summary } : {}),
+      ...(summary?.steps ? { steps: summary.steps } : {}),
+      artifactRefs: step.observation?.artifactRefs ?? [],
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+function runtimeEditorOpenArgs(action: RuntimeEditorOpenAction): string[] {
+  const args: string[] = []
+  if (action.target) {
+    args.push(`target=${action.target}`)
+  }
+  if (action.post_id !== undefined) {
+    args.push(`post-id=${action.post_id}`)
+  }
+  if (action.post_type) {
+    args.push(`post-type=${action.post_type}`)
+  }
+  if (action.url) {
+    args.push(`url=${action.url}`)
+  }
+  if (action.wait_selector) {
+    args.push(`wait-selector=${action.wait_selector}`)
+  }
+  if (action.timeout_ms !== undefined) {
+    args.push(`wait-timeout=${action.timeout_ms}ms`)
+  }
+  if (action.capture && action.capture.length > 0) {
+    args.push(`capture=${action.capture.join(",")}`)
+  }
+  return args
 }
 
 function normalizeWpCliRuntimeActionCommand(command: string): string {

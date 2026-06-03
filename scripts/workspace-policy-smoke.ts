@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { checkWorkspacePolicy } from "@chubes4/wp-codebox-core"
+import { checkWorkspacePolicy } from "@automattic/wp-codebox-core"
 
 const execFileAsync = promisify(execFile)
 

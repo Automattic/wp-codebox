@@ -8,8 +8,8 @@ import {
   createRuntimeEpisode,
   runRuntimeAction,
   validateRuntimeEpisodeTrace,
-} from "@chubes4/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
+} from "@automattic/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const tempRoot = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-action-"))
 const workspaceRoot = join(tempRoot, "workspace")
@@ -28,7 +28,7 @@ try {
         policy: {
           network: "deny",
           filesystem: "readwrite-mounts",
-          commands: ["wordpress.wp-cli", "wordpress.browser-actions", "inspect-mounted-inputs"],
+          commands: ["wordpress.wp-cli", "wordpress.browser-actions", "wordpress.editor-open", "inspect-mounted-inputs"],
           secrets: "none",
           approvals: "never",
         },
@@ -82,6 +82,29 @@ try {
       "capture=actions,errors",
     ])
 
+    const editorOpen = await runRuntimeAction(
+      episode,
+      { type: "editor_open", target: "post-new", post_type: "post", capture: ["steps", "editor-state"], timeout_ms: 30_000 },
+      policy,
+    )
+    assert.equal(editorOpen.schema, RUNTIME_ACTION_OBSERVATION_SCHEMA)
+    assert.equal(editorOpen.type, "editor_open")
+    assert.equal(editorOpen.step?.action.kind, "browser")
+    assert.equal(editorOpen.step?.execution.command, "wordpress.editor-open")
+    assert.deepEqual(editorOpen.step?.execution.args, [
+      "target=post-new",
+      "post-type=post",
+      "wait-timeout=30000ms",
+      "capture=steps,editor-state",
+    ])
+    assert.equal(editorOpen.data.exitCode, 0)
+    assert.equal((editorOpen.data.target as { kind?: string; postType?: string }).kind, "post-new")
+    assert.equal((editorOpen.data.target as { kind?: string; postType?: string }).postType, "post")
+    assert.equal((editorOpen.data.files as { editorState?: string }).editorState, "files/browser/editor-state.json")
+    assert.equal((editorOpen.data.summary as { editor?: { storesAvailable?: boolean; postType?: string } }).editor?.storesAvailable, true)
+    assert.equal((editorOpen.data.summary as { editor?: { storesAvailable?: boolean; postType?: string } }).editor?.postType, "post")
+    assert.ok(Array.isArray(editorOpen.data.artifactRefs), "editor open should expose artifact refs")
+
     const deleteResult = await runRuntimeAction(episode, { type: "filesystem", operation: "delete", path: "/workspace/notes/hello.txt" }, policy)
     assert.equal(deleteResult.data.deleted, true)
 
@@ -95,9 +118,9 @@ try {
     )
 
     const trace = await episode.trace()
-    assert.equal(trace.steps.length, 6)
+    assert.equal(trace.steps.length, 7)
     assert.equal(trace.steps.filter((step) => step.action.kind === "filesystem").length, 4)
-    assert.equal(trace.steps.filter((step) => step.action.kind === "browser").length, 1)
+    assert.equal(trace.steps.filter((step) => step.action.kind === "browser").length, 2)
     assert.equal(validateRuntimeEpisodeTrace(trace).valid, true)
   } finally {
     await episode.close()

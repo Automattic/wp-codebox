@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest, stripUndefined } from "@chubes4/wp-codebox-core"
+import { artifactFileDigest, stripUndefined } from "@automattic/wp-codebox-core"
 import type {
   ArtifactDiagnostic,
   ArtifactDiagnostics,
@@ -21,7 +21,7 @@ import type {
   RuntimeCreateSpec,
   RuntimeInfo,
   SandboxWorkspaceContract,
-} from "@chubes4/wp-codebox-core"
+} from "@automattic/wp-codebox-core"
 
 export interface CapturedMountFile {
   mountIndex: number
@@ -498,8 +498,8 @@ export function buildArtifactProvenance({
 
 function buildArtifactPackageProvenance(runtime: RuntimeInfo): ArtifactPackageProvenance {
   const rootPackage = readPackageIdentity("../../../package.json", "wp-codebox")
-  const corePackage = readPackageIdentity("../../runtime-core/package.json", "@chubes4/wp-codebox-core")
-  const playgroundPackage = readPackageIdentity("../package.json", "@chubes4/wp-codebox-playground")
+  const corePackage = readPackageIdentity("../../runtime-core/package.json", "@automattic/wp-codebox-core")
+  const playgroundPackage = readPackageIdentity("../package.json", "@automattic/wp-codebox-playground")
   const playgroundCliVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/cli")
   const wordpressBuildsVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/wordpress-builds")
 

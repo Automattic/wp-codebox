@@ -5,8 +5,8 @@ import { cp, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, verifyArtifactBundle } from "@chubes4/wp-codebox-core"
-import type { ArtifactManifest } from "@chubes4/wp-codebox-core"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, verifyArtifactBundle } from "@automattic/wp-codebox-core"
+import type { ArtifactManifest } from "@automattic/wp-codebox-core"
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, "..")

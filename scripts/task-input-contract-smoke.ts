@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { normalizeTaskInput, TASK_INPUT_JSON_SCHEMA, TASK_INPUT_SCHEMA, TASK_INPUT_VERSION } from "@chubes4/wp-codebox-core"
+import { normalizeTaskInput, TASK_INPUT_JSON_SCHEMA, TASK_INPUT_SCHEMA, TASK_INPUT_VERSION } from "@automattic/wp-codebox-core"
 
 interface Fixture {
   name: string

@@ -53,7 +53,7 @@ try {
   assert.equal(attestation.package.name, "wp-codebox")
   assert.match(attestation.package.commit, /^[a-f0-9]{40}$/)
   assert.equal(attestation.backend.kind, "wordpress-playground")
-  assert.equal(attestation.backend.package.name, "@chubes4/wp-codebox-playground")
+  assert.equal(attestation.backend.package.name, "@automattic/wp-codebox-playground")
   assert.equal(attestation.backend.engine.name, "@wp-playground/cli")
   assert.equal(attestation.runtime.kind, "wordpress")
   assert.equal(attestation.runtime.version, "7.0")

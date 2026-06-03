@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@chubes4/wp-codebox-core"
+import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const execFileAsync = promisify(execFile)
@@ -44,6 +44,7 @@ const expectedCommandIds = [
   "wordpress.capture-html",
   "wordpress.browser-actions",
   "wordpress.editor-open",
+  "wordpress.editor-actions",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
 ]
@@ -65,6 +66,7 @@ const expectedCatalogCommandIds = [
   "wordpress.capture-html",
   "wordpress.browser-actions",
   "wordpress.editor-open",
+  "wordpress.editor-actions",
   "wordpress.browser-actions.evaluate",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",

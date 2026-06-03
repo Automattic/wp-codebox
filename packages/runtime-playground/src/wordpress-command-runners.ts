@@ -28,7 +28,7 @@ import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playgr
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistVfsDiagnosticFile, readCorePhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import type { ExecutionSpec, MountSpec, RuntimeCreateSpec } from "@chubes4/wp-codebox-core"
+import type { ExecutionSpec, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
