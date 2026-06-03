@@ -105,6 +105,10 @@ private static function agent_bundle_schema(): array {
 				'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
 				'owner_id'    => array( 'type' => 'integer' ),
 				'token_env'   => array( 'type' => 'string' ),
+				'import_principal' => array(
+					'type'        => 'object',
+					'description' => 'Non-secret Data Machine principal context used only for the datamachine/import-agent call inside the sandbox.',
+				),
 			),
 		),
 	);
