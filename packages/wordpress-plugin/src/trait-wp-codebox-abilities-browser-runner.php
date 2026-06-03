@@ -196,6 +196,10 @@ private static function browser_agent_runner_php( array $task_input, string $ses
 $_GET[\'rest_route\'] = \'/wp-codebox/browser-runner\';
 require_once \'/wordpress/wp-load.php\';
 
+if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_current_user\' ) && get_current_user_id() <= 0 ) {
+	wp_set_current_user( 1 );
+}
+
 $task_path = ' . var_export( $task_path, true ) . ';
 $result_path = ' . var_export( $result_path, true ) . ';
 $payload = ' . var_export( $default_payload, true ) . ';
