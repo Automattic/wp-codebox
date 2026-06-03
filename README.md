@@ -141,14 +141,14 @@ Host tool output is always a JSON envelope with schema
 `wp-codebox/host-tool-result/v1`. Successful calls return `status: "ok"` and an
 `output` value validated against the tool's output schema. Invalid input,
 invalid output, and handler failures return `status: "error"` with a stable error
-code and message instead of terminal-shaped stderr. Product-specific tools such
-as Homeboy evidence commands should live in product extensions that register
-tools through this surface.
+code and message instead of terminal-shaped stderr. Product-specific evidence
+commands should live in product extensions that register tools through this
+surface.
 
 Trusted worker hosts that need repo-local commands can use the playground
 package's `createHostCommandTool()` adapter instead of exposing arbitrary shell.
 Each adapter is still a named host tool such as `host.pnpm-test`,
-`host.cargo-test`, or `host.homeboy-check`; the runtime denies it unless that
+`host.cargo-test`, or `host.project-check`; the runtime denies it unless that
 exact name appears in `policy.commands`. The adapter runs one configured
 executable with `child_process.spawn()` and `shell: false`, appends only
 structured string-array arguments from the input, enforces allowed cwd roots,
