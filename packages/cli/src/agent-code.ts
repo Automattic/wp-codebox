@@ -94,6 +94,15 @@ if (function_exists('wp_get_ability')) {
         }
         foreach (glob(rtrim(DATAMACHINE_WORKSPACE_PATH, '/') . '/*', GLOB_ONLYDIR) ?: array() as $sandbox_workspace_dir) {
             $sandbox_workspace_name = basename($sandbox_workspace_dir);
+            if (is_file($sandbox_workspace_dir . '/.git')) {
+                $sandbox_workspace_adoptions[$sandbox_workspace_name] = array(
+                    'success' => true,
+                    'skipped' => true,
+                    'reason' => 'linked_worktree_mount',
+                    'message' => 'Mounted linked worktrees are treated as sandbox workspaces, not Data Machine primary checkouts.',
+                );
+                continue;
+            }
             $sandbox_adopt_result = $sandbox_adopt_ability->execute(array(
                 'path' => $sandbox_workspace_dir,
                 'name' => $sandbox_workspace_name,
