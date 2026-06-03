@@ -1,7 +1,27 @@
 import assert from "node:assert/strict"
+import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.ts"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.ts"
 
 async function main() {
+  const sandboxWorkspace = {
+    schema: "wp-codebox/sandbox-workspace/v1" as const,
+    root: "/workspace",
+    defaultMode: "repo-backed" as const,
+    mounts: [
+      {
+        target: "/workspace/wp-codebox",
+        mode: "readwrite" as const,
+        sourceMode: "repo-backed" as const,
+        workspaceRef: "wp-codebox@fix-issue-533-mounted-workspace-perception",
+        repo: "Automattic/wp-codebox",
+        mountRole: "recipe-workspace",
+      },
+    ],
+    dmc: {
+      safeAbilities: ["datamachine/workspace-read"],
+      parentOnlyAbilities: [],
+    },
+  }
   const code = await resolveSandboxTaskCode({
     task: "Fix duplicate code",
     agent: "sandbox-agent",
@@ -9,6 +29,7 @@ async function main() {
     provider: "opencode",
     model: "opencode-go/kimi-k2.6",
     sessionId: "codebox-smoke-session",
+    sandboxWorkspace,
     agentBundles: [
       { source: "/tmp/site-generator-agent.json", slug: "site-generator" },
       {
@@ -30,6 +51,17 @@ async function main() {
   assert.match(code, /datamachine_agent_mode_sandbox/, "sandbox mode should inject tool guidance")
   assert.match(code, /WP_Codebox_Sandbox_Perception_Directive/, "sandbox mode should inject a WP Codebox perception directive")
   assert.match(code, /WP Codebox Sandbox Perception/, "sandbox perception should expose workspace context by default")
+  assert.match(code, /sandbox_workspace/, "sandbox request should include mounted workspace context")
+  assert.match(code, /default_workspace/, "sandbox request should include a default mounted workspace")
+  assert.match(code, /wp-codebox@fix-issue-533-mounted-workspace-perception/, "sandbox context should include mounted workspace handle")
+  assert.match(code, /\/workspace\/wp-codebox/, "sandbox context should include mounted workspace path")
+  assert.match(code, /Automattic\/wp-codebox/, "sandbox context should include mounted workspace repo")
+  assert.match(code, /\\"mode\\":\\"readwrite\\"/, "sandbox context should include mounted workspace mode")
+  assert.match(code, /Mounted Workspaces/, "sandbox perception should render a mounted workspace section")
+  assert.match(code, /Bounded tree/, "sandbox perception should render bounded mounted workspace trees")
+  assert.match(code, /TREE_MAX_ENTRIES = 80/, "sandbox perception should bound the root tree")
+  assert.match(code, /scan_tree\(\$mount_path, \$mount_path, 0, 30\)/, "sandbox perception should bound each mounted workspace tree")
+  assert.match(code, /Prefer this mounted-workspace map before broad reconnaissance/, "sandbox guidance should discourage repeated reconnaissance")
   assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")
   assert.match(code, /is_file\(\$sandbox_workspace_dir \. '\/.git'\)/, "sandbox setup should detect linked worktree mounts")
   assert.match(code, /linked_worktree_mount/, "sandbox setup should report linked worktree mounts as non-fatal diagnostics")
@@ -49,6 +81,20 @@ async function main() {
   const createIfMissingIndex = code.indexOf("create_if_missing")
   assert.ok(fallbackGateIndex > code.indexOf("wp_codebox_import_sandbox_agent_bundles") && createIfMissingIndex > fallbackGateIndex, "legacy create_if_missing should be gated behind the no-bundle fallback")
   assert.match(code, /repair-agent/, "inline bundle specs should be embedded in sandbox setup")
+
+  const recipeSpec = await recipeExecutionSpec(
+    {
+      command: "wp-codebox.agent-sandbox-run",
+      args: ["task=Inspect the mounted repo", "agent=sandbox-agent"],
+    },
+    process.cwd(),
+    sandboxWorkspace,
+  )
+  const recipeCodeArg = recipeSpec.args.find((arg) => arg.startsWith("code=")) ?? ""
+  assert.match(recipeCodeArg, /wp-codebox@fix-issue-533-mounted-workspace-perception/, "recipe-generated sandbox code should include mounted workspace handle")
+  assert.match(recipeCodeArg, /\/workspace\/wp-codebox/, "recipe-generated sandbox code should include mounted workspace path")
+  assert.match(recipeCodeArg, /Automattic\/wp-codebox/, "recipe-generated sandbox code should include mounted workspace repo")
+  assert.match(recipeCodeArg, /\\"mode\\":\\"readwrite\\"/, "recipe-generated sandbox code should include mounted workspace mode")
 
   const runCode = agentSandboxRunCode(
     '{"prompt":"Do not interpolate $buckets, $meta, or $state_store."}',

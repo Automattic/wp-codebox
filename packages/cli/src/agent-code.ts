@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core"
+import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, type SandboxWorkspaceContract } from "@automattic/wp-codebox-core"
 
 export interface AgentBundleSpec {
   source?: string
@@ -23,6 +23,7 @@ export interface AgentSandboxCodeOptions {
   agentBundles?: AgentBundleSpec[]
   code?: string
   codeFile?: string
+  sandboxWorkspace?: SandboxWorkspaceContract
 }
 
 export async function resolveSandboxTaskCode(options: AgentSandboxCodeOptions): Promise<string> {
@@ -58,6 +59,8 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       mode,
       agent_modes: agentModes,
       workspace_root: SANDBOX_WORKSPACE_ROOT,
+      sandbox_workspace: options.sandboxWorkspace ?? null,
+      default_workspace: defaultSandboxWorkspace(options.sandboxWorkspace),
       tool_contract: sandboxToolContract(),
     },
   }
@@ -248,6 +251,7 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
 if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') && !class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
     final class WP_Codebox_Sandbox_Perception_Directive implements DataMachine\\Engine\\AI\\Directives\\DirectiveInterface {
         private const TREE_MAX_DEPTH = 2;
+        private const TREE_MAX_ENTRIES = 80;
 
         public static function get_outputs(string $provider_name, array $tools, ?string $step_id = null, array $payload = array()): array {
             unset($provider_name, $step_id);
@@ -255,6 +259,7 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
             $sections = array(
                 self::section_header(),
                 self::section_workspace((string) $workspace_root),
+                self::section_mounted_workspaces($workspace_root, is_array($payload['client_context']['sandbox_workspace'] ?? null) ? $payload['client_context']['sandbox_workspace'] : array(), is_array($payload['client_context']['default_workspace'] ?? null) ? $payload['client_context']['default_workspace'] : array()),
                 self::section_runtime(),
                 self::section_tools($tools, is_array($payload['client_context']['tool_contract'] ?? null) ? $payload['client_context']['tool_contract'] : array()),
                 self::section_outcome(),
@@ -271,6 +276,7 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
                 '# WP Codebox Sandbox Perception',
                 '',
                 'Live snapshot of the disposable WP Codebox sandbox at the start of this run. Use it as your starting awareness; workspace tools remain available for targeted inspection and edits.',
+                'Prefer this mounted-workspace map before broad reconnaissance. Inspect only the specific files or directories needed for the task.',
             ));
         }
 
@@ -278,13 +284,14 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
             if ('' === $workspace_root || !is_dir($workspace_root)) {
                 return '';
             }
-            $entries = self::scan_tree($workspace_root, $workspace_root, 0);
+            $entries = self::scan_tree($workspace_root, $workspace_root, 0, self::TREE_MAX_ENTRIES);
             sort($entries, SORT_STRING);
             $lines = array(
                 '## Workspace',
                 '',
                 sprintf('- Root: %s', $workspace_root),
                 sprintf('- Tree depth: %d', self::TREE_MAX_DEPTH),
+                sprintf('- Tree max entries: %d', self::TREE_MAX_ENTRIES),
                 '',
                 'Tree:',
             );
@@ -294,8 +301,60 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
             return implode("\n", $lines);
         }
 
-        private static function scan_tree(string $base, string $current, int $depth): array {
-            if ($depth > self::TREE_MAX_DEPTH) {
+        private static function section_mounted_workspaces(string $workspace_root, array $workspace_contract, array $default_workspace): string {
+            $mounts = is_array($workspace_contract['mounts'] ?? null) ? $workspace_contract['mounts'] : array();
+            if (empty($mounts)) {
+                return '';
+            }
+
+            $lines = array(
+                '## Mounted Workspaces',
+                '',
+            );
+            if (!empty($default_workspace)) {
+                $lines[] = sprintf('- Default workspace: %s at %s', (string) ($default_workspace['workspaceRef'] ?? $default_workspace['component'] ?? 'mounted workspace'), (string) ($default_workspace['target'] ?? $workspace_root));
+                $lines[] = '';
+            }
+            foreach ($mounts as $mount) {
+                if (!is_array($mount)) {
+                    continue;
+                }
+                $target = (string) ($mount['target'] ?? '');
+                if ('' === $target) {
+                    continue;
+                }
+                $label = (string) ($mount['workspaceRef'] ?? $mount['component'] ?? basename($target));
+                $lines[] = sprintf('### %s', $label);
+                $lines[] = sprintf('- Path: %s', $target);
+                $lines[] = sprintf('- Mode: %s', (string) ($mount['mode'] ?? 'readwrite'));
+                if (!empty($mount['repo'])) {
+                    $lines[] = sprintf('- Repo: %s', (string) $mount['repo']);
+                }
+                if (!empty($mount['sourceMode'])) {
+                    $lines[] = sprintf('- Source mode: %s', (string) $mount['sourceMode']);
+                }
+                if (!empty($mount['mountRole'])) {
+                    $lines[] = sprintf('- Role: %s', (string) $mount['mountRole']);
+                }
+                $mount_path = str_starts_with($target, '/') ? $target : rtrim($workspace_root, '/') . '/' . ltrim($target, '/');
+                if (is_dir($mount_path)) {
+                    $tree = self::scan_tree($mount_path, $mount_path, 0, 30);
+                    sort($tree, SORT_STRING);
+                    if (!empty($tree)) {
+                        $lines[] = '- Bounded tree:';
+                        foreach ($tree as $entry) {
+                            $lines[] = sprintf('  - %s', $entry);
+                        }
+                    }
+                }
+                $lines[] = '';
+            }
+
+            return trim(implode("\n", $lines));
+        }
+
+        private static function scan_tree(string $base, string $current, int $depth, int $remaining): array {
+            if ($depth > self::TREE_MAX_DEPTH || $remaining <= 0) {
                 return array();
             }
             $ignored = array('.git', 'node_modules', 'vendor', 'dist', 'build');
@@ -312,10 +371,19 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
                 $relative = ltrim(substr($path, strlen($base)), '/');
                 if (is_dir($path)) {
                     $results[] = $relative . '/';
-                    $results = array_merge($results, self::scan_tree($base, $path, $depth + 1));
+                    if (count($results) >= $remaining) {
+                        break;
+                    }
+                    $results = array_merge($results, self::scan_tree($base, $path, $depth + 1, $remaining - count($results)));
+                    if (count($results) >= $remaining) {
+                        break;
+                    }
                     continue;
                 }
                 $results[] = $relative;
+                if (count($results) >= $remaining) {
+                    break;
+                }
             }
             return $results;
         }
@@ -450,6 +518,12 @@ function sandboxToolNames(): string[] {
 
 function sandboxAgentModes(mode: string): string[] {
   return Array.from(new Set([mode, "chat"].filter(Boolean)))
+}
+
+function defaultSandboxWorkspace(workspace: SandboxWorkspaceContract | undefined): Record<string, unknown> | null {
+  if (!workspace?.mounts.length) return null
+  const mount = workspace.mounts.find((entry) => entry.mode === "readwrite" && entry.target.startsWith(SANDBOX_WORKSPACE_ROOT)) ?? workspace.mounts[0]
+  return mount ? { ...mount } : null
 }
 
 function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] {
