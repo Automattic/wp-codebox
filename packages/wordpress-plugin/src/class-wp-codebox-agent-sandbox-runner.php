@@ -17,6 +17,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const REMEDIATION_OUTCOME_SCHEMA = 'wp-codebox/agent-sandbox-remediation-outcome/v1';
 	private const COMPLETION_OUTCOME_SCHEMA = 'wp-codebox/sandbox-completion-outcome/v1';
 	private const SANDBOX_TOOL_POLICY_SCHEMA = 'wp-codebox/sandbox-tool-policy/v1';
+	private const AGENTS_API_RUNTIME_ENVIRONMENT = 'environment';
+	private const AGENTS_API_RUNTIME_CAPABILITY_SCOPE = 'capability_scope';
+	private const AGENTS_API_RUNTIME_LOCAL = 'runtime_local';
+	private const AGENTS_API_CONTROL_PLANE = 'control_plane';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -1507,10 +1511,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $tool */
 	private function sandbox_policy_denial_reason( array $tool ): string|null {
-		if ( 'sandbox' !== (string) ( $tool['execution_location'] ?? '' ) ) {
+		$runtime = $this->sandbox_tool_runtime_metadata( $tool );
+
+		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) {
 			return 'parent-only';
 		}
-		if ( ! in_array( (string) ( $tool['transport_visibility'] ?? '' ), array( 'sandbox', 'both' ), true ) ) {
+		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) {
 			return 'not-visible-in-sandbox';
 		}
 		if ( true !== ( $tool['allowed'] ?? false ) ) {
@@ -1518,6 +1524,28 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return null;
+	}
+
+	/** @param array<string,mixed> $tool @return array{environment:string,capability_scope:string} */
+	private function sandbox_tool_runtime_metadata( array $tool ): array {
+		$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
+
+		return array(
+			self::AGENTS_API_RUNTIME_ENVIRONMENT => isset( $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
+				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
+				: $this->legacy_execution_environment( (string) ( $tool['execution_location'] ?? '' ) ),
+			self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE => isset( $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
+				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
+				: $this->legacy_capability_scope( (string) ( $tool['transport_visibility'] ?? '' ) ),
+		);
+	}
+
+	private function legacy_execution_environment( string $location ): string {
+		return 'sandbox' === $location ? self::AGENTS_API_RUNTIME_LOCAL : self::AGENTS_API_CONTROL_PLANE;
+	}
+
+	private function legacy_capability_scope( string $visibility ): string {
+		return in_array( $visibility, array( 'sandbox', 'both' ), true ) ? self::AGENTS_API_RUNTIME_LOCAL : self::AGENTS_API_CONTROL_PLANE;
 	}
 
 	private function default_artifacts_path(): string {

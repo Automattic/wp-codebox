@@ -129,12 +129,18 @@ function wp_codebox_smoke_sandbox_tool_policy( array $tools ): array {
 	$entries = array();
 	foreach ( $tools as $tool => $attributes ) {
 		$attributes = is_array( $attributes ) ? $attributes : array();
+		$execution_location = (string) ( $attributes['execution_location'] ?? 'sandbox' );
+		$transport_visibility = (string) ( $attributes['transport_visibility'] ?? 'sandbox' );
 		$entries[] = array(
 			'id'                   => (string) $tool,
 			'runtime_tool_id'      => (string) ( $attributes['runtime_tool_id'] ?? str_replace( array( 'datamachine/', '-', '.' ), array( '', '_', '_' ), (string) $tool ) ),
-			'execution_location'   => (string) ( $attributes['execution_location'] ?? 'sandbox' ),
-			'transport_visibility' => (string) ( $attributes['transport_visibility'] ?? 'sandbox' ),
+			'execution_location'   => $execution_location,
+			'transport_visibility' => $transport_visibility,
 			'allowed'              => (bool) ( $attributes['allowed'] ?? true ),
+			'runtime'              => array(
+				'environment'      => 'sandbox' === $execution_location ? 'runtime_local' : 'control_plane',
+				'capability_scope' => in_array( $transport_visibility, array( 'sandbox', 'both' ), true ) ? 'runtime_local' : 'control_plane',
+			),
 		);
 	}
 
@@ -1252,6 +1258,7 @@ $assert( 'browser Playground recipe bypasses agents chat transcript permissions 
 $assert( 'browser Playground recipe provides bounded user context to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0" ) );
 $assert( 'browser Playground recipe passes inherited provider and model to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'provider' => (string) ( \$payload['provider'] ?? '' )" ) && str_contains( $browser_runner_code, "'model' => (string) ( \$payload['model'] ?? '' )" ) );
 $assert( 'browser Playground recipe keeps sandbox id in client context instead of transcript session id', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'caller_session_id' => \$session_id" ) && ! str_contains( $browser_runner_code, "'message' => \$message,\n\t'session_id' => \$session_id" ) );
+$assert( 'browser Playground recipe passes Agents API runtime principal', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'auth_source' => 'runtime'" ) && str_contains( $browser_runner_code, "'request_context' => 'runtime'" ) && str_contains( $browser_runner_code, "'owner_type' => 'runtime'" ) && str_contains( $browser_runner_code, "'runtime_type' => 'wordpress-playground'" ) );
 $assert( 'browser Playground recipe preserves and imports multiple runtime agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'wp_agent_runtime_import_bundle' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
 $assert( 'browser Playground recipe preserves non-secret runtime import principal', ! is_wp_error( $browser_inherited_session ) && 123 === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['agent_id'] ?? null ) && array( 'runtime/import-agent' ) === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['scope']['ability_allow'] ?? array() ) );
 $assert( 'browser Playground recipe delegates runtime bundle imports through a generic hook', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "apply_filters( 'wp_agent_runtime_import_bundle'" ) && ! str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper' ) && ! str_contains( $browser_runner_code, "wp_get_ability( 'datamachine/import-agent' )" ) );

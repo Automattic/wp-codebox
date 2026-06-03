@@ -2,9 +2,20 @@ import { isPlainObject, stringList } from "./object-utils.js"
 
 export const SANDBOX_TOOL_POLICY_SCHEMA = "wp-codebox/sandbox-tool-policy/v1" as const
 export const SANDBOX_TOOL_POLICY_VERSION = 1 as const
+export const AGENTS_API_RUNTIME_ENVIRONMENT = "environment" as const
+export const AGENTS_API_RUNTIME_CAPABILITY_SCOPE = "capability_scope" as const
+export const AGENTS_API_RUNTIME_LOCAL = "runtime_local" as const
+export const AGENTS_API_CONTROL_PLANE = "control_plane" as const
 
 export type SandboxToolExecutionLocation = "sandbox" | "parent" | "external" | (string & {})
 export type SandboxToolTransportVisibility = "sandbox" | "parent" | "both" | "hidden" | (string & {})
+export type AgentsApiRuntimeEnvironment = typeof AGENTS_API_RUNTIME_LOCAL | typeof AGENTS_API_CONTROL_PLANE | (string & {})
+
+export interface AgentsApiRuntimeToolMetadata {
+  [AGENTS_API_RUNTIME_ENVIRONMENT]?: AgentsApiRuntimeEnvironment
+  [AGENTS_API_RUNTIME_CAPABILITY_SCOPE]?: AgentsApiRuntimeEnvironment
+  [key: string]: unknown
+}
 
 export interface SandboxToolPolicyTool {
   id: string
@@ -12,6 +23,7 @@ export interface SandboxToolPolicyTool {
   execution_location: SandboxToolExecutionLocation
   transport_visibility: SandboxToolTransportVisibility
   allowed: boolean
+  runtime?: AgentsApiRuntimeToolMetadata
   risk?: string
   action?: string
   metadata?: Record<string, unknown>
@@ -120,6 +132,29 @@ export function assertSandboxToolPolicySnapshot(input: unknown): asserts input i
 
 export function sandboxAllowedRuntimeToolIds(policy: SandboxToolPolicySnapshot): string[] {
   return stringList(policy.tools
-    .filter((tool) => tool.allowed && tool.execution_location === "sandbox" && ["sandbox", "both"].includes(tool.transport_visibility))
+    .filter((tool) => tool.allowed && sandboxToolRuntimeMetadata(tool).environment === AGENTS_API_RUNTIME_LOCAL && sandboxToolRuntimeMetadata(tool).capability_scope === AGENTS_API_RUNTIME_LOCAL)
     .map((tool) => tool.runtime_tool_id))
+}
+
+export function sandboxToolRuntimeMetadata(tool: SandboxToolPolicyTool): Required<Pick<AgentsApiRuntimeToolMetadata, typeof AGENTS_API_RUNTIME_ENVIRONMENT | typeof AGENTS_API_RUNTIME_CAPABILITY_SCOPE>> {
+  const runtime = isPlainObject(tool.runtime) ? tool.runtime : {}
+  const environment = typeof runtime[AGENTS_API_RUNTIME_ENVIRONMENT] === "string"
+    ? runtime[AGENTS_API_RUNTIME_ENVIRONMENT]
+    : legacyExecutionEnvironment(tool.execution_location)
+  const capabilityScope = typeof runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE] === "string"
+    ? runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE]
+    : legacyCapabilityScope(tool.transport_visibility)
+
+  return {
+    environment,
+    capability_scope: capabilityScope,
+  }
+}
+
+function legacyExecutionEnvironment(location: string): AgentsApiRuntimeEnvironment {
+  return location === "sandbox" ? AGENTS_API_RUNTIME_LOCAL : AGENTS_API_CONTROL_PLANE
+}
+
+function legacyCapabilityScope(visibility: string): AgentsApiRuntimeEnvironment {
+  return ["sandbox", "both"].includes(visibility) ? AGENTS_API_RUNTIME_LOCAL : AGENTS_API_CONTROL_PLANE
 }

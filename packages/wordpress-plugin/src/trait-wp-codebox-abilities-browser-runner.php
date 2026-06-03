@@ -534,6 +534,26 @@ $base_input = array(
 	\'key\' => $session_id,
 	\'label\' => \'WP Codebox Browser Playground\',
 ),
+\'principal\' => array(
+	\'acting_user_id\' => 0,
+	\'effective_agent_id\' => $agent,
+	\'auth_source\' => \'runtime\',
+	\'request_context\' => \'runtime\',
+	\'token_id\' => null,
+	\'request_metadata\' => array(
+		\'source\' => \'wp-codebox\',
+		\'mode\' => \'browser-playground\',
+		\'codebox_session_id\' => $session_id,
+	),
+	\'workspace_id\' => \'wp-codebox\',
+	\'client_id\' => \'wp-codebox-browser-runner\',
+	\'audience_id\' => $session_id,
+	\'audience_claims\' => array(
+		\'runtime_type\' => \'wordpress-playground\',
+	),
+	\'owner_type\' => \'runtime\',
+	\'owner_key\' => $session_id,
+),
 \'client_context\' => array(
 	\'source\' => \'peer-agent\',
 	\'client_name\' => \'wp-codebox-browser-runner\',

@@ -69,6 +69,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       default_workspace: defaultSandboxWorkspace(options.sandboxWorkspace),
       tool_contract: sandboxToolContract(sandboxToolPolicy),
     },
+    principal: runtimePrincipal(options.agent, options.sessionId, mode),
   }
 
   if (options.maxTurns) {
@@ -507,6 +508,30 @@ function sandboxToolContract(policy: SandboxToolPolicySnapshot): Record<string, 
     modes: ["chat", "sandbox"],
     tools: sandboxAllowedRuntimeToolIds(policy),
     policy,
+  }
+}
+
+function runtimePrincipal(agent: string | undefined, sessionId: string | undefined, mode: string): Record<string, unknown> {
+  const runtimeId = sessionId?.trim() || "wp-codebox-runtime"
+  return {
+    acting_user_id: 0,
+    effective_agent_id: agent || "wp-codebox-agent",
+    auth_source: "runtime",
+    request_context: "runtime",
+    token_id: null,
+    request_metadata: {
+      source: "wp-codebox",
+      mode,
+      codebox_session_id: sessionId ?? null,
+    },
+    workspace_id: "wp-codebox",
+    client_id: "wp-codebox-cli",
+    audience_id: runtimeId,
+    audience_claims: {
+      runtime_type: "wordpress-playground",
+    },
+    owner_type: "runtime",
+    owner_key: runtimeId,
   }
 }
 
