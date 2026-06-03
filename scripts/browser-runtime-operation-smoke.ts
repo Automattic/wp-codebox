@@ -97,6 +97,7 @@ const adminBarClient = createClient('{"success":true,"data":{"target":"frontendA
 const adminBarResult = await runtime.setFrontendAdminBarVisible(adminBarClient, { visible: false })
 assert.deepEqual(sameRealm(adminBarResult), {
   operation: "setFrontendAdminBarVisible",
+  success: true,
   status: "ok",
   target: "frontendAdminBar",
   key: "show_admin_bar_front",
@@ -114,6 +115,7 @@ assert.match(adminBarClient.files[0]?.contents ?? "", /case 'setFrontendAdminBar
 const invalidAdminBarResult = await runtime.setFrontendAdminBarVisible(createClient("{}"), { visible: "false" })
 assert.deepEqual(sameRealm(invalidAdminBarResult), {
   operation: "setFrontendAdminBarVisible",
+  success: false,
   status: "error",
   target: "frontendAdminBar",
   key: "show_admin_bar_front",
@@ -130,6 +132,7 @@ assert.deepEqual(sameRealm(invalidAdminBarResult), {
 const invalidAdminBarArgsResult = await runtime.setFrontendAdminBarVisible(createClient("{}"), null)
 assert.deepEqual(sameRealm(invalidAdminBarArgsResult), {
   operation: "setFrontendAdminBarVisible",
+  success: false,
   status: "error",
   target: "frontendAdminBar",
   key: "show_admin_bar_front",
@@ -147,6 +150,7 @@ const reviewFileClient = createClient('{"success":true,"data":{"target":"reviewF
 const reviewFileResult = await runtime.writeReviewFile(reviewFileClient, { path: "artifacts/review.md", content: "looks ok\n" })
 assert.deepEqual(sameRealm(reviewFileResult), {
   operation: "writeReviewFile",
+  success: true,
   status: "ok",
   target: "reviewFile",
   path: "/wordpress/wp-content/uploads/wp-codebox/reviews/artifacts/review.md",
@@ -163,6 +167,7 @@ assert.match(reviewFileClient.files[0]?.contents ?? "", /case 'writeReviewFile':
 const unsafeReviewFileResult = await runtime.writeReviewFile(createClient("{}"), { path: "../escape.md", content: "nope" })
 assert.deepEqual(sameRealm(unsafeReviewFileResult), {
   operation: "writeReviewFile",
+  success: false,
   status: "error",
   target: "reviewFile",
   path: "../escape.md",
@@ -179,6 +184,7 @@ assert.deepEqual(sameRealm(unsafeReviewFileResult), {
 const invalidReviewFileArgsResult = await runtime.writeReviewFile(createClient("{}"), null)
 assert.deepEqual(sameRealm(invalidReviewFileArgsResult), {
   operation: "writeReviewFile",
+  success: false,
   status: "error",
   target: "reviewFile",
   path: null,

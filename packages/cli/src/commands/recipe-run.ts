@@ -615,7 +615,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
     const activeRuntime = runtime
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
-      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0, undefined, interruption))
+      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0))
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
     })
     runRecord = await runRegistry.read(runRecord.runId)
