@@ -9,6 +9,7 @@ interface CliCommandRouter {
   recipeValidate: CliCommandHandler
   recipeBuild: CliCommandHandler
   recipeRun: CliCommandHandler
+  agentTaskRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
@@ -44,6 +45,8 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       return router.validateBlueprint(args)
     case "recipe-run":
       return router.recipeRun(args)
+    case "agent-task-run":
+      return router.agentTaskRun(args)
     case "recipe": {
       const subcommand = args.shift()
       if (subcommand === "validate") {
@@ -128,7 +131,7 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
 }
 
 async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
-  if (!command || !["boot", "run", "recipe-run"].includes(command)) {
+  if (!command || !["boot", "run", "recipe-run", "agent-task-run"].includes(command)) {
     return undefined
   }
 
