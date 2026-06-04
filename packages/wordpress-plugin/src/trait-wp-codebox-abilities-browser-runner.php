@@ -38,6 +38,9 @@ trait WP_Codebox_Abilities_Browser_Runner {
 		}
 	}
 
+	$runner_php      = self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation, $captures );
+	$runner_contract = self::browser_agent_runner_contract( $runner_php );
+
 	return array(
 		'schema'   => 'wp-codebox/workspace-recipe/v1',
 		'runtime'  => array(
@@ -60,7 +63,7 @@ trait WP_Codebox_Abilities_Browser_Runner {
 				array(
 					'command' => 'wordpress.run-php',
 					'args'    => array(
-						'code=' . self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation, $captures ),
+						'code=' . $runner_php,
 					),
 				),
 			),
@@ -75,6 +78,7 @@ trait WP_Codebox_Abilities_Browser_Runner {
 			'task_payload' => $task_payload,
 			'invocation' => self::browser_runner_invocation_metadata( $invocation ),
 			'captures'   => $captures,
+			'runner_contract' => $runner_contract,
 		),
 	);
 }
@@ -1036,6 +1040,7 @@ if ( interface_exists( "\\DataMachine\\Engine\\AI\\LoopEventSinkInterface" ) && 
 }
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
 
+/* WP_CODEBOX_BROWSER_RUNNER_BODY_START */
 if ( ! $wp_codebox_is_playground ) {
 $response = new WP_Error(
 	\'wp_codebox_browser_runner_not_playground\',
@@ -1098,6 +1103,7 @@ try {
 }
 }
 
+/* WP_CODEBOX_BROWSER_RUNNER_BODY_END */
 $captures = array();
 foreach ( $capture_paths as $capture ) {
 if ( is_array( $capture ) ) {
@@ -1187,6 +1193,26 @@ if ( ! empty( $artifact_bundle ) ) {
 file_put_contents( $result_path, wp_json_encode( $result ) );
 echo wp_json_encode( $result );
 ';
+}
+
+/** @return array<string,string> */
+private static function browser_agent_runner_contract( string $runner_php ): array {
+	$body_start = '/* WP_CODEBOX_BROWSER_RUNNER_BODY_START */';
+	$body_end   = '/* WP_CODEBOX_BROWSER_RUNNER_BODY_END */';
+	$start_pos  = strpos( $runner_php, $body_start );
+	$end_pos    = strpos( $runner_php, $body_end );
+
+	if ( false === $start_pos || false === $end_pos || $end_pos <= $start_pos ) {
+		return array(
+			'schema' => 'wp-codebox/browser-runner-contract/v1',
+		);
+	}
+
+	return array(
+		'schema'      => 'wp-codebox/browser-runner-contract/v1',
+		'php_prelude' => substr( $runner_php, 0, $start_pos ),
+		'php_footer'  => substr( $runner_php, $end_pos + strlen( $body_end ) ),
+	);
 }
 
 /** @param array<string,mixed> $playground Playground config. */
