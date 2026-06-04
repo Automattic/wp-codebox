@@ -8,7 +8,9 @@ return static function (): array {
 		'metrics'  => array(
 			'fixture_value'                 => wp_codebox_bench_plugin_value(),
 			'dependency_value'              => wp_codebox_bench_dependency_value(),
+			'dependency_class_visible'      => class_exists( 'WP_Codebox_Bench_Dependency_Fixture' ) ? 1 : 0,
 			'dependency_active'             => is_plugin_active( 'bench-dependency/dependency-main.php' ) ? 1 : 0,
+			'dependency_active_at_include'  => (int) $GLOBALS['wp_codebox_bench_dependency_boot']['active_at_include'],
 			'dependency_plugins_loaded_callback_count' => (int) $GLOBALS['wp_codebox_bench_dependency_boot']['plugins_loaded_callbacks'],
 			'dependency_init_callback_count'           => (int) $GLOBALS['wp_codebox_bench_dependency_boot']['init_callbacks'],
 			'rest_route_visible'            => isset( $data['value'] ) && 7 === (int) $data['value'] ? 1 : 0,

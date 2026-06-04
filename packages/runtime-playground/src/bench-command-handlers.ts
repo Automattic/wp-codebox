@@ -203,12 +203,12 @@ function wp_codebox_bench_run_deferred_wordpress_hook_callbacks(array $deferred,
 function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role): string {
     $plugin_slug = sanitize_key($plugin_slug);
     if ($plugin_slug === '') {
-        throw new RuntimeException('wordpress.bench received an empty ' . $role . ' plugin slug.');
+        throw new RuntimeException('wordpress.bench received an empty ' . $role . ' plugin slug. ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'empty plugin slug'));
     }
 
     $plugin_dir = WP_PLUGIN_DIR . '/' . $plugin_slug;
     if (!is_dir($plugin_dir)) {
-        throw new RuntimeException('wordpress.bench could not find ' . $role . ' plugin directory for slug "' . $plugin_slug . '" at ' . $plugin_dir . '. WP_PLUGIN_DIR=' . WP_PLUGIN_DIR);
+        throw new RuntimeException('wordpress.bench could not find ' . $role . ' plugin directory for slug "' . $plugin_slug . '". ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'missing plugin directory'));
     }
 
     $candidate_files = array($plugin_dir . '/' . $plugin_slug . '.php');
@@ -230,7 +230,42 @@ function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role
         }
     }
 
-    throw new RuntimeException('wordpress.bench could not locate a readable plugin header for ' . $role . ' slug "' . $plugin_slug . '". Checked: ' . implode(', ', $checked_files));
+    throw new RuntimeException('wordpress.bench could not locate a readable plugin header for ' . $role . ' slug "' . $plugin_slug . '". ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'missing readable plugin header', $checked_files));
+}
+
+function wp_codebox_bench_plugin_slug_diagnostic(string $plugin_slug, string $role, string $error, array $checked_files = array()): string {
+    $plugin_dir = WP_PLUGIN_DIR . '/' . $plugin_slug;
+    return 'diagnostic=' . wp_json_encode(array(
+        'schema' => 'wp-codebox/bench-plugin-load-diagnostic/v1',
+        'role' => $role,
+        'plugin_slug' => $plugin_slug,
+        'expected_directory' => $plugin_dir,
+        'directory_exists' => is_dir($plugin_dir),
+        'wp_plugin_dir' => WP_PLUGIN_DIR,
+        'checked_files' => $checked_files,
+        'error' => $error,
+    ), JSON_UNESCAPED_SLASHES);
+}
+
+function wp_codebox_bench_plugin_load_diagnostic(string $plugin_basename, string $role, string $error = ''): string {
+    $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_basename;
+    $real_plugin_file = realpath($absolute_plugin_file);
+    $included_files = array_map(static fn($file) => realpath($file) ?: $file, get_included_files());
+    $included = in_array($real_plugin_file ?: $absolute_plugin_file, $included_files, true);
+
+    return 'diagnostic=' . wp_json_encode(array(
+        'schema' => 'wp-codebox/bench-plugin-load-diagnostic/v1',
+        'role' => $role,
+        'plugin_slug' => dirname($plugin_basename),
+        'plugin_file' => $plugin_basename,
+        'expected_file_path' => $absolute_plugin_file,
+        'file_exists' => is_file($absolute_plugin_file),
+        'file_readable' => is_readable($absolute_plugin_file),
+        'active' => function_exists('is_plugin_active') ? is_plugin_active($plugin_basename) : null,
+        'included' => $included,
+        'wp_plugin_dir' => WP_PLUGIN_DIR,
+        'error' => $error,
+    ), JSON_UNESCAPED_SLASHES);
 }
 
 function wp_codebox_bench_mark_plugin_active(string $plugin_basename): void {
@@ -242,10 +277,10 @@ function wp_codebox_bench_mark_plugin_active(string $plugin_basename): void {
     }
 }
 
-function wp_codebox_bench_include_plugin_file(string $plugin_basename): void {
+function wp_codebox_bench_include_plugin_file(string $plugin_basename, string $role): void {
     $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_basename;
     if (!is_file($absolute_plugin_file) || !is_readable($absolute_plugin_file)) {
-        throw new RuntimeException('wordpress.bench cannot include plugin file "' . $plugin_basename . '" at ' . $absolute_plugin_file . '.');
+        throw new RuntimeException('wordpress.bench cannot include plugin file "' . $plugin_basename . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_basename, $role, 'missing or unreadable plugin file'));
     }
 
     wp_codebox_bench_assert_plugin_autoload_ready($plugin_basename);
@@ -254,7 +289,12 @@ function wp_codebox_bench_include_plugin_file(string $plugin_basename): void {
         require_once $absolute_plugin_file;
         wp_codebox_bench_mark_plugin_active($plugin_basename);
     } catch (Throwable $e) {
-        throw new RuntimeException('wordpress.bench failed to include plugin "' . $plugin_basename . '" at ' . $absolute_plugin_file . ': ' . $e->getMessage(), 0, $e);
+        throw new RuntimeException('wordpress.bench failed to include plugin "' . $plugin_basename . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_basename, $role, $e->getMessage()), 0, $e);
+    }
+
+    $diagnostic = wp_codebox_bench_plugin_load_diagnostic($plugin_basename, $role, 'plugin file was not included');
+    if (strpos($diagnostic, '"included":true') === false) {
+        throw new RuntimeException('wordpress.bench failed to verify included plugin "' . $plugin_basename . '". ' . $diagnostic);
     }
 }
 
@@ -287,12 +327,16 @@ function wp_codebox_bench_assert_plugin_autoload_ready(string $plugin_basename):
 }
 
 $plugins_to_activate = array();
+$plugin_roles = array();
 $activated_plugins = array();
 foreach (is_array($dependency_slugs) ? $dependency_slugs : array() as $dependency_slug) {
-    $plugins_to_activate[] = wp_codebox_bench_plugin_file_for_slug((string) $dependency_slug, 'dependency');
+    $dependency_file = wp_codebox_bench_plugin_file_for_slug((string) $dependency_slug, 'dependency');
+    $plugins_to_activate[] = $dependency_file;
+    $plugin_roles[$dependency_file] = 'dependency';
 }
 $plugin_file = wp_codebox_bench_plugin_file_for_slug($plugin_slug, 'component');
 $plugins_to_activate[] = $plugin_file;
+$plugin_roles[$plugin_file] = 'component';
 $plugins_to_activate = array_values(array_unique($plugins_to_activate));
 foreach ($plugins_to_activate as $plugin_to_activate) {
     wp_codebox_bench_assert_plugin_autoload_ready($plugin_to_activate);
@@ -303,7 +347,7 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
     }
     $activation = activate_plugin($plugin_to_activate);
     if (is_wp_error($activation)) {
-        throw new RuntimeException($activation->get_error_message());
+        throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_to_activate . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin', $activation->get_error_message()));
     }
     $activated_plugins[] = $plugin_to_activate;
 }
@@ -311,7 +355,7 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
 $pre_plugins_loaded_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_init_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('init');
 foreach ($plugins_to_activate as $plugin_to_activate) {
-    wp_codebox_bench_include_plugin_file($plugin_to_activate);
+    wp_codebox_bench_include_plugin_file($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin');
 }
 $loaded_bootstrap_file = '';
 foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_file) {
