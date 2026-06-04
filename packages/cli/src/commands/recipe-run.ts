@@ -120,7 +120,30 @@ interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
 interface BenchResults {
   component_id: string
   iterations: number
-  scenarios: Array<Record<string, unknown>>
+  warmup_iterations?: number
+  scenarios: BenchScenarioResults[]
+}
+
+interface BenchSampleDiagnostics {
+  sample_count: number
+  mean: number
+  standard_deviation: number
+  relative_standard_deviation: number
+}
+
+interface BenchScenarioResults extends Record<string, unknown> {
+  id: string
+  source: string
+  iterations: number
+  metrics: Record<string, number>
+  samples?: {
+    duration_ms?: number[]
+    metrics?: Record<string, number[]>
+  }
+  diagnostics?: {
+    duration_ms?: BenchSampleDiagnostics
+    metrics?: Record<string, BenchSampleDiagnostics>
+  }
 }
 
 export async function runRecipeRunCommand(args: string[]): Promise<number> {

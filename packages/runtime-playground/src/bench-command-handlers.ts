@@ -62,6 +62,36 @@ function wp_codebox_bench_aggregate(array $samples, string $prefix = '', string 
     );
 }
 
+function wp_codebox_bench_sample_diagnostics(array $samples): array {
+    $count = count($samples);
+    $mean = $count > 0 ? array_sum($samples) / $count : 0.0;
+    $variance_sum = 0.0;
+    foreach ($samples as $sample) {
+        $delta = (float) $sample - $mean;
+        $variance_sum += $delta * $delta;
+    }
+    $standard_deviation = $count > 0 ? sqrt($variance_sum / $count) : 0.0;
+
+    return array(
+        'sample_count' => $count,
+        'mean' => $mean,
+        'standard_deviation' => $standard_deviation,
+        'relative_standard_deviation' => $mean !== 0.0 ? $standard_deviation / abs($mean) : 0.0,
+    );
+}
+
+function wp_codebox_bench_samples_diagnostics(array $metric_samples): array {
+    $diagnostics = array();
+    ksort($metric_samples);
+    foreach ($metric_samples as $name => $samples) {
+        if (!is_string($name) || !is_array($samples)) {
+            continue;
+        }
+        $diagnostics[$name] = wp_codebox_bench_sample_diagnostics($samples);
+    }
+    return $diagnostics;
+}
+
 function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null): void {
     if (!is_array($payload)) {
         return;
@@ -464,7 +494,6 @@ foreach ($workload_files as $workload_file) {
     $metric_samples = array();
     $metadata = null;
     $artifacts = null;
-    $artifacts = null;
 
     if (function_exists('memory_reset_peak_usage')) {
         memory_reset_peak_usage();
@@ -496,6 +525,14 @@ foreach ($workload_files as $workload_file) {
         'file' => $relative_file,
         'iterations' => $iterations,
         'metrics' => $metrics,
+        'samples' => array(
+            'duration_ms' => $timings,
+            'metrics' => $metric_samples,
+        ),
+        'diagnostics' => array(
+            'duration_ms' => wp_codebox_bench_sample_diagnostics($timings),
+            'metrics' => wp_codebox_bench_samples_diagnostics($metric_samples),
+        ),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
     );
 
@@ -514,6 +551,7 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     $timings = array();
     $metric_samples = array();
     $metadata = null;
+    $artifacts = null;
     $total_iterations = $iterations + $warmup_iterations;
     for ($i = 0; $i < $total_iterations; $i++) {
         $is_warmup = $i < $warmup_iterations;
@@ -535,6 +573,14 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
         'source' => 'config',
         'iterations' => $iterations,
         'metrics' => $metrics,
+        'samples' => array(
+            'duration_ms' => $timings,
+            'metrics' => $metric_samples,
+        ),
+        'diagnostics' => array(
+            'duration_ms' => wp_codebox_bench_sample_diagnostics($timings),
+            'metrics' => wp_codebox_bench_samples_diagnostics($metric_samples),
+        ),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
     );
     if (is_array($metadata) && !empty($metadata)) {
