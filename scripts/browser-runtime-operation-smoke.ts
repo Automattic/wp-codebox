@@ -82,6 +82,31 @@ assert.equal(handlerClient.handlerRequests.length, 1)
 assert.equal(handlerClient.requests.length, 0)
 assert.match(handlerClient.handlerRequests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/task-/)
 
+const workerEndpointClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"worker-endpoint\"},\"error\":null} suffix", false, true)
+workerEndpointClient.requestHandler = {
+  request: async (body: { request?: { method: string; url: string } }) => {
+    if (!body.request) {
+      throw new TypeError("Cannot read properties of undefined (reading 'request')")
+    }
+    workerEndpointClient.handlerRequests.push(body.request)
+    return "prefix {\"success\":true,\"data\":{\"runner\":\"worker-endpoint\"},\"error\":null} suffix"
+  },
+}
+const workerEndpointResult = await runtime.runPhpRequest(workerEndpointClient, { code: "<?php echo 'ok';", expectJson: true })
+assert.deepEqual(sameRealm(workerEndpointResult), { success: true, data: { runner: "worker-endpoint" }, error: null })
+assert.equal(workerEndpointClient.handlerRequests.length, 1)
+
+const objectShapeFileClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"object-file\"},\"error\":null} suffix")
+objectShapeFileClient.writeFile = async function writeFile(body: string | { path?: string; data?: string }) {
+  if (typeof body === "string") {
+    throw new TypeError("writeFile expects object shape")
+  }
+  this.files.push({ path: body.path ?? "", contents: body.data ?? "" })
+}
+const objectShapeFileResult = await runtime.runPhpRequest(objectShapeFileClient, { code: "<?php echo 'ok';", expectJson: true })
+assert.deepEqual(sameRealm(objectShapeFileResult), { success: true, data: { runner: "object-file" }, error: null })
+assert.match(objectShapeFileClient.files[0]?.path ?? "", /\/wordpress\/wp-content\/uploads\/wp-codebox\/runner\/task-/)
+
 const writeClient = createClient("{\"success\":true,\"data\":{\"path\":\"/wordpress/wp-content/example.txt\",\"bytes\":11},\"error\":null}")
 const writeResult = await runtime.writeFile(writeClient, { path: "/wordpress/wp-content/example.txt", content: "hello world" })
 assert.deepEqual(sameRealm(writeResult), {
@@ -369,7 +394,7 @@ function createClient(response: unknown, supportsRun = false, supportsRequestHan
     handlerRequests: [] as Array<{ method: string; url: string }>,
     runs: [] as Array<{ code: string }>,
     runResponse: undefined as unknown,
-    requestHandler: undefined as undefined | { request: (request: { method: string; url: string }) => Promise<unknown> },
+    requestHandler: undefined as undefined | { request: (request: { method: string; url: string } | { request: { method: string; url: string } }) => Promise<unknown> },
     async mkdir(path: string) {
       this.mkdirs.push(path)
     },
@@ -392,7 +417,8 @@ function createClient(response: unknown, supportsRun = false, supportsRequestHan
 
   if (supportsRequestHandler) {
     client.requestHandler = {
-      request: async (request: { method: string; url: string }) => {
+      request: async (body: { method: string; url: string } | { request: { method: string; url: string } }) => {
+        const request = "request" in body ? body.request : body
         client.handlerRequests.push(request)
         return response
       },

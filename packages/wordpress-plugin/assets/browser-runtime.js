@@ -116,6 +116,39 @@
 
 	const isPlainObject = ( value ) => !! value && typeof value === 'object' && ! Array.isArray( value );
 
+	const runtimeError = ( phase, code, message, data = null ) => {
+		const error = new Error( message );
+		error.phase = phase;
+		error.code = code;
+		error.data = data;
+		return error;
+	};
+
+	const errorDetails = ( error ) => ( {
+		code: error?.code || 'runtime_error',
+		phase: error?.phase || 'runtime',
+		message: error?.message || String( error ),
+		data: error?.data ?? null,
+	} );
+
+	const invokePlaygroundMethod = async ( phase, method, attempts ) => {
+		let lastError = null;
+		for ( const attempt of attempts ) {
+			try {
+				return await attempt();
+			} catch ( error ) {
+				lastError = error;
+			}
+		}
+
+		throw runtimeError(
+			phase,
+			`playground_${ method }_failed`,
+			`Playground ${ method } failed during ${ phase }.`,
+			lastError ? errorDetails( lastError ) : null
+		);
+	};
+
 	const redactBrowserProviderProxyData = ( value ) => {
 		if ( ! value || typeof value !== 'object' ) {
 			return value;
@@ -657,31 +690,75 @@ try {
 }
 `;
 
-	const playgroundRequestHandler = ( client ) => {
+	const playgroundRequestTarget = ( client ) => {
 		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
-			return client.requestHandler;
+			return {
+				target: client.requestHandler,
+				method: client.requestHandler.request,
+				shape: 'request-handler',
+			};
 		}
 
 		if ( client && typeof client.request === 'function' ) {
-			return client;
+			return {
+				target: client,
+				method: client.request,
+				shape: 'client',
+			};
 		}
 
 		return null;
 	};
 
-	const runPhpRequest = async ( client, options = {} ) => {
-		const requestHandler = playgroundRequestHandler( client );
-		if ( ! requestHandler ) {
-			throw new Error( 'Playground request handler is unavailable.' );
+	const playgroundMkdir = async ( client, path ) => {
+		if ( typeof client?.mkdir !== 'function' ) {
+			return;
 		}
 
+		await invokePlaygroundMethod( 'mkdir', 'mkdir', [
+			() => client.mkdir( path, { recursive: true } ),
+			() => client.mkdir( path ),
+			() => client.mkdir( { path } ),
+		] );
+	};
+
+	const playgroundWriteFile = async ( client, path, contents ) => {
+		if ( typeof client?.writeFile !== 'function' ) {
+			throw runtimeError( 'write_file', 'playground_write_file_unavailable', 'Playground writeFile is unavailable.' );
+		}
+
+		await invokePlaygroundMethod( 'write_file', 'writeFile', [
+			() => client.writeFile( path, contents ),
+			() => client.writeFile( { path, data: contents } ),
+			() => client.writeFile( { path, contents } ),
+		] );
+	};
+
+	const playgroundRequest = async ( client, request ) => {
+		const requestTarget = playgroundRequestTarget( client );
+		if ( ! requestTarget ) {
+			throw runtimeError( 'request', 'playground_request_unavailable', 'Playground request handler is unavailable.' );
+		}
+
+		const invoke = ( body ) => requestTarget.method.call( requestTarget.target, body );
+		const attempts = requestTarget.shape === 'request-handler'
+			? [ () => invoke( { request } ), () => invoke( request ) ]
+			: [ () => invoke( request ), () => invoke( { request } ) ];
+
+		return await invokePlaygroundMethod( 'request', 'request', attempts );
+	};
+
+	const runPhpRequest = async ( client, options = {} ) => {
 		const code = String( options.code || '' );
 		if ( ! code ) {
-			throw new Error( 'PHP code is required.' );
+			throw runtimeError( 'validate', 'php_code_missing', 'PHP code is required.' );
 		}
 
 		if ( ! options.forceRequest && typeof client.run === 'function' ) {
-			const response = await client.run( { code } );
+			const response = await invokePlaygroundMethod( 'run_php', 'run', [
+				() => client.run( { code } ),
+				() => client.run( code ),
+			] );
 			return options.expectJson ? await parseJsonResponse( response ) : response;
 		}
 
@@ -690,39 +767,14 @@ try {
 		const filename = `${ safeName( options.name ) }-${ Date.now() }-${ Math.random().toString( 36 ).slice( 2, 8 ) }.php`;
 		const scriptPath = `${ runnerDir }/${ filename }`;
 		const requestUrl = `${ runnerUrlBase }/${ filename }`;
-		const retryObjectShape = async ( error, callback ) => {
-			if ( ! /request/i.test( error?.message || '' ) ) {
-				throw error;
-			}
-			return await callback();
-		};
-
-		if ( typeof client.mkdir === 'function' ) {
-			try {
-				await client.mkdir( runnerDir );
-			} catch ( error ) {
-				await retryObjectShape( error, () => client.mkdir( { path: runnerDir } ) );
-			}
-		}
-		try {
-			await client.writeFile( scriptPath, code );
-		} catch ( error ) {
-			await retryObjectShape( error, () => client.writeFile( { path: scriptPath, data: code } ) );
-		}
+		await playgroundMkdir( client, runnerDir );
+		await playgroundWriteFile( client, scriptPath, code );
 
 		const request = {
 			method: 'GET',
 			url: requestUrl,
 		};
-		let response;
-		try {
-			response = await requestHandler.request( request );
-		} catch ( error ) {
-			if ( ! /request/i.test( error?.message || '' ) ) {
-				throw error;
-			}
-			response = await requestHandler.request( { request } );
-		}
+		const response = await playgroundRequest( client, request );
 
 		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
@@ -856,12 +908,12 @@ try {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
 		if ( ! taskPath || steps.length === 0 ) {
-			throw new Error( 'WP Codebox browser recipe missing.' );
+			throw runtimeError( 'recipe_validate', 'browser_recipe_missing', 'WP Codebox browser recipe missing.' );
 		}
 
 		const payload = taskPayload && typeof taskPayload === 'object' ? taskPayload : recipe?.browser?.task_payload;
 		if ( ! payload || typeof payload !== 'object' ) {
-			throw new Error( 'WP Codebox browser recipe task payload missing.' );
+			throw runtimeError( 'recipe_validate', 'browser_recipe_task_payload_missing', 'WP Codebox browser recipe task payload missing.' );
 		}
 
 		const writeResult = await writeFile( client, {
@@ -871,7 +923,7 @@ try {
 			name: options.name || 'codebox-recipe-task',
 		} );
 		if ( ! writeResult.success ) {
-			throw new Error( writeResult?.error?.message || 'WP Codebox browser recipe task write failed.' );
+			throw runtimeError( 'recipe_task_write', writeResult?.error?.code || 'browser_recipe_task_write_failed', writeResult?.error?.message || 'WP Codebox browser recipe task write failed.', writeResult?.error?.data ?? null );
 		}
 
 		let lastResult = null;
@@ -879,12 +931,12 @@ try {
 		try {
 			for ( const step of steps ) {
 				if ( step?.command !== 'wordpress.run-php' ) {
-					throw new Error( `Unsupported browser recipe step: ${ step?.command || 'unknown' }` );
+					throw runtimeError( 'recipe_step_validate', 'browser_recipe_step_unsupported', `Unsupported browser recipe step: ${ step?.command || 'unknown' }`, { command: step?.command || null } );
 				}
 
 				const codeArg = ( step.args || [] ).find( ( arg ) => typeof arg === 'string' && arg.startsWith( 'code=' ) );
 				if ( ! codeArg ) {
-					throw new Error( 'Browser recipe PHP step missing code argument.' );
+					throw runtimeError( 'recipe_step_validate', 'browser_recipe_php_code_missing', 'Browser recipe PHP step missing code argument.' );
 				}
 
 				lastResult = await runPhpRequest( client, {
@@ -895,8 +947,7 @@ try {
 					forceRequest: true,
 				} );
 				if ( ! lastResult.success ) {
-					const detail = lastResult?.error?.data ? ` ${ JSON.stringify( lastResult.error.data ) }` : '';
-					throw new Error( `${ lastResult?.error?.message || 'WP Codebox browser recipe step failed.' }${ detail }` );
+					throw runtimeError( 'recipe_step_php', lastResult?.error?.code || 'browser_recipe_step_failed', lastResult?.error?.message || 'WP Codebox browser recipe step failed.', lastResult?.error?.data ?? null );
 				}
 			}
 		} finally {
