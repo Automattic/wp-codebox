@@ -123,6 +123,15 @@ interface RecipePluginRuntimeDiagnostic {
   executionIndex?: number
 }
 
+interface RecipePhpWasmRuntimeDiagnostic {
+  schema: "wp-codebox/php-wasm-runtime-diagnostic/v1"
+  severity: "error"
+  phase: "preflight"
+  message: string
+  runtime?: Record<string, unknown>
+  repair?: string
+}
+
 interface RecipePhaseDiagnostic {
   schema: "wp-codebox/recipe-phase-diagnostic/v1"
   severity: "error"
@@ -134,7 +143,7 @@ interface RecipePhaseDiagnostic {
   executionIndex?: number
 }
 
-type RecipeRuntimeDiagnostic = RecipePluginRuntimeDiagnostic | RecipePhaseDiagnostic
+type RecipeRuntimeDiagnostic = RecipePluginRuntimeDiagnostic | RecipePhaseDiagnostic | RecipePhpWasmRuntimeDiagnostic
 
 interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
   action: "imported" | "skipped"
@@ -1524,6 +1533,11 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
       executionIndex,
     } as RecipeRuntimeDiagnostic))
 
+  const phpWasmDiagnostic = phpWasmRuntimeDiagnostic(error)
+  if (phpWasmDiagnostic) {
+    diagnostics.push(phpWasmDiagnostic)
+  }
+
   const message = error instanceof Error ? error.message : String(error)
   if (error instanceof RecipePhaseError && diagnostics.length === 0) {
     diagnostics.push({
@@ -1545,6 +1559,39 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
   }
 
   return diagnostics.length > 0 ? diagnostics : undefined
+}
+
+function phpWasmRuntimeDiagnostic(error: unknown): RecipePhpWasmRuntimeDiagnostic | undefined {
+  const candidate = phpWasmRuntimeErrorCandidate(error)
+  if (!candidate) {
+    return undefined
+  }
+
+  const diagnostic = candidate.diagnostic && typeof candidate.diagnostic === "object" && !Array.isArray(candidate.diagnostic)
+    ? candidate.diagnostic as Record<string, unknown>
+    : undefined
+
+  return {
+    schema: "wp-codebox/php-wasm-runtime-diagnostic/v1",
+    severity: "error",
+    phase: "preflight",
+    message: typeof candidate.message === "string" ? candidate.message : "PHP wasm runtime asset preflight failed.",
+    ...(diagnostic ? { runtime: diagnostic } : {}),
+    ...(typeof candidate.repair === "string" ? { repair: candidate.repair } : {}),
+  }
+}
+
+function phpWasmRuntimeErrorCandidate(error: unknown): { message?: unknown; code?: unknown; diagnostic?: unknown; repair?: unknown; cause?: unknown } | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined
+  }
+
+  const candidate = error as { message?: unknown; code?: unknown; diagnostic?: unknown; repair?: unknown; cause?: unknown }
+  if (candidate.code === "wp-codebox-php-wasm-runtime-asset-invalid") {
+    return candidate
+  }
+
+  return phpWasmRuntimeErrorCandidate(candidate.cause)
 }
 
 function pluginFileFromActivationFailure(message: string, phaseData: Record<string, unknown> | undefined): string | undefined {

@@ -38,6 +38,10 @@ try {
 
   const metadata = JSON.parse(await readFile(output.artifacts.metadataPath, "utf8"))
   assert.equal(metadata.context.task.kind, "cli-boot")
+  assert.equal(metadata.context.phpWasmRuntimeAssetPreflight.schema, "wp-codebox/php-wasm-runtime-asset-preflight/v1")
+  assert.equal(typeof metadata.context.phpWasmRuntimeAssetPreflight.packageName, "string")
+  assert.equal(typeof metadata.context.phpWasmRuntimeAssetPreflight.mode, "string")
+  assert.match(metadata.context.phpWasmRuntimeAssetPreflight.wasmPath, /php_\d_\d\.wasm$/)
 } finally {
   await rm(artifactsDirectory, { recursive: true, force: true })
 }

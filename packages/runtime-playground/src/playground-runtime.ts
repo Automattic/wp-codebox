@@ -16,6 +16,7 @@ import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
+import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import type {
   ArtifactBundle,
   ArtifactPreview,
@@ -87,13 +88,21 @@ class PlaygroundRuntime implements Runtime {
   }
 
   static async create(spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
-    const runtime = new PlaygroundRuntime(spec, options)
+    const phpWasmRuntimeAssetPreflight = await preflightPhpWasmRuntimeAssets()
+    const runtime = new PlaygroundRuntime({
+      ...spec,
+      metadata: {
+        ...(spec.metadata ?? {}),
+        phpWasmRuntimeAssetPreflight,
+      },
+    }, options)
     await mkdir(runtime.artifactRoot, { recursive: true })
     runtime.recordEvent("runtime.created", {
       backend: "wordpress-playground",
       environment: spec.environment,
       policy: spec.policy,
       hostTools: runtime.hostTools?.list() ?? [],
+      phpWasmRuntimeAssetPreflight,
     })
     return runtime
   }
