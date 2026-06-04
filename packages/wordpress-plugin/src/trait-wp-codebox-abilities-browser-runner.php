@@ -838,6 +838,63 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 	}
 }
 
+function wp_codebox_browser_runtime_tool_name( string $tool_id ): string {
+$tool_id = trim( $tool_id );
+if ( \'filesystem-write\' === $tool_id || \'client/filesystem-write\' === $tool_id ) {
+	return \'client/filesystem-write\';
+}
+
+return \'\';
+}
+
+function wp_codebox_browser_runtime_tool_declarations( array $tool_names ): array {
+global $wp_codebox_browser_artifact_environment;
+
+$declarations = array();
+if ( ! in_array( \'client/filesystem-write\', $tool_names, true ) ) {
+	return $declarations;
+}
+
+$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
+$root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
+$base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
+$declarations[\'client/filesystem-write\'] = array(
+	\'name\'        => \'client/filesystem-write\',
+	\'source\'      => \'client\',
+	\'description\' => sprintf( \'Write one generated artifact file inside %s/%s. Call this once per file required by the caller artifact contract.\', $base_path, $root ),
+	\'executor\'    => \'client\',
+	\'scope\'       => \'run\',
+	\'parameters\'  => array(
+		\'type\'       => \'object\',
+		\'required\'   => array( \'path\', \'content\' ),
+		\'properties\' => array(
+			\'path\'     => array( \'type\' => \'string\', \'description\' => sprintf( \'Relative artifact path under %s, for example %sindex.html.\', $root, $root ) ),
+			\'content\'  => array( \'type\' => \'string\', \'description\' => \'Full file contents. Use UTF-8 text unless encoding is base64.\' ),
+			\'encoding\' => array( \'type\' => \'string\', \'enum\' => array( \'utf-8\', \'base64\' ) ),
+		),
+	),
+	\'runtime\'     => array(
+		\'environment\'      => \'runtime_local\',
+		\'capability_scope\' => \'runtime_local\',
+	),
+);
+
+return $declarations;
+}
+
+function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
+unset( $payload );
+
+if ( \'client/filesystem-write\' !== (string) ( $request[\'tool_name\'] ?? \'\' ) ) {
+	return null;
+}
+
+$handler = new WP_Codebox_Browser_Filesystem_Write_Tool();
+$parameters = is_array( $request[\'parameters\'] ?? null ) ? $request[\'parameters\'] : array();
+$tool_def = is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] : array();
+return $handler->handle_tool_call( $parameters, $tool_def );
+}
+
 add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode, array $args ) {
 	global $wp_codebox_browser_artifact_environment;
 	$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
@@ -903,19 +960,22 @@ foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'too
 		continue;
 	}
 	$tool_id = trim( (string) ( $tool_policy_entry[\'id\'] ?? \'\' ) );
-	if ( \'\' !== $tool_id ) {
-		$sandbox_tool_ids[] = $tool_id;
+	$tool_name = wp_codebox_browser_runtime_tool_name( $tool_id );
+	if ( \'\' !== $tool_name ) {
+		$sandbox_tool_ids[] = $tool_name;
 	}
 }
 if ( empty( $sandbox_tool_ids ) && is_array( $payload[\'task_input\'][\'allowed_tools\'] ?? null ) ) {
 	foreach ( $payload[\'task_input\'][\'allowed_tools\'] as $tool_id ) {
 		$tool_id = trim( (string) $tool_id );
-		if ( \'\' !== $tool_id ) {
-			$sandbox_tool_ids[] = $tool_id;
+		$tool_name = wp_codebox_browser_runtime_tool_name( $tool_id );
+		if ( \'\' !== $tool_name ) {
+			$sandbox_tool_ids[] = $tool_name;
 		}
 }
 }
 $sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
+$runtime_tool_declarations = wp_codebox_browser_runtime_tool_declarations( $sandbox_tool_ids );
 $base_input = array(
 \'agent\' => $agent,
 \'message\' => $message,
@@ -953,6 +1013,8 @@ $base_input = array(
 	\'peer_agent_call\' => true,
 	\'caller_session_id\' => $session_id,
 	\'task_input\' => $payload[\'task_input\'] ?? array(),
+	\'runtime_tools\' => $runtime_tool_declarations,
+	\'runtime_tool_callback\' => \'wp_codebox_browser_runtime_tool_callback\',
 ),
 );
 if ( ! empty( $sandbox_tool_ids ) ) {

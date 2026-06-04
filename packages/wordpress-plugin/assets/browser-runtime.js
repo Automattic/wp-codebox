@@ -131,6 +131,123 @@
 		] ) );
 	};
 
+	const browserProviderDiagnostics = () => {
+		const diagnostics = window.__wpCodeboxBrowserProviderDiagnostics;
+		if ( diagnostics && typeof diagnostics === 'object' ) {
+			return diagnostics;
+		}
+
+		window.__wpCodeboxBrowserProviderDiagnostics = {
+			schema: 'wp-codebox/browser-provider-live-diagnostics/v1',
+			requests: [],
+			counts: {
+				started: 0,
+				completed: 0,
+				failed: 0,
+			},
+		};
+
+		return window.__wpCodeboxBrowserProviderDiagnostics;
+	};
+
+	const safeJsonParse = ( value ) => {
+		if ( typeof value !== 'string' || ! value ) {
+			return null;
+		}
+
+		try {
+			const parsed = JSON.parse( value );
+			return parsed && typeof parsed === 'object' ? parsed : null;
+		} catch {
+			return null;
+		}
+	};
+
+	const summarizeProviderRequestBody = ( body ) => {
+		const parsed = safeJsonParse( typeof body === 'string' ? body : '' );
+		if ( ! parsed ) {
+			return {};
+		}
+
+		const tools = Array.isArray( parsed.tools ) ? parsed.tools : [];
+		const input = Array.isArray( parsed.input ) ? parsed.input : [];
+		const inputTypes = input.map( ( item ) => typeof item?.type === 'string' ? item.type : ( typeof item?.role === 'string' ? `message:${ item.role }` : '' ) ).filter( Boolean );
+		const functionCalls = input.filter( ( item ) => item?.type === 'function_call' );
+		const functionOutputs = input.filter( ( item ) => item?.type === 'function_call_output' );
+		return {
+			model: typeof parsed.model === 'string' ? parsed.model : '',
+			previous_response_id: typeof parsed.previous_response_id === 'string' && parsed.previous_response_id ? true : false,
+			input_items: input.length,
+			input_types: inputTypes.slice( 0, 20 ),
+			input_function_call_count: functionCalls.length,
+			input_function_call_output_count: functionOutputs.length,
+			input_function_call_ids: functionCalls.map( ( item ) => typeof item?.call_id === 'string' ? item.call_id : '' ).filter( Boolean ).slice( 0, 20 ),
+			input_function_call_output_ids: functionOutputs.map( ( item ) => typeof item?.call_id === 'string' ? item.call_id : '' ).filter( Boolean ).slice( 0, 20 ),
+			tool_count: tools.length,
+			tool_names: tools.map( ( tool ) => typeof tool?.name === 'string' ? tool.name : '' ).filter( Boolean ).slice( 0, 20 ),
+		};
+	};
+
+	const summarizeProviderResponseBody = ( body ) => {
+		const parsed = safeJsonParse( typeof body === 'string' ? body : '' );
+		if ( ! parsed ) {
+			return {};
+		}
+
+		const output = Array.isArray( parsed.output ) ? parsed.output : [];
+		const functionCalls = output.filter( ( item ) => item?.type === 'function_call' );
+		return {
+			id_present: typeof parsed.id === 'string' && parsed.id ? true : false,
+			status: typeof parsed.status === 'string' ? parsed.status : '',
+			output_items: output.length,
+			output_types: output.map( ( item ) => typeof item?.type === 'string' ? item.type : '' ).filter( Boolean ).slice( 0, 20 ),
+			function_call_count: functionCalls.length,
+			function_call_names: functionCalls.map( ( item ) => typeof item?.name === 'string' ? item.name : '' ).filter( Boolean ).slice( 0, 20 ),
+			function_call_ids: functionCalls.map( ( item ) => typeof item?.call_id === 'string' ? item.call_id : '' ).filter( Boolean ).slice( 0, 20 ),
+			usage: parsed.usage && typeof parsed.usage === 'object' ? {
+				input_tokens: Number.isFinite( parsed.usage.input_tokens ) ? parsed.usage.input_tokens : null,
+				output_tokens: Number.isFinite( parsed.usage.output_tokens ) ? parsed.usage.output_tokens : null,
+				total_tokens: Number.isFinite( parsed.usage.total_tokens ) ? parsed.usage.total_tokens : null,
+			} : null,
+		};
+	};
+
+	const summarizeBrowserProviderProxyMessage = ( message ) => {
+		const request = message?.request && typeof message.request === 'object' ? message.request : {};
+		return {
+			id: typeof message?.id === 'string' ? message.id : '',
+			operation: typeof message?.operation === 'string' ? message.operation : '',
+			provider: typeof message?.provider === 'string' ? message.provider : '',
+			model: typeof message?.model === 'string' ? message.model : '',
+			connector_present: typeof message?.connector === 'string' && message.connector ? true : false,
+			method: typeof request.method === 'string' ? request.method : '',
+			uri: typeof request.uri === 'string' ? request.uri.replace( /[?].*$/, '' ) : '',
+			request_bytes: typeof request.body === 'string' ? request.body.length : 0,
+			request: summarizeProviderRequestBody( request.body ),
+		};
+	};
+
+	const summarizeBrowserProviderProxyResponse = ( response ) => {
+		const responsePayload = response?.response && typeof response.response === 'object' ? response.response : {};
+		const http = responsePayload?.http && typeof responsePayload.http === 'object' ? responsePayload.http : response?.http || {};
+		return {
+			success: response?.success === true,
+			status: Number.isFinite( http?.status ) ? http.status : null,
+			response_bytes: typeof http?.body === 'string' ? http.body.length : 0,
+			response: summarizeProviderResponseBody( http?.body ),
+			error_code: typeof response?.error?.code === 'string' ? response.error.code : '',
+		};
+	};
+
+	const recordBrowserProviderDiagnostic = ( entry ) => {
+		const diagnostics = browserProviderDiagnostics();
+		diagnostics.requests.push( entry );
+		if ( diagnostics.requests.length > 20 ) {
+			diagnostics.requests.splice( 0, diagnostics.requests.length - 20 );
+		}
+		window.dispatchEvent( new CustomEvent( 'wp-codebox:browser-provider-diagnostic', { detail: entry } ) );
+	};
+
 	const browserProviderProxyError = ( code, message, data = {} ) => {
 		const redactedData = redactBrowserProviderProxyData( data );
 		return {
@@ -182,13 +299,25 @@
 			return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_payload_too_large', 'Browser provider proxy request is too large.' );
 		}
 
+		const startedAt = Date.now();
+		const requestSummary = summarizeBrowserProviderProxyMessage( message );
+		browserProviderDiagnostics().counts.started += 1;
+
 		try {
+			let result;
 			if ( window.wp?.apiFetch ) {
-				return await window.wp.apiFetch( {
+				result = await window.wp.apiFetch( {
 					path: '/wp-codebox/v1/browser-provider-request',
 					method: 'POST',
 					data: message,
 				} );
+				browserProviderDiagnostics().counts.completed += 1;
+				recordBrowserProviderDiagnostic( {
+					...requestSummary,
+					duration_ms: Date.now() - startedAt,
+					...summarizeBrowserProviderProxyResponse( result ),
+				} );
+				return result;
 			}
 
 			const response = await fetch( browserProviderProxyEndpoint(), {
@@ -199,12 +328,31 @@
 			} );
 			const json = await response.json().catch( () => null );
 			if ( ! response.ok ) {
-				return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_http_error', 'Browser provider proxy request failed.', { status: response.status, response: json } );
+				const error = browserProviderProxyError( 'wp_codebox_browser_provider_proxy_http_error', 'Browser provider proxy request failed.', { status: response.status, response: json } );
+				browserProviderDiagnostics().counts.failed += 1;
+				recordBrowserProviderDiagnostic( { ...requestSummary, duration_ms: Date.now() - startedAt, success: false, status: response.status, error_code: error.error.code } );
+				return error;
 			}
 
-			return isPlainObject( json ) ? json : browserProviderProxyError( 'wp_codebox_browser_provider_proxy_malformed_response', 'Browser provider proxy returned a malformed response.' );
+			if ( isPlainObject( json ) ) {
+				browserProviderDiagnostics().counts.completed += 1;
+				recordBrowserProviderDiagnostic( {
+					...requestSummary,
+					duration_ms: Date.now() - startedAt,
+					...summarizeBrowserProviderProxyResponse( json ),
+				} );
+				return json;
+			}
+
+			const error = browserProviderProxyError( 'wp_codebox_browser_provider_proxy_malformed_response', 'Browser provider proxy returned a malformed response.' );
+			browserProviderDiagnostics().counts.failed += 1;
+			recordBrowserProviderDiagnostic( { ...requestSummary, duration_ms: Date.now() - startedAt, success: false, error_code: error.error.code } );
+			return error;
 		} catch ( error ) {
-			return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_fetch_failed', error?.message || 'Browser provider proxy request failed.' );
+			const proxyError = browserProviderProxyError( 'wp_codebox_browser_provider_proxy_fetch_failed', error?.message || 'Browser provider proxy request failed.' );
+			browserProviderDiagnostics().counts.failed += 1;
+			recordBrowserProviderDiagnostic( { ...requestSummary, duration_ms: Date.now() - startedAt, success: false, error_code: proxyError.error.code } );
+			return proxyError;
 		}
 	};
 
@@ -542,16 +690,39 @@ try {
 		const filename = `${ safeName( options.name ) }-${ Date.now() }-${ Math.random().toString( 36 ).slice( 2, 8 ) }.php`;
 		const scriptPath = `${ runnerDir }/${ filename }`;
 		const requestUrl = `${ runnerUrlBase }/${ filename }`;
+		const retryObjectShape = async ( error, callback ) => {
+			if ( ! /request/i.test( error?.message || '' ) ) {
+				throw error;
+			}
+			return await callback();
+		};
 
 		if ( typeof client.mkdir === 'function' ) {
-			await client.mkdir( runnerDir );
+			try {
+				await client.mkdir( runnerDir );
+			} catch ( error ) {
+				await retryObjectShape( error, () => client.mkdir( { path: runnerDir } ) );
+			}
 		}
-		await client.writeFile( scriptPath, code );
+		try {
+			await client.writeFile( scriptPath, code );
+		} catch ( error ) {
+			await retryObjectShape( error, () => client.writeFile( { path: scriptPath, data: code } ) );
+		}
 
-		const response = await requestHandler.request( {
+		const request = {
 			method: 'GET',
 			url: requestUrl,
-		} );
+		};
+		let response;
+		try {
+			response = await requestHandler.request( request );
+		} catch ( error ) {
+			if ( ! /request/i.test( error?.message || '' ) ) {
+				throw error;
+			}
+			response = await requestHandler.request( { request } );
+		}
 
 		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
@@ -721,6 +892,7 @@ try {
 					code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
+					forceRequest: true,
 				} );
 				if ( ! lastResult.success ) {
 					const detail = lastResult?.error?.data ? ` ${ JSON.stringify( lastResult.error.data ) }` : '';
