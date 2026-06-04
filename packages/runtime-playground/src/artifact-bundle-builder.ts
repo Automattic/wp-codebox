@@ -11,13 +11,16 @@ import {
   type ArtifactManifest,
   type ArtifactManifestFile,
   type ArtifactPreview,
+  type ArtifactPreviewEvidence,
   type ArtifactReviewBrowserSummary,
   type ArtifactSpec,
+  type BrowserStartupProgressEvent,
   type ExecutionResult,
   type LifecycleEvent,
   type MountSpec,
   type ObservationResult,
   type RuntimeCreateSpec,
+  type RuntimeEpisodeTraceRef,
   type RuntimeInfo,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
@@ -101,6 +104,7 @@ export class ArtifactBundleBuilder {
     const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
     const runtimeReferenceIndexPath = join(filesDirectory, "runtime-reference-index.json")
     const runtimeReplayReferenceIndexPath = join(filesDirectory, "runtime-replay-index.json")
+    const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
     const redactor = new ArtifactRedactor(source.spec.secretEnv)
 
     await source.redactBrowserArtifacts(redactor)
@@ -131,6 +135,20 @@ export class ArtifactBundleBuilder {
       runtime,
       context: source.spec.metadata ?? {},
       mounts: source.mounts,
+    })
+    const artifactBundleRef: RuntimeEpisodeTraceRef = {
+      kind: "artifact-bundle",
+      id: bundleId,
+      digest: { algorithm: "sha256", value: contentDigest },
+      path: "manifest.json",
+    }
+    const previewEvidence = buildPreviewEvidence({
+      createdAt,
+      runtime,
+      preview,
+      events: source.events,
+      packages: provenance.packages,
+      artifactBundleRef,
     })
     const metadata: Record<string, unknown> = {
       id: bundleId,
@@ -163,6 +181,7 @@ export class ArtifactBundleBuilder {
       runtimeCreatedAt: source.runtimeCreatedAt,
       mounts: source.mounts,
       preview,
+      previewEvidencePath: "files/preview-evidence.json",
       browser,
       diagnosticsPath: "files/diagnostics.json",
     })
@@ -184,6 +203,7 @@ export class ArtifactBundleBuilder {
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
       runtimeReferenceIndex: relative(source.artifactRoot, runtimeReferenceIndexPath),
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
+      previewEvidence: relative(source.artifactRoot, previewEvidencePath),
       mountDiffs: relative(source.artifactRoot, diffsPath),
       ...(runtimeSnapshotFiles.length > 0 ? { runtimeSnapshots: runtimeSnapshotFiles.map((file) => relative(source.artifactRoot, file.path)) } : {}),
       ...(browser ? { browser: browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" } : {}),
@@ -225,6 +245,7 @@ export class ArtifactBundleBuilder {
       artifactManifestFile(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
       artifactManifestFile(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
       artifactManifestFile(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
+      artifactManifestFile(previewEvidencePath, "preview-evidence", "application/json"),
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
       ...source.pluginCheckManifestFiles(),
@@ -253,6 +274,7 @@ export class ArtifactBundleBuilder {
     await writeFile(patchPath, redactedPatch)
     await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
     await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
       review.redaction = redaction
@@ -351,11 +373,147 @@ export class ArtifactBundleBuilder {
       runtimeReferenceManifestPath,
       runtimeReferenceIndexPath,
       runtimeReplayReferenceIndexPath,
+      previewEvidencePath,
       ...(preview ? { preview } : {}),
       contentDigest,
       createdAt,
     }
   }
+}
+
+function buildPreviewEvidence({
+  artifactBundleRef,
+  createdAt,
+  events,
+  packages,
+  preview,
+  runtime,
+}: {
+  artifactBundleRef: RuntimeEpisodeTraceRef
+  createdAt: string
+  events: LifecycleEvent[]
+  packages?: ArtifactPreviewEvidence["components"]["packages"]
+  preview?: ArtifactPreview
+  runtime: RuntimeInfo
+}): ArtifactPreviewEvidence {
+  const progressEvents = events.flatMap((event) => {
+    if (event.type !== "runtime.browser-startup-progress") {
+      return []
+    }
+
+    const progress = event.data?.event
+    if (!isBrowserStartupProgressEvent(progress)) {
+      return []
+    }
+
+    return [{
+      id: event.id,
+      phase: progress.phase,
+      status: progress.status,
+      label: progress.label,
+      elapsed_ms: progress.elapsed_ms,
+      timestamp: event.timestamp,
+    }]
+  })
+  const lastProgress = progressEvents.at(-1)
+  const ready = progressEvents.some((event) => event.phase === "preview:ready" && event.status === "complete")
+
+  return {
+    schema: "wp-codebox/preview-evidence/v1",
+    createdAt,
+    session: {
+      kind: "browser-playground-session",
+      id: `browser-playground-session-${runtime.id}`,
+      runtimeId: runtime.id,
+      backend: runtime.backend,
+      environment: {
+        kind: runtime.environment.kind,
+        name: runtime.environment.name ?? runtime.environment.kind,
+        version: runtime.environment.version ?? "unknown",
+      },
+    },
+    run: artifactBundleRef,
+    preview: {
+      status: preview?.status ?? "unavailable",
+      lifecycle: preview?.lifecycle ?? "not-started",
+      source: preview?.source,
+      createdAt: preview?.createdAt,
+      expiresAt: preview?.expiresAt,
+      holdSeconds: preview?.holdSeconds,
+      url: safePreviewUrlRef(preview?.url),
+      ...(preview?.publicUrl ? { publicUrl: safePreviewUrlRef(preview.publicUrl) } : {}),
+      ...(preview?.localUrl ? { localUrl: safePreviewUrlRef(preview.localUrl) } : {}),
+      ...(preview?.siteUrl ? { siteUrl: safePreviewUrlRef(preview.siteUrl) } : {}),
+    },
+    readiness: {
+      ready,
+      status: lastProgress?.status ?? "not-started",
+      phase: lastProgress?.phase,
+      events: progressEvents,
+    },
+    components: {
+      packages,
+      runtime: {
+        backend: runtime.backend,
+        wordpressVersion: runtime.environment.version,
+      },
+    },
+  }
+}
+
+function isBrowserStartupProgressEvent(value: unknown): value is BrowserStartupProgressEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+
+  const candidate = value as Partial<BrowserStartupProgressEvent>
+  return typeof candidate.phase === "string" && typeof candidate.status === "string"
+}
+
+function safePreviewUrlRef(url: string | undefined): ArtifactPreviewEvidence["preview"]["url"] {
+  if (!url) {
+    return {
+      kind: "preview-url",
+      availability: "unavailable",
+      reviewerSafe: false,
+      reason: "preview-url-unavailable",
+    }
+  }
+
+  try {
+    const parsed = new URL(url)
+    if (isLocalPreviewHost(parsed.hostname)) {
+      return {
+        kind: "preview-url",
+        availability: "local-only",
+        reviewerSafe: false,
+        reason: "loopback-url-omitted",
+      }
+    }
+  } catch {
+    return {
+      kind: "preview-url",
+      availability: "unavailable",
+      reviewerSafe: false,
+      reason: "invalid-url-omitted",
+    }
+  }
+
+  return {
+    kind: "preview-url",
+    availability: "reviewer-safe",
+    reviewerSafe: true,
+    url,
+  }
+}
+
+function isLocalPreviewHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  return normalized === "localhost"
+    || normalized === "0.0.0.0"
+    || normalized === "127.0.0.1"
+    || normalized === "::1"
+    || normalized.startsWith("127.")
 }
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {

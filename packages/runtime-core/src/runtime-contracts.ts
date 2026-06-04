@@ -513,6 +513,63 @@ export interface ArtifactPreview {
   holdSeconds?: number
 }
 
+export interface ArtifactPreviewUrlRef {
+  kind: "preview-url"
+  availability: "reviewer-safe" | "local-only" | "unavailable"
+  reviewerSafe: boolean
+  url?: string
+  reason?: string
+}
+
+export interface ArtifactPreviewEvidence {
+  schema: "wp-codebox/preview-evidence/v1"
+  createdAt: string
+  session: {
+    kind: "browser-playground-session"
+    id: string
+    runtimeId: string
+    backend: RuntimeBackendKind
+    environment: {
+      kind: EnvironmentSpec["kind"]
+      name: string
+      version: string
+    }
+  }
+  run: RuntimeEpisodeTraceRef
+  preview: {
+    status: ArtifactPreview["status"] | "unavailable"
+    lifecycle: ArtifactPreview["lifecycle"] | "not-started"
+    source?: ArtifactPreview["source"]
+    createdAt?: string
+    expiresAt?: string
+    holdSeconds?: number
+    url: ArtifactPreviewUrlRef
+    publicUrl?: ArtifactPreviewUrlRef
+    localUrl?: ArtifactPreviewUrlRef
+    siteUrl?: ArtifactPreviewUrlRef
+  }
+  readiness: {
+    ready: boolean
+    status: BrowserStartupProgressEvent["status"] | "not-started"
+    phase?: BrowserStartupProgressEvent["phase"]
+    events: Array<{
+      id: string
+      phase: BrowserStartupProgressEvent["phase"]
+      status: BrowserStartupProgressEvent["status"]
+      label?: string
+      elapsed_ms?: number
+      timestamp: string
+    }>
+  }
+  components: {
+    packages?: ArtifactPackageProvenance
+    runtime: {
+      backend: RuntimeBackendKind
+      wordpressVersion?: string
+    }
+  }
+}
+
 export interface ArtifactBundle {
   id: string
   directory: string
@@ -542,6 +599,7 @@ export interface ArtifactBundle {
   runtimeReferenceManifestPath?: string
   runtimeReferenceIndexPath?: string
   runtimeReplayReferenceIndexPath?: string
+  previewEvidencePath?: string
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string

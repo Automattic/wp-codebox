@@ -82,6 +82,7 @@ export interface ArtifactReview {
     runtimeEpisodeTrace?: string
     runtimeReferenceManifest?: string
     runtimeReplayReferenceIndex?: string
+    previewEvidence?: string
     agentResult?: string
     transcript?: string
   }
