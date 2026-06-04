@@ -9,12 +9,14 @@ const code = benchRunCode({
   dependencySlugs: [],
   env: {},
   bootstrapFiles: ["lib/compat/new.php", "lib/compat/old.php"],
-  workloads: [],
+  workloads: [{ id: "php-variable", code: "$value = 1; return array('metrics' => array('value' => $value));" }],
+  lifecycle: {},
+  resetPolicy: {},
 })
 
-assert.match(code, /\$bootstrap_files = json_decode/)
-assert.match(code, /lib\/compat\/new\.php/)
-assert.match(code, /lib\/compat\/old\.php/)
+assert.match(code, /\$bootstrap_files = json_decode\(base64_decode/)
+assert.match(code, new RegExp(Buffer.from(JSON.stringify(["lib/compat/new.php", "lib/compat/old.php"]), "utf8").toString("base64")))
+assert.doesNotMatch(code, /\$value = 1/)
 assert.match(code, /foreach \(is_array\(\$bootstrap_files\)/)
 assert.match(code, /require_once \$bootstrap_path/)
 assert.match(code, /break;/)

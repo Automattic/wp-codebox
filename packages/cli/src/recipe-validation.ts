@@ -538,6 +538,25 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     return
   }
 
+  if (step.command === "wordpress.bench") {
+    if (!recipeStepArgValue(step.args ?? [], "plugin-slug")?.trim()) {
+      addIssue("missing-plugin-slug", `${path}.args`, "wordpress.bench requires plugin-slug=<slug>.")
+    }
+
+    validateInlineJsonArg(step, "workloads-json", "array", path, addIssue)
+    validateInlineJsonArg(step, "lifecycle-json", "object", path, addIssue)
+    const resetPolicy = validateInlineJsonArg(step, "reset-policy-json", "object", path, addIssue)
+    if (resetPolicy && typeof resetPolicy === "object" && !Array.isArray(resetPolicy)) {
+      for (const key of ["betweenIterations", "betweenScenarios"] as const) {
+        const value = (resetPolicy as Record<string, unknown>)[key]
+        if (value !== undefined && value !== "none" && value !== "object-cache") {
+          addIssue("invalid-reset-policy", `${path}.args`, `wordpress.bench reset-policy-json ${key} must be none or object-cache.`)
+        }
+      }
+    }
+    return
+  }
+
   if (step.command === "wordpress.browser-probe") {
     if (!recipeStepArgValue(step.args ?? [], "url")?.trim()) {
       addIssue("missing-url", `${path}.args`, "wordpress.browser-probe requires url=<path-or-url>.")
@@ -669,6 +688,28 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   }
 }
 
+function validateInlineJsonArg(step: WorkspaceRecipe["workflow"]["steps"][number], name: string, shape: "array" | "object", path: string, addIssue: (code: string, path: string, message: string) => void): unknown {
+  const raw = recipeStepArgValue(step.args ?? [], name)
+  if (!raw || raw.startsWith("@")) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (shape === "array" && !Array.isArray(parsed)) {
+      addIssue(`invalid-${name}`, `${path}.args`, `wordpress.bench ${name} must be a JSON array.`)
+      return undefined
+    }
+    if (shape === "object" && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) {
+      addIssue(`invalid-${name}`, `${path}.args`, `wordpress.bench ${name} must be a JSON object.`)
+      return undefined
+    }
+    return parsed
+  } catch (error) {
+    addIssue(`invalid-${name}`, `${path}.args`, `wordpress.bench ${name} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+}
+
 async function validateExistingDirectory(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
   try {
     const result = await stat(path)
@@ -759,12 +800,11 @@ echo wp_json_encode(array('command' => 'plugin-runtime.health', 'type' => 'plugi
 
 function recipeBenchStepUsesWpCli(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
   const workloadsArg = (step.args ?? []).find((arg) => arg.startsWith("workloads-json="))
-  if (!workloadsArg) {
-    return false
-  }
+  const lifecycleArg = (step.args ?? []).find((arg) => arg.startsWith("lifecycle-json="))
 
   try {
-    return recipeBenchWorkloadsUseWpCli(JSON.parse(workloadsArg.slice("workloads-json=".length)))
+    return Boolean(workloadsArg && recipeBenchWorkloadsUseWpCli(JSON.parse(workloadsArg.slice("workloads-json=".length))))
+      || Boolean(lifecycleArg && recipeBenchWorkloadsUseWpCli(JSON.parse(lifecycleArg.slice("lifecycle-json=".length))))
   } catch {
     return false
   }

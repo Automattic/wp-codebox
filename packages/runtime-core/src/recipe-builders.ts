@@ -35,6 +35,8 @@ export interface WordPressBenchRecipeOptions {
   wpConfigDefines?: JsonObject
   bootstrapFiles?: string[]
   workloads?: unknown[]
+  lifecycle?: JsonObject
+  resetPolicy?: JsonObject
 }
 
 export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = [], options: NormalizeRecipeMountsOptions = {}): WorkspaceRecipeMount[] {
@@ -120,6 +122,8 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
           `env-json=${JSON.stringify(options.env ?? {})}`,
           `bootstrap-files-json=${JSON.stringify(options.bootstrapFiles ?? [])}`,
           `workloads-json=${JSON.stringify(options.workloads ?? [])}`,
+          `lifecycle-json=${JSON.stringify(options.lifecycle ?? {})}`,
+          `reset-policy-json=${JSON.stringify(options.resetPolicy ?? {})}`,
         ],
       }],
     },
