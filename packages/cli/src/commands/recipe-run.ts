@@ -72,6 +72,7 @@ interface RecipeRunOutput {
   executions: RecipeExecutionResult[]
   stagedFiles?: RecipeRunStagedFile[]
   siteSeeds?: RecipeRunSiteSeed[]
+  phaseEvidence?: RecipePhaseEvidence[]
   diagnostics?: RecipeRuntimeDiagnostic[]
   validation?: {
     issues: RecipeValidationIssue[]
@@ -95,7 +96,20 @@ type RecipeExecutionResult = ExecutionResult & {
   recipeCommand?: string
 }
 
-interface RecipeRuntimeDiagnostic {
+type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "run_workloads" | "collect_artifacts"
+
+interface RecipePhaseEvidence {
+  schema: "wp-codebox/recipe-phase-evidence/v1"
+  name: RecipePhaseName
+  status: "completed" | "failed"
+  startedAt: string
+  endedAt: string
+  durationMs: number
+  data?: Record<string, unknown>
+  error?: RunOutput["error"]
+}
+
+interface RecipePluginRuntimeDiagnostic {
   schema: "wp-codebox/plugin-runtime-diagnostic/v1"
   severity: "error"
   phase: "setup" | "health-probe" | "runtime" | "overlay-preparation"
@@ -105,6 +119,19 @@ interface RecipeRuntimeDiagnostic {
   message: string
   executionIndex?: number
 }
+
+interface RecipePhaseDiagnostic {
+  schema: "wp-codebox/recipe-phase-diagnostic/v1"
+  severity: "error"
+  phase: RecipePhaseName
+  pluginFile?: string
+  command?: string
+  exitCode?: number
+  message: string
+  executionIndex?: number
+}
+
+type RecipeRuntimeDiagnostic = RecipePluginRuntimeDiagnostic | RecipePhaseDiagnostic
 
 interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
   action: "imported" | "skipped"
@@ -223,6 +250,82 @@ class RecipeRuntimeCreateError extends Error {
   constructor(message: string, readonly context: Record<string, unknown>, cause: unknown) {
     super(message, { cause })
     this.name = "RecipeRuntimeCreateError"
+  }
+}
+
+class RecipePhaseError extends Error {
+  readonly code = "recipe-phase-failed"
+
+  constructor(readonly phase: RecipePhaseName, readonly phaseData: Record<string, unknown> | undefined, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause)
+    super(`Recipe phase ${phase} failed: ${message}`, { cause })
+    this.name = "RecipePhaseError"
+  }
+}
+
+class RecipePhaseTracker {
+  private phases: RecipePhaseEvidence[] = []
+
+  list(): RecipePhaseEvidence[] {
+    return this.phases
+  }
+
+  complete(name: RecipePhaseName, data?: Record<string, unknown>): void {
+    const now = new Date().toISOString()
+    this.phases.push({
+      schema: "wp-codebox/recipe-phase-evidence/v1",
+      name,
+      status: "completed",
+      startedAt: now,
+      endedAt: now,
+      durationMs: 0,
+      ...(data ? { data } : {}),
+    })
+  }
+
+  fail(name: RecipePhaseName, error: unknown, data?: Record<string, unknown>): void {
+    const now = new Date().toISOString()
+    this.phases.push({
+      schema: "wp-codebox/recipe-phase-evidence/v1",
+      name,
+      status: "failed",
+      startedAt: now,
+      endedAt: now,
+      durationMs: 0,
+      ...(data ? { data } : {}),
+      error: serializeRecipeRunError(error),
+    })
+  }
+
+  async run<T>(name: RecipePhaseName, data: Record<string, unknown> | undefined, callback: () => Promise<T>): Promise<T> {
+    const startedAtMs = Date.now()
+    const startedAt = new Date().toISOString()
+    try {
+      const result = await callback()
+      this.phases.push({
+        schema: "wp-codebox/recipe-phase-evidence/v1",
+        name,
+        status: "completed",
+        startedAt,
+        endedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAtMs,
+        ...(data ? { data } : {}),
+      })
+      return result
+    } catch (error) {
+      const phaseError = error instanceof RecipePhaseError ? error : new RecipePhaseError(name, data, error)
+      this.phases.push({
+        schema: "wp-codebox/recipe-phase-evidence/v1",
+        name,
+        status: "failed",
+        startedAt,
+        endedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAtMs,
+        ...(data ? { data } : {}),
+        error: serializeRecipeRunError(error),
+      })
+      throw phaseError
+    }
   }
 }
 
@@ -424,6 +527,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
+  const phaseTracker = new RecipePhaseTracker()
   const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
     return interruption ? interruption.interruptible(guarded) : guarded
@@ -459,12 +563,23 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
     try {
       const startupStartedAtMs = Date.now()
-      runtime = await awaitRecipe("runtime.create", createRuntime(
+      runtime = await phaseTracker.run("runtime_startup", {
+        operation: "runtime.create",
+        backend: runtimeCreateSpec.backend,
+        runtime: runtimeEnvironment,
+      }, async () => await awaitRecipe("runtime.create", createRuntime(
         runtimeCreateSpec,
         createPlaygroundRuntimeBackend(),
-      ))
+      )))
       startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {
+      const blueprintSteps = recipeBlueprintSteps(runtimeEnvironment.blueprint)
+      if (blueprintSteps.length > 0) {
+        phaseTracker.fail("run_blueprint_steps", error, {
+          stepCount: blueprintSteps.length,
+          appliedDuring: "runtime.create",
+        })
+      }
       throw new RecipeRuntimeCreateError("Runtime creation failed before recipe workflow execution.", {
         operation: "runtime.create",
         backend: runtimeCreateSpec.backend,
@@ -486,7 +601,15 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         })),
       }, error)
     }
+    if (!runtime) {
+      throw new Error("Runtime creation did not return a runtime")
+    }
     runRecord = await runRegistry.update(runRecord.runId, { status: "running", runtime: await runtime.info() })
+    const blueprintSteps = recipeBlueprintSteps(runtimeEnvironment.blueprint)
+    phaseTracker.complete("run_blueprint_steps", {
+      stepCount: blueprintSteps.length,
+      appliedDuring: "runtime.create",
+    })
     interruption?.throwIfInterrupted()
 
     for (const [index, mount] of (recipe.runtime?.stack?.mounts ?? []).entries()) {
@@ -527,20 +650,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       interruption?.throwIfInterrupted()
     }
 
-    for (const plugin of extraPlugins) {
-      await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime.mount({
-        type: "directory",
-        source: plugin.source,
-        target: plugin.target,
-        mode: "readonly",
-        metadata: {
-          kind: "extra-plugin",
-          slug: plugin.slug,
-          source: plugin.provenance,
-        },
-      }))
-      interruption?.throwIfInterrupted()
-    }
+    await phaseTracker.run("mount_plugins", phasePluginMountData(extraPlugins), async () => {
+      for (const plugin of extraPlugins) {
+        await awaitRecipe(`extra-plugin.mount:${plugin.slug}`, runtime!.mount({
+          type: "directory",
+          source: plugin.source,
+          target: plugin.target,
+          mode: "readonly",
+          metadata: {
+            kind: "extra-plugin",
+            slug: plugin.slug,
+            source: plugin.provenance,
+          },
+        }))
+        interruption?.throwIfInterrupted()
+      }
+    })
 
     for (const mount of recipe.inputs?.mounts ?? []) {
       const source = resolve(recipeDirectory, mount.source)
@@ -570,9 +695,19 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2))
     }
 
-    const extraPluginActivationCode = activateExtraPluginsCode(extraPlugins)
-    if (extraPluginActivationCode) {
-      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${extraPluginActivationCode}`] }), "setup", -1, "extra-plugin.activate"))
+    const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
+    if (activatedPlugins.length > 0) {
+      const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
+        for (const plugin of activatedPlugins) {
+          executions.push(withRecipeExecutionPhase(await runtime!.execute({ command: "wordpress.run-php", args: [`code=${activateExtraPluginCode(plugin.pluginFile)}`] }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
+          interruption?.throwIfInterrupted()
+        }
+        return await activePlugins(runtime!)
+      })
+      const activationPhase = [...phaseTracker.list()].reverse().find((phase: RecipePhaseEvidence) => phase.name === "activate_plugins")
+      if (activationPhase?.data) {
+        activationPhase.data.activePlugins = activePluginsAfterActivation
+      }
     }
 
     for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
@@ -589,27 +724,36 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     interruption?.throwIfInterrupted()
 
     const sandboxWorkspace = sandboxWorkspaceContract(workspaceMounts, recipe.inputs?.mounts ?? [])
-    for (const workflowStep of recipeWorkflowSteps(recipe)) {
-      executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime, workflowStep, recipeDirectory, sandboxWorkspace)))
-      interruption?.throwIfInterrupted()
-    }
+    const workflowSteps = recipeWorkflowSteps(recipe)
+    await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
+      for (const workflowStep of workflowSteps) {
+        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace)))
+        interruption?.throwIfInterrupted()
+      }
+    })
 
-    await awaitRecipe("runtime.observe:runtime-info", runtime.observe({ type: "runtime-info" }))
-    await awaitRecipe("runtime.observe:mounts", runtime.observe({ type: "mounts" }))
-    runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime.info() })
-    artifacts = await awaitRecipe("runtime.collect-artifacts", runtime.collectArtifacts({ includeLogs: true, includeObservations: true }))
-    let evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
-    let agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
-    Object.assign(evidence, agentEvidence)
-    markRecipeArtifactsFinalized(interruption, true)
+    let evidence = await phaseTracker.run("collect_artifacts", { includeLogs: true, includeObservations: true }, async () => {
+      await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
+      await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
+      runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
+      artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
+      const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
+      const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
+      Object.assign(recipeEvidence, agentEvidence)
+      markRecipeArtifactsFinalized(interruption, true)
+      return recipeEvidence
+    })
+    if (!artifacts) {
+      throw new Error("Recipe artifact collection did not return an artifact bundle")
+    }
     const strictFailure = recipeArtifactEvidenceFailure(evidence)
     const agentFailure = recipeAgentResultFailure(evidence.agentResult)
     const successfulRecipe = !strictFailure && !agentFailure
     if (successfulRecipe && options.previewHoldSeconds) {
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }))
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
-      agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
-      Object.assign(evidence, agentEvidence)
+      const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
+      Object.assign(evidence, previewAgentEvidence)
     }
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
     const activeRuntime = runtime
@@ -630,7 +774,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeInfo ?? await runtime.info(),
         preview: artifacts.preview,
         artifactRefs: artifactBundleRunRef(artifacts),
-        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure }) },
+        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure, phaseEvidence: phaseTracker.list() }) },
         error: strictFailure ?? agentFailure,
       })
       return {
@@ -641,6 +785,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         executions,
         stagedFiles: stagedFiles.map(recipeRunStagedFile),
         siteSeeds,
+        phaseEvidence: phaseTracker.list(),
         ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
@@ -656,7 +801,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime: runtimeInfo ?? await runtime.info(),
       preview: artifacts.preview,
       artifactRefs: artifactBundleRunRef(artifacts),
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }) },
     })
     return {
       success: true,
@@ -666,6 +811,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       executions,
       stagedFiles: stagedFiles.map(recipeRunStagedFile),
       siteSeeds,
+      phaseEvidence: phaseTracker.list(),
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
@@ -676,7 +822,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   } catch (error) {
     if (runtime) {
       const activeRuntime = runtime
-      artifacts = await collectAndFinalizeFailedRecipeArtifacts({
+      artifacts = await phaseTracker.run("collect_artifacts", { failureRecovery: true, includeLogs: true, includeObservations: true }, async () => await collectAndFinalizeFailedRecipeArtifacts({
         runtime: activeRuntime,
         existingArtifacts: artifacts,
         recipe,
@@ -686,7 +832,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         secretEnv,
         executions,
         interruption,
-      })
+      }))
 
       if (error instanceof RecipeRunTimeoutError) {
         void activeRuntime.destroy().catch(() => undefined)
@@ -709,7 +855,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       status: recipeRunFailureStatus(error, interruption),
       ...(runtime ? { runtime: await runtime.info() } : {}),
       ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
       error: serializedError,
     })
 
@@ -719,6 +865,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       recipePath,
       ...(runtime ? { runtime: await runtime.info() } : {}),
       executions,
+      phaseEvidence: phaseTracker.list(),
       diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       ...(artifacts ? { artifacts } : {}),
       run: runRecord,
@@ -759,6 +906,7 @@ interface RunResourceEvidenceOptions {
   cleanup?: RunResourceCleanupEvidence
   artifacts?: ArtifactBundle
   failure?: RunOutput["error"]
+  phaseEvidence?: RecipePhaseEvidence[]
 }
 
 async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecord: RuntimeRunRecord, cleanup: () => Promise<void>): Promise<RunResourceCleanupEvidence> {
@@ -814,6 +962,7 @@ async function runResourceEvidence(options: RunResourceEvidenceOptions): Promise
       runtimeProcessCount: unavailableMetric("WordPress Playground runtime process count is not exposed by the runtime backend"),
     },
     artifacts: await artifactSizeEvidence(options.artifacts),
+    phases: options.phaseEvidence ?? [],
     reliability: {
       failureClassification: classifyRunResourceFailure(options.status, options.failure),
       retryCount: unavailableMetric("recipe-run does not retry worker executions"),
@@ -879,7 +1028,10 @@ function classifyRunResourceFailure(status: RuntimeRunRecord["status"], failure:
   }
 
   const code = failure.code ?? failure.name
-  const value = code === "recipe-run-timeout"
+  const phase = typeof failure.phase === "string" ? failure.phase : undefined
+  const value = code === "recipe-phase-failed" && phase
+    ? classifyRecipePhaseFailure(phase)
+    : code === "recipe-run-timeout"
     ? "timeout"
     : code === "recipe-interrupted"
       ? "cancelled"
@@ -891,7 +1043,25 @@ function classifyRunResourceFailure(status: RuntimeRunRecord["status"], failure:
           ? "cancelled"
           : "execution"
 
-  return { available: true, value, code, message: failure.message }
+  return { available: true, value, code, ...(phase ? { phase } : {}), message: failure.message }
+}
+
+function classifyRecipePhaseFailure(phase: string): string {
+  switch (phase) {
+    case "runtime_startup":
+    case "run_blueprint_steps":
+      return "startup"
+    case "mount_plugins":
+      return "plugin_mount"
+    case "activate_plugins":
+      return "plugin_activation"
+    case "run_workloads":
+      return "workload"
+    case "collect_artifacts":
+      return "artifact_collection"
+    default:
+      return "execution"
+  }
 }
 
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
@@ -1119,48 +1289,84 @@ async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: Wo
   }
 }
 
-function activateExtraPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {
-  const pluginFiles = extraPlugins
-    .filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
-    .map((plugin) => plugin.pluginFile)
+function activateExtraPluginCode(pluginFile: string): string {
+  return `$plugin_file = ${JSON.stringify(pluginFile)};
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+if (is_plugin_active($plugin_file)) {
+    deactivate_plugins($plugin_file, true, false);
+}
+$result = activate_plugin($plugin_file, '', false, false);
+if (is_wp_error($result)) {
+    throw new RuntimeException('Failed to activate extra plugin ' . $plugin_file . ': ' . $result->get_error_message());
+}
+do_action('wp_codebox_runtime_plugin_activated', $plugin_file);
+echo wp_json_encode(array('activated' => $plugin_file));`
+}
 
-  if (pluginFiles.length === 0) {
-    return null
+async function activePlugins(runtime: Runtime): Promise<string[]> {
+  const execution = await runtime.execute({
+    command: "wordpress.run-php",
+    args: ["code=echo wp_json_encode(array_values((array) get_option('active_plugins', array())));"],
+  })
+  const parsed = JSON.parse(execution.stdout.trim() || "[]") as unknown
+  return Array.isArray(parsed) ? parsed.filter((plugin): plugin is string => typeof plugin === "string") : []
+}
+
+function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<string, unknown> {
+  return {
+    count: extraPlugins.length,
+    plugins: extraPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, target: plugin.target, loadAs: plugin.loadAs })),
+  }
+}
+
+function phasePluginActivationData(activatedPlugins: PreparedExtraPlugin[]): Record<string, unknown> {
+  return {
+    count: activatedPlugins.length,
+    plugins: activatedPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile })),
+  }
+}
+
+function phaseWorkflowData(workflowSteps: ReturnType<typeof recipeWorkflowSteps>): Record<string, unknown> {
+  return {
+    count: workflowSteps.length,
+    steps: workflowSteps.map((workflowStep) => ({ phase: workflowStep.phase, index: workflowStep.index, command: workflowStep.step.command })),
+  }
+}
+
+function recipeBlueprintSteps(blueprint: unknown): unknown[] {
+  if (!blueprint || typeof blueprint !== "object" || !("steps" in blueprint) || !Array.isArray(blueprint.steps)) {
+    return []
   }
 
-  return `$plugins = ${JSON.stringify(pluginFiles)};
-require_once ABSPATH . 'wp-admin/includes/plugin.php';
-$activated = array();
-foreach ($plugins as $plugin_file) {
-    if (is_plugin_active($plugin_file)) {
-        deactivate_plugins($plugin_file, true, false);
-    }
-    $result = activate_plugin($plugin_file, '', false, false);
-    if (is_wp_error($result)) {
-        throw new RuntimeException('Failed to activate extra plugin ' . $plugin_file . ': ' . $result->get_error_message());
-    }
-    $activated[] = $plugin_file;
-}
-do_action('wp_codebox_runtime_plugins_activated', $activated);
-echo wp_json_encode(array('activated' => $activated));`
+  return blueprint.steps
 }
 
 function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExecutionResult[], error: unknown): RecipeRuntimeDiagnostic[] | undefined {
   const diagnostics: RecipeRuntimeDiagnostic[] = executions
     .map((execution, executionIndex) => ({ execution, executionIndex }))
-    .filter(({ execution }) => execution.recipeCommand?.startsWith("plugin-runtime.") && execution.exitCode !== 0)
+    .filter(({ execution }) => (execution.recipeCommand?.startsWith("plugin-runtime.") || execution.recipeCommand?.startsWith("extra-plugin.activate:")) && execution.exitCode !== 0)
     .map(({ execution, executionIndex }) => ({
-      schema: "wp-codebox/plugin-runtime-diagnostic/v1" as const,
+      schema: execution.recipeCommand?.startsWith("extra-plugin.activate:") ? "wp-codebox/recipe-phase-diagnostic/v1" as const : "wp-codebox/plugin-runtime-diagnostic/v1" as const,
       severity: "error" as const,
-      phase: execution.recipeCommand?.startsWith("plugin-runtime.health:") ? "health-probe" as const : "setup" as const,
-      name: execution.recipeCommand?.split(":").slice(1).join(":"),
+      phase: execution.recipeCommand?.startsWith("extra-plugin.activate:") ? "activate_plugins" as const : execution.recipeCommand?.startsWith("plugin-runtime.health:") ? "health-probe" as const : "setup" as const,
+      ...(execution.recipeCommand?.startsWith("extra-plugin.activate:") ? { pluginFile: execution.recipeCommand.slice("extra-plugin.activate:".length) } : { name: execution.recipeCommand?.split(":").slice(1).join(":") }),
       command: execution.command,
       exitCode: execution.exitCode,
       message: execution.stderr || execution.stdout || `Plugin runtime command failed with exit code ${execution.exitCode}`,
       executionIndex,
-    }))
+    } as RecipeRuntimeDiagnostic))
 
   const message = error instanceof Error ? error.message : String(error)
+  if (error instanceof RecipePhaseError && diagnostics.length === 0) {
+    diagnostics.push({
+      schema: "wp-codebox/recipe-phase-diagnostic/v1",
+      severity: "error",
+      phase: error.phase,
+      ...(error.phase === "activate_plugins" ? { pluginFile: pluginFileFromActivationFailure(message, error.phaseData) } : {}),
+      message,
+    })
+  }
+
   if ((recipe.inputs?.pluginRuntime || recipe.runtime?.overlays || message.includes("plugin runtime") || message.includes("runtime overlay")) && diagnostics.length === 0) {
     diagnostics.push({
       schema: "wp-codebox/plugin-runtime-diagnostic/v1",
@@ -1171,6 +1377,21 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
   }
 
   return diagnostics.length > 0 ? diagnostics : undefined
+}
+
+function pluginFileFromActivationFailure(message: string, phaseData: Record<string, unknown> | undefined): string | undefined {
+  const match = message.match(/Failed to activate extra plugin\s+([^:]+):/)
+  if (match) {
+    return match[1]
+  }
+
+  const plugins = phaseData?.plugins
+  if (Array.isArray(plugins) && plugins.length === 1) {
+    const plugin = plugins[0]
+    return plugin && typeof plugin === "object" && "pluginFile" in plugin && typeof plugin.pluginFile === "string" ? plugin.pluginFile : undefined
+  }
+
+  return undefined
 }
 
 function recipeWorkflowMetadata(recipe: WorkspaceRecipe): { before?: Array<{ command: string; args: string[] }>; steps: Array<{ command: string; args: string[] }>; after?: Array<{ command: string; args: string[] }> } {

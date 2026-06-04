@@ -29,6 +29,20 @@ add_action( 'init', static function (): void {
 } );
 `)
 
+  const activationFailurePluginSource = join(workspace, "activation-failure-plugin")
+  await mkdir(activationFailurePluginSource, { recursive: true })
+  await writeFile(join(activationFailurePluginSource, "activation-failure-plugin.php"), `<?php
+/**
+ * Plugin Name: Activation Failure Fixture
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+register_activation_hook( __FILE__, static function (): void {
+	throw new RuntimeException( 'activation fixture failed' );
+} );
+`)
+
   const recipePath = join(workspace, "recipe.json")
   const artifacts = join(workspace, "artifacts")
   await writeFile(recipePath, `${JSON.stringify({
@@ -82,6 +96,13 @@ add_action( 'init', static function (): void {
   const result = await recipeRun(recipePath, false)
   assert.equal(result.success, true, result.error?.message)
   assert.equal(result.diagnostics, undefined)
+  assert.equal(result.phaseEvidence.find((phase: { name: string }) => phase.name === "runtime_startup")?.status, "completed")
+  assert.equal(result.phaseEvidence.find((phase: { name: string }) => phase.name === "mount_plugins")?.status, "completed")
+  const activationPhase = result.phaseEvidence.find((phase: { name: string }) => phase.name === "activate_plugins")
+  assert.equal(activationPhase?.status, "completed")
+  assert.ok((activationPhase?.data.activePlugins as string[]).includes("heavy-runtime-plugin/heavy-runtime-plugin.php"))
+  assert.equal(result.phaseEvidence.find((phase: { name: string }) => phase.name === "run_workloads")?.status, "completed")
+  assert.equal(result.phaseEvidence.find((phase: { name: string }) => phase.name === "collect_artifacts")?.status, "completed")
   assert.ok(result.executions.some((execution: { recipeCommand?: string }) => execution.recipeCommand === "plugin-runtime.setup:0"))
   assert.ok(result.executions.some((execution: { recipeCommand?: string }) => execution.recipeCommand === "plugin-runtime.health:plugin-active"))
   assert.ok(result.executions.some((execution: { recipeCommand?: string }) => execution.recipeCommand === "plugin-runtime.health:runtime-config"))
@@ -123,6 +144,34 @@ add_action( 'init', static function (): void {
   assert.equal(failure.diagnostics[0].schema, "wp-codebox/plugin-runtime-diagnostic/v1")
   assert.equal(failure.diagnostics[0].phase, "health-probe")
   assert.match(failure.diagnostics[0].message, /plugin runtime health probe|plugin is not active/i)
+
+  const activationFailureRecipePath = join(workspace, "activation-failure-recipe.json")
+  const activationFailureArtifacts = join(workspace, "activation-failure-artifacts")
+  await writeFile(activationFailureRecipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    runtime: { wp: "7.0" },
+    inputs: {
+      extraPlugins: [
+        {
+          source: "./activation-failure-plugin",
+          slug: "activation-failure-plugin",
+          pluginFile: "activation-failure-plugin/activation-failure-plugin.php",
+        },
+      ],
+    },
+    workflow: { steps: [{ command: "inspect-mounted-inputs" }] },
+    artifacts: { directory: activationFailureArtifacts },
+  }, null, 2)}\n`)
+
+  const activationFailure = await recipeRunFailure(activationFailureRecipePath)
+  assert.equal(activationFailure.success, false)
+  assert.equal(activationFailure.diagnostics[0].schema, "wp-codebox/recipe-phase-diagnostic/v1")
+  assert.equal(activationFailure.diagnostics[0].phase, "activate_plugins")
+  assert.equal(activationFailure.diagnostics[0].pluginFile, "activation-failure-plugin/activation-failure-plugin.php")
+  assert.equal(activationFailure.phaseEvidence.find((phase: { name: string }) => phase.name === "activate_plugins")?.status, "failed")
+  const activationFailureRun = JSON.parse(await readFile(join(activationFailureArtifacts, "runs", `${activationFailure.run.runId}.json`), "utf8"))
+  assert.equal(activationFailureRun.metadata.runResourceEvidence.reliability.failureClassification.value, "plugin_activation")
+  assert.equal(activationFailureRun.metadata.runResourceEvidence.reliability.failureClassification.phase, "activate_plugins")
 
   console.log("Recipe heavyweight plugin runtime smoke passed")
 } finally {
