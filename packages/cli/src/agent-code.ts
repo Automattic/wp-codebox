@@ -342,6 +342,7 @@ function normalizeDatamachineBundleRunInput(config: Record<string, unknown> | un
 
   const runInput: Record<string, unknown> = {
     source,
+    wait_for_completion: true,
     initial_data: {
       ...(recordValue(config.initial_data) ?? {}),
       task_input: agentInput,
@@ -360,6 +361,11 @@ function normalizeDatamachineBundleRunInput(config: Record<string, unknown> | un
     if (value) runInput[key] = value
   }
 
+  for (const key of ["step_budget", "time_budget_ms"] as const) {
+    const value = numberValue(config[key])
+    if (value > 0) runInput[key] = value
+  }
+
   return runInput
 }
 
@@ -373,6 +379,11 @@ function stringFromKeys(record: Record<string, unknown>, keys: string[]): string
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function numberValue(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : 0
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
