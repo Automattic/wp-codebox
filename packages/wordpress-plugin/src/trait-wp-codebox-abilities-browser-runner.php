@@ -9,20 +9,31 @@ defined( 'ABSPATH' ) || exit;
 
 trait WP_Codebox_Abilities_Browser_Runner {
 /** @param array<string,mixed> $task_input Normalized task input. @param array<string,mixed> $runner Runner overrides. @param array<string,mixed> $task_payload Browser task payload. @return array<string,mixed>|WP_Error */
-private static function browser_agent_recipe( array $task_input, string $session_id, array $runner, array $blueprint, array $playground, array $task_payload ): array|WP_Error {
-	$task_path   = (string) ( $runner['task_path'] ?? '/tmp/wp-codebox-agent-task.json' );
-	$result_path = (string) ( $runner['result_path'] ?? '/tmp/wp-codebox-agent-result.json' );
-	$invocation  = self::browser_runner_invocation( $runner );
-	if ( is_wp_error( $invocation ) ) {
-		return $invocation;
-	}
+	private static function browser_agent_recipe( array $task_input, string $session_id, array $runner, array $blueprint, array $playground, array $task_payload ): array|WP_Error {
+		$task_path   = (string) ( $runner['task_path'] ?? '/tmp/wp-codebox-agent-task.json' );
+		$result_path = (string) ( $runner['result_path'] ?? '/tmp/wp-codebox-agent-result.json' );
+		$event_path  = '/tmp/wp-codebox-agent-events.jsonl';
+		$invocation  = self::browser_runner_invocation( $runner );
+		if ( is_wp_error( $invocation ) ) {
+			return $invocation;
+		}
 	$captures = self::browser_runner_capture_paths( $runner );
-	if ( is_wp_error( $captures ) ) {
-		return $captures;
-	}
+		if ( is_wp_error( $captures ) ) {
+			return $captures;
+		}
+		$captured_paths = array_map( static fn( array $capture ): string => (string) ( $capture['path'] ?? '' ), $captures );
+		if ( ! in_array( $event_path, $captured_paths, true ) ) {
+			$captures[] = array(
+				'path'      => $event_path,
+				'name'      => 'agent-events',
+				'kind'      => 'events',
+				'mime_type' => 'application/x-ndjson',
+				'max_bytes' => self::BROWSER_CAPTURE_MAX_BYTES,
+			);
+		}
 
-	foreach ( array( 'task_path' => $task_path, 'result_path' => $result_path ) as $field => $path ) {
-		if ( '' === $path || str_contains( $path, '..' ) || ! str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
+		foreach ( array( 'task_path' => $task_path, 'result_path' => $result_path ) as $field => $path ) {
+			if ( '' === $path || str_contains( $path, '..' ) || ! str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
 			return new WP_Error( 'wp_codebox_browser_runner_path_invalid', $field . ' must be a safe absolute Playground path.', array( 'status' => 400 ) );
 		}
 	}
@@ -202,6 +213,7 @@ if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_cur
 
 $task_path = ' . var_export( $task_path, true ) . ';
 $result_path = ' . var_export( $result_path, true ) . ';
+$event_path = "/tmp/wp-codebox-agent-events.jsonl";
 $payload = ' . var_export( $default_payload, true ) . ';
 $invocation = ' . var_export( $default_invocation, true ) . ';
 $capture_paths = ' . var_export( $default_captures, true ) . ';
@@ -262,19 +274,126 @@ if ( $max_bytes > 0 ) {
 return array_filter( $record, static fn( $value ) => \'\' !== $value );
 }
 
-function wp_codebox_browser_install_provider_proxy( array $payload ): void {
-if ( ! function_exists( \'post_message_to_js\' ) || ! class_exists( \'\\WordPress\\AiClient\\AiClient\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' ) ) {
-	return;
+function wp_codebox_browser_event_scalar( $value, string $key = "" ) {
+if ( is_bool( $value ) || is_int( $value ) || is_float( $value ) || null === $value ) {
+	return $value;
 }
 
-$provider = trim( (string) ( $payload[\'provider\'] ?? \'\' ) );
+$text = is_scalar( $value ) ? (string) $value : "";
+if ( preg_match( "/authorization|secret|token|password|credential|private_key|api_key|cookie/i", $key ) ) {
+	return "[redacted]";
+}
+if ( preg_match( "/content|message|prompt|response|body|data|argument|output|input/i", $key ) ) {
+	return array( "type" => "string", "bytes" => strlen( $text ), "sha256" => hash( "sha256", $text ) );
+}
+if ( strlen( $text ) > 160 ) {
+	return array( "type" => "string", "bytes" => strlen( $text ), "sha256" => hash( "sha256", $text ), "preview" => substr( $text, 0, 160 ) );
+}
+
+return $text;
+}
+
+function wp_codebox_browser_sanitize_event_value( $value, string $key = "" ) {
+if ( is_array( $value ) ) {
+	$sanitized = array();
+	$count = 0;
+	foreach ( $value as $item_key => $item ) {
+		if ( $count >= 20 ) {
+			$sanitized["truncated_items"] = count( $value ) - $count;
+			break;
+		}
+		$sanitized[ is_int( $item_key ) ? $item_key : (string) $item_key ] = wp_codebox_browser_sanitize_event_value( $item, is_int( $item_key ) ? $key : (string) $item_key );
+		++$count;
+	}
+	return $sanitized;
+}
+
+return wp_codebox_browser_event_scalar( $value, $key );
+}
+
+function wp_codebox_browser_sanitize_event_payload( array $payload ): array {
+$preserve_keys = array(
+	"turn" => true,
+	"turn_index" => true,
+	"turn_count" => true,
+	"tool_name" => true,
+	"tool_call_id" => true,
+	"success" => true,
+	"finish_reason" => true,
+	"budget_exhausted" => true,
+	"status" => true,
+	"code" => true,
+	"error_code" => true,
+	"reason" => true,
+	"provider" => true,
+	"model" => true,
+	"duration_ms" => true,
+	"elapsed_ms" => true,
+	"remaining_budget" => true,
+	"budget" => true,
+	"max_turns" => true,
+	"completed" => true,
+	"stopped" => true,
+);
+$preserve_containers = array( "metadata" => true, "finish" => true, "budget" => true, "usage" => true );
+$sanitized = array();
+foreach ( $payload as $key => $value ) {
+	$key = (string) $key;
+	if ( isset( $preserve_keys[ $key ] ) || isset( $preserve_containers[ $key ] ) || str_contains( $key, "status" ) || str_contains( $key, "budget" ) || str_contains( $key, "finish" ) ) {
+		$sanitized[ $key ] = wp_codebox_browser_sanitize_event_value( $value, $key );
+	}
+}
+return $sanitized;
+}
+
+if ( interface_exists( "\\DataMachine\\Engine\\AI\\LoopEventSinkInterface" ) && ! class_exists( "WP_Codebox_Browser_Event_File_Sink" ) ) {
+class WP_Codebox_Browser_Event_File_Sink implements \\DataMachine\\Engine\\AI\\LoopEventSinkInterface {
+	private string $path;
+
+	public function __construct( string $path ) {
+		$this->path = $path;
+	}
+
+	public function emit( string $event, array $payload = array() ): void {
+		$record = array(
+			"schema" => "wp-codebox/browser-agent-event/v1",
+			"event" => sanitize_key( $event ),
+			"payload" => wp_codebox_browser_sanitize_event_payload( $payload ),
+			"emitted_at" => gmdate( "c" ),
+		);
+		$json = wp_json_encode( $record, JSON_UNESCAPED_SLASHES );
+		if ( is_string( $json ) ) {
+			file_put_contents( $this->path, $json . "\n", FILE_APPEND | LOCK_EX );
+		}
+	}
+}
+}
+
+function wp_codebox_browser_install_provider_proxy( array $payload ): array {
+$diagnostics = array( \'schema\' => \'wp-codebox/browser-provider-proxy-diagnostics/v1\', \'installed\' => false );
+if ( ! function_exists( \'post_message_to_js\' ) || ! class_exists( \'\\WordPress\\AiClient\\AiClient\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' ) ) {
+	$diagnostics[\'early_return\'] = \'missing_browser_proxy_dependencies\';
+	$diagnostics[\'has_post_message_to_js\'] = function_exists( \'post_message_to_js\' );
+	$diagnostics[\'has_ai_client\'] = class_exists( \'\\WordPress\\AiClient\\AiClient\' );
+	$diagnostics[\'has_http_transporter_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' );
+	$diagnostics[\'has_request_authentication_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' );
+	return $diagnostics;
+}
+
+$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
+$provider = trim( (string) ( $payload[\'provider\'] ?? $task_input[\'provider\'] ?? \'\' ) );
+$diagnostics[\'provider\'] = $provider;
 if ( \'\' === $provider ) {
-	return;
+	$diagnostics[\'early_return\'] = \'provider_missing\';
+	return $diagnostics;
 }
 
 $registry = \\WordPress\\AiClient\\AiClient::defaultRegistry();
 if ( ! method_exists( $registry, \'setHttpTransporter\' ) || ! method_exists( $registry, \'setProviderRequestAuthentication\' ) ) {
-	return;
+	$diagnostics[\'early_return\'] = \'registry_methods_missing\';
+	$diagnostics[\'has_set_http_transporter\'] = method_exists( $registry, \'setHttpTransporter\' );
+	$diagnostics[\'has_set_provider_request_authentication\'] = method_exists( $registry, \'setProviderRequestAuthentication\' );
+	return $diagnostics;
 }
 
 $provider_id = $provider;
@@ -285,20 +404,28 @@ if ( method_exists( $registry, \'getProviderId\' ) ) {
 		$provider_id = $provider;
 	}
 }
+$diagnostics[\'provider_id\'] = $provider_id;
 
-$inherit = is_array( $payload[\'inherit\'] ?? null ) ? $payload[\'inherit\'] : array();
+$inherit = is_array( $payload[\'inherit\'] ?? null ) ? $payload[\'inherit\'] : ( is_array( $task_input[\'inherit\'] ?? null ) ? $task_input[\'inherit\'] : array() );
 if ( empty( $inherit[\'connectors\'] ) && is_array( $payload[\'inheritance\'][\'connectors\'] ?? null ) ) {
 	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
 		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
 	}, $payload[\'inheritance\'][\'connectors\'] ) ) );
 }
-if ( empty( $inherit[\'connectors\'] ) ) {
-	return;
+if ( empty( $inherit[\'connectors\'] ) && is_array( $task_input[\'inheritance\'][\'connectors\'] ?? null ) ) {
+	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
+		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
+	}, $task_input[\'inheritance\'][\'connectors\'] ) ) );
 }
+if ( empty( $inherit[\'connectors\'] ) ) {
+	$inherit[\'connectors\'] = array( $provider );
+}
+$diagnostics[\'connector_count\'] = count( is_array( $inherit[\'connectors\'] ?? null ) ? $inherit[\'connectors\'] : array() );
+$diagnostics[\'connector\'] = (string) ( $inherit[\'connectors\'][0] ?? \'\' );
 
-$registry->setProviderRequestAuthentication(
-	$provider_id,
-	new class implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface {
+$request_authentication = class_exists( \'\\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication\' )
+	? new \\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication( \'wp-codebox-browser-provider-proxy\' )
+	: new class implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface {
 		public static function getJsonSchema(): array {
 			return array( \'type\' => \'object\' );
 		}
@@ -306,8 +433,10 @@ $registry->setProviderRequestAuthentication(
 		public function authenticateRequest( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request {
 			return $request;
 		}
-	}
-);
+	};
+$registry->setProviderRequestAuthentication( $provider_id, $request_authentication );
+$diagnostics[\'request_authentication_class\'] = get_class( $request_authentication );
+$diagnostics[\'request_authentication_bound\'] = true;
 
 $registry->setHttpTransporter(
 	new class( $payload, $inherit ) implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface {
@@ -326,8 +455,8 @@ $registry->setHttpTransporter(
 				\'schema\'             => \'wp-codebox/browser-provider-proxy-request/v1\',
 				\'id\'                 => \'provider-\' . bin2hex( random_bytes( 8 ) ),
 				\'operation\'          => \'http.request\',
-				\'provider\'           => (string) ( $this->payload[\'provider\'] ?? \'\' ),
-				\'model\'              => (string) ( $this->payload[\'model\'] ?? \'\' ),
+				\'provider\'           => (string) ( $this->payload[\'provider\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'provider\'] ?? \'\' ) : \'\' ) ),
+				\'model\'              => (string) ( $this->payload[\'model\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'model\'] ?? \'\' ) : \'\' ) ),
 				\'connector\'          => $connector,
 				\'inherit\'            => $this->inherit,
 				\'sandbox_session_id\' => (string) ( $this->payload[\'sandbox_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
@@ -366,6 +495,9 @@ $registry->setHttpTransporter(
 		}
 	}
 );
+$diagnostics[\'http_transporter_bound\'] = true;
+$diagnostics[\'installed\'] = true;
+return $diagnostics;
 }
 
 function wp_codebox_browser_safe_artifact_path( $path, $root ) {
@@ -523,12 +655,38 @@ if ( ! is_array( $response ) ) {
 }
 
 $metadata = is_array( $response[\'metadata\'] ?? null ) ? $response[\'metadata\'] : array();
+$tool_names = array();
+foreach ( is_array( $response[\'tool_calls\'] ?? null ) ? $response[\'tool_calls\'] : array() as $tool_call ) {
+	if ( is_array( $tool_call ) && is_scalar( $tool_call[\'name\'] ?? null ) ) {
+		$tool_names[] = (string) $tool_call[\'name\'];
+	}
+}
+$last_tool_names = array();
+foreach ( is_array( $response[\'last_tool_calls\'] ?? null ) ? $response[\'last_tool_calls\'] : array() as $tool_call ) {
+	if ( is_array( $tool_call ) && is_scalar( $tool_call[\'name\'] ?? null ) ) {
+		$last_tool_names[] = (string) $tool_call[\'name\'];
+	}
+}
+$tool_result_names = array();
+foreach ( is_array( $response[\'tool_execution_results\'] ?? null ) ? $response[\'tool_execution_results\'] : array() as $tool_result ) {
+	if ( is_array( $tool_result ) && is_scalar( $tool_result[\'tool_name\'] ?? null ) ) {
+		$tool_result_names[] = (string) $tool_result[\'tool_name\'];
+	}
+}
 
 return array_filter( array(
 	\'keys\' => array_slice( array_keys( $response ), 0, 20 ),
+	\'turn_count\' => isset( $response[\'turn_count\'] ) && is_scalar( $response[\'turn_count\'] ) ? (int) $response[\'turn_count\'] : null,
 	\'tool_call_count\' => is_array( $response[\'tool_calls\'] ?? null ) ? count( $response[\'tool_calls\'] ) : null,
 	\'last_tool_call_count\' => is_array( $response[\'last_tool_calls\'] ?? null ) ? count( $response[\'last_tool_calls\'] ) : null,
 	\'tool_execution_result_count\' => is_array( $response[\'tool_execution_results\'] ?? null ) ? count( $response[\'tool_execution_results\'] ) : null,
+	\'tool_names\' => array_values( array_unique( $tool_names ) ),
+	\'last_tool_names\' => array_values( array_unique( $last_tool_names ) ),
+	\'tool_execution_result_names\' => array_values( array_unique( $tool_result_names ) ),
+	\'completion_assertions_required\' => is_array( $metadata[\'completion_assertions_required\'] ?? null ) ? $metadata[\'completion_assertions_required\'] : null,
+	\'completion_assertions_missing\' => is_array( $metadata[\'completion_assertions_missing\'] ?? null ) ? $metadata[\'completion_assertions_missing\'] : null,
+	\'completion_assertions_satisfied\' => is_array( $metadata[\'completion_assertions_satisfied\'] ?? null ) ? $metadata[\'completion_assertions_satisfied\'] : null,
+	\'completion_assertions_complete\' => isset( $metadata[\'completion_assertions_complete\'] ) ? (bool) $metadata[\'completion_assertions_complete\'] : null,
 	\'text_bytes\' => isset( $response[\'response\'] ) && is_string( $response[\'response\'] ) ? strlen( $response[\'response\'] ) : null,
 	\'status\' => is_scalar( $response[\'status\'] ?? null ) ? (string) $response[\'status\'] : null,
 ) );
@@ -636,6 +794,79 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 	}
 }
 
+function wp_codebox_browser_runtime_tool_name( string $tool_id ): string {
+$tool_id = strtolower( trim( $tool_id ) );
+$tool_id = preg_replace( "/[^a-z0-9_-]+/", "_", $tool_id ) ?? "";
+$tool_id = trim( $tool_id, "_" );
+if ( "" === $tool_id || ! preg_match( "/^[a-z][a-z0-9_-]*$/", $tool_id ) ) {
+	return "";
+}
+
+return "client/" . $tool_id;
+}
+
+function wp_codebox_browser_runtime_tools_from_policy( array $sandbox_policy, array $fallback_tool_ids ): array {
+$policy_tools = is_array( $sandbox_policy["tools"] ?? null ) ? $sandbox_policy["tools"] : array();
+if ( empty( $policy_tools ) ) {
+	$policy_tools = array_map(
+		static fn( $tool_id ) => array( "id" => (string) $tool_id, "allowed" => true ),
+		$fallback_tool_ids
+	);
+}
+
+$runtime_tools = array();
+foreach ( $policy_tools as $tool ) {
+	if ( ! is_array( $tool ) || empty( $tool["allowed"] ) ) {
+		continue;
+	}
+
+	$tool_id = trim( (string) ( $tool["id"] ?? "" ) );
+	if ( "filesystem-write" !== $tool_id ) {
+		continue;
+	}
+
+	$name = wp_codebox_browser_runtime_tool_name( $tool_id );
+	if ( "" === $name ) {
+		continue;
+	}
+
+	$runtime_tools[ $name ] = array(
+		"description" => "Write a file into the allowed browser Playground artifact bundle root.",
+		"parameters"  => array(
+			"type"       => "object",
+			"properties" => array(
+				"path"     => array( "type" => "string", "description" => "Artifact-relative path under website/." ),
+				"content"  => array( "type" => "string", "description" => "File contents to write." ),
+				"encoding" => array( "type" => "string", "enum" => array( "utf-8", "base64" ) ),
+			),
+			"required"   => array( "path", "content" ),
+		),
+		"executor"    => "client",
+		"scope"       => "run",
+		"runtime"     => array_filter( array(
+			"sandbox_tool_id" => $tool_id,
+			"runtime_tool_id" => (string) ( $tool["runtime_tool_id"] ?? "" ),
+		) ),
+	);
+}
+
+return $runtime_tools;
+}
+
+function wp_codebox_browser_runtime_tool_result( array $request ) {
+$tool_name = (string) ( $request["tool_name"] ?? "" );
+$tool_def = is_array( $request["tool_def"] ?? null ) ? $request["tool_def"] : array();
+$runtime = is_array( $tool_def["runtime"] ?? null ) ? $tool_def["runtime"] : array();
+$sandbox_tool_id = (string) ( $runtime["sandbox_tool_id"] ?? "" );
+
+if ( "client/filesystem-write" === $tool_name || "filesystem-write" === $sandbox_tool_id ) {
+	$parameters = is_array( $request["parameters"] ?? null ) ? $request["parameters"] : array();
+	return ( new WP_Codebox_Browser_Filesystem_Write_Tool() )->handle_tool_call( $parameters, $tool_def );
+}
+
+return new WP_Error( "wp_codebox_browser_runtime_tool_unsupported", "The requested browser runtime tool is not supported by this sandbox runner.", array( "tool_name" => $tool_name ) );
+}
+
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
 
@@ -655,7 +886,7 @@ if ( is_array( $raw_payload ) ) {
 }
 }
 
-wp_codebox_browser_install_provider_proxy( $payload );
+$provider_proxy_diagnostics = wp_codebox_browser_install_provider_proxy( $payload );
 
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
@@ -685,15 +916,17 @@ if ( empty( $sandbox_tool_ids ) && is_array( $payload[\'task_input\'][\'allowed_
 		if ( \'\' !== $tool_id ) {
 			$sandbox_tool_ids[] = $tool_id;
 		}
-	}
+}
 }
 $sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
+$sandbox_runtime_tools = wp_codebox_browser_runtime_tools_from_policy( $sandbox_policy, $sandbox_tool_ids );
+$sandbox_model_tool_names = array_keys( $sandbox_runtime_tools );
 $base_input = array(
 \'agent\' => $agent,
 \'message\' => $message,
 \'user_id\' => $runtime_user_id,
-\'provider\' => (string) ( $payload[\'provider\'] ?? \'\' ),
-\'model\' => (string) ( $payload[\'model\'] ?? \'\' ),
+\'provider\' => (string) ( $payload[\'provider\'] ?? ( is_array( $payload[\'task_input\'] ?? null ) ? ( $payload[\'task_input\'][\'provider\'] ?? \'\' ) : \'\' ) ),
+\'model\' => (string) ( $payload[\'model\'] ?? ( is_array( $payload[\'task_input\'] ?? null ) ? ( $payload[\'task_input\'][\'model\'] ?? \'\' ) : \'\' ) ),
 \'session_owner\' => array(
 	\'type\' => \'browser-playground\',
 	\'key\' => $session_id,
@@ -727,17 +960,33 @@ $base_input = array(
 	\'task_input\' => $payload[\'task_input\'] ?? array(),
 ),
 );
-if ( ! empty( $sandbox_tool_ids ) ) {
+if ( ! empty( $sandbox_runtime_tools ) ) {
+	$base_input[\'client_context\'][\'runtime_tools\'] = $sandbox_runtime_tools;
+	$base_input[\'client_context\'][\'runtime_tool_callback\'] = \'wp_codebox_browser_runtime_tool_result\';
+	$base_input[\'client_context\'][\'sandbox_tool_name_map\'] = array();
+	foreach ( $sandbox_tool_ids as $sandbox_tool_id ) {
+		$model_tool_name = wp_codebox_browser_runtime_tool_name( (string) $sandbox_tool_id );
+		if ( isset( $sandbox_runtime_tools[ $model_tool_name ] ) ) {
+			$base_input[\'client_context\'][\'sandbox_tool_name_map\'][ (string) $sandbox_tool_id ] = $model_tool_name;
+		}
+	}
+	$base_input[\'client_context\'][\'sandbox_tool_policy\'] = $sandbox_policy;
 	$base_input[\'tool_policy\'] = array(
 		\'mode\' => \'allow\',
-		\'tools\' => $sandbox_tool_ids,
+		\'tools\' => $sandbox_model_tool_names,
 	);
-	$base_input[\'allow_only\'] = $sandbox_tool_ids;
+	$base_input[\'allow_only\'] = $sandbox_model_tool_names;
 	$base_input[\'completion_assertions\'] = array(
-		\'required_tool_names\' => $sandbox_tool_ids,
+		\'required_tool_names\' => $sandbox_model_tool_names,
 	);
 }
 $input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
+$event_sink_attached = false;
+if ( interface_exists( "\\DataMachine\\Engine\\AI\\LoopEventSinkInterface" ) && class_exists( "WP_Codebox_Browser_Event_File_Sink" ) ) {
+	file_put_contents( $event_path, "" );
+	$input[\'event_sink\'] = new WP_Codebox_Browser_Event_File_Sink( $event_path );
+	$event_sink_attached = true;
+}
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
 $permission_filters = is_array( $invocation[\'permission_filters\'] ?? null ) ? $invocation[\'permission_filters\'] : array_filter( array( (string) ( $invocation[\'permission_filter\'] ?? \'\' ) ) );
 
@@ -807,6 +1056,13 @@ $diagnostics = array(
 \'capture_count\' => count( $captures ),
 \'captured_paths\' => array_values( array_map( static fn( $capture ) => (string) ( $capture[\'path\'] ?? \'\' ), $captures ) ),
 \'agent_bundle_imports\' => $agent_bundle_imports,
+\'event_stream\' => array(
+	\'path\' => $event_path,
+	\'sink_attached\' => $event_sink_attached,
+	\'exists\' => is_readable( $event_path ),
+	\'size\' => is_readable( $event_path ) ? filesize( $event_path ) : 0,
+),
+\'provider_proxy\' => $provider_proxy_diagnostics,
 \'sandbox_tool_ids\' => $sandbox_tool_ids,
 \'input_controls\' => wp_codebox_browser_input_control_diagnostics( is_array( $input ?? null ) ? $input : array() ),
 \'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),

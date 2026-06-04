@@ -1,6 +1,8 @@
 ( () => {
 	const defaultRunnerDir = '/wordpress/wp-content/uploads/wp-codebox/runner';
 	const defaultRunnerUrlBase = '/wp-content/uploads/wp-codebox/runner';
+	const browserProviderProxySchema = 'wp-codebox/browser-provider-proxy-request/v1';
+	const browserProviderProxyMaxBytes = 1000000;
 
 	const safeName = ( name ) => String( name || 'task' ).replace( /[^a-z0-9_-]/gi, '-' ).toLowerCase();
 
@@ -113,6 +115,121 @@
 	};
 
 	const isPlainObject = ( value ) => !! value && typeof value === 'object' && ! Array.isArray( value );
+
+	const redactBrowserProviderProxyData = ( value ) => {
+		if ( ! value || typeof value !== 'object' ) {
+			return value;
+		}
+
+		if ( Array.isArray( value ) ) {
+			return value.map( redactBrowserProviderProxyData );
+		}
+
+		return Object.fromEntries( Object.entries( value ).map( ( [ key, item ] ) => [
+			key,
+			/authorization|secret|token|password|credential|private_key|api_key|\bkey\b|\bvalue\b/i.test( key ) ? '[redacted]' : redactBrowserProviderProxyData( item ),
+		] ) );
+	};
+
+	const browserProviderProxyError = ( code, message, data = {} ) => {
+		const redactedData = redactBrowserProviderProxyData( data );
+		return {
+			success: false,
+			error: {
+				code,
+				message,
+				...( redactedData && typeof redactedData === 'object' && ! Array.isArray( redactedData ) ? redactedData : {} ),
+			},
+		};
+	};
+
+	const parseBrowserProviderProxyMessage = ( data ) => {
+		const text = typeof data === 'string' ? data : '';
+		if ( ! text || text.length > browserProviderProxyMaxBytes ) {
+			return null;
+		}
+
+		let message = null;
+		try {
+			message = JSON.parse( text );
+		} catch {
+			return null;
+		}
+
+		return isPlainObject( message ) && message.schema === browserProviderProxySchema ? message : null;
+	};
+
+	const browserProviderProxyEndpoint = () => {
+		const root = window.wpApiSettings?.root || window.wp?.apiFetch?.root;
+		if ( typeof root === 'string' && root ) {
+			return new URL( 'wp-codebox/v1/browser-provider-request', root ).toString();
+		}
+
+		return new URL( '/wp-json/wp-codebox/v1/browser-provider-request', window.location.origin ).toString();
+	};
+
+	const browserProviderProxyHeaders = () => {
+		const nonce = window.wpApiSettings?.nonce;
+		return {
+			'Content-Type': 'application/json',
+			...( typeof nonce === 'string' && nonce ? { 'X-WP-Nonce': nonce } : {} ),
+		};
+	};
+
+	const executeBrowserProviderProxyRequest = async ( message ) => {
+		const body = JSON.stringify( message );
+		if ( body.length > browserProviderProxyMaxBytes ) {
+			return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_payload_too_large', 'Browser provider proxy request is too large.' );
+		}
+
+		try {
+			if ( window.wp?.apiFetch ) {
+				return await window.wp.apiFetch( {
+					path: '/wp-codebox/v1/browser-provider-request',
+					method: 'POST',
+					data: message,
+				} );
+			}
+
+			const response = await fetch( browserProviderProxyEndpoint(), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: browserProviderProxyHeaders(),
+				body,
+			} );
+			const json = await response.json().catch( () => null );
+			if ( ! response.ok ) {
+				return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_http_error', 'Browser provider proxy request failed.', { status: response.status, response: json } );
+			}
+
+			return isPlainObject( json ) ? json : browserProviderProxyError( 'wp_codebox_browser_provider_proxy_malformed_response', 'Browser provider proxy returned a malformed response.' );
+		} catch ( error ) {
+			return browserProviderProxyError( 'wp_codebox_browser_provider_proxy_fetch_failed', error?.message || 'Browser provider proxy request failed.' );
+		}
+	};
+
+	const installBrowserProviderProxy = ( client ) => {
+		const onMessage = typeof client?.onMessage === 'function' ? client.onMessage.bind( client ) : null;
+		if ( ! onMessage ) {
+			return null;
+		}
+
+		const remove = onMessage( async ( data ) => {
+			const message = parseBrowserProviderProxyMessage( data );
+			if ( ! message ) {
+				return undefined;
+			}
+
+			return JSON.stringify( await executeBrowserProviderProxyRequest( message ) );
+		} );
+
+		return async () => {
+			const cleanup = await remove;
+			if ( typeof cleanup === 'function' ) {
+				await cleanup();
+			}
+		};
+	};
 
 const operationPhp = ( operation ) => `<?php
 header( 'Content-Type: application/json; charset=utf-8' );
@@ -587,26 +704,31 @@ try {
 		}
 
 		let lastResult = null;
-		for ( const step of steps ) {
-			if ( step?.command !== 'wordpress.run-php' ) {
-				throw new Error( `Unsupported browser recipe step: ${ step?.command || 'unknown' }` );
-			}
+		const removeProviderProxy = installBrowserProviderProxy( client );
+		try {
+			for ( const step of steps ) {
+				if ( step?.command !== 'wordpress.run-php' ) {
+					throw new Error( `Unsupported browser recipe step: ${ step?.command || 'unknown' }` );
+				}
 
-			const codeArg = ( step.args || [] ).find( ( arg ) => typeof arg === 'string' && arg.startsWith( 'code=' ) );
-			if ( ! codeArg ) {
-				throw new Error( 'Browser recipe PHP step missing code argument.' );
-			}
+				const codeArg = ( step.args || [] ).find( ( arg ) => typeof arg === 'string' && arg.startsWith( 'code=' ) );
+				if ( ! codeArg ) {
+					throw new Error( 'Browser recipe PHP step missing code argument.' );
+				}
 
-			lastResult = await runPhpRequest( client, {
-				...options,
-				code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
-				name: options.name || 'codebox-recipe',
-				expectJson: true,
-			} );
-			if ( ! lastResult.success ) {
-				const detail = lastResult?.error?.data ? ` ${ JSON.stringify( lastResult.error.data ) }` : '';
-				throw new Error( `${ lastResult?.error?.message || 'WP Codebox browser recipe step failed.' }${ detail }` );
+				lastResult = await runPhpRequest( client, {
+					...options,
+					code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
+					name: options.name || 'codebox-recipe',
+					expectJson: true,
+				} );
+				if ( ! lastResult.success ) {
+					const detail = lastResult?.error?.data ? ` ${ JSON.stringify( lastResult.error.data ) }` : '';
+					throw new Error( `${ lastResult?.error?.message || 'WP Codebox browser recipe step failed.' }${ detail }` );
+				}
 			}
+		} finally {
+			await removeProviderProxy?.();
 		}
 
 		return lastResult;
