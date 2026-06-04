@@ -501,7 +501,29 @@ private static function browser_component_plugins( array $input, array $declared
 private static function browser_runtime_component_slugs( array $declared_components, bool $include_required ): array {
 	$slugs = array();
 	if ( $include_required ) {
-		$slugs = array( 'agents-api', 'data-machine', 'data-machine-code' );
+		/**
+		 * Filters the set of component slugs the browser runtime always installs.
+		 *
+		 * The generic runtime has no built-in required components; consumer
+		 * integrations (e.g. an agent runtime) register the plugin slugs their
+		 * sandbox depends on. Slugs must have a matching entry in the component
+		 * registry (see the wp_codebox_browser_runtime_component_registry filter)
+		 * to resolve to an installable source.
+		 *
+		 * @param array<int,string> $slugs Required component slugs. Default empty.
+		 */
+		$required = function_exists( 'apply_filters' )
+			? apply_filters( 'wp_codebox_browser_runtime_required_components', array() )
+			: array();
+
+		if ( is_array( $required ) ) {
+			foreach ( $required as $required_slug ) {
+				$normalized = self::safe_key( (string) $required_slug );
+				if ( '' !== $normalized ) {
+					$slugs[] = $normalized;
+				}
+			}
+		}
 	}
 
 	foreach ( $declared_components as $component ) {
@@ -520,33 +542,22 @@ private static function browser_runtime_component_key( string $slug ): string {
 
 /** @return array<string,array<string,mixed>> */
 private static function browser_runtime_component_registry(): array {
-	$registry = array(
-		'agents-api'        => array(
-			'resource'         => 'url',
-			'url'              => 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip',
-			'targetFolderName' => 'agents-api',
-			'activate'         => true,
-			'provenance'       => array( 'source' => 'runtime-component-registry' ),
-		),
-		'data-machine'      => array(
-			'resource'         => 'url',
-			'url'              => 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip',
-			'targetFolderName' => 'data-machine',
-			'activate'         => true,
-			'provenance'       => array( 'source' => 'runtime-component-registry' ),
-		),
-		'data-machine-code' => array(
-			'resource'         => 'url',
-			'url'              => 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip',
-			'targetFolderName' => 'data-machine-code',
-			'activate'         => true,
-			'provenance'       => array( 'source' => 'runtime-component-registry' ),
-		),
-	);
-
-	if ( function_exists( 'apply_filters' ) ) {
-		$registry = apply_filters( 'wp_codebox_browser_runtime_component_registry', $registry );
-	}
+	/**
+	 * Filters the browser runtime component registry: a map of component slug
+	 * to an installable source descriptor (resource, url, targetFolderName,
+	 * activate, provenance).
+	 *
+	 * The generic runtime ships no built-in components — it must not know which
+	 * downstream plugins or vendor release URLs exist. Consumer integrations
+	 * register their own components (and pair them with the
+	 * wp_codebox_browser_runtime_required_components filter when a component
+	 * should always be installed).
+	 *
+	 * @param array<string,array<string,mixed>> $registry Component registry. Default empty.
+	 */
+	$registry = function_exists( 'apply_filters' )
+		? apply_filters( 'wp_codebox_browser_runtime_component_registry', array() )
+		: array();
 
 	return is_array( $registry ) ? $registry : array();
 }

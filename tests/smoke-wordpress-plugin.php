@@ -544,6 +544,37 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
 	'data_machine_code' => $root . '/data-machine-code',
 	'provider_plugins'  => array( $root . '/ai-provider-test' ),
 );
+// The generic runtime ships no built-in components. A consumer integration
+// registers the agent-stack components + their release sources via these
+// filters (mirrors how extrachill-roadie wires the Extra Chill platform in).
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_required_components'] = static function ( array $slugs ): array {
+	foreach ( array( 'agents-api', 'data-machine', 'data-machine-code' ) as $required ) {
+		if ( ! in_array( $required, $slugs, true ) ) {
+			$slugs[] = $required;
+		}
+	}
+	return $slugs;
+};
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] = static function ( array $registry ): array {
+	$defaults = array(
+		'agents-api'        => 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip',
+		'data-machine'      => 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip',
+		'data-machine-code' => 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip',
+	);
+	foreach ( $defaults as $slug => $url ) {
+		if ( isset( $registry[ $slug ] ) ) {
+			continue;
+		}
+		$registry[ $slug ] = array(
+			'resource'         => 'url',
+			'url'              => $url,
+			'targetFolderName' => $slug,
+			'activate'         => true,
+			'provenance'       => array( 'source' => 'runtime-component-registry' ),
+		);
+	}
+	return $registry;
+};
 $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] = $root . '/wp-codebox.js';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_agent'] = 'site-coder';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
@@ -1533,7 +1564,23 @@ $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 $component_paths = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'];
 $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array_merge( $component_paths, array( 'data_machine' => '' ) );
 $registry_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] ?? null;
+// Register only agents-api + data-machine-code (omit data-machine) so the
+// missing-Data-Machine prerequisite path is exercised. The generic default is
+// empty, so the consumer-style registration here is the full source of truth.
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] = static function ( array $registry ): array {
+	$defaults = array(
+		'agents-api'        => 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip',
+		'data-machine-code' => 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip',
+	);
+	foreach ( $defaults as $slug => $url ) {
+		$registry[ $slug ] = array(
+			'resource'         => 'url',
+			'url'              => $url,
+			'targetFolderName' => $slug,
+			'activate'         => true,
+			'provenance'       => array( 'source' => 'runtime-component-registry' ),
+		);
+	}
 	unset( $registry['data-machine'] );
 	return $registry;
 };
