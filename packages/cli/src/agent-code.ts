@@ -136,7 +136,7 @@ if (function_exists('wp_get_ability')) {
         }
     };
     if (class_exists('DataMachine\\Abilities\\PermissionHelper')) {
-        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback, 1);
+        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback);
     } else {
         $sandbox_adopt_callback();
     }
@@ -248,7 +248,7 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
         return $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
     };
     $agent_result = class_exists('DataMachine\\Abilities\\PermissionHelper')
-        ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($agent_execute_callback, 1)
+        ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($agent_execute_callback)
         : $agent_execute_callback();
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
