@@ -18,9 +18,10 @@ assert.match(code, /lib\/compat\/old\.php/)
 assert.match(code, /foreach \(is_array\(\$bootstrap_files\)/)
 assert.match(code, /require_once \$bootstrap_path/)
 assert.match(code, /break;/)
-assert.match(code, /do_action\('plugins_loaded'\)/)
+assert.match(code, /wp_codebox_bench_run_deferred_wordpress_hook_callbacks\(\$deferred_plugins_loaded_callbacks, array\(\), 'plugins_loaded'\)/)
+assert.match(code, /wp_codebox_bench_run_deferred_wordpress_hook_callbacks\(\$deferred_init_callbacks, array\(\), 'init'\)/)
 assert.ok(
-  code.indexOf("require_once $bootstrap_path") < code.indexOf("do_action('plugins_loaded')"),
+  code.indexOf("require_once $bootstrap_path") < code.indexOf("wp_codebox_bench_run_deferred_wordpress_hook_callbacks($deferred_plugins_loaded_callbacks"),
   "bootstrap files should load before synthetic plugins_loaded/init hooks"
 )
 

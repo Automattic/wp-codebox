@@ -136,18 +136,166 @@ function wp_codebox_bench_run_wp_cli_step(array $step) {
     return $stdout;
 }
 
+function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): array {
+    global $wp_filter;
+    $snapshot = array();
+    if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
+        return $snapshot;
+    }
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+        foreach (array_keys($callbacks) as $callback_id) {
+            $snapshot[$priority . ':' . $callback_id] = true;
+        }
+    }
+    return $snapshot;
+}
+
+function wp_codebox_bench_defer_new_wordpress_hook_callbacks(string $hook_name, array $before): array {
+    global $wp_filter;
+    $deferred = array();
+    if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
+        return $deferred;
+    }
+    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
+        foreach ($callbacks as $callback_id => $callback) {
+            if (isset($before[$priority . ':' . $callback_id])) {
+                continue;
+            }
+            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
+            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
+        }
+        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
+            unset($wp_filter[$hook_name]->callbacks[$priority]);
+        }
+    }
+    usort($deferred, static function (array $left, array $right): int {
+        return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
+    });
+    return $deferred;
+}
+
+function wp_codebox_bench_run_deferred_wordpress_hook_callbacks(array $deferred, array $args = array(), ?string $hook_name = null): void {
+    global $wp_current_filter;
+    $pushed_hook = false;
+    if (is_string($hook_name) && $hook_name !== '') {
+        if (!is_array($wp_current_filter)) {
+            $wp_current_filter = array();
+        }
+        $wp_current_filter[] = $hook_name;
+        $pushed_hook = true;
+    }
+    try {
+        foreach ($deferred as $entry) {
+            $callback = $entry['callback'] ?? null;
+            if (!is_array($callback) || !isset($callback['function'])) {
+                continue;
+            }
+            $accepted_args = isset($callback['accepted_args']) ? (int) $callback['accepted_args'] : count($args);
+            call_user_func_array($callback['function'], array_slice($args, 0, $accepted_args));
+        }
+    } finally {
+        if ($pushed_hook) {
+            array_pop($wp_current_filter);
+        }
+    }
+}
+
+function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role): string {
+    $plugin_slug = sanitize_key($plugin_slug);
+    if ($plugin_slug === '') {
+        throw new RuntimeException('wordpress.bench received an empty ' . $role . ' plugin slug.');
+    }
+
+    $plugin_dir = WP_PLUGIN_DIR . '/' . $plugin_slug;
+    if (!is_dir($plugin_dir)) {
+        throw new RuntimeException('wordpress.bench could not find ' . $role . ' plugin directory for slug "' . $plugin_slug . '" at ' . $plugin_dir . '. WP_PLUGIN_DIR=' . WP_PLUGIN_DIR);
+    }
+
+    $candidate_files = array($plugin_dir . '/' . $plugin_slug . '.php');
+    foreach (glob($plugin_dir . '/*.php') ?: array() as $candidate_file) {
+        if (basename($candidate_file) !== 'db.php' && !in_array($candidate_file, $candidate_files, true)) {
+            $candidate_files[] = $candidate_file;
+        }
+    }
+
+    $checked_files = array();
+    foreach ($candidate_files as $candidate_file) {
+        $checked_files[] = $candidate_file;
+        if (!is_file($candidate_file) || !is_readable($candidate_file)) {
+            continue;
+        }
+        $contents = file_get_contents($candidate_file, false, null, 0, 8192);
+        if (is_string($contents) && strpos($contents, 'Plugin Name:') !== false) {
+            return $plugin_slug . '/' . basename($candidate_file);
+        }
+    }
+
+    throw new RuntimeException('wordpress.bench could not locate a readable plugin header for ' . $role . ' slug "' . $plugin_slug . '". Checked: ' . implode(', ', $checked_files));
+}
+
+function wp_codebox_bench_mark_plugin_active(string $plugin_basename): void {
+    $active_plugins = (array) get_option('active_plugins', array());
+    if (!in_array($plugin_basename, $active_plugins, true)) {
+        $active_plugins[] = $plugin_basename;
+        sort($active_plugins);
+        update_option('active_plugins', array_values($active_plugins));
+    }
+}
+
+function wp_codebox_bench_include_plugin_file(string $plugin_basename): void {
+    $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_basename;
+    if (!is_file($absolute_plugin_file) || !is_readable($absolute_plugin_file)) {
+        throw new RuntimeException('wordpress.bench cannot include plugin file "' . $plugin_basename . '" at ' . $absolute_plugin_file . '.');
+    }
+
+    wp_codebox_bench_assert_plugin_autoload_ready($plugin_basename);
+
+    try {
+        require_once $absolute_plugin_file;
+        wp_codebox_bench_mark_plugin_active($plugin_basename);
+    } catch (Throwable $e) {
+        throw new RuntimeException('wordpress.bench failed to include plugin "' . $plugin_basename . '" at ' . $absolute_plugin_file . ': ' . $e->getMessage(), 0, $e);
+    }
+}
+
+function wp_codebox_bench_assert_plugin_autoload_ready(string $plugin_basename): void {
+    $plugin_slug = dirname($plugin_basename);
+    if ($plugin_slug === '.' || $plugin_slug === '') {
+        return;
+    }
+
+    $plugin_dir = WP_PLUGIN_DIR . '/' . $plugin_slug;
+    $autoload_markers = array(
+        $plugin_dir . '/vendor/autoload.php',
+        $plugin_dir . '/vendor/autoload_packages.php',
+    );
+    foreach ($autoload_markers as $autoload_marker) {
+        if (is_file($autoload_marker) && is_readable($autoload_marker)) {
+            return;
+        }
+    }
+
+    $source_autoloader = $plugin_dir . '/src/Autoloader.php';
+    if (!is_file($source_autoloader) || !is_readable($source_autoloader)) {
+        return;
+    }
+
+    $source = file_get_contents($source_autoloader, false, null, 0, 4096);
+    if (is_string($source) && (strpos($source, 'vendor/autoload.php') !== false || strpos($source, 'vendor/autoload_packages.php') !== false)) {
+        throw new RuntimeException('wordpress.bench cannot fully bootstrap plugin "' . $plugin_basename . '" because its source autoloader requires a missing vendor autoload file. Checked: ' . implode(', ', $autoload_markers) . '. Provide a built dependency/plugin with Composer package autoload files before running heavyweight benchmark workloads.');
+    }
+}
+
 $plugins_to_activate = array();
 $activated_plugins = array();
 foreach (is_array($dependency_slugs) ? $dependency_slugs : array() as $dependency_slug) {
-    $dependency_slug = sanitize_key((string) $dependency_slug);
-    $dependency_file = WP_PLUGIN_DIR . '/' . $dependency_slug . '/' . $dependency_slug . '.php';
-    if (file_exists($dependency_file)) {
-        $plugins_to_activate[] = $dependency_slug . '/' . $dependency_slug . '.php';
-    }
+    $plugins_to_activate[] = wp_codebox_bench_plugin_file_for_slug((string) $dependency_slug, 'dependency');
 }
-$plugin_file = $plugin_path . '/' . $plugin_slug . '.php';
-if (file_exists($plugin_file)) {
-    $plugins_to_activate[] = $plugin_slug . '/' . $plugin_slug . '.php';
+$plugin_file = wp_codebox_bench_plugin_file_for_slug($plugin_slug, 'component');
+$plugins_to_activate[] = $plugin_file;
+$plugins_to_activate = array_values(array_unique($plugins_to_activate));
+foreach ($plugins_to_activate as $plugin_to_activate) {
+    wp_codebox_bench_assert_plugin_autoload_ready($plugin_to_activate);
 }
 foreach ($plugins_to_activate as $plugin_to_activate) {
     if (is_plugin_active($plugin_to_activate)) {
@@ -158,6 +306,12 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
         throw new RuntimeException($activation->get_error_message());
     }
     $activated_plugins[] = $plugin_to_activate;
+}
+
+$pre_plugins_loaded_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('plugins_loaded');
+$pre_init_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('init');
+foreach ($plugins_to_activate as $plugin_to_activate) {
+    wp_codebox_bench_include_plugin_file($plugin_to_activate);
 }
 $loaded_bootstrap_file = '';
 foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_file) {
@@ -174,10 +328,16 @@ foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_f
 if (is_array($bootstrap_files) && count($bootstrap_files) > 0 && $loaded_bootstrap_file === '') {
     throw new RuntimeException('No configured wordpress.bench bootstrap files were found.');
 }
-if (!empty($activated_plugins)) {
-    do_action('plugins_loaded');
-    do_action('init');
-}
+
+$deferred_plugins_loaded_callbacks = wp_codebox_bench_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_plugins_loaded_callbacks);
+$pre_replayed_plugins_loaded_init_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('init');
+wp_codebox_bench_run_deferred_wordpress_hook_callbacks($deferred_plugins_loaded_callbacks, array(), 'plugins_loaded');
+$deferred_init_callbacks = wp_codebox_bench_defer_new_wordpress_hook_callbacks('init', $pre_init_callbacks);
+$deferred_init_callbacks = array_merge($deferred_init_callbacks, wp_codebox_bench_defer_new_wordpress_hook_callbacks('init', $pre_replayed_plugins_loaded_init_callbacks));
+usort($deferred_init_callbacks, static function (array $left, array $right): int {
+    return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10);
+});
+wp_codebox_bench_run_deferred_wordpress_hook_callbacks($deferred_init_callbacks, array(), 'init');
 if (did_action('rest_api_init')) {
     $GLOBALS['wp_rest_server'] = null;
     do_action('rest_api_init', rest_get_server());

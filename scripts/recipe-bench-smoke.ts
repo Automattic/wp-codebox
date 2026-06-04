@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path"
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const cli = resolve(root, "packages/cli/dist/index.js")
 const component = resolve(root, "examples/bench-plugin")
+const dependency = resolve(root, "examples/bench-dependency")
 const artifacts = resolve(root, "artifacts/recipe-bench-smoke")
 const recipePath = resolve(artifacts, "recipe.json")
 
@@ -30,6 +31,11 @@ writeFileSync(recipePath, `${JSON.stringify({
         source: component,
         slug: "bench-plugin",
       },
+      {
+        source: dependency,
+        slug: "bench-dependency",
+        pluginFile: "bench-dependency/dependency-main.php",
+      },
     ],
   },
   workflow: {
@@ -39,6 +45,7 @@ writeFileSync(recipePath, `${JSON.stringify({
         args: [
           "component-id=bench-plugin",
           "plugin-slug=bench-plugin",
+          "dependency-slugs=bench-dependency",
           "iterations=2",
           "warmup=0",
           `env-json=${JSON.stringify({ BENCH_FIXTURE_ENV: "13" })}`,
@@ -92,6 +99,10 @@ assert.equal(scenario.metrics.included_before_plugins_loaded_mean, 1)
 assert.equal(scenario.metrics.included_before_init_mean, 1)
 assert.equal(scenario.metrics.plugins_loaded_callback_count_mean, 1)
 assert.equal(scenario.metrics.init_callback_count_mean, 1)
+assert.equal(scenario.metrics.dependency_value_mean, 11)
+assert.equal(scenario.metrics.dependency_active_mean, 1)
+assert.equal(scenario.metrics.dependency_plugins_loaded_callback_count_mean, 1)
+assert.equal(scenario.metrics.dependency_init_callback_count_mean, 1)
 assert.equal(scenario.metadata.fixture, "bench-plugin")
 const configured = output.benchResults.scenarios[1]
 assert.equal(configured.id, "configured-env")
