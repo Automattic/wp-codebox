@@ -159,6 +159,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$response['outcome'] = $outcome;
 		}
 
+		$response['status']        = true === ( $response['success'] ?? false ) ? 'completed' : 'failed';
+		$response['diagnostics']   = $this->run_diagnostics( $decoded, $exit_code, $outcome );
+		$response['evidence_refs'] = $this->evidence_refs( $response['session'], $decoded );
+		$response['run_metadata']  = $this->run_metadata( $session_id, $input, $wp_version, $decoded );
+
 		return $response;
 	}
 
@@ -2290,6 +2295,61 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			)
+		);
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. @param array<string,mixed>|null $outcome Strict remediation outcome when requested. @return array<string,mixed> */
+	private function run_diagnostics( array $run, int $exit_code, ?array $outcome ): array {
+		$agent_result = is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array();
+
+		return array_filter(
+			array(
+				'schema'                    => 'wp-codebox/agent-task-diagnostics/v1',
+				'exit_code'                 => $exit_code,
+				'recipe_run_schema'         => (string) ( $run['schema'] ?? '' ),
+				'agent_result_schema'       => (string) ( $agent_result['schema'] ?? '' ),
+				'agent_actionable'          => array_key_exists( 'actionable', $agent_result ) ? (bool) $agent_result['actionable'] : null,
+				'agent_no_op_reason'        => (string) ( $agent_result['noOpReason'] ?? '' ),
+				'completion_outcome_status' => is_array( $run['completionOutcome'] ?? null ) ? (string) ( $run['completionOutcome']['status'] ?? '' ) : '',
+				'outcome_kind'              => is_array( $outcome ) ? (string) ( $outcome['kind'] ?? '' ) : '',
+				'outcome_retryable'         => is_array( $outcome ) && array_key_exists( 'retryable', $outcome ) ? (bool) $outcome['retryable'] : null,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Sandbox session envelope. @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function evidence_refs( array $session, array $run ): array {
+		$session_artifacts = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+		$run_artifacts     = is_array( $run['artifacts'] ?? null ) ? $run['artifacts'] : array();
+		$agent_result      = is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array();
+		$transcript        = is_array( $agent_result['transcript'] ?? null ) ? $agent_result['transcript'] : array();
+
+		return array_filter(
+			array(
+				'schema'             => 'wp-codebox/agent-task-evidence-refs/v1',
+				'artifacts_path'     => (string) ( $session_artifacts['path'] ?? '' ),
+				'artifact_bundle_id' => (string) ( $session_artifacts['bundle_id'] ?? $run_artifacts['id'] ?? '' ),
+				'preview_url'        => (string) ( $session_artifacts['preview_url'] ?? '' ),
+				'completion_outcome' => (string) ( $session_artifacts['completion_outcome'] ?? '' ),
+				'transcript'         => (string) ( $transcript['artifact'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function run_metadata( string $session_id, array $input, string $wp_version, array $run ): array {
+		return array_filter(
+			array(
+				'schema'             => 'wp-codebox/agent-task-run-metadata/v1',
+				'sandbox_session_id' => $session_id,
+				'agent_session_id'   => (string) ( $input['session_id'] ?? '' ),
+				'orchestrator'       => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+				'wp'                 => $wp_version,
+				'recipe_run_schema'  => (string) ( $run['schema'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
 	}
 

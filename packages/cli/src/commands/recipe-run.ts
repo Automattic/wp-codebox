@@ -1,8 +1,9 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type BenchResults, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
+import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
@@ -117,34 +118,8 @@ interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
   action: "staged"
 }
 
-interface BenchResults {
-  component_id: string
-  iterations: number
-  warmup_iterations?: number
-  scenarios: BenchScenarioResults[]
-}
-
-interface BenchSampleDiagnostics {
-  sample_count: number
-  mean: number
-  standard_deviation: number
-  relative_standard_deviation: number
-}
-
-interface BenchScenarioResults extends Record<string, unknown> {
-  id: string
-  source: string
-  iterations: number
-  metrics: Record<string, number>
-  samples?: {
-    duration_ms?: number[]
-    metrics?: Record<string, number[]>
-  }
-  diagnostics?: {
-    duration_ms?: BenchSampleDiagnostics
-    metrics?: Record<string, BenchSampleDiagnostics>
-  }
-}
+const benchResultsAjv = new Ajv2020({ strict: false })
+const validateBenchResultsSchema = benchResultsAjv.compile(createBenchResultsJsonSchema())
 
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
@@ -951,12 +926,12 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
 }
 
 function parseBenchResults(raw: string): BenchResults {
-  const parsed = JSON.parse(raw) as BenchResults
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
-    throw new Error("Bench command did not emit a BenchResults envelope")
+  const parsed = JSON.parse(raw) as unknown
+  if (!validateBenchResultsSchema(parsed)) {
+    throw new Error(`Bench command did not emit a wp-codebox/bench-results/v1 envelope: ${benchResultsAjv.errorsText(validateBenchResultsSchema.errors)}`)
   }
 
-  return parsed
+  return parsed as BenchResults
 }
 
 function resolveSecretEnv(names: string[]): Record<string, string> {
