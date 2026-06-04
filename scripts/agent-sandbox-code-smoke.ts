@@ -87,7 +87,7 @@ async function main() {
   assert.doesNotMatch(code, /wp_get_ability\('datamachine\/import-agent'\)/, "sandbox setup should not call the Data Machine import ability directly")
   assert.match(code, /agent_bundle_imports/, "sandbox setup should report agent bundle import results")
   assert.match(code, /agent_bundle_import_failed/, "sandbox setup should fail before chat when bundle imports fail")
-  assert.ok(code.indexOf("wp_codebox_import_sandbox_agent_bundles") < code.indexOf("wp_get_ability('agents/chat')"), "agent bundles should import before agents/chat is resolved")
+  assert.ok(code.indexOf("wp_codebox_import_sandbox_agent_bundles") < code.indexOf("$ability ="), "agent bundles should import before agents/chat is resolved")
   assert.doesNotMatch(code, /DataMachine\\Core\\Database\\Agents\\Agents/, "sandbox setup should not create Data Machine agent rows directly")
   assert.doesNotMatch(code, /create_if_missing/, "sandbox setup should leave Data Machine materialization to its runtime import adapter")
   assert.match(code, /repair-agent/, "inline bundle specs should be embedded in sandbox setup")

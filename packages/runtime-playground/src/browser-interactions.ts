@@ -236,10 +236,14 @@ export function browserAssertionsSummary(records: BrowserStepRecord[]) {
     .map((record) => record.assertion)
     .filter((assertion): assertion is BrowserStepAssertion => assertion !== undefined)
   const passed = results.filter((assertion) => assertion.passed).length
+  const failed = results.filter((assertion) => !assertion.passed).length
+  const advisoryFailed = results.filter((assertion) => !assertion.passed && assertion.advisory).length
   return {
     total: results.length,
     passed,
-    failed: results.length - passed,
+    failed,
+    advisoryFailed,
+    fatalFailed: failed - advisoryFailed,
     results,
   }
 }

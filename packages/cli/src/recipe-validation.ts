@@ -615,6 +615,24 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         }
       }
     }
+
+    for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
+      const normalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
+      if (
+        !normalized.startsWith("exists:")
+        && !normalized.startsWith("not-exists:")
+        && !normalized.startsWith("visible:")
+        && !normalized.startsWith("hidden:")
+        && !normalized.startsWith("count:")
+        && !normalized.startsWith("text:")
+        && !normalized.startsWith("attr:")
+        && normalized !== "no-console-errors"
+        && normalized !== "no-page-errors"
+        && normalized !== "no-errors"
+      ) {
+        addIssue("invalid-assert", `${path}.args`, `wordpress.browser-probe assert does not support: ${assertion}`)
+      }
+    }
     return
   }
 

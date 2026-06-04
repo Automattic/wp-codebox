@@ -74,6 +74,7 @@
     "recipe-browser-smoke": "tsx scripts/recipe-browser-smoke.ts",
     "headless-browser-agent-recipe-smoke": "tsx scripts/headless-browser-agent-recipe-smoke.ts",
     "browser-probe-artifact-smoke": "tsx scripts/browser-probe-artifact-smoke.ts",
+    "browser-probe-assertions-smoke": "tsx scripts/browser-probe-assertions-smoke.ts",
     "browser-actions-artifact-smoke": "tsx scripts/browser-actions-artifact-smoke.ts",
     "browser-html-capture-smoke": "tsx scripts/browser-html-capture-smoke.ts",
     "editor-open-artifact-smoke": "tsx scripts/editor-open-artifact-smoke.ts",
