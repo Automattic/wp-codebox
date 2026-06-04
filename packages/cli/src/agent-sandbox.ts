@@ -28,6 +28,7 @@ export interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   maxTurns?: string
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
+  datamachineBundle?: Record<string, unknown>
   sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
@@ -115,6 +116,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       maxTurns: argValue(args, "max-turns"),
       timeoutSeconds: argValue(args, "timeout-seconds"),
       agentBundles: parseAgentBundles(args),
+      datamachineBundle: parseDatamachineBundle(args),
       sandboxWorkspace: parseSandboxWorkspace(args) ?? sandboxWorkspace,
       sandboxToolPolicy: parseSandboxToolPolicy(args),
     }))
@@ -233,7 +235,7 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 }
 
 export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--sandbox-tool-policy-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--datamachine-bundle-json", "--sandbox-tool-policy-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -274,6 +276,9 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
       case "--agent-bundles-json":
         options.agentBundles = parseAgentBundleList(value)
         break
+      case "--datamachine-bundle-json":
+        options.datamachineBundle = parseDatamachineBundleValue(value)
+        break
       case "--sandbox-tool-policy-json":
         options.sandboxToolPolicy = normalizeSandboxToolPolicySnapshot(JSON.parse(value))
         break
@@ -296,6 +301,20 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
 
 function parseAgentBundles(args: string[]): AgentBundleSpec[] {
   return parseAgentBundleList(argValue(args, "agent-bundles-json") ?? "[]")
+}
+
+function parseDatamachineBundle(args: string[]): Record<string, unknown> | undefined {
+  const value = argValue(args, "datamachine-bundle-json")
+  return value ? parseDatamachineBundleValue(value) : undefined
+}
+
+function parseDatamachineBundleValue(value: string): Record<string, unknown> | undefined {
+  if (!value.trim()) return undefined
+  const parsed = JSON.parse(value)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("datamachine-bundle-json must be an object")
+  }
+  return parsed as Record<string, unknown>
 }
 
 function parseSandboxWorkspace(args: string[]): SandboxWorkspaceContract | undefined {

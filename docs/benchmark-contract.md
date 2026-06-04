@@ -22,6 +22,7 @@ caller benchmark suite
 - Capture runtime artifacts, command logs, browser evidence, and provenance.
 - Emit `benchResults` and `benchResultsList` in `wp-codebox/recipe-run/v1` JSON output when `wordpress.bench` steps succeed.
 - Provide CLI helpers that extract benchmark envelopes from saved `recipe-run` output or artifact bundles.
+- Provide CLI/API helpers that compare compatible baseline/candidate benchmark envelopes and emit generic deltas plus diagnostics.
 - Keep helper output stable, JSON-friendly, and free of product-specific scoring fields.
 
 ## Caller Responsibilities
@@ -196,6 +197,36 @@ benchmark envelopes by cell:
 Failed cells remain isolated as `cell-failed` diagnostics. A failed cell does not
 prevent later cells from running, and WP Codebox still does not score, grade,
 rank, retry, or publish benchmark results.
+
+## Comparing Results
+
+Compare two saved `recipe-run` JSON outputs:
+
+```bash
+npm run wp-codebox -- bench compare \
+  --baseline-input ./artifacts/baseline/recipe-run.json \
+  --candidate-input ./artifacts/candidate/recipe-run.json \
+  --json
+```
+
+Compare two artifact bundles by reading each bundle's command log:
+
+```bash
+npm run wp-codebox -- artifacts bench-compare \
+  --baseline-bundle ./artifacts/baseline \
+  --candidate-bundle ./artifacts/candidate \
+  --json
+```
+
+Both commands emit `wp-codebox/benchmark-comparison/v1`. The comparison surface
+is mechanical: it matches scenario ids and metric ids, compares numeric values or
+`samples.mean` from metric records, emits absolute and percent deltas, carries
+sample counts and stability metadata, and reports missing scenarios or metrics as
+diagnostics. It does not decide whether a delta is a regression, improvement,
+pass, or failure.
+
+When a source contains multiple benchmark envelopes, select an envelope with
+`--baseline-index` or `--candidate-index`.
 
 ## Non-Responsibilities
 

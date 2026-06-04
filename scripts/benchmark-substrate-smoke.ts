@@ -125,4 +125,28 @@ assert.equal(comparison.diagnostics.some((diagnostic) => diagnostic.type === "mi
 assert.equal(comparison.diagnostics.some((diagnostic) => diagnostic.type === "missing-candidate-scenario" && diagnostic.scenarioId === "baseline-only"), true)
 assert.equal(comparison.diagnostics.some((diagnostic) => diagnostic.type === "missing-baseline-scenario" && diagnostic.scenarioId === "candidate-only"), true)
 
+const sampleComparison = compareBenchmarkResults(
+  {
+    component_id: "demo",
+    scenarios: [{ id: "load", metrics: { duration: { unit: "ms", samples: { count: 2, mean: 10, p50: 10, p95: 11, p99: 11, min: 9, max: 11, standard_deviation: 1, relative_standard_deviation: 0.1 } } } }],
+  },
+  {
+    component_id: "demo",
+    scenarios: [{ id: "load", metrics: { duration: { unit: "ms", samples: { count: 4, mean: 12, p50: 12, p95: 13, p99: 13, min: 11, max: 13, standard_deviation: 2, relative_standard_deviation: 0.16 } } } }],
+  },
+)
+const sampleDelta = sampleComparison.pairs[0]?.metrics[0]
+assert.deepEqual(sampleDelta, {
+  scenarioId: "load",
+  metricId: "duration",
+  unit: "ms",
+  statistic: "mean",
+  baseline: 10,
+  candidate: 12,
+  absoluteDelta: 2,
+  percentDelta: 20,
+  baselineSamples: { count: 2, standardDeviation: 1, relativeStandardDeviation: 0.1, min: 9, max: 11, p50: 10, p95: 11, p99: 11 },
+  candidateSamples: { count: 4, standardDeviation: 2, relativeStandardDeviation: 0.16, min: 11, max: 13, p50: 12, p95: 13, p99: 13 },
+})
+
 console.log("benchmark substrate smoke passed")

@@ -16,7 +16,9 @@ interface CliCommandRouter {
   artifactsBenchmark: CliCommandHandler
   artifactsBenchResults: CliCommandHandler
   benchMatrix: CliCommandHandler
+  artifactsBenchCompare: CliCommandHandler
   benchSummarize: CliCommandHandler
+  benchCompare: CliCommandHandler
   runsStatus: CliCommandHandler
   runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
@@ -86,6 +88,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       if (subcommand === "bench-results") {
         return router.artifactsBenchResults(args)
       }
+      if (subcommand === "bench-compare") {
+        return router.artifactsBenchCompare(args)
+      }
       console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
       router.printHelp()
       return 1
@@ -97,6 +102,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       }
       if (subcommand === "matrix") {
         return router.benchMatrix(args)
+      }
+      if (subcommand === "compare") {
+        return router.benchCompare(args)
       }
       console.error(`Unknown bench command: ${subcommand ?? ""}`)
       router.printHelp()

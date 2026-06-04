@@ -98,10 +98,25 @@ export type BenchmarkMatrixCellRunner = (cell: BenchmarkMatrixCell) => Promise<B
 export interface BenchmarkComparisonMetricDelta {
   scenarioId: string
   metricId: string
+  unit?: string
+  statistic?: "mean" | "value" | (string & {})
   baseline: number
   candidate: number
   absoluteDelta: number
   percentDelta?: number
+  baselineSamples?: BenchmarkComparisonSampleMetadata
+  candidateSamples?: BenchmarkComparisonSampleMetadata
+}
+
+export interface BenchmarkComparisonSampleMetadata {
+  count?: number
+  standardDeviation?: number
+  relativeStandardDeviation?: number
+  min?: number
+  max?: number
+  p50?: number
+  p95?: number
+  p99?: number
 }
 
 export interface BenchmarkComparisonScenarioPair {
@@ -273,14 +288,14 @@ export function compareBenchmarkResults(baseline: BenchmarkResultEnvelope, candi
       continue
     }
 
-    const baselineMetrics = numericMetricMap(baselineScenario.metrics)
-    const candidateMetrics = numericMetricMap(candidateScenario.metrics)
+    const baselineMetrics = comparableMetricMap(baselineScenario.metrics)
+    const candidateMetrics = comparableMetricMap(candidateScenario.metrics)
     const metricIds = sortedUnion(Object.keys(baselineMetrics), Object.keys(candidateMetrics))
     const metrics: BenchmarkComparisonMetricDelta[] = []
     for (const metricId of metricIds) {
-      const baselineValue = baselineMetrics[metricId]
-      const candidateValue = candidateMetrics[metricId]
-      if (baselineValue === undefined) {
+      const baselineMetric = baselineMetrics[metricId]
+      const candidateMetric = candidateMetrics[metricId]
+      if (!baselineMetric) {
         diagnostics.push({
           type: "missing-baseline-metric",
           severity: "warning",
@@ -290,7 +305,7 @@ export function compareBenchmarkResults(baseline: BenchmarkResultEnvelope, candi
         })
         continue
       }
-      if (candidateValue === undefined) {
+      if (!candidateMetric) {
         diagnostics.push({
           type: "missing-candidate-metric",
           severity: "warning",
@@ -301,14 +316,18 @@ export function compareBenchmarkResults(baseline: BenchmarkResultEnvelope, candi
         continue
       }
 
-      const absoluteDelta = candidateValue - baselineValue
+      const absoluteDelta = candidateMetric.value - baselineMetric.value
       metrics.push({
         scenarioId,
         metricId,
-        baseline: baselineValue,
-        candidate: candidateValue,
+        ...(baselineMetric.unit === candidateMetric.unit && baselineMetric.unit ? { unit: baselineMetric.unit } : {}),
+        ...comparisonStatistic(baselineMetric, candidateMetric),
+        baseline: baselineMetric.value,
+        candidate: candidateMetric.value,
         absoluteDelta,
-        ...(baselineValue !== 0 ? { percentDelta: (absoluteDelta / baselineValue) * 100 } : {}),
+        ...(baselineMetric.value !== 0 ? { percentDelta: (absoluteDelta / baselineMetric.value) * 100 } : {}),
+        ...(baselineMetric.samples ? { baselineSamples: baselineMetric.samples } : {}),
+        ...(candidateMetric.samples ? { candidateSamples: candidateMetric.samples } : {}),
       })
     }
 
@@ -377,14 +396,72 @@ function scenarioMap(results: BenchmarkResultEnvelope): Record<string, Benchmark
   return scenarios
 }
 
-function numericMetricMap(metrics: Record<string, unknown> | undefined): Record<string, number> {
-  const numericMetrics: Record<string, number> = {}
+interface ComparableBenchmarkMetric {
+  value: number
+  unit?: string
+  statistic: "mean" | "value" | (string & {})
+  samples?: BenchmarkComparisonSampleMetadata
+}
+
+function comparableMetricMap(metrics: Record<string, unknown> | undefined): Record<string, ComparableBenchmarkMetric> {
+  const comparableMetrics: Record<string, ComparableBenchmarkMetric> = {}
   for (const [key, value] of Object.entries(metrics ?? {})) {
     if (typeof value === "number" && Number.isFinite(value)) {
-      numericMetrics[key] = value
+      comparableMetrics[key] = { value, statistic: "value" }
+      continue
+    }
+
+    const samples = metricSamplesSummary(value)
+    if (samples && Number.isFinite(samples.mean)) {
+      comparableMetrics[key] = {
+        value: samples.mean,
+        statistic: "mean",
+        ...metricUnit(value),
+        samples: comparisonSampleMetadata(samples),
+      }
     }
   }
-  return numericMetrics
+  return comparableMetrics
+}
+
+function metricSamplesSummary(value: unknown): { count?: unknown; mean: number; standard_deviation?: unknown; relative_standard_deviation?: unknown; min?: unknown; max?: unknown; p50?: unknown; p95?: unknown; p99?: unknown } | undefined {
+  if (!isRecord(value) || !isRecord(value.samples) || typeof value.samples.mean !== "number") {
+    return undefined
+  }
+  return value.samples as { count?: unknown; mean: number; standard_deviation?: unknown; relative_standard_deviation?: unknown; min?: unknown; max?: unknown; p50?: unknown; p95?: unknown; p99?: unknown }
+}
+
+function metricUnit(value: unknown): { unit?: string } {
+  if (!isRecord(value) || typeof value.unit !== "string" || !value.unit.trim()) {
+    return {}
+  }
+  return { unit: value.unit }
+}
+
+function comparisonSampleMetadata(samples: { count?: unknown; standard_deviation?: unknown; relative_standard_deviation?: unknown; min?: unknown; max?: unknown; p50?: unknown; p95?: unknown; p99?: unknown }): BenchmarkComparisonSampleMetadata {
+  return {
+    ...finiteNumberProperty("count", samples.count),
+    ...finiteNumberProperty("standardDeviation", samples.standard_deviation),
+    ...finiteNumberProperty("relativeStandardDeviation", samples.relative_standard_deviation),
+    ...finiteNumberProperty("min", samples.min),
+    ...finiteNumberProperty("max", samples.max),
+    ...finiteNumberProperty("p50", samples.p50),
+    ...finiteNumberProperty("p95", samples.p95),
+    ...finiteNumberProperty("p99", samples.p99),
+  }
+}
+
+function finiteNumberProperty(name: keyof BenchmarkComparisonSampleMetadata, value: unknown): Partial<BenchmarkComparisonSampleMetadata> {
+  return typeof value === "number" && Number.isFinite(value) ? { [name]: value } : {}
+}
+
+function comparisonStatistic(baselineMetric: ComparableBenchmarkMetric, candidateMetric: ComparableBenchmarkMetric): { statistic?: "mean" | "value" | (string & {}) } {
+  const statistic = baselineMetric.statistic === candidateMetric.statistic ? baselineMetric.statistic : "value"
+  return statistic === "value" ? {} : { statistic }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function sortedUnion(left: string[], right: string[]): string[] {

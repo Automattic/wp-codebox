@@ -52,6 +52,7 @@
     "run-registry-smoke": "tsx scripts/run-registry-smoke.ts",
     "benchmark-substrate-smoke": "tsx scripts/benchmark-substrate-smoke.ts",
     "benchmark-matrix-cli-smoke": "tsx scripts/benchmark-matrix-cli-smoke.ts",
+    "benchmark-comparison-smoke": "tsx scripts/benchmark-comparison-smoke.ts",
     "runtime-episode-smoke": "tsx scripts/runtime-episode-smoke.ts",
     "wordpress-state-contract-smoke": "tsx scripts/wordpress-state-contract-smoke.ts",
     "runtime-snapshot-restore-smoke": "tsx scripts/runtime-snapshot-restore-smoke.ts",
