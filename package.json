@@ -69,6 +69,8 @@
     "recipe-bench-smoke": "tsx scripts/recipe-bench-smoke.ts",
     "recipe-build-cli-smoke": "tsx scripts/recipe-build-cli-smoke.ts",
     "recipe-browser-bench-metrics-smoke": "tsx scripts/recipe-browser-bench-metrics-smoke.ts",
+    "recipe-run-php-plugin-load-smoke": "tsx scripts/recipe-run-php-plugin-load-smoke.ts",
+    "run-php-plugin-diagnostics-smoke": "tsx scripts/run-php-plugin-diagnostics-smoke.ts",
     "recipe-browser-smoke": "tsx scripts/recipe-browser-smoke.ts",
     "headless-browser-agent-recipe-smoke": "tsx scripts/headless-browser-agent-recipe-smoke.ts",
     "browser-probe-artifact-smoke": "tsx scripts/browser-probe-artifact-smoke.ts",
