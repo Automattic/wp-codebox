@@ -178,6 +178,10 @@ final class WP_Codebox_Abilities {
 								'items'       => array( 'type' => 'string' ),
 							),
 							'agent_bundles'          => self::agent_bundle_schema(),
+							'datamachine_bundle'     => array(
+								'type'        => 'object',
+								'description' => 'Data Machine agent bundle run request. WP Codebox forwards this to datamachine/run-agent-bundle inside the sandbox.',
+							),
 							'parent_request'         => array(
 								'type'        => 'object',
 								'description' => 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.',
@@ -296,6 +300,7 @@ final class WP_Codebox_Abilities {
 								'items' => array( 'type' => 'string' ),
 							),
 							'agent_bundles'          => self::agent_bundle_schema(),
+							'datamachine_bundle'     => array( 'type' => 'object' ),
 							'parent_request'         => array( 'type' => 'object' ),
 							'mounts'                 => $mount_schema,
 							'workspaces'             => array(
