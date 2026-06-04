@@ -1782,6 +1782,7 @@ $homeboy_result = $runner->run(
 		'datamachine_bundle' => array(
 			'bundle_path' => $root . '/site-generator-agent.json',
 			'flow_slug'   => 'static-site-manual-flow',
+			'dry_run'     => true,
 		),
 		'parent_request' => array(
 			'schema'               => 'homeboy/wp-codebox-task-request/v1',
@@ -1856,12 +1857,20 @@ $homeboy_result = $runner->run(
 );
 $homeboy_recipe = json_decode( $captured_recipe, true );
 $homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
+$homeboy_datamachine_bundle_arg = '';
+foreach ( $homeboy_step_args as $homeboy_step_arg ) {
+	if ( is_string( $homeboy_step_arg ) && str_starts_with( $homeboy_step_arg, 'datamachine-bundle-json=' ) ) {
+		$homeboy_datamachine_bundle_arg = substr( $homeboy_step_arg, strlen( 'datamachine-bundle-json=' ) );
+		break;
+	}
+}
+$homeboy_datamachine_bundle = '' !== $homeboy_datamachine_bundle_arg ? json_decode( $homeboy_datamachine_bundle_arg, true ) : array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
 $assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
-$assert( 'runner passes Data Machine bundle execution request to sandbox step', str_contains( implode( "\n", $homeboy_step_args ), 'datamachine-bundle-json=' ) && str_contains( $captured_recipe, 'static-site-manual-flow' ) );
+$assert( 'runner passes Data Machine bundle execution request to sandbox step', is_array( $homeboy_datamachine_bundle ) && 'static-site-manual-flow' === ( $homeboy_datamachine_bundle['flow_slug'] ?? '' ) && true === ( $homeboy_datamachine_bundle['dry_run'] ?? false ) );
 $assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
 $assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use mounted workspace repos' ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );

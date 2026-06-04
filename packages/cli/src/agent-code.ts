@@ -355,6 +355,10 @@ function normalizeDatamachineBundleRunInput(config: Record<string, unknown> | un
     runInput.flow = flow
   }
 
+  if (typeof config.dry_run === "boolean") {
+    runInput.dry_run = config.dry_run
+  }
+
   for (const key of ["token_env", "job_label"] as const) {
     const value = typeof config[key] === "string" ? config[key].trim() : ""
     if (value) runInput[key] = value
