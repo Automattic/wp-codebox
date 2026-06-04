@@ -79,6 +79,15 @@ export interface BenchResults {
   component_id: string
   iterations: number
   warmup_iterations: number
+  lifecycle?: {
+    phases: string[]
+    diagnostics: BenchmarkDiagnostic[]
+  }
+  reset_policy?: {
+    betweenIterations: string
+    betweenScenarios: string
+    events?: Array<Record<string, unknown>>
+  }
   scenarios: BenchmarkScenarioRecord[]
   diagnostics: BenchmarkDiagnostic[]
   artifacts?: Record<string, BenchmarkArtifactRef>
@@ -114,6 +123,8 @@ export interface BenchmarkDefinition {
   env?: Record<string, unknown>
   bootstrap_files?: string[]
   workloads?: BenchmarkDefinitionWorkload[]
+  lifecycle?: Record<string, unknown>
+  reset_policy?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
 
@@ -132,6 +143,8 @@ export function createBenchResultsJsonSchema(): BenchmarkJsonSchema {
       component_id: { type: "string", minLength: 1 },
       iterations: { type: "integer", minimum: 1 },
       warmup_iterations: { type: "integer", minimum: 0 },
+      lifecycle: { $ref: "#/$defs/lifecycle" },
+      reset_policy: { $ref: "#/$defs/resetPolicy" },
       scenarios: { type: "array", items: { $ref: "#/$defs/scenario" } },
       diagnostics: { type: "array", items: { $ref: "#/$defs/diagnostic" } },
       artifacts: { $ref: "#/$defs/artifactMap" },
@@ -159,6 +172,8 @@ export function createBenchmarkDefinitionJsonSchema(): BenchmarkJsonSchema {
       env: { type: "object", additionalProperties: true },
       bootstrap_files: { type: "array", items: { type: "string", minLength: 1 } },
       workloads: { type: "array", items: { $ref: "#/$defs/workload" } },
+      lifecycle: { type: "object", additionalProperties: true },
+      reset_policy: { type: "object", additionalProperties: true },
       metadata: { type: "object", additionalProperties: true },
     },
     $defs: benchmarkSchemaDefs(),
@@ -215,6 +230,25 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
     artifactMap: {
       type: "object",
       additionalProperties: { $ref: "#/$defs/artifactRef" },
+    },
+    lifecycle: {
+      type: "object",
+      additionalProperties: false,
+      required: ["phases", "diagnostics"],
+      properties: {
+        phases: { type: "array", items: { type: "string" } },
+        diagnostics: { type: "array", items: { $ref: "#/$defs/diagnostic" } },
+      },
+    },
+    resetPolicy: {
+      type: "object",
+      additionalProperties: false,
+      required: ["betweenIterations", "betweenScenarios"],
+      properties: {
+        betweenIterations: { type: "string" },
+        betweenScenarios: { type: "string" },
+        events: { type: "array", items: { type: "object", additionalProperties: true } },
+      },
     },
     scenario: {
       type: "object",

@@ -57,12 +57,17 @@ writeFileSync(recipePath, `${JSON.stringify({
                 { type: "rest-request", method: "GET", path: "/wp/v2/types", "metric-prefix": "rest_types" },
                 {
                   type: "php",
-                  code: "return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0), 'metadata' => array('kind' => 'configured'));",
+                  code: "return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0, 'lifecycle_setup_visible' => get_option('wp_codebox_bench_lifecycle_setup') === 'yes' ? 1 : 0, 'lifecycle_prepare_visible' => get_option('wp_codebox_bench_lifecycle_prepare') === 'yes' ? 1 : 0, 'cache_was_empty' => wp_cache_get('wp_codebox_bench_cache_flag', 'wp-codebox-bench') === false ? (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 1 : 1) : (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 0 : 0)), 'metadata' => array('kind' => 'configured'));",
                 },
               ],
               artifacts: { report: { path: "workloads/report.json", kind: "json" } },
             },
           ])}`,
+          `lifecycle-json=${JSON.stringify({
+            setup: [{ type: "php", code: "update_option('wp_codebox_bench_lifecycle_setup', 'yes');" }],
+            prepare: [{ type: "php", code: "update_option('wp_codebox_bench_lifecycle_prepare', 'yes');" }],
+          })}`,
+          `reset-policy-json=${JSON.stringify({ betweenIterations: "object-cache" })}`,
         ],
       },
     ],
@@ -89,6 +94,10 @@ assert.equal(output.benchResults.schema, "wp-codebox/bench-results/v1")
 assert.equal(output.benchResults.component_id, "bench-plugin")
 assert.equal(output.benchResults.iterations, 2)
 assert.equal(output.benchResults.warmup_iterations, 0)
+assert.deepEqual(output.benchResults.lifecycle.phases, ["setup", "prepare"])
+assert.deepEqual(output.benchResults.lifecycle.diagnostics, [])
+assert.equal(output.benchResults.reset_policy.betweenIterations, "object-cache")
+assert.equal(output.benchResults.reset_policy.betweenScenarios, "none")
 assert.equal(output.benchResults.scenarios.length, 2)
 assert.equal(output.benchResults.diagnostics.length, 0)
 assert.equal(output.benchResults.provenance.command, "wordpress.bench")
@@ -129,6 +138,9 @@ assert.ok(configured.metrics.rest_types_duration_ms.samples.mean >= 0)
 assert.deepEqual(configured.metrics.env_value.samples.values, [13, 13])
 assert.deepEqual(configured.metrics.define_visible.samples.values, [1, 1])
 assert.equal(configured.metrics.env_value.samples.standard_deviation, 0)
+assert.equal(configured.metrics.lifecycle_setup_visible.samples.mean, 1)
+assert.equal(configured.metrics.lifecycle_prepare_visible.samples.mean, 1)
+assert.equal(configured.metrics.cache_was_empty.samples.mean, 1)
 assert.equal(configured.metadata.kind, "configured")
 assert.equal(configured.artifacts.report.path, "workloads/report.json")
 assert.equal(configured.steps.length, 1)

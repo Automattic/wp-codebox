@@ -92,6 +92,8 @@ export const commandRegistry = [
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
       { name: "bootstrap-files-json", description: "Component-relative bootstrap file fallbacks; the first existing file is loaded before workloads execute.", format: "JSON array" },
       { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, and rest-request mechanics.", format: "JSON array" },
+      { name: "lifecycle-json", description: "Generic benchmark lifecycle hooks keyed by setup, prepare, warmup, measure, or teardown. Hook entries use the same php/ability/wp-cli step format as configured workloads.", format: "JSON object" },
+      { name: "reset-policy-json", description: "Explicit benchmark reset policy. Supports betweenIterations and betweenScenarios modes: none or object-cache.", format: "JSON object" },
     ],
     outputShape: "wp-codebox/bench-results/v1 JSON envelope with typed scenarios, metrics, diagnostics, artifacts, and provenance.",
     policyRequirement: "Runtime policy commands must include wordpress.bench.",

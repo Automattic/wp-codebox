@@ -48,6 +48,8 @@ const benchRecipe = buildWordPressBenchRecipe({
   wpConfigDefines: { BENCH_DEFINE: "defined" },
   bootstrapFiles: ["tests/bench/bootstrap.php"],
   workloads: [{ id: "noop", file: "tests/bench/noop.php" }],
+  lifecycle: { setup: [{ type: "php", code: "update_option('bench_setup', 'yes');" }] },
+  resetPolicy: { betweenIterations: "object-cache" },
   extraPlugins: [{ source: "/repo/demo-plugin", slug: "demo-plugin", pluginFile: "demo-plugin/demo.php", activate: false }],
   mounts: [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php" }],
 })
@@ -65,6 +67,8 @@ assert.deepEqual(benchRecipe.workflow.steps[0]?.args, [
   'env-json={"BENCH_ENV":"yes"}',
   'bootstrap-files-json=["tests/bench/bootstrap.php"]',
   'workloads-json=[{"id":"noop","file":"tests/bench/noop.php"}]',
+  'lifecycle-json={"setup":[{"type":"php","code":"update_option(\'bench_setup\', \'yes\');"}]}',
+  'reset-policy-json={"betweenIterations":"object-cache"}',
 ])
 assert.ok(validate(benchRecipe), ajv.errorsText(validate.errors))
 assert.ok(validateBenchmarkDefinition({
