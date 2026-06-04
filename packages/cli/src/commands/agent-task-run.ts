@@ -1,6 +1,8 @@
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
+import { spawnSync } from "node:child_process"
 import { normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -116,7 +118,8 @@ async function runAgentTask(input: AgentTaskRunInput): Promise<AgentTaskRunOutpu
 }
 
 function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
-  const providerPlugins = stringList(input.provider_plugin_paths).map((source) => ({ source, slug: slugFromPath(source), activate: false }))
+  const artifacts = stringValue(input.artifacts_path)
+  const providerPlugins = stringList(input.provider_plugin_paths).map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
     `task=${taskInput.goal}`,
@@ -153,9 +156,9 @@ function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<ty
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
       extraPlugins: [
-        componentPlugin(input.agents_api_path, "agents-api"),
-        componentPlugin(input.data_machine_path, "data-machine"),
-        componentPlugin(input.data_machine_code_path, "data-machine-code"),
+        componentPlugin(input.agents_api_path, "agents-api", artifacts),
+        componentPlugin(input.data_machine_path, "data-machine", artifacts),
+        componentPlugin(input.data_machine_code_path, "data-machine-code", artifacts),
         ...providerPlugins,
       ].filter(Boolean),
       secretEnv: stringList(input.secret_env),
@@ -258,9 +261,58 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string): Array<Re
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
 }
 
-function componentPlugin(source: unknown, slug: string): { source: string; slug: string; activate: boolean } | undefined {
+function componentPlugin(source: unknown, slug: string, artifactsRoot: string): { source: string; slug: string; activate: boolean } | undefined {
   const path = stringValue(source)
-  return path ? { source: path, slug, activate: true } : undefined
+  return path ? { source: prepareComposerPluginSource(path, slug, artifactsRoot), slug, activate: true } : undefined
+}
+
+function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {
+  if (!source || !pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
+    return source
+  }
+  if (!artifactsRoot) {
+    throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
+  }
+
+  const preparedRoot = join(artifactsRoot, "prepared-plugins")
+  const preparedSource = join(preparedRoot, slug)
+  rmSyncSafe(preparedSource)
+  mkdirSyncSafe(preparedRoot)
+  cpSyncFiltered(source, preparedSource)
+  const result = spawnSync("composer", ["install", "--no-interaction", "--prefer-dist", "--no-progress"], {
+    cwd: preparedSource,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (result.status !== 0) {
+    throw new Error(`Composer install failed for plugin ${slug}: ${result.stderr || result.stdout || `exit ${result.status}`}`)
+  }
+  if (!pathExists(join(preparedSource, "vendor", "autoload.php"))) {
+    throw new Error(`Composer install for plugin ${slug} did not create vendor/autoload.php.`)
+  }
+  return preparedSource
+}
+
+function pathExists(filePath: string): boolean {
+  return existsSync(filePath)
+}
+
+function rmSyncSafe(filePath: string): void {
+  rmSync(filePath, { recursive: true, force: true })
+}
+
+function mkdirSyncSafe(filePath: string): void {
+  mkdirSync(filePath, { recursive: true })
+}
+
+function cpSyncFiltered(source: string, target: string): void {
+  cpSync(source, target, {
+    recursive: true,
+    filter: (entry: string) => {
+      const base = basename(entry)
+      return base !== ".git" && base !== "node_modules" && base !== "vendor"
+    },
+  })
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>): SandboxToolPolicySnapshot {
