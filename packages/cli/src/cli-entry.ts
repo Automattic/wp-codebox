@@ -1,4 +1,5 @@
 import { routeCliCommand } from "./command-router.js"
+import { runAgentTaskRunCommand } from "./commands/agent-task-run.js"
 import { runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
 import { runCleanupCommand, runDoctorCommand } from "./commands/doctor.js"
@@ -15,6 +16,7 @@ export async function runCli(args: string[]): Promise<number> {
     boot: runBootCommand,
     validateBlueprint: runValidateBlueprintCommand,
     recipeRun: runRecipeRunCommand,
+    agentTaskRun: runAgentTaskRunCommand,
     recipeValidate: runRecipeValidateCommand,
     recipeBuild: runRecipeBuildCommand,
     workspacePolicyCheck: runWorkspacePolicyCheckCommand,
