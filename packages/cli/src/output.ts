@@ -256,7 +256,7 @@ export function printHelp(): void {
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
-  wp-codebox agent-task-run --input-file <path> [--json]
+  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox recipe-run --recipe <path> [options]
   wp-codebox boot [--mount <host>:<vfs>] [options]
@@ -267,6 +267,10 @@ Options:
   --options <path>    Recipe builder options JSON file for recipe build.
   --output <path>     Optional output JSON path for recipe build; defaults to stdout.
   --input-file <path> Agent task input JSON for agent-task-run.
+  --preview-hold-seconds <n>
+                    Keep preview runtimes alive after agent-task-run/recipe-run.
+  --preview-public-url <url>
+                    Public preview URL passed through to agent-task-run/recipe-run.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>

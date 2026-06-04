@@ -9,6 +9,8 @@ import { runRecipeRunCommand } from "./recipe-run.js"
 interface AgentTaskRunOptions {
   inputPath: string
   json: boolean
+  previewHoldSeconds: string
+  previewPublicUrl: string
 }
 
 interface AgentTaskRunInput {
@@ -59,7 +61,7 @@ interface AgentTaskRunOutput {
 export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   const options = parseAgentTaskRunOptions(args)
   const input = JSON.parse(await readFile(options.inputPath, "utf8")) as AgentTaskRunInput
-  const output = await runAgentTask(input)
+  const output = await runAgentTask(input, options)
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
@@ -70,7 +72,7 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   return output.success ? 0 : 1
 }
 
-async function runAgentTask(input: AgentTaskRunInput): Promise<AgentTaskRunOutput> {
+async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptions): Promise<AgentTaskRunOutput> {
   const taskInput = normalizeTaskInput(input)
   const task = taskInput.goal
   const wpVersion = stringValue(input.wp) || "trunk"
@@ -81,7 +83,14 @@ async function runAgentTask(input: AgentTaskRunInput): Promise<AgentTaskRunOutpu
 
   await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`)
   try {
-    const capture = await captureStdout(() => runRecipeRunCommand(["--recipe", recipePath, "--artifacts", artifacts, "--json"]))
+    const recipeRunArgs = ["--recipe", recipePath, "--artifacts", artifacts, "--json"]
+    if (options.previewHoldSeconds) {
+      recipeRunArgs.push("--preview-hold-seconds", options.previewHoldSeconds)
+    }
+    if (options.previewPublicUrl) {
+      recipeRunArgs.push("--preview-public-url", options.previewPublicUrl)
+    }
+    const capture = await captureStdout(() => runRecipeRunCommand(recipeRunArgs))
     const run = parseRecipeRunOutput(capture.stdout)
     const runRecord = objectValue(run.run) || {}
     const artifactsRecord = objectValue(run.artifacts) || {}
@@ -108,7 +117,7 @@ async function runAgentTask(input: AgentTaskRunInput): Promise<AgentTaskRunOutpu
         runtime_status: stringValue(runtimeRecord.status),
         sandbox_session_id: stringValue(input.sandbox_session_id),
         orchestrator: input.orchestrator,
-      parent_request_schema: stringValue(input.parent_request?.schema),
+        parent_request_schema: stringValue(input.parent_request?.schema),
       }),
     }
     return output
@@ -171,6 +180,8 @@ function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<ty
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
   let inputPath = ""
   let json = false
+  let previewHoldSeconds = ""
+  let previewPublicUrl = ""
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     const [name, inlineValue] = arg.split("=", 2)
@@ -187,6 +198,14 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
         json = value === "json"
         if (inlineValue === undefined) index += 1
         break
+      case "--preview-hold-seconds":
+        previewHoldSeconds = value ?? ""
+        if (inlineValue === undefined) index += 1
+        break
+      case "--preview-public-url":
+        previewPublicUrl = value ?? ""
+        if (inlineValue === undefined) index += 1
+        break
       default:
         throw new Error(`Unknown agent-task-run option: ${arg}`)
     }
@@ -194,7 +213,7 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
   if (!inputPath) {
     throw new Error("agent-task-run requires --input-file <path>")
   }
-  return { inputPath, json }
+  return { inputPath, json, previewHoldSeconds, previewPublicUrl }
 }
 
 async function captureStdout<T>(callback: () => Promise<T>): Promise<{ result: T; stdout: string; exitCode: number }> {
