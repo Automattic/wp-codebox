@@ -82,7 +82,7 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.bench",
-    description: "Run plugin benchmark workloads and emit a normalized benchmark results envelope.",
+    description: "Run plugin benchmark workloads and emit a versioned benchmark results envelope.",
     acceptedArgs: [
       { name: "component-id", description: "Component id for the benchmark results envelope.", format: "string" },
       { name: "plugin-slug", description: "Plugin slug containing tests/bench workloads.", required: true, format: "slug" },
@@ -91,11 +91,11 @@ export const commandRegistry = [
       { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
       { name: "bootstrap-files-json", description: "Component-relative bootstrap file fallbacks; the first existing file is loaded before workloads execute.", format: "JSON array" },
-      { name: "workloads-json", description: "Explicit workload list.", format: "JSON array" },
+      { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, and rest-request mechanics.", format: "JSON array" },
       { name: "lifecycle-json", description: "Generic benchmark lifecycle hooks keyed by setup, prepare, warmup, measure, or teardown. Hook entries use the same php/ability/wp-cli step format as configured workloads.", format: "JSON object" },
       { name: "reset-policy-json", description: "Explicit benchmark reset policy. Supports betweenIterations and betweenScenarios modes: none or object-cache.", format: "JSON object" },
     ],
-    outputShape: "Benchmark results JSON envelope with component_id, iterations, lifecycle/reset provenance, and scenarios.",
+    outputShape: "wp-codebox/bench-results/v1 JSON envelope with typed scenarios, metrics, diagnostics, artifacts, and provenance.",
     policyRequirement: "Runtime policy commands must include wordpress.bench.",
     recipe: true,
     handler: { kind: "playground", method: "runBench" },

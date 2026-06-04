@@ -146,13 +146,42 @@ export function promoteBrowserMetricsToBenchResults(raw: string, probes: Browser
       continue
     }
 
+    const existingMetrics = isRecord(scenario.metrics) ? scenario.metrics : {}
     scenario.metrics = {
-      ...(isRecord(scenario.metrics) ? scenario.metrics : {}),
-      ...metrics,
+      ...existingMetrics,
+      ...Object.fromEntries(Object.entries(metrics).map(([name, value]) => [name, benchMetricRecord(name, value)])),
     }
   }
 
   return `${JSON.stringify(parsed, null, 2)}\n`
+}
+
+function benchMetricRecord(name: string, value: number): { unit: string; samples: Record<string, number> } {
+  return {
+    unit: benchMetricUnit(name),
+    samples: {
+      count: 1,
+      mean: value,
+      p50: value,
+      p95: value,
+      p99: value,
+      min: value,
+      max: value,
+    },
+  }
+}
+
+function benchMetricUnit(name: string): string {
+  if (name.endsWith("_ms")) {
+    return "ms"
+  }
+  if (name.endsWith("_bytes")) {
+    return "bytes"
+  }
+  if (name.endsWith("_count")) {
+    return "count"
+  }
+  return "unitless"
 }
 
 export async function browserArtifactMetrics(bundleDirectory: string): Promise<BrowserArtifactMetricsResult> {
