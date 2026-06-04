@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -1038,7 +1038,94 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
   await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
+  await refreshRuntimeReferenceFiles(artifacts.directory, manifest)
+  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+async function refreshRuntimeReferenceFiles(artifactRoot: string, manifest: ArtifactManifest): Promise<void> {
+  const filesByPath = new Map(manifest.files.map((file) => [file.path, file]))
+  let changed = false
+
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-reference-manifest") {
+      continue
+    }
+
+    const path = join(artifactRoot, file.path)
+    const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    if (value.schema !== "wp-codebox/runtime-reference-manifest/v1") {
+      continue
+    }
+
+    refreshRuntimeArtifactReferences(value, filesByPath)
+    value.artifactBundle = artifactBundleRef(manifest)
+    const digest = runtimeReferenceManifestDigest(value as unknown as Parameters<typeof runtimeReferenceManifestDigest>[0])
+    value.digest = digest
+    value.id = `runtime-reference-manifest-sha256-${digest.value}`
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
+    changed = true
+  }
+
+  if (changed) {
+    await refreshArtifactManifestFileSha256s(artifactRoot, manifest)
+    filesByPath.clear()
+    for (const file of manifest.files) {
+      filesByPath.set(file.path, file)
+    }
+  }
+
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-replay-index") {
+      continue
+    }
+
+    const path = join(artifactRoot, file.path)
+    const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    if (value.schema !== "wp-codebox/runtime-replay-reference-index/v1") {
+      continue
+    }
+
+    refreshRuntimeArtifactReferences(value, filesByPath)
+    value.artifactBundle = artifactBundleRef(manifest)
+    const digest = runtimeReplayReferenceIndexDigest(value as unknown as Parameters<typeof runtimeReplayReferenceIndexDigest>[0])
+    value.digest = digest
+    value.id = `runtime-replay-reference-index-sha256-${digest.value}`
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
+  }
+}
+
+function refreshRuntimeArtifactReferences(value: unknown, filesByPath: Map<string, ArtifactManifestFile>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      refreshRuntimeArtifactReferences(item, filesByPath)
+    }
+    return
+  }
+
+  if (!isRecord(value)) {
+    return
+  }
+
+  const path = typeof value.path === "string" ? value.path : undefined
+  const file = path ? filesByPath.get(path) : undefined
+  if (file && isRecord(file.sha256)) {
+    value.kind = file.kind
+    value.contentType = file.contentType
+    value.sha256 = file.sha256
+  }
+
+  for (const nested of Object.values(value)) {
+    refreshRuntimeArtifactReferences(nested, filesByPath)
+  }
+}
+
+function artifactBundleRef(manifest: ArtifactManifest): Record<string, unknown> {
+  return {
+    kind: "artifact-bundle",
+    id: manifest.id,
+    digest: manifest.contentDigest,
+  }
 }
 
 function evidenceFileToManifestFile(file: RecipeArtifactEvidenceFile): ArtifactManifestFile {
