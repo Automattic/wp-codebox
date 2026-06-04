@@ -1,7 +1,7 @@
-import { readdir, readFile, stat } from "node:fs/promises"
-import { basename, dirname, resolve } from "node:path"
+import { readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -120,7 +120,44 @@ interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
 interface BenchResults {
   component_id: string
   iterations: number
-  scenarios: Array<Record<string, unknown>>
+  warmup_iterations?: number
+  scenarios: BenchScenario[]
+}
+
+interface BenchScenario extends Record<string, unknown> {
+  id?: string
+  source?: string
+  metrics?: Record<string, unknown>
+  artifacts?: Record<string, unknown>
+  artifactRefs?: BenchmarkArtifactRef[]
+  samples?: Array<Record<string, unknown>>
+}
+
+interface BenchmarkArtifactRef {
+  path: string
+  kind: string
+  contentType?: string
+  sha256?: { algorithm: "sha256"; value: string }
+  source: "scenario-artifact" | "metric-source" | "browser-artifact" | "sample-artifact"
+  name?: string
+  metric?: string
+  sampleIndex?: number
+}
+
+interface BenchmarkArtifactOutput {
+  schema: "wp-codebox/benchmark-artifacts/v1"
+  artifactBundle: {
+    id: string
+    directory: string
+    contentDigest: string
+  }
+  results: BenchResults[]
+  scenarios: Array<{
+    componentId: string
+    scenarioId: string
+    source?: string
+    artifactRefs: BenchmarkArtifactRef[]
+  }>
 }
 
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
@@ -621,9 +658,13 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
 
+    const benchmarkManifestFiles = await artifactManifestFilesByPath(artifacts)
     const benchResultsList = executions
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
-      .map((execution) => parseBenchResults(execution.stdout))
+      .map((execution) => parseBenchResults(execution.stdout, benchmarkManifestFiles))
+    if (benchResultsList.length > 0) {
+      await writeBenchmarkArtifactEvidence(artifacts, benchResultsList)
+    }
 
     if (strictFailure || agentFailure) {
       runRecord = await runRegistry.update(runRecord.runId, {
@@ -927,13 +968,150 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
   }
 }
 
-function parseBenchResults(raw: string): BenchResults {
+function parseBenchResults(raw: string, manifestFiles: Map<string, ArtifactManifestFile>): BenchResults {
   const parsed = JSON.parse(raw) as BenchResults
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
     throw new Error("Bench command did not emit a BenchResults envelope")
   }
 
-  return parsed
+  return {
+    ...parsed,
+    scenarios: parsed.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
+  }
+}
+
+function enrichBenchScenarioArtifactRefs(scenario: BenchScenario, manifestFiles: Map<string, ArtifactManifestFile>): BenchScenario {
+  const artifactRefs = [
+    ...scenarioArtifactRefs(scenario.artifacts, manifestFiles, "scenario-artifact"),
+    ...sampleArtifactRefs(scenario.samples, manifestFiles),
+    ...metricArtifactRefs(scenario.metrics, manifestFiles),
+    ...browserArtifactRefs(scenario.metrics, manifestFiles),
+  ]
+  const existingRefs = Array.isArray(scenario.artifactRefs) ? scenario.artifactRefs : []
+  const dedupedRefs = dedupeBenchmarkArtifactRefs([...existingRefs, ...artifactRefs])
+
+  return stripUndefined({
+    ...scenario,
+    ...(dedupedRefs.length > 0 ? { artifactRefs: dedupedRefs } : {}),
+  }) as BenchScenario
+}
+
+async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<void> {
+  const scenarios = benchResultsList.flatMap((result) => result.scenarios.map((scenario) => ({
+    componentId: result.component_id,
+    scenarioId: String(scenario.id ?? ""),
+    source: typeof scenario.source === "string" ? scenario.source : undefined,
+    artifactRefs: scenario.artifactRefs ?? [],
+  }))).filter((scenario) => scenario.scenarioId.length > 0 || scenario.artifactRefs.length > 0)
+  const output: BenchmarkArtifactOutput = {
+    schema: "wp-codebox/benchmark-artifacts/v1",
+    artifactBundle: {
+      id: artifacts.id,
+      directory: artifacts.directory,
+      contentDigest: artifacts.contentDigest,
+    },
+    results: benchResultsList,
+    scenarios,
+  }
+  const relativePath = "files/bench-results.json"
+  await writeFile(join(artifacts.directory, relativePath), `${JSON.stringify(output, null, 2)}\n`)
+  const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
+  upsertArtifactManifestFiles(manifest, [artifactManifestFile(relativePath, "benchmark-results", "application/json")])
+  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
+  await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+async function artifactManifestFilesByPath(artifacts: ArtifactBundle): Promise<Map<string, ArtifactManifestFile>> {
+  try {
+    const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
+    return new Map((manifest.files ?? []).map((file) => [file.path, file]))
+  } catch {
+    return new Map()
+  }
+}
+
+function scenarioArtifactRefs(input: unknown, manifestFiles: Map<string, ArtifactManifestFile>, source: BenchmarkArtifactRef["source"], sampleIndex?: number): BenchmarkArtifactRef[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return []
+  }
+
+  return Object.entries(input).flatMap(([name, value]) => artifactValueRefs(name, value, manifestFiles, source, sampleIndex))
+}
+
+function sampleArtifactRefs(samples: BenchScenario["samples"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+  if (!Array.isArray(samples)) {
+    return []
+  }
+
+  return samples.flatMap((sample, sampleIndex) => scenarioArtifactRefs(sample.artifacts, manifestFiles, "sample-artifact", sampleIndex))
+}
+
+function artifactValueRefs(name: string, value: unknown, manifestFiles: Map<string, ArtifactManifestFile>, source: BenchmarkArtifactRef["source"], sampleIndex?: number): BenchmarkArtifactRef[] {
+  if (typeof value === "string") {
+    return [benchmarkArtifactRef(value, { name, source, sampleIndex }, manifestFiles)]
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return []
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.path === "string") {
+    return [benchmarkArtifactRef(record.path, {
+      name,
+      source,
+      sampleIndex,
+      kind: typeof record.kind === "string" ? record.kind : undefined,
+      contentType: typeof record.contentType === "string" ? record.contentType : typeof record.mime === "string" ? record.mime : undefined,
+    }, manifestFiles)]
+  }
+
+  return Object.entries(record).flatMap(([childName, childValue]) => artifactValueRefs(`${name}.${childName}`, childValue, manifestFiles, source, sampleIndex))
+}
+
+function metricArtifactRefs(metrics: BenchScenario["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+  if (!metrics || typeof metrics !== "object") {
+    return []
+  }
+
+  return Object.keys(metrics).sort().map((metric) => benchmarkArtifactRef("files/bench-results.json", { source: "metric-source", metric, kind: "benchmark-results", contentType: "application/json" }, manifestFiles))
+}
+
+function browserArtifactRefs(metrics: BenchScenario["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+  if (!metrics || !Object.keys(metrics).some((metric) => metric.startsWith("browser_"))) {
+    return []
+  }
+
+  return [...manifestFiles.values()]
+    .filter((file) => file.path.startsWith("files/browser/"))
+    .map((file) => benchmarkArtifactRef(file.path, { source: "browser-artifact", kind: file.kind, contentType: file.contentType }, manifestFiles))
+}
+
+function benchmarkArtifactRef(path: string, options: Omit<Partial<BenchmarkArtifactRef>, "path"> & { source: BenchmarkArtifactRef["source"] }, manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef {
+  const manifestFile = manifestFiles.get(path)
+  return stripUndefined({
+    path,
+    kind: options.kind ?? manifestFile?.kind ?? "artifact",
+    contentType: options.contentType ?? manifestFile?.contentType,
+    sha256: manifestFile?.sha256,
+    source: options.source,
+    name: options.name,
+    metric: options.metric,
+    sampleIndex: options.sampleIndex,
+  }) as BenchmarkArtifactRef
+}
+
+function dedupeBenchmarkArtifactRefs(refs: BenchmarkArtifactRef[]): BenchmarkArtifactRef[] {
+  const seen = new Set<string>()
+  const deduped: BenchmarkArtifactRef[] = []
+  for (const ref of refs) {
+    const key = `${ref.source}:${ref.path}:${ref.name ?? ""}:${ref.metric ?? ""}:${ref.sampleIndex ?? ""}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(ref)
+  }
+
+  return deduped
 }
 
 function resolveSecretEnv(names: string[]): Record<string, string> {

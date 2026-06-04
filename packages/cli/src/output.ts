@@ -254,6 +254,7 @@ export function printHelp(): void {
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
+  wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
@@ -266,6 +267,8 @@ Options:
   --options <path>    Recipe builder options JSON file for recipe build.
   --output <path>     Optional output JSON path for recipe build; defaults to stdout.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
+  --scenario-id <id>  Filter benchmark artifact refs to one scenario.
+  --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>
                        Durable run registry directory for recipe-run.

@@ -22,6 +22,11 @@ await writeFile(recipePath, `${JSON.stringify({
         source: resolve(repoRoot, "examples", "bench-plugin"),
         slug: "bench-plugin",
       },
+      {
+        source: resolve(repoRoot, "examples", "bench-dependency"),
+        slug: "bench-dependency",
+        pluginFile: "bench-dependency/dependency-main.php",
+      },
     ],
   },
   workflow: {
@@ -40,6 +45,7 @@ await writeFile(recipePath, `${JSON.stringify({
         args: [
           "component-id=bench-plugin",
           "plugin-slug=bench-plugin",
+          "dependency-slugs=bench-dependency",
           "iterations=1",
           "warmup=0",
         ],
@@ -64,6 +70,7 @@ assert.ok(output.benchResults, "recipe-run should expose benchResults")
 assert.equal(output.benchResults.scenarios.length, 1)
 
 const metrics = output.benchResults.scenarios[0].metrics
+const artifactRefs = output.benchResults.scenarios[0].artifactRefs
 const expectedBrowserMetrics = {
   browser_peak_used_js_heap_bytes: metrics.browser_peak_used_js_heap_bytes,
   browser_final_used_js_heap_bytes: metrics.browser_final_used_js_heap_bytes,
@@ -84,6 +91,8 @@ assert.ok(metrics.browser_long_task_count >= 0, "browser_long_task_count should 
 assert.ok(metrics.browser_long_task_total_ms >= 0, "browser_long_task_total_ms should be numeric")
 assert.ok(metrics.browser_peak_used_js_heap_bytes >= 0, "browser_peak_used_js_heap_bytes should be numeric")
 assert.ok(metrics.browser_final_used_js_heap_bytes >= 0, "browser_final_used_js_heap_bytes should be numeric")
+assert.ok(artifactRefs.some((ref: { path: string; source: string }) => ref.path === "files/browser/performance.json" && ref.source === "browser-artifact"), "browser performance artifact should be scenario-linked")
+assert.ok(artifactRefs.some((ref: { path: string; source: string; metric?: string }) => ref.path === "files/bench-results.json" && ref.source === "metric-source" && ref.metric === "browser_checkpoint_count"), "browser metric should reference benchmark evidence")
 
 const artifactDirectory = output.artifacts.directory
 const performancePath = join(artifactDirectory, "files", "browser", "performance.json")
@@ -112,6 +121,22 @@ assert.equal(browserMetrics.artifacts.summary.path, "files/browser/summary.json"
 assert.equal(browserMetrics.artifacts.memory.path, "files/browser/memory.json")
 assert.equal(browserMetrics.artifacts.performance.path, "files/browser/performance.json")
 assert.equal(browserMetrics.artifacts.checkpoints.path, "files/browser/checkpoints.jsonl")
+
+const benchmarkArtifacts = await runCli([
+  "packages/cli/dist/index.js",
+  "artifacts",
+  "benchmark",
+  "--bundle",
+  artifactDirectory,
+  "--scenario-id",
+  "noop",
+  "--json",
+])
+
+assert.equal(benchmarkArtifacts.schema, "wp-codebox/benchmark-artifacts/v1")
+assert.equal(benchmarkArtifacts.scenarioId, "noop")
+assert.equal(benchmarkArtifacts.scenarios.length, 1)
+assert.ok(benchmarkArtifacts.artifactRefs.some((ref: { path: string; source: string }) => ref.path === "files/browser/performance.json" && ref.source === "browser-artifact"))
 
 const emptyBrowserMetrics = await runCli([
   "packages/cli/dist/index.js",

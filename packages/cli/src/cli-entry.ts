@@ -1,5 +1,5 @@
 import { routeCliCommand } from "./command-router.js"
-import { runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
+import { runArtifactsBenchmarkCommand, runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
 import { runCleanupCommand, runDoctorCommand } from "./commands/doctor.js"
 import { runRecipeBuildCommand } from "./commands/recipe-build.js"
@@ -20,6 +20,7 @@ export async function runCli(args: string[]): Promise<number> {
     workspacePolicyCheck: runWorkspacePolicyCheckCommand,
     artifactsVerify: runArtifactsVerifyCommand,
     artifactsBrowserMetrics: runArtifactsBrowserMetricsCommand,
+    artifactsBenchmark: runArtifactsBenchmarkCommand,
     runsStatus: runRunsStatusCommand,
     runsArtifacts: runRunsArtifactsCommand,
     commands: runCommandsCommand,
