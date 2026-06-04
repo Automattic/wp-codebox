@@ -54,6 +54,7 @@ writeFileSync(recipePath, `${JSON.stringify({
               id: "configured-env",
               run: [
                 { type: "wp-cli", command: "wp option update wp_codebox_bench_wp_cli yes", parse: "json" },
+                { type: "rest-request", method: "GET", path: "/wp/v2/types", "metric-prefix": "rest_types" },
                 {
                   type: "php",
                   code: "return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0), 'metadata' => array('kind' => 'configured'));",
@@ -112,8 +113,14 @@ assert.equal(configured.source, "config")
 assert.equal(configured.metrics.env_value_mean, 13)
 assert.equal(configured.metrics.define_visible_mean, 1)
 assert.equal(configured.metrics.wp_cli_option_visible_mean, 1)
+assert.equal(configured.metrics.rest_types_status_mean, 200)
+assert.ok(configured.metrics.rest_types_duration_ms_mean >= 0)
 assert.equal(configured.metadata.kind, "configured")
 assert.equal(configured.artifacts.report.path, "workloads/report.json")
+assert.equal(configured.steps.length, 1)
+assert.equal(configured.steps[0].type, "rest-request")
+assert.equal(configured.steps[0].route, "/wp/v2/types")
+assert.equal(configured.steps[0].status, 200)
 assert.ok(output.artifacts?.directory)
 
 console.log("recipe bench smoke passed")
