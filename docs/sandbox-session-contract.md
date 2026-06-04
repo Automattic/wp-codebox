@@ -32,25 +32,26 @@ session boundary:
 {
   "execution": "browser-playground",
   "execution_scope": "disposable-playground",
-  "permission_model": "sandbox-bypass",
+  "permission_model": "runtime-principal",
   "session": {
     "execution_scope": "disposable-playground",
-    "permission_model": "sandbox-bypass"
+    "permission_model": "runtime-principal"
   }
 }
 ```
 
-The `sandbox-bypass` permission model means the generated browser runner can
-temporarily bypass a caller-declared sandbox permission filter inside the
-disposable Playground site so sandbox-local abilities or hook tasks can run
-without inheriting host-site user state. This is safe only because the browser
-runner executes in PHP-WASM inside the caller-owned Playground filesystem and
-cannot grant permissions on the host WordPress site.
+The `runtime-principal` permission model means the generated browser runner
+authorizes Agents API calls with a scoped runtime principal inside the disposable
+Playground site. The principal binds the call to the WP Codebox client,
+workspace, runtime type, and browser session instead of inheriting host-site user
+state. This is safe only because the browser runner executes in PHP-WASM inside
+the caller-owned Playground filesystem and cannot grant permissions on the host
+WordPress site.
 
 The generated PHP runner validates the expected Playground environment before it
-adds any permission bypass. If the runner is copied into a normal host WordPress
-install, it fails with `wp_codebox_browser_runner_not_playground` instead of
-executing the requested sandbox invocation.
+registers runtime-principal authorization. If the runner is copied into a normal
+host WordPress install, it fails with `wp_codebox_browser_runner_not_playground`
+instead of executing the requested sandbox invocation.
 
 ## Browser Provider Adapter Contract
 

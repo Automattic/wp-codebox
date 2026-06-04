@@ -466,7 +466,6 @@ final class WP_Codebox_Abilities {
 											'name'              => array( 'type' => 'string' ),
 											'hook'              => array( 'type' => 'string' ),
 											'input'             => array( 'type' => 'object' ),
-											'permission_filter' => array( 'type' => 'string' ),
 										),
 									),
 								),

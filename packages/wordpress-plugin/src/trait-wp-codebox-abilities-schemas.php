@@ -207,11 +207,11 @@ private static function remediation_outcome_schema(): array {
 			'success'               => array( 'type' => 'boolean' ),
 			'kind'                  => array(
 				'type' => 'string',
-				'enum' => array( 'fix_artifact', 'false_positive_artifact', 'noop_artifact', 'unable_to_remediate', 'fix_pr', 'false_positive_pr', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded' ),
+				'enum' => array( 'fix_artifact', 'false_positive_artifact', 'noop_artifact', 'unable_to_remediate', 'fix_pr', 'false_positive_pr', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending' ),
 			),
 			'failure'               => array(
 				'type' => 'string',
-				'enum' => array( 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', '' ),
+				'enum' => array( 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending', '' ),
 			),
 			'pr_url'                => array( 'type' => 'string' ),
 			'false_positive_pr_url' => array( 'type' => 'string' ),
@@ -300,8 +300,8 @@ private static function browser_playground_session_schema(): array {
 			),
 			'permission_model' => array(
 				'type'        => 'string',
-				'enum'        => array( 'sandbox-bypass' ),
-				'description' => 'The generated browser runner bypasses agents/chat permission checks only inside the disposable Playground sandbox.',
+				'enum'        => array( 'runtime-principal' ),
+				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
 			'task_input' => self::task_input_schema(),
@@ -337,7 +337,7 @@ private static function browser_materializer_contract_schema(): array {
 			),
 			'permission_model' => array(
 				'type' => 'string',
-				'enum' => array( 'sandbox-bypass' ),
+				'enum' => array( 'runtime-principal' ),
 			),
 			'session_id'       => array( 'type' => 'string' ),
 			'authorization'    => array( 'type' => 'object' ),
@@ -348,6 +348,7 @@ private static function browser_materializer_contract_schema(): array {
 			'playground'       => array( 'type' => 'object' ),
 			'runtime'          => array( 'type' => 'object' ),
 			'artifacts'        => array( 'type' => 'object' ),
+			'compact'          => self::browser_product_dto_schema(),
 		),
 	);
 }
@@ -369,7 +370,7 @@ private static function browser_task_contract_schema(): array {
 			),
 			'permission_model' => array(
 				'type' => 'string',
-				'enum' => array( 'sandbox-bypass' ),
+				'enum' => array( 'runtime-principal' ),
 			),
 			'session'          => array( 'type' => 'object' ),
 			'primary'          => self::browser_playground_session_schema(),
@@ -379,6 +380,33 @@ private static function browser_task_contract_schema(): array {
 				'items'       => array( 'type' => 'object' ),
 			),
 			'provenance'       => array( 'type' => 'object' ),
+			'compact'          => self::browser_product_dto_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_product_dto_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Compact product-facing browser task/session DTO for durable product records and REST responses. It preserves runner fields used by runBrowserSessionRecipe while omitting raw runtime plugin payloads, source paths, inline content, and secret values.',
+		'properties'  => array(
+			'success'          => array( 'type' => 'boolean' ),
+			'schema'           => array( 'type' => 'string' ),
+			'dto_schema'       => array( 'type' => 'string' ),
+			'source_schema'    => array( 'type' => 'string' ),
+			'execution'        => array( 'type' => 'string' ),
+			'execution_scope'  => array( 'type' => 'string' ),
+			'permission_model' => array( 'type' => 'string' ),
+			'session'          => array( 'type' => 'object' ),
+			'primary'          => array( 'type' => 'object' ),
+			'phases'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'task_input'       => array( 'type' => 'object' ),
+			'task_payload'     => array( 'type' => 'object' ),
+			'materialization'  => array( 'type' => 'object' ),
+			'playground'       => array( 'type' => 'object' ),
+			'recipe'           => array( 'type' => 'object' ),
+			'artifacts'        => array( 'type' => 'object' ),
 		),
 	);
 }

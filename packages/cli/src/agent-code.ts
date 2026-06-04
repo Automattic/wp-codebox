@@ -146,32 +146,29 @@ $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array
 $sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
 $sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
 
-$sandbox_model_settings = json_decode(${JSON.stringify(JSON.stringify(scopedSettings(mode, options.provider, options.model)))}, true);
-if (is_array($sandbox_model_settings) && !empty($sandbox_model_settings)) {
-    update_option('datamachine_settings', array_merge(get_option('datamachine_settings', array()), $sandbox_model_settings));
-}
-
-add_filter('agents_chat_permission', static function () {
-    return true;
-}, 100, 2);
-
-add_action('datamachine_agent_modes', static function () {
-    if (class_exists('DataMachine\\Engine\\AI\\AgentModeRegistry')) {
-        DataMachine\\Engine\\AI\\AgentModeRegistry::register('sandbox', 25, array(
-            'label' => 'Sandbox',
-            'description' => 'WP Codebox sandbox execution with reviewed artifact output.',
-        ));
+add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
+    if (!$principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal) {
+        return $allowed;
     }
-}, 100);
-
-add_filter('datamachine_agent_mode_sandbox', static function (string $content): string {
-    $guidance = ${JSON.stringify(sandboxModeGuidance(runtimeToolIds))};
-    return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
-}, 100, 1);
+    if ('runtime' !== $principal->auth_source || 'runtime' !== $principal->request_context) {
+        return $allowed;
+    }
+    if ('wp-codebox-cli' !== $principal->client_id || 'wp-codebox' !== $principal->workspace_id || 'runtime' !== $principal->owner_type) {
+        return $allowed;
+    }
+    if ('wordpress-playground' !== (string) ($principal->audience_claims['runtime_type'] ?? '')) {
+        return $allowed;
+    }
+    return 'wp-codebox' === (string) ($input['principal']['workspace_id'] ?? '') && 'wp-codebox-cli' === (string) ($input['principal']['client_id'] ?? '');
+}, 100, 3);
 
 function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     if (empty($bundle_specs)) {
         return array();
+    }
+
+    if (function_exists('wp_agent_import_runtime_bundles')) {
+        return wp_agent_import_runtime_bundles($bundle_specs, array('owner_id' => get_current_user_id() ?: 1));
     }
 
     $imports = array();
@@ -181,29 +178,15 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
             continue;
         }
 
-        $source = isset($spec['source']) ? trim((string) $spec['source']) : '';
-        $temp_source = '';
-        if ('' === $source && isset($spec['bundle']) && is_array($spec['bundle'])) {
-            $temp_source = tempnam(sys_get_temp_dir(), 'wp-codebox-agent-bundle-');
-            if (false === $temp_source) {
-                $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_temp_failed', 'message' => 'Could not create a temporary agent bundle JSON file.'));
-                continue;
-            }
-            $json_source = wp_json_encode($spec['bundle'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            if (!is_string($json_source) || false === file_put_contents($temp_source, $json_source)) {
-                @unlink($temp_source);
-                $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_write_failed', 'message' => 'Could not stage inline agent bundle JSON.'));
-                continue;
-            }
-            $source = $temp_source;
-        }
-
-        if ('' === $source) {
+        if (!isset($spec['source']) && !isset($spec['bundle'])) {
             $imports[] = array('success' => false, 'index' => $index, 'error' => array('code' => 'agent_bundle_source_missing', 'message' => 'Agent bundle spec requires source or bundle.'));
             continue;
         }
 
-        $input = array('source' => $source, 'on_conflict' => (string) ($spec['on_conflict'] ?? 'upgrade'));
+        $input = array('on_conflict' => (string) ($spec['on_conflict'] ?? 'upgrade'));
+        if (isset($spec['source']) && '' !== trim((string) $spec['source'])) {
+            $input['source'] = trim((string) $spec['source']);
+        }
         foreach (array('slug', 'token_env') as $field) {
             if (isset($spec[$field]) && '' !== trim((string) $spec[$field])) {
                 $input[$field] = trim((string) $spec[$field]);
@@ -222,218 +205,13 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
         if (null === $result) {
             $result = new WP_Error('wp_codebox_agent_bundle_importer_unavailable', 'No runtime agent bundle importer handled this bundle spec.', array('index' => $index));
         }
-        if ('' !== $temp_source) {
-            @unlink($temp_source);
-        }
         $imports[] = is_wp_error($result)
-            ? array('success' => false, 'index' => $index, 'source' => isset($spec['source']) ? $source : 'inline', 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data()))
-            : array_merge(array('index' => $index, 'source' => isset($spec['source']) ? $source : 'inline'), is_array($result) ? $result : array('result' => $result));
+            ? array('success' => false, 'index' => $index, 'source' => isset($input['source']) ? $input['source'] : 'inline', 'error' => array('code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data()))
+            : array_merge(array('index' => $index, 'source' => isset($input['source']) ? $input['source'] : 'inline'), is_array($result) ? $result : array('result' => $result));
     }
 
     return $imports;
 }
-
-if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') && !class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
-    final class WP_Codebox_Sandbox_Perception_Directive implements DataMachine\\Engine\\AI\\Directives\\DirectiveInterface {
-        private const TREE_MAX_DEPTH = 2;
-        private const TREE_MAX_ENTRIES = 80;
-
-        public static function get_outputs(string $provider_name, array $tools, ?string $step_id = null, array $payload = array()): array {
-            unset($provider_name, $step_id);
-            $workspace_root = defined('DATAMACHINE_WORKSPACE_PATH') ? DATAMACHINE_WORKSPACE_PATH : (${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
-            $sections = array(
-                self::section_header(),
-                self::section_workspace((string) $workspace_root),
-                self::section_mounted_workspaces($workspace_root, is_array($payload['client_context']['sandbox_workspace'] ?? null) ? $payload['client_context']['sandbox_workspace'] : array(), is_array($payload['client_context']['default_workspace'] ?? null) ? $payload['client_context']['default_workspace'] : array()),
-                self::section_runtime(),
-                self::section_tools($tools, is_array($payload['client_context']['tool_contract'] ?? null) ? $payload['client_context']['tool_contract'] : array()),
-                self::section_outcome(),
-            );
-            $content = trim(implode("\n\n", array_filter($sections, static fn(string $section): bool => '' !== $section)));
-            if ('' === $content) {
-                return array();
-            }
-            return array(array('type' => 'system_text', 'content' => $content));
-        }
-
-        private static function section_header(): string {
-            return implode("\n", array(
-                '# WP Codebox Sandbox Perception',
-                '',
-                'Live snapshot of the disposable WP Codebox sandbox at the start of this run. Use it as your starting awareness; workspace tools remain available for targeted inspection and edits.',
-                'Prefer this mounted-workspace map before broad reconnaissance. Inspect only the specific files or directories needed for the task.',
-            ));
-        }
-
-        private static function section_workspace(string $workspace_root): string {
-            if ('' === $workspace_root || !is_dir($workspace_root)) {
-                return '';
-            }
-            $entries = self::scan_tree($workspace_root, $workspace_root, 0, self::TREE_MAX_ENTRIES);
-            sort($entries, SORT_STRING);
-            $lines = array(
-                '## Workspace',
-                '',
-                sprintf('- Root: %s', $workspace_root),
-                sprintf('- Tree depth: %d', self::TREE_MAX_DEPTH),
-                sprintf('- Tree max entries: %d', self::TREE_MAX_ENTRIES),
-                '',
-                'Tree:',
-            );
-            foreach ($entries as $entry) {
-                $lines[] = $entry;
-            }
-            return implode("\n", $lines);
-        }
-
-        private static function section_mounted_workspaces(string $workspace_root, array $workspace_contract, array $default_workspace): string {
-            $mounts = is_array($workspace_contract['mounts'] ?? null) ? $workspace_contract['mounts'] : array();
-            if (empty($mounts)) {
-                return '';
-            }
-
-            $lines = array(
-                '## Mounted Workspaces',
-                '',
-            );
-            if (!empty($default_workspace)) {
-                $lines[] = sprintf('- Default workspace: %s at %s', (string) ($default_workspace['workspaceRef'] ?? $default_workspace['component'] ?? 'mounted workspace'), (string) ($default_workspace['target'] ?? $workspace_root));
-                $lines[] = '';
-            }
-            foreach ($mounts as $mount) {
-                if (!is_array($mount)) {
-                    continue;
-                }
-                $target = (string) ($mount['target'] ?? '');
-                if ('' === $target) {
-                    continue;
-                }
-                $label = (string) ($mount['workspaceRef'] ?? $mount['component'] ?? basename($target));
-                $lines[] = sprintf('### %s', $label);
-                $lines[] = sprintf('- Path: %s', $target);
-                $lines[] = sprintf('- Mode: %s', (string) ($mount['mode'] ?? 'readwrite'));
-                if (!empty($mount['repo'])) {
-                    $lines[] = sprintf('- Repo: %s', (string) $mount['repo']);
-                }
-                if (!empty($mount['sourceMode'])) {
-                    $lines[] = sprintf('- Source mode: %s', (string) $mount['sourceMode']);
-                }
-                if (!empty($mount['mountRole'])) {
-                    $lines[] = sprintf('- Role: %s', (string) $mount['mountRole']);
-                }
-                $mount_path = str_starts_with($target, '/') ? $target : rtrim($workspace_root, '/') . '/' . ltrim($target, '/');
-                if (is_dir($mount_path)) {
-                    $tree = self::scan_tree($mount_path, $mount_path, 0, 30);
-                    sort($tree, SORT_STRING);
-                    if (!empty($tree)) {
-                        $lines[] = '- Bounded tree:';
-                        foreach ($tree as $entry) {
-                            $lines[] = sprintf('  - %s', $entry);
-                        }
-                    }
-                }
-                $lines[] = '';
-            }
-
-            return trim(implode("\n", $lines));
-        }
-
-        private static function scan_tree(string $base, string $current, int $depth, int $remaining): array {
-            if ($depth > self::TREE_MAX_DEPTH || $remaining <= 0) {
-                return array();
-            }
-            $ignored = array('.git', 'node_modules', 'vendor', 'dist', 'build');
-            $items = scandir($current);
-            if (false === $items) {
-                return array();
-            }
-            $results = array();
-            foreach ($items as $item) {
-                if ('.' === $item || '..' === $item || in_array($item, $ignored, true)) {
-                    continue;
-                }
-                $path = $current . '/' . $item;
-                $relative = ltrim(substr($path, strlen($base)), '/');
-                if (is_dir($path)) {
-                    $results[] = $relative . '/';
-                    if (count($results) >= $remaining) {
-                        break;
-                    }
-                    $results = array_merge($results, self::scan_tree($base, $path, $depth + 1, $remaining - count($results)));
-                    if (count($results) >= $remaining) {
-                        break;
-                    }
-                    continue;
-                }
-                $results[] = $relative;
-                if (count($results) >= $remaining) {
-                    break;
-                }
-            }
-            return $results;
-        }
-
-        private static function section_runtime(): string {
-            $plugins = array();
-            foreach ((array) get_option('active_plugins', array()) as $plugin_file) {
-                $plugins[] = '- ' . (string) $plugin_file;
-            }
-            $lines = array(
-                '## Runtime',
-                '',
-                sprintf('- WordPress: %s', get_bloginfo('version')),
-                sprintf('- PHP: %s', PHP_VERSION),
-            );
-            if (!empty($plugins)) {
-                $lines[] = '';
-                $lines[] = 'Active plugins:';
-                $lines = array_merge($lines, $plugins);
-            }
-            return implode("\n", $lines);
-        }
-
-        private static function section_tools(array $tools, array $tool_contract): string {
-            $tool_names = array_keys($tools);
-            sort($tool_names, SORT_STRING);
-            $contract_tools = array_values(array_filter((array) ($tool_contract['tools'] ?? array()), 'is_string'));
-            sort($contract_tools, SORT_STRING);
-            $lines = array('## Tool Surface', '');
-            if (!empty($tool_names)) {
-                $lines[] = 'Resolved tools:';
-                foreach ($tool_names as $tool_name) {
-                    $lines[] = sprintf('- %s', $tool_name);
-                }
-            }
-            if (!empty($contract_tools)) {
-                $lines[] = '';
-                $lines[] = 'Sandbox contract tools:';
-                foreach ($contract_tools as $tool_name) {
-                    $lines[] = sprintf('- %s', $tool_name);
-                }
-            }
-            return implode("\n", $lines);
-        }
-
-        private static function section_outcome(): string {
-            return implode("\n", array(
-                '## Outcome Contract',
-                '',
-                'Make repository changes through workspace tools when the task calls for code changes. The parent WP Codebox run captures sandbox diffs as reviewed artifacts; return a concise final outcome that includes changed files, verification, and any PR or false-positive disposition when available.',
-            ));
-        }
-    }
-}
-
-add_filter('datamachine_directives', static function (array $directives): array {
-    if (class_exists('WP_Codebox_Sandbox_Perception_Directive')) {
-        $directives[] = array(
-            'class' => 'WP_Codebox_Sandbox_Perception_Directive',
-            'priority' => 25,
-            'modes' => array('sandbox'),
-        );
-    }
-    return $directives;
-});
 
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
 if (!empty($sandbox_agent_bundle_import_failures)) {
@@ -548,35 +326,6 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
     if (spec.import_principal && typeof spec.import_principal === "object" && !Array.isArray(spec.import_principal)) normalized.import_principal = spec.import_principal
     return [normalized]
   })
-}
-
-function sandboxModeGuidance(runtimeToolIds: string[]): string {
-  return `# WP Codebox Sandbox Context
-
-You are running inside a disposable WP Codebox sandbox. The sandbox can produce a reviewed artifact bundle from workspace changes.
-
-Use the available tools by their exact names: ${runtimeToolIds.join(", ")}.
-
-Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write or workspace_edit.
-
-The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
-}
-
-function scopedSettings(mode: string, provider: string | undefined, model: string | undefined): Record<string, unknown> {
-  if (!provider && !model) {
-    return {}
-  }
-
-  return {
-    ...(provider ? { default_provider: provider } : {}),
-    ...(model ? { default_model: model } : {}),
-    mode_models: {
-      [mode]: {
-        ...(provider ? { provider } : {}),
-        ...(model ? { model } : {}),
-      },
-    },
-  }
 }
 
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
