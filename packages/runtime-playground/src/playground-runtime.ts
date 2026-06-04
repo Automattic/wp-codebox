@@ -417,7 +417,15 @@ class PlaygroundRuntime implements Runtime {
 
   async runBrowserProbe(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, server, spec })
+    let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
+    try {
+      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }

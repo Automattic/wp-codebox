@@ -11,10 +11,11 @@ import { browserProbeMemorySummary, browserProbePerformanceSummary, cdpDomCounte
 
 export const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
 
-export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
+export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
 (() => {
   const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [] };
   state.checkpoints = state.checkpoints || [];
+  state.longTasks = state.longTasks || [];
   globalThis.__wpCodeboxProbeCheckpoint = (name, metadata = {}) => {
     state.checkpoints.push({
       name: String(name || ''),
@@ -22,6 +23,21 @@ export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
       timestamp: new Date().toISOString(),
     });
   };
+  globalThis.__wpCodeboxProbeFail = (message, details = undefined) => {
+    state.terminalFailure = {
+      message: String(message || 'Browser probe reported a terminal failure'),
+      details,
+      timestamp: new Date().toISOString(),
+    };
+  };
+})();
+`
+
+export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
+(() => {
+  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [] };
+  state.checkpoints = state.checkpoints || [];
+  state.longTasks = state.longTasks || [];
   if (state.longTaskObserverInstalled || typeof PerformanceObserver === 'undefined') {
     return;
   }

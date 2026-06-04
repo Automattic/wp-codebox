@@ -587,6 +587,16 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       addIssue("invalid-duration", `${path}.args`, "wordpress.browser-probe duration must look like 500ms or 2s.")
     }
 
+    const stallTimeout = recipeStepArgValue(step.args ?? [], "stall-timeout")
+    if (stallTimeout && !/^(\d+(?:\.\d+)?)(ms|s)$/.test(stallTimeout)) {
+      addIssue("invalid-stall-timeout", `${path}.args`, "wordpress.browser-probe stall-timeout must look like 500ms or 2s.")
+    }
+
+    const failFast = recipeStepArgValue(step.args ?? [], "fail-fast")
+    if (failFast && !["1", "0", "true", "false", "yes", "no", "on", "off"].includes(failFast.toLowerCase())) {
+      addIssue("invalid-fail-fast", `${path}.args`, "wordpress.browser-probe fail-fast must be true or false.")
+    }
+
     const repeat = recipeStepArgValue(step.args ?? [], "repeat")
     if (repeat && !/^[1-9]\d*$/.test(repeat)) {
       addIssue("invalid-repeat", `${path}.args`, "wordpress.browser-probe repeat must be a positive integer.")

@@ -39,11 +39,31 @@ export interface BrowserProbeArtifact {
     metrics?: Record<string, number>
     networkEvents: number
     performance?: BrowserProbePerformanceSummary
+    progress?: BrowserProbeProgressSummary
     replayability: BrowserProbeReplayability
     screenshot: boolean
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
+}
+
+export interface BrowserProbeProgressSummary {
+  status: "active" | "failed" | "stalled"
+  startedAt: string
+  lastProgressAt: string
+  lastProgressSource: BrowserProbeProgressSource
+  idleMs: number
+  stallTimeoutMs?: number
+  terminalFailure?: BrowserProbeTerminalFailure
+}
+
+export type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
+
+export interface BrowserProbeTerminalFailure {
+  message: string
+  reason?: string
+  details?: unknown
+  timestamp: string
 }
 
 export interface BrowserAssertionsSummary {

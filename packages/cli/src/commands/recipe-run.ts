@@ -334,7 +334,7 @@ class RecipePhaseTracker {
       })
       return result
     } catch (error) {
-      const phaseError = error instanceof RecipePhaseError ? error : new RecipePhaseError(name, data, error)
+      const phaseError = error instanceof RecipePhaseError || error instanceof RecipeRunTimeoutError ? error : new RecipePhaseError(name, data, error)
       this.phases.push({
         schema: "wp-codebox/recipe-phase-evidence/v1",
         name,

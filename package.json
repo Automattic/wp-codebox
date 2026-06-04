@@ -85,6 +85,7 @@
     "preview-public-url-canonical-smoke": "tsx scripts/preview-public-url-canonical-smoke.ts",
     "preview-response-body-smoke": "tsx scripts/preview-response-body-smoke.ts",
     "browser-startup-progress-smoke": "tsx scripts/browser-startup-progress-smoke.ts",
+    "recipe-browser-probe-liveness-smoke": "tsx scripts/recipe-browser-probe-liveness-smoke.ts",
     "boot-preview-smoke": "tsx scripts/boot-preview-smoke.ts",
     "blueprint-validation-smoke": "tsx scripts/blueprint-validation-smoke.ts",
     "ability-login-blueprint-smoke": "tsx scripts/ability-login-blueprint-smoke.ts",
