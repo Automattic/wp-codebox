@@ -5,6 +5,7 @@ import type { Request } from "playwright"
 export interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
+  prePageScript?: BrowserProbeScriptMetadata
   files: {
     actions?: string
     editorState?: string
@@ -39,6 +40,7 @@ export interface BrowserProbeArtifact {
     metrics?: Record<string, number>
     networkEvents: number
     performance?: BrowserProbePerformanceSummary
+    progress?: BrowserProbeProgressSummary
     replayability: BrowserProbeReplayability
     screenshot: boolean
     scriptResult?: unknown
@@ -46,10 +48,36 @@ export interface BrowserProbeArtifact {
   }
 }
 
+export interface BrowserProbeProgressSummary {
+  status: "active" | "failed" | "stalled"
+  startedAt: string
+  lastProgressAt: string
+  lastProgressSource: BrowserProbeProgressSource
+  idleMs: number
+  stallTimeoutMs?: number
+  terminalFailure?: BrowserProbeTerminalFailure
+}
+
+export type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
+
+export interface BrowserProbeTerminalFailure {
+  message: string
+  reason?: string
+  details?: unknown
+  timestamp: string
+}
+
+export interface BrowserProbeScriptMetadata {
+  sha256: string
+  bytes: number
+}
+
 export interface BrowserAssertionsSummary {
   total: number
   passed: number
   failed: number
+  advisoryFailed?: number
+  fatalFailed?: number
   results: BrowserStepAssertion[]
 }
 
@@ -175,10 +203,15 @@ export interface BrowserStepRecord {
 }
 
 export interface BrowserStepAssertion {
-  kind: "expect" | "evaluate"
+  kind: "expect" | "evaluate" | "probe"
+  assertion?: string
+  advisory?: boolean
+  message?: string
   selector?: string
+  name?: string
   state?: string
   expression?: string
+  operator?: string
   expected?: unknown
   actual?: unknown
   passed: boolean

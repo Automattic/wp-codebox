@@ -151,6 +151,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'artifacts'    => $artifacts,
 			'exit_code'    => $exit_code,
 			'agent_result' => is_array( $decoded['agentResult'] ?? null ) ? $decoded['agentResult'] : array(),
+			'agent_task_result' => is_array( $decoded['agentTaskResult'] ?? null ) ? $decoded['agentTaskResult'] : array(),
 			'completion_outcome' => $this->completion_outcome( $decoded ),
 			'run'          => $decoded,
 		);
@@ -158,6 +159,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		if ( null !== $outcome ) {
 			$response['outcome'] = $outcome;
 		}
+
+		$response['status']        = true === ( $response['success'] ?? false ) ? 'completed' : 'failed';
+		$response['diagnostics']   = $this->run_diagnostics( $decoded, $exit_code, $outcome );
+		$response['evidence_refs'] = $this->evidence_refs( $response['session'], $decoded );
+		$response['run_metadata']  = $this->run_metadata( $session_id, $input, $wp_version, $decoded );
 
 		return $response;
 	}
@@ -239,6 +245,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'preview_url' => (string) ( $task_result['session']['artifacts']['preview_url'] ?? '' ),
 				'artifacts'    => $task_result['session']['artifacts'] ?? array(),
 				'agent_result' => $task_result['agent_result'] ?? array(),
+				'agent_task_result' => $task_result['agent_task_result'] ?? array(),
 				'completion_outcome' => $task_result['completion_outcome'] ?? array(),
 				'run'          => $task_result['run'] ?? array(),
 			);
@@ -422,6 +429,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
 					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
 					'agent_bundles'          => $this->agent_bundles( $input, $request ),
+					'runtime_task'           => $this->runtime_task( $input, $request ),
 					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
 					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
 					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $workspaces ),
@@ -1015,6 +1023,26 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $normalized;
+	}
+
+	/**
+	 * @param array<string,mixed> $input Ability input.
+	 * @param array<string,mixed> $request Parent request input.
+	 * @return array<string,mixed>
+	 */
+	private function runtime_task( array $input, array $request = array() ): array {
+		$candidates = array(
+			$input['runtime_task'] ?? $input['runtimeTask'] ?? null,
+			$request['runtime_task'] ?? $request['runtimeTask'] ?? null,
+		);
+
+		foreach ( $candidates as $bundle ) {
+			if ( is_array( $bundle ) ) {
+				return $bundle;
+			}
+		}
+
+		return array();
 	}
 
 	/** @param array<string,mixed> $principal Raw import principal. @return array<string,mixed> */
@@ -1857,7 +1885,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
 		$agent_bundles  = $this->agent_bundles( $input );
-		$steps          = array();
+		$runtime_task   = $this->runtime_task( $input );
+		$steps              = array();
 		foreach ( $task_prompts as $task_prompt ) {
 			$task_input = $this->task_input( array_merge( $input, array( 'goal' => $task_prompt ) ) );
 			if ( is_wp_error( $task_input ) ) {
@@ -1875,6 +1904,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			);
 			if ( ! empty( $agent_bundles ) ) {
 				$args[] = 'agent-bundles-json=' . $this->json_encode( $agent_bundles );
+			}
+			if ( ! empty( $runtime_task ) ) {
+				$args[] = 'runtime-task-json=' . $this->json_encode( $runtime_task );
 			}
 			if ( ! empty( $input['session_id'] ) ) {
 				$args[] = 'session-id=' . (string) $input['session_id'];
@@ -2286,10 +2318,70 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'path'        => $artifacts,
 					'bundle_id'   => is_array( $run['artifacts'] ?? null ) ? (string) ( $run['artifacts']['id'] ?? '' ) : '',
 					'preview_url' => is_array( $run['artifacts']['preview'] ?? null ) ? (string) ( $run['artifacts']['preview']['url'] ?? '' ) : '',
+					'agent_task_result' => is_array( $run['agentTaskResult'] ?? null ) ? 'files/agent-task-result.json' : '',
 					'completion_outcome' => is_array( $run['completionOutcome'] ?? null ) ? 'files/completion-outcome.json' : '',
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			)
+		);
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. @param array<string,mixed>|null $outcome Strict remediation outcome when requested. @return array<string,mixed> */
+	private function run_diagnostics( array $run, int $exit_code, ?array $outcome ): array {
+		$agent_result = is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array();
+		$agent_task_result = is_array( $run['agentTaskResult'] ?? null ) ? $run['agentTaskResult'] : array();
+
+		return array_filter(
+			array(
+				'schema'                    => 'wp-codebox/agent-task-diagnostics/v1',
+				'exit_code'                 => $exit_code,
+				'recipe_run_schema'         => (string) ( $run['schema'] ?? '' ),
+				'agent_result_schema'       => (string) ( $agent_result['schema'] ?? '' ),
+				'agent_task_result_schema'  => (string) ( $agent_task_result['schema'] ?? '' ),
+				'agent_task_result_status'  => (string) ( $agent_task_result['status'] ?? '' ),
+				'agent_actionable'          => array_key_exists( 'actionable', $agent_result ) ? (bool) $agent_result['actionable'] : null,
+				'agent_no_op_reason'        => (string) ( $agent_result['noOpReason'] ?? '' ),
+				'completion_outcome_status' => is_array( $run['completionOutcome'] ?? null ) ? (string) ( $run['completionOutcome']['status'] ?? '' ) : '',
+				'outcome_kind'              => is_array( $outcome ) ? (string) ( $outcome['kind'] ?? '' ) : '',
+				'outcome_retryable'         => is_array( $outcome ) && array_key_exists( 'retryable', $outcome ) ? (bool) $outcome['retryable'] : null,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Sandbox session envelope. @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function evidence_refs( array $session, array $run ): array {
+		$session_artifacts = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+		$run_artifacts     = is_array( $run['artifacts'] ?? null ) ? $run['artifacts'] : array();
+		$agent_result      = is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array();
+		$transcript        = is_array( $agent_result['transcript'] ?? null ) ? $agent_result['transcript'] : array();
+
+		return array_filter(
+			array(
+				'schema'             => 'wp-codebox/agent-task-evidence-refs/v1',
+				'artifacts_path'     => (string) ( $session_artifacts['path'] ?? '' ),
+				'artifact_bundle_id' => (string) ( $session_artifacts['bundle_id'] ?? $run_artifacts['id'] ?? '' ),
+				'preview_url'        => (string) ( $session_artifacts['preview_url'] ?? '' ),
+				'agent_task_result'  => (string) ( $session_artifacts['agent_task_result'] ?? '' ),
+				'completion_outcome' => (string) ( $session_artifacts['completion_outcome'] ?? '' ),
+				'transcript'         => (string) ( $transcript['artifact'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function run_metadata( string $session_id, array $input, string $wp_version, array $run ): array {
+		return array_filter(
+			array(
+				'schema'             => 'wp-codebox/agent-task-run-metadata/v1',
+				'sandbox_session_id' => $session_id,
+				'agent_session_id'   => (string) ( $input['session_id'] ?? '' ),
+				'orchestrator'       => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+				'wp'                 => $wp_version,
+				'recipe_run_schema'  => (string) ( $run['schema'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
 	}
 

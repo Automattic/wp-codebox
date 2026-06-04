@@ -552,9 +552,10 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org', 'github.com' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_theme_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org' );
 $recipe_run_source = file_get_contents( $source_root . '/packages/cli/src/commands/recipe-run.ts' );
-$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugins_activated', $" . "activated)" ) );
+$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugin_activated', $" . "plugin_file)" ) );
 $agent_code_source = file_get_contents( $source_root . '/packages/cli/src/agent-code.ts' );
 $assert( 'CLI sandbox delegates runtime bundle imports through generic helper', false !== $agent_code_source && str_contains( $agent_code_source, "wp_agent_import_runtime_bundles" ) && str_contains( $agent_code_source, "apply_filters('wp_agent_runtime_import_bundle'" ) && ! str_contains( $agent_code_source, "wp_get_ability('datamachine/import-agent')" ) && ! str_contains( $agent_code_source, 'DataMachine\\Core\\Database\\Agents\\Agents' ) );
+$assert( 'CLI sandbox runs caller runtime tasks through generic ability payload', false !== $agent_code_source && str_contains( $agent_code_source, 'normalizeRuntimeTask' ) && str_contains( $agent_code_source, "'runtime_task_ability_unavailable'" ) && ! str_contains( $agent_code_source, "'datamachine/run-agent-bundle'" ) && ! str_contains( $agent_code_source, 'ExecuteWorkflowAbility' ) );
 $assert( 'CLI sandbox preserves runtime bundle import principal without Data Machine permission helper', false !== $agent_code_source && str_contains( $agent_code_source, "'import_principal'" ) && ! str_contains( $agent_code_source, 'DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($execute' ) );
 $assert( 'CLI sandbox uses Agents API runtime-principal authorization instead of Data Machine chat mode glue', false !== $agent_code_source && str_contains( $agent_code_source, "agents_chat_runtime_principal_permission" ) && ! str_contains( $agent_code_source, 'datamachine_settings' ) && ! str_contains( $agent_code_source, 'datamachine_agent_modes' ) && ! str_contains( $agent_code_source, 'datamachine_agent_mode_sandbox' ) && ! str_contains( $agent_code_source, 'datamachine_directives' ) && ! str_contains( $agent_code_source, 'WP_Codebox_Sandbox_Perception_Directive' ) );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
@@ -740,7 +741,7 @@ $assert( 'browser Playground session identifies disposable execution scope', ! i
 $assert( 'browser Playground session identifies runtime-principal permission model', ! is_wp_error( $browser_session ) && 'runtime-principal' === ( $browser_session['permission_model'] ?? '' ) && 'runtime-principal' === ( $browser_session['session']['permission_model'] ?? '' ) );
 $assert( 'browser Playground session emits canonical sandbox session envelope', ! is_wp_error( $browser_session ) && 'wp-codebox/sandbox-session/v1' === ( $browser_session['session']['schema'] ?? '' ) && 'browser-session-123' === ( $browser_session['session']['id'] ?? '' ) && 'ready' === ( $browser_session['session']['status'] ?? '' ) && 'external-orchestrator' === ( $browser_session['session']['persistence'] ?? '' ) );
 $assert( 'browser Playground session returns trusted authorization provenance in session envelope', ! is_wp_error( $browser_session ) && 'studio-web' === ( $browser_session['session']['authorization']['caller'] ?? '' ) && 'browser-session:create' === ( $browser_session['session']['authorization']['scope'] ?? '' ) && true === ( $browser_session['session']['authorization']['authorized'] ?? false ) && 'trusted-caller-grant' === ( $browser_session['session']['authorization']['reason'] ?? '' ) );
-$assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.automattic.ai' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.automattic.ai' ) );
+$assert( 'browser Playground session includes Playground client URLs', ! is_wp_error( $browser_session ) && str_contains( $browser_session['playground']['client_module_url'] ?? '', 'playground.wordpress.net' ) && str_contains( $browser_session['playground']['remote_url'] ?? '', 'playground.wordpress.net' ) );
 $assert( 'browser Playground session includes Playground CORS proxy URL', ! is_wp_error( $browser_session ) && 'https://wordpress-playground-cors-proxy.net/?' === ( $browser_session['playground']['cors_proxy_url'] ?? '' ) && 'https://wordpress-playground-cors-proxy.net' === ( $browser_session['playground']['provenance']['cors_proxy_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session includes default blueprint', ! is_wp_error( $browser_session ) && true === ( $browser_session['playground']['blueprint']['features']['networking'] ?? false ) && is_array( $browser_session['playground']['blueprint']['steps'] ?? null ) );
 $assert( 'browser Playground session defaults to latest WordPress and PHP', ! is_wp_error( $browser_session ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['wp'] ?? '' ) && 'latest' === ( $browser_session['playground']['blueprint']['preferredVersions']['php'] ?? '' ) );
@@ -759,7 +760,7 @@ $assert( 'browser Playground session compiles git directory runtime plugins', ! 
 $assert( 'browser Playground session compiles caller mu-plugin runtime dependency', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/mu-plugins/caller-runtime.php' )['code'] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground session compiles theme runtime dependency', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "require_once '/wordpress/wp-load.php'" ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "require_once ABSPATH . WPINC . '/theme.php'" ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "switch_theme( 'example-starter' )" ) );
 $assert( 'browser Playground session compiles named bootstrap runtime operation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( "update_option( 'blogname', 'Browser Preview' )" )['code'] ?? '' ), "require_once '/wordpress/wp-load.php'" ) );
-$assert( 'browser Playground session records trusted origins', ! is_wp_error( $browser_session ) && 'https://playground.automattic.ai' === ( $browser_session['playground']['provenance']['client_module_url']['origin'] ?? '' ) );
+$assert( 'browser Playground session records trusted origins', ! is_wp_error( $browser_session ) && 'https://playground.wordpress.net' === ( $browser_session['playground']['provenance']['client_module_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session records browser plugin provenance', ! is_wp_error( $browser_session ) && 'example.test' === ( $browser_session['plugins'][0]['provenance']['host'] ?? '' ) && str_repeat( 'a', 64 ) === ( $browser_session['plugins'][0]['provenance']['sha256'] ?? '' ) );
 $assert( 'browser Playground session includes recipe', ! is_wp_error( $browser_session ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_session['recipe']['schema'] ?? '' ) );
 $assert( 'browser Playground recipe uses generic artifact directory', ! is_wp_error( $browser_session ) && '/wordpress/wp-content/uploads/wp-codebox/artifacts' === ( $browser_session['recipe']['artifacts']['directory'] ?? '' ) );
@@ -875,6 +876,9 @@ add_filter(
 $runner_php = (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
 $assert( 'browser Playground generated runner has no Studio Web-specific artifact paths', ! str_contains( $runner_php, '/wordpress/wp-content/uploads/studio-web' ) && ! str_contains( $runner_php, 'studio-web/website' ) );
 $assert( 'browser Playground generated runner defaults to generic Codebox artifacts path', str_contains( $runner_php, '/wordpress/wp-content/uploads/wp-codebox/artifacts' ) && str_contains( $runner_php, 'wp-codebox-output/' ) );
+$runner_contract = $browser_session['recipe']['browser']['runner_contract'] ?? array();
+$assert( 'browser Playground recipe exposes reusable runner PHP contract prelude', is_array( $runner_contract ) && 'wp-codebox/browser-runner-contract/v1' === ( $runner_contract['schema'] ?? '' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), 'function wp_codebox_browser_artifact_environment' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$wp_codebox_is_playground' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$capture_paths' ) );
+$assert( 'browser Playground recipe exposes reusable runner PHP contract footer', is_array( $runner_contract ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'wp_codebox_browser_artifact_capture_diagnostics' ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'file_put_contents( $result_path' ) );
 $runner_php = preg_replace( '/^code=/', '', $runner_php ) ?? $runner_php;
 $runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
 $runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );
@@ -1678,6 +1682,24 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 								'executionCount' => 1,
 							),
 						),
+						'agentTaskResult' => array(
+							'schema'      => 'wp-codebox/agent-task-result/v1',
+							'success'     => true,
+							'status'      => 'completed',
+							'outputs'     => array(
+								'issue_number' => 614,
+								'issue_url'    => 'https://github.com/Automattic/wp-codebox/issues/614',
+							),
+							'diagnostics' => array(
+								'runtime' => array( 'run_id' => 'runtime-run-123' ),
+							),
+							'raw'         => array(
+								'agent_runtime' => array(
+									'success' => true,
+									'result'  => array( 'outputs' => array( 'issue_number' => 614 ) ),
+								),
+							),
+						),
 						'completionOutcome' => array(
 							'schema'       => 'wp-codebox/sandbox-completion-outcome/v1',
 							'status'       => 'partial',
@@ -1752,6 +1774,7 @@ $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_err
 $assert( 'runner returns orchestrator correlation and artifact refs', ! is_wp_error( $result ) && 'job-123' === ( $result['session']['orchestrator']['job_id'] ?? '' ) && 'artifact-bundle-sha256-fixture' === ( $result['session']['artifacts']['bundle_id'] ?? '' ) );
 $assert( 'runner returns public preview URL in session artifact metadata', ! is_wp_error( $result ) && 'https://preview.example.test/session-123/' === ( $result['session']['artifacts']['preview_url'] ?? '' ) && 'https://preview.example.test/session-123/' === ( $result['run']['artifacts']['preview']['url'] ?? '' ) );
 $assert( 'runner surfaces normalized agent result summary', ! is_wp_error( $result ) && 'wp-codebox/agent-result/v1' === ( $result['agent_result']['schema'] ?? '' ) && false === ( $result['agent_result']['actionable'] ?? true ) && 'no_file_changes' === ( $result['agent_result']['noOpReason'] ?? '' ) && 'files/transcript.json' === ( $result['agent_result']['transcript']['artifact'] ?? '' ) );
+$assert( 'runner surfaces single runtime agent task result envelope', ! is_wp_error( $result ) && 'wp-codebox/agent-task-result/v1' === ( $result['agent_task_result']['schema'] ?? '' ) && 614 === ( $result['agent_task_result']['outputs']['issue_number'] ?? 0 ) && ! isset( $result['agent_task_result']['scenarios'] ) && 'files/agent-task-result.json' === ( $result['session']['artifacts']['agent_task_result'] ?? '' ) );
 $assert( 'runner surfaces generic completion outcome', ! is_wp_error( $result ) && 'wp-codebox/sandbox-completion-outcome/v1' === ( $result['completion_outcome']['schema'] ?? '' ) && 'partial' === ( $result['completion_outcome']['status'] ?? '' ) && 'files/completion-outcome.json' === ( $result['session']['artifacts']['completion_outcome'] ?? '' ) );
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $legacy_task_fixture = $task_input_fixture_by_name['legacy task maps to canonical goal with empty optionals']['normalized'] ?? array();
@@ -1775,6 +1798,18 @@ $assert( 'runner does not pass raw code options', ! str_contains( $captured_comm
 
 $homeboy_result = $runner->run(
 	array(
+		'runtime_task' => array(
+			'ability' => 'runtime/run-agent-bundle',
+			'input'   => array(
+				'source'              => '/wordpress/wp-content/wp-codebox-inputs/site-generator-agent.json',
+				'flow'                => 'static-site-manual-flow',
+				'wait_for_completion' => true,
+				'dry_run'             => true,
+			),
+			'metadata' => array(
+				'owner' => 'homeboy',
+			),
+		),
 		'parent_request' => array(
 			'schema'               => 'homeboy/wp-codebox-task-request/v1',
 			'provider'             => 'openai',
@@ -1848,10 +1883,20 @@ $homeboy_result = $runner->run(
 );
 $homeboy_recipe = json_decode( $captured_recipe, true );
 $homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
+$homeboy_runtime_task_arg = '';
+foreach ( $homeboy_step_args as $homeboy_step_arg ) {
+	if ( is_string( $homeboy_step_arg ) && str_starts_with( $homeboy_step_arg, 'runtime-task-json=' ) ) {
+		$homeboy_runtime_task_arg = substr( $homeboy_step_arg, strlen( 'runtime-task-json=' ) );
+		break;
+	}
+}
+$homeboy_runtime_task = '' !== $homeboy_runtime_task_arg ? json_decode( $homeboy_runtime_task_arg, true ) : array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
+$assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $homeboy_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
+$assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $homeboy_runtime_task ) && 'runtime/run-agent-bundle' === ( $homeboy_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $homeboy_runtime_task['input']['flow'] ?? '' ) && true === ( $homeboy_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $homeboy_runtime_task['input']['dry_run'] ?? false ) );
 $assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
 $assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use mounted workspace repos' ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );

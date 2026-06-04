@@ -26,6 +26,31 @@ may still pass `task` as a string; the runner normalizes it into `goal` and
 returns the normalized `task_input` in the ability response. Raw PHP `code` and
 `code_file` fields remain rejected on this product ability path.
 
+Runtime orchestrators can pass `agent_bundles` plus a generic `runtime_task`
+payload to run caller-owned bundle logic without injecting PHP code. WP Codebox
+imports each bundle through `wp_agent_import_runtime_bundles` or the
+`wp_agent_runtime_import_bundle` filter, then executes the sandbox-local ability
+named by `runtime_task.ability` with `runtime_task.input`. The runtime owner
+plugin defines that ability contract; WP Codebox only preserves the generic
+transport, task input, status, diagnostics, and evidence refs.
+
+```json
+{
+  "goal": "Run the provider-owned bundle task.",
+  "agent_bundles": [
+    { "source": "/path/to/site-generator-agent.json", "slug": "site-generator", "on_conflict": "upgrade" }
+  ],
+  "runtime_task": {
+    "ability": "runtime/run-agent-bundle",
+    "input": {
+      "source": "/wordpress/wp-content/wp-codebox-inputs/site-generator-agent.json",
+      "flow": "static-site-manual-flow",
+      "wait_for_completion": true
+    }
+  }
+}
+```
+
 When `allowed_tools` is non-empty, the parent-side runner requires a resolved
 `sandbox_tool_policy` snapshot before launching the CLI. Codebox validates and
 enforces the snapshot generically: tools that are not present, not allowed, not
@@ -68,10 +93,10 @@ create host-site job tables or depend on a specific queue. See
 `docs/sandbox-session-contract.md`.
 
 Both abilities accept optional `provider` and `model` fields. These seed the
-disposable sandbox's Data Machine agent configuration for the selected execution
-mode. Provider plugins are supplied with `provider_plugin_paths`; WP Codebox
-mounts and activates them without knowing provider-specific behavior. Provider
-credentials continue to resolve through the provider's normal scoped mechanism.
+disposable sandbox agent configuration for the selected execution mode. Provider
+plugins are supplied with `provider_plugin_paths`; WP Codebox mounts and
+activates them without knowing provider-specific behavior. Provider credentials
+continue to resolve through the provider's normal scoped mechanism.
 Pass `secret_env` as a list of environment variable names to expose selected
 parent process credentials inside the sandbox; values are read from the process
 environment and are not accepted in the ability payload. For example, pass

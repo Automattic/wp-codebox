@@ -354,11 +354,13 @@ export async function runBenchCommand({
   const env = jsonObjectArg(args, "env-json")
   const bootstrapFiles = jsonArrayArg(args, "bootstrap-files-json").filter((file): file is string => typeof file === "string")
   const workloads = jsonArrayArg(args, "workloads-json")
-  const bridge = benchWorkloadsUseWpCli(workloads) ? await createRuntimeWpCliBridge(server) : undefined
+  const lifecycle = jsonObjectArg(args, "lifecycle-json")
+  const resetPolicy = jsonObjectArg(args, "reset-policy-json")
+  const bridge = benchWorkloadsUseWpCli([workloads, lifecycle]) ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
   try {
     response = await runPlaygroundCommand("wordpress.bench", server, {
-      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, bootstrapFiles, workloads, wpCliBridge: bridge }), []),
+      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, bootstrapFiles, workloads, lifecycle, resetPolicy, wpCliBridge: bridge }), []),
     })
     assertPlaygroundResponseOk("wordpress.bench", response)
   } finally {

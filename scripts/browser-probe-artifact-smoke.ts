@@ -18,9 +18,11 @@ await writeFile(join(pluginDir, "browser-error-fixture.php"), `<?php
  * Plugin Name: Browser Error Fixture
  */
 add_action('wp_footer', function () {
-    echo '<script>console.error("wp-codebox fixture console error"); setTimeout(function () { throw new Error("wp-codebox fixture browser error"); }, 0);</script>';
+    echo '<script>window.__wpCodeboxFixtureObservedCapabilities = { applePay: typeof window.ApplePaySession === "function" && window.ApplePaySession.canMakePayments(), paymentRequest: typeof window.PaymentRequest === "function", marker: window.__wpCodeboxPrePageMarker }; console.error("wp-codebox fixture console error"); setTimeout(function () { throw new Error("wp-codebox fixture browser error"); }, 0);</script>';
 });
 `)
+
+const prePageScript = 'window.__wpCodeboxPrePageMarker = "before-app-scripts"; window.ApplePaySession = class { static canMakePayments() { return true; } }; window.PaymentRequest = class {};'
 
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
@@ -43,7 +45,8 @@ await writeFile(recipePath, `${JSON.stringify({
           "duration=1s",
           "viewport=390x844",
           "capture=console,errors,html,network,performance,memory,screenshot",
-          "script=window.__wpCodeboxProbeCheckpoint('fixture-before-return', { source: 'smoke' }); console.info('wp-codebox fixture browser script'); return { title: document.title, hasBody: !!document.body };",
+          `pre-page-script=${prePageScript}`,
+          "script=window.__wpCodeboxProbeCheckpoint('fixture-before-return', { source: 'smoke' }); console.info('wp-codebox fixture browser script'); return { title: document.title, hasBody: !!document.body, observedCapabilities: window.__wpCodeboxFixtureObservedCapabilities };",
         ],
       },
     ],
@@ -131,6 +134,7 @@ assert.ok(performance.checkpoints.length >= 1, "performance artifact should incl
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   requestedUrl: string
   finalUrl: string
+  prePageScript?: { sha256?: string; bytes?: number }
   files: { checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; screenshot?: string }
   hashes: { html?: { value: string }; screenshot?: { value: string } }
   viewport: { width: number; height: number; userAgent: string }
@@ -138,7 +142,7 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
     replayability: string
     networkEvents: number
     htmlSnapshot: boolean
-    scriptResult?: { title?: string; hasBody?: boolean }
+    scriptResult?: { title?: string; hasBody?: boolean; observedCapabilities?: { applePay?: boolean; paymentRequest?: boolean; marker?: string } }
     memory?: { usedJSHeapSize: { final: number | null; peak: number | null }; domNodes: { final: number | null; peak: number | null } }
     performance?: { resources: number; domNodes: { final: number | null; peak: number | null }; longTasks: number }
   }
@@ -158,6 +162,11 @@ assert.equal(summary.summary.replayability, "artifact-backed")
 assert.equal(summary.summary.htmlSnapshot, true)
 assert.equal(summary.summary.scriptResult?.title, "My WordPress Website")
 assert.equal(summary.summary.scriptResult?.hasBody, true)
+assert.equal(summary.summary.scriptResult?.observedCapabilities?.applePay, true, "page scripts should observe pre-page Apple Pay mock")
+assert.equal(summary.summary.scriptResult?.observedCapabilities?.paymentRequest, true, "page scripts should observe pre-page PaymentRequest mock")
+assert.equal(summary.summary.scriptResult?.observedCapabilities?.marker, "before-app-scripts", "page scripts should observe pre-page marker")
+assert.match(summary.prePageScript?.sha256 ?? "", /^[a-f0-9]{64}$/)
+assert.equal(summary.prePageScript?.bytes, Buffer.byteLength(prePageScript, "utf8"))
 assert.ok(summary.summary.networkEvents >= 1, "summary should count network events")
 assert.ok((summary.summary.memory?.domNodes.final ?? 0) > 0, "summary should include memory DOM node counts")
 assert.ok((summary.summary.performance?.resources ?? 0) >= 1, "summary should include performance resource counts")

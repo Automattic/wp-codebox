@@ -149,7 +149,7 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	private function normalize_value( string $field, mixed $value ): mixed {
-		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target' ), true ) ) {
+		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target' ), true ) ) {
 			return $this->json_object( (string) $value, $field );
 		}
 

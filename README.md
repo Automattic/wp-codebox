@@ -266,12 +266,40 @@ npm run check
 
 ## Distribution Artifacts
 
-The CLI package is prepared as `@automattic/wp-codebox-cli` and exposes the
-`wp-codebox` binary from `packages/cli/dist/index.js`.
+The GitHub Release workspace tarball exposes the stable `wp-codebox` binary from
+`packages/cli/dist/index.js`. The scoped npm packages are prepared under
+`@automattic/wp-codebox-*`, but they are not published yet; do not document
+`npm install -g @automattic/wp-codebox-cli` as an available install path until
+the package exists in the registry.
 
 ```bash
 npm run build
 npm pack --workspace @automattic/wp-codebox-cli --dry-run --json
+npm pack --json
+```
+
+Install a GitHub Release tarball built from a release that includes the root
+`bin` mapping when a downstream control plane needs a stable binary path without
+pointing at a local feature worktree:
+
+```bash
+npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
+wp-codebox commands --json
+wp-codebox recipe validate --recipe ./examples/recipes/cookbook/codex-agent-smoke.json --json
+```
+
+`v0.4.0` includes the fresh sandbox session fix and Codex recipe example, but its
+release asset predates the root `bin` mapping. Release managers need to cut a new
+release from a commit containing this section before relying on the GitHub
+Release tarball as the stable installed binary path.
+
+For a future npm release, publish all three scoped packages from the same clean
+release commit after approval:
+
+```bash
+npm publish --workspace @automattic/wp-codebox-core --access public
+npm publish --workspace @automattic/wp-codebox-playground --access public
+npm publish --workspace @automattic/wp-codebox-cli --access public
 ```
 
 The WordPress plugin zip is built from `packages/wordpress-plugin` with only the
@@ -284,10 +312,13 @@ unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip
 
 `npm run package-distribution-smoke` validates both artifact shapes. It checks
 that the CLI pack includes `package.json`, `README.md`, and compiled `dist/`
-files without TypeScript source, then builds the WordPress plugin zip and checks
-that it contains the plugin bootstrap, README, PHP sources, checked-in browser
-runtime asset, and vendored CLI runtime without package metadata or generated
-artifacts.
+files without TypeScript source, checks that the root release tarball installs a
+`wp-codebox` binary, then builds the WordPress plugin zip and checks that it
+contains the plugin bootstrap, README, PHP sources, checked-in browser runtime
+asset, and vendored CLI runtime without package metadata or generated artifacts.
+`npm run package-installed-binary-smoke` packs the root release tarball, installs
+it into a temporary global prefix, and verifies the installed `wp-codebox`
+binary can emit the command catalog.
 
 Versioning and release policy:
 
@@ -296,18 +327,21 @@ Versioning and release policy:
    `@automattic/wp-codebox-playground` stay on the same version.
 2. Keep `packages/wordpress-plugin/wp-codebox.php` `Version:` aligned with the
    package version used for the matching plugin zip.
-3. Treat the npm package and plugin zip as one release unit: publish the CLI,
-   build the plugin zip from the same commit, and attach the zip to the release.
+3. Treat the release tarball, npm packages, and plugin zip as one release unit:
+   attach the root `wp-codebox-workspace-<version>.tgz` tarball, publish the
+   scoped npm packages when approved, build the plugin zip from the same commit,
+   and attach the zip to the release.
 4. Use conventional semver: patch for fixes and docs-only distribution updates,
    minor for new commands or artifact fields, major for runtime contract breaks.
 
 Install notes by environment:
 
 1. Self-hosted WordPress control planes should install the CLI on the same host
-   that runs PHP, install `packages/wordpress-plugin/dist/wp-codebox.zip` as the
-   parent-site plugin, then set `wp_codebox_bin` to the resolved `wp-codebox`
-   binary path. Component paths can be supplied through
-   `wp_codebox_component_paths` or the matching filter.
+   that runs PHP from the GitHub Release workspace tarball, install
+   `packages/wordpress-plugin/dist/wp-codebox.zip` as the parent-site plugin,
+   then set `wp_codebox_bin` to the resolved `wp-codebox` binary path. Component
+   paths can be supplied through `wp_codebox_component_paths` or the matching
+   filter.
 2. Studio or local development environments can run from a checkout with
    `npm install`, `npm run build`, and `npm run wp-codebox -- ...`; install the
    plugin zip into the local parent site and point `wp_codebox_bin` at either
@@ -325,11 +359,22 @@ options because the executable path is host-level configuration.
 Release checklist:
 
 1. Run `npm run check` from a clean checkout.
-2. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
-3. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with `npm run package:wordpress-plugin` and inspect `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
-4. Confirm package and plugin versions are aligned on the release commit.
-5. Install the CLI in the target environment and configure the WordPress plugin `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
-6. Install the plugin zip on the parent site and run the WordPress plugin smoke or equivalent ability registration check in that environment.
+2. Run `npm run package-installed-binary-smoke` to verify the root release
+   tarball installs a working `wp-codebox` binary.
+3. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
+4. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with
+   `npm run package:wordpress-plugin` and inspect
+   `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
+5. Confirm package and plugin versions are aligned on the release commit.
+6. Build the root release tarball and attach it to the matching GitHub Release:
+   `npm pack --json`. The expected asset name is
+   `wp-codebox-workspace-<version>.tgz`.
+7. If npm publishing is approved, publish the scoped packages with the exact
+   `npm publish --workspace ... --access public` commands above.
+8. Install the CLI in the target environment and configure the WordPress plugin
+   `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
+9. Install the plugin zip on the parent site and run the WordPress plugin smoke
+   or equivalent ability registration check in that environment.
 
 ## Quick Start
 
@@ -683,7 +728,7 @@ Supported runtime commands today:
 
 `wordpress.core-phpunit` **requires the mounted `wordpress-develop` checkout to already have its Composer dev dependencies installed** before you mount it. WordPress core's `tests/phpunit/includes/bootstrap.php` hard-requires the test toolchain (PHPUnit plus the Yoast PHPUnit Polyfills at `vendor/yoast/phpunit-polyfills/phpunitpolyfills-autoload.php`) and `die()`s if it is absent — a freshly cloned `wordpress-develop` tree has **no `vendor/`**. Run `composer install` (or `composer update -W`) inside the checkout first, or mount a checkout that already has `vendor/`. WP Codebox does **not** silently fetch these dependencies for you (sandbox network downloads remain gated behind `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1`). When the toolchain is missing, the command now fails with a clear, structured error naming the missing paths instead of crashing with an opaque "crashed before producing a structured response" — the pre-flight check runs before core's bootstrap, and a mid-`require` `die()` is captured via output buffering + a shutdown handler so diagnostics always reach `files/core-phpunit/.pg-test-result.txt`.
 
-`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, `viewport=<width>x<height>` (for example `viewport=390x844`), and `capture=console,errors,html,network,performance,memory,screenshot`. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/performance.json`, `files/browser/memory.json`, `files/browser/checkpoints.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, effective viewport/device metadata, HTML and screenshot hashes, network event counts, optional final/peak browser memory and performance summaries, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. Performance and memory captures use generic browser/CDP data only: JS heap when available, CDP `Performance.getMetrics`, CDP DOM counters, DOM/resource counts and byte totals, and long task counts/duration. Probe scripts may call `window.__wpCodeboxProbeCheckpoint(name, metadata)` when `performance` or `memory` capture is enabled to record named generic checkpoint snapshots. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
+`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, `viewport=<width>x<height>` (for example `viewport=390x844`), `pre-page-script=<js>`, repeated `assert=<assertion>` arguments, and `capture=console,errors,html,network,performance,memory,screenshot`. Use `pre-page-script` for controlled capability mocks that page scripts must observe during startup, such as `ApplePaySession`, `PaymentRequest`, wallet availability probes, or other browser/payment feature state. The script is installed with Playwright before navigation and before application scripts run; artifact summaries preserve only its SHA-256 and byte length, not the source. Assertions support `exists:<selector>`, `not-exists:<selector>`, `visible:<selector>`, `hidden:<selector>`, `count:<selector><op><number>`, `text:<selector> contains <text>`, `attr:<selector>[name][=value]`, `no-console-errors`, `no-page-errors`, and `no-errors`; prefix with `advisory:` to record a failing assertion without failing the probe. Assertion results are included in the command JSON and `summary.json`, and non-advisory failures fail the command after artifacts are written. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/performance.json`, `files/browser/memory.json`, `files/browser/checkpoints.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, effective viewport/device metadata, optional pre-page script metadata, HTML and screenshot hashes, assertion results, network event counts, optional final/peak browser memory and performance summaries, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. Performance and memory captures use generic browser/CDP data only: JS heap when available, CDP `Performance.getMetrics`, CDP DOM counters, DOM/resource counts and byte totals, and long task counts/duration. Probe scripts may call `window.__wpCodeboxProbeCheckpoint(name, metadata)` when `performance` or `memory` capture is enabled to record named generic checkpoint snapshots. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
 
 `wordpress.browser-actions` drives the preview with an ordered interaction script so Codebox can prove a plugin still *works* under interaction, not just that it renders. Pass the script as `steps-json=<array>` (inline JSON, or `@<path>` to read it from a file); the legacy `actions-json=<array>` shape is still accepted and normalized to steps. Each step is a thin, stable mapping over a Playwright locator action — this is not a test-runner DSL.
 
@@ -939,6 +984,24 @@ npm run wp-codebox -- recipe-run \
 
 Each workload file returns a callable. The callable may return numeric metrics directly or a payload with `metrics` and `metadata` keys. The recipe output reports duration percentiles, custom metric aggregates, peak memory, runtime artifacts, and the parsed `benchResults` object in JSON output when a single `wordpress.bench` step runs. If earlier `wordpress.browser-probe` steps in the same recipe captured generic `performance` or `memory` artifacts, `wordpress.bench` promotes selected numeric browser values into each scenario's metrics using `browser_*` names, while the raw browser artifacts remain available under `files/browser/`.
 
+Use `bench summarize` to extract a stable automation envelope from saved `recipe-run --json` output:
+
+```bash
+npm run wp-codebox -- bench summarize \
+  --input ./artifacts/bench-plugin/recipe-run.json \
+  --json
+```
+
+Use `artifacts bench-results` to extract benchmark results from an artifact bundle command log:
+
+```bash
+npm run wp-codebox -- artifacts bench-results \
+  --bundle ./artifacts/bench-plugin \
+  --json
+```
+
+See [`docs/benchmark-contract.md`](docs/benchmark-contract.md) for the generic benchmark contract, result shape, artifact/provenance expectations, and the boundary between WP Codebox responsibilities and caller-owned scoring or product semantics.
+
 ### `agent-runtime-probe`
 
 Boot a sandbox with Agents API, Data Machine, and Data Machine Code mounted, then verify the stack loads.
@@ -1173,6 +1236,54 @@ Expected component keys:
 The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter.
 
 Data Machine Code is a mounted coding-tools component inside the sandbox. It provides workspace/file/GitHub tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
+
+Parent orchestrators that already own task state can call the same API instead of generating a low-level WP Codebox recipe. The stable CLI entry point is:
+
+```bash
+wp-codebox agent-task-run --input-file=/path/to/request.json --json
+```
+
+For Homeboy executor integration, `request.json` may use this shape:
+
+```json
+{
+  "schema": "wp-codebox/task-input/v1",
+  "goal": "Fix the failing audit finding and return a reviewable artifact.",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
+  "secret_env": ["OPENAI_API_KEY"],
+  "mounts": [
+    {
+      "source": "/srv/worktrees/plugin",
+      "target": "/workspace/plugin",
+      "mode": "readwrite",
+      "metadata": { "kind": "component", "slug": "plugin" }
+    }
+  ],
+  "runtime_stack_mounts": [
+    { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
+  ],
+  "runtime_overlays": [
+    { "id": "data-machine-code", "source": "/srv/runtime/data-machine-code" }
+  ],
+  "task_timeout_seconds": 3600,
+  "max_turns": 8,
+  "sandbox_session_id": "homeboy-sandbox-session-123",
+  "artifacts_path": "/srv/artifacts/homeboy/agent-task-123",
+  "expected_artifacts": ["patch"],
+  "policy": { "kind": "audit-remediation" },
+  "context": { "issue": "https://github.com/org/repo/issues/123" },
+  "orchestrator": {
+    "type": "homeboy",
+    "id": "homeboy-agent-task",
+    "job_id": "homeboy-job-123",
+    "agent_task_id": "agent-task-123"
+  }
+}
+```
+
+WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 

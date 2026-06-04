@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   await assertMissingAsyncifyWasmFailsEarly()
   await assertCorruptAsyncifyWasmFailsEarly()
   await assertHealthyRuntimeProvenance()
+  await assertNoJspiRespawnSelectsAsyncify()
   await assertRecipeRunJsonReportsPreflightDiagnostic()
   console.log("PHP wasm runtime preflight smoke passed")
 }
@@ -82,6 +83,41 @@ async function assertHealthyRuntimeProvenance(): Promise<void> {
   assert.match(preflight.wasmSha256, /^[a-f0-9]{64}$/)
 }
 
+async function assertNoJspiRespawnSelectsAsyncify(): Promise<void> {
+  const fixture = await phpWasmFixture()
+  await writeLoader(fixture, "asyncify", "8_3_30")
+  await writeWasm(fixture, "asyncify", "8_3_30", validEmptyWasm)
+
+  const previousPackageRoot = process.env.WP_CODEBOX_PHP_WASM_PACKAGE_ROOT
+  const previousPhpVersion = process.env.WP_CODEBOX_PHP_WASM_VERSION
+  const previousMode = process.env.WP_CODEBOX_PHP_WASM_MODE
+  const previousNoJspiRespawn = process.env.WP_CODEBOX_NO_JSPI_RESPAWN
+  try {
+    process.env.WP_CODEBOX_PHP_WASM_PACKAGE_ROOT = fixture
+    process.env.WP_CODEBOX_PHP_WASM_VERSION = "8.3"
+    delete process.env.WP_CODEBOX_PHP_WASM_MODE
+    process.env.WP_CODEBOX_NO_JSPI_RESPAWN = "1"
+
+    const preflight = await preflightPhpWasmRuntimeAssets({ packageName: "@php-wasm/node-8-3" })
+    assert.equal(preflight.mode, "asyncify")
+    assert.match(preflight.wasmPath, /asyncify\/8_3_30\/php_8_3\.wasm$/)
+  } finally {
+    restoreEnv("WP_CODEBOX_PHP_WASM_PACKAGE_ROOT", previousPackageRoot)
+    restoreEnv("WP_CODEBOX_PHP_WASM_VERSION", previousPhpVersion)
+    restoreEnv("WP_CODEBOX_PHP_WASM_MODE", previousMode)
+    restoreEnv("WP_CODEBOX_NO_JSPI_RESPAWN", previousNoJspiRespawn)
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name]
+    return
+  }
+
+  process.env[name] = value
+}
+
 async function assertRecipeRunJsonReportsPreflightDiagnostic(): Promise<void> {
   const fixture = await phpWasmFixture()
   await writeLoader(fixture, "jspi", "8_3_31")
@@ -111,17 +147,30 @@ async function assertRecipeRunJsonReportsPreflightDiagnostic(): Promise<void> {
   const output = JSON.parse(String(child.stdout)) as {
     success: boolean
     diagnostics?: Array<{ schema: string; phase: string; runtime?: Record<string, unknown>; repair?: string }>
-    error?: { code?: string; cause?: { code?: string } }
+    error?: SerializedSmokeError
   }
   assert.equal(output.success, false)
   assert.equal(output.error?.code, "recipe-runtime-create-failed")
-  assert.equal(output.error?.cause?.code, "wp-codebox-php-wasm-runtime-asset-invalid")
+  assert.ok(errorCauseCodes(output.error).includes("wp-codebox-php-wasm-runtime-asset-invalid"))
   const diagnostic = output.diagnostics?.find((item) => item.schema === "wp-codebox/php-wasm-runtime-diagnostic/v1")
   assert.ok(diagnostic)
   assert.equal(diagnostic.phase, "preflight")
   assert.equal(diagnostic.runtime?.reason, "missing-wasm")
   assert.equal(diagnostic.runtime?.mode, "jspi")
   assert.match(String(diagnostic.repair), /reinstalling dependencies/)
+}
+
+interface SerializedSmokeError {
+  code?: string
+  cause?: SerializedSmokeError
+}
+
+function errorCauseCodes(error: SerializedSmokeError | undefined): string[] {
+  if (!error) {
+    return []
+  }
+
+  return [...(error.code ? [error.code] : []), ...errorCauseCodes(error.cause)]
 }
 
 async function phpWasmFixture(): Promise<string> {

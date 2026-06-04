@@ -178,6 +178,10 @@ final class WP_Codebox_Abilities {
 								'items'       => array( 'type' => 'string' ),
 							),
 							'agent_bundles'          => self::agent_bundle_schema(),
+							'runtime_task'           => array(
+								'type'        => 'object',
+								'description' => 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.',
+							),
 							'parent_request'         => array(
 								'type'        => 'object',
 								'description' => 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.',
@@ -245,6 +249,7 @@ final class WP_Codebox_Abilities {
 						'properties' => array(
 							'success'   => array( 'type' => 'boolean' ),
 							'schema'    => array( 'type' => 'string' ),
+							'status'    => array( 'type' => 'string' ),
 							'session'   => $session_schema,
 							'task'      => array( 'type' => 'string' ),
 							'task_input' => $task_input_schema,
@@ -253,6 +258,9 @@ final class WP_Codebox_Abilities {
 							'artifacts' => array( 'type' => 'string' ),
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
+							'diagnostics' => array( 'type' => 'object' ),
+							'evidence_refs' => array( 'type' => 'object' ),
+							'run_metadata' => array( 'type' => 'object' ),
 							'completion_outcome' => $completion_outcome_schema,
 							'run'       => array( 'type' => 'object' ),
 						),
@@ -292,6 +300,7 @@ final class WP_Codebox_Abilities {
 								'items' => array( 'type' => 'string' ),
 							),
 							'agent_bundles'          => self::agent_bundle_schema(),
+							'runtime_task'           => array( 'type' => 'object' ),
 							'parent_request'         => array( 'type' => 'object' ),
 							'mounts'                 => $mount_schema,
 							'workspaces'             => array(

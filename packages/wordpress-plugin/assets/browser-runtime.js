@@ -131,13 +131,38 @@
 		data: error?.data ?? null,
 	} );
 
+	const normalizePlaygroundAttempt = ( attempt, index, method ) => {
+		if ( typeof attempt === 'function' ) {
+			return {
+				label: `${ method }-${ index + 1 }`,
+				run: attempt,
+			};
+		}
+
+		return {
+			label: String( attempt?.label || `${ method }-${ index + 1 }` ),
+			run: attempt?.run,
+			shape: attempt?.shape || null,
+		};
+	};
+
 	const invokePlaygroundMethod = async ( phase, method, attempts ) => {
 		let lastError = null;
-		for ( const attempt of attempts ) {
+		const failedAttempts = [];
+		for ( const [ index, rawAttempt ] of attempts.entries() ) {
+			const attempt = normalizePlaygroundAttempt( rawAttempt, index, method );
 			try {
-				return await attempt();
+				if ( typeof attempt.run !== 'function' ) {
+					throw runtimeError( phase, `playground_${ method }_attempt_invalid`, `Playground ${ method } attempt is not callable.` );
+				}
+				return await attempt.run();
 			} catch ( error ) {
 				lastError = error;
+				failedAttempts.push( {
+					label: attempt.label,
+					shape: attempt.shape,
+					error: errorDetails( error ),
+				} );
 			}
 		}
 
@@ -145,8 +170,37 @@
 			phase,
 			`playground_${ method }_failed`,
 			`Playground ${ method } failed during ${ phase }.`,
-			lastError ? errorDetails( lastError ) : null
+			{
+				last_error: lastError ? errorDetails( lastError ) : null,
+				attempts: failedAttempts,
+			}
 		);
+	};
+
+	const isPlaygroundStructuredCloneError = ( error ) => {
+		const message = String( error?.message || '' );
+		if ( error?.code === 25 || message.includes( 'could not be cloned' ) || message.includes( 'DataCloneError' ) ) {
+			return true;
+		}
+
+		const details = error?.data;
+		if ( details?.last_error && isPlaygroundStructuredCloneError( details.last_error ) ) {
+			return true;
+		}
+
+		return Array.isArray( details?.attempts ) && details.attempts.some( ( attempt ) => isPlaygroundStructuredCloneError( attempt?.error ) );
+	};
+
+	const runPhpDirect = async ( client, code, options = {} ) => {
+		if ( typeof client?.run !== 'function' ) {
+			throw runtimeError( 'run_php', 'playground_run_unavailable', 'Playground run is unavailable.' );
+		}
+
+		const response = await invokePlaygroundMethod( 'run_php', 'run', [
+			() => client.run( { code } ),
+			() => client.run( code ),
+		] );
+		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
 
 	const redactBrowserProviderProxyData = ( value ) => {
@@ -691,19 +745,19 @@ try {
 `;
 
 	const playgroundRequestTarget = ( client ) => {
-		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
-			return {
-				target: client.requestHandler,
-				method: client.requestHandler.request,
-				shape: 'request-handler',
-			};
-		}
-
 		if ( client && typeof client.request === 'function' ) {
 			return {
 				target: client,
 				method: client.request,
 				shape: 'client',
+			};
+		}
+
+		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
+			return {
+				target: client.requestHandler,
+				method: client.requestHandler.request,
+				shape: 'request-handler',
 			};
 		}
 
@@ -742,8 +796,14 @@ try {
 
 		const invoke = ( body ) => requestTarget.method.call( requestTarget.target, body );
 		const attempts = requestTarget.shape === 'request-handler'
-			? [ () => invoke( { request } ), () => invoke( request ) ]
-			: [ () => invoke( request ), () => invoke( { request } ) ];
+			? [
+				{ label: 'request-handler-envelope', shape: 'request-handler', run: () => invoke( { request } ) },
+				{ label: 'request-handler-plain', shape: 'request-handler', run: () => invoke( request ) },
+			]
+			: [
+				{ label: 'client-plain', shape: 'client', run: () => invoke( request ) },
+				{ label: 'client-envelope', shape: 'client', run: () => invoke( { request } ) },
+			];
 
 		return await invokePlaygroundMethod( 'request', 'request', attempts );
 	};
@@ -755,11 +815,7 @@ try {
 		}
 
 		if ( ! options.forceRequest && typeof client.run === 'function' ) {
-			const response = await invokePlaygroundMethod( 'run_php', 'run', [
-				() => client.run( { code } ),
-				() => client.run( code ),
-			] );
-			return options.expectJson ? await parseJsonResponse( response ) : response;
+			return await runPhpDirect( client, code, options );
 		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );
@@ -774,7 +830,16 @@ try {
 			method: 'GET',
 			url: requestUrl,
 		};
-		const response = await playgroundRequest( client, request );
+		let response;
+		try {
+			response = await playgroundRequest( client, request );
+		} catch ( error ) {
+			if ( options.forceRequest && typeof client.run === 'function' && isPlaygroundStructuredCloneError( error ) ) {
+				return await runPhpDirect( client, code, options );
+			}
+
+			throw error;
+		}
 
 		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
@@ -883,6 +948,29 @@ try {
 		return `<?php\n${ marker }\n?>\n${ source }`;
 	};
 
+	const normalizePhpPrelude = ( prelude ) => String( prelude || '' )
+		.replace( /^\s*<\?php\s*/i, '' )
+		.replace( /\?>\s*$/i, '' );
+
+	const withBrowserRunnerPrelude = ( code, recipe ) => {
+		const source = String( code || '' );
+		const prelude = recipe?.browser?.runner_contract?.php_prelude;
+		if ( typeof prelude !== 'string' || prelude.trim() === '' || source.includes( 'function wp_codebox_browser_artifact_environment' ) ) {
+			return source;
+		}
+
+		return injectPhpPrelude( source, normalizePhpPrelude( prelude ) );
+	};
+
+	const injectPhpPrelude = ( code, prelude ) => {
+		const source = String( code || '' );
+		if ( source.startsWith( '<?php' ) ) {
+			return source.replace( '<?php', `<?php\n${ prelude }` );
+		}
+
+		return `<?php\n${ prelude }\n?>\n${ source }`;
+	};
+
 	const browserSessionRecipe = ( session ) => {
 		if ( ! session || typeof session !== 'object' ) {
 			throw new Error( 'WP Codebox browser session output is required.' );
@@ -915,6 +1003,9 @@ try {
 		if ( ! payload || typeof payload !== 'object' ) {
 			throw runtimeError( 'recipe_validate', 'browser_recipe_task_payload_missing', 'WP Codebox browser recipe task payload missing.' );
 		}
+		if ( ! recipe?.browser?.runner_contract?.php_prelude && steps.some( ( step ) => ( step?.args || [] ).some( ( arg ) => typeof arg === 'string' && arg.startsWith( 'code=' ) && arg.includes( 'wp_codebox_browser_' ) && ! arg.includes( 'function wp_codebox_browser_artifact_environment' ) ) ) ) {
+			throw runtimeError( 'recipe_validate', 'browser_recipe_runner_contract_missing', 'Browser recipe PHP references WP Codebox runner helpers but does not include a runner contract.' );
+		}
 
 		const writeResult = await writeFile( client, {
 			path: taskPath,
@@ -941,7 +1032,7 @@ try {
 
 				lastResult = await runPhpRequest( client, {
 					...options,
-					code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
+					code: markBrowserPlaygroundRunner( withBrowserRunnerPrelude( codeArg.slice( 5 ), recipe ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
 					forceRequest: true,
@@ -1155,6 +1246,18 @@ try {
 			const result = await runRecipe( client, {
 				browser: {
 					task_path: recipeTaskPath,
+					runner_contract: {
+						schema: 'wp-codebox/browser-runner-contract/v1',
+						php_prelude: `<?php
+function wp_codebox_browser_artifact_environment( array $payload ): array {
+$contract = is_array( $payload['artifacts'] ?? null ) ? $payload['artifacts'] : array();
+$root = rtrim( (string) ( $contract['root'] ?? 'wp-codebox-output' ), '/' ) . '/';
+return array( 'contract' => $contract, 'root' => $root );
+}
+function wp_codebox_browser_capture_artifact_bundle( array $payload ): array {
+return is_array( $payload['artifacts'] ?? null ) ? $payload['artifacts'] : array();
+}`,
+					},
 				},
 				workflow: {
 					steps: [

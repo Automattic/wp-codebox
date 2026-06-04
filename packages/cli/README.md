@@ -5,25 +5,32 @@ reviewable artifact bundles. **Secure coding environments inside WordPress** —
 
 ## Install
 
+The public `@automattic/wp-codebox-cli` npm package is not published yet. Until
+that package exists, install a GitHub Release workspace tarball built from a
+release that includes the root `bin` mapping:
+
 ```bash
-npm install -g @automattic/wp-codebox-cli
+npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
 wp-codebox --help
 ```
 
-The package exposes the `wp-codebox` binary and includes the compiled
-`dist/` entrypoint only. Build from source with `npm run build` before running
-local package validation.
+Release tarball installs expose the `wp-codebox` binary from the compiled
+`packages/cli/dist/` entrypoint. Build from source with `npm run build` before
+running local package validation.
 
 ## Smoke
 
 ```bash
 npm run build
 npm run package-distribution-smoke
+npm run package-installed-binary-smoke
 ```
 
 The distribution smoke runs `npm pack --dry-run --json` and verifies the package
 contains `package.json`, `README.md`, and the compiled CLI entrypoint used by the
-published binary.
+published binary. The installed binary smoke packs the root release tarball,
+installs it into a temporary global prefix, and verifies `wp-codebox commands
+--json` works from that installed path.
 
 ## Discovery
 

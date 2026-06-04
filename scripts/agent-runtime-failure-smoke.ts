@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { agentSandboxRuntimeFailure, recipeAgentResultFailure, type RecipeArtifactEvidenceResult } from "../packages/cli/src/recipe-evidence.ts"
+import { agentSandboxRuntimeFailure, buildAgentTaskSingleResult, recipeAgentResultFailure, type RecipeArtifactEvidenceResult } from "../packages/cli/src/recipe-evidence.ts"
 
 const nestedFailure = agentSandboxRuntimeFailure({
   executionIndex: 0,
@@ -54,6 +54,73 @@ const agentFailure = recipeAgentResultFailure({
 assert.equal(agentFailure?.code, "agent-runtime-failed")
 assert.equal(agentFailure?.message, "Provider codex is not registered in wp-ai-client")
 assert.equal(agentFailure?.name, "AgentRuntimeError")
+
+const singleResult = buildAgentTaskSingleResult({
+  schema: "wp-codebox/agent-transcript/v1",
+  executions: [{
+    executionIndex: 0,
+    command: "wordpress.run-php",
+    exitCode: 0,
+    recipeCommand: "wp-codebox.agent-sandbox-run",
+    stdout: JSON.stringify({
+      agent_runtime: {
+        success: true,
+        result: {
+          schema: "datamachine/agent-bundle-result/v1",
+          success: true,
+          status: "completed",
+          outputs: {
+            issue_number: 614,
+            issue_url: "https://github.com/Automattic/wp-codebox/issues/614",
+          },
+          diagnostics: { run_id: "runtime-run-123" },
+        },
+      },
+    }),
+    stderr: "",
+    parsed: {
+      agent_runtime: {
+        success: true,
+        result: {
+          schema: "datamachine/agent-bundle-result/v1",
+          success: true,
+          status: "completed",
+          outputs: {
+            issue_number: 614,
+            issue_url: "https://github.com/Automattic/wp-codebox/issues/614",
+          },
+          diagnostics: { run_id: "runtime-run-123" },
+        },
+      },
+    },
+  }],
+})
+
+assert.equal(singleResult?.schema, "wp-codebox/agent-task-result/v1")
+assert.equal(singleResult?.success, true)
+assert.equal(singleResult?.status, "completed")
+assert.deepEqual(singleResult?.outputs, {
+  issue_number: 614,
+  issue_url: "https://github.com/Automattic/wp-codebox/issues/614",
+})
+assert.deepEqual(singleResult?.diagnostics.runtime, { run_id: "runtime-run-123" })
+assert.ok(!("scenarios" in (singleResult ?? {})))
+
+const failedSingleResult = buildAgentTaskSingleResult({
+  schema: "wp-codebox/agent-transcript/v1",
+  executions: [{
+    executionIndex: 0,
+    command: "wordpress.run-php",
+    exitCode: 0,
+    recipeCommand: "wp-codebox.agent-sandbox-run",
+    stdout: JSON.stringify({ agent_runtime: { success: false, error: { code: "runtime_failed", message: "Runtime task failed." } } }),
+    stderr: "",
+    parsed: { agent_runtime: { success: false, error: { code: "runtime_failed", message: "Runtime task failed." } } },
+  }],
+})
+
+assert.equal(failedSingleResult?.status, "failed")
+assert.equal((failedSingleResult?.diagnostics.error as { code?: string } | undefined)?.code, "runtime_failed")
 
 const pendingToolsFailure = agentSandboxRuntimeFailure({
   executionIndex: 1,

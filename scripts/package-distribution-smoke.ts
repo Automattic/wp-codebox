@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 
 const rootPackage = JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8")) as {
+  bin?: Record<string, string>
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
 }
@@ -47,6 +48,12 @@ assert.ok(
   rootPackedFiles.has("scripts/normalize-playground-sqlite-package.mjs"),
   "Root package should ship the Playground SQLite package normalizer for clean installs",
 )
+assert.equal(
+  rootPackage.bin?.["wp-codebox"],
+  "packages/cli/dist/index.js",
+  "Root release tarball should install the stable wp-codebox binary",
+)
+assert.ok(rootPackedFiles.has("packages/cli/dist/index.js"), "Root package should ship the compiled CLI binary target")
 
 await execFileAsync("npm", ["run", "package:wordpress-plugin"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 const pluginZip = resolve(repoRoot, "packages", "wordpress-plugin", "dist", "wp-codebox.zip")

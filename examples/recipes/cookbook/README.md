@@ -56,6 +56,27 @@ npm run wp-codebox -- recipe-run \
   --json
 ```
 
+When running from an installed release binary, replace `npm run wp-codebox --`
+with `wp-codebox`:
+
+```bash
+wp-codebox recipe-run \
+  --recipe ./examples/recipes/cookbook/codex-agent-smoke.json \
+  --json
+```
+
+The stable installed path is the GitHub Release workspace tarball from a release
+that includes the root `bin` mapping, not the unpublished npm package:
+
+```bash
+npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
+```
+
+`v0.4.0` includes the fresh sandbox session fix used by the Codex smoke path, but
+its release asset predates the root `bin` mapping. Release managers should cut a
+new release, attach a new root workspace tarball, and publish the scoped npm
+packages from the same commit once npm publishing is approved.
+
 The expected successful response is a JSON recipe run whose agent runtime
 reports the Playground site title and active theme. Fleet runners such as
 Homeboy should generate one recipe/run per task and own queueing,

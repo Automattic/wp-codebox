@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -28,11 +28,26 @@ export interface RecipeArtifactEvidenceResult {
   agentResult?: AgentSandboxResultSummary & {
     artifact: RecipeArtifactEvidenceFile
   }
+  agentTaskResult?: AgentTaskSingleResult & {
+    artifact: RecipeArtifactEvidenceFile
+  }
   completionOutcome?: SandboxCompletionOutcome & {
     artifact: RecipeArtifactEvidenceFile
   }
   transcript?: AgentSandboxTranscript & {
     artifact: RecipeArtifactEvidenceFile
+  }
+}
+
+export interface AgentTaskSingleResult {
+  schema: "wp-codebox/agent-task-result/v1"
+  success: boolean
+  status: "completed" | "failed"
+  outputs: Record<string, unknown>
+  diagnostics: Record<string, unknown>
+  raw: {
+    agent_runtime?: Record<string, unknown>
+    result?: unknown
   }
 }
 
@@ -342,7 +357,7 @@ export async function finalizeRecipeArtifactEvidence(
   return result
 }
 
-export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "completionOutcome" | "transcript">> {
+export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "agentTaskResult" | "completionOutcome" | "transcript">> {
   const transcript = buildAgentSandboxTranscript(executions)
   if (transcript.executions.length === 0) {
     return {}
@@ -350,16 +365,20 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
 
   const transcriptPath = join(dirname(artifacts.reviewPath), "transcript.json")
   const agentResultPath = join(dirname(artifacts.reviewPath), "agent-result.json")
+  const agentTaskResultPath = join(dirname(artifacts.reviewPath), "agent-task-result.json")
   const completionOutcomePath = join(dirname(artifacts.reviewPath), "completion-outcome.json")
   const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
   const agentResult = await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path)
   const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
+  const agentTaskResult = buildAgentTaskSingleResult(transcript)
+  const agentTaskResultFile = agentTaskResult ? await writeRecipeEvidenceJson(artifacts.directory, agentTaskResultPath, agentTaskResult, "agent-task-result") : undefined
   const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
   const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
-  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, completionOutcomeFile, transcriptFile])
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...(agentTaskResultFile ? [agentTaskResultFile] : []), completionOutcomeFile, transcriptFile])
 
   return {
     agentResult: { ...agentResult, artifact: agentResultFile },
+    ...(agentTaskResult && agentTaskResultFile ? { agentTaskResult: { ...agentTaskResult, artifact: agentTaskResultFile } } : {}),
     completionOutcome: { ...completionOutcome, artifact: completionOutcomeFile },
     transcript: { ...transcript, artifact: transcriptFile },
   }
@@ -466,6 +485,68 @@ function buildSandboxCompletionOutcome(artifacts: ArtifactBundle, agentResult: A
       artifactDirectory: artifacts.directory,
     },
   })
+}
+
+export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): AgentTaskSingleResult | undefined {
+  const runtime = latestAgentRuntime(transcript)
+  if (!runtime) {
+    return undefined
+  }
+
+  const rawResult = runtime.result
+  const resultRecord = isRecord(rawResult) ? rawResult : undefined
+  const success = runtime.success === true
+  return {
+    schema: "wp-codebox/agent-task-result/v1",
+    success,
+    status: success ? "completed" : "failed",
+    outputs: semanticOutputs(resultRecord),
+    diagnostics: stripUndefined({
+      runtime: isRecord(resultRecord?.diagnostics) || Array.isArray(resultRecord?.diagnostics) ? resultRecord?.diagnostics : undefined,
+      error: isRecord(runtime.error) ? runtime.error : undefined,
+      adapter: resultRecord ? undefined : { code: "agent_task_result_not_object", message: "Runtime agent task result was preserved under raw.result but did not expose object-shaped semantic outputs." },
+    }),
+    raw: stripUndefined({
+      agent_runtime: runtime,
+      result: rawResult,
+    }),
+  }
+}
+
+function latestAgentRuntime(transcript: AgentSandboxTranscript): Record<string, unknown> | undefined {
+  for (const execution of [...transcript.executions].reverse()) {
+    const runtime = agentRuntimeFromParsed(execution.parsed)
+    if (runtime) {
+      return runtime
+    }
+  }
+
+  return undefined
+}
+
+function agentRuntimeFromParsed(parsed: unknown): Record<string, unknown> | undefined {
+  const record = isRecord(parsed) ? parsed : undefined
+  const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
+  if (runtime) {
+    return runtime
+  }
+
+  const output = typeof record?.output === "string" ? decodeJsonFragment(record.output) : undefined
+  const outputRecord = isRecord(output) ? output : undefined
+  return isRecord(outputRecord?.agent_runtime) ? outputRecord.agent_runtime : undefined
+}
+
+function semanticOutputs(result: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!result) {
+    return {}
+  }
+
+  const outputs = isRecord(result.outputs) ? result.outputs : isRecord(result.output) ? result.output : undefined
+  if (outputs) {
+    return outputs
+  }
+
+  return Object.fromEntries(Object.entries(result).filter(([key]) => !["schema", "success", "status", "diagnostics", "raw", "error", "metadata"].includes(key)))
 }
 
 async function readChangedFileSummary(path: string): Promise<AgentSandboxResultSummary["changedFiles"]> {
@@ -688,6 +769,15 @@ export function recipeAgentResultOutput(agentResult: RecipeArtifactEvidenceResul
   }
 
   const { artifact: _artifact, ...result } = agentResult
+  return result
+}
+
+export function recipeAgentTaskResultOutput(agentTaskResult: RecipeArtifactEvidenceResult["agentTaskResult"]): AgentTaskSingleResult | undefined {
+  if (!agentTaskResult) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = agentTaskResult
   return result
 }
 
@@ -1038,7 +1128,94 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
   await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
+  await refreshRuntimeReferenceFiles(artifacts.directory, manifest)
+  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+async function refreshRuntimeReferenceFiles(artifactRoot: string, manifest: ArtifactManifest): Promise<void> {
+  const filesByPath = new Map(manifest.files.map((file) => [file.path, file]))
+  let changed = false
+
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-reference-manifest") {
+      continue
+    }
+
+    const path = join(artifactRoot, file.path)
+    const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    if (value.schema !== "wp-codebox/runtime-reference-manifest/v1") {
+      continue
+    }
+
+    refreshRuntimeArtifactReferences(value, filesByPath)
+    value.artifactBundle = artifactBundleRef(manifest)
+    const digest = runtimeReferenceManifestDigest(value as unknown as Parameters<typeof runtimeReferenceManifestDigest>[0])
+    value.digest = digest
+    value.id = `runtime-reference-manifest-sha256-${digest.value}`
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
+    changed = true
+  }
+
+  if (changed) {
+    await refreshArtifactManifestFileSha256s(artifactRoot, manifest)
+    filesByPath.clear()
+    for (const file of manifest.files) {
+      filesByPath.set(file.path, file)
+    }
+  }
+
+  for (const file of manifest.files) {
+    if (file.kind !== "runtime-replay-index") {
+      continue
+    }
+
+    const path = join(artifactRoot, file.path)
+    const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    if (value.schema !== "wp-codebox/runtime-replay-reference-index/v1") {
+      continue
+    }
+
+    refreshRuntimeArtifactReferences(value, filesByPath)
+    value.artifactBundle = artifactBundleRef(manifest)
+    const digest = runtimeReplayReferenceIndexDigest(value as unknown as Parameters<typeof runtimeReplayReferenceIndexDigest>[0])
+    value.digest = digest
+    value.id = `runtime-replay-reference-index-sha256-${digest.value}`
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
+  }
+}
+
+function refreshRuntimeArtifactReferences(value: unknown, filesByPath: Map<string, ArtifactManifestFile>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      refreshRuntimeArtifactReferences(item, filesByPath)
+    }
+    return
+  }
+
+  if (!isRecord(value)) {
+    return
+  }
+
+  const path = typeof value.path === "string" ? value.path : undefined
+  const file = path ? filesByPath.get(path) : undefined
+  if (file && isRecord(file.sha256)) {
+    value.kind = file.kind
+    value.contentType = file.contentType
+    value.sha256 = file.sha256
+  }
+
+  for (const nested of Object.values(value)) {
+    refreshRuntimeArtifactReferences(nested, filesByPath)
+  }
+}
+
+function artifactBundleRef(manifest: ArtifactManifest): Record<string, unknown> {
+  return {
+    kind: "artifact-bundle",
+    id: manifest.id,
+    digest: manifest.contentDigest,
+  }
 }
 
 function evidenceFileToManifestFile(file: RecipeArtifactEvidenceFile): ArtifactManifestFile {

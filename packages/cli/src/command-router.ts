@@ -9,9 +9,16 @@ interface CliCommandRouter {
   recipeValidate: CliCommandHandler
   recipeBuild: CliCommandHandler
   recipeRun: CliCommandHandler
+  agentTaskRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
+  artifactsBenchmark: CliCommandHandler
+  artifactsBenchResults: CliCommandHandler
+  benchMatrix: CliCommandHandler
+  artifactsBenchCompare: CliCommandHandler
+  benchSummarize: CliCommandHandler
+  benchCompare: CliCommandHandler
   runsStatus: CliCommandHandler
   runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
@@ -42,6 +49,8 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       return router.validateBlueprint(args)
     case "recipe-run":
       return router.recipeRun(args)
+    case "agent-task-run":
+      return router.agentTaskRun(args)
     case "recipe": {
       const subcommand = args.shift()
       if (subcommand === "validate") {
@@ -73,7 +82,31 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
       }
+      if (subcommand === "benchmark") {
+        return router.artifactsBenchmark(args)
+      }
+      if (subcommand === "bench-results") {
+        return router.artifactsBenchResults(args)
+      }
+      if (subcommand === "bench-compare") {
+        return router.artifactsBenchCompare(args)
+      }
       console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
+      router.printHelp()
+      return 1
+    }
+    case "bench": {
+      const subcommand = args.shift()
+      if (subcommand === "summarize") {
+        return router.benchSummarize(args)
+      }
+      if (subcommand === "matrix") {
+        return router.benchMatrix(args)
+      }
+      if (subcommand === "compare") {
+        return router.benchCompare(args)
+      }
+      console.error(`Unknown bench command: ${subcommand ?? ""}`)
       router.printHelp()
       return 1
     }
@@ -114,7 +147,7 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
 }
 
 async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
-  if (!command || !["boot", "run", "recipe-run"].includes(command)) {
+  if (!command || !["boot", "run", "recipe-run", "agent-task-run"].includes(command)) {
     return undefined
   }
 

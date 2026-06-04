@@ -9,18 +9,25 @@ const code = benchRunCode({
   dependencySlugs: [],
   env: {},
   bootstrapFiles: ["lib/compat/new.php", "lib/compat/old.php"],
-  workloads: [],
+  workloads: [{ id: "php-variable", code: "$value = 1; return array('metrics' => array('value' => $value));" }],
+  lifecycle: {},
+  resetPolicy: {},
 })
 
-assert.match(code, /\$bootstrap_files = json_decode/)
-assert.match(code, /lib\/compat\/new\.php/)
-assert.match(code, /lib\/compat\/old\.php/)
+assert.match(code, /\$bootstrap_files = json_decode\(base64_decode/)
+assert.match(code, new RegExp(Buffer.from(JSON.stringify(["lib/compat/new.php", "lib/compat/old.php"]), "utf8").toString("base64")))
+assert.doesNotMatch(code, /\$value = 1/)
 assert.match(code, /foreach \(is_array\(\$bootstrap_files\)/)
 assert.match(code, /require_once \$bootstrap_path/)
 assert.match(code, /break;/)
-assert.match(code, /do_action\('plugins_loaded'\)/)
+assert.match(code, /wp_codebox_bench_run_deferred_wordpress_hook_callbacks\(\$deferred_plugins_loaded_callbacks, array\(\), 'plugins_loaded'\)/)
+assert.match(code, /wp_codebox_bench_run_deferred_wordpress_hook_callbacks\(\$deferred_init_callbacks, array\(\), 'init'\)/)
+assert.match(code, /wp-codebox\/bench-plugin-load-diagnostic\/v1/)
+assert.match(code, /expected_file_path/)
+assert.match(code, /'active' => function_exists\('is_plugin_active'\) \? is_plugin_active\(\$plugin_basename\) : null/)
+assert.match(code, /'included' => \$included/)
 assert.ok(
-  code.indexOf("require_once $bootstrap_path") < code.indexOf("do_action('plugins_loaded')"),
+  code.indexOf("require_once $bootstrap_path") < code.indexOf("wp_codebox_bench_run_deferred_wordpress_hook_callbacks($deferred_plugins_loaded_callbacks"),
   "bootstrap files should load before synthetic plugins_loaded/init hooks"
 )
 

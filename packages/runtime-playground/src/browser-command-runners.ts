@@ -3,10 +3,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
-import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, navigateBrowserProbe } from "./browser-probe.js"
+import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
@@ -62,8 +62,15 @@ export async function runBrowserProbeCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
+  const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
+  const failFast = booleanArg(args, "fail-fast", false)
+  const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
+  const assertions = browserProbeAssertionsFromArgs(args)
+  const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
+  const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
+  const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -83,6 +90,7 @@ export async function runBrowserProbeCommand({
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
+  const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { chromium } = await import("playwright")
   const browser = await chromium.launch()
   let finalUrl = targetUrl
@@ -93,6 +101,8 @@ export async function runBrowserProbeCommand({
   let memoryArtifact: BrowserProbeMemoryArtifact | undefined
   let performanceArtifact: BrowserProbePerformanceArtifact | undefined
   let page: import("playwright").Page | null = null
+  let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
+  let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
 
   try {
@@ -100,50 +110,79 @@ export async function runBrowserProbeCommand({
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
+    await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (capturesBrowserMetrics) {
       await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
     }
-    viewport = await browserProbeViewport(page)
-    if (capture.has("console")) {
-      page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
+    if (prePageScript) {
+      await page.addInitScript(prePageScript)
     }
-    if (capture.has("errors")) {
-      page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
+    viewport = await browserProbeViewport(page)
+    if (capture.has("console") || capturesConsoleForAssertions) {
+      page.on("console", (message) => {
+        progress.mark("console")
+        consoleMessages.push(serializeBrowserConsoleMessage(message))
+      })
+    }
+    if (capture.has("errors") || capturesErrorsForAssertions) {
+      page.on("pageerror", (error) => {
+        progress.mark("pageerror")
+        errors.push(serializeBrowserError("pageerror", error))
+      })
     }
     if (capture.has("network")) {
       page.on("requestfinished", (request) => {
         const task = serializeBrowserFinishedRequest(request).then((record) => {
+          progress.mark("network")
           network.push(record)
         }).catch(() => undefined)
         networkTasks.push(task)
       })
-      page.on("requestfailed", (request) => network.push(serializeBrowserRequestFailure(request)))
+      page.on("requestfailed", (request) => {
+        progress.mark("network")
+        network.push(serializeBrowserRequestFailure(request))
+      })
     }
 
-    await navigateBrowserProbe(page, targetUrl, waitFor, durationMs)
+    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs))
+    progress.mark("navigation")
     if (capturesBrowserMetrics) {
       checkpoints.push(await browserProbeCheckpoint(page, "after-navigation"))
     }
     if (script) {
-      scriptResult = await page.evaluate(async (source) => {
+      scriptResult = await withBrowserProbeLiveness(page, progress, failFast, page.evaluate(async (source) => {
         const run = new Function(`return (async () => {\n${source}\n})()`)
         return run()
-      }, script)
+      }, script))
+      progress.mark("script")
       if (capturesBrowserMetrics) {
-        checkpoints.push(...await browserProbePendingCheckpoints(page))
+        const pendingCheckpoints = await browserProbePendingCheckpoints(page)
+        if (pendingCheckpoints.length > 0) {
+          progress.mark("checkpoint")
+        }
+        checkpoints.push(...pendingCheckpoints)
         checkpoints.push(await browserProbeCheckpoint(page, "after-script"))
       }
     }
     if (durationMs > 0 && waitFor !== "duration") {
-      await page.waitForTimeout(durationMs)
+      await withBrowserProbeLiveness(page, progress, failFast, page.waitForTimeout(durationMs))
+      progress.mark("duration")
       if (capturesBrowserMetrics) {
         checkpoints.push(await browserProbeCheckpoint(page, "after-duration"))
       }
     }
+    if (assertions.length > 0) {
+      assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors)
+      const fatalFailures = assertionResults.filter((assertion) => !assertion.passed && !assertion.advisory)
+      if (fatalFailures.length > 0) {
+        pendingError = new Error(`wordpress.browser-probe assertion failed: ${fatalFailures.map((assertion) => assertion.assertion).join(", ")}`)
+      }
+    }
     finalUrl = page.url()
   } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    progress.fail("probe-error", pendingError)
     errors.push(serializeBrowserError("probe-error", error))
-    throw error
   } finally {
     if (page) {
       finalUrl = page.url()
@@ -199,9 +238,22 @@ export async function runBrowserProbeCommand({
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
 
+    const assertionPassed = assertionResults.filter((assertion) => assertion.passed).length
+    const assertionFailed = assertionResults.filter((assertion) => !assertion.passed).length
+    const advisoryFailed = assertionResults.filter((assertion) => !assertion.passed && assertion.advisory).length
+    const assertionSummary = {
+      total: assertionResults.length,
+      passed: assertionPassed,
+      failed: assertionFailed,
+      advisoryFailed,
+      fatalFailed: assertionFailed - advisoryFailed,
+      results: assertionResults,
+    }
+
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
         ...(checkpoints.length > 0 ? { checkpoints: "files/browser/checkpoints.jsonl" } : {}),
@@ -214,6 +266,7 @@ export async function runBrowserProbeCommand({
         summary: "files/browser/summary.json",
       },
       summary: {
+        ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
         consoleMessages: consoleMessages.length,
         errors: errors.length,
         finalUrl,
@@ -222,6 +275,7 @@ export async function runBrowserProbeCommand({
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
         networkEvents: network.length,
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
+        progress: progress.summary(),
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(typeof scriptResult !== "undefined" ? { scriptResult } : {}),
@@ -234,7 +288,11 @@ export async function runBrowserProbeCommand({
       finalUrl,
       waitFor,
       durationMs,
+      failFast,
+      stallTimeoutMs,
       capture: [...capture].sort(),
+      ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
+      ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       startedAt,
       finishedAt: now(),
       files: artifact.files,
@@ -247,6 +305,13 @@ export async function runBrowserProbeCommand({
     }, null, 2)}\n`)
   }
 
+  if (pendingError) {
+    if (!artifact) {
+      throw pendingError
+    }
+    throw new BrowserCommandArtifactError(pendingError.message, artifact)
+  }
+
   return {
     artifact,
     output: `${JSON.stringify({
@@ -256,6 +321,13 @@ export async function runBrowserProbeCommand({
       files: artifact.files,
       summary: artifact.summary,
     }, null, 2)}\n`,
+  }
+}
+
+function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata {
+  return {
+    sha256: sha256(Buffer.from(source, "utf8")),
+    bytes: Buffer.byteLength(source, "utf8"),
   }
 }
 
@@ -328,6 +400,7 @@ export async function runBrowserActionsCommand({
 
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
+  const requestedViewport = viewportArg(args, "viewport")
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -358,6 +431,9 @@ export async function runBrowserActionsCommand({
 
   try {
     const page = await browser.newPage()
+    if (requestedViewport) {
+      await page.setViewportSize(requestedViewport)
+    }
     viewport = await browserProbeViewport(page)
     if (capture.has("console")) {
       page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
@@ -1191,6 +1267,184 @@ async function fileSha256(path: string): Promise<string> {
 
 function sha256(contents: Buffer): string {
   return createHash("sha256").update(contents).digest("hex")
+}
+
+type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"
+
+class BrowserProbeTerminalFailureError extends Error {
+  readonly code = "browser-probe-terminal-failure"
+
+  constructor(readonly failure: { message: string; reason?: string; details?: unknown; timestamp: string }) {
+    super(`Browser probe reported a terminal failure: ${failure.message}`)
+    this.name = "BrowserProbeTerminalFailureError"
+  }
+}
+
+class BrowserProbeStallError extends Error {
+  readonly code = "browser-probe-stalled"
+
+  constructor(readonly idleMs: number, readonly stallTimeoutMs: number, readonly lastProgressSource: BrowserProbeProgressSource) {
+    super(`Browser probe stalled after ${idleMs}ms without progress; last progress source was ${lastProgressSource}`)
+    this.name = "BrowserProbeStallError"
+  }
+}
+
+function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: number): {
+  mark(source: BrowserProbeProgressSource, timestamp?: string): void
+  fail(source: BrowserProbeProgressSource, error: Error): void
+  terminalFailure(failure: { message: string; reason?: string; details?: unknown; timestamp: string }): void
+  lastProgressElapsedMs(): number
+  summary(): {
+    status: "active" | "failed" | "stalled"
+    startedAt: string
+    lastProgressAt: string
+    lastProgressSource: BrowserProbeProgressSource
+    idleMs: number
+    stallTimeoutMs?: number
+    terminalFailure?: { message: string; reason?: string; details?: unknown; timestamp: string }
+  }
+} {
+  let status: "active" | "failed" | "stalled" = "active"
+  let lastProgressAt = startedAt
+  let lastProgressSource: BrowserProbeProgressSource = "navigation"
+  let terminalFailure: { message: string; reason?: string; details?: unknown; timestamp: string } | undefined
+
+  return {
+    mark(source, timestamp = now()) {
+      lastProgressAt = timestamp
+      lastProgressSource = source
+    },
+    fail(source, error) {
+      lastProgressAt = now()
+      lastProgressSource = source
+      status = error instanceof BrowserProbeStallError ? "stalled" : "failed"
+      if (error instanceof BrowserProbeTerminalFailureError) {
+        terminalFailure = error.failure
+      }
+    },
+    terminalFailure(failure) {
+      status = "failed"
+      terminalFailure = failure
+      lastProgressAt = failure.timestamp
+      lastProgressSource = "probe-error"
+    },
+    lastProgressElapsedMs() {
+      return Math.max(0, Date.now() - Date.parse(lastProgressAt))
+    },
+    summary() {
+      return {
+        status,
+        startedAt,
+        lastProgressAt,
+        lastProgressSource,
+        idleMs: this.lastProgressElapsedMs(),
+        ...(stallTimeoutMs > 0 ? { stallTimeoutMs } : {}),
+        ...(terminalFailure ? { terminalFailure } : {}),
+      }
+    },
+  }
+}
+
+async function withBrowserProbeLiveness<T>(page: import("playwright").Page, progress: ReturnType<typeof createBrowserProbeProgressTracker>, failFast: boolean, operation: Promise<T>): Promise<T> {
+  const stallTimeoutMs = progress.summary().stallTimeoutMs ?? 0
+  if (!failFast && stallTimeoutMs <= 0) {
+    return operation
+  }
+
+  let interval: NodeJS.Timeout | undefined
+  operation.catch(() => undefined)
+
+  try {
+    const result = await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        interval = setInterval(() => {
+          void (async () => {
+            try {
+              const state = await page.evaluate(() => {
+                const probe = (globalThis as typeof globalThis & {
+                  __wpCodeboxBrowserProbe?: {
+                    checkpoints?: Array<{ timestamp?: unknown }>
+                    terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
+                  }
+                }).__wpCodeboxBrowserProbe
+                const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
+                const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
+                const failure = probe?.terminalFailure
+                return {
+                  checkpointTimestamp: latestCheckpoint?.timestamp,
+                  terminalFailure: failure && typeof failure.message === "string" ? {
+                    message: failure.message,
+                    reason: typeof failure.reason === "string" ? failure.reason : undefined,
+                    details: failure.details,
+                    timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
+                  } : undefined,
+                }
+              })
+              if (typeof state.checkpointTimestamp === "string") {
+                progress.mark("checkpoint", state.checkpointTimestamp)
+              }
+              if (state.terminalFailure) {
+                progress.terminalFailure(state.terminalFailure)
+                reject(new BrowserProbeTerminalFailureError(state.terminalFailure))
+                return
+              }
+              if (stallTimeoutMs > 0 && progress.lastProgressElapsedMs() >= stallTimeoutMs) {
+                const summary = progress.summary()
+                reject(new BrowserProbeStallError(summary.idleMs, stallTimeoutMs, summary.lastProgressSource))
+              }
+            } catch {
+              // The page may be navigating or already closed; the outer operation remains authoritative.
+            }
+          })()
+        }, 250)
+        interval.unref()
+      }),
+    ])
+    const terminalFailure = failFast ? await browserProbeTerminalFailure(page) : undefined
+    if (terminalFailure) {
+      progress.terminalFailure(terminalFailure)
+      throw new BrowserProbeTerminalFailureError(terminalFailure)
+    }
+    return result
+  } finally {
+    if (interval) {
+      clearInterval(interval)
+    }
+  }
+}
+
+async function browserProbeTerminalFailure(page: import("playwright").Page): Promise<{ message: string; reason?: string; details?: unknown; timestamp: string } | undefined> {
+  return page.evaluate(() => {
+    const failure = (globalThis as typeof globalThis & {
+      __wpCodeboxBrowserProbe?: {
+        terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
+      }
+    }).__wpCodeboxBrowserProbe?.terminalFailure
+    if (!failure || typeof failure.message !== "string") {
+      return undefined
+    }
+    return {
+      message: failure.message,
+      reason: typeof failure.reason === "string" ? failure.reason : undefined,
+      details: failure.details,
+      timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
+    }
+  }).catch(() => undefined)
+}
+
+function booleanArg(args: string[], name: string, fallback: boolean): boolean {
+  const raw = argValue(args, name)?.trim().toLowerCase()
+  if (!raw) {
+    return fallback
+  }
+  if (["1", "true", "yes", "on"].includes(raw)) {
+    return true
+  }
+  if (["0", "false", "no", "off"].includes(raw)) {
+    return false
+  }
+  throw new Error(`${name} must be true or false`)
 }
 
 function durationArg(args: string[], name: string, fallbackMs: number): number {

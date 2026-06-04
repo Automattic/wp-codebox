@@ -22,6 +22,7 @@ export interface AgentSandboxCodeOptions {
   maxTurns?: string
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
+  runtimeTask?: Record<string, unknown>
   sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
@@ -90,6 +91,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
+  const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
 
   return `
 if (function_exists('wp_set_current_user')) {
@@ -134,7 +136,7 @@ if (function_exists('wp_get_ability')) {
         }
     };
     if (class_exists('DataMachine\\Abilities\\PermissionHelper')) {
-        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback, 1);
+        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback);
     } else {
         $sandbox_adopt_callback();
     }
@@ -145,9 +147,11 @@ $sandbox_agent_bundles = json_decode(${JSON.stringify(JSON.stringify(agentBundle
 $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array($sandbox_agent_bundles) ? $sandbox_agent_bundles : array());
 $sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
 $sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
+$sandbox_runtime_task = json_decode(${JSON.stringify(JSON.stringify(runtimeTask))}, true);
+$sandbox_stack['runtime_task'] = is_array($sandbox_runtime_task) ? $sandbox_runtime_task : null;
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
-    if (!$principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal) {
+    if (!$principal instanceof AgentsAPI\\AI\\WP_Agent_Execution_Principal) {
         return $allowed;
     }
     if ('runtime' !== $principal->auth_source || 'runtime' !== $principal->request_context) {
@@ -213,7 +217,9 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     return $imports;
 }
 
-$ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability('agents/chat') : null;
+$runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
+$ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
+$ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
 if (!empty($sandbox_agent_bundle_import_failures)) {
     $sandbox_agent_runtime = array(
         'agent_runtime' => array(
@@ -230,14 +236,20 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
         'agent_runtime' => array(
             'success' => false,
             'error' => array(
-                'code' => 'agents_chat_unavailable',
-                'message' => 'The canonical agents/chat ability is not available inside the sandbox.',
+                'code' => $runtime_task_run ? 'runtime_task_ability_unavailable' : 'agents_chat_unavailable',
+                'message' => $runtime_task_run ? 'The requested runtime task ability is not available inside the sandbox.' : 'The canonical agents/chat ability is not available inside the sandbox.',
             ),
         ),
     );
 } else {
     $agent_input = ${JSON.stringify(JSON.stringify(input))};
-    $agent_result = $ability->execute(json_decode($agent_input, true));
+    $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
+    $agent_execute_callback = static function () use ($ability, $runtime_task_run, $runtime_task_input, $agent_input) {
+        return $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
+    };
+    $agent_result = class_exists('DataMachine\\Abilities\\PermissionHelper')
+        ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($agent_execute_callback)
+        : $agent_execute_callback();
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
             'agent_runtime' => array(
@@ -326,6 +338,48 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
     if (spec.import_principal && typeof spec.import_principal === "object" && !Array.isArray(spec.import_principal)) normalized.import_principal = spec.import_principal
     return [normalized]
   })
+}
+
+function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return null
+
+  const ability = stringFromKeys(config, ["ability", "ability_name", "abilityName"])
+  if (!ability) return null
+
+  const taskInput = recordValue(config.input) ?? {}
+  const input: Record<string, unknown> = {
+    ...taskInput,
+  }
+  if (!recordValue(input.task_input)) {
+    input.task_input = agentInput
+  }
+
+  const normalized: Record<string, unknown> = { ability, input }
+  if (typeof config.wait_for_completion === "boolean") {
+    normalized.wait_for_completion = config.wait_for_completion
+  }
+  if (typeof config.label === "string" && config.label.trim()) {
+    normalized.label = config.label.trim()
+  }
+
+  const metadata = recordValue(config.metadata)
+  if (metadata) {
+    normalized.metadata = metadata
+  }
+
+  return normalized
+}
+
+function stringFromKeys(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = typeof record[key] === "string" ? record[key].trim() : ""
+    if (value) return value
+  }
+  return ""
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {

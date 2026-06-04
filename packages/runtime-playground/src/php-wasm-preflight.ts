@@ -125,7 +125,13 @@ async function recommendedPhpVersion(): Promise<string> {
 
 function phpWasmModeFromEnv(): "jspi" | "asyncify" | undefined {
   const mode = process.env.WP_CODEBOX_PHP_WASM_MODE
-  return mode === "jspi" || mode === "asyncify" ? mode : undefined
+  if (mode === "jspi" || mode === "asyncify") {
+    return mode
+  }
+
+  if (process.env.WP_CODEBOX_NO_JSPI_RESPAWN || process.env.PLAYGROUND_NO_JSPI_RESPAWN) {
+    return "asyncify"
+  }
 }
 
 async function selectedPhpWasmMode(): Promise<"jspi" | "asyncify"> {
