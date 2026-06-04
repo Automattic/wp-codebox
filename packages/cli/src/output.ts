@@ -253,10 +253,12 @@ export function printHelp(): void {
   wp-codebox recipe build phpunit --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
+  wp-codebox bench compare --baseline-input <recipe-run.json> --candidate-input <recipe-run.json> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox artifacts bench-results --bundle <dir> [--json]
+  wp-codebox artifacts bench-compare --baseline-bundle <dir> --candidate-bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
@@ -278,6 +280,18 @@ Options:
   --scenario-id <id>  Filter benchmark artifact refs to one scenario.
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.
+  --baseline-input <path>
+                       Saved baseline recipe-run JSON for benchmark comparison.
+  --candidate-input <path>
+                       Saved candidate recipe-run JSON for benchmark comparison.
+  --baseline-bundle <dir>
+                       Baseline artifact bundle directory for benchmark comparison.
+  --candidate-bundle <dir>
+                       Candidate artifact bundle directory for benchmark comparison.
+  --baseline-index <n>
+                       Benchmark envelope index to compare when a source has multiple results.
+  --candidate-index <n>
+                       Benchmark envelope index to compare when a source has multiple results.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>
                        Durable run registry directory for recipe-run.
