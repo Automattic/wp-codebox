@@ -85,7 +85,15 @@ assert.match(successClient.files[0]?.contents ?? "", /wp-load\.php/)
 assert.match(successClient.files[0]?.contents ?? "", /case 'ensureDirectory':/)
 assert.match(successClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/codebox-ensuredirectory-/)
 
+const dualTransportClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"client\"},\"error\":null} suffix", false, true)
+const dualTransportResult = await runtime.runPhpRequest(dualTransportClient, { code: "<?php echo 'ok';", expectJson: true })
+assert.deepEqual(sameRealm(dualTransportResult), { success: true, data: { runner: "client" }, error: null })
+assert.equal(dualTransportClient.requests.length, 1)
+assert.equal(dualTransportClient.handlerRequests.length, 0)
+assert.match(dualTransportClient.requests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/task-/)
+
 const handlerClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"handler\"},\"error\":null} suffix", false, true)
+delete (handlerClient as { request?: unknown }).request
 const handlerResult = await runtime.runPhpRequest(handlerClient, { code: "<?php echo 'ok';", expectJson: true })
 assert.deepEqual(sameRealm(handlerResult), { success: true, data: { runner: "handler" }, error: null })
 assert.equal(handlerClient.handlerRequests.length, 1)
@@ -93,6 +101,7 @@ assert.equal(handlerClient.requests.length, 0)
 assert.match(handlerClient.handlerRequests[0]?.url ?? "", /\/wp-content\/uploads\/wp-codebox\/runner\/task-/)
 
 const workerEndpointClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"worker-endpoint\"},\"error\":null} suffix", false, true)
+delete (workerEndpointClient as { request?: unknown }).request
 workerEndpointClient.requestHandler = {
   request: async (body: { request?: { method: string; url: string } }) => {
     if (!body.request) {
@@ -105,6 +114,36 @@ workerEndpointClient.requestHandler = {
 const workerEndpointResult = await runtime.runPhpRequest(workerEndpointClient, { code: "<?php echo 'ok';", expectJson: true })
 assert.deepEqual(sameRealm(workerEndpointResult), { success: true, data: { runner: "worker-endpoint" }, error: null })
 assert.equal(workerEndpointClient.handlerRequests.length, 1)
+
+const failingRequestClient = createClient("", false, true)
+delete (failingRequestClient as { request?: unknown }).request
+failingRequestClient.requestHandler = {
+  request: async () => {
+    throw new Error("Playground worker rejected request")
+  },
+}
+const failedRequestError = await runtime.runPhpRequest(failingRequestClient, { code: "<?php echo 'ok';", expectJson: true }).catch((error: unknown) => error)
+assert.equal(failedRequestError.code, "playground_request_failed")
+assert.equal(failedRequestError.phase, "request")
+assert.deepEqual(
+  sameRealm(failedRequestError.data?.attempts?.map((attempt: { label?: string; shape?: string; error?: { message?: string } }) => ({
+    label: attempt.label,
+    shape: attempt.shape,
+    message: attempt.error?.message,
+  }))),
+  [
+    {
+      label: "request-handler-envelope",
+      shape: "request-handler",
+      message: "Playground worker rejected request",
+    },
+    {
+      label: "request-handler-plain",
+      shape: "request-handler",
+      message: "Playground worker rejected request",
+    },
+  ]
+)
 
 const objectShapeFileClient = createClient("prefix {\"success\":true,\"data\":{\"runner\":\"object-file\"},\"error\":null} suffix")
 objectShapeFileClient.writeFile = async function writeFile(body: string | { path?: string; data?: string }) {

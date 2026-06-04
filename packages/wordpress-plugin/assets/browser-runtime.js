@@ -131,13 +131,38 @@
 		data: error?.data ?? null,
 	} );
 
+	const normalizePlaygroundAttempt = ( attempt, index, method ) => {
+		if ( typeof attempt === 'function' ) {
+			return {
+				label: `${ method }-${ index + 1 }`,
+				run: attempt,
+			};
+		}
+
+		return {
+			label: String( attempt?.label || `${ method }-${ index + 1 }` ),
+			run: attempt?.run,
+			shape: attempt?.shape || null,
+		};
+	};
+
 	const invokePlaygroundMethod = async ( phase, method, attempts ) => {
 		let lastError = null;
-		for ( const attempt of attempts ) {
+		const failedAttempts = [];
+		for ( const [ index, rawAttempt ] of attempts.entries() ) {
+			const attempt = normalizePlaygroundAttempt( rawAttempt, index, method );
 			try {
-				return await attempt();
+				if ( typeof attempt.run !== 'function' ) {
+					throw runtimeError( phase, `playground_${ method }_attempt_invalid`, `Playground ${ method } attempt is not callable.` );
+				}
+				return await attempt.run();
 			} catch ( error ) {
 				lastError = error;
+				failedAttempts.push( {
+					label: attempt.label,
+					shape: attempt.shape,
+					error: errorDetails( error ),
+				} );
 			}
 		}
 
@@ -145,7 +170,10 @@
 			phase,
 			`playground_${ method }_failed`,
 			`Playground ${ method } failed during ${ phase }.`,
-			lastError ? errorDetails( lastError ) : null
+			{
+				last_error: lastError ? errorDetails( lastError ) : null,
+				attempts: failedAttempts,
+			}
 		);
 	};
 
@@ -691,19 +719,19 @@ try {
 `;
 
 	const playgroundRequestTarget = ( client ) => {
-		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
-			return {
-				target: client.requestHandler,
-				method: client.requestHandler.request,
-				shape: 'request-handler',
-			};
-		}
-
 		if ( client && typeof client.request === 'function' ) {
 			return {
 				target: client,
 				method: client.request,
 				shape: 'client',
+			};
+		}
+
+		if ( client?.requestHandler && typeof client.requestHandler.request === 'function' ) {
+			return {
+				target: client.requestHandler,
+				method: client.requestHandler.request,
+				shape: 'request-handler',
 			};
 		}
 
@@ -742,8 +770,14 @@ try {
 
 		const invoke = ( body ) => requestTarget.method.call( requestTarget.target, body );
 		const attempts = requestTarget.shape === 'request-handler'
-			? [ () => invoke( { request } ), () => invoke( request ) ]
-			: [ () => invoke( request ), () => invoke( { request } ) ];
+			? [
+				{ label: 'request-handler-envelope', shape: 'request-handler', run: () => invoke( { request } ) },
+				{ label: 'request-handler-plain', shape: 'request-handler', run: () => invoke( request ) },
+			]
+			: [
+				{ label: 'client-plain', shape: 'client', run: () => invoke( request ) },
+				{ label: 'client-envelope', shape: 'client', run: () => invoke( { request } ) },
+			];
 
 		return await invokePlaygroundMethod( 'request', 'request', attempts );
 	};
