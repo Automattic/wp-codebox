@@ -67,6 +67,8 @@ async function main() {
   assert.match(code, /\\"workspace_read\\"/, "sandbox agent should allow workspace read tool")
   assert.match(code, /agents_chat_runtime_principal_permission/, "sandbox chat should authorize through Agents API runtime-principal permission")
   assert.match(code, /PermissionHelper::run_as_authenticated/, "sandbox chat should execute runtime abilities in an authenticated Data Machine context")
+  assert.match(code, /DataMachine\\Abilities\\PermissionHelper::run_as_authenticated/, "sandbox chat should emit a valid namespaced PermissionHelper class reference")
+  assert.doesNotMatch(code, /DataMachineAbilitiesPermissionHelper/, "sandbox chat should not collapse namespaced PermissionHelper references")
   assert.doesNotMatch(code, /datamachine_agent_mode_sandbox/, "sandbox chat should not depend on Data Machine agent mode filters")
   assert.doesNotMatch(code, /WP_Codebox_Sandbox_Perception_Directive/, "sandbox chat should not register Data Machine directives")
   assert.match(code, /sandbox_workspace/, "sandbox request should include mounted workspace context")
