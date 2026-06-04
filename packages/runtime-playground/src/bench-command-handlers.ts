@@ -46,20 +46,45 @@ function wp_codebox_bench_percentile(array $samples, float $percentile): float {
     return (float) $samples[$index];
 }
 
-function wp_codebox_bench_aggregate(array $samples, string $prefix = '', string $suffix = ''): array {
+function wp_codebox_bench_metric_unit(string $name): string {
+    if (str_ends_with($name, '_ms') || $name === 'duration') {
+        return 'ms';
+    }
+    if (str_ends_with($name, '_bytes')) {
+        return 'bytes';
+    }
+    if (str_ends_with($name, '_count')) {
+        return 'count';
+    }
+    return 'unitless';
+}
+
+function wp_codebox_bench_metric_summary(array $samples, string $unit): array {
     sort($samples, SORT_NUMERIC);
     $count = count($samples);
     $sum = array_sum($samples);
-    $key_prefix = $prefix === '' ? '' : $prefix . '_';
 
     return array(
-        $key_prefix . 'mean' . $suffix => $count > 0 ? $sum / $count : 0.0,
-        $key_prefix . 'p50' . $suffix => wp_codebox_bench_percentile($samples, 0.50),
-        $key_prefix . 'p95' . $suffix => wp_codebox_bench_percentile($samples, 0.95),
-        $key_prefix . 'p99' . $suffix => wp_codebox_bench_percentile($samples, 0.99),
-        $key_prefix . 'min' . $suffix => $count > 0 ? (float) $samples[0] : 0.0,
-        $key_prefix . 'max' . $suffix => $count > 0 ? (float) $samples[$count - 1] : 0.0,
+        'unit' => $unit,
+        'samples' => array(
+            'count' => $count,
+            'mean' => $count > 0 ? $sum / $count : 0.0,
+            'p50' => wp_codebox_bench_percentile($samples, 0.50),
+            'p95' => wp_codebox_bench_percentile($samples, 0.95),
+            'p99' => wp_codebox_bench_percentile($samples, 0.99),
+            'min' => $count > 0 ? (float) $samples[0] : 0.0,
+            'max' => $count > 0 ? (float) $samples[$count - 1] : 0.0,
+        ),
     );
+}
+
+function wp_codebox_bench_metrics(array $timings, array $metric_samples): array {
+    ksort($metric_samples);
+    $metrics = array('duration' => wp_codebox_bench_metric_summary($timings, 'ms'));
+    foreach ($metric_samples as $metric => $samples) {
+        $metrics[$metric] = wp_codebox_bench_metric_summary($samples, wp_codebox_bench_metric_unit($metric));
+    }
+    return $metrics;
 }
 
 function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null): void {
@@ -464,7 +489,6 @@ foreach ($workload_files as $workload_file) {
     $metric_samples = array();
     $metadata = null;
     $artifacts = null;
-    $artifacts = null;
 
     if (function_exists('memory_reset_peak_usage')) {
         memory_reset_peak_usage();
@@ -483,24 +507,23 @@ foreach ($workload_files as $workload_file) {
         }
     }
 
-    $metrics = wp_codebox_bench_aggregate($timings, '', '_ms');
-    ksort($metric_samples);
-    foreach ($metric_samples as $metric => $samples) {
-        $metrics += wp_codebox_bench_aggregate($samples, $metric);
-    }
-
     $relative_file = substr($workload_file, strlen($plugin_path) + 1);
     $scenario = array(
         'id' => preg_replace('/\\.php$/', '', basename($workload_file)),
         'source' => 'in_tree',
         'file' => $relative_file,
         'iterations' => $iterations,
-        'metrics' => $metrics,
+        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
+        'diagnostics' => array(),
+        'provenance' => array('workload_file' => $relative_file),
     );
 
     if (is_array($metadata) && !empty($metadata)) {
         $scenario['metadata'] = $metadata;
+    }
+    if (is_array($artifacts) && !empty($artifacts)) {
+        $scenario['artifacts'] = $artifacts;
     }
 
     $scenarios[] = $scenario;
@@ -514,6 +537,7 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     $timings = array();
     $metric_samples = array();
     $metadata = null;
+    $artifacts = null;
     $total_iterations = $iterations + $warmup_iterations;
     for ($i = 0; $i < $total_iterations; $i++) {
         $is_warmup = $i < $warmup_iterations;
@@ -525,17 +549,14 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
             wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts);
         }
     }
-    $metrics = wp_codebox_bench_aggregate($timings, '', '_ms');
-    ksort($metric_samples);
-    foreach ($metric_samples as $metric => $samples) {
-        $metrics += wp_codebox_bench_aggregate($samples, $metric);
-    }
     $scenario = array(
         'id' => $scenario_id,
         'source' => 'config',
         'iterations' => $iterations,
-        'metrics' => $metrics,
+        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
+        'diagnostics' => array(),
+        'provenance' => array('workload_index' => $index),
     );
     if (is_array($metadata) && !empty($metadata)) {
         $scenario['metadata'] = $metadata;
@@ -547,9 +568,40 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
 }
 
 echo wp_json_encode(array(
+    'schema' => 'wp-codebox/bench-results/v1',
     'component_id' => $component_id,
     'iterations' => $iterations,
     'warmup_iterations' => $warmup_iterations,
     'scenarios' => $scenarios,
+    'diagnostics' => empty($scenarios) ? array(array(
+        'severity' => 'warning',
+        'code' => 'no-benchmark-scenarios',
+        'message' => 'wordpress.bench completed without runnable scenarios.',
+    )) : array(),
+    'provenance' => array(
+        'command' => 'wordpress.bench',
+        'generated_at' => gmdate('c'),
+        'component' => array(
+            'id' => $component_id,
+            'plugin_slug' => $plugin_slug,
+            'dependency_slugs' => array_values($dependency_slugs),
+            'bootstrap_files' => array_values($bootstrap_files),
+        ),
+        'runtime' => array(
+            'wordpress_version' => get_bloginfo('version'),
+            'php_version' => PHP_VERSION,
+        ),
+        'definition' => array(
+            'schema' => 'wp-codebox/benchmark-definition/v1',
+            'component_id' => $component_id,
+            'plugin_slug' => $plugin_slug,
+            'iterations' => $iterations,
+            'warmup_iterations' => $warmup_iterations,
+            'dependency_slugs' => array_values($dependency_slugs),
+            'env' => $bench_env,
+            'bootstrap_files' => array_values($bootstrap_files),
+            'workloads' => is_array($configured_workloads) ? $configured_workloads : array(),
+        ),
+    ),
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }
