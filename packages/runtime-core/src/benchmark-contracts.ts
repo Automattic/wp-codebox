@@ -12,6 +12,9 @@ export interface BenchmarkMetricSamplesSummary {
   p99: number
   min: number
   max: number
+  standard_deviation?: number
+  relative_standard_deviation?: number
+  values?: number[]
 }
 
 export interface BenchmarkMetricRecord {
@@ -179,7 +182,10 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
       type: "object",
       additionalProperties: false,
       required: ["count", "mean", "p50", "p95", "p99", "min", "max"],
-      properties: Object.fromEntries(["count", "mean", "p50", "p95", "p99", "min", "max"].map((name) => [name, { type: "number" }])),
+      properties: {
+        ...Object.fromEntries(["count", "mean", "p50", "p95", "p99", "min", "max", "standard_deviation", "relative_standard_deviation"].map((name) => [name, { type: "number" }])),
+        values: { type: "array", items: { type: "number" } },
+      },
     },
     diagnostic: {
       type: "object",

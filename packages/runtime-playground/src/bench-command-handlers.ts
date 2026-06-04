@@ -63,17 +63,27 @@ function wp_codebox_bench_metric_summary(array $samples, string $unit): array {
     sort($samples, SORT_NUMERIC);
     $count = count($samples);
     $sum = array_sum($samples);
+    $mean = $count > 0 ? $sum / $count : 0.0;
+    $variance_sum = 0.0;
+    foreach ($samples as $sample) {
+        $delta = (float) $sample - $mean;
+        $variance_sum += $delta * $delta;
+    }
+    $standard_deviation = $count > 0 ? sqrt($variance_sum / $count) : 0.0;
 
     return array(
         'unit' => $unit,
         'samples' => array(
             'count' => $count,
-            'mean' => $count > 0 ? $sum / $count : 0.0,
+            'mean' => $mean,
             'p50' => wp_codebox_bench_percentile($samples, 0.50),
             'p95' => wp_codebox_bench_percentile($samples, 0.95),
             'p99' => wp_codebox_bench_percentile($samples, 0.99),
             'min' => $count > 0 ? (float) $samples[0] : 0.0,
             'max' => $count > 0 ? (float) $samples[$count - 1] : 0.0,
+            'standard_deviation' => $standard_deviation,
+            'relative_standard_deviation' => $mean !== 0.0 ? $standard_deviation / abs($mean) : 0.0,
+            'values' => array_values(array_map('floatval', $samples)),
         ),
     );
 }
