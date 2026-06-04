@@ -38,6 +38,7 @@ interface AgentTaskRunInput {
   agents_api_path?: string
   data_machine_path?: string
   data_machine_code_path?: string
+  runtime_component_paths?: Record<string, unknown>
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
 }
@@ -127,7 +128,7 @@ async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptio
   }
 }
 
-function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
+export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const providerPlugins = stringList(input.provider_plugin_paths).map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
@@ -169,9 +170,9 @@ function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<ty
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
       extraPlugins: [
-        componentPlugin(input.agents_api_path, "agents-api", artifacts),
-        componentPlugin(input.data_machine_path, "data-machine", artifacts),
-        componentPlugin(input.data_machine_code_path, "data-machine-code", artifacts),
+        componentPlugin(runtimeComponentPath(input, "agents_api", input.agents_api_path), "agents-api", artifacts),
+        componentPlugin(runtimeComponentPath(input, "agent_runtime", input.data_machine_path), "data-machine", artifacts),
+        componentPlugin(runtimeComponentPath(input, "agent_runtime_tools", input.data_machine_code_path), "data-machine-code", artifacts),
         ...providerPlugins,
       ].filter(Boolean),
       secretEnv: stringList(input.secret_env),
@@ -179,6 +180,11 @@ function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<ty
     }),
     workflow: { steps: [{ command: "wp-codebox.agent-sandbox-run", args: workflowArgs }] },
   }) as WorkspaceRecipe
+}
+
+function runtimeComponentPath(input: AgentTaskRunInput, key: string, fallback: unknown): unknown {
+  const paths = input.runtime_component_paths
+  return paths && typeof paths === "object" && !Array.isArray(paths) ? paths[key] || fallback : fallback
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {

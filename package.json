@@ -94,6 +94,7 @@
     "discovery-command-smoke": "tsx scripts/discovery-command-smoke.ts",
     "doctor-command-smoke": "tsx scripts/doctor-command-smoke.ts",
     "agent-sandbox-code-smoke": "tsx scripts/agent-sandbox-code-smoke.ts",
+    "agent-task-run-runtime-components-smoke": "tsx scripts/agent-task-run-runtime-components-smoke.ts",
     "agent-runtime-failure-smoke": "tsx scripts/agent-runtime-failure-smoke.ts",
     "recipe-dry-run-smoke": "tsx scripts/recipe-dry-run-smoke.ts",
     "recipe-workflow-phases-smoke": "tsx scripts/recipe-workflow-phases-smoke.ts",
