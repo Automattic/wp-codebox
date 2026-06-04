@@ -136,6 +136,67 @@ envelopes plus a flattened scenario summary for automation:
 Omit `--json` for a compact human-readable table. The human form is for quick
 inspection; automation should consume the JSON envelope.
 
+## Matrix Execution
+
+`bench matrix` runs the same benchmark recipe across an opaque cartesian product
+of mechanical dimensions. Dimensions are generic; callers decide whether they
+represent WordPress versions, environment maps, blueprint fragments, seeds,
+mounts, viewport settings, cache modes, or other runtime knobs.
+
+```bash
+npm run wp-codebox -- bench matrix \
+  --matrix ./benchmarks/matrix.json \
+  --json > ./artifacts/benchmark-matrix.json
+```
+
+Matrix definitions point at a base recipe and declare dimension values. When a
+value includes `value.recipe`, WP Codebox deep-merges that partial recipe into
+the base recipe for the generated cell recipe. Arrays are replaced, not merged.
+
+```json
+{
+  "schema": "wp-codebox/benchmark-recipe-matrix/v1",
+  "recipe": "./bench-plugin.recipe.json",
+  "artifacts": { "directory": "./artifacts/bench-plugin-matrix" },
+  "dimensions": [
+    {
+      "id": "wp",
+      "values": [
+        { "id": "6.9", "value": { "recipe": { "runtime": { "wp": "6.9" } } } },
+        { "id": "7.0", "value": { "recipe": { "runtime": { "wp": "7.0" } } } }
+      ]
+    },
+    {
+      "id": "cache",
+      "values": [
+        { "id": "cold", "provenance": { "cache": "cold" } },
+        { "id": "warm", "provenance": { "cache": "warm" } }
+      ]
+    }
+  ]
+}
+```
+
+Each cell gets its own generated recipe, `recipe-run.json`, and artifact bundle
+directory. The JSON output uses `wp-codebox/benchmark-matrix-run/v1` and groups
+benchmark envelopes by cell:
+
+```json
+{
+  "schema": "wp-codebox/benchmark-matrix-run/v1",
+  "matrix": { "schema": "wp-codebox/benchmark-matrix/v1", "cells": [], "diagnostics": [] },
+  "cells": [],
+  "benchResults": [
+    { "cellId": "wp:6.9__cache:cold", "cell": {}, "results": [] }
+  ],
+  "diagnostics": []
+}
+```
+
+Failed cells remain isolated as `cell-failed` diagnostics. A failed cell does not
+prevent later cells from running, and WP Codebox still does not score, grade,
+rank, retry, or publish benchmark results.
+
 ## Non-Responsibilities
 
 WP Codebox benchmark helpers do not define or store:

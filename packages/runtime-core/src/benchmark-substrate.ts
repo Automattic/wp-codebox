@@ -69,8 +69,31 @@ export interface BenchmarkMatrixCellResult {
   cell: BenchmarkMatrixCell
   status: "succeeded" | "failed"
   benchResults?: BenchmarkResultEnvelope
+  benchResultsList?: BenchmarkResultEnvelope[]
   diagnostics: BenchmarkMatrixCellDiagnostic[]
 }
+
+export interface BenchmarkMatrixGroupedBenchResults {
+  cellId: string
+  cell: BenchmarkMatrixCell
+  results: BenchmarkResultEnvelope[]
+}
+
+export interface BenchmarkMatrixRun {
+  schema: "wp-codebox/benchmark-matrix-run/v1"
+  matrix: BenchmarkMatrixExpansion
+  cells: BenchmarkMatrixCellResult[]
+  benchResults: BenchmarkMatrixGroupedBenchResults[]
+  diagnostics: BenchmarkMatrixCellDiagnostic[]
+  provenance: Record<string, unknown>
+}
+
+export interface ExecuteBenchmarkMatrixOptions {
+  generatedAt?: string
+  provenance?: Record<string, unknown>
+}
+
+export type BenchmarkMatrixCellRunner = (cell: BenchmarkMatrixCell) => Promise<BenchmarkResultEnvelope | BenchmarkResultEnvelope[]>
 
 export interface BenchmarkComparisonMetricDelta {
   scenarioId: string
@@ -152,6 +175,17 @@ export function createBenchmarkMatrixCellResult(cell: BenchmarkMatrixCell, bench
   }
 }
 
+export function createBenchmarkMatrixCellResults(cell: BenchmarkMatrixCell, benchResultsList: BenchmarkResultEnvelope[]): BenchmarkMatrixCellResult {
+  return {
+    schema: "wp-codebox/benchmark-matrix-cell-result/v1",
+    cell,
+    status: "succeeded",
+    ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
+    benchResultsList,
+    diagnostics: [],
+  }
+}
+
 export function createBenchmarkMatrixCellFailure(cell: BenchmarkMatrixCell, error: unknown): BenchmarkMatrixCellResult {
   const normalized = normalizeError(error)
   return {
@@ -165,6 +199,48 @@ export function createBenchmarkMatrixCellFailure(cell: BenchmarkMatrixCell, erro
       message: normalized.message,
       ...(normalized.code ? { code: normalized.code } : {}),
     }],
+  }
+}
+
+export async function executeBenchmarkMatrix(dimensions: readonly BenchmarkMatrixDimension[], runCell: BenchmarkMatrixCellRunner, options: ExecuteBenchmarkMatrixOptions = {}): Promise<BenchmarkMatrixRun> {
+  const matrix = expandBenchmarkMatrix(dimensions)
+  const cells: BenchmarkMatrixCellResult[] = []
+
+  if (matrix.diagnostics.length > 0) {
+    return {
+      schema: "wp-codebox/benchmark-matrix-run/v1",
+      matrix,
+      cells,
+      benchResults: [],
+      diagnostics: matrix.diagnostics.map((diagnostic) => ({
+        type: "cell-failed",
+        severity: diagnostic.severity,
+        cellId: "matrix-expansion",
+        message: diagnostic.message,
+        code: diagnostic.type,
+      })),
+      provenance: matrixRunProvenance(options),
+    }
+  }
+
+  for (const cell of matrix.cells) {
+    try {
+      const result = await runCell(cell)
+      cells.push(createBenchmarkMatrixCellResults(cell, Array.isArray(result) ? result : [result]))
+    } catch (error) {
+      cells.push(createBenchmarkMatrixCellFailure(cell, error))
+    }
+  }
+
+  return {
+    schema: "wp-codebox/benchmark-matrix-run/v1",
+    matrix,
+    cells,
+    benchResults: cells
+      .filter((cell): cell is BenchmarkMatrixCellResult & { benchResultsList: BenchmarkResultEnvelope[] } => cell.status === "succeeded" && Array.isArray(cell.benchResultsList))
+      .map((cell) => ({ cellId: cell.cell.id, cell: cell.cell, results: cell.benchResultsList })),
+    diagnostics: cells.flatMap((cell) => cell.diagnostics),
+    provenance: matrixRunProvenance(options),
   }
 }
 
@@ -341,4 +417,11 @@ function normalizeError(error: unknown): { message: string; code?: string } {
     return { message: error.message, ...(code ? { code } : {}) }
   }
   return { message: typeof error === "string" ? error : "Benchmark matrix cell failed." }
+}
+
+function matrixRunProvenance(options: ExecuteBenchmarkMatrixOptions): Record<string, unknown> {
+  return {
+    generated_at: options.generatedAt ?? new Date().toISOString(),
+    ...(options.provenance ?? {}),
+  }
 }

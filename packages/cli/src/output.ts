@@ -252,6 +252,7 @@ export function printHelp(): void {
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe build phpunit --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--json]
+  wp-codebox bench matrix --matrix <path> [--recipe <path>] [--artifacts <dir>] [--json]
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
@@ -278,6 +279,7 @@ Options:
   --scenario-id <id>  Filter benchmark artifact refs to one scenario.
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.
+  --matrix <path>     Benchmark recipe matrix JSON file for bench matrix.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>
                        Durable run registry directory for recipe-run.

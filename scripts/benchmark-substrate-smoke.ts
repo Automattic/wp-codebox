@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { compareBenchmarkResults, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResult, expandBenchmarkMatrix } from "@automattic/wp-codebox-core"
+import { compareBenchmarkResults, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResult, executeBenchmarkMatrix, expandBenchmarkMatrix } from "@automattic/wp-codebox-core"
 
 const matrix = expandBenchmarkMatrix([
   {
@@ -38,6 +38,42 @@ const failure = createBenchmarkMatrixCellFailure(cell, Object.assign(new Error("
 assert.equal(failure.status, "failed")
 assert.equal(failure.diagnostics[0]?.type, "cell-failed")
 assert.equal(failure.diagnostics[0]?.code, "boot-failed")
+
+const matrixRun = await executeBenchmarkMatrix([
+  {
+    id: "wp",
+    values: [
+      { id: "6.9", value: { recipe: { runtime: { wp: "6.9" } } } },
+      { id: "7.0", value: { recipe: { runtime: { wp: "7.0" } } } },
+    ],
+  },
+  {
+    id: "cache",
+    values: [
+      { id: "cold", value: { recipe: { workflow: { steps: [{ command: "wordpress.bench", args: ["cache=cold"] }] } } } },
+      { id: "warm", value: { recipe: { workflow: { steps: [{ command: "wordpress.bench", args: ["cache=warm"] }] } } } },
+    ],
+  },
+], async (matrixCell) => {
+  if (matrixCell.id === "wp:7.0__cache:warm") {
+    throw Object.assign(new Error("simulated cell failure"), { code: "simulated-failure" })
+  }
+
+  return {
+    component_id: "demo",
+    iterations: 1,
+    scenarios: [{ id: matrixCell.id, iterations: 1, metrics: { duration_ms_mean: 1 } }],
+  }
+}, { generatedAt: "2026-06-04T00:00:00.000Z" })
+
+assert.equal(matrixRun.schema, "wp-codebox/benchmark-matrix-run/v1")
+assert.equal(matrixRun.matrix.cells.length, 4)
+assert.equal(matrixRun.cells.length, 4)
+assert.equal(matrixRun.benchResults.length, 3)
+assert.equal(matrixRun.diagnostics.length, 1)
+assert.equal(matrixRun.diagnostics[0]?.cellId, "wp:7.0__cache:warm")
+assert.equal(matrixRun.diagnostics[0]?.code, "simulated-failure")
+assert.equal(matrixRun.cells.find((matrixCell) => matrixCell.cell.id === "wp:7.0__cache:warm")?.status, "failed")
 
 const comparison = compareBenchmarkResults(
   {

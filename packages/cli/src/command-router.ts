@@ -15,6 +15,7 @@ interface CliCommandRouter {
   artifactsBrowserMetrics: CliCommandHandler
   artifactsBenchmark: CliCommandHandler
   artifactsBenchResults: CliCommandHandler
+  benchMatrix: CliCommandHandler
   benchSummarize: CliCommandHandler
   runsStatus: CliCommandHandler
   runsArtifacts: CliCommandHandler
@@ -93,6 +94,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       const subcommand = args.shift()
       if (subcommand === "summarize") {
         return router.benchSummarize(args)
+      }
+      if (subcommand === "matrix") {
+        return router.benchMatrix(args)
       }
       console.error(`Unknown bench command: ${subcommand ?? ""}`)
       router.printHelp()
