@@ -552,7 +552,7 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org', 'github.com' );
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_theme_allowed_hosts'] = array( 'example.test', 'downloads.wordpress.org' );
 $recipe_run_source = file_get_contents( $source_root . '/packages/cli/src/commands/recipe-run.ts' );
-$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugins_activated', $" . "activated)" ) );
+$assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && ( str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugins_activated', $" . "activated)" ) || str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugin_activated', $" . "plugin_file)" ) ) );
 $agent_code_source = file_get_contents( $source_root . '/packages/cli/src/agent-code.ts' );
 $assert( 'CLI sandbox delegates runtime bundle imports through generic helper', false !== $agent_code_source && str_contains( $agent_code_source, "wp_agent_import_runtime_bundles" ) && str_contains( $agent_code_source, "apply_filters('wp_agent_runtime_import_bundle'" ) && ! str_contains( $agent_code_source, "wp_get_ability('datamachine/import-agent')" ) && ! str_contains( $agent_code_source, 'DataMachine\\Core\\Database\\Agents\\Agents' ) );
 $assert( 'CLI sandbox preserves runtime bundle import principal without Data Machine permission helper', false !== $agent_code_source && str_contains( $agent_code_source, "'import_principal'" ) && ! str_contains( $agent_code_source, 'DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($execute' ) );
@@ -875,6 +875,9 @@ add_filter(
 $runner_php = (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
 $assert( 'browser Playground generated runner has no Studio Web-specific artifact paths', ! str_contains( $runner_php, '/wordpress/wp-content/uploads/studio-web' ) && ! str_contains( $runner_php, 'studio-web/website' ) );
 $assert( 'browser Playground generated runner defaults to generic Codebox artifacts path', str_contains( $runner_php, '/wordpress/wp-content/uploads/wp-codebox/artifacts' ) && str_contains( $runner_php, 'wp-codebox-output/' ) );
+$runner_contract = $browser_session['recipe']['browser']['runner_contract'] ?? array();
+$assert( 'browser Playground recipe exposes reusable runner PHP contract prelude', is_array( $runner_contract ) && 'wp-codebox/browser-runner-contract/v1' === ( $runner_contract['schema'] ?? '' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), 'function wp_codebox_browser_artifact_environment' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$wp_codebox_is_playground' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$capture_paths' ) );
+$assert( 'browser Playground recipe exposes reusable runner PHP contract footer', is_array( $runner_contract ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'wp_codebox_browser_artifact_capture_diagnostics' ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'file_put_contents( $result_path' ) );
 $runner_php = preg_replace( '/^code=/', '', $runner_php ) ?? $runner_php;
 $runner_php = preg_replace( '/^<\?php\s*/', '', $runner_php ) ?? $runner_php;
 $runner_php = str_replace( "require_once '/wordpress/wp-load.php';", '', $runner_php );

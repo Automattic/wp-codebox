@@ -948,6 +948,29 @@ try {
 		return `<?php\n${ marker }\n?>\n${ source }`;
 	};
 
+	const normalizePhpPrelude = ( prelude ) => String( prelude || '' )
+		.replace( /^\s*<\?php\s*/i, '' )
+		.replace( /\?>\s*$/i, '' );
+
+	const withBrowserRunnerPrelude = ( code, recipe ) => {
+		const source = String( code || '' );
+		const prelude = recipe?.browser?.runner_contract?.php_prelude;
+		if ( typeof prelude !== 'string' || prelude.trim() === '' || source.includes( 'function wp_codebox_browser_artifact_environment' ) ) {
+			return source;
+		}
+
+		return injectPhpPrelude( source, normalizePhpPrelude( prelude ) );
+	};
+
+	const injectPhpPrelude = ( code, prelude ) => {
+		const source = String( code || '' );
+		if ( source.startsWith( '<?php' ) ) {
+			return source.replace( '<?php', `<?php\n${ prelude }` );
+		}
+
+		return `<?php\n${ prelude }\n?>\n${ source }`;
+	};
+
 	const browserSessionRecipe = ( session ) => {
 		if ( ! session || typeof session !== 'object' ) {
 			throw new Error( 'WP Codebox browser session output is required.' );
@@ -980,6 +1003,9 @@ try {
 		if ( ! payload || typeof payload !== 'object' ) {
 			throw runtimeError( 'recipe_validate', 'browser_recipe_task_payload_missing', 'WP Codebox browser recipe task payload missing.' );
 		}
+		if ( ! recipe?.browser?.runner_contract?.php_prelude && steps.some( ( step ) => ( step?.args || [] ).some( ( arg ) => typeof arg === 'string' && arg.startsWith( 'code=' ) && arg.includes( 'wp_codebox_browser_' ) && ! arg.includes( 'function wp_codebox_browser_artifact_environment' ) ) ) ) {
+			throw runtimeError( 'recipe_validate', 'browser_recipe_runner_contract_missing', 'Browser recipe PHP references WP Codebox runner helpers but does not include a runner contract.' );
+		}
 
 		const writeResult = await writeFile( client, {
 			path: taskPath,
@@ -1006,7 +1032,7 @@ try {
 
 				lastResult = await runPhpRequest( client, {
 					...options,
-					code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
+					code: markBrowserPlaygroundRunner( withBrowserRunnerPrelude( codeArg.slice( 5 ), recipe ) ),
 					name: options.name || 'codebox-recipe',
 					expectJson: true,
 					forceRequest: true,
@@ -1220,6 +1246,18 @@ try {
 			const result = await runRecipe( client, {
 				browser: {
 					task_path: recipeTaskPath,
+					runner_contract: {
+						schema: 'wp-codebox/browser-runner-contract/v1',
+						php_prelude: `<?php
+function wp_codebox_browser_artifact_environment( array $payload ): array {
+$contract = is_array( $payload['artifacts'] ?? null ) ? $payload['artifacts'] : array();
+$root = rtrim( (string) ( $contract['root'] ?? 'wp-codebox-output' ), '/' ) . '/';
+return array( 'contract' => $contract, 'root' => $root );
+}
+function wp_codebox_browser_capture_artifact_bundle( array $payload ): array {
+return is_array( $payload['artifacts'] ?? null ) ? $payload['artifacts'] : array();
+}`,
+					},
 				},
 				workflow: {
 					steps: [
