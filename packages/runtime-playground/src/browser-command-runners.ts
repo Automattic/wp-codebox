@@ -6,7 +6,7 @@ import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-act
 import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
-import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, navigateBrowserProbe } from "./browser-probe.js"
+import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
@@ -65,6 +65,9 @@ export async function runBrowserProbeCommand({
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
+  const assertions = browserProbeAssertionsFromArgs(args)
+  const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
+  const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
   const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
   const browserDirectory = join(artifactRoot, "files", "browser")
@@ -96,8 +99,9 @@ export async function runBrowserProbeCommand({
   let memoryArtifact: BrowserProbeMemoryArtifact | undefined
   let performanceArtifact: BrowserProbePerformanceArtifact | undefined
   let page: import("playwright").Page | null = null
-  let artifact: BrowserProbeArtifact | undefined
+  let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
+  let artifact: BrowserProbeArtifact | undefined
 
   try {
     page = await browser.newPage()
@@ -109,13 +113,13 @@ export async function runBrowserProbeCommand({
       await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
     }
     viewport = await browserProbeViewport(page)
-    if (capture.has("console")) {
+    if (capture.has("console") || capturesConsoleForAssertions) {
       page.on("console", (message) => {
         progress.mark("console")
         consoleMessages.push(serializeBrowserConsoleMessage(message))
       })
     }
-    if (capture.has("errors")) {
+    if (capture.has("errors") || capturesErrorsForAssertions) {
       page.on("pageerror", (error) => {
         progress.mark("pageerror")
         errors.push(serializeBrowserError("pageerror", error))
@@ -160,6 +164,13 @@ export async function runBrowserProbeCommand({
       progress.mark("duration")
       if (capturesBrowserMetrics) {
         checkpoints.push(await browserProbeCheckpoint(page, "after-duration"))
+      }
+    }
+    if (assertions.length > 0) {
+      assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors)
+      const fatalFailures = assertionResults.filter((assertion) => !assertion.passed && !assertion.advisory)
+      if (fatalFailures.length > 0) {
+        pendingError = new Error(`wordpress.browser-probe assertion failed: ${fatalFailures.map((assertion) => assertion.assertion).join(", ")}`)
       }
     }
     finalUrl = page.url()
@@ -222,6 +233,18 @@ export async function runBrowserProbeCommand({
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
 
+    const assertionPassed = assertionResults.filter((assertion) => assertion.passed).length
+    const assertionFailed = assertionResults.filter((assertion) => !assertion.passed).length
+    const advisoryFailed = assertionResults.filter((assertion) => !assertion.passed && assertion.advisory).length
+    const assertionSummary = {
+      total: assertionResults.length,
+      passed: assertionPassed,
+      failed: assertionFailed,
+      advisoryFailed,
+      fatalFailed: assertionFailed - advisoryFailed,
+      results: assertionResults,
+    }
+
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
@@ -237,6 +260,7 @@ export async function runBrowserProbeCommand({
         summary: "files/browser/summary.json",
       },
       summary: {
+        ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
         consoleMessages: consoleMessages.length,
         errors: errors.length,
         finalUrl,
@@ -261,6 +285,7 @@ export async function runBrowserProbeCommand({
       failFast,
       stallTimeoutMs,
       capture: [...capture].sort(),
+      ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
       startedAt,
       finishedAt: now(),
       files: artifact.files,

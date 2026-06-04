@@ -70,6 +70,8 @@ export interface BrowserAssertionsSummary {
   total: number
   passed: number
   failed: number
+  advisoryFailed?: number
+  fatalFailed?: number
   results: BrowserStepAssertion[]
 }
 
@@ -195,10 +197,15 @@ export interface BrowserStepRecord {
 }
 
 export interface BrowserStepAssertion {
-  kind: "expect" | "evaluate"
+  kind: "expect" | "evaluate" | "probe"
+  assertion?: string
+  advisory?: boolean
+  message?: string
   selector?: string
+  name?: string
   state?: string
   expression?: string
+  operator?: string
   expected?: unknown
   actual?: unknown
   passed: boolean
