@@ -939,6 +939,24 @@ npm run wp-codebox -- recipe-run \
 
 Each workload file returns a callable. The callable may return numeric metrics directly or a payload with `metrics` and `metadata` keys. The recipe output reports duration percentiles, custom metric aggregates, peak memory, runtime artifacts, and the parsed `benchResults` object in JSON output when a single `wordpress.bench` step runs. If earlier `wordpress.browser-probe` steps in the same recipe captured generic `performance` or `memory` artifacts, `wordpress.bench` promotes selected numeric browser values into each scenario's metrics using `browser_*` names, while the raw browser artifacts remain available under `files/browser/`.
 
+Use `bench summarize` to extract a stable automation envelope from saved `recipe-run --json` output:
+
+```bash
+npm run wp-codebox -- bench summarize \
+  --input ./artifacts/bench-plugin/recipe-run.json \
+  --json
+```
+
+Use `artifacts bench-results` to extract benchmark results from an artifact bundle command log:
+
+```bash
+npm run wp-codebox -- artifacts bench-results \
+  --bundle ./artifacts/bench-plugin \
+  --json
+```
+
+See [`docs/benchmark-contract.md`](docs/benchmark-contract.md) for the generic benchmark contract, result shape, artifact/provenance expectations, and the boundary between WP Codebox responsibilities and caller-owned scoring or product semantics.
+
 ### `agent-runtime-probe`
 
 Boot a sandbox with Agents API, Data Machine, and Data Machine Code mounted, then verify the stack loads.

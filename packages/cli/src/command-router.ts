@@ -12,6 +12,8 @@ interface CliCommandRouter {
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
+  artifactsBenchResults: CliCommandHandler
+  benchSummarize: CliCommandHandler
   runsStatus: CliCommandHandler
   runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
@@ -73,7 +75,19 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
       }
+      if (subcommand === "bench-results") {
+        return router.artifactsBenchResults(args)
+      }
       console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
+      router.printHelp()
+      return 1
+    }
+    case "bench": {
+      const subcommand = args.shift()
+      if (subcommand === "summarize") {
+        return router.benchSummarize(args)
+      }
+      console.error(`Unknown bench command: ${subcommand ?? ""}`)
       router.printHelp()
       return 1
     }

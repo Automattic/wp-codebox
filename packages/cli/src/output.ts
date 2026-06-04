@@ -252,8 +252,10 @@ export function printHelp(): void {
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
   wp-codebox recipe build phpunit --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--json]
+  wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
+  wp-codebox artifacts bench-results --bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
@@ -266,6 +268,7 @@ Options:
   --options <path>    Recipe builder options JSON file for recipe build.
   --output <path>     Optional output JSON path for recipe build; defaults to stdout.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
+  --input <path>      Saved recipe-run JSON output for benchmark summarization.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>
                        Durable run registry directory for recipe-run.
