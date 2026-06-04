@@ -55,6 +55,7 @@ await writeFile(recipePath, `${JSON.stringify({
             { kind: "evaluate", expression: "document.getElementById('wp-codebox-result').dataset.state", assert: "done" },
             { kind: "screenshot", name: "after-apply" },
           ])}`,
+          "viewport=390x844",
           "capture=steps,console,errors,html,network,screenshot",
         ],
       },
@@ -107,6 +108,7 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   schema: string
   finalUrl: string
   files: { steps?: string; html?: string; screenshot?: string; summary: string }
+  viewport: { width: number; height: number; userAgent: string }
   assertions?: { total: number; passed: number; failed: number; results: Array<{ kind: string; passed: boolean }> }
   summary: { steps: number; actions: number; replayability: string; htmlSnapshot: boolean; assertions?: { total: number; passed: number; failed: number } }
 }
@@ -115,6 +117,9 @@ assert.equal(summary.finalUrl.endsWith("/"), true, "summary should include final
 assert.equal(summary.files.steps, "files/browser/steps.jsonl")
 assert.equal(summary.files.html, "files/browser/snapshot.html")
 assert.equal(summary.files.summary, "files/browser/action-summary.json")
+assert.equal(summary.viewport.width, 390, "summary should record requested viewport width")
+assert.equal(summary.viewport.height, 844, "summary should record requested viewport height")
+assert.ok(summary.viewport.userAgent.length > 0, "summary should include user agent")
 assert.equal(summary.summary.steps, 8)
 assert.equal(summary.summary.replayability, "artifact-backed")
 assert.equal(summary.summary.htmlSnapshot, true)
@@ -133,11 +138,13 @@ const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Ar
 assert.ok(manifest.files.some((file) => file.path === "files/browser/steps.jsonl" && file.kind === "browser-steps"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/action-summary.json" && file.kind === "browser-summary"))
 
-const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ steps?: string; stepCount?: number; html?: string; summaryFile?: string; assertions?: { total: number; passed: number; failed: number } }> } }
+const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ steps?: string; stepCount?: number; html?: string; summaryFile?: string; viewport?: { width: number; height: number }; assertions?: { total: number; passed: number; failed: number } }> } }
 assert.equal(review.browser?.probes?.[0]?.steps, "files/browser/steps.jsonl")
 assert.equal(review.browser?.probes?.[0]?.stepCount, 8)
 assert.equal(review.browser?.probes?.[0]?.html, "files/browser/snapshot.html")
 assert.equal(review.browser?.probes?.[0]?.summaryFile, "files/browser/action-summary.json")
+assert.equal(review.browser?.probes?.[0]?.viewport?.width, 390, "review should record requested viewport width")
+assert.equal(review.browser?.probes?.[0]?.viewport?.height, 844, "review should record requested viewport height")
 assert.equal(review.browser?.probes?.[0]?.assertions?.total, 2)
 assert.equal(review.browser?.probes?.[0]?.assertions?.passed, 2)
 
