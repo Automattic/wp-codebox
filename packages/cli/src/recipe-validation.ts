@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -50,6 +50,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
 
   validateRecipeMounts(recipe.runtime?.stack?.mounts, "runtime stack", recipePath)
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
+  validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
 
   const workspaces = recipe.inputs?.workspaces ?? []
@@ -159,6 +160,20 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   }
 
   return recipe
+}
+
+function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recipePath: string): void {
+  if (assets === undefined) {
+    return
+  }
+
+  if (!assets || typeof assets !== "object" || Array.isArray(assets)) {
+    throw new Error(`Recipe runtime assets must be an object: ${recipePath}`)
+  }
+
+  if (assets.wordpressZip !== undefined && typeof assets.wordpressZip !== "string") {
+    throw new Error(`Recipe runtime assets wordpressZip must be a string: ${recipePath}`)
+  }
 }
 
 function validateRecipeMounts(mounts: WorkspaceRecipeMount[] | undefined, label: string, recipePath: string): void {

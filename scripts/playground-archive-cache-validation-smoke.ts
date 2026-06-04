@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { validatePlaygroundWordPressArchiveCache } from "../packages/runtime-playground/src/playground-cli-runner.js"
+import { resolvePlaygroundWordPressStartupAsset, validatePlaygroundWordPressArchiveCache } from "../packages/runtime-playground/src/playground-cli-runner.js"
 
 const cacheDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-playground-cache-"))
 
@@ -15,13 +15,40 @@ try {
 
   assert.equal(result.version, "7.1")
   assert.match(result.sourceUrl, /wordpress/i)
+  assert.equal(result.source, "inferred")
   assert.equal(result.invalidArchives.length, 2)
   assert.equal(result.invalidArchives.every((archive) => archive.deleted), true)
   assert.equal(existsSync(join(cacheDirectory, "7.1.zip")), false)
   assert.equal(existsSync(join(cacheDirectory, "prebuilt-wp-content-for-wp-7.1.zip")), false)
   assert.match(result.invalidArchives[0]?.reason ?? "", /too small|unexpected zip header/)
 
+  await writeFile(join(cacheDirectory, "7.2.zip"), minimalZipArchive())
+  const cachedStartupAsset = await resolvePlaygroundWordPressStartupAsset("7.2", undefined, cacheDirectory)
+  assert.equal(cachedStartupAsset.wp, undefined)
+  assert.equal(cachedStartupAsset.localPath, join(cacheDirectory, "7.2.zip"))
+  assert.equal(cachedStartupAsset.cacheValidation.source, "cache")
+  assert.equal(cachedStartupAsset.cacheValidation.sourceUrl, `cache:${join(cacheDirectory, "7.2.zip")}`)
+
+  const inferredStartupAsset = await resolvePlaygroundWordPressStartupAsset("7.3", undefined, cacheDirectory)
+  assert.equal(inferredStartupAsset.wp, "https://wordpress.org/wordpress-7.3.zip")
+  assert.equal(inferredStartupAsset.cacheValidation.source, "inferred")
+  assert.equal(inferredStartupAsset.cacheValidation.sourceUrl, "https://wordpress.org/wordpress-7.3.zip")
+
+  const preResolvedStartupAsset = await resolvePlaygroundWordPressStartupAsset("7.4", join(cacheDirectory, "7.2.zip"), cacheDirectory)
+  assert.equal(preResolvedStartupAsset.wp, undefined)
+  assert.equal(preResolvedStartupAsset.localPath, join(cacheDirectory, "7.2.zip"))
+  assert.equal(preResolvedStartupAsset.cacheValidation.source, "pre-resolved")
+
   console.log("Playground archive cache validation smoke passed")
 } finally {
   await rm(cacheDirectory, { recursive: true, force: true })
+}
+
+function minimalZipArchive(): Uint8Array {
+  const archive = new Uint8Array(22)
+  archive[0] = 0x50
+  archive[1] = 0x4b
+  archive[2] = 0x05
+  archive[3] = 0x06
+  return archive
 }

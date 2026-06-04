@@ -26,6 +26,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string" },
           wp: { type: "string" },
           blueprint: { type: "object" },
+          assets: { $ref: "#/$defs/runtimeAssets" },
           stack: { $ref: "#/$defs/runtimeStack" },
           overlays: {
             type: "array",
@@ -141,6 +142,17 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       metadata: {
         type: "object",
         additionalProperties: true,
+      },
+      runtimeAssets: {
+        type: "object",
+        additionalProperties: false,
+        description: "Pre-resolved runtime assets. Use local paths or URLs to make recipe startup deterministic without live release metadata lookups.",
+        properties: {
+          wordpressZip: {
+            type: "string",
+            description: "Local path or HTTP(S) URL for a WordPress release zip used to boot the Playground runtime.",
+          },
+        },
       },
       mount: {
         type: "object",

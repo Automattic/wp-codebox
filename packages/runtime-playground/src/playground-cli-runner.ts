@@ -4,9 +4,10 @@ import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, erro
 import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
 import { readFile, stat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 
@@ -56,7 +57,9 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     emitProgress("preview:loading-wordpress", "running", "Loading your site", {
       wordpressVersion: spec.environment.version,
     })
-    const cacheValidation = await validatePlaygroundWordPressArchiveCache(spec.environment.version)
+    const wordpressStartupAsset = await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
+    const cacheValidation = wordpressStartupAsset.cacheValidation
+    const localAssetServer = wordpressStartupAsset.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
     const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
     const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
     if (blueprintSummary.steps > 0) {
@@ -69,20 +72,26 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       emitProgress("preview:activating-dependencies", "running", "Activating site features", blueprintSummary)
     }
 
-    const server = await runPlaygroundCliWithoutProcessExit(() => runCLI({
-      command: "server",
-      port,
-      quiet: true,
-      verbosity: "quiet",
-      skipBrowser: true,
-      mount: mounts.map((mount) => ({
-        hostPath: mount.source,
-        vfsPath: mount.target,
-      })),
-      wp: spec.environment.version,
-      "site-url": spec.preview?.siteUrl,
-      blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
-    }))
+    const server = await runPlaygroundCliWithoutProcessExit(async () => {
+      try {
+        return await runCLI({
+          command: "server",
+          port,
+          quiet: true,
+          verbosity: "quiet",
+          skipBrowser: true,
+          mount: mounts.map((mount) => ({
+            hostPath: mount.source,
+            vfsPath: mount.target,
+          })),
+          wp: localAssetServer?.url ?? wordpressStartupAsset.wp,
+          "site-url": spec.preview?.siteUrl,
+          blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
+        })
+      } finally {
+        await localAssetServer?.close()
+      }
+    })
 
     emitProgress("preview:connecting-client", "running", "Connecting preview", {
       localUrl: server.serverUrl,
@@ -166,6 +175,7 @@ function errorDetail(error: unknown): Record<string, unknown> {
 export interface PlaygroundWordPressArchiveCacheValidation {
   version: string
   sourceUrl: string
+  source: "pre-resolved" | "cache" | "inferred" | "api"
   invalidArchives: Array<{
     path: string
     size: number
@@ -179,9 +189,9 @@ export interface PlaygroundWordPressArchiveCacheValidationOptions {
 }
 
 export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = join(homedir(), ".wordpress-playground"), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
-  const release = await resolveWordPressRelease(versionQuery)
-  const version = String(release.version)
-  const sourceUrl = String(release.releaseUrl)
+  const release = await resolveWordPressReleaseForStartup(versionQuery)
+  const version = release.version
+  const sourceUrl = release.releaseUrl
   const archivePaths = [
     join(cacheDirectory, `${version}.zip`),
     join(cacheDirectory, `prebuilt-wp-content-for-wp-${version}.zip`),
@@ -213,7 +223,169 @@ export async function validatePlaygroundWordPressArchiveCache(versionQuery: stri
     }
   }
 
-  return { version, sourceUrl, invalidArchives }
+  return { version, sourceUrl, source: release.source, invalidArchives }
+}
+
+interface PlaygroundWordPressStartupAsset {
+  wp: string | undefined
+  localPath?: string
+  cacheValidation: PlaygroundWordPressArchiveCacheValidation
+}
+
+interface ResolvedWordPressReleaseForStartup {
+  version: string
+  releaseUrl: string
+  source: PlaygroundWordPressArchiveCacheValidation["source"]
+}
+
+export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = join(homedir(), ".wordpress-playground")): Promise<PlaygroundWordPressStartupAsset> {
+  if (wordpressZip) {
+    const version = startupAssetVersion(versionQuery, wordpressZip)
+    const cacheValidation = await validateWordPressArchivePaths(version, wordpressZip, isHttpUrl(wordpressZip) ? [] : [wordpressZip], { deleteInvalid: false })
+    return { wp: isHttpUrl(wordpressZip) ? wordpressZip : undefined, localPath: isHttpUrl(wordpressZip) ? undefined : wordpressZip, cacheValidation: { ...cacheValidation, sourceUrl: wordpressZip, source: "pre-resolved" } }
+  }
+
+  const cachedVersion = exactWordPressVersion(versionQuery)
+  if (cachedVersion) {
+    const cachedArchivePath = join(cacheDirectory, `${cachedVersion}.zip`)
+    if (existsSync(cachedArchivePath)) {
+      const cacheValidation = await validateWordPressArchivePaths(cachedVersion, `cache:${cachedArchivePath}`, [cachedArchivePath, join(cacheDirectory, `prebuilt-wp-content-for-wp-${cachedVersion}.zip`)], { deleteInvalid: true })
+      if (existsSync(cachedArchivePath)) {
+        return { wp: undefined, localPath: cachedArchivePath, cacheValidation: { ...cacheValidation, source: "cache" } }
+      }
+    }
+  }
+
+  const cacheValidation = await validatePlaygroundWordPressArchiveCache(versionQuery, cacheDirectory)
+  return { wp: cacheValidation.sourceUrl, cacheValidation }
+}
+
+async function resolveWordPressReleaseForStartup(versionQuery: string | undefined): Promise<ResolvedWordPressReleaseForStartup> {
+  const exactVersion = exactWordPressVersion(versionQuery)
+  if (exactVersion) {
+    return {
+      version: exactVersion,
+      releaseUrl: `https://wordpress.org/wordpress-${exactVersion}.zip`,
+      source: "inferred",
+    }
+  }
+
+  try {
+    const release = await resolveWordPressRelease(versionQuery)
+    return {
+      version: String(release.version),
+      releaseUrl: String(release.releaseUrl),
+      source: release.source === "api" ? "api" : "inferred",
+    }
+  } catch (error) {
+    throw new PlaygroundStartupAssetError("wordpress-release-metadata", "https://api.wordpress.org/core/version-check/1.7/?channel=beta", versionQuery ?? "latest", error)
+  }
+}
+
+async function validateWordPressArchivePaths(version: string, sourceUrl: string, archivePaths: string[], options: PlaygroundWordPressArchiveCacheValidationOptions): Promise<PlaygroundWordPressArchiveCacheValidation> {
+  const invalidArchives: PlaygroundWordPressArchiveCacheValidation["invalidArchives"] = []
+
+  for (const archivePath of archivePaths) {
+    if (!existsSync(archivePath)) {
+      continue
+    }
+
+    const archiveStat = await stat(archivePath)
+    const reason = await invalidZipReason(archivePath, archiveStat.size)
+    if (!reason) {
+      continue
+    }
+
+    if (!options.deleteInvalid) {
+      invalidArchives.push({ path: archivePath, size: archiveStat.size, reason, deleted: false })
+      continue
+    }
+
+    try {
+      await unlink(archivePath)
+      invalidArchives.push({ path: archivePath, size: archiveStat.size, reason, deleted: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Corrupt cached WordPress archive could not be removed: ${archivePath} (size: ${archiveStat.size} bytes, requested WordPress version: ${version}, resolved WordPress version: ${version}, source URL: ${sourceUrl}, validation: ${reason}, unlink error: ${message})`)
+    }
+  }
+
+  return { version, sourceUrl, source: "inferred", invalidArchives }
+}
+
+class PlaygroundStartupAssetError extends Error {
+  readonly code = "wp-codebox-playground-startup-asset-unavailable"
+  readonly phase = "preview:loading-wordpress"
+  readonly asset: string
+  readonly sourceUrl: string
+  readonly requestedVersion: string
+
+  constructor(asset: string, sourceUrl: string, requestedVersion: string, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause)
+    super(`Unable to resolve Playground startup asset ${asset} for WordPress ${requestedVersion} from ${sourceUrl}: ${message}`, { cause })
+    this.name = "PlaygroundStartupAssetError"
+    this.asset = asset
+    this.sourceUrl = sourceUrl
+    this.requestedVersion = requestedVersion
+  }
+}
+
+async function serveLocalStartupAsset(assetPath: string): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createHttpServer(async (_request, response) => {
+    try {
+      const contents = await readFile(assetPath)
+      response.writeHead(200, {
+        "content-type": "application/zip",
+        "content-length": String(contents.byteLength),
+      })
+      response.end(contents)
+    } catch (error) {
+      response.writeHead(500, { "content-type": "text/plain" })
+      response.end(error instanceof Error ? error.message : String(error))
+    }
+  })
+
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen)
+    server.listen(0, "127.0.0.1", () => resolveListen())
+  })
+
+  const address = server.address()
+  if (!address || typeof address !== "object") {
+    await closeHttpServer(server)
+    throw new Error(`Unable to serve local Playground startup asset: ${assetPath}`)
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/${encodeURIComponent(basename(assetPath))}`,
+    close: () => closeHttpServer(server),
+  }
+}
+
+async function closeHttpServer(server: HttpServer): Promise<void> {
+  if (!server.listening) {
+    return
+  }
+
+  await new Promise<void>((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose())
+  })
+}
+
+function startupAssetVersion(versionQuery: string | undefined, wordpressZip: string): string {
+  return exactWordPressVersion(versionQuery) ?? `pre-resolved-${basename(wordpressZip).replace(/[^A-Za-z0-9_.-]+/g, "-")}`
+}
+
+function exactWordPressVersion(versionQuery: string | undefined): string | undefined {
+  if (!versionQuery || !/^\d+\.\d+(?:\.\d+)?$/.test(versionQuery)) {
+    return undefined
+  }
+
+  return versionQuery.endsWith(".0") ? versionQuery.split(".").slice(0, 2).join(".") : versionQuery
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value)
 }
 
 async function invalidZipReason(archivePath: string, size: number): Promise<string | undefined> {
