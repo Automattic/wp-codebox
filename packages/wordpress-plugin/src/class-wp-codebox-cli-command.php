@@ -149,11 +149,11 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	private function normalize_value( string $field, mixed $value ): mixed {
-		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target' ), true ) ) {
+		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target' ), true ) ) {
 			return $this->json_object( (string) $value, $field );
 		}
 
-		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'datamachine_bundle', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files' ), true ) ) {
+		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files' ), true ) ) {
 			return $this->json_or_list( (string) $value, $field );
 		}
 

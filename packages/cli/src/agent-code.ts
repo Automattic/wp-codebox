@@ -22,7 +22,7 @@ export interface AgentSandboxCodeOptions {
   maxTurns?: string
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
-  datamachineBundle?: Record<string, unknown>
+  runtimeTask?: Record<string, unknown>
   sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
@@ -91,7 +91,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
-  const datamachineBundle = normalizeDatamachineBundleRunInput(options.datamachineBundle, input)
+  const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
 
   return `
 if (function_exists('wp_set_current_user')) {
@@ -147,8 +147,8 @@ $sandbox_agent_bundles = json_decode(${JSON.stringify(JSON.stringify(agentBundle
 $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array($sandbox_agent_bundles) ? $sandbox_agent_bundles : array());
 $sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
 $sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
-$sandbox_datamachine_bundle = json_decode(${JSON.stringify(JSON.stringify(datamachineBundle))}, true);
-$sandbox_stack['datamachine_bundle'] = is_array($sandbox_datamachine_bundle) ? $sandbox_datamachine_bundle : null;
+$sandbox_runtime_task = json_decode(${JSON.stringify(JSON.stringify(runtimeTask))}, true);
+$sandbox_stack['runtime_task'] = is_array($sandbox_runtime_task) ? $sandbox_runtime_task : null;
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
     if (!$principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal) {
@@ -217,8 +217,8 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     return $imports;
 }
 
-$datamachine_bundle_run = is_array($sandbox_datamachine_bundle) && !empty($sandbox_datamachine_bundle);
-$ability_name = $datamachine_bundle_run ? 'datamachine/run-agent-bundle' : 'agents/chat';
+$runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
+$ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
 if (!empty($sandbox_agent_bundle_import_failures)) {
     $sandbox_agent_runtime = array(
@@ -236,14 +236,15 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
         'agent_runtime' => array(
             'success' => false,
             'error' => array(
-                'code' => $datamachine_bundle_run ? 'datamachine_agent_bundle_runner_unavailable' : 'agents_chat_unavailable',
-                'message' => $datamachine_bundle_run ? 'The datamachine/run-agent-bundle ability is not available inside the sandbox.' : 'The canonical agents/chat ability is not available inside the sandbox.',
+                'code' => $runtime_task_run ? 'runtime_task_ability_unavailable' : 'agents_chat_unavailable',
+                'message' => $runtime_task_run ? 'The requested runtime task ability is not available inside the sandbox.' : 'The canonical agents/chat ability is not available inside the sandbox.',
             ),
         ),
     );
 } else {
     $agent_input = ${JSON.stringify(JSON.stringify(input))};
-    $agent_result = $ability->execute($datamachine_bundle_run ? $sandbox_datamachine_bundle : json_decode($agent_input, true));
+    $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
+    $agent_result = $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
             'agent_runtime' => array(
@@ -334,43 +335,34 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
   })
 }
 
-function normalizeDatamachineBundleRunInput(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {
+function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {
   if (!config || typeof config !== "object" || Array.isArray(config)) return null
 
-  const source = stringFromKeys(config, ["source", "bundle_path", "bundle_host_path"])
-  if (!source) return null
+  const ability = stringFromKeys(config, ["ability", "ability_name", "abilityName"])
+  if (!ability) return null
 
-  const runInput: Record<string, unknown> = {
-    source,
-    wait_for_completion: true,
-    initial_data: {
-      ...(recordValue(config.initial_data) ?? {}),
-      task_input: agentInput,
-      datamachine_bundle: config,
-    },
-    job_source: "wp_codebox_agent_task",
+  const taskInput = recordValue(config.input) ?? {}
+  const input: Record<string, unknown> = {
+    ...taskInput,
+  }
+  if (!recordValue(input.task_input)) {
+    input.task_input = agentInput
   }
 
-  const flow = stringFromKeys(config, ["flow", "flow_slug"])
-  if (flow) {
-    runInput.flow = flow
+  const normalized: Record<string, unknown> = { ability, input }
+  if (typeof config.wait_for_completion === "boolean") {
+    normalized.wait_for_completion = config.wait_for_completion
+  }
+  if (typeof config.label === "string" && config.label.trim()) {
+    normalized.label = config.label.trim()
   }
 
-  if (typeof config.dry_run === "boolean") {
-    runInput.dry_run = config.dry_run
+  const metadata = recordValue(config.metadata)
+  if (metadata) {
+    normalized.metadata = metadata
   }
 
-  for (const key of ["token_env", "job_label"] as const) {
-    const value = typeof config[key] === "string" ? config[key].trim() : ""
-    if (value) runInput[key] = value
-  }
-
-  for (const key of ["step_budget", "time_budget_ms"] as const) {
-    const value = numberValue(config[key])
-    if (value > 0) runInput[key] = value
-  }
-
-  return runInput
+  return normalized
 }
 
 function stringFromKeys(record: Record<string, unknown>, keys: string[]): string {
@@ -383,11 +375,6 @@ function stringFromKeys(record: Record<string, unknown>, keys: string[]): string
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-}
-
-function numberValue(value: unknown): number {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseInt(value, 10) : 0
-  return Number.isFinite(parsed) ? parsed : 0
 }
 
 export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {

@@ -555,7 +555,7 @@ $recipe_run_source = file_get_contents( $source_root . '/packages/cli/src/comman
 $assert( 'recipe extra plugin activation exposes lifecycle hook', false !== $recipe_run_source && str_contains( $recipe_run_source, "do_action('wp_codebox_runtime_plugin_activated', $" . "plugin_file)" ) );
 $agent_code_source = file_get_contents( $source_root . '/packages/cli/src/agent-code.ts' );
 $assert( 'CLI sandbox delegates runtime bundle imports through generic helper', false !== $agent_code_source && str_contains( $agent_code_source, "wp_agent_import_runtime_bundles" ) && str_contains( $agent_code_source, "apply_filters('wp_agent_runtime_import_bundle'" ) && ! str_contains( $agent_code_source, "wp_get_ability('datamachine/import-agent')" ) && ! str_contains( $agent_code_source, 'DataMachine\\Core\\Database\\Agents\\Agents' ) );
-$assert( 'CLI sandbox runs Data Machine bundles through canonical ability', false !== $agent_code_source && str_contains( $agent_code_source, "'datamachine/run-agent-bundle'" ) && str_contains( $agent_code_source, 'normalizeDatamachineBundleRunInput' ) && str_contains( $agent_code_source, 'wait_for_completion: true' ) && ! str_contains( $agent_code_source, 'ExecuteWorkflowAbility' ) );
+$assert( 'CLI sandbox runs caller runtime tasks through generic ability payload', false !== $agent_code_source && str_contains( $agent_code_source, 'normalizeRuntimeTask' ) && str_contains( $agent_code_source, "'runtime_task_ability_unavailable'" ) && ! str_contains( $agent_code_source, "'datamachine/run-agent-bundle'" ) && ! str_contains( $agent_code_source, 'ExecuteWorkflowAbility' ) );
 $assert( 'CLI sandbox preserves runtime bundle import principal without Data Machine permission helper', false !== $agent_code_source && str_contains( $agent_code_source, "'import_principal'" ) && ! str_contains( $agent_code_source, 'DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($execute' ) );
 $assert( 'CLI sandbox uses Agents API runtime-principal authorization instead of Data Machine chat mode glue', false !== $agent_code_source && str_contains( $agent_code_source, "agents_chat_runtime_principal_permission" ) && ! str_contains( $agent_code_source, 'datamachine_settings' ) && ! str_contains( $agent_code_source, 'datamachine_agent_modes' ) && ! str_contains( $agent_code_source, 'datamachine_agent_mode_sandbox' ) && ! str_contains( $agent_code_source, 'datamachine_directives' ) && ! str_contains( $agent_code_source, 'WP_Codebox_Sandbox_Perception_Directive' ) );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
@@ -1779,10 +1779,17 @@ $assert( 'runner does not pass raw code options', ! str_contains( $captured_comm
 
 $homeboy_result = $runner->run(
 	array(
-		'datamachine_bundle' => array(
-			'bundle_path' => $root . '/site-generator-agent.json',
-			'flow_slug'   => 'static-site-manual-flow',
-			'dry_run'     => true,
+		'runtime_task' => array(
+			'ability' => 'runtime/run-agent-bundle',
+			'input'   => array(
+				'source'              => '/wordpress/wp-content/wp-codebox-inputs/site-generator-agent.json',
+				'flow'                => 'static-site-manual-flow',
+				'wait_for_completion' => true,
+				'dry_run'             => true,
+			),
+			'metadata' => array(
+				'owner' => 'homeboy',
+			),
 		),
 		'parent_request' => array(
 			'schema'               => 'homeboy/wp-codebox-task-request/v1',
@@ -1857,20 +1864,20 @@ $homeboy_result = $runner->run(
 );
 $homeboy_recipe = json_decode( $captured_recipe, true );
 $homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
-$homeboy_datamachine_bundle_arg = '';
+$homeboy_runtime_task_arg = '';
 foreach ( $homeboy_step_args as $homeboy_step_arg ) {
-	if ( is_string( $homeboy_step_arg ) && str_starts_with( $homeboy_step_arg, 'datamachine-bundle-json=' ) ) {
-		$homeboy_datamachine_bundle_arg = substr( $homeboy_step_arg, strlen( 'datamachine-bundle-json=' ) );
+	if ( is_string( $homeboy_step_arg ) && str_starts_with( $homeboy_step_arg, 'runtime-task-json=' ) ) {
+		$homeboy_runtime_task_arg = substr( $homeboy_step_arg, strlen( 'runtime-task-json=' ) );
 		break;
 	}
 }
-$homeboy_datamachine_bundle = '' !== $homeboy_datamachine_bundle_arg ? json_decode( $homeboy_datamachine_bundle_arg, true ) : array();
+$homeboy_runtime_task = '' !== $homeboy_runtime_task_arg ? json_decode( $homeboy_runtime_task_arg, true ) : array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
 $assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
-$assert( 'runner passes Data Machine bundle execution request to sandbox step', is_array( $homeboy_datamachine_bundle ) && 'static-site-manual-flow' === ( $homeboy_datamachine_bundle['flow_slug'] ?? '' ) && true === ( $homeboy_datamachine_bundle['dry_run'] ?? false ) );
+$assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $homeboy_runtime_task ) && 'runtime/run-agent-bundle' === ( $homeboy_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $homeboy_runtime_task['input']['flow'] ?? '' ) && true === ( $homeboy_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $homeboy_runtime_task['input']['dry_run'] ?? false ) );
 $assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
 $assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use mounted workspace repos' ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );

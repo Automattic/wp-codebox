@@ -427,7 +427,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
 					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
 					'agent_bundles'          => $this->agent_bundles( $input, $request ),
-					'datamachine_bundle'     => $this->datamachine_bundle( $input, $request ),
+					'runtime_task'           => $this->runtime_task( $input, $request ),
 					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
 					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
 					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $workspaces ),
@@ -1028,10 +1028,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param array<string,mixed> $request Parent request input.
 	 * @return array<string,mixed>
 	 */
-	private function datamachine_bundle( array $input, array $request = array() ): array {
+	private function runtime_task( array $input, array $request = array() ): array {
 		$candidates = array(
-			$input['datamachine_bundle'] ?? $input['datamachineBundle'] ?? null,
-			$request['datamachine_bundle'] ?? $request['datamachineBundle'] ?? null,
+			$input['runtime_task'] ?? $input['runtimeTask'] ?? null,
+			$request['runtime_task'] ?? $request['runtimeTask'] ?? null,
 		);
 
 		foreach ( $candidates as $bundle ) {
@@ -1881,9 +1881,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$this->provider_plugin_paths( $input, $inheritance )
 		);
 
-		$provider_slugs     = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
-		$agent_bundles      = $this->agent_bundles( $input );
-		$datamachine_bundle = $this->datamachine_bundle( $input );
+		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
+		$agent_bundles  = $this->agent_bundles( $input );
+		$runtime_task   = $this->runtime_task( $input );
 		$steps              = array();
 		foreach ( $task_prompts as $task_prompt ) {
 			$task_input = $this->task_input( array_merge( $input, array( 'goal' => $task_prompt ) ) );
@@ -1903,8 +1903,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			if ( ! empty( $agent_bundles ) ) {
 				$args[] = 'agent-bundles-json=' . $this->json_encode( $agent_bundles );
 			}
-			if ( ! empty( $datamachine_bundle ) ) {
-				$args[] = 'datamachine-bundle-json=' . $this->json_encode( $datamachine_bundle );
+			if ( ! empty( $runtime_task ) ) {
+				$args[] = 'runtime-task-json=' . $this->json_encode( $runtime_task );
 			}
 			if ( ! empty( $input['session_id'] ) ) {
 				$args[] = 'session-id=' . (string) $input['session_id'];

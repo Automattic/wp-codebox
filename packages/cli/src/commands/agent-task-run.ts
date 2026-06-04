@@ -27,7 +27,7 @@ interface AgentTaskRunInput {
   runtime_stack_mounts?: Array<Record<string, unknown>>
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
-  datamachine_bundle?: Record<string, unknown>
+  runtime_task?: Record<string, unknown>
   sandbox_tool_policy?: SandboxToolPolicySnapshot
   max_turns?: number | string
   task_timeout_seconds?: number | string
@@ -152,8 +152,8 @@ function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<ty
   if (Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0) {
     workflowArgs.push(`agent-bundles-json=${JSON.stringify(input.agent_bundles)}`)
   }
-  if (input.datamachine_bundle && typeof input.datamachine_bundle === "object" && !Array.isArray(input.datamachine_bundle)) {
-    workflowArgs.push(`datamachine-bundle-json=${JSON.stringify(input.datamachine_bundle)}`)
+  if (input.runtime_task && typeof input.runtime_task === "object" && !Array.isArray(input.runtime_task)) {
+    workflowArgs.push(`runtime-task-json=${JSON.stringify(input.runtime_task)}`)
   }
 
   return stripUndefined({
