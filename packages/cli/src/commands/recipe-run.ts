@@ -8,7 +8,7 @@ import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
-import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput } from "../recipe-evidence.js"
+import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
@@ -79,6 +79,9 @@ interface RecipeRunOutput {
   }
   benchResults?: BenchResults
   benchResultsList?: BenchResults[]
+  agentResult?: AgentSandboxResultSummary
+  agentTaskResult?: AgentTaskSingleResult
+  completionOutcome?: SandboxCompletionOutcome
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
   interruption?: RecipeInterruptionMetadata
@@ -814,6 +817,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
+        ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
         ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
         artifacts,
         run: runRecord,
@@ -840,6 +844,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
+      ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
       ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
       artifacts,
       run: runRecord,

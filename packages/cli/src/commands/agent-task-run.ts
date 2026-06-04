@@ -53,6 +53,7 @@ interface AgentTaskRunOutput {
   wp: string
   artifacts: string
   agent_result: Record<string, unknown>
+  agent_task_result: Record<string, unknown>
   completion_outcome: Record<string, unknown>
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
@@ -108,6 +109,7 @@ async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptio
       wp: wpVersion,
       artifacts,
       agent_result: objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {},
+      agent_task_result: objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {},
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       run,
       diagnostics: diagnostics(run, capture.exitCode),

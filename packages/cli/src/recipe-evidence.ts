@@ -28,11 +28,26 @@ export interface RecipeArtifactEvidenceResult {
   agentResult?: AgentSandboxResultSummary & {
     artifact: RecipeArtifactEvidenceFile
   }
+  agentTaskResult?: AgentTaskSingleResult & {
+    artifact: RecipeArtifactEvidenceFile
+  }
   completionOutcome?: SandboxCompletionOutcome & {
     artifact: RecipeArtifactEvidenceFile
   }
   transcript?: AgentSandboxTranscript & {
     artifact: RecipeArtifactEvidenceFile
+  }
+}
+
+export interface AgentTaskSingleResult {
+  schema: "wp-codebox/agent-task-result/v1"
+  success: boolean
+  status: "completed" | "failed"
+  outputs: Record<string, unknown>
+  diagnostics: Record<string, unknown>
+  raw: {
+    agent_runtime?: Record<string, unknown>
+    result?: unknown
   }
 }
 
@@ -342,7 +357,7 @@ export async function finalizeRecipeArtifactEvidence(
   return result
 }
 
-export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "completionOutcome" | "transcript">> {
+export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "agentTaskResult" | "completionOutcome" | "transcript">> {
   const transcript = buildAgentSandboxTranscript(executions)
   if (transcript.executions.length === 0) {
     return {}
@@ -350,16 +365,20 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
 
   const transcriptPath = join(dirname(artifacts.reviewPath), "transcript.json")
   const agentResultPath = join(dirname(artifacts.reviewPath), "agent-result.json")
+  const agentTaskResultPath = join(dirname(artifacts.reviewPath), "agent-task-result.json")
   const completionOutcomePath = join(dirname(artifacts.reviewPath), "completion-outcome.json")
   const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
   const agentResult = await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path)
   const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
+  const agentTaskResult = buildAgentTaskSingleResult(transcript)
+  const agentTaskResultFile = agentTaskResult ? await writeRecipeEvidenceJson(artifacts.directory, agentTaskResultPath, agentTaskResult, "agent-task-result") : undefined
   const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
   const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
-  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, completionOutcomeFile, transcriptFile])
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...(agentTaskResultFile ? [agentTaskResultFile] : []), completionOutcomeFile, transcriptFile])
 
   return {
     agentResult: { ...agentResult, artifact: agentResultFile },
+    ...(agentTaskResult && agentTaskResultFile ? { agentTaskResult: { ...agentTaskResult, artifact: agentTaskResultFile } } : {}),
     completionOutcome: { ...completionOutcome, artifact: completionOutcomeFile },
     transcript: { ...transcript, artifact: transcriptFile },
   }
@@ -466,6 +485,68 @@ function buildSandboxCompletionOutcome(artifacts: ArtifactBundle, agentResult: A
       artifactDirectory: artifacts.directory,
     },
   })
+}
+
+export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): AgentTaskSingleResult | undefined {
+  const runtime = latestAgentRuntime(transcript)
+  if (!runtime) {
+    return undefined
+  }
+
+  const rawResult = runtime.result
+  const resultRecord = isRecord(rawResult) ? rawResult : undefined
+  const success = runtime.success === true
+  return {
+    schema: "wp-codebox/agent-task-result/v1",
+    success,
+    status: success ? "completed" : "failed",
+    outputs: semanticOutputs(resultRecord),
+    diagnostics: stripUndefined({
+      runtime: isRecord(resultRecord?.diagnostics) || Array.isArray(resultRecord?.diagnostics) ? resultRecord?.diagnostics : undefined,
+      error: isRecord(runtime.error) ? runtime.error : undefined,
+      adapter: resultRecord ? undefined : { code: "agent_task_result_not_object", message: "Runtime agent task result was preserved under raw.result but did not expose object-shaped semantic outputs." },
+    }),
+    raw: stripUndefined({
+      agent_runtime: runtime,
+      result: rawResult,
+    }),
+  }
+}
+
+function latestAgentRuntime(transcript: AgentSandboxTranscript): Record<string, unknown> | undefined {
+  for (const execution of [...transcript.executions].reverse()) {
+    const runtime = agentRuntimeFromParsed(execution.parsed)
+    if (runtime) {
+      return runtime
+    }
+  }
+
+  return undefined
+}
+
+function agentRuntimeFromParsed(parsed: unknown): Record<string, unknown> | undefined {
+  const record = isRecord(parsed) ? parsed : undefined
+  const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
+  if (runtime) {
+    return runtime
+  }
+
+  const output = typeof record?.output === "string" ? decodeJsonFragment(record.output) : undefined
+  const outputRecord = isRecord(output) ? output : undefined
+  return isRecord(outputRecord?.agent_runtime) ? outputRecord.agent_runtime : undefined
+}
+
+function semanticOutputs(result: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!result) {
+    return {}
+  }
+
+  const outputs = isRecord(result.outputs) ? result.outputs : isRecord(result.output) ? result.output : undefined
+  if (outputs) {
+    return outputs
+  }
+
+  return Object.fromEntries(Object.entries(result).filter(([key]) => !["schema", "success", "status", "diagnostics", "raw", "error", "metadata"].includes(key)))
 }
 
 async function readChangedFileSummary(path: string): Promise<AgentSandboxResultSummary["changedFiles"]> {
@@ -688,6 +769,15 @@ export function recipeAgentResultOutput(agentResult: RecipeArtifactEvidenceResul
   }
 
   const { artifact: _artifact, ...result } = agentResult
+  return result
+}
+
+export function recipeAgentTaskResultOutput(agentTaskResult: RecipeArtifactEvidenceResult["agentTaskResult"]): AgentTaskSingleResult | undefined {
+  if (!agentTaskResult) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = agentTaskResult
   return result
 }
 

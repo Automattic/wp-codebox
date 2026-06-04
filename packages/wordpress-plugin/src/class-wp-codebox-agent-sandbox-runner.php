@@ -151,6 +151,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'artifacts'    => $artifacts,
 			'exit_code'    => $exit_code,
 			'agent_result' => is_array( $decoded['agentResult'] ?? null ) ? $decoded['agentResult'] : array(),
+			'agent_task_result' => is_array( $decoded['agentTaskResult'] ?? null ) ? $decoded['agentTaskResult'] : array(),
 			'completion_outcome' => $this->completion_outcome( $decoded ),
 			'run'          => $decoded,
 		);
@@ -244,6 +245,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'preview_url' => (string) ( $task_result['session']['artifacts']['preview_url'] ?? '' ),
 				'artifacts'    => $task_result['session']['artifacts'] ?? array(),
 				'agent_result' => $task_result['agent_result'] ?? array(),
+				'agent_task_result' => $task_result['agent_task_result'] ?? array(),
 				'completion_outcome' => $task_result['completion_outcome'] ?? array(),
 				'run'          => $task_result['run'] ?? array(),
 			);
@@ -2316,6 +2318,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'path'        => $artifacts,
 					'bundle_id'   => is_array( $run['artifacts'] ?? null ) ? (string) ( $run['artifacts']['id'] ?? '' ) : '',
 					'preview_url' => is_array( $run['artifacts']['preview'] ?? null ) ? (string) ( $run['artifacts']['preview']['url'] ?? '' ) : '',
+					'agent_task_result' => is_array( $run['agentTaskResult'] ?? null ) ? 'files/agent-task-result.json' : '',
 					'completion_outcome' => is_array( $run['completionOutcome'] ?? null ) ? 'files/completion-outcome.json' : '',
 				),
 				static fn( mixed $value ): bool => '' !== $value
@@ -2326,6 +2329,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	/** @param array<string,mixed> $run Decoded CLI run output. @param array<string,mixed>|null $outcome Strict remediation outcome when requested. @return array<string,mixed> */
 	private function run_diagnostics( array $run, int $exit_code, ?array $outcome ): array {
 		$agent_result = is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array();
+		$agent_task_result = is_array( $run['agentTaskResult'] ?? null ) ? $run['agentTaskResult'] : array();
 
 		return array_filter(
 			array(
@@ -2333,6 +2337,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'exit_code'                 => $exit_code,
 				'recipe_run_schema'         => (string) ( $run['schema'] ?? '' ),
 				'agent_result_schema'       => (string) ( $agent_result['schema'] ?? '' ),
+				'agent_task_result_schema'  => (string) ( $agent_task_result['schema'] ?? '' ),
+				'agent_task_result_status'  => (string) ( $agent_task_result['status'] ?? '' ),
 				'agent_actionable'          => array_key_exists( 'actionable', $agent_result ) ? (bool) $agent_result['actionable'] : null,
 				'agent_no_op_reason'        => (string) ( $agent_result['noOpReason'] ?? '' ),
 				'completion_outcome_status' => is_array( $run['completionOutcome'] ?? null ) ? (string) ( $run['completionOutcome']['status'] ?? '' ) : '',
@@ -2356,6 +2362,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'artifacts_path'     => (string) ( $session_artifacts['path'] ?? '' ),
 				'artifact_bundle_id' => (string) ( $session_artifacts['bundle_id'] ?? $run_artifacts['id'] ?? '' ),
 				'preview_url'        => (string) ( $session_artifacts['preview_url'] ?? '' ),
+				'agent_task_result'  => (string) ( $session_artifacts['agent_task_result'] ?? '' ),
 				'completion_outcome' => (string) ( $session_artifacts['completion_outcome'] ?? '' ),
 				'transcript'         => (string) ( $transcript['artifact'] ?? '' ),
 			),

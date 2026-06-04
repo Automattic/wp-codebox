@@ -1682,6 +1682,24 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 								'executionCount' => 1,
 							),
 						),
+						'agentTaskResult' => array(
+							'schema'      => 'wp-codebox/agent-task-result/v1',
+							'success'     => true,
+							'status'      => 'completed',
+							'outputs'     => array(
+								'issue_number' => 614,
+								'issue_url'    => 'https://github.com/Automattic/wp-codebox/issues/614',
+							),
+							'diagnostics' => array(
+								'runtime' => array( 'run_id' => 'runtime-run-123' ),
+							),
+							'raw'         => array(
+								'agent_runtime' => array(
+									'success' => true,
+									'result'  => array( 'outputs' => array( 'issue_number' => 614 ) ),
+								),
+							),
+						),
 						'completionOutcome' => array(
 							'schema'       => 'wp-codebox/sandbox-completion-outcome/v1',
 							'status'       => 'partial',
@@ -1756,6 +1774,7 @@ $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_err
 $assert( 'runner returns orchestrator correlation and artifact refs', ! is_wp_error( $result ) && 'job-123' === ( $result['session']['orchestrator']['job_id'] ?? '' ) && 'artifact-bundle-sha256-fixture' === ( $result['session']['artifacts']['bundle_id'] ?? '' ) );
 $assert( 'runner returns public preview URL in session artifact metadata', ! is_wp_error( $result ) && 'https://preview.example.test/session-123/' === ( $result['session']['artifacts']['preview_url'] ?? '' ) && 'https://preview.example.test/session-123/' === ( $result['run']['artifacts']['preview']['url'] ?? '' ) );
 $assert( 'runner surfaces normalized agent result summary', ! is_wp_error( $result ) && 'wp-codebox/agent-result/v1' === ( $result['agent_result']['schema'] ?? '' ) && false === ( $result['agent_result']['actionable'] ?? true ) && 'no_file_changes' === ( $result['agent_result']['noOpReason'] ?? '' ) && 'files/transcript.json' === ( $result['agent_result']['transcript']['artifact'] ?? '' ) );
+$assert( 'runner surfaces single runtime agent task result envelope', ! is_wp_error( $result ) && 'wp-codebox/agent-task-result/v1' === ( $result['agent_task_result']['schema'] ?? '' ) && 614 === ( $result['agent_task_result']['outputs']['issue_number'] ?? 0 ) && ! isset( $result['agent_task_result']['scenarios'] ) && 'files/agent-task-result.json' === ( $result['session']['artifacts']['agent_task_result'] ?? '' ) );
 $assert( 'runner surfaces generic completion outcome', ! is_wp_error( $result ) && 'wp-codebox/sandbox-completion-outcome/v1' === ( $result['completion_outcome']['schema'] ?? '' ) && 'partial' === ( $result['completion_outcome']['status'] ?? '' ) && 'files/completion-outcome.json' === ( $result['session']['artifacts']['completion_outcome'] ?? '' ) );
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $legacy_task_fixture = $task_input_fixture_by_name['legacy task maps to canonical goal with empty optionals']['normalized'] ?? array();
@@ -1874,7 +1893,7 @@ foreach ( $homeboy_step_args as $homeboy_step_arg ) {
 $homeboy_runtime_task = '' !== $homeboy_runtime_task_arg ? json_decode( $homeboy_runtime_task_arg, true ) : array();
 $assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
 $assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
-$assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
+$assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $homeboy_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
 $assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
 $assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $homeboy_runtime_task ) && 'runtime/run-agent-bundle' === ( $homeboy_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $homeboy_runtime_task['input']['flow'] ?? '' ) && true === ( $homeboy_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $homeboy_runtime_task['input']['dry_run'] ?? false ) );
