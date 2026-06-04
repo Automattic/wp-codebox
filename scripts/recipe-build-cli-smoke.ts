@@ -7,6 +7,8 @@ import { runCli } from "../packages/cli/src/cli-entry.js"
 const directory = await mkdtemp(join(tmpdir(), "wp-codebox-recipe-build-cli-"))
 const optionsPath = join(directory, "phpunit-options.json")
 const outputPath = join(directory, "phpunit-recipe.json")
+const benchOptionsPath = join(directory, "bench-options.json")
+const benchOutputPath = join(directory, "bench-recipe.json")
 
 await writeFile(optionsPath, JSON.stringify({
   wordpressVersion: "6.10",
@@ -40,6 +42,48 @@ assert.deepEqual(recipe.workflow.steps[0].args, [
   "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   "dependency-mounts=/wordpress/wp-content/plugins/dep",
   "multisite=1",
+])
+
+await writeFile(benchOptionsPath, JSON.stringify({
+  wordpressVersion: "6.10",
+  blueprint: { steps: [{ step: "login", username: "admin", password: "password" }] },
+  mounts: [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php", type: "file" }],
+  extraPlugins: [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }],
+  componentId: "demo-component",
+  pluginSlug: "demo",
+  iterations: 7,
+  warmupIterations: 2,
+  dependencySlugs: ["dependency-plugin"],
+  env: { BENCH_FLAG: "yes" },
+  wpConfigDefines: { SAVEQUERIES: true },
+  bootstrapFiles: ["bench/bootstrap.php"],
+  workloads: [{ id: "homepage", path: "/" }],
+}, null, 2))
+
+const benchExitCode = await runCli(["recipe", "build", "bench", "--options", benchOptionsPath, "--output", benchOutputPath])
+assert.equal(benchExitCode, 0)
+
+const benchRecipe = JSON.parse(await readFile(benchOutputPath, "utf8"))
+assert.equal(benchRecipe.schema, "wp-codebox/workspace-recipe/v1")
+assert.equal(benchRecipe.runtime.wp, "6.10")
+assert.deepEqual(benchRecipe.runtime.blueprint, {
+  steps: [
+    { step: "login", username: "admin", password: "password" },
+    { step: "defineWpConfigConsts", consts: { SAVEQUERIES: true } },
+  ],
+})
+assert.equal(benchRecipe.workflow.steps[0].command, "wordpress.bench")
+assert.deepEqual(benchRecipe.inputs.mounts, [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php", mode: "readonly", type: "file" }])
+assert.deepEqual(benchRecipe.inputs.extraPlugins, [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }])
+assert.deepEqual(benchRecipe.workflow.steps[0].args, [
+  "component-id=demo-component",
+  "plugin-slug=demo",
+  "iterations=7",
+  "warmup=2",
+  "dependency-slugs=dependency-plugin",
+  'env-json={"BENCH_FLAG":"yes"}',
+  'bootstrap-files-json=["bench/bootstrap.php"]',
+  'workloads-json=[{"id":"homepage","path":"/"}]',
 ])
 
 console.log("recipe build cli smoke passed")

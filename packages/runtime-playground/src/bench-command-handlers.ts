@@ -7,6 +7,8 @@ export interface BenchRunCodeOptions {
   env: Record<string, unknown>
   bootstrapFiles: string[]
   workloads: unknown[]
+  lifecycle: Record<string, unknown>
+  resetPolicy: Record<string, unknown>
   wpCliBridge?: { url: string; token: string }
 }
 
@@ -18,10 +20,12 @@ $plugin_slug = ${JSON.stringify(options.pluginSlug)};
 $plugin_path = WP_PLUGIN_DIR . '/' . $plugin_slug;
 $iterations = max(1, (int) ${JSON.stringify(String(options.iterations))});
 $warmup_iterations = max(0, (int) ${JSON.stringify(String(options.warmupIterations))});
-$dependency_slugs = json_decode(${JSON.stringify(JSON.stringify(options.dependencySlugs))}, true);
-$bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
-$bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
-$configured_workloads = json_decode(${JSON.stringify(JSON.stringify(options.workloads))}, true);
+$dependency_slugs = ${phpJsonDecodeExpression(options.dependencySlugs)};
+$bench_env = ${phpJsonDecodeExpression(options.env)};
+$bootstrap_files = ${phpJsonDecodeExpression(options.bootstrapFiles)};
+$configured_workloads = ${phpJsonDecodeExpression(options.workloads)};
+$bench_lifecycle = ${phpJsonDecodeExpression(options.lifecycle)};
+$bench_reset_policy = ${phpJsonDecodeExpression(options.resetPolicy)};
 $wp_cli_bridge_url = ${JSON.stringify(options.wpCliBridge?.url ?? null)};
 $wp_cli_bridge_token = ${JSON.stringify(options.wpCliBridge?.token ?? null)};
 
@@ -46,23 +50,58 @@ function wp_codebox_bench_percentile(array $samples, float $percentile): float {
     return (float) $samples[$index];
 }
 
-function wp_codebox_bench_aggregate(array $samples, string $prefix = '', string $suffix = ''): array {
+function wp_codebox_bench_metric_unit(string $name): string {
+    if (str_ends_with($name, '_ms') || $name === 'duration') {
+        return 'ms';
+    }
+    if (str_ends_with($name, '_bytes')) {
+        return 'bytes';
+    }
+    if (str_ends_with($name, '_count')) {
+        return 'count';
+    }
+    return 'unitless';
+}
+
+function wp_codebox_bench_metric_summary(array $samples, string $unit): array {
     sort($samples, SORT_NUMERIC);
     $count = count($samples);
     $sum = array_sum($samples);
-    $key_prefix = $prefix === '' ? '' : $prefix . '_';
+    $mean = $count > 0 ? $sum / $count : 0.0;
+    $variance_sum = 0.0;
+    foreach ($samples as $sample) {
+        $delta = (float) $sample - $mean;
+        $variance_sum += $delta * $delta;
+    }
+    $standard_deviation = $count > 0 ? sqrt($variance_sum / $count) : 0.0;
 
     return array(
-        $key_prefix . 'mean' . $suffix => $count > 0 ? $sum / $count : 0.0,
-        $key_prefix . 'p50' . $suffix => wp_codebox_bench_percentile($samples, 0.50),
-        $key_prefix . 'p95' . $suffix => wp_codebox_bench_percentile($samples, 0.95),
-        $key_prefix . 'p99' . $suffix => wp_codebox_bench_percentile($samples, 0.99),
-        $key_prefix . 'min' . $suffix => $count > 0 ? (float) $samples[0] : 0.0,
-        $key_prefix . 'max' . $suffix => $count > 0 ? (float) $samples[$count - 1] : 0.0,
+        'unit' => $unit,
+        'samples' => array(
+            'count' => $count,
+            'mean' => $mean,
+            'p50' => wp_codebox_bench_percentile($samples, 0.50),
+            'p95' => wp_codebox_bench_percentile($samples, 0.95),
+            'p99' => wp_codebox_bench_percentile($samples, 0.99),
+            'min' => $count > 0 ? (float) $samples[0] : 0.0,
+            'max' => $count > 0 ? (float) $samples[$count - 1] : 0.0,
+            'standard_deviation' => $standard_deviation,
+            'relative_standard_deviation' => $mean !== 0.0 ? $standard_deviation / abs($mean) : 0.0,
+            'values' => array_values(array_map('floatval', $samples)),
+        ),
     );
 }
 
-function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null): void {
+function wp_codebox_bench_metrics(array $timings, array $metric_samples): array {
+    ksort($metric_samples);
+    $metrics = array('duration' => wp_codebox_bench_metric_summary($timings, 'ms'));
+    foreach ($metric_samples as $metric => $samples) {
+        $metrics[$metric] = wp_codebox_bench_metric_summary($samples, wp_codebox_bench_metric_unit($metric));
+    }
+    return $metrics;
+}
+
+function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?array &$metadata, ?array &$artifacts = null, ?array &$steps = null, ?array &$diagnostics = null): void {
     if (!is_array($payload)) {
         return;
     }
@@ -75,12 +114,20 @@ function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?arra
         $artifacts = $payload['artifacts'];
     }
 
+    if (isset($payload['steps']) && is_array($payload['steps'])) {
+        $steps = $payload['steps'];
+    }
+
+    if (isset($payload['diagnostics']) && is_array($payload['diagnostics'])) {
+        $diagnostics = $payload['diagnostics'];
+    }
+
     $metrics = array();
     if (isset($payload['metrics']) && is_array($payload['metrics'])) {
         $metrics = $payload['metrics'];
     } else {
         $metrics = $payload;
-        unset($metrics['metadata'], $metrics['artifacts']);
+        unset($metrics['metadata'], $metrics['artifacts'], $metrics['steps'], $metrics['diagnostics']);
     }
 
     foreach ($metrics as $name => $value) {
@@ -93,6 +140,53 @@ function wp_codebox_bench_record_payload($payload, array &$metric_samples, ?arra
             $metric_samples[$name][] = $sample;
         }
     }
+}
+
+function wp_codebox_bench_lifecycle_steps(array $lifecycle, string $phase): array {
+    $steps = isset($lifecycle[$phase]) && is_array($lifecycle[$phase]) ? $lifecycle[$phase] : array();
+    if (isset($steps['type']) || isset($steps['run']) || isset($steps['code']) || isset($steps['file'])) {
+        return array($steps);
+    }
+    return $steps;
+}
+
+function wp_codebox_bench_run_lifecycle_phase(array $lifecycle, string $phase, string $plugin_path, array &$diagnostics): void {
+    foreach (wp_codebox_bench_lifecycle_steps($lifecycle, $phase) as $index => $step) {
+        if (!is_array($step)) {
+            continue;
+        }
+        try {
+            wp_codebox_bench_run_configured_workload($step, $plugin_path);
+        } catch (Throwable $e) {
+            $diagnostics[] = array(
+                'schema' => 'wp-codebox/bench-lifecycle-diagnostic/v1',
+                'severity' => 'error',
+                'phase' => $phase,
+                'index' => $index,
+                'message' => $e->getMessage(),
+            );
+            throw new RuntimeException('wordpress.bench lifecycle ' . $phase . '[' . $index . '] failed: ' . $e->getMessage(), 0, $e);
+        }
+    }
+}
+
+function wp_codebox_bench_normalize_reset_mode($mode): string {
+    return in_array($mode, array('none', 'object-cache'), true) ? $mode : 'none';
+}
+
+function wp_codebox_bench_reset(array $policy, string $scope, array &$events): void {
+    $mode = wp_codebox_bench_normalize_reset_mode($policy[$scope] ?? 'none');
+    if ($mode === 'none') {
+        return;
+    }
+    if ($mode === 'object-cache') {
+        if (function_exists('wp_cache_flush_runtime')) {
+            wp_cache_flush_runtime();
+        } elseif (function_exists('wp_cache_flush')) {
+            wp_cache_flush();
+        }
+    }
+    $events[] = array('scope' => $scope, 'mode' => $mode);
 }
 
 function wp_codebox_bench_run_wp_cli_step(array $step) {
@@ -134,6 +228,85 @@ function wp_codebox_bench_run_wp_cli_step(array $step) {
         }
     }
     return $stdout;
+}
+
+function wp_codebox_bench_metric_prefix(array $step, string $fallback): string {
+    $prefix = isset($step['metric-prefix']) && is_string($step['metric-prefix']) ? $step['metric-prefix'] : $fallback;
+    $prefix = preg_replace('/[^A-Za-z0-9_]+/', '_', trim($prefix));
+    $prefix = trim((string) $prefix, '_');
+    return $prefix !== '' ? $prefix : $fallback;
+}
+
+function wp_codebox_bench_run_rest_request_step(array $step): array {
+    if (!class_exists('WP_REST_Request') || !function_exists('rest_do_request')) {
+        throw new RuntimeException('The WordPress REST API is not available in this runtime.');
+    }
+
+    $path = '';
+    if (isset($step['path']) && is_string($step['path'])) {
+        $path = trim($step['path']);
+    } elseif (isset($step['route']) && is_string($step['route'])) {
+        $path = trim($step['route']);
+    }
+    if ($path === '') {
+        throw new RuntimeException('rest-request bench workload steps require path or route.');
+    }
+
+    $method = isset($step['method']) && is_string($step['method']) ? strtoupper(trim($step['method'])) : 'GET';
+    $route = '/' . ltrim(preg_replace('#^/wp-json#', '', $path), '/');
+    $headers = isset($step['headers']) && is_array($step['headers']) ? $step['headers'] : array();
+    $params = isset($step['params']) && is_array($step['params']) ? $step['params'] : array();
+    $body = '';
+    if (array_key_exists('body-json', $step)) {
+        $body = is_string($step['body-json']) ? $step['body-json'] : wp_json_encode($step['body-json']);
+    } elseif (array_key_exists('body', $step)) {
+        $body = is_scalar($step['body']) ? (string) $step['body'] : wp_json_encode($step['body']);
+    }
+
+    $request = new WP_REST_Request($method, $route);
+    foreach ($headers as $name => $value) {
+        if (is_string($name)) {
+            $request->set_header($name, $value);
+        }
+    }
+    foreach ($params as $name => $value) {
+        if (is_string($name)) {
+            $request->set_param($name, $value);
+        }
+    }
+    if ($body !== '') {
+        $request->set_body($body);
+    }
+
+    $started = hrtime(true);
+    $response = rest_do_request($request);
+    $duration_ms = (hrtime(true) - $started) / 1000000;
+    if (is_wp_error($response)) {
+        throw new RuntimeException('REST bench workload step failed: ' . $response->get_error_message());
+    }
+
+    $status = method_exists($response, 'get_status') ? (int) $response->get_status() : 0;
+    $prefix = wp_codebox_bench_metric_prefix($step, 'rest');
+    $record = array(
+        'type' => 'rest-request',
+        'method' => $method,
+        'path' => $path,
+        'route' => $route,
+        'status' => $status,
+        'timing' => array('duration_ms' => $duration_ms),
+    );
+    if (!empty($step['capture-response'])) {
+        $record['response'] = rest_get_server()->response_to_data($response, false);
+    }
+
+    return array(
+        'metrics' => array(
+            $prefix . '_duration_ms' => $duration_ms,
+            $prefix . '_status' => $status,
+        ),
+        'steps' => array($record),
+        'diagnostics' => array(),
+    );
 }
 
 function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): array {
@@ -389,7 +562,7 @@ if (did_action('rest_api_init')) {
 
 function wp_codebox_bench_run_configured_workload(array $workload, string $plugin_path) {
     $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array($workload);
-    $payload = array('metrics' => array(), 'metadata' => array(), 'artifacts' => array());
+    $payload = array('metrics' => array(), 'metadata' => array(), 'artifacts' => array(), 'steps' => array(), 'diagnostics' => array());
     if (isset($workload['metadata']) && is_array($workload['metadata'])) {
         $payload['metadata'] = array_merge($payload['metadata'], $workload['metadata']);
     }
@@ -431,6 +604,8 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
             }
         } elseif ($type === 'wp-cli') {
             $result = wp_codebox_bench_run_wp_cli_step($step);
+        } elseif ($type === 'rest-request' || $type === 'rest') {
+            $result = wp_codebox_bench_run_rest_request_step($step);
         } else {
             throw new RuntimeException('Unsupported bench workload step type: ' . $type);
         }
@@ -444,6 +619,12 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
             if (isset($result['artifacts']) && is_array($result['artifacts'])) {
                 $payload['artifacts'] = array_merge($payload['artifacts'], $result['artifacts']);
             }
+            if (isset($result['steps']) && is_array($result['steps'])) {
+                $payload['steps'] = array_merge($payload['steps'], $result['steps']);
+            }
+            if (isset($result['diagnostics']) && is_array($result['diagnostics'])) {
+                $payload['diagnostics'] = array_merge($payload['diagnostics'], $result['diagnostics']);
+            }
         }
     }
     return $payload;
@@ -452,6 +633,13 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
 $bench_dir = $plugin_path . '/tests/bench';
 $workload_files = is_dir($bench_dir) ? glob($bench_dir . '/*.php') : array();
 sort($workload_files, SORT_STRING);
+
+$bench_lifecycle = is_array($bench_lifecycle) ? $bench_lifecycle : array();
+$bench_reset_policy = is_array($bench_reset_policy) ? $bench_reset_policy : array();
+$lifecycle_diagnostics = array();
+$reset_events = array();
+
+wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'setup', $plugin_path, $lifecycle_diagnostics);
 
 $scenarios = array();
 foreach ($workload_files as $workload_file) {
@@ -464,29 +652,29 @@ foreach ($workload_files as $workload_file) {
     $metric_samples = array();
     $metadata = null;
     $artifacts = null;
-    $artifacts = null;
+    $steps = null;
+    $diagnostics = null;
 
     if (function_exists('memory_reset_peak_usage')) {
         memory_reset_peak_usage();
     }
 
+    wp_codebox_bench_reset($bench_reset_policy, 'betweenScenarios', $reset_events);
+    wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'prepare', $plugin_path, $lifecycle_diagnostics);
+
     $total_iterations = $iterations + $warmup_iterations;
     for ($i = 0; $i < $total_iterations; $i++) {
         $is_warmup = $i < $warmup_iterations;
+        wp_codebox_bench_reset($bench_reset_policy, 'betweenIterations', $reset_events);
+        wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, $is_warmup ? 'warmup' : 'measure', $plugin_path, $lifecycle_diagnostics);
         $started = hrtime(true);
         $payload = $callable();
         $elapsed_ms = (hrtime(true) - $started) / 1000000;
 
         if (!$is_warmup) {
             $timings[] = $elapsed_ms;
-            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts);
+            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics);
         }
-    }
-
-    $metrics = wp_codebox_bench_aggregate($timings, '', '_ms');
-    ksort($metric_samples);
-    foreach ($metric_samples as $metric => $samples) {
-        $metrics += wp_codebox_bench_aggregate($samples, $metric);
     }
 
     $relative_file = substr($workload_file, strlen($plugin_path) + 1);
@@ -495,13 +683,26 @@ foreach ($workload_files as $workload_file) {
         'source' => 'in_tree',
         'file' => $relative_file,
         'iterations' => $iterations,
-        'metrics' => $metrics,
+        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
+        'diagnostics' => array(),
+        'provenance' => array('workload_file' => $relative_file),
     );
 
     if (is_array($metadata) && !empty($metadata)) {
         $scenario['metadata'] = $metadata;
     }
+    if (is_array($artifacts) && !empty($artifacts)) {
+        $scenario['artifacts'] = $artifacts;
+    }
+    if (is_array($steps) && !empty($steps)) {
+        $scenario['steps'] = $steps;
+    }
+    if (is_array($diagnostics) && !empty($diagnostics)) {
+        $scenario['diagnostics'] = $diagnostics;
+    }
+
+    wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'teardown', $plugin_path, $lifecycle_diagnostics);
 
     $scenarios[] = $scenario;
 }
@@ -514,28 +715,33 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     $timings = array();
     $metric_samples = array();
     $metadata = null;
+    $artifacts = null;
+    $steps = null;
+    $diagnostics = null;
+
+    wp_codebox_bench_reset($bench_reset_policy, 'betweenScenarios', $reset_events);
+    wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'prepare', $plugin_path, $lifecycle_diagnostics);
     $total_iterations = $iterations + $warmup_iterations;
     for ($i = 0; $i < $total_iterations; $i++) {
         $is_warmup = $i < $warmup_iterations;
+        wp_codebox_bench_reset($bench_reset_policy, 'betweenIterations', $reset_events);
+        wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, $is_warmup ? 'warmup' : 'measure', $plugin_path, $lifecycle_diagnostics);
         $started = hrtime(true);
         $payload = wp_codebox_bench_run_configured_workload($workload, $plugin_path);
         $elapsed_ms = (hrtime(true) - $started) / 1000000;
         if (!$is_warmup) {
             $timings[] = $elapsed_ms;
-            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts);
+            wp_codebox_bench_record_payload($payload, $metric_samples, $metadata, $artifacts, $steps, $diagnostics);
         }
-    }
-    $metrics = wp_codebox_bench_aggregate($timings, '', '_ms');
-    ksort($metric_samples);
-    foreach ($metric_samples as $metric => $samples) {
-        $metrics += wp_codebox_bench_aggregate($samples, $metric);
     }
     $scenario = array(
         'id' => $scenario_id,
         'source' => 'config',
         'iterations' => $iterations,
-        'metrics' => $metrics,
+        'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
+        'diagnostics' => array(),
+        'provenance' => array('workload_index' => $index),
     );
     if (is_array($metadata) && !empty($metadata)) {
         $scenario['metadata'] = $metadata;
@@ -543,13 +749,67 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     if (is_array($artifacts) && !empty($artifacts)) {
         $scenario['artifacts'] = $artifacts;
     }
+    if (is_array($steps) && !empty($steps)) {
+        $scenario['steps'] = $steps;
+    }
+    if (is_array($diagnostics) && !empty($diagnostics)) {
+        $scenario['diagnostics'] = $diagnostics;
+    }
+    wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'teardown', $plugin_path, $lifecycle_diagnostics);
     $scenarios[] = $scenario;
 }
 
 echo wp_json_encode(array(
+    'schema' => 'wp-codebox/bench-results/v1',
     'component_id' => $component_id,
     'iterations' => $iterations,
     'warmup_iterations' => $warmup_iterations,
+    'lifecycle' => array(
+        'phases' => array_values(array_filter(array('setup', 'prepare', 'warmup', 'measure', 'teardown'), static function (string $phase) use ($bench_lifecycle): bool {
+            return count(wp_codebox_bench_lifecycle_steps($bench_lifecycle, $phase)) > 0;
+        })),
+        'diagnostics' => $lifecycle_diagnostics,
+    ),
+    'reset_policy' => array(
+        'betweenIterations' => wp_codebox_bench_normalize_reset_mode($bench_reset_policy['betweenIterations'] ?? 'none'),
+        'betweenScenarios' => wp_codebox_bench_normalize_reset_mode($bench_reset_policy['betweenScenarios'] ?? 'none'),
+        'events' => $reset_events,
+    ),
     'scenarios' => $scenarios,
+    'diagnostics' => empty($scenarios) ? array(array(
+        'severity' => 'warning',
+        'code' => 'no-benchmark-scenarios',
+        'message' => 'wordpress.bench completed without runnable scenarios.',
+    )) : array(),
+    'provenance' => array(
+        'command' => 'wordpress.bench',
+        'generated_at' => gmdate('c'),
+        'component' => array(
+            'id' => $component_id,
+            'plugin_slug' => $plugin_slug,
+            'dependency_slugs' => array_values($dependency_slugs),
+            'bootstrap_files' => array_values($bootstrap_files),
+        ),
+        'runtime' => array(
+            'wordpress_version' => get_bloginfo('version'),
+            'php_version' => PHP_VERSION,
+        ),
+        'definition' => array(
+            'schema' => 'wp-codebox/benchmark-definition/v1',
+            'component_id' => $component_id,
+            'plugin_slug' => $plugin_slug,
+            'iterations' => $iterations,
+            'warmup_iterations' => $warmup_iterations,
+            'dependency_slugs' => array_values($dependency_slugs),
+            'env' => $bench_env,
+            'bootstrap_files' => array_values($bootstrap_files),
+            'workloads' => is_array($configured_workloads) ? $configured_workloads : array(),
+        ),
+    ),
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+function phpJsonDecodeExpression(value: unknown): string {
+  const encoded = Buffer.from(JSON.stringify(value), "utf8").toString("base64")
+  return `json_decode(base64_decode(${JSON.stringify(encoded)}), true)`
 }

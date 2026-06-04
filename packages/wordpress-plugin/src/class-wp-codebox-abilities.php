@@ -245,6 +245,7 @@ final class WP_Codebox_Abilities {
 						'properties' => array(
 							'success'   => array( 'type' => 'boolean' ),
 							'schema'    => array( 'type' => 'string' ),
+							'status'    => array( 'type' => 'string' ),
 							'session'   => $session_schema,
 							'task'      => array( 'type' => 'string' ),
 							'task_input' => $task_input_schema,
@@ -253,6 +254,9 @@ final class WP_Codebox_Abilities {
 							'artifacts' => array( 'type' => 'string' ),
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
+							'diagnostics' => array( 'type' => 'object' ),
+							'evidence_refs' => array( 'type' => 'object' ),
+							'run_metadata' => array( 'type' => 'object' ),
 							'completion_outcome' => $completion_outcome_schema,
 							'run'       => array( 'type' => 'object' ),
 						),

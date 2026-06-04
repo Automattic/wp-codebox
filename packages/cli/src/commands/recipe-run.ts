@@ -1,8 +1,9 @@
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
+import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
@@ -117,33 +118,6 @@ interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
   action: "staged"
 }
 
-interface BenchResults {
-  component_id: string
-  iterations: number
-  warmup_iterations?: number
-  scenarios: BenchScenario[]
-}
-
-interface BenchScenario extends Record<string, unknown> {
-  id?: string
-  source?: string
-  metrics?: Record<string, unknown>
-  artifacts?: Record<string, unknown>
-  artifactRefs?: BenchmarkArtifactRef[]
-  samples?: Array<Record<string, unknown>>
-}
-
-interface BenchmarkArtifactRef {
-  path: string
-  kind: string
-  contentType?: string
-  sha256?: { algorithm: "sha256"; value: string }
-  source: "scenario-artifact" | "metric-source" | "browser-artifact" | "sample-artifact"
-  name?: string
-  metric?: string
-  sampleIndex?: number
-}
-
 interface BenchmarkArtifactOutput {
   schema: "wp-codebox/benchmark-artifacts/v1"
   artifactBundle: {
@@ -159,6 +133,14 @@ interface BenchmarkArtifactOutput {
     artifactRefs: BenchmarkArtifactRef[]
   }>
 }
+
+type BenchScenarioWithArtifactRefs = BenchResults["scenarios"][number] & {
+  artifactRefs?: BenchmarkArtifactRef[]
+  samples?: Array<{ artifacts?: unknown }>
+}
+
+const benchResultsAjv = new Ajv2020({ strict: false })
+const validateBenchResultsSchema = benchResultsAjv.compile(createBenchResultsJsonSchema())
 
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
@@ -481,6 +463,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
+      assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
     }
     const runtimeCreateSpec = {
       backend: recipe.runtime?.backend ?? "wordpress-playground",
@@ -770,6 +753,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   }
 }
 
+function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {
+  const assets = recipe.runtime?.assets
+  if (!assets?.wordpressZip) {
+    return undefined
+  }
+
+  return {
+    ...assets,
+    wordpressZip: isUrl(assets.wordpressZip) ? assets.wordpressZip : resolve(recipeDirectory, assets.wordpressZip),
+  }
+}
+
+function isUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value)
+}
+
 interface RunResourceCleanupEvidence {
   durationMs: number
   state: "completed" | "failed"
@@ -969,31 +968,32 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
 }
 
 function parseBenchResults(raw: string, manifestFiles: Map<string, ArtifactManifestFile>): BenchResults {
-  const parsed = JSON.parse(raw) as BenchResults
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
-    throw new Error("Bench command did not emit a BenchResults envelope")
+  const parsed = JSON.parse(raw) as unknown
+  if (!validateBenchResultsSchema(parsed)) {
+    throw new Error(`Bench command did not emit a wp-codebox/bench-results/v1 envelope: ${benchResultsAjv.errorsText(validateBenchResultsSchema.errors)}`)
   }
 
+  const results = parsed as BenchResults
   return {
-    ...parsed,
-    scenarios: parsed.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
+    ...results,
+    scenarios: results.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
   }
 }
 
-function enrichBenchScenarioArtifactRefs(scenario: BenchScenario, manifestFiles: Map<string, ArtifactManifestFile>): BenchScenario {
+function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][number], manifestFiles: Map<string, ArtifactManifestFile>): BenchScenarioWithArtifactRefs {
   const artifactRefs = [
     ...scenarioArtifactRefs(scenario.artifacts, manifestFiles, "scenario-artifact"),
-    ...sampleArtifactRefs(scenario.samples, manifestFiles),
+    ...sampleArtifactRefs((scenario as BenchScenarioWithArtifactRefs).samples, manifestFiles),
     ...metricArtifactRefs(scenario.metrics, manifestFiles),
     ...browserArtifactRefs(scenario.metrics, manifestFiles),
   ]
-  const existingRefs = Array.isArray(scenario.artifactRefs) ? scenario.artifactRefs : []
+  const existingRefs = Array.isArray((scenario as BenchScenarioWithArtifactRefs).artifactRefs) ? (scenario as BenchScenarioWithArtifactRefs).artifactRefs ?? [] : []
   const dedupedRefs = dedupeBenchmarkArtifactRefs([...existingRefs, ...artifactRefs])
 
   return stripUndefined({
     ...scenario,
     ...(dedupedRefs.length > 0 ? { artifactRefs: dedupedRefs } : {}),
-  }) as BenchScenario
+  }) as BenchScenarioWithArtifactRefs
 }
 
 async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<void> {
@@ -1001,7 +1001,7 @@ async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, benchRe
     componentId: result.component_id,
     scenarioId: String(scenario.id ?? ""),
     source: typeof scenario.source === "string" ? scenario.source : undefined,
-    artifactRefs: scenario.artifactRefs ?? [],
+    artifactRefs: (scenario as BenchScenarioWithArtifactRefs).artifactRefs ?? [],
   }))).filter((scenario) => scenario.scenarioId.length > 0 || scenario.artifactRefs.length > 0)
   const output: BenchmarkArtifactOutput = {
     schema: "wp-codebox/benchmark-artifacts/v1",
@@ -1038,7 +1038,7 @@ function scenarioArtifactRefs(input: unknown, manifestFiles: Map<string, Artifac
   return Object.entries(input).flatMap(([name, value]) => artifactValueRefs(name, value, manifestFiles, source, sampleIndex))
 }
 
-function sampleArtifactRefs(samples: BenchScenario["samples"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+function sampleArtifactRefs(samples: BenchScenarioWithArtifactRefs["samples"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
   if (!Array.isArray(samples)) {
     return []
   }
@@ -1067,7 +1067,7 @@ function artifactValueRefs(name: string, value: unknown, manifestFiles: Map<stri
   return Object.entries(record).flatMap(([childName, childValue]) => artifactValueRefs(`${name}.${childName}`, childValue, manifestFiles, source, sampleIndex))
 }
 
-function metricArtifactRefs(metrics: BenchScenario["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+function metricArtifactRefs(metrics: BenchResults["scenarios"][number]["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
   if (!metrics || typeof metrics !== "object") {
     return []
   }
@@ -1075,7 +1075,7 @@ function metricArtifactRefs(metrics: BenchScenario["metrics"], manifestFiles: Ma
   return Object.keys(metrics).sort().map((metric) => benchmarkArtifactRef("files/bench-results.json", { source: "metric-source", metric, kind: "benchmark-results", contentType: "application/json" }, manifestFiles))
 }
 
-function browserArtifactRefs(metrics: BenchScenario["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
+function browserArtifactRefs(metrics: BenchResults["scenarios"][number]["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
   if (!metrics || !Object.keys(metrics).some((metric) => metric.startsWith("browser_"))) {
     return []
   }
@@ -1091,7 +1091,7 @@ function benchmarkArtifactRef(path: string, options: Omit<Partial<BenchmarkArtif
     path,
     kind: options.kind ?? manifestFile?.kind ?? "artifact",
     contentType: options.contentType ?? manifestFile?.contentType,
-    sha256: manifestFile?.sha256,
+    sha256: manifestFile?.sha256.value,
     source: options.source,
     name: options.name,
     metric: options.metric,
