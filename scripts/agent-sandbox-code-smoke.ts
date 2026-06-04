@@ -3,6 +3,20 @@ import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.ts"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.ts"
 
 async function main() {
+  const explicitInlineCode = await resolveSandboxTaskCode({
+    task: "Run explicit code",
+    agent: "sandbox-agent",
+    code: "echo 'explicit';",
+  })
+  assert.equal(explicitInlineCode, "echo 'explicit';", "explicit sandbox code should take precedence over generated agent chat code")
+
+  const explicitFileCode = await resolveSandboxTaskCode({
+    task: "Run explicit code file",
+    agent: "sandbox-agent",
+    codeFile: "scripts/agent-sandbox-code-smoke.ts",
+  })
+  assert.match(explicitFileCode, /resolveSandboxTaskCode/, "explicit sandbox code files should take precedence over generated agent chat code")
+
   const sandboxWorkspace = {
     schema: "wp-codebox/sandbox-workspace/v1" as const,
     root: "/workspace",

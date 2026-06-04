@@ -30,16 +30,16 @@ export interface AgentSandboxCodeOptions {
 }
 
 export async function resolveSandboxTaskCode(options: AgentSandboxCodeOptions): Promise<string> {
-  if (options.agent) {
-    return agentChatTaskCode(options)
-  }
-
   if (options.code) {
     return options.code
   }
 
   if (options.codeFile) {
     return readFile(resolve(options.codeFile), "utf8")
+  }
+
+  if (options.agent) {
+    return agentChatTaskCode(options)
   }
 
   return `echo json_encode(array('task_received' => true), JSON_PRETTY_PRINT);`
