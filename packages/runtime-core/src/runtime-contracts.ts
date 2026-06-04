@@ -19,6 +19,11 @@ export interface EnvironmentSpec {
   name?: string
   blueprint?: unknown
   version?: string
+  assets?: RuntimeAssetSpec
+}
+
+export interface RuntimeAssetSpec {
+  wordpressZip?: string
 }
 
 export interface RuntimeCreateSpec {
@@ -216,6 +221,7 @@ export interface WorkspaceRecipe {
     name?: string
     wp?: string
     blueprint?: unknown
+    assets?: RuntimeAssetSpec
     stack?: WorkspaceRecipeRuntimeStack
     overlays?: WorkspaceRecipeRuntimeOverlay[]
   }

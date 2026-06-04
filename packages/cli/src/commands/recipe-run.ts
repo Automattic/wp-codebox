@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type BenchResults, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -442,6 +442,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
+      assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
     }
     const runtimeCreateSpec = {
       backend: recipe.runtime?.backend ?? "wordpress-playground",
@@ -725,6 +726,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       error: serializedError,
     }
   }
+}
+
+function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {
+  const assets = recipe.runtime?.assets
+  if (!assets?.wordpressZip) {
+    return undefined
+  }
+
+  return {
+    ...assets,
+    wordpressZip: isUrl(assets.wordpressZip) ? assets.wordpressZip : resolve(recipeDirectory, assets.wordpressZip),
+  }
+}
+
+function isUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value)
 }
 
 interface RunResourceCleanupEvidence {
