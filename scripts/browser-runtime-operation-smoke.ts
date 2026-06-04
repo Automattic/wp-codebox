@@ -332,6 +332,44 @@ assert.deepEqual(extractBrowserOperation(recipeClient.files[0]?.contents ?? ""),
 assert.match(recipeClient.files[1]?.contents ?? "", /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
 assert.match(recipeClient.files[1]?.contents ?? "", /<\?php\ndefine\( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true \);/)
 
+const cloneSafeRecipeClient = createClient("unused", true)
+cloneSafeRecipeClient.runResponse = '{"success":true,"schema":"wp-codebox/browser-agent-run/v1","data":{"runner":"direct-fallback"}}'
+let providerProxyInstalled = false
+;(cloneSafeRecipeClient as typeof cloneSafeRecipeClient & { onMessage: (callback: (data: unknown) => unknown) => Promise<() => void> }).onMessage = async () => {
+  providerProxyInstalled = true
+  return () => {
+    providerProxyInstalled = false
+  }
+}
+cloneSafeRecipeClient.request = async function request(request: { method: string; url: string }) {
+  this.requests.push(request)
+  if (providerProxyInstalled) {
+    const error = new Error("Failed to execute 'postMessage' on 'Worker': function(){} could not be cloned.") as Error & { code?: number }
+    error.code = 25
+    throw error
+  }
+  return "unused"
+}
+const cloneSafeRecipeResult = await runtime.runRecipe(cloneSafeRecipeClient, {
+  browser: { task_path: "/tmp/wp-codebox-agent-task.json" },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=<?php echo wp_json_encode( array( 'success' => true, 'data' => array( 'runner' => 'direct-fallback' ) ) );"],
+      },
+    ],
+  },
+}, { goal: "Smoke test clone-safe browser execution." })
+assert.deepEqual(sameRealm(cloneSafeRecipeResult), {
+  success: true,
+  schema: "wp-codebox/browser-agent-run/v1",
+  data: { runner: "direct-fallback" },
+})
+assert.equal(cloneSafeRecipeClient.requests.length, 2)
+assert.equal(cloneSafeRecipeClient.runs.length, 2)
+assert.equal(providerProxyInstalled, false)
+
 const sessionClient = createClient("prefix {\"success\":true,\"data\":{\"summary\":\"session runner\"},\"error\":null} suffix")
 const sessionOutput = {
   schema: "wp-codebox/browser-playground-session/v1",
