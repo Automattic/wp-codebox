@@ -9,9 +9,12 @@ interface CliCommandRouter {
   recipeValidate: CliCommandHandler
   recipeBuild: CliCommandHandler
   recipeRun: CliCommandHandler
+  agentTaskRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
+  artifactsBenchResults: CliCommandHandler
+  benchSummarize: CliCommandHandler
   runsStatus: CliCommandHandler
   runsArtifacts: CliCommandHandler
   commands: CliCommandHandler
@@ -42,6 +45,8 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       return router.validateBlueprint(args)
     case "recipe-run":
       return router.recipeRun(args)
+    case "agent-task-run":
+      return router.agentTaskRun(args)
     case "recipe": {
       const subcommand = args.shift()
       if (subcommand === "validate") {
@@ -73,7 +78,19 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
       }
+      if (subcommand === "bench-results") {
+        return router.artifactsBenchResults(args)
+      }
       console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
+      router.printHelp()
+      return 1
+    }
+    case "bench": {
+      const subcommand = args.shift()
+      if (subcommand === "summarize") {
+        return router.benchSummarize(args)
+      }
+      console.error(`Unknown bench command: ${subcommand ?? ""}`)
       router.printHelp()
       return 1
     }
@@ -114,7 +131,7 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
 }
 
 async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
-  if (!command || !["boot", "run", "recipe-run"].includes(command)) {
+  if (!command || !["boot", "run", "recipe-run", "agent-task-run"].includes(command)) {
     return undefined
   }
 

@@ -939,6 +939,24 @@ npm run wp-codebox -- recipe-run \
 
 Each workload file returns a callable. The callable may return numeric metrics directly or a payload with `metrics` and `metadata` keys. The recipe output reports duration percentiles, custom metric aggregates, peak memory, runtime artifacts, and the parsed `benchResults` object in JSON output when a single `wordpress.bench` step runs. If earlier `wordpress.browser-probe` steps in the same recipe captured generic `performance` or `memory` artifacts, `wordpress.bench` promotes selected numeric browser values into each scenario's metrics using `browser_*` names, while the raw browser artifacts remain available under `files/browser/`.
 
+Use `bench summarize` to extract a stable automation envelope from saved `recipe-run --json` output:
+
+```bash
+npm run wp-codebox -- bench summarize \
+  --input ./artifacts/bench-plugin/recipe-run.json \
+  --json
+```
+
+Use `artifacts bench-results` to extract benchmark results from an artifact bundle command log:
+
+```bash
+npm run wp-codebox -- artifacts bench-results \
+  --bundle ./artifacts/bench-plugin \
+  --json
+```
+
+See [`docs/benchmark-contract.md`](docs/benchmark-contract.md) for the generic benchmark contract, result shape, artifact/provenance expectations, and the boundary between WP Codebox responsibilities and caller-owned scoring or product semantics.
+
 ### `agent-runtime-probe`
 
 Boot a sandbox with Agents API, Data Machine, and Data Machine Code mounted, then verify the stack loads.
@@ -1173,6 +1191,54 @@ Expected component keys:
 The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter.
 
 Data Machine Code is a mounted coding-tools component inside the sandbox. It provides workspace/file/GitHub tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
+
+Parent orchestrators that already own task state can call the same API instead of generating a low-level WP Codebox recipe. The stable CLI entry point is:
+
+```bash
+wp-codebox agent-task-run --input-file=/path/to/request.json --json
+```
+
+For Homeboy executor integration, `request.json` may use this shape:
+
+```json
+{
+  "schema": "wp-codebox/task-input/v1",
+  "goal": "Fix the failing audit finding and return a reviewable artifact.",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
+  "secret_env": ["OPENAI_API_KEY"],
+  "mounts": [
+    {
+      "source": "/srv/worktrees/plugin",
+      "target": "/workspace/plugin",
+      "mode": "readwrite",
+      "metadata": { "kind": "component", "slug": "plugin" }
+    }
+  ],
+  "runtime_stack_mounts": [
+    { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
+  ],
+  "runtime_overlays": [
+    { "id": "data-machine-code", "source": "/srv/runtime/data-machine-code" }
+  ],
+  "task_timeout_seconds": 3600,
+  "max_turns": 8,
+  "sandbox_session_id": "homeboy-sandbox-session-123",
+  "artifacts_path": "/srv/artifacts/homeboy/agent-task-123",
+  "expected_artifacts": ["patch"],
+  "policy": { "kind": "audit-remediation" },
+  "context": { "issue": "https://github.com/org/repo/issues/123" },
+  "orchestrator": {
+    "type": "homeboy",
+    "id": "homeboy-agent-task",
+    "job_id": "homeboy-job-123",
+    "agent_task_id": "agent-task-123"
+  }
+}
+```
+
+WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 

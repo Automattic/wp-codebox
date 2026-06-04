@@ -48,6 +48,7 @@ export interface BenchmarkScenarioRecord {
     peak_bytes?: number
   }
   diagnostics: BenchmarkDiagnostic[]
+  steps?: Array<Record<string, unknown>>
   artifacts?: Record<string, BenchmarkArtifactRef>
   metadata?: Record<string, unknown>
   provenance?: Record<string, unknown>
@@ -88,6 +89,7 @@ export interface BenchmarkDefinitionWorkloadStep {
   command?: string
   parse?: "json" | (string & {})
   metadata?: Record<string, unknown>
+  [key: string]: unknown
 }
 
 export interface BenchmarkDefinitionWorkload {
@@ -224,6 +226,7 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
           properties: { peak_bytes: { type: "integer", minimum: 0 } },
         },
         diagnostics: { type: "array", items: { $ref: "#/$defs/diagnostic" } },
+        steps: { type: "array", items: { type: "object", additionalProperties: true } },
         artifacts: { $ref: "#/$defs/artifactMap" },
         metadata: { type: "object", additionalProperties: true },
         provenance: { type: "object", additionalProperties: true },
@@ -274,7 +277,7 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
     },
     workloadStep: {
       type: "object",
-      additionalProperties: false,
+      additionalProperties: true,
       required: ["type"],
       properties: {
         type: { type: "string", minLength: 1 },
