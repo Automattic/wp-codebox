@@ -193,20 +193,20 @@ private static function normalize_browser_bootstrap( array $operations ): array|
 private static function browser_playground( array $input ): array|WP_Error {
 	$playground = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
 	$client     = self::browser_trusted_url(
-		(string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
+		(string) ( $playground['client_module_url'] ?? 'https://playground.wordpress.net/client/index.js' ),
 		'client_module_url',
 		'wp_codebox_browser_playground_allowed_origins',
-		array( 'https://playground.automattic.ai' )
+		array( 'https://playground.wordpress.net', 'https://playground.automattic.ai' )
 	);
 	if ( is_wp_error( $client ) ) {
 		return $client;
 	}
 
 	$remote = self::browser_trusted_url(
-		(string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+		(string) ( $playground['remote_url'] ?? 'https://playground.wordpress.net/remote.html' ),
 		'remote_url',
 		'wp_codebox_browser_playground_allowed_origins',
-		array( 'https://playground.automattic.ai' )
+		array( 'https://playground.wordpress.net', 'https://playground.automattic.ai' )
 	);
 	if ( is_wp_error( $remote ) ) {
 		return $remote;
