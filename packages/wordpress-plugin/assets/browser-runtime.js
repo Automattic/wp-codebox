@@ -177,6 +177,32 @@
 		);
 	};
 
+	const isPlaygroundStructuredCloneError = ( error ) => {
+		const message = String( error?.message || '' );
+		if ( error?.code === 25 || message.includes( 'could not be cloned' ) || message.includes( 'DataCloneError' ) ) {
+			return true;
+		}
+
+		const details = error?.data;
+		if ( details?.last_error && isPlaygroundStructuredCloneError( details.last_error ) ) {
+			return true;
+		}
+
+		return Array.isArray( details?.attempts ) && details.attempts.some( ( attempt ) => isPlaygroundStructuredCloneError( attempt?.error ) );
+	};
+
+	const runPhpDirect = async ( client, code, options = {} ) => {
+		if ( typeof client?.run !== 'function' ) {
+			throw runtimeError( 'run_php', 'playground_run_unavailable', 'Playground run is unavailable.' );
+		}
+
+		const response = await invokePlaygroundMethod( 'run_php', 'run', [
+			() => client.run( { code } ),
+			() => client.run( code ),
+		] );
+		return options.expectJson ? await parseJsonResponse( response ) : response;
+	};
+
 	const redactBrowserProviderProxyData = ( value ) => {
 		if ( ! value || typeof value !== 'object' ) {
 			return value;
@@ -789,11 +815,7 @@ try {
 		}
 
 		if ( ! options.forceRequest && typeof client.run === 'function' ) {
-			const response = await invokePlaygroundMethod( 'run_php', 'run', [
-				() => client.run( { code } ),
-				() => client.run( code ),
-			] );
-			return options.expectJson ? await parseJsonResponse( response ) : response;
+			return await runPhpDirect( client, code, options );
 		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );
@@ -808,7 +830,16 @@ try {
 			method: 'GET',
 			url: requestUrl,
 		};
-		const response = await playgroundRequest( client, request );
+		let response;
+		try {
+			response = await playgroundRequest( client, request );
+		} catch ( error ) {
+			if ( options.forceRequest && typeof client.run === 'function' && isPlaygroundStructuredCloneError( error ) ) {
+				return await runPhpDirect( client, code, options );
+			}
+
+			throw error;
+		}
 
 		return options.expectJson ? await parseJsonResponse( response ) : response;
 	};
