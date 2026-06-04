@@ -11,7 +11,7 @@ import { basename, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 
-interface PlaygroundCliModule {
+export interface PlaygroundCliModule {
   runCLI(options: {
     command: "server"
     port: number
@@ -29,6 +29,7 @@ const PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV = "WP_CODEBOX_PLAYGROUND_WORDPRES
 
 export interface PlaygroundCliStartupOptions {
   onProgress?: (event: BrowserStartupProgressEvent) => void | Promise<void>
+  cliModule?: PlaygroundCliModule
 }
 
 export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: MountSpec[], options: PlaygroundCliStartupOptions = {}): Promise<PlaygroundCliServer> {
@@ -51,7 +52,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   })
   emitProgress("preview:loading-client", "running", "Loading preview")
   try {
-    const { runCLI } = (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
+    const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
     if (spec.preview?.port) {
       await assertPreviewPortAvailable(spec.preview.port)
     }

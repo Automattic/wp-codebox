@@ -95,6 +95,14 @@ export interface WorkspaceRecipeRuntimeOverlay {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeRuntimeBackendPackage {
+  kind: "playground"
+  source: string
+  package?: string
+  entrypoint?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeStagedFile {
   source: string
   target: string
@@ -222,6 +230,7 @@ export interface WorkspaceRecipe {
     wp?: string
     blueprint?: unknown
     assets?: RuntimeAssetSpec
+    backendPackage?: WorkspaceRecipeRuntimeBackendPackage
     stack?: WorkspaceRecipeRuntimeStack
     overlays?: WorkspaceRecipeRuntimeOverlay[]
   }
@@ -463,6 +472,7 @@ export interface ArtifactProvenance {
     backend: RuntimeBackendKind
     version?: string
     wordpressVersion?: string
+    backendPackage?: Record<string, unknown>
   }
   agent?: Record<string, unknown>
   mounts: Array<{

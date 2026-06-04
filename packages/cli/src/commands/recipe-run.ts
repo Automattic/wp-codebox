@@ -9,6 +9,7 @@ import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, 
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
+import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
@@ -115,7 +116,7 @@ interface RecipePhaseEvidence {
 interface RecipePluginRuntimeDiagnostic {
   schema: "wp-codebox/plugin-runtime-diagnostic/v1"
   severity: "error"
-  phase: "setup" | "health-probe" | "runtime" | "overlay-preparation"
+  phase: "setup" | "health-probe" | "runtime" | "overlay-preparation" | "backend-preparation"
   name?: string
   command?: string
   exitCode?: number
@@ -555,6 +556,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let extraPlugins: PreparedExtraPlugin[] = []
   let stagedFiles: PreparedStagedFile[] = []
   let overlays: PreparedRuntimeOverlay[] = []
+  let backendPackage: PreparedRuntimeBackendPackage | undefined
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
@@ -571,6 +573,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
     overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
+    backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory)
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
@@ -590,7 +593,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
-        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, options.previewPublicUrl, options.previewPort, options.previewBind),
+        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, backendPackage, options.previewPublicUrl, options.previewPort, options.previewBind),
       },
       preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
     }
@@ -599,10 +602,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime = await phaseTracker.run("runtime_startup", {
         operation: "runtime.create",
         backend: runtimeCreateSpec.backend,
+        ...(backendPackage ? { backendPackage: backendPackage.provenance } : {}),
         runtime: runtimeEnvironment,
       }, async () => await awaitRecipe("runtime.create", createRuntime(
         runtimeCreateSpec,
-        createPlaygroundRuntimeBackend(),
+        createPlaygroundRuntimeBackend({ cliModule: backendPackage?.cliModule }),
       )))
       startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {
@@ -632,6 +636,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           mode: overlay.mode,
           metadata: overlay.metadata,
         })),
+        ...(backendPackage ? { backendPackage: backendPackage.provenance } : {}),
       }, error)
     }
     if (!runtime) {
@@ -1549,11 +1554,11 @@ function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExe
     })
   }
 
-  if ((recipe.inputs?.pluginRuntime || recipe.runtime?.overlays || message.includes("plugin runtime") || message.includes("runtime overlay")) && diagnostics.length === 0) {
+  if ((recipe.inputs?.pluginRuntime || recipe.runtime?.overlays || recipe.runtime?.backendPackage || message.includes("plugin runtime") || message.includes("runtime overlay") || message.includes("backend package")) && diagnostics.length === 0) {
     diagnostics.push({
       schema: "wp-codebox/plugin-runtime-diagnostic/v1",
       severity: "error",
-      phase: message.includes("runtime overlay") ? "overlay-preparation" : message.includes("health probe") ? "health-probe" : message.includes("setup") ? "setup" : "runtime",
+      phase: message.includes("backend package") ? "backend-preparation" : message.includes("runtime overlay") ? "overlay-preparation" : message.includes("health probe") ? "health-probe" : message.includes("setup") ? "setup" : "runtime",
       message,
     })
   }
@@ -1621,7 +1626,7 @@ function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]):
   return { command: step.command, args: step.args ?? [] }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -1696,6 +1701,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       mode: overlay.mode,
       metadata: overlay.metadata,
     })),
+    ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
   }
 }
 

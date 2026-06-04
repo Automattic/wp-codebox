@@ -35,6 +35,13 @@ export interface RecipeDryRunOutput {
 export interface RecipeDryRunPlan {
   runtime: {
     backend: string
+    backendPackage?: {
+      kind: "playground"
+      source: string
+      package?: string
+      entrypoint?: string
+      metadata?: Record<string, unknown>
+    }
     name: string
     wp: string
     blueprint: unknown
@@ -286,6 +293,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   return {
     runtime: {
       backend: recipe.runtime?.backend ?? "wordpress-playground",
+      ...(recipe.runtime?.backendPackage ? { backendPackage: recipe.runtime.backendPackage } : {}),
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),

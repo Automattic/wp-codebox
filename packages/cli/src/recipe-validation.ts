@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -49,6 +49,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   }
 
   validateRecipeMounts(recipe.runtime?.stack?.mounts, "runtime stack", recipePath)
+  validateRecipeRuntimeBackendPackage(recipe.runtime?.backendPackage, recipePath)
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
@@ -176,6 +177,31 @@ function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recip
   }
 }
 
+function validateRecipeRuntimeBackendPackage(backendPackage: WorkspaceRecipeRuntimeBackendPackage | undefined, recipePath: string): void {
+  if (backendPackage === undefined) {
+    return
+  }
+
+  if (!backendPackage || typeof backendPackage !== "object" || Array.isArray(backendPackage)) {
+    throw new Error(`Recipe runtime backendPackage must be an object: ${recipePath}`)
+  }
+  if (backendPackage.kind !== "playground") {
+    throw new Error(`Recipe runtime backendPackage kind is unsupported: ${recipePath}`)
+  }
+  if (!backendPackage.source || typeof backendPackage.source !== "string") {
+    throw new Error(`Recipe runtime backendPackage must include source: ${recipePath}`)
+  }
+  if (backendPackage.package !== undefined && typeof backendPackage.package !== "string") {
+    throw new Error(`Recipe runtime backendPackage package must be a string when provided: ${recipePath}`)
+  }
+  if (backendPackage.entrypoint !== undefined && typeof backendPackage.entrypoint !== "string") {
+    throw new Error(`Recipe runtime backendPackage entrypoint must be a string when provided: ${recipePath}`)
+  }
+  if (backendPackage.metadata !== undefined && (!backendPackage.metadata || typeof backendPackage.metadata !== "object" || Array.isArray(backendPackage.metadata))) {
+    throw new Error(`Recipe runtime backendPackage metadata must be an object when provided: ${recipePath}`)
+  }
+}
+
 function validateRecipeMounts(mounts: WorkspaceRecipeMount[] | undefined, label: string, recipePath: string): void {
   if (mounts && !Array.isArray(mounts)) {
     throw new Error(`Recipe ${label} mounts must be an array: ${recipePath}`)
@@ -236,6 +262,13 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
 
   if (recipe.runtime?.backend && recipe.runtime.backend !== "wordpress-playground") {
     addIssue("unsupported-backend", "$.runtime.backend", `Unsupported recipe backend: ${recipe.runtime.backend}`)
+  }
+
+  if (recipe.runtime?.backendPackage) {
+    if ((recipe.runtime.backend ?? "wordpress-playground") !== "wordpress-playground") {
+      addIssue("unsupported-backend-package", "$.runtime.backendPackage", "Runtime backendPackage is only supported for the wordpress-playground backend")
+    }
+    await validateExistingBackendPackageSource(resolve(recipeDirectory, recipe.runtime.backendPackage.source), "$.runtime.backendPackage.source", addIssue)
   }
 
   for (const { phase, index, step } of recipeWorkflowSteps(recipe)) {
@@ -762,6 +795,19 @@ async function validateExistingDirectory(path: string, issuePath: string, addIss
   } catch {
     addIssue("missing-path", issuePath, `Directory does not exist: ${path}`)
   }
+}
+
+async function validateExistingBackendPackageSource(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  try {
+    const result = await stat(path)
+    if (result.isDirectory() || result.isFile()) {
+      return
+    }
+  } catch {
+    // Report below.
+  }
+
+  addIssue("missing-backend-package-source", issuePath, `Runtime backend package source must be an existing file or directory: ${path}`)
 }
 
 async function validateExistingFile(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {

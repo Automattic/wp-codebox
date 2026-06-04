@@ -27,6 +27,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           wp: { type: "string" },
           blueprint: { type: "object" },
           assets: { $ref: "#/$defs/runtimeAssets" },
+          backendPackage: { $ref: "#/$defs/runtimeBackendPackage" },
           stack: { $ref: "#/$defs/runtimeStack" },
           overlays: {
             type: "array",
@@ -175,6 +176,19 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/mount" },
           },
+        },
+      },
+      runtimeBackendPackage: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "source"],
+        description: "Optional local Playground backend package or entrypoint used to boot the runtime. This selects the backend package itself and is separate from /wordpress filesystem overlays.",
+        properties: {
+          kind: { const: "playground" },
+          source: { type: "string" },
+          package: { type: "string" },
+          entrypoint: { type: "string" },
+          metadata: { $ref: "#/$defs/metadata" },
         },
       },
       runtimeOverlay: {
