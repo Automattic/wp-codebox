@@ -605,6 +605,7 @@ export function buildArtifactProvenance({
       backend: runtime.backend,
       version: provenanceString(provenanceContext(context, "runtime"), "version"),
       wordpressVersion: runtime.environment.version,
+      backendPackage: provenanceContext(context, "preparedRuntimeBackend"),
     }),
     agent: provenanceContext(context, "agent"),
     mounts: mounts.map((mount) => stripUndefined({

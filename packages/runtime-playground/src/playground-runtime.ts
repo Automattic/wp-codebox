@@ -10,7 +10,7 @@ import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } fro
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
-import { startPlaygroundCliServer } from "./playground-cli-runner.js"
+import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
@@ -60,6 +60,7 @@ export class PlaygroundRuntimeBackend implements RuntimeBackend {
 
 export interface PlaygroundRuntimeBackendOptions {
   hostTools?: HostToolRegistry
+  cliModule?: PlaygroundCliModule
 }
 
 class PlaygroundRuntime implements Runtime {
@@ -78,13 +79,13 @@ class PlaygroundRuntime implements Runtime {
   private readonly hostTools?: HostToolRegistry
   private cliServerPromise?: Promise<PlaygroundCliServer>
 
-  private constructor(private readonly spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}) {
+  private constructor(private readonly spec: RuntimeCreateSpec, private readonly backendOptions: PlaygroundRuntimeBackendOptions = {}) {
     this.artifactRoot = resolve(spec.artifactsDirectory ?? "artifacts", this.runtimeId)
     this.hostTools = spec.hostTools instanceof HostToolRegistry
       ? spec.hostTools
       : Array.isArray(spec.hostTools)
         ? createHostToolRegistry(spec.hostTools)
-        : options.hostTools
+        : backendOptions.hostTools
   }
 
   static async create(spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
@@ -676,6 +677,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
   private async startPlayground(): Promise<PlaygroundCliServer> {
     return startPlaygroundCliServer(this.spec, this.mounts, {
       onProgress: (event) => this.recordBrowserStartupProgress(event),
+      cliModule: this.backendOptions.cliModule,
     })
   }
 

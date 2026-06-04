@@ -4,3 +4,4 @@ export { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./bro
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"
 export { PlaygroundRuntimeBackend, createPlaygroundRuntimeBackend } from "./playground-runtime.js"
 export { preflightPhpWasmRuntimeAssets, PhpWasmRuntimeAssetIntegrityError, type PhpWasmRuntimeAssetPreflight, type PhpWasmRuntimeAssetPreflightOptions } from "./php-wasm-preflight.js"
+export type { PlaygroundCliModule } from "./playground-cli-runner.js"
