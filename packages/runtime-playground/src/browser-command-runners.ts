@@ -328,6 +328,7 @@ export async function runBrowserActionsCommand({
 
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
+  const requestedViewport = viewportArg(args, "viewport")
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -358,6 +359,9 @@ export async function runBrowserActionsCommand({
 
   try {
     const page = await browser.newPage()
+    if (requestedViewport) {
+      await page.setViewportSize(requestedViewport)
+    }
     viewport = await browserProbeViewport(page)
     if (capture.has("console")) {
       page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
