@@ -959,6 +959,10 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         && normalized !== "no-console-errors"
         && normalized !== "no-page-errors"
         && normalized !== "no-errors"
+        && !normalized.startsWith("request-count-by-host:")
+        && !normalized.startsWith("request-count-by-type:")
+        && !normalized.startsWith("total-transfer-size")
+        && !normalized.startsWith("metric:")
       ) {
         addIssue("invalid-assert", `${path}.args`, `wordpress.browser-probe assert does not support: ${assertion}`)
       }

@@ -6,7 +6,7 @@ import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-act
 import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
-import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
+import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
@@ -72,7 +72,8 @@ export async function runBrowserProbeCommand({
   const assertions = browserProbeAssertionsFromArgs(args)
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
-  const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
+  const capturesNetworkForAssertions = browserProbeAssertionsNeedNetwork(assertions)
+  const capturesBrowserMetrics = capture.has("performance") || capture.has("memory") || browserProbeAssertionsNeedMetrics(assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const previewOrigins = browserProbePreviewOrigins(runtimeSpec, server.serverUrl)
   const targetUrl = resolveBrowserProbeUrl(urlArg, previewOrigins.effectivePreviewOrigin)
@@ -147,7 +148,7 @@ export async function runBrowserProbeCommand({
         errors.push(serializeBrowserError("pageerror", error))
       })
     }
-    if (capture.has("network")) {
+    if (capture.has("network") || capturesNetworkForAssertions) {
       page.on("requestfinished", (request) => {
         const task = serializeBrowserFinishedRequest(request).then((record) => {
           progress.mark("network")
@@ -189,7 +190,11 @@ export async function runBrowserProbeCommand({
       }
     }
     if (assertions.length > 0) {
-      assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors)
+      if (networkTasks.length > 0) {
+        await Promise.all(networkTasks)
+      }
+      const assertionMetrics = capturesBrowserMetrics ? browserProbeBenchMetrics(browserProbeMemoryArtifact(checkpoints), browserProbePerformanceArtifact(checkpoints)) : {}
+      assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors, network, assertionMetrics)
       const fatalFailures = assertionResults.filter((assertion) => !assertion.passed && !assertion.advisory)
       if (fatalFailures.length > 0) {
         pendingError = new Error(`wordpress.browser-probe assertion failed: ${fatalFailures.map((assertion) => assertion.assertion).join(", ")}`)
@@ -236,13 +241,13 @@ export async function runBrowserProbeCommand({
       await Promise.all(networkTasks)
     }
     await browser.close()
-    if (capture.has("console")) {
+    if (capture.has("console") || capturesConsoleForAssertions) {
       await writeFile(consolePath, jsonLines(consoleMessages))
     }
-    if (capture.has("errors")) {
+    if (capture.has("errors") || capturesErrorsForAssertions) {
       await writeFile(errorsPath, jsonLines(errors))
     }
-    if (capture.has("network")) {
+    if (capture.has("network") || capturesNetworkForAssertions) {
       await writeFile(networkPath, jsonLines(network))
     }
     if (checkpoints.length > 0) {
@@ -273,12 +278,12 @@ export async function runBrowserProbeCommand({
       ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
-        ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
+        ...(capture.has("console") || capturesConsoleForAssertions ? { console: "files/browser/console.jsonl" } : {}),
         ...(checkpoints.length > 0 ? { checkpoints: "files/browser/checkpoints.jsonl" } : {}),
-        ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
+        ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: "files/browser/errors.jsonl" } : {}),
         ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
         ...(memoryArtifact ? { memory: "files/browser/memory.json" } : {}),
-        ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+        ...(capture.has("network") || capturesNetworkForAssertions ? { network: "files/browser/network.jsonl" } : {}),
         ...(performanceArtifact ? { performance: "files/browser/performance.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         summary: "files/browser/summary.json",

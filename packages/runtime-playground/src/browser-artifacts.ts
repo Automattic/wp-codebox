@@ -225,6 +225,8 @@ export interface BrowserStepRecord {
 
 export interface BrowserStepAssertion {
   kind: "expect" | "evaluate" | "probe"
+  id?: string
+  status?: "pass" | "fail" | "warn" | "skipped"
   assertion?: string
   advisory?: boolean
   message?: string
@@ -234,7 +236,10 @@ export interface BrowserStepAssertion {
   expression?: string
   operator?: string
   expected?: unknown
+  expectedBudget?: unknown
   actual?: unknown
+  observed?: unknown
+  supportingArtifacts?: string[]
   passed: boolean
 }
 

@@ -37,15 +37,28 @@ const passing = await runRecipe("passing", [
   "assert=no-console-errors",
   "assert=no-page-errors",
   "assert=no-errors",
+  "assert=request-count-by-type:document>=1",
+  "assert=total-transfer-size>=0",
+  "assert=metric:browser_resource_count>=0",
 ])
 
 assert.equal(passing.success, true, passing.error?.message ?? "passing assertions should succeed")
 const passingSummary = await readSummary(passing)
-assert.equal(passingSummary.assertions.total, 10)
+assert.equal(passingSummary.assertions.total, 13)
 assert.equal(passingSummary.assertions.failed, 0)
-assert.equal(passingSummary.summary.assertions.total, 10)
+assert.equal(passingSummary.summary.assertions.total, 13)
 assert.equal(passingSummary.summary.assertions.failed, 0)
-assert.equal(commandOutput(passing).summary.assertions.total, 10, "command JSON should include assertion totals")
+const passingRequestBudget = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "request-count-by-type:document>=1")
+assert.equal(passingRequestBudget.status, "pass")
+assert.equal(passingRequestBudget.expectedBudget, 1)
+assert.equal(typeof passingRequestBudget.observed, "number")
+assert.deepEqual(passingRequestBudget.supportingArtifacts, ["files/browser/network.jsonl"])
+const passingMetricBudget = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "metric:browser_resource_count>=0")
+assert.equal(passingMetricBudget.status, "pass")
+assert.equal(passingMetricBudget.expectedBudget, 0)
+assert.equal(typeof passingMetricBudget.observed, "number")
+assert.deepEqual(passingMetricBudget.supportingArtifacts, ["files/browser/performance.json", "files/browser/memory.json"])
+assert.equal(commandOutput(passing).summary.assertions.total, 13, "command JSON should include assertion totals")
 
 const advisory = await runRecipe("advisory", [
   "url=/",
@@ -56,6 +69,7 @@ const advisory = await runRecipe("advisory", [
 ])
 
 assert.equal(advisory.success, true, advisory.error?.message ?? "advisory assertion failures should not fail")
+assert.equal(advisory.__exitCode, 0, "advisory assertion failures should keep command exit zero")
 const advisorySummary = await readSummary(advisory)
 assert.equal(advisorySummary.assertions.total, 2)
 assert.equal(advisorySummary.assertions.failed, 1)
@@ -67,11 +81,16 @@ const failing = await runRecipe("failing", [
   "wait-for=load",
   "capture=html",
   "assert=exists:#probe-target",
-  "assert=exists:#probe-missing",
+  "assert=request-count-by-type:document<0",
 ])
 
 assert.equal(failing.success, false, "fatal assertion failure should fail recipe-run")
+assert.notEqual(failing.__exitCode, 0, "fatal assertion failures should make command execution fail")
 const failingSummary = await readSummary(failing)
+const failingBudget = failingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "request-count-by-type:document<0")
+assert.equal(failingBudget.status, "fail")
+assert.equal(typeof failingBudget.observed, "number")
+assert.equal(failingBudget.expectedBudget, 0)
 assert.equal(failingSummary.assertions.total, 2)
 assert.equal(failingSummary.assertions.failed, 1)
 assert.equal(failingSummary.assertions.fatalFailed, 1)
@@ -117,8 +136,8 @@ async function runRecipe(name: string, args: string[]): Promise<any> {
 }
 
 async function readSummary(output: any): Promise<any> {
-  const artifactDirectory = output.artifacts?.directory
-  assert.equal(typeof artifactDirectory, "string", "recipe-run should return artifact directory")
+  const artifactDirectory = output.artifacts?.directory ?? output.run?.artifactRefs?.find((ref: { kind?: string }) => ref.kind === "artifact-bundle")?.directory
+  assert.equal(typeof artifactDirectory, "string", "recipe-run should return artifact bundle directory")
   const summaryPath = join(artifactDirectory, "files", "browser", "summary.json")
   assert.equal(existsSync(summaryPath), true, "summary.json should be captured")
   return JSON.parse(await readFile(summaryPath, "utf8"))
@@ -151,5 +170,5 @@ async function runCli(args: string[]): Promise<any> {
   if (output.success !== false) {
     assert.equal(exitCode, 0, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }
-  return output
+  return { ...output, __exitCode: exitCode }
 }
