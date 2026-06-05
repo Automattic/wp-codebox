@@ -18,6 +18,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
     required: ["schema", "workflow"],
     properties: {
       schema: { const: "wp-codebox/workspace-recipe/v1" },
+      distribution: { $ref: "#/$defs/distribution" },
       runtime: {
         type: "object",
         additionalProperties: false,
@@ -159,6 +160,128 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       metadata: {
         type: "object",
         additionalProperties: true,
+      },
+      distribution: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "wordpress"],
+        description: "Generic external WordPress distribution declaration. Distribution-specific semantics live in recipe packs; WP Codebox only plans and validates the substrate.",
+        properties: {
+          name: { type: "string" },
+          sourceMounts: {
+            type: "array",
+            items: { $ref: "#/$defs/distributionSourceMount" },
+          },
+          wordpress: { $ref: "#/$defs/distributionWordPress" },
+          env: { $ref: "#/$defs/distributionScalarMap" },
+          constants: { $ref: "#/$defs/distributionScalarMap" },
+          serviceFakes: {
+            type: "array",
+            items: { $ref: "#/$defs/distributionServiceFake" },
+          },
+          routeAliases: {
+            type: "array",
+            items: { $ref: "#/$defs/distributionRouteAlias" },
+          },
+          startupProbes: {
+            type: "array",
+            items: { $ref: "#/$defs/distributionStartupProbe" },
+          },
+          artifacts: {
+            type: "array",
+            items: { $ref: "#/$defs/distributionArtifact" },
+          },
+          safety: { $ref: "#/$defs/distributionSafety" },
+        },
+      },
+      distributionScalarMap: {
+        type: "object",
+        additionalProperties: {
+          type: ["string", "number", "boolean", "null"],
+        },
+      },
+      distributionSourceMount: {
+        type: "object",
+        additionalProperties: false,
+        required: ["source", "target"],
+        properties: {
+          type: { enum: ["directory", "file"] },
+          source: { type: "string" },
+          target: { type: "string", pattern: "^/" },
+          mode: { enum: ["readonly", "readwrite"] },
+          metadata: { $ref: "#/$defs/metadata" },
+          role: { type: "string" },
+          ref: { type: "string" },
+        },
+      },
+      distributionWordPress: {
+        type: "object",
+        additionalProperties: false,
+        required: ["root"],
+        properties: {
+          root: { type: "string", pattern: "^/" },
+          bootstrap: { type: "string" },
+          config: { type: "string" },
+          bootstrapFile: { type: "string" },
+        },
+      },
+      distributionServiceFake: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "source"],
+        properties: {
+          name: { type: "string" },
+          source: { type: "string" },
+          load: { enum: ["pre-bootstrap", "mu-plugin", "manual"] },
+          sideEffectsArtifact: { type: "string" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      distributionRouteAlias: {
+        type: "object",
+        additionalProperties: false,
+        required: ["target"],
+        properties: {
+          name: { type: "string" },
+          host: { type: "string" },
+          path: { type: "string", pattern: "^/" },
+          target: { type: "string" },
+          targetType: { type: "string" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      distributionStartupProbe: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "type"],
+        properties: {
+          name: { type: "string" },
+          type: { enum: ["http", "browser", "wp-cli", "php"] },
+          url: { type: "string" },
+          command: { type: "string" },
+          code: { type: "string" },
+          expectStatus: { type: "integer", minimum: 100, maximum: 599 },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      distributionArtifact: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path"],
+        properties: {
+          path: { type: "string" },
+          kind: { type: "string" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      distributionSafety: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          network: { enum: ["deny", "declared"] },
+          allowedHosts: { type: "array", items: { type: "string" } },
+          secretEnv: { type: "array", items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" } },
+        },
       },
       runtimePreview: {
         type: "object",
