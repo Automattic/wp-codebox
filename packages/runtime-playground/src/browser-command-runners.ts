@@ -15,6 +15,36 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
+const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "timezone", "user-agent", "viewport"])
+
+interface BrowserProbeProfileDefinition {
+  id: string
+  browser: "chromium" | "webkit"
+  args: string[]
+}
+
+const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
+  "desktop-chrome": {
+    id: "desktop-chrome",
+    browser: "chromium",
+    args: ["browser=chromium", "viewport=1280x720"],
+  },
+  "mobile-chrome": {
+    id: "mobile-chrome",
+    browser: "chromium",
+    args: ["browser=chromium", "device=Pixel 5"],
+  },
+  "desktop-webkit": {
+    id: "desktop-webkit",
+    browser: "webkit",
+    args: ["browser=webkit", "viewport=1280x720"],
+  },
+  "mobile-webkit": {
+    id: "mobile-webkit",
+    browser: "webkit",
+    args: ["browser=webkit", "device=iPhone 13"],
+  },
+}
 
 export class BrowserCommandArtifactError extends Error {
   constructor(message: string, readonly artifact: BrowserProbeArtifact) {
@@ -39,6 +69,70 @@ export async function runBrowserProbeCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
+  const profileIds = browserProbeProfileIds(spec.args ?? [])
+  if (profileIds.length === 0) {
+    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, server, spec, browserFilesDirectory: "files/browser" })
+  }
+
+  const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
+  for (const profile of profiles) {
+    if (profile.browser !== "chromium") {
+      throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported profiles: desktop-chrome, mobile-chrome.`)
+    }
+  }
+
+  const artifacts: BrowserProbeArtifact[] = []
+  const outputs: unknown[] = []
+  for (const profile of profiles) {
+    const result = await runSingleBrowserProbeCommand({
+      artifactRoot,
+      command,
+      runtimeSpec,
+      server,
+      spec: {
+        ...spec,
+        args: browserProbeProfileArgs(spec.args ?? [], profile),
+      },
+      browserFilesDirectory: `files/browser/${profile.id}`,
+      profileId: profile.id,
+    })
+    artifacts.push(result.artifact)
+    outputs.push(JSON.parse(result.output))
+  }
+
+  const artifact = artifacts[0]
+  if (!artifact) {
+    throw new Error("wordpress.browser-probe profiles requires at least one profile")
+  }
+
+  return {
+    artifact,
+    artifacts,
+    output: `${JSON.stringify({
+      command,
+      schema: "wp-codebox/browser-probe-profile-matrix/v1",
+      profiles: outputs,
+    }, null, 2)}\n`,
+  }
+}
+
+async function runSingleBrowserProbeCommand({
+  artifactRoot,
+  command,
+  runtimeSpec,
+  server,
+  spec,
+  browserFilesDirectory,
+  profileId,
+}: {
+  artifactRoot: string
+  command: string
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+  browserFilesDirectory: string
+  profileId?: string
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
   const urlArg = argValue(args, "url")?.trim()
@@ -64,7 +158,7 @@ export async function runBrowserProbeCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
-  const requestedContext = browserProbeContextRequest(args, requestedViewport)
+  const requestedContext = browserProbeContextRequest(args, requestedViewport, profileId)
   const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
@@ -77,7 +171,7 @@ export async function runBrowserProbeCommand({
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const previewOrigins = browserProbePreviewOrigins(runtimeSpec, server.serverUrl)
   const targetUrl = resolveBrowserProbeUrl(urlArg, previewOrigins.effectivePreviewOrigin)
-  const browserDirectory = join(artifactRoot, "files", "browser")
+  const browserDirectory = join(artifactRoot, browserFilesDirectory)
   await mkdir(browserDirectory, { recursive: true })
 
   const consoleMessages: Record<string, unknown>[] = []
@@ -97,6 +191,9 @@ export async function runBrowserProbeCommand({
   const startedAt = now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { chromium, devices } = await import("playwright")
+  if (requestedContext.browser && requestedContext.browser !== "chromium") {
+    throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; use browser=chromium or a Chromium profile.`)
+  }
   const deviceProfile = requestedContext.device ? devices[requestedContext.device] : undefined
   if (requestedContext.device && !deviceProfile) {
     throw new Error(`wordpress.browser-probe unknown Playwright device profile: ${requestedContext.device}`)
@@ -118,12 +215,17 @@ export async function runBrowserProbeCommand({
   let artifact: BrowserProbeArtifact | undefined
 
   try {
-    context = requestedContext.device || requestedContext.locale
+    context = requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
+        ...(requestedContext.timezone ? { timezoneId: requestedContext.timezone } : {}),
+        ...(requestedContext.userAgent ? { userAgent: requestedContext.userAgent } : {}),
       })
       : null
+    if (context && requestedContext.permissions && requestedContext.permissions.length > 0) {
+      await context.grantPermissions(requestedContext.permissions)
+    }
     page = context ? await context.newPage() : await browser.newPage()
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -280,15 +382,15 @@ export async function runBrowserProbeCommand({
       ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
-        ...(capture.has("console") || capturesConsoleForAssertions ? { console: "files/browser/console.jsonl" } : {}),
-        ...(checkpoints.length > 0 ? { checkpoints: "files/browser/checkpoints.jsonl" } : {}),
-        ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: "files/browser/errors.jsonl" } : {}),
-        ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
-        ...(memoryArtifact ? { memory: "files/browser/memory.json" } : {}),
-        ...(capture.has("network") || capturesNetworkForAssertions ? { network: "files/browser/network.jsonl" } : {}),
-        ...(performanceArtifact ? { performance: "files/browser/performance.json" } : {}),
-        ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
-        summary: "files/browser/summary.json",
+        ...(capture.has("console") || capturesConsoleForAssertions ? { console: `${browserFilesDirectory}/console.jsonl` } : {}),
+        ...(checkpoints.length > 0 ? { checkpoints: `${browserFilesDirectory}/checkpoints.jsonl` } : {}),
+        ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: `${browserFilesDirectory}/errors.jsonl` } : {}),
+        ...(capture.has("html") ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
+        ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
+        ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
+        ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
+        ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
+        summary: `${browserFilesDirectory}/summary.json`,
       },
       summary: {
         ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
@@ -355,6 +457,34 @@ export async function runBrowserProbeCommand({
   }
 }
 
+function browserProbeProfileIds(args: string[]): string[] {
+  const raw = argValue(args, "profiles")?.trim()
+  if (!raw) {
+    return []
+  }
+  return raw.split(",").map((profile) => profile.trim()).filter(Boolean)
+}
+
+function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
+  const profile = BROWSER_PROBE_PROFILES[profileId]
+  if (!profile) {
+    throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_PROFILES).join(", ")}`)
+  }
+  return profile
+}
+
+function browserProbeProfileArgs(args: string[], profile: BrowserProbeProfileDefinition): string[] {
+  const explicitOverrideKeys = new Set(args.map((arg) => arg.match(/^([^=]+)=/)?.[1]).filter((key): key is string => typeof key === "string" && BROWSER_PROBE_PROFILE_OVERRIDES.has(key)))
+  return [
+    ...args.filter((arg) => !arg.startsWith("profiles=")),
+    `profile=${profile.id}`,
+    ...profile.args.filter((arg) => {
+      const key = arg.match(/^([^=]+)=/)?.[1]
+      return !key || !explicitOverrideKeys.has(key)
+    }),
+  ]
+}
+
 function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata {
   return {
     sha256: sha256(Buffer.from(source, "utf8")),
@@ -362,12 +492,21 @@ function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata 
   }
 }
 
-function browserProbeContextRequest(args: string[], viewport: { width: number; height: number } | undefined): BrowserProbeContextDetails["requested"] {
+function browserProbeContextRequest(args: string[], viewport: { width: number; height: number } | undefined, profileId?: string): BrowserProbeContextDetails["requested"] {
+  const browser = argValue(args, "browser")?.trim()
   const device = argValue(args, "device")?.trim()
   const locale = argValue(args, "locale")?.trim()
+  const permissions = commaListArg(args, "permissions")
+  const timezone = argValue(args, "timezone")?.trim()
+  const userAgent = argValue(args, "user-agent")?.trim()
   return {
+    ...(browser ? { browser } : {}),
     ...(device ? { device } : {}),
     ...(locale ? { locale } : {}),
+    ...(permissions.length > 0 ? { permissions } : {}),
+    ...(profileId ? { profile: profileId } : {}),
+    ...(timezone ? { timezone } : {}),
+    ...(userAgent ? { userAgent } : {}),
     ...(viewport ? { viewport } : {}),
   }
 }
@@ -381,9 +520,13 @@ async function browserProbeContextDetails(page: import("playwright").Page, reque
   return {
     requested,
     effective: {
+      ...(requested.browser ? { browser: requested.browser } : {}),
       ...(requested.device ? { device: requested.device } : {}),
       ...(effective.locale ? { locale: effective.locale } : {}),
+      ...(requested.permissions ? { permissions: requested.permissions } : {}),
+      ...(requested.profile ? { profile: requested.profile } : {}),
       ...(effective.timezone ? { timezone: effective.timezone } : {}),
+      ...(viewport?.userAgent ? { userAgent: viewport.userAgent } : {}),
       viewport,
     },
   }

@@ -937,6 +937,25 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       addIssue("invalid-reset-between", `${path}.args`, "wordpress.browser-probe reset-between must be none, reload, or new-page.")
     }
 
+    const profiles = recipeStepArgValue(step.args ?? [], "profiles")
+    if (profiles) {
+      for (const profile of profiles.split(",").map((value) => value.trim()).filter(Boolean)) {
+        if (!["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit"].includes(profile)) {
+          addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
+        }
+      }
+    }
+
+    const browser = recipeStepArgValue(step.args ?? [], "browser")
+    if (browser && !["chromium", "webkit"].includes(browser)) {
+      addIssue("invalid-browser", `${path}.args`, "wordpress.browser-probe browser must be chromium or webkit.")
+    }
+
+    const viewport = recipeStepArgValue(step.args ?? [], "viewport")
+    if (viewport && !/^\d+x\d+$/i.test(viewport)) {
+      addIssue("invalid-viewport", `${path}.args`, "wordpress.browser-probe viewport must use <width>x<height>, for example 390x844.")
+    }
+
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {

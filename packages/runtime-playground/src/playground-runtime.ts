@@ -436,7 +436,7 @@ class PlaygroundRuntime implements Runtime {
       }
       throw error
     }
-    this.browserProbes.push(result.artifact)
+    this.browserProbes.push(...(result.artifacts ?? [result.artifact]))
     return result.output
   }
 
