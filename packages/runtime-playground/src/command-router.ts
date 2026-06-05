@@ -15,6 +15,7 @@ interface PlaygroundCommandRuntime {
   runBrowserProbe(spec: ExecutionSpec): Promise<string>
   runHtmlCapture(spec: ExecutionSpec): Promise<string>
   runBrowserActions(spec: ExecutionSpec): Promise<string>
+  runBrowserScenario(spec: ExecutionSpec): Promise<string>
   runEditorOpen(spec: ExecutionSpec): Promise<string>
   runEditorActions(spec: ExecutionSpec): Promise<string>
 }
@@ -33,6 +34,7 @@ const playgroundCommandHandlers = {
   "wordpress.browser-probe": (runtime, spec) => runtime.runBrowserProbe(spec),
   "wordpress.capture-html": (runtime, spec) => runtime.runHtmlCapture(spec),
   "wordpress.browser-actions": (runtime, spec) => runtime.runBrowserActions(spec),
+  "wordpress.browser-scenario": (runtime, spec) => runtime.runBrowserScenario(spec),
   "wordpress.editor-open": (runtime, spec) => runtime.runEditorOpen(spec),
   "wordpress.editor-actions": (runtime, spec) => runtime.runEditorActions(spec),
 } satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<string>>

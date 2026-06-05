@@ -623,7 +623,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   // Auto-grant the evaluate capability when a browser-actions step opts into the
   // arbitrary-JS escape hatch by including an evaluate step. Recipe authors opt in
   // by writing the step; direct `run` invocations still control the gate via --policy.
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.browser-actions" && recipeStepUsesEvaluate(step))) {
+  if (recipeWorkflowSteps(recipe).some(({ step }) => (step.command === "wordpress.browser-actions" || step.command === "wordpress.browser-scenario") && recipeStepUsesEvaluate(step))) {
     commands.push("wordpress.browser-actions.evaluate")
   }
 
@@ -1008,6 +1008,66 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     return
   }
 
+  if (step.command === "wordpress.browser-scenario") {
+    const scenarioJson = recipeStepArgValue(step.args ?? [], "scenario-json")
+    const url = recipeStepArgValue(step.args ?? [], "url")?.trim()
+    if (!scenarioJson && !url) {
+      addIssue("missing-scenario", `${path}.args`, "wordpress.browser-scenario requires scenario-json=<object> or url=<path-or-url>.")
+    }
+
+    if (scenarioJson && !scenarioJson.startsWith("@")) {
+      try {
+        const parsed = JSON.parse(scenarioJson) as unknown
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          addIssue("invalid-scenario-json", `${path}.args`, "wordpress.browser-scenario scenario-json must be a JSON object.")
+        } else {
+          const steps = (parsed as { steps?: unknown }).steps
+          if (steps !== undefined) {
+            const result = validateBrowserInteractionScript(normalizeBrowserScenarioStepsForValidation(steps))
+            for (const issue of result.issues) {
+              addIssue("invalid-step", `${path}.args`, `wordpress.browser-scenario scenario-json.steps[${issue.index}]: ${issue.message}`)
+            }
+          }
+        }
+      } catch (error) {
+        addIssue("invalid-scenario-json", `${path}.args`, `wordpress.browser-scenario scenario-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
+    if (stepsJson && !stepsJson.startsWith("@")) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(stepsJson)
+      } catch (error) {
+        addIssue("invalid-steps-json", `${path}.args`, `wordpress.browser-scenario steps-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (parsed !== undefined) {
+        const result = validateBrowserInteractionScript(parsed)
+        for (const issue of result.issues) {
+          addIssue("invalid-step", `${path}.args`, `wordpress.browser-scenario steps-json[${issue.index}]: ${issue.message}`)
+        }
+      }
+    }
+
+    for (const name of ["step-timeout", "timeout"] as const) {
+      const value = recipeStepArgValue(step.args ?? [], name)
+      if (value && /^(\d+(?:\.\d+)?)(ms|s)$/.test(value) === false) {
+        addIssue("invalid-duration", `${path}.args`, `wordpress.browser-scenario ${name} must look like 500ms or 2s.`)
+      }
+    }
+
+    const capture = recipeStepArgValue(step.args ?? [], "capture")
+    if (capture) {
+      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
+        if (!["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot"].includes(item)) {
+          addIssue("invalid-capture", `${path}.args`, `wordpress.browser-scenario capture does not support: ${item}`)
+        }
+      }
+    }
+    return
+  }
+
   if (step.command === "wordpress.editor-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
     if (!stepsJson) {
@@ -1209,6 +1269,18 @@ function recipeBenchWorkloadsUseWpCli(value: unknown): boolean {
 }
 
 function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
+  const scenarioRaw = recipeStepArgValue(step.args ?? [], "scenario-json")
+  if (scenarioRaw && !scenarioRaw.startsWith("@")) {
+    try {
+      const parsed = JSON.parse(scenarioRaw) as { steps?: unknown; assertions?: unknown }
+      const steps = normalizeBrowserScenarioStepsForValidation(parsed.steps)
+      const assertions = normalizeBrowserScenarioAssertionsForValidation(parsed.assertions)
+      return [...steps, ...assertions].some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")
+    } catch {
+      return false
+    }
+  }
+
   const raw = recipeStepArgValue(step.args ?? [], "steps-json")
   if (!raw || raw.startsWith("@")) {
     return false
@@ -1219,4 +1291,49 @@ function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][numbe
   } catch {
     return false
   }
+}
+
+function normalizeBrowserScenarioStepsForValidation(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry
+    }
+    const step = entry as Record<string, unknown>
+    const type = typeof step.type === "string" ? step.type : undefined
+    const kind = typeof step.kind === "string" ? step.kind : type
+    if (kind === "wait" && typeof step.ms === "number") {
+      return { kind: "waitFor", waitFor: "duration", duration: `${step.ms}ms` }
+    }
+    if (kind === "scrollTo" && typeof step.selector === "string") {
+      return { kind: "evaluate", expression: `document.querySelector(${JSON.stringify(step.selector)})?.scrollIntoView({ block: "center", inline: "center" })` }
+    }
+    const { type: _type, ...rest } = step
+    return { ...rest, kind: kind === "wait" ? "waitFor" : kind }
+  })
+}
+
+function normalizeBrowserScenarioAssertionsForValidation(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry
+    }
+    const assertion = entry as Record<string, unknown>
+    if (assertion.type === "selectorVisible" && typeof assertion.selector === "string") {
+      return { kind: "expect", selector: assertion.selector, state: "visible", ...(typeof assertion.withinMs === "number" ? { timeout: `${assertion.withinMs}ms` } : {}) }
+    }
+    if (assertion.type === "noPageErrors") {
+      return { kind: "evaluate", expression: "window.__wpCodeboxBrowserErrors?.length ?? 0", assert: 0 }
+    }
+    if (typeof assertion.type === "string") {
+      const { type: _type, ...rest } = assertion
+      return { ...rest, kind: assertion.type }
+    }
+    return assertion
+  })
 }

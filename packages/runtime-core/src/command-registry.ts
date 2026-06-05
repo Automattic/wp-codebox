@@ -221,6 +221,26 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runBrowserActions" },
   },
   {
+    id: "wordpress.browser-scenario",
+    description: "Run a declarative browser evidence scenario by composing browser-probe and browser-actions artifacts behind one normalized scenario summary.",
+    acceptedArgs: [
+      { name: "scenario-json", description: "Declarative scenario object with url, profile, captures, observers, steps, assertions, viewport, and timeout settings. Supports inline JSON or @<path>.", format: "JSON object" },
+      { name: "url", description: "Preview path or absolute URL to visit when scenario-json is omitted or does not include url.", format: "path or URL" },
+      { name: "steps-json", description: "Optional browser interaction steps when scenario-json.steps is omitted.", format: "JSON array" },
+      { name: "capture", description: "Comma-separated artifacts to capture.", format: "steps,console,errors,html,network,performance,memory,screenshot" },
+      { name: "pre-page-script", description: "Optional JavaScript installed before probe navigation for observer setup.", format: "JavaScript source" },
+      { name: "viewport", description: "Browser viewport size.", format: "<width>x<height>" },
+      { name: "device", description: "Optional Playwright device profile for the probe phase.", format: "Playwright device name" },
+      { name: "locale", description: "Optional browser context locale for the probe phase.", format: "BCP 47 locale" },
+      { name: "step-timeout", description: "Per-step timeout applied to action steps.", format: "duration, e.g. 5s or 500ms" },
+      { name: "timeout", description: "Total action timeout bounding the interaction run.", format: "duration, e.g. 30s or 1500ms" },
+    ],
+    outputShape: "JSON scenario summary with requested/effective browser metadata and files/browser/scenario-summary.json, preserving lower-level browser-probe and browser-actions summaries when used.",
+    policyRequirement: "Runtime policy commands must include wordpress.browser-scenario. Scenarios using evaluate steps additionally require wordpress.browser-actions.evaluate.",
+    recipe: true,
+    handler: { kind: "playground", method: "runBrowserScenario" },
+  },
+  {
     id: "wordpress.editor-open",
     description: "Open a generic WordPress block editor target and capture replayable editor evidence artifacts.",
     acceptedArgs: [

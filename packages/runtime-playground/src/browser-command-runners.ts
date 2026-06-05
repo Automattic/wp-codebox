@@ -647,6 +647,268 @@ export async function runBrowserActionsCommand({
   }
 }
 
+interface BrowserScenarioInput {
+  url?: string
+  profile?: string
+  captures?: string[]
+  capture?: string[]
+  prePageScript?: string
+  pre_page_script?: string
+  observers?: Array<Record<string, unknown>>
+  steps?: Array<Record<string, unknown>>
+  assertions?: Array<Record<string, unknown>>
+  viewport?: string
+  device?: string
+  locale?: string
+  waitFor?: string
+  wait_for?: string
+  duration?: string
+  stepTimeout?: string
+  step_timeout?: string
+  timeout?: string
+}
+
+export async function runBrowserScenarioCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = spec.args ?? []
+  const scenario = await browserScenarioFromArgs(args)
+  const url = scenario.url?.trim() || argValue(args, "url")?.trim()
+  if (!url) {
+    throw new Error("wordpress.browser-scenario requires url=<path-or-url> or scenario-json.url")
+  }
+
+  const captures = browserScenarioCaptures(scenario, args)
+  const steps = browserScenarioSteps(scenario, args)
+  const assertions = browserScenarioAssertions(scenario)
+  const actionSteps = [...steps, ...assertions]
+  const requestedViewport = browserScenarioViewport(scenario, args)
+  const device = scenario.device ?? (scenario.profile && scenario.profile !== "desktop-chrome" ? scenario.profile : undefined) ?? argValue(args, "device")
+  const locale = scenario.locale ?? argValue(args, "locale")
+  const prePageScript = scenario.prePageScript ?? scenario.pre_page_script ?? browserScenarioObserverScript(scenario.observers) ?? argValue(args, "pre-page-script")
+  const startedAt = now()
+  const browserDirectory = join(artifactRoot, "files", "browser")
+  await mkdir(browserDirectory, { recursive: true })
+
+  let probeResult: Awaited<ReturnType<typeof runBrowserProbeCommand>> | undefined
+  let actionsResult: Awaited<ReturnType<typeof runBrowserActionsCommand>> | undefined
+  let pendingError: Error | undefined
+
+  const shouldRunProbe = actionSteps.length === 0 || Boolean(prePageScript) || captures.some((capture) => capture === "performance" || capture === "memory")
+  if (shouldRunProbe) {
+    const probeArgs = [
+      `url=${url}`,
+      `capture=${browserScenarioProbeCaptures(captures, actionSteps.length > 0).join(",")}`,
+      `wait-for=${scenario.waitFor ?? scenario.wait_for ?? argValue(args, "wait-for") ?? "domcontentloaded"}`,
+    ]
+    const duration = scenario.duration ?? argValue(args, "duration")
+    if (duration) probeArgs.push(`duration=${duration}`)
+    if (requestedViewport) probeArgs.push(`viewport=${requestedViewport}`)
+    if (device) probeArgs.push(`device=${device}`)
+    if (locale) probeArgs.push(`locale=${locale}`)
+    if (prePageScript) probeArgs.push(`pre-page-script=${prePageScript}`)
+
+    try {
+      probeResult = await runBrowserProbeCommand({ artifactRoot, runtimeSpec, server, spec: { ...spec, command: "wordpress.browser-probe", args: probeArgs } })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        probeResult = { artifact: error.artifact, output: "" }
+      }
+      pendingError = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
+  if (!pendingError && actionSteps.length > 0) {
+    const actionsArgs = [
+      `url=${url}`,
+      `steps-json=${JSON.stringify(actionSteps)}`,
+      `capture=${browserScenarioActionCaptures(captures).join(",")}`,
+    ]
+    const stepTimeout = scenario.stepTimeout ?? scenario.step_timeout ?? argValue(args, "step-timeout")
+    const timeout = scenario.timeout ?? argValue(args, "timeout")
+    if (requestedViewport) actionsArgs.push(`viewport=${requestedViewport}`)
+    if (stepTimeout) actionsArgs.push(`step-timeout=${stepTimeout}`)
+    if (timeout) actionsArgs.push(`timeout=${timeout}`)
+
+    try {
+      actionsResult = await runBrowserActionsCommand({ artifactRoot, runtimeSpec, server, spec: { ...spec, command: "wordpress.browser-actions", args: actionsArgs } })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        actionsResult = { artifact: error.artifact, output: "" }
+      }
+      pendingError = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
+  const primaryArtifact = actionsResult?.artifact ?? probeResult?.artifact
+  if (!primaryArtifact) {
+    throw pendingError ?? new Error("wordpress.browser-scenario did not produce a browser artifact")
+  }
+
+  const finalUrl = primaryArtifact.summary.finalUrl
+  const scenarioSummaryPath = join(browserDirectory, "scenario-summary.json")
+  const scenarioSummary = {
+    schema: "wp-codebox/browser-scenario/v1",
+    requestedUrl: primaryArtifact.requestedUrl,
+    url: primaryArtifact.url,
+    localPreviewOrigin: primaryArtifact.localPreviewOrigin,
+    requestedPreviewOrigin: primaryArtifact.requestedPreviewOrigin,
+    effectivePreviewOrigin: primaryArtifact.effectivePreviewOrigin,
+    finalUrl,
+    profile: scenario.profile ?? "desktop-chrome",
+    capture: captures,
+    startedAt,
+    finishedAt: now(),
+    context: primaryArtifact.summary.context,
+    viewport: primaryArtifact.summary.viewport,
+    files: {
+      ...(probeResult ? { probeSummary: probeResult.artifact.files.summary } : {}),
+      ...(actionsResult ? { actionSummary: actionsResult.artifact.files.summary } : {}),
+      scenarioSummary: "files/browser/scenario-summary.json",
+    },
+    summary: {
+      probe: probeResult ? probeResult.artifact.summary : undefined,
+      actions: actionsResult ? actionsResult.artifact.summary : undefined,
+      assertions: actionsResult?.artifact.summary.assertions ?? probeResult?.artifact.summary.assertions,
+    },
+  }
+  await writeFile(scenarioSummaryPath, `${JSON.stringify(scenarioSummary, null, 2)}\n`)
+
+  const artifact: BrowserProbeArtifact = {
+    ...primaryArtifact,
+    files: {
+      ...primaryArtifact.files,
+      summary: "files/browser/scenario-summary.json",
+    },
+    summary: {
+      ...primaryArtifact.summary,
+      actions: actionsResult?.artifact.summary.actions ?? primaryArtifact.summary.actions,
+      steps: actionsResult?.artifact.summary.steps ?? primaryArtifact.summary.steps,
+      assertions: actionsResult?.artifact.summary.assertions ?? probeResult?.artifact.summary.assertions,
+      context: primaryArtifact.summary.context,
+      finalUrl,
+    },
+  }
+
+  if (pendingError) {
+    throw new BrowserCommandArtifactError(`wordpress.browser-scenario failed: ${pendingError.message}`, artifact)
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify({
+      command: "wordpress.browser-scenario",
+      requestedUrl: artifact.requestedUrl,
+      finalUrl,
+      files: artifact.files,
+      summary: artifact.summary,
+      scenario: scenarioSummary,
+    }, null, 2)}\n`,
+  }
+}
+
+async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioInput> {
+  const raw = argValue(args, "scenario-json")
+  if (!raw) {
+    return {}
+  }
+  const text = raw.startsWith("@") ? await readFile(raw.slice(1), "utf8") : raw
+  const parsed = JSON.parse(text) as unknown
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("wordpress.browser-scenario scenario-json must be a JSON object")
+  }
+  return parsed as BrowserScenarioInput
+}
+
+function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[]): string[] {
+  const raw = scenario.captures ?? scenario.capture ?? commaListArg(args, "capture")
+  const captures = Array.isArray(raw) ? raw.map(String).filter(Boolean) : []
+  return captures.length > 0 ? captures : ["steps", "console", "errors", "html", "network", "screenshot"]
+}
+
+function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolean): string[] {
+  const supported = new Set(["console", "errors", "html", "network", "performance", "memory", "screenshot"])
+  const selected = captures.filter((capture) => supported.has(capture) && (!actionsWillRun || capture === "performance" || capture === "memory"))
+  return selected.length > 0 ? selected : ["console", "errors", "html", "network", "screenshot"]
+}
+
+function browserScenarioActionCaptures(captures: string[]): string[] {
+  const supported = new Set(["steps", "actions", "console", "errors", "html", "network", "screenshot"])
+  const selected = captures.filter((capture) => supported.has(capture))
+  return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot"]
+}
+
+function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Array<Record<string, unknown>> {
+  const raw = scenario.steps ?? parseInlineJsonArrayArg(args, "steps-json")
+  return (raw ?? []).map((step) => normalizeBrowserScenarioStep(step))
+}
+
+function browserScenarioAssertions(scenario: BrowserScenarioInput): Array<Record<string, unknown>> {
+  return (scenario.assertions ?? []).map((assertion) => normalizeBrowserScenarioAssertion(assertion))
+}
+
+function normalizeBrowserScenarioStep(step: Record<string, unknown>): Record<string, unknown> {
+  const type = typeof step.type === "string" ? step.type : undefined
+  const kind = typeof step.kind === "string" ? step.kind : type
+  if (kind === "wait" && typeof step.ms === "number") {
+    return { kind: "waitFor", waitFor: "duration", duration: `${step.ms}ms` }
+  }
+  if (kind === "scrollTo" && typeof step.selector === "string") {
+    return { kind: "evaluate", expression: `document.querySelector(${JSON.stringify(step.selector)})?.scrollIntoView({ block: "center", inline: "center" })` }
+  }
+  if (kind === "wait") {
+    return { ...step, kind: "waitFor" }
+  }
+  const { type: _type, ...rest } = step
+  return { ...rest, kind }
+}
+
+function normalizeBrowserScenarioAssertion(assertion: Record<string, unknown>): Record<string, unknown> {
+  if (assertion.type === "selectorVisible" && typeof assertion.selector === "string") {
+    return { kind: "expect", selector: assertion.selector, state: "visible", ...(typeof assertion.withinMs === "number" ? { timeout: `${assertion.withinMs}ms` } : {}) }
+  }
+  if (assertion.type === "noPageErrors") {
+    return { kind: "evaluate", expression: "window.__wpCodeboxBrowserErrors?.length ?? 0", assert: 0 }
+  }
+  if (typeof assertion.type === "string") {
+    const { type: _type, ...rest } = assertion
+    return { ...rest, kind: assertion.type }
+  }
+  return assertion
+}
+
+function parseInlineJsonArrayArg(args: string[], name: string): Array<Record<string, unknown>> | undefined {
+  const raw = argValue(args, name)
+  if (!raw || raw.startsWith("@")) {
+    return undefined
+  }
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed)) {
+    throw new Error(`wordpress.browser-scenario ${name} must be a JSON array`)
+  }
+  return parsed as Array<Record<string, unknown>>
+}
+
+function browserScenarioViewport(scenario: BrowserScenarioInput, args: string[]): string | undefined {
+  if (scenario.viewport) return scenario.viewport
+  return argValue(args, "viewport")
+}
+
+function browserScenarioObserverScript(observers: Array<Record<string, unknown>> | undefined): string | undefined {
+  if (!observers || observers.length === 0) {
+    return undefined
+  }
+  return `window.__wpCodeboxBrowserScenarioObservers = ${JSON.stringify(observers)}; window.__wpCodeboxBrowserErrors = []; window.addEventListener("error", (event) => window.__wpCodeboxBrowserErrors.push({ message: event.message, filename: event.filename, lineno: event.lineno, colno: event.colno }));`
+}
+
 export async function runEditorOpenCommand({
   artifactRoot,
   runPlaygroundCommand,
