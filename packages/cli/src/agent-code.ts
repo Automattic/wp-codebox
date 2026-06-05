@@ -166,6 +166,60 @@ add_filter('agents_chat_runtime_principal_permission', static function (bool $al
     return 'wp-codebox' === (string) ($input['principal']['workspace_id'] ?? '') && 'wp-codebox-cli' === (string) ($input['principal']['client_id'] ?? '');
 }, 100, 3);
 
+$sandbox_default_agent = sanitize_title((string) (${JSON.stringify(input.agent)}));
+$sandbox_stack['default_agent'] = wp_codebox_ensure_sandbox_default_agent(
+    $sandbox_default_agent,
+    json_decode(${JSON.stringify(JSON.stringify(input))}, true)
+);
+
+function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agent_input): array {
+    if ('' === $agent_slug) {
+        return array('success' => false, 'skipped' => true, 'reason' => 'agent_slug_missing');
+    }
+
+    if (function_exists('wp_get_agent') && wp_get_agent($agent_slug)) {
+        return array('success' => true, 'agent' => $agent_slug, 'existing' => true);
+    }
+
+    if (!class_exists('DataMachine\\Engine\\Agents\\AgentRegistry')) {
+        return array('success' => false, 'agent' => $agent_slug, 'reason' => 'agent_registry_unavailable');
+    }
+
+    $owner_id = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+    if ($owner_id <= 0) {
+        $owner_id = 1;
+    }
+
+    $default_config = array_filter(array(
+        'default_provider' => (string) ($agent_input['provider'] ?? ''),
+        'default_model' => (string) ($agent_input['model'] ?? ''),
+    ), static fn($value): bool => '' !== $value);
+
+    \\DataMachine\\Engine\\Agents\\AgentRegistry::register($agent_slug, array(
+        'label' => 'WP Codebox Sandbox',
+        'description' => 'Default sandbox agent for WP Codebox runtime tasks.',
+        'owner_resolver' => static fn(): int => $owner_id,
+        'default_config' => $default_config,
+        'meta' => array(
+            'source_plugin' => 'wp-codebox',
+            'source_type' => 'runtime-default-agent',
+            'source_package' => 'wp-codebox',
+        ),
+    ));
+
+    $summary = \\DataMachine\\Engine\\Agents\\AgentRegistry::reconcile();
+    $created = is_array($summary['created'] ?? null) ? $summary['created'] : array();
+    $existing = is_array($summary['existing'] ?? null) ? $summary['existing'] : array();
+
+    return array(
+        'success' => in_array($agent_slug, $created, true) || in_array($agent_slug, $existing, true) || (function_exists('wp_get_agent') && (bool) wp_get_agent($agent_slug)),
+        'agent' => $agent_slug,
+        'created' => in_array($agent_slug, $created, true),
+        'existing' => in_array($agent_slug, $existing, true),
+        'summary' => $summary,
+    );
+}
+
 function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     if (empty($bundle_specs)) {
         return array();
