@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
-import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { serializeError } from "./output.js"
 import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
@@ -46,6 +46,7 @@ export interface RecipeDryRunPlan {
     wp: string
     blueprint: unknown
   }
+  distribution?: RecipeDryRunDistribution
   artifacts: {
     directory?: string
   }
@@ -65,6 +66,42 @@ export interface RecipeDryRunPlan {
     steps: RecipeDryRunStep[]
     after?: RecipeDryRunStep[]
   }
+}
+
+interface RecipeDryRunDistribution {
+  name: string
+  wordpress: WorkspaceRecipeDistribution["wordpress"]
+  sourceMounts: RecipeDryRunDistributionSourceMount[]
+  env: Record<string, string | number | boolean | null>
+  constants: Record<string, string | number | boolean | null>
+  serviceFakes: RecipeDryRunDistributionServiceFake[]
+  routeAliases: NonNullable<WorkspaceRecipeDistribution["routeAliases"]>
+  startupProbes: RecipeDryRunDistributionStartupProbe[]
+  artifacts: NonNullable<WorkspaceRecipeDistribution["artifacts"]>
+  safety: {
+    network: "deny" | "declared"
+    allowedHosts: string[]
+    secretEnv: Array<{ name: string; available: boolean }>
+    ambientSecrets: false
+  }
+}
+
+interface RecipeDryRunDistributionSourceMount extends RecipeDryRunMount {
+  role?: string
+  ref?: string
+}
+
+interface RecipeDryRunDistributionServiceFake {
+  name: string
+  source: string
+  load: "pre-bootstrap" | "mu-plugin" | "manual"
+  sideEffectsArtifact?: string
+  metadata?: Record<string, unknown>
+}
+
+interface RecipeDryRunDistributionStartupProbe extends WorkspaceRecipeDistributionStartupProbe {
+  command?: string
+  args?: string[]
 }
 
 interface RecipeDryRunMount {
@@ -223,6 +260,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)
   const pluginRuntime = await recipeDryRunPluginRuntime(recipe, recipeDirectory, policy, context)
+  const distribution = await recipeDryRunDistribution(recipe.distribution, recipeDirectory)
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const stagedFiles = await recipeDryRunStagedFiles(recipe, recipeDirectory)
   const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy, context)
@@ -255,6 +293,19 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   }))
   const mounts: RecipeDryRunMount[] = [
     ...runtimeOverlays,
+    ...(distribution?.sourceMounts ?? []).map((mount) => ({
+      type: mount.type,
+      source: mount.source,
+      target: mount.target,
+      mode: mount.mode,
+      metadata: {
+        ...(mount.metadata ?? {}),
+        kind: "distribution-source-mount",
+        ...(mount.role ? { role: mount.role } : {}),
+        ...(mount.ref ? { ref: mount.ref } : {}),
+      },
+      planned: mount.planned,
+    })),
     ...workspaces.map((workspace) => ({
       type: "directory" as const,
       ...(workspace.source ? { source: workspace.source } : {}),
@@ -298,6 +349,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
     },
+    ...(distribution ? { distribution } : {}),
     artifacts: stripUndefined({
       directory: options.artifactsDirectory ?? recipe.artifacts?.directory,
     }),
@@ -321,6 +373,73 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       steps: workflowSteps,
       ...(recipe.workflow.after ? { after: workflowSteps.filter((step) => step.phase === "after") } : {}),
     },
+  }
+}
+
+async function recipeDryRunDistribution(distribution: WorkspaceRecipeDistribution | undefined, recipeDirectory: string): Promise<RecipeDryRunDistribution | undefined> {
+  if (!distribution) {
+    return undefined
+  }
+
+  const sourceMounts = await Promise.all((distribution.sourceMounts ?? []).map(async (mount): Promise<RecipeDryRunDistributionSourceMount> => {
+    const source = resolve(recipeDirectory, mount.source)
+    return {
+      type: await recipeMountType(source, mount.type),
+      source,
+      target: mount.target,
+      mode: mount.mode ?? "readonly",
+      ...(mount.metadata ? { metadata: mount.metadata } : {}),
+      ...(mount.role ? { role: mount.role } : {}),
+      ...(mount.ref ? { ref: mount.ref } : {}),
+      planned: "existing",
+    }
+  }))
+
+  return {
+    name: distribution.name,
+    wordpress: distribution.wordpress,
+    sourceMounts,
+    env: distribution.env ?? {},
+    constants: distribution.constants ?? {},
+    serviceFakes: (distribution.serviceFakes ?? []).map((fake) => ({
+      name: fake.name,
+      source: resolve(recipeDirectory, fake.source),
+      load: fake.load ?? "pre-bootstrap",
+      ...(fake.sideEffectsArtifact ? { sideEffectsArtifact: fake.sideEffectsArtifact } : {}),
+      ...(fake.metadata ? { metadata: fake.metadata } : {}),
+    })),
+    routeAliases: distribution.routeAliases ?? [],
+    startupProbes: (distribution.startupProbes ?? []).map(distributionStartupProbePlan),
+    artifacts: distribution.artifacts ?? [],
+    safety: {
+      network: distribution.safety?.network ?? "deny",
+      allowedHosts: distribution.safety?.allowedHosts ?? [],
+      secretEnv: (distribution.safety?.secretEnv ?? []).map((name) => ({
+        name,
+        available: process.env[name] !== undefined,
+      })),
+      ambientSecrets: false,
+    },
+  }
+}
+
+function distributionStartupProbePlan(probe: WorkspaceRecipeDistributionStartupProbe): RecipeDryRunDistributionStartupProbe {
+  if (probe.type === "http" || probe.type === "browser") {
+    return probe
+  }
+
+  if (probe.type === "wp-cli") {
+    return {
+      ...probe,
+      command: "wordpress.wp-cli",
+      args: [`command=${probe.command ?? ""}`],
+    }
+  }
+
+  return {
+    ...probe,
+    command: "wordpress.run-php",
+    args: [`code=${probe.code ?? ""}`],
   }
 }
 

@@ -13,17 +13,24 @@ const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
 const externalUntrustedHostRecipePath = resolve(workspace, "external-untrusted-host-recipe.json")
 const externalStrictDigestRecipePath = resolve(workspace, "external-strict-digest-recipe.json")
+const distributionRecipePath = resolve(workspace, "distribution-recipe.json")
+const invalidDistributionRecipePath = resolve(workspace, "invalid-distribution-recipe.json")
 const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
 const fixtureSeedPath = resolve(workspace, "fixture-seed.json")
 const fixtureMountPath = resolve(workspace, "fixture-mount.json")
 const fixtureMountDir = resolve(workspace, "fixture-mount-dir")
+const distributionSourceDir = resolve(workspace, "toy-distribution")
+const serviceFakePath = resolve(workspace, "service-fake.php")
 const dryRunArtifacts = resolve(workspace, "dry-run-artifacts")
 const multisiteCookbookRecipePath = resolve(root, "examples/recipes/cookbook/multisite-network.json")
 
 mkdirSync(workspace, { recursive: true })
 mkdirSync(fixtureMountDir, { recursive: true })
+mkdirSync(distributionSourceDir, { recursive: true })
 writeFileSync(fixtureSeedPath, `${JSON.stringify({ posts: [{ slug: "fixture-page" }] }, null, 2)}\n`)
 writeFileSync(fixtureMountPath, `${JSON.stringify({ ok: true }, null, 2)}\n`)
+writeFileSync(resolve(distributionSourceDir, "index.php"), "<?php // Toy external distribution fixture.\n")
+writeFileSync(serviceFakePath, "<?php file_put_contents('/tmp/toy-service-effects.jsonl', json_encode(['fake' => 'active']) . PHP_EOL, FILE_APPEND);\n")
 writeFileSync(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   runtime: {
@@ -199,6 +206,109 @@ writeFileSync(externalStrictDigestRecipePath, `${JSON.stringify({
   },
 }, null, 2)}\n`)
 
+writeFileSync(distributionRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  distribution: {
+    name: "toy-distribution",
+    sourceMounts: [
+      {
+        source: "./toy-distribution",
+        target: "/workspace/toy-distribution",
+        mode: "readonly",
+        role: "wordpress-root",
+        ref: "fixture-ref",
+      },
+    ],
+    wordpress: {
+      root: "/workspace/toy-distribution",
+      bootstrap: "external",
+      config: "wp-config.codebox.php",
+      bootstrapFile: "/workspace/toy-distribution/index.php",
+    },
+    env: {
+      TOY_DISTRIBUTION: "1",
+    },
+    constants: {
+      TOY_DISTRIBUTION_BOOT: true,
+    },
+    serviceFakes: [
+      {
+        name: "toy-service",
+        source: "./service-fake.php",
+        load: "pre-bootstrap",
+        sideEffectsArtifact: "fake-services/toy-service.jsonl",
+      },
+    ],
+    routeAliases: [
+      {
+        name: "toy-api",
+        host: "api.toy.test",
+        path: "/toy-api",
+        target: "/wp-json/toy/v1",
+        targetType: "wordpress-rest",
+      },
+    ],
+    startupProbes: [
+      {
+        name: "toy-home",
+        type: "http",
+        url: "/",
+        expectStatus: 200,
+      },
+      {
+        name: "toy-options",
+        type: "wp-cli",
+        command: "option get home",
+      },
+    ],
+    artifacts: [
+      {
+        path: "probe-results/toy.json",
+        kind: "probe-results",
+      },
+    ],
+    safety: {
+      network: "declared",
+      allowedHosts: ["api.toy.test"],
+      secretEnv: ["TOY_SERVICE_TOKEN"],
+    },
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=echo 'toy distribution';"],
+      },
+    ],
+  },
+}, null, 2)}\n`)
+
+writeFileSync(invalidDistributionRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  distribution: {
+    name: "invalid-distribution",
+    wordpress: {
+      root: "/workspace/invalid-distribution",
+    },
+    routeAliases: [
+      {
+        target: "/wp-json/toy/v1",
+      },
+    ],
+    safety: {
+      allowedHosts: ["api.toy.test"],
+    },
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=echo 'invalid distribution';"],
+      },
+    ],
+  },
+}, null, 2)}\n`)
+
 const result = spawnSync(process.execPath, [
   cli,
   "recipe-run",
@@ -348,6 +458,51 @@ assert.equal(externalDisabledResult.status, 1, externalDisabledResult.stderr || 
 const externalDisabledOutput = JSON.parse(externalDisabledResult.stdout)
 assert.equal(externalDisabledOutput.success, false)
 assert.equal(externalDisabledOutput.validation.issues[0].code, "network-downloads-disabled")
+
+const distributionResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  distributionRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8", env: { ...process.env, TOY_SERVICE_TOKEN: "redacted-value" } })
+
+assert.equal(distributionResult.status, 0, distributionResult.stderr || distributionResult.stdout)
+const distributionOutput = JSON.parse(distributionResult.stdout)
+assert.equal(distributionOutput.success, true)
+assert.equal(distributionOutput.plan.distribution.name, "toy-distribution")
+assert.equal(distributionOutput.plan.distribution.wordpress.root, "/workspace/toy-distribution")
+assert.equal(distributionOutput.plan.distribution.sourceMounts[0].source, distributionSourceDir)
+assert.equal(distributionOutput.plan.distribution.sourceMounts[0].role, "wordpress-root")
+assert.equal(distributionOutput.plan.distribution.env.TOY_DISTRIBUTION, "1")
+assert.equal(distributionOutput.plan.distribution.constants.TOY_DISTRIBUTION_BOOT, true)
+assert.equal(distributionOutput.plan.distribution.serviceFakes[0].source, serviceFakePath)
+assert.equal(distributionOutput.plan.distribution.serviceFakes[0].sideEffectsArtifact, "fake-services/toy-service.jsonl")
+assert.equal(distributionOutput.plan.distribution.routeAliases[0].host, "api.toy.test")
+assert.equal(distributionOutput.plan.distribution.startupProbes[1].command, "wordpress.wp-cli")
+assert.equal(distributionOutput.plan.distribution.startupProbes[1].args[0], "command=option get home")
+assert.equal(distributionOutput.plan.distribution.artifacts[0].path, "probe-results/toy.json")
+assert.equal(distributionOutput.plan.distribution.safety.secretEnv[0].name, "TOY_SERVICE_TOKEN")
+assert.equal(distributionOutput.plan.distribution.safety.secretEnv[0].available, true)
+assert.equal(Object.prototype.hasOwnProperty.call(distributionOutput.plan.distribution.safety.secretEnv[0], "value"), false)
+assert.equal(distributionOutput.plan.distribution.safety.ambientSecrets, false)
+assert.equal(distributionOutput.plan.mounts.some((mount: { target: string; metadata?: { kind?: string; role?: string } }) => mount.target === "/workspace/toy-distribution" && mount.metadata?.kind === "distribution-source-mount" && mount.metadata?.role === "wordpress-root"), true)
+
+const invalidDistributionResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  invalidDistributionRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8" })
+
+assert.equal(invalidDistributionResult.status, 1, invalidDistributionResult.stderr || invalidDistributionResult.stdout)
+const invalidDistributionOutput = JSON.parse(invalidDistributionResult.stdout)
+assert.equal(invalidDistributionOutput.success, false)
+assert.equal(invalidDistributionOutput.validation.issues.some((issue: { code: string }) => issue.code === "missing-route-alias-source"), true)
+assert.equal(invalidDistributionOutput.validation.issues.some((issue: { code: string }) => issue.code === "undeclared-distribution-network"), true)
 
 const multisiteCookbookResult = spawnSync(process.execPath, [
   cli,

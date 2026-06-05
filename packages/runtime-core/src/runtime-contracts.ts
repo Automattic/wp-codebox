@@ -103,6 +103,70 @@ export interface WorkspaceRecipeRuntimeBackendPackage {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeDistributionSourceMount extends WorkspaceRecipeMount {
+  role?: "wordpress-root" | "dependency" | "fixtures" | (string & {})
+  ref?: string
+}
+
+export interface WorkspaceRecipeDistributionWordPress {
+  root: string
+  bootstrap?: "standard" | "custom" | "external" | (string & {})
+  config?: string
+  bootstrapFile?: string
+}
+
+export interface WorkspaceRecipeDistributionServiceFake {
+  name: string
+  source: string
+  load?: "pre-bootstrap" | "mu-plugin" | "manual"
+  sideEffectsArtifact?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeDistributionRouteAlias {
+  name?: string
+  host?: string
+  path?: string
+  target: string
+  targetType?: "wordpress-rest" | "wordpress-route" | "local-url" | (string & {})
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeDistributionStartupProbe {
+  name: string
+  type: "http" | "browser" | "wp-cli" | "php"
+  url?: string
+  command?: string
+  code?: string
+  expectStatus?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeDistributionArtifact {
+  path: string
+  kind?: "logs" | "probe-results" | "fake-side-effects" | "runtime" | (string & {})
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeDistributionSafety {
+  network?: "deny" | "declared"
+  allowedHosts?: string[]
+  secretEnv?: string[]
+}
+
+export interface WorkspaceRecipeDistribution {
+  name: string
+  sourceMounts?: WorkspaceRecipeDistributionSourceMount[]
+  wordpress: WorkspaceRecipeDistributionWordPress
+  env?: Record<string, string | number | boolean | null>
+  constants?: Record<string, string | number | boolean | null>
+  serviceFakes?: WorkspaceRecipeDistributionServiceFake[]
+  routeAliases?: WorkspaceRecipeDistributionRouteAlias[]
+  startupProbes?: WorkspaceRecipeDistributionStartupProbe[]
+  artifacts?: WorkspaceRecipeDistributionArtifact[]
+  safety?: WorkspaceRecipeDistributionSafety
+}
+
 export interface WorkspaceRecipeStagedFile {
   source: string
   target: string
@@ -224,6 +288,7 @@ export interface SandboxWorkspaceContract {
 
 export interface WorkspaceRecipe {
   schema: "wp-codebox/workspace-recipe/v1"
+  distribution?: WorkspaceRecipeDistribution
   runtime?: {
     backend?: RuntimeBackendKind
     name?: string

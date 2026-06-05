@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -45,6 +45,26 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
 
     if (step.args && !Array.isArray(step.args)) {
       throw new Error(`Recipe workflow ${phase} args must be arrays: ${recipePath}`)
+    }
+  }
+
+  if (recipe.distribution !== undefined) {
+    if (!recipe.distribution || typeof recipe.distribution !== "object" || Array.isArray(recipe.distribution)) {
+      throw new Error(`Recipe distribution must be an object: ${recipePath}`)
+    }
+    if (!recipe.distribution.name || typeof recipe.distribution.name !== "string") {
+      throw new Error(`Recipe distribution requires name: ${recipePath}`)
+    }
+    if (!recipe.distribution.wordpress || typeof recipe.distribution.wordpress !== "object" || Array.isArray(recipe.distribution.wordpress)) {
+      throw new Error(`Recipe distribution requires wordpress: ${recipePath}`)
+    }
+    if (!recipe.distribution.wordpress.root || typeof recipe.distribution.wordpress.root !== "string") {
+      throw new Error(`Recipe distribution wordpress requires root: ${recipePath}`)
+    }
+    for (const field of ["sourceMounts", "serviceFakes", "routeAliases", "startupProbes", "artifacts"] as const) {
+      if (recipe.distribution[field] !== undefined && !Array.isArray(recipe.distribution[field])) {
+        throw new Error(`Recipe distribution ${field} must be an array: ${recipePath}`)
+      }
     }
   }
 
@@ -309,6 +329,8 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
     addIssue("unsupported-backend", "$.runtime.backend", `Unsupported recipe backend: ${recipe.runtime.backend}`)
   }
 
+  await validateRecipeDistribution(recipe.distribution, recipeDirectory, addIssue)
+
   if (recipe.runtime?.backendPackage) {
     if ((recipe.runtime.backend ?? "wordpress-playground") !== "wordpress-playground") {
       addIssue("unsupported-backend-package", "$.runtime.backendPackage", "Runtime backendPackage is only supported for the wordpress-playground backend")
@@ -406,6 +428,136 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
   }
 
   return issues
+}
+
+async function validateRecipeDistribution(distribution: WorkspaceRecipeDistribution | undefined, recipeDirectory: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  if (!distribution) {
+    return
+  }
+
+  if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(distribution.name)) {
+    addIssue("invalid-distribution-name", "$.distribution.name", `Distribution names must be stable identifiers: ${distribution.name}`)
+  }
+
+  if (!distribution.wordpress || typeof distribution.wordpress !== "object") {
+    addIssue("missing-distribution-wordpress", "$.distribution.wordpress", "Distribution recipes must declare wordpress.root.")
+  } else {
+    validateAbsoluteSandboxPath(distribution.wordpress.root, "$.distribution.wordpress.root", addIssue)
+    if (distribution.wordpress.bootstrapFile) {
+      validateAbsoluteSandboxPath(distribution.wordpress.bootstrapFile, "$.distribution.wordpress.bootstrapFile", addIssue)
+    }
+  }
+
+  for (const [name, value] of Object.entries(distribution.env ?? {})) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      addIssue("invalid-distribution-env", `$.distribution.env.${name}`, "Distribution env keys must match /^[A-Z_][A-Z0-9_]*$/.")
+    }
+    validateDistributionScalar(value, `$.distribution.env.${name}`, addIssue)
+  }
+
+  for (const [name, value] of Object.entries(distribution.constants ?? {})) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      addIssue("invalid-distribution-constant", `$.distribution.constants.${name}`, "Distribution constants must be valid PHP-style constant names.")
+    }
+    validateDistributionScalar(value, `$.distribution.constants.${name}`, addIssue)
+  }
+
+  for (const [index, mount] of (distribution.sourceMounts ?? []).entries()) {
+    const path = `$.distribution.sourceMounts[${index}]`
+    await validateExistingMountSource(resolve(recipeDirectory, mount.source), mount.type, `${path}.source`, addIssue)
+    validateAbsoluteSandboxPath(mount.target, `${path}.target`, addIssue)
+  }
+
+  for (const [index, fake] of (distribution.serviceFakes ?? []).entries()) {
+    const path = `$.distribution.serviceFakes[${index}]`
+    if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(fake.name)) {
+      addIssue("invalid-service-fake-name", `${path}.name`, `Service fake names must be stable identifiers: ${fake.name}`)
+    }
+    await validateExistingFile(resolve(recipeDirectory, fake.source), `${path}.source`, addIssue)
+    if (fake.load && !["pre-bootstrap", "mu-plugin", "manual"].includes(fake.load)) {
+      addIssue("invalid-service-fake-load", `${path}.load`, "Service fake load must be pre-bootstrap, mu-plugin, or manual.")
+    }
+    if (fake.sideEffectsArtifact && !isRelativeArtifactPath(fake.sideEffectsArtifact)) {
+      addIssue("invalid-service-fake-artifact", `${path}.sideEffectsArtifact`, "Service fake sideEffectsArtifact must be a relative artifact path.")
+    }
+  }
+
+  for (const [index, alias] of (distribution.routeAliases ?? []).entries()) {
+    const path = `$.distribution.routeAliases[${index}]`
+    if (!alias.host && !alias.path) {
+      addIssue("missing-route-alias-source", path, "Route aliases must declare at least one host or path.")
+    }
+    if (alias.path) {
+      validateAbsoluteSandboxPath(alias.path, `${path}.path`, addIssue)
+    }
+    if (!alias.target || typeof alias.target !== "string") {
+      addIssue("missing-route-alias-target", `${path}.target`, "Route aliases require a target.")
+    }
+  }
+
+  for (const [index, probe] of (distribution.startupProbes ?? []).entries()) {
+    validateDistributionStartupProbe(probe, `$.distribution.startupProbes[${index}]`, addIssue)
+  }
+
+  for (const [index, artifact] of (distribution.artifacts ?? []).entries()) {
+    if (!artifact.path || !isRelativeArtifactPath(artifact.path)) {
+      addIssue("invalid-distribution-artifact", `$.distribution.artifacts[${index}].path`, "Distribution artifact paths must be relative artifact paths.")
+    }
+  }
+
+  for (const [index, host] of (distribution.safety?.allowedHosts ?? []).entries()) {
+    if ((distribution.safety?.network ?? "deny") !== "declared") {
+      addIssue("undeclared-distribution-network", `$.distribution.safety.allowedHosts[${index}]`, "Distribution allowedHosts require safety.network to be declared.")
+    }
+    if (!/^[a-z0-9.-]+$/i.test(host)) {
+      addIssue("invalid-distribution-network-host", `$.distribution.safety.allowedHosts[${index}]`, `Distribution allowed host is invalid: ${host}`)
+    }
+  }
+
+  for (const [index, name] of (distribution.safety?.secretEnv ?? []).entries()) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      addIssue("invalid-distribution-secret-env", `$.distribution.safety.secretEnv[${index}]`, `Distribution secret environment variable names must match /^[A-Z_][A-Z0-9_]*$/: ${name}`)
+    }
+  }
+}
+
+function validateDistributionStartupProbe(probe: WorkspaceRecipeDistributionStartupProbe, path: string, addIssue: (code: string, path: string, message: string) => void): void {
+  if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(probe.name)) {
+    addIssue("invalid-startup-probe-name", `${path}.name`, `Startup probe names must be stable identifiers: ${probe.name}`)
+  }
+
+  if (probe.type === "http" || probe.type === "browser") {
+    if (!probe.url) {
+      addIssue("missing-startup-probe-url", `${path}.url`, `${probe.type} startup probes require url.`)
+    }
+    return
+  }
+
+  if (probe.type === "wp-cli") {
+    if (!probe.command) {
+      addIssue("missing-startup-probe-command", `${path}.command`, "wp-cli startup probes require command.")
+    }
+    return
+  }
+
+  if (probe.type === "php") {
+    if (!probe.code) {
+      addIssue("missing-startup-probe-code", `${path}.code`, "php startup probes require code.")
+    }
+    return
+  }
+
+  addIssue("unsupported-startup-probe", `${path}.type`, `Unsupported startup probe type: ${probe.type}`)
+}
+
+function validateDistributionScalar(value: unknown, path: string, addIssue: (code: string, path: string, message: string) => void): void {
+  if (!["string", "number", "boolean"].includes(typeof value) && value !== null) {
+    addIssue("invalid-distribution-scalar", path, "Distribution env/constants values must be string, number, boolean, or null.")
+  }
+}
+
+function isRelativeArtifactPath(path: string): boolean {
+  return path.length > 0 && !path.startsWith("/") && !path.includes("..")
 }
 
 export function recipeWorkflowSteps(recipe: WorkspaceRecipe): Array<{ phase: Exclude<RecipeWorkflowPhase, "setup">; index: number; step: WorkspaceRecipe["workflow"]["steps"][number] }> {
