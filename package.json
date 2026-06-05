@@ -107,6 +107,7 @@
     "recipe-dry-run-smoke": "tsx scripts/recipe-dry-run-smoke.ts",
     "recipe-workflow-phases-smoke": "tsx scripts/recipe-workflow-phases-smoke.ts",
     "recipe-site-seed-smoke": "tsx scripts/recipe-site-seed-smoke.ts",
+    "recipe-fixture-probes-smoke": "tsx scripts/recipe-fixture-probes-smoke.ts",
     "recipe-staged-files-smoke": "tsx scripts/recipe-staged-files-smoke.ts",
     "recipe-workspace-seed-excludes-smoke": "tsx scripts/recipe-workspace-seed-excludes-smoke.ts",
     "recipe-runtime-evidence-smoke": "tsx scripts/recipe-runtime-evidence-smoke.ts",

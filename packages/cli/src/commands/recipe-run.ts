@@ -1,14 +1,15 @@
+import { createHash } from "node:crypto"
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
-import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -72,7 +73,10 @@ interface RecipeRunOutput {
   runtime?: RuntimeInfo
   executions: RecipeExecutionResult[]
   stagedFiles?: RecipeRunStagedFile[]
+  fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
+  probes?: RecipeRunProbe[]
+  declaredArtifacts?: RecipeRunDeclaredArtifact[]
   phaseEvidence?: RecipePhaseEvidence[]
   diagnostics?: RecipeRuntimeDiagnostic[]
   validation?: {
@@ -100,7 +104,7 @@ type RecipeExecutionResult = ExecutionResult & {
   recipeCommand?: string
 }
 
-type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "run_workloads" | "collect_artifacts"
+type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_workloads" | "run_probes" | "collect_artifacts"
 
 interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"
@@ -156,6 +160,58 @@ interface RecipeRunSiteSeed extends Omit<RecipeDryRunSiteSeed, "dryRunOnly"> {
 
 interface RecipeRunStagedFile extends RecipeDryRunStagedFile {
   action: "staged"
+}
+
+interface RecipeRunFixtureDatabase {
+  schema: "wp-codebox/fixture-database-result/v1"
+  index: number
+  name: string
+  version: string
+  source: string
+  format: "sql"
+  action: "imported" | "skipped"
+  reset: {
+    strategy: "none" | "truncate-tables"
+    tables: string[]
+  }
+  identity: {
+    name: string
+    version: string
+    sourceSha256: string
+  }
+  counts?: Record<string, number>
+  metadata?: Record<string, unknown>
+}
+
+interface RecipeRunProbe {
+  schema: "wp-codebox/recipe-probe-result/v1"
+  index: number
+  name: string
+  status: "passed" | "failed"
+  command: string
+  args: string[]
+  exitCode: number
+  stdout: string
+  stderr: string
+  parsedJson?: unknown
+  allowFailure: boolean
+  metadata?: Record<string, unknown>
+}
+
+interface RecipeRunDeclaredArtifact {
+  schema: "wp-codebox/recipe-declared-artifact-result/v1"
+  index: number
+  name: string
+  path: string
+  required: boolean
+  status: "collected" | "missing" | "failed"
+  exists: boolean
+  type?: "file" | "directory" | "other"
+  size?: number
+  sha256?: string
+  parsedJson?: unknown
+  error?: RunOutput["error"]
+  metadata?: Record<string, unknown>
 }
 
 interface BenchmarkArtifactOutput {
@@ -294,6 +350,26 @@ class RecipePhaseError extends Error {
     const message = cause instanceof Error ? cause.message : String(cause)
     super(`Recipe phase ${phase} failed: ${message}`, { cause })
     this.name = "RecipePhaseError"
+  }
+}
+
+class RecipeProbeFailureError extends Error {
+  readonly code = "recipe-probe-failed"
+
+  constructor(readonly probes: RecipeRunProbe[]) {
+    const failed = probes.filter((probe) => probe.status === "failed" && !probe.allowFailure)
+    super(`${failed.length} recipe probe${failed.length === 1 ? "" : "s"} failed: ${failed.map((probe) => probe.name).join(", ")}`)
+    this.name = "RecipeProbeFailureError"
+  }
+}
+
+class RecipeDeclaredArtifactFailureError extends Error {
+  readonly code = "recipe-artifact-collection-failed"
+
+  constructor(readonly declaredArtifacts: RecipeRunDeclaredArtifact[]) {
+    const failed = declaredArtifacts.filter((artifact) => artifact.required && artifact.status !== "collected")
+    super(`${failed.length} required recipe artifact${failed.length === 1 ? "" : "s"} failed collection: ${failed.map((artifact) => artifact.name).join(", ")}`)
+    this.name = "RecipeDeclaredArtifactFailureError"
   }
 }
 
@@ -494,6 +570,14 @@ async function bestEffortTimeout<T>(promise: Promise<T>, timeoutMs: number): Pro
 }
 
 function serializeRecipeRunError(error: unknown): RunOutput["error"] {
+  if (error instanceof RecipePhaseError && (error.cause instanceof RecipeProbeFailureError || error.cause instanceof RecipeDeclaredArtifactFailureError)) {
+    return {
+      ...serializeError(error),
+      code: error.cause.code,
+      cause: serializeError(error.cause),
+    }
+  }
+
   const serialized = serializeError(error)
   if (error instanceof RecipeRunTimeoutError) {
     return {
@@ -559,6 +643,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let backendPackage: PreparedRuntimeBackendPackage | undefined
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
+  let fixtureDatabases: RecipeRunFixtureDatabase[] = []
+  let probes: RecipeRunProbe[] = []
+  let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
@@ -759,7 +846,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       interruption?.throwIfInterrupted()
     }
 
-    const siteSeeds = await awaitRecipe("site-seeds.import", importRecipeSiteSeeds(recipe, recipeDirectory, runtime, executions))
+    fixtureDatabases = await phaseTracker.run("import_fixture_databases", phaseFixtureDatabaseData(recipe), async () => await awaitRecipe("fixture-databases.import", importRecipeFixtureDatabases(recipe, recipeDirectory, runtime!, executions)))
+    const siteSeeds = await awaitRecipe("site-seeds.import", importRecipeSiteSeeds(recipe, recipeDirectory, runtime!, executions))
     interruption?.throwIfInterrupted()
 
     const sandboxWorkspace = sandboxWorkspaceContract(workspaceMounts, recipe.inputs?.mounts ?? [])
@@ -771,11 +859,23 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     })
 
+    probes = await phaseTracker.run("run_probes", phaseProbeData(recipe), async () => await awaitRecipe("recipe-probes.run", runRecipeProbes(recipe, recipeDirectory, runtime!, executions)))
+    const probeFailure = recipeProbeFailure(probes)
+    if (probeFailure) {
+      throw probeFailure
+    }
+
     let evidence = await phaseTracker.run("collect_artifacts", { includeLogs: true, includeObservations: true }, async () => {
+      declaredArtifacts = await awaitRecipe("recipe-artifacts.collect", collectRecipeDeclaredArtifacts(recipe, runtime!))
+      const declaredArtifactFailure = recipeDeclaredArtifactFailure(declaredArtifacts)
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
+      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
+      if (declaredArtifactFailure) {
+        throw declaredArtifactFailure
+      }
       const recipeEvidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       const agentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(recipeEvidence, agentEvidence)
@@ -827,7 +927,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeInfo ?? await runtime.info(),
         executions,
         stagedFiles: stagedFiles.map(recipeRunStagedFile),
+        fixtureDatabases,
         siteSeeds,
+        probes,
+        declaredArtifacts,
         phaseEvidence: phaseTracker.list(),
         ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
@@ -854,7 +957,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime: runtimeInfo ?? await runtime.info(),
       executions,
       stagedFiles: stagedFiles.map(recipeRunStagedFile),
+      fixtureDatabases,
       siteSeeds,
+      probes,
+      declaredArtifacts,
       phaseEvidence: phaseTracker.list(),
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
@@ -878,6 +984,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         executions,
         interruption,
       }))
+      if (artifacts) {
+        try {
+          if (declaredArtifacts.length === 0) {
+            declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
+          }
+          await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
+        } catch {
+          // Preserve the original recipe failure; failure recovery already kept the base artifact bundle.
+        }
+      }
 
       if (error instanceof RecipeRunTimeoutError) {
         void activeRuntime.destroy().catch(() => undefined)
@@ -910,6 +1026,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       recipePath,
       ...(runtime ? { runtime: await runtime.info() } : {}),
       executions,
+      stagedFiles: stagedFiles.map(recipeRunStagedFile),
+      fixtureDatabases,
+      probes,
+      declaredArtifacts,
       phaseEvidence: phaseTracker.list(),
       diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       ...(artifacts ? { artifacts } : {}),
@@ -1100,8 +1220,12 @@ function classifyRecipePhaseFailure(phase: string): string {
       return "plugin_mount"
     case "activate_plugins":
       return "plugin_activation"
+    case "import_fixture_databases":
+      return "fixture_database"
     case "run_workloads":
       return "workload"
+    case "run_probes":
+      return "probe"
     case "collect_artifacts":
       return "artifact_collection"
     default:
@@ -1472,6 +1596,241 @@ async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: Wo
   }
 }
 
+async function importRecipeFixtureDatabases(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunFixtureDatabase[]> {
+  const results: RecipeRunFixtureDatabase[] = []
+  for (const [index, fixture] of (recipe.inputs?.fixtureDatabases ?? []).entries()) {
+    const source = resolve(recipeDirectory, fixture.source)
+    const sql = await readFile(source, "utf8")
+    const reset = {
+      strategy: fixture.reset?.strategy ?? "truncate-tables" as const,
+      tables: fixture.reset?.tables ?? [],
+    }
+    const execution = await runtime.execute({
+      command: "wordpress.run-php",
+      args: [`code=${fixtureDatabaseImportCode(fixture, sql, reset)}`],
+    })
+    executions.push(withRecipeExecutionPhase(execution, "setup", index, `fixture-database.import:${fixture.name}`))
+    const imported = parseFixtureDatabaseImportResult(execution.stdout)
+    results.push({
+      schema: "wp-codebox/fixture-database-result/v1",
+      index,
+      name: fixture.name,
+      version: fixture.version,
+      source,
+      format: fixture.format ?? "sql",
+      action: "imported",
+      reset,
+      identity: {
+        name: fixture.name,
+        version: fixture.version,
+        sourceSha256: createHash("sha256").update(sql).digest("hex"),
+      },
+      counts: imported.counts,
+      ...(fixture.metadata ? { metadata: fixture.metadata } : {}),
+    })
+  }
+  return results
+}
+
+async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunProbe[]> {
+  const results: RecipeRunProbe[] = []
+  for (const [index, probe] of (recipe.probes ?? []).entries()) {
+    const execution = await executeRecipeProbe(runtime, probe, recipeDirectory, index)
+    executions.push(execution)
+    const parsedJson = parseProbeJson(execution.stdout)
+    const failedJsonExpectation = probe.expectJson === true && parsedJson === undefined
+    results.push(stripUndefined({
+      schema: "wp-codebox/recipe-probe-result/v1" as const,
+      index,
+      name: probe.name,
+      status: execution.exitCode === 0 && !failedJsonExpectation ? "passed" as const : "failed" as const,
+      command: execution.command,
+      args: execution.args,
+      exitCode: execution.exitCode,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      parsedJson,
+      allowFailure: probe.allowFailure === true,
+      metadata: probe.metadata,
+    }))
+  }
+  return results
+}
+
+async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe, recipeDirectory: string, index: number): Promise<RecipeExecutionResult> {
+  try {
+    const execution = await runtime.execute(await recipeExecutionSpec(probe.step, recipeDirectory))
+    return withRecipeExecutionPhase(execution, "setup", index, `recipe.probe:${probe.name}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Recipe probe "${probe.name}" failed before producing a result: ${message}`, { cause: error })
+  }
+}
+
+async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: Runtime): Promise<RecipeRunDeclaredArtifact[]> {
+  const results: RecipeRunDeclaredArtifact[] = []
+  for (const [index, artifact] of (recipe.artifacts?.paths ?? []).entries()) {
+    results.push(await collectRecipeDeclaredArtifact(runtime, artifact, index))
+  }
+  return results
+}
+
+async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: WorkspaceRecipeDeclaredArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
+  const required = artifact.required !== false
+  try {
+    const execution = await runtime.execute({
+      command: "wordpress.run-php",
+      args: [`code=${declaredArtifactReadCode(artifact.path, artifact.parseJson === true)}`],
+    })
+    const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
+    const exists = collected.exists === true
+    return stripUndefined({
+      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
+      index,
+      name: artifact.name,
+      path: artifact.path,
+      required,
+      status: exists ? "collected" as const : "missing" as const,
+      exists,
+      type: collected.type,
+      size: collected.size,
+      sha256: collected.sha256,
+      parsedJson: collected.parsedJson,
+      metadata: artifact.metadata,
+    }) as RecipeRunDeclaredArtifact
+  } catch (error) {
+    return stripUndefined({
+      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
+      index,
+      name: artifact.name,
+      path: artifact.path,
+      required,
+      status: "failed" as const,
+      exists: false,
+      error: serializeRecipeRunError(error),
+      metadata: artifact.metadata,
+    }) as RecipeRunDeclaredArtifact
+  }
+}
+
+function recipeProbeFailure(probes: RecipeRunProbe[]): RecipeProbeFailureError | undefined {
+  return probes.some((probe) => probe.status === "failed" && !probe.allowFailure) ? new RecipeProbeFailureError(probes) : undefined
+}
+
+function recipeDeclaredArtifactFailure(declaredArtifacts: RecipeRunDeclaredArtifact[]): RecipeDeclaredArtifactFailureError | undefined {
+  return declaredArtifacts.some((artifact) => artifact.required && artifact.status !== "collected") ? new RecipeDeclaredArtifactFailureError(declaredArtifacts) : undefined
+}
+
+function recipeRuntimeEvidenceFiles(fixtureDatabases: RecipeRunFixtureDatabase[], probes: RecipeRunProbe[], declaredArtifacts: RecipeRunDeclaredArtifact[]): Array<{ filename: string; kind: string; value: unknown }> {
+  return [
+    ...(fixtureDatabases.length > 0 ? [{ filename: "fixture-databases.json", kind: "fixture-database-results", value: { schema: "wp-codebox/fixture-database-results/v1", fixtures: fixtureDatabases } }] : []),
+    ...(probes.length > 0 ? [{ filename: "recipe-probes.json", kind: "recipe-probe-results", value: { schema: "wp-codebox/recipe-probe-results/v1", passed: !recipeProbeFailure(probes), probes } }] : []),
+    ...(declaredArtifacts.length > 0 ? [{ filename: "recipe-declared-artifacts.json", kind: "recipe-declared-artifact-results", value: { schema: "wp-codebox/recipe-declared-artifact-results/v1", passed: !recipeDeclaredArtifactFailure(declaredArtifacts), artifacts: declaredArtifacts } }] : []),
+  ]
+}
+
+function parseFixtureDatabaseImportResult(stdout: string): { counts: Record<string, number> } {
+  const parsed = JSON.parse(stdout.trim() || "{}") as { counts?: Record<string, unknown> }
+  const counts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(parsed.counts ?? {})) {
+    if (typeof value === "number") {
+      counts[key] = value
+    }
+  }
+  return { counts }
+}
+
+function parseProbeJson(stdout: string): unknown | undefined {
+  const trimmed = stdout.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return undefined
+  }
+}
+
+function fixtureDatabaseImportCode(fixture: WorkspaceRecipeFixtureDatabase, sql: string, reset: RecipeRunFixtureDatabase["reset"]): string {
+  const encodedSql = JSON.stringify(sql)
+  const encodedTables = JSON.stringify(reset.tables)
+  const encodedResetStrategy = JSON.stringify(reset.strategy)
+  const encodedName = JSON.stringify(fixture.name)
+  const encodedVersion = JSON.stringify(fixture.version)
+  return `
+global $wpdb;
+$fixture_name = ${encodedName};
+$fixture_version = ${encodedVersion};
+$reset_strategy = ${encodedResetStrategy};
+$reset_tables = json_decode(${JSON.stringify(encodedTables)}, true);
+$sql = ${encodedSql};
+$counts = array('resetTables' => 0, 'statements' => 0);
+if (!is_array($reset_tables)) {
+    throw new RuntimeException('Fixture database reset tables must be an array.');
+}
+if ('truncate-tables' === $reset_strategy) {
+    foreach ($reset_tables as $table) {
+        $table = (string) $table;
+        if (!preg_match('/^[A-Za-z0-9_$]+$/', $table)) {
+            throw new RuntimeException('Fixture database reset table has an unsafe name: ' . $table);
+        }
+        $reset_result = $wpdb->query('DELETE FROM ' . $table);
+        if (false === $reset_result && !str_contains(strtolower((string) $wpdb->last_error), 'no such table')) {
+            throw new RuntimeException('Fixture database reset failed for ' . $table . ': ' . $wpdb->last_error);
+        }
+        $counts['resetTables']++;
+    }
+}
+$statements = preg_split('/;\s*(?:\r?\n|$)/', $sql);
+foreach ($statements as $statement) {
+    $statement = trim($statement);
+    if ('' === $statement || str_starts_with($statement, '--')) {
+        continue;
+    }
+    $result = $wpdb->query($statement);
+    if (false === $result) {
+        throw new RuntimeException('Fixture database import failed for ' . $fixture_name . '@' . $fixture_version . ': ' . $wpdb->last_error);
+    }
+    $counts['statements']++;
+}
+echo wp_json_encode(array('counts' => $counts));`
+}
+
+function declaredArtifactReadCode(path: string, parseJson: boolean): string {
+  const encodedPath = JSON.stringify(path)
+  return `
+$path = ${encodedPath};
+$parse_json = ${parseJson ? "true" : "false"};
+$result = array('exists' => file_exists($path));
+if (!$result['exists']) {
+    echo wp_json_encode($result);
+    return;
+}
+$result['type'] = is_dir($path) ? 'directory' : (is_file($path) ? 'file' : 'other');
+if (is_file($path)) {
+    $contents = file_get_contents($path);
+    if (false === $contents) {
+        throw new RuntimeException('Unable to read declared artifact path: ' . $path);
+    }
+    $result['size'] = strlen($contents);
+    $result['sha256'] = hash('sha256', $contents);
+    if ($parse_json) {
+        $decoded = json_decode($contents, true);
+        if (JSON_ERROR_NONE !== json_last_error()) {
+            throw new RuntimeException('Declared artifact JSON parse failed for ' . $path . ': ' . json_last_error_msg());
+        }
+        $result['parsedJson'] = $decoded;
+    }
+} elseif (is_dir($path)) {
+    $entries = array_values(array_diff(scandir($path) ?: array(), array('.', '..')));
+    sort($entries);
+    $result['size'] = count($entries);
+    $result['sha256'] = hash('sha256', wp_json_encode($entries));
+}
+echo wp_json_encode($result);`
+}
+
 function activateExtraPluginCode(pluginFile: string): string {
   return `$plugin_file = ${JSON.stringify(pluginFile)};
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -1513,6 +1872,35 @@ function phaseWorkflowData(workflowSteps: ReturnType<typeof recipeWorkflowSteps>
   return {
     count: workflowSteps.length,
     steps: workflowSteps.map((workflowStep) => ({ phase: workflowStep.phase, index: workflowStep.index, command: workflowStep.step.command })),
+  }
+}
+
+function phaseFixtureDatabaseData(recipe: WorkspaceRecipe): Record<string, unknown> {
+  const fixtures = recipe.inputs?.fixtureDatabases ?? []
+  return {
+    count: fixtures.length,
+    fixtures: fixtures.map((fixture, index) => ({
+      index,
+      name: fixture.name,
+      version: fixture.version,
+      format: fixture.format ?? "sql",
+      resetStrategy: fixture.reset?.strategy ?? "truncate-tables",
+      resetTables: fixture.reset?.tables ?? [],
+    })),
+  }
+}
+
+function phaseProbeData(recipe: WorkspaceRecipe): Record<string, unknown> {
+  const probes = recipe.probes ?? []
+  return {
+    count: probes.length,
+    probes: probes.map((probe, index) => ({
+      index,
+      name: probe.name,
+      command: probe.step.command,
+      expectJson: probe.expectJson === true,
+      allowFailure: probe.allowFailure === true,
+    })),
   }
 }
 
@@ -1662,6 +2050,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
+        fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
@@ -1682,11 +2071,13 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         cliOverrides: previewCliOverrides(recipe.runtime?.preview, preview),
       }),
       workflow,
+      probes: recipe.probes ?? [],
       inputs: {
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
+        fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
         siteSeedProvenance,
         stagedFiles: recipe.inputs?.stagedFiles ?? [],
@@ -1694,6 +2085,9 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         secretEnv: recipe.inputs?.secretEnv ?? [],
         inherit: recipe.inputs?.inherit ?? {},
         inheritance: recipe.inputs?.inheritance ?? {},
+      },
+      artifacts: {
+        paths: recipe.artifacts?.paths ?? [],
       },
     },
     preparedWorkspaces: workspaceMounts.map((workspace) => ({

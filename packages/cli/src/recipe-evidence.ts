@@ -13,6 +13,12 @@ export interface RecipeArtifactEvidenceFile {
   contentType: string
 }
 
+export interface RecipeRuntimeEvidenceInput {
+  filename: string
+  kind: string
+  value: unknown
+}
+
 export interface RecipeArtifactEvidenceResult {
   runAttestation?: RecipeRunAttestation & {
     artifact: RecipeArtifactEvidenceFile
@@ -355,6 +361,21 @@ export async function finalizeRecipeArtifactEvidence(
 
   await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
   return result
+}
+
+export async function appendRecipeRuntimeEvidence(artifacts: ArtifactBundle, files: RecipeRuntimeEvidenceInput[]): Promise<RecipeArtifactEvidenceFile[]> {
+  if (files.length === 0) {
+    return []
+  }
+
+  const evidenceDirectory = join(dirname(artifacts.reviewPath), "runtime-evidence")
+  await mkdir(evidenceDirectory, { recursive: true })
+  const evidenceFiles: RecipeArtifactEvidenceFile[] = []
+  for (const file of files) {
+    evidenceFiles.push(await writeRecipeEvidenceJson(artifacts.directory, join(evidenceDirectory, file.filename), file.value, file.kind))
+  }
+  await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
+  return evidenceFiles
 }
 
 export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "agentTaskResult" | "completionOutcome" | "transcript">> {

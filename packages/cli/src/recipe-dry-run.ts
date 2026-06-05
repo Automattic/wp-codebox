@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
-import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { serializeError } from "./output.js"
 import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
@@ -49,13 +49,16 @@ export interface RecipeDryRunPlan {
   distribution?: RecipeDryRunDistribution
   artifacts: {
     directory?: string
+    paths?: RecipeDryRunDeclaredArtifact[]
   }
   mounts: RecipeDryRunMount[]
   workspaces: RecipeDryRunWorkspace[]
   extra_plugins: RecipeDryRunExtraPlugin[]
   pluginRuntime?: RecipeDryRunPluginRuntime
+  fixtureDatabases: RecipeDryRunFixtureDatabase[]
   siteSeeds: RecipeDryRunSiteSeed[]
   stagedFiles: RecipeDryRunStagedFile[]
+  probes: RecipeDryRunProbe[]
   secretEnv: Array<{ name: string; available: boolean }>
   policy: RuntimePolicy & {
     valid: boolean
@@ -153,6 +156,35 @@ interface RecipeDryRunPluginRuntimeHealthProbe {
   resolvedCommand: string
   resolvedArgs: string[]
   policy: RecipeDryRunStep["policy"]
+}
+
+interface RecipeDryRunFixtureDatabase {
+  index: number
+  name: string
+  version: string
+  source: string
+  format: "sql"
+  reset: {
+    strategy: "none" | "truncate-tables"
+    tables: string[]
+  }
+  metadata?: Record<string, unknown>
+}
+
+interface RecipeDryRunProbe extends RecipeDryRunStep {
+  name: string
+  expectJson: boolean
+  allowFailure: boolean
+  metadata?: Record<string, unknown>
+}
+
+interface RecipeDryRunDeclaredArtifact {
+  index: number
+  name: string
+  path: string
+  required: boolean
+  parseJson: boolean
+  metadata?: Record<string, unknown>
 }
 
 export interface RecipeDryRunSiteSeed {
@@ -260,10 +292,12 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
   const extraPlugins = recipeDryRunExtraPlugins(recipe, recipeDirectory)
   const pluginRuntime = await recipeDryRunPluginRuntime(recipe, recipeDirectory, policy, context)
+  const fixtureDatabases = recipeDryRunFixtureDatabases(recipe, recipeDirectory)
   const distribution = await recipeDryRunDistribution(recipe.distribution, recipeDirectory)
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const stagedFiles = await recipeDryRunStagedFiles(recipe, recipeDirectory)
   const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy, context)
+  const probes = await recipeDryRunProbes(recipe, recipeDirectory, policy, context)
   const recipeMounts = await Promise.all((recipe.inputs?.mounts ?? []).map(async (mount) => {
     const source = resolve(recipeDirectory, mount.source)
     return {
@@ -352,13 +386,16 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
     ...(distribution ? { distribution } : {}),
     artifacts: stripUndefined({
       directory: options.artifactsDirectory ?? recipe.artifacts?.directory,
+      paths: recipeDryRunDeclaredArtifacts(recipe),
     }),
     mounts,
     workspaces,
     extra_plugins: extraPlugins,
     ...(pluginRuntime ? { pluginRuntime } : {}),
+    fixtureDatabases,
     siteSeeds,
     stagedFiles,
+    probes,
     secretEnv: (recipe.inputs?.secretEnv ?? []).map((name) => ({
       name,
       available: process.env[name] !== undefined,
@@ -374,6 +411,42 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       ...(recipe.workflow.after ? { after: workflowSteps.filter((step) => step.phase === "after") } : {}),
     },
   }
+}
+
+function recipeDryRunFixtureDatabases(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunFixtureDatabase[] {
+  return (recipe.inputs?.fixtureDatabases ?? []).map((fixture: WorkspaceRecipeFixtureDatabase, index) => ({
+    index,
+    name: fixture.name,
+    version: fixture.version,
+    source: resolve(recipeDirectory, fixture.source),
+    format: fixture.format ?? "sql",
+    reset: {
+      strategy: fixture.reset?.strategy ?? "truncate-tables",
+      tables: fixture.reset?.tables ?? [],
+    },
+    ...(fixture.metadata ? { metadata: fixture.metadata } : {}),
+  }))
+}
+
+async function recipeDryRunProbes(recipe: WorkspaceRecipe, recipeDirectory: string, policy: RuntimePolicy, context: RecipeDryRunContext): Promise<RecipeDryRunProbe[]> {
+  return Promise.all((recipe.probes ?? []).map(async (probe, index) => ({
+    ...await recipeDryRunStep(probe.step, recipeDirectory, policy, "setup", index, context, `probe:${probe.name}`),
+    name: probe.name,
+    expectJson: probe.expectJson === true,
+    allowFailure: probe.allowFailure === true,
+    ...(probe.metadata ? { metadata: probe.metadata } : {}),
+  })))
+}
+
+function recipeDryRunDeclaredArtifacts(recipe: WorkspaceRecipe): RecipeDryRunDeclaredArtifact[] {
+  return (recipe.artifacts?.paths ?? []).map((artifact: WorkspaceRecipeDeclaredArtifact, index) => ({
+    index,
+    name: artifact.name,
+    path: artifact.path,
+    required: artifact.required !== false,
+    parseJson: artifact.parseJson === true,
+    ...(artifact.metadata ? { metadata: artifact.metadata } : {}),
+  }))
 }
 
 async function recipeDryRunDistribution(distribution: WorkspaceRecipeDistribution | undefined, recipeDirectory: string): Promise<RecipeDryRunDistribution | undefined> {
