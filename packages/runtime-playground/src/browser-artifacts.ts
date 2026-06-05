@@ -44,9 +44,27 @@ export interface BrowserProbeArtifact {
     networkEvents: number
     performance?: BrowserProbePerformanceSummary
     progress?: BrowserProbeProgressSummary
+    context?: BrowserProbeContextDetails
     replayability: BrowserProbeReplayability
     screenshot: boolean
     scriptResult?: unknown
+    viewport: BrowserProbeViewport | null
+  }
+}
+
+export interface BrowserProbeContextDetails {
+  requested: {
+    device?: string
+    locale?: string
+    viewport?: {
+      width: number
+      height: number
+    }
+  }
+  effective: {
+    device?: string
+    locale?: string
+    timezone?: string
     viewport: BrowserProbeViewport | null
   }
 }
