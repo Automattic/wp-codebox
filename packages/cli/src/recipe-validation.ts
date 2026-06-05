@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -113,6 +113,10 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
       throw new Error(`Recipe pluginRuntime healthProbes must be an array: ${recipePath}`)
     }
   }
+
+  validateFixtureDatabases(recipe.inputs?.fixtureDatabases, recipePath)
+  validateRecipeProbes(recipe.probes, recipePath)
+  validateDeclaredArtifacts(recipe.artifacts?.paths, recipePath)
 
   const siteSeeds = recipe.inputs?.siteSeeds ?? []
   if (!Array.isArray(siteSeeds)) {
@@ -344,6 +348,25 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
 
   await validateRecipePluginRuntime(recipe.inputs?.pluginRuntime, addIssue)
 
+  for (const [index, fixture] of (recipe.inputs?.fixtureDatabases ?? []).entries()) {
+    const path = `$.inputs.fixtureDatabases[${index}]`
+    await validateExistingFile(resolve(recipeDirectory, fixture.source), `${path}.source`, addIssue)
+    for (const [tableIndex, table] of (fixture.reset?.tables ?? []).entries()) {
+      if (!/^[A-Za-z0-9_$]+$/.test(table)) {
+        addIssue("invalid-fixture-reset-table", `${path}.reset.tables[${tableIndex}]`, `Fixture database reset table names must be simple identifiers: ${table}`)
+      }
+    }
+  }
+
+  for (const [index, probe] of (recipe.probes ?? []).entries()) {
+    const path = `$.probes[${index}].step`
+    if (!supportedRecipeCommands.has(probe.step.command)) {
+      addIssue("unsupported-command", `${path}.command`, `Unsupported recipe probe command: ${probe.step.command}`)
+      continue
+    }
+    await validateRecipeStepArgs(probe.step, path, addIssue)
+  }
+
   for (const [index, name] of (recipe.inputs?.secretEnv ?? []).entries()) {
     if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
       addIssue("invalid-secret-env", `$.inputs.secretEnv[${index}]`, `Secret environment variable names must match /^[A-Z_][A-Z0-9_]*$/: ${name}`)
@@ -358,6 +381,10 @@ export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePat
     const path = `$.inputs.stagedFiles[${index}]`
     await validateExistingFileOrDirectory(resolve(recipeDirectory, stagedFile.source), `${path}.source`, addIssue)
     validateAbsoluteSandboxPath(stagedFile.target, `${path}.target`, addIssue)
+  }
+
+  for (const [index, artifact] of (recipe.artifacts?.paths ?? []).entries()) {
+    validateAbsoluteSandboxPath(artifact.path, `$.artifacts.paths[${index}].path`, addIssue)
   }
 
   return issues
@@ -379,6 +406,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   const commands = [
     ...recipeWorkflowSteps(recipe).map(({ step }) => step.command.startsWith("wp-codebox.agent-") ? "wordpress.run-php" : step.command),
     ...pluginRuntimeCommands,
+    ...(recipe.probes ?? []).map((probe) => probe.step.command),
   ]
   if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wp-codebox.agent-sandbox-run")) {
     commands.unshift("wordpress.wp-cli")
@@ -392,6 +420,9 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   if ((recipe.inputs?.siteSeeds ?? []).some((siteSeed) => siteSeed.type === "fixture")) {
     commands.unshift("wordpress.run-php")
   }
+  if ((recipe.inputs?.fixtureDatabases ?? []).length > 0 || (recipe.artifacts?.paths ?? []).length > 0) {
+    commands.unshift("wordpress.run-php")
+  }
   // Auto-grant the evaluate capability when a browser-actions step opts into the
   // arbitrary-JS escape hatch by including an evaluate step. Recipe authors opt in
   // by writing the step; direct `run` invocations still control the gate via --policy.
@@ -402,6 +433,75 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   return {
     ...defaultPolicy,
     commands: [...new Set(commands)],
+  }
+}
+
+function validateFixtureDatabases(fixtureDatabases: WorkspaceRecipeFixtureDatabase[] | undefined, recipePath: string): void {
+  if (fixtureDatabases && !Array.isArray(fixtureDatabases)) {
+    throw new Error(`Recipe fixtureDatabases must be an array: ${recipePath}`)
+  }
+
+  for (const fixture of fixtureDatabases ?? []) {
+    if (!fixture || typeof fixture !== "object") {
+      throw new Error(`Recipe fixtureDatabases entries must be objects: ${recipePath}`)
+    }
+    if (!fixture.name || typeof fixture.name !== "string") {
+      throw new Error(`Recipe fixtureDatabases entries must include name: ${recipePath}`)
+    }
+    if (!fixture.version || typeof fixture.version !== "string") {
+      throw new Error(`Recipe fixtureDatabases entries must include version: ${recipePath}`)
+    }
+    if (!fixture.source || typeof fixture.source !== "string") {
+      throw new Error(`Recipe fixtureDatabases entries must include source: ${recipePath}`)
+    }
+    if (fixture.format !== undefined && fixture.format !== "sql") {
+      throw new Error(`Recipe fixtureDatabases format is unsupported: ${recipePath}`)
+    }
+    if (fixture.reset?.strategy !== undefined && fixture.reset.strategy !== "none" && fixture.reset.strategy !== "truncate-tables") {
+      throw new Error(`Recipe fixtureDatabases reset strategy is unsupported: ${recipePath}`)
+    }
+    if (fixture.reset?.tables !== undefined && !Array.isArray(fixture.reset.tables)) {
+      throw new Error(`Recipe fixtureDatabases reset tables must be an array: ${recipePath}`)
+    }
+  }
+}
+
+function validateRecipeProbes(probes: WorkspaceRecipeProbe[] | undefined, recipePath: string): void {
+  if (probes && !Array.isArray(probes)) {
+    throw new Error(`Recipe probes must be an array: ${recipePath}`)
+  }
+
+  for (const probe of probes ?? []) {
+    if (!probe || typeof probe !== "object") {
+      throw new Error(`Recipe probes entries must be objects: ${recipePath}`)
+    }
+    if (!probe.name || typeof probe.name !== "string") {
+      throw new Error(`Recipe probes entries must include name: ${recipePath}`)
+    }
+    if (!probe.step || typeof probe.step !== "object" || !probe.step.command) {
+      throw new Error(`Recipe probes entries must include a step command: ${recipePath}`)
+    }
+    if (probe.step.args !== undefined && !Array.isArray(probe.step.args)) {
+      throw new Error(`Recipe probes step args must be arrays: ${recipePath}`)
+    }
+  }
+}
+
+function validateDeclaredArtifacts(paths: WorkspaceRecipeDeclaredArtifact[] | undefined, recipePath: string): void {
+  if (paths && !Array.isArray(paths)) {
+    throw new Error(`Recipe artifacts.paths must be an array: ${recipePath}`)
+  }
+
+  for (const artifact of paths ?? []) {
+    if (!artifact || typeof artifact !== "object") {
+      throw new Error(`Recipe artifacts.paths entries must be objects: ${recipePath}`)
+    }
+    if (!artifact.name || typeof artifact.name !== "string") {
+      throw new Error(`Recipe artifacts.paths entries must include name: ${recipePath}`)
+    }
+    if (!artifact.path || typeof artifact.path !== "string") {
+      throw new Error(`Recipe artifacts.paths entries must include path: ${recipePath}`)
+    }
   }
 }
 

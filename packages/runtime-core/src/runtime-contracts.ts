@@ -113,6 +113,36 @@ export interface WorkspaceRecipeStep {
   args?: string[]
 }
 
+export interface WorkspaceRecipeFixtureDatabaseReset {
+  strategy?: "none" | "truncate-tables"
+  tables?: string[]
+}
+
+export interface WorkspaceRecipeFixtureDatabase {
+  name: string
+  version: string
+  source: string
+  format?: "sql"
+  reset?: WorkspaceRecipeFixtureDatabaseReset
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeProbe {
+  name: string
+  step: WorkspaceRecipeStep
+  expectJson?: boolean
+  allowFailure?: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeDeclaredArtifact {
+  name: string
+  path: string
+  required?: boolean
+  parseJson?: boolean
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipePluginRuntimePhp {
   memoryLimit?: string
   maxExecutionTime?: number
@@ -241,6 +271,7 @@ export interface WorkspaceRecipe {
     extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
+    fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     agent_bundles?: WorkspaceRecipeAgentBundle[]
@@ -256,7 +287,9 @@ export interface WorkspaceRecipe {
     directory?: string
     verify?: boolean | WorkspaceRecipeArtifactVerifier
     workspacePolicy?: boolean | WorkspaceRecipeWorkspacePolicyArtifact
+    paths?: WorkspaceRecipeDeclaredArtifact[]
   }
+  probes?: WorkspaceRecipeProbe[]
 }
 
 export interface WorkspaceRecipeArtifactVerifier {

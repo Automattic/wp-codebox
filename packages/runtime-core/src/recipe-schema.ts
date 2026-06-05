@@ -61,6 +61,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
           },
           pluginRuntime: { $ref: "#/$defs/pluginRuntime" },
+          fixtureDatabases: {
+            type: "array",
+            description: "Fixture database declarations imported into the sandbox with deterministic reset metadata. Sources are local recipe files; no production database access is implied.",
+            items: { $ref: "#/$defs/fixtureDatabase" },
+          },
           siteSeeds: {
             type: "array",
             description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
@@ -107,7 +112,17 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           directory: { type: "string" },
           verify: { $ref: "#/$defs/artifactVerifier" },
           workspacePolicy: { $ref: "#/$defs/workspacePolicyArtifact" },
+          paths: {
+            type: "array",
+            description: "Sandbox artifact paths declared by the recipe for structured post-run collection.",
+            items: { $ref: "#/$defs/declaredArtifact" },
+          },
         },
+      },
+      probes: {
+        type: "array",
+        description: "Recipe-defined post-startup probes executed after workflow steps and before artifact finalization.",
+        items: { $ref: "#/$defs/recipeProbe" },
       },
     },
     $defs: {
@@ -307,6 +322,50 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           pluginFile: { type: "string" },
           code: { type: "string" },
           command: { type: "string" },
+        },
+      },
+      fixtureDatabase: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "version", "source"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          version: { type: "string", minLength: 1 },
+          source: { type: "string" },
+          format: { const: "sql" },
+          reset: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              strategy: { enum: ["none", "truncate-tables"] },
+              tables: { type: "array", items: { type: "string", pattern: "^[A-Za-z0-9_$]+$" }, maxItems: 100 },
+            },
+          },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      recipeProbe: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "step"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          step: { $ref: "#/$defs/step" },
+          expectJson: { type: "boolean" },
+          allowFailure: { type: "boolean" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      declaredArtifact: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "path"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          path: { type: "string", pattern: "^/" },
+          required: { type: "boolean" },
+          parseJson: { type: "boolean" },
+          metadata: { $ref: "#/$defs/metadata" },
         },
       },
       siteSeed: {
