@@ -70,7 +70,6 @@ try {
   const previewEvidence = JSON.parse(await readFile(artifacts.previewEvidencePath, "utf8"))
   const previewSessionEvidence = JSON.parse(await readFile(artifacts.previewSessionEvidencePath, "utf8"))
   const previewSessionEvidenceText = await readFile(artifacts.previewSessionEvidencePath, "utf8")
-  const previewEvidence = JSON.parse(await readFile(artifacts.previewEvidencePath, "utf8"))
   const runtimeReferenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath, "utf8"))
   const runtimeReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReferenceIndexPath, "utf8"))
   const runtimeReplayReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReplayReferenceIndexPath, "utf8"))

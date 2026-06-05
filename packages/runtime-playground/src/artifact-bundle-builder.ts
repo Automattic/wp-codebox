@@ -17,7 +17,6 @@ import {
   type ArtifactPreviewEvidence,
   type ArtifactPreviewSessionEvidence,
   type ArtifactPackageProvenance,
-  type ArtifactPreviewEvidence,
   type ArtifactReviewBrowserSummary,
   type ArtifactSpec,
   type BrowserStartupProgressEvent,
@@ -112,7 +111,6 @@ export class ArtifactBundleBuilder {
     const runtimeReplayReferenceIndexPath = join(filesDirectory, "runtime-replay-index.json")
     const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
     const previewSessionEvidencePath = join(filesDirectory, "preview-session-evidence.json")
-    const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
     const redactor = new ArtifactRedactor(source.spec.secretEnv)
 
     await source.redactBrowserArtifacts(redactor)
@@ -217,7 +215,6 @@ export class ArtifactBundleBuilder {
       preview,
       previewEvidencePath: "files/preview-evidence.json",
       previewSessionEvidencePath: previewSessionEvidenceRelativePath,
-      previewEvidencePath: "files/preview-evidence.json",
       browser,
       diagnosticsPath: "files/diagnostics.json",
     })
@@ -315,7 +312,6 @@ export class ArtifactBundleBuilder {
     await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
     await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
     await writeFile(previewSessionEvidencePath, previewSessionEvidenceJson)
-    await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
       review.redaction = redaction
