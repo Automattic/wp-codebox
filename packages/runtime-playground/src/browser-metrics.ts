@@ -189,6 +189,7 @@ export async function browserArtifactMetrics(bundleDirectory: string): Promise<B
   const artifacts: BrowserArtifactMetricsResult["artifacts"] = {}
 
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "summary", "summary.json", "json")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "lifecycle", "lifecycle.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "memory", "memory.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "performance", "performance.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "checkpoints", "checkpoints.jsonl", "jsonl")
