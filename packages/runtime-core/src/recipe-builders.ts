@@ -18,6 +18,10 @@ export interface WordPressPhpunitRecipeOptions {
   autoloadFile?: string
   testsDir?: string
   dependencyMounts?: string[]
+  bootstrapFiles?: string[]
+  phpunitArgs?: string[]
+  bootstrapMode?: "managed" | "project" | (string & {})
+  projectBootstrap?: string
   multisite?: boolean
 }
 
@@ -89,6 +93,10 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           `autoload-file=${options.autoloadFile ?? "/wp-codebox-vendor/autoload.php"}`,
           `tests-dir=${options.testsDir ?? "/wp-codebox-vendor/wp-phpunit/wp-phpunit"}`,
           `dependency-mounts=${(options.dependencyMounts ?? []).filter(Boolean).join(",")}`,
+          `bootstrap-files-json=${JSON.stringify(options.bootstrapFiles ?? [])}`,
+          `phpunit-args-json=${JSON.stringify(options.phpunitArgs ?? [])}`,
+          `bootstrap-mode=${options.bootstrapMode ?? "managed"}`,
+          `project-bootstrap=${options.projectBootstrap ?? ""}`,
           `multisite=${options.multisite ? "1" : "0"}`,
         ],
       }],

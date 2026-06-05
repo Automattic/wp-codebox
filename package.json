@@ -67,6 +67,7 @@
     "core-phpunit-command-smoke": "tsx scripts/core-phpunit-command-smoke.ts",
     "theme-check-normalization-smoke": "tsx scripts/theme-check-normalization-smoke.ts",
     "phpunit-diagnostic-artifact-smoke": "tsx scripts/phpunit-diagnostic-artifact-smoke.ts",
+    "project-phpunit-bootstrap-smoke": "tsx scripts/project-phpunit-bootstrap-smoke.ts",
     "plugin-check-normalization-smoke": "tsx scripts/plugin-check-normalization-smoke.ts",
     "bench-bootstrap-files-smoke": "tsx scripts/bench-bootstrap-files-smoke.ts",
     "benchmark-summary-smoke": "tsx scripts/benchmark-summary-smoke.ts",

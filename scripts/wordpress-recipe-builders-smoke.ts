@@ -16,6 +16,10 @@ const phpunitRecipe = buildWordPressPhpunitRecipe({
   env: { DEMO_ENV: "yes" },
   wpConfigDefines: { DEMO_DEFINE: true },
   dependencyMounts: ["/wordpress/wp-content/plugins/demo-dependency"],
+  bootstrapFiles: ["tests/managed-bootstrap.php"],
+  phpunitArgs: ["--filter", "DemoTest::test_selected"],
+  bootstrapMode: "project",
+  projectBootstrap: "tests/bootstrap.php",
   multisite: true,
   mounts: [
     { source: "/repo/demo-plugin", target: "/wordpress/wp-content/plugins/demo-plugin" },
@@ -33,6 +37,10 @@ assert.deepEqual(phpunitRecipe.workflow.steps[0]?.args, [
   "autoload-file=/wp-codebox-vendor/autoload.php",
   "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   "dependency-mounts=/wordpress/wp-content/plugins/demo-dependency",
+  'bootstrap-files-json=["tests/managed-bootstrap.php"]',
+  'phpunit-args-json=["--filter","DemoTest::test_selected"]',
+  "bootstrap-mode=project",
+  "project-bootstrap=tests/bootstrap.php",
   "multisite=1",
 ])
 assert.ok(validate(phpunitRecipe), ajv.errorsText(validate.errors))

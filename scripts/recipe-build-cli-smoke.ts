@@ -21,6 +21,10 @@ await writeFile(optionsPath, JSON.stringify({
   autoloadFile: "/wp-codebox-vendor/autoload.php",
   testsDir: "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   dependencyMounts: ["/wordpress/wp-content/plugins/dep"],
+  bootstrapFiles: ["tests/managed-bootstrap.php"],
+  phpunitArgs: ["--filter", "DemoTest::test_selected"],
+  bootstrapMode: "project",
+  projectBootstrap: "tests/bootstrap.php",
   multisite: true,
 }, null, 2))
 
@@ -41,6 +45,10 @@ assert.deepEqual(recipe.workflow.steps[0].args, [
   "autoload-file=/wp-codebox-vendor/autoload.php",
   "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
   "dependency-mounts=/wordpress/wp-content/plugins/dep",
+  'bootstrap-files-json=["tests/managed-bootstrap.php"]',
+  'phpunit-args-json=["--filter","DemoTest::test_selected"]',
+  "bootstrap-mode=project",
+  "project-bootstrap=tests/bootstrap.php",
   "multisite=1",
 ])
 
@@ -84,6 +92,8 @@ assert.deepEqual(benchRecipe.workflow.steps[0].args, [
   'env-json={"BENCH_FLAG":"yes"}',
   'bootstrap-files-json=["bench/bootstrap.php"]',
   'workloads-json=[{"id":"homepage","path":"/"}]',
+  'lifecycle-json={}',
+  'reset-policy-json={}',
 ])
 
 console.log("recipe build cli smoke passed")

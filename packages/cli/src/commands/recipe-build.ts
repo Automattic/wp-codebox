@@ -19,6 +19,10 @@ interface WordPressPhpunitBuilderOptions {
   autoloadFile?: string
   testsDir?: string
   dependencyMounts?: string[]
+  bootstrapFiles?: string[]
+  phpunitArgs?: string[]
+  bootstrapMode?: string
+  projectBootstrap?: string
   multisite?: boolean
 }
 
@@ -68,6 +72,10 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         autoloadFile: stringOrUndefined((options as WordPressPhpunitBuilderOptions).autoloadFile),
         testsDir: stringOrUndefined((options as WordPressPhpunitBuilderOptions).testsDir),
         dependencyMounts: Array.isArray((options as WordPressPhpunitBuilderOptions).dependencyMounts) ? (options as WordPressPhpunitBuilderOptions).dependencyMounts : [],
+        bootstrapFiles: Array.isArray((options as WordPressPhpunitBuilderOptions).bootstrapFiles) ? (options as WordPressPhpunitBuilderOptions).bootstrapFiles : [],
+        phpunitArgs: Array.isArray((options as WordPressPhpunitBuilderOptions).phpunitArgs) ? (options as WordPressPhpunitBuilderOptions).phpunitArgs : [],
+        bootstrapMode: stringOrUndefined((options as WordPressPhpunitBuilderOptions).bootstrapMode),
+        projectBootstrap: stringOrUndefined((options as WordPressPhpunitBuilderOptions).projectBootstrap),
         multisite: Boolean((options as WordPressPhpunitBuilderOptions).multisite),
       })
     case "bench":

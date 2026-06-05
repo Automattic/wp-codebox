@@ -10,6 +10,8 @@ export interface PhpunitRunCodeOptions {
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
   bootstrapFiles: string[]
+  bootstrapMode: string
+  projectBootstrap: string
   multisite: boolean
   /**
    * Sandbox-internal, writable path for the structured diagnostics log. Defaults
@@ -58,6 +60,8 @@ $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\\n"))};
 $bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
+$bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
+$project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
 
 @file_put_contents($result_file, '');
@@ -306,6 +310,77 @@ CONFIG;
     }
 }
 
+function pg_plugin_real_path(string $relative_path, string $kind): ?string {
+    global $plugin_path;
+    $relative_path = trim(str_replace('\\\\', '/', $relative_path));
+    if ($relative_path === '' || strpos($relative_path, '..') !== false || strpos($relative_path, "\0") !== false) {
+        pg_log('NOTICE:invalid ' . $kind . ' path: ' . var_export($relative_path, true));
+        return null;
+    }
+    $path = $plugin_path . '/' . ltrim($relative_path, '/');
+    $real = realpath($path);
+    $plugin_real = realpath($plugin_path);
+    if ($real === false || $plugin_real === false || strpos($real, rtrim($plugin_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0 || !is_file($real)) {
+        pg_log('NOTICE:' . $kind . ' file not found under plugin path: ' . $relative_path);
+        return null;
+    }
+    return $real;
+}
+
+function pg_project_bootstrap_from_config(string $xml_path): string {
+    if (!is_readable($xml_path) && basename($xml_path) === 'phpunit.xml.dist') {
+        $alternate = dirname($xml_path) . '/phpunit.xml';
+        if (is_readable($alternate)) {
+            $xml_path = $alternate;
+        }
+    }
+    if (!is_readable($xml_path)) {
+        return '';
+    }
+    $prev = libxml_use_internal_errors(true);
+    $xml = @simplexml_load_file($xml_path);
+    libxml_clear_errors();
+    libxml_use_internal_errors($prev);
+    if ($xml === false) {
+        return '';
+    }
+    return trim((string) ($xml['bootstrap'] ?? ''));
+}
+
+function pg_prepare_project_bootstrap_environment(string $config_path): void {
+    global $tests_dir;
+    $tests_dir = rtrim($tests_dir, '/');
+    foreach (array(
+        'WP_TESTS_DIR' => $tests_dir,
+        'WP_TESTS_CONFIG_FILE_PATH' => $config_path,
+        'WP_PHPUNIT__TESTS_CONFIG' => $config_path,
+    ) as $name => $value) {
+        putenv($name . '=' . $value);
+        $_ENV[$name] = $value;
+        $_SERVER[$name] = $value;
+    }
+}
+
+function pg_run_project_bootstrap_stage(array $cfg): void {
+    pg_stage_begin('project_bootstrap');
+    try {
+        $bootstrap = trim((string) ($cfg['project_bootstrap'] ?? ''));
+        if ($bootstrap === '') {
+            $bootstrap = pg_project_bootstrap_from_config((string) ($cfg['phpunit_xml'] ?? ''));
+        }
+        $bootstrap_real = pg_plugin_real_path($bootstrap, 'project bootstrap');
+        if ($bootstrap_real === null) {
+            throw new RuntimeException('project bootstrap not found; pass project-bootstrap=<relative path> or declare phpunit bootstrap');
+        }
+        pg_log('PROJECT_BOOTSTRAP:' . $bootstrap);
+        require_once $bootstrap_real;
+        pg_stage_ok('project_bootstrap');
+    } catch (Throwable $e) {
+        pg_stage_fail('project_bootstrap', $e);
+        exit(1);
+    }
+}
+
 function pg_run_install_stage(array $cfg) {
     global $argv, $pg_stage_output_buffering;
     pg_stage_begin('install');
@@ -516,6 +591,13 @@ if ($multisite) {
 }
 
 $config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines));
+if ($bootstrap_mode === 'project') {
+    pg_prepare_project_bootstrap_environment($config_path);
+    pg_run_project_bootstrap_stage(array('project_bootstrap' => $project_bootstrap, 'phpunit_xml' => ${JSON.stringify(options.phpunitXml)}));
+} else {
+    if ($bootstrap_mode !== 'managed') {
+        pg_log('NOTICE:unknown bootstrap-mode ' . var_export($bootstrap_mode, true) . '; using managed');
+    }
 $pre_component_plugins_loaded_callbacks = pg_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_component_init_callbacks = pg_snapshot_wordpress_hook_callbacks('init');
 $pre_component_shutdown_callbacks = pg_snapshot_wordpress_hook_callbacks('shutdown');
@@ -595,6 +677,7 @@ try {
 } catch (Throwable $e) {
     pg_stage_fail('load_bootstrap_files', $e);
     exit(1);
+}
 }
 
 function wp_codebox_phpunit_parse_config($xml_path, $test_dir_default) {

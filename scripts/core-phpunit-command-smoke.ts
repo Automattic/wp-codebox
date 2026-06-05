@@ -68,9 +68,13 @@ const pluginCode = phpunitRunCode({
   phpunitXml: "/wordpress/wp-content/plugins/network-plugin/phpunit.xml.dist",
   selectedTestFile: "",
   changedTestFiles: [],
+  phpunitArgs: [],
   env: {},
   wpConfigDefines: {},
   dependencyMounts: [],
+  bootstrapFiles: [],
+  bootstrapMode: "managed",
+  projectBootstrap: "",
   multisite: true,
 })
 

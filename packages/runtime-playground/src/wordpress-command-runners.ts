@@ -402,6 +402,8 @@ export async function runPhpunitCommand({
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
     bootstrapFiles: jsonArrayArg(args, "bootstrap-files-json").filter((value): value is string => typeof value === "string"),
+    bootstrapMode: argValue(args, "bootstrap-mode")?.trim() || "managed",
+    projectBootstrap: argValue(args, "project-bootstrap")?.trim() || "",
     multisite: booleanArg(args, "multisite"),
     resultFile,
   }))
