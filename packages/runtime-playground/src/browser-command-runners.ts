@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
@@ -111,6 +111,7 @@ export async function runBrowserProbeCommand({
   let page: import("playwright").Page | null = null
   let context: import("playwright").BrowserContext | null = null
   let contextDetails: BrowserProbeContextDetails | undefined
+  let capabilityDiagnostics: BrowserProbeCapabilityDiagnostics | undefined
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
@@ -135,6 +136,7 @@ export async function runBrowserProbeCommand({
     }
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
+    capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
     if (capture.has("console") || capturesConsoleForAssertions) {
       page.on("console", (message) => {
         progress.mark("console")
@@ -295,6 +297,7 @@ export async function runBrowserProbeCommand({
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
         context: contextDetails,
+        capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(typeof scriptResult !== "undefined" ? { scriptResult } : {}),
@@ -321,6 +324,7 @@ export async function runBrowserProbeCommand({
         ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
       },
       context: contextDetails,
+      capabilities: capabilityDiagnostics,
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -377,6 +381,73 @@ async function browserProbeContextDetails(page: import("playwright").Page, reque
       ...(effective.timezone ? { timezone: effective.timezone } : {}),
       viewport,
     },
+  }
+}
+
+async function browserProbeCapabilityDiagnostics(page: import("playwright").Page, viewport: BrowserProbeViewport | null): Promise<BrowserProbeCapabilityDiagnostics> {
+  const fallback: BrowserProbeCapabilityDiagnostics = {
+    secureContext: false,
+    userAgent: viewport?.userAgent ?? "",
+    viewport: viewport ? browserProbeCapabilityViewport(viewport) : null,
+    maxTouchPoints: 0,
+    paymentRequest: { available: false },
+    permissions: {},
+  }
+
+  return page.evaluate(async (probeViewport) => {
+    const resolvedOptions = Intl.DateTimeFormat().resolvedOptions()
+    const permissionNames = ["clipboard-read", "clipboard-write", "geolocation", "notifications", "payment-handler"]
+    const permissions: BrowserProbeCapabilityDiagnostics["permissions"] = {}
+    const permissionsApi = (navigator as typeof navigator & { permissions?: { query?: (descriptor: { name: string }) => Promise<{ state?: string }> } }).permissions
+    const normalizePermissionState = (state: unknown): BrowserProbeCapabilityDiagnostics["permissions"][string]["state"] => {
+      if (state === "granted" || state === "denied" || state === "prompt") {
+        return state
+      }
+      return typeof state === "string" ? "error" : "unsupported"
+    }
+
+    for (const name of permissionNames) {
+      if (!permissionsApi?.query) {
+        permissions[name] = { state: "unsupported" }
+        continue
+      }
+
+      try {
+        const status = await permissionsApi.query({ name })
+        permissions[name] = { state: normalizePermissionState(status.state) }
+      } catch {
+        permissions[name] = { state: "unsupported" }
+      }
+    }
+
+    return {
+      secureContext: Boolean(window.isSecureContext),
+      userAgent: navigator.userAgent || "",
+      language: navigator.language || undefined,
+      languages: Array.isArray(navigator.languages) ? navigator.languages.slice(0, 10).filter((language) => typeof language === "string" && language.length > 0) : undefined,
+      locale: resolvedOptions.locale || navigator.language || undefined,
+      timezone: resolvedOptions.timeZone || undefined,
+      viewport: probeViewport ? {
+        width: probeViewport.width,
+        height: probeViewport.height,
+        deviceScaleFactor: probeViewport.deviceScaleFactor,
+        isMobile: probeViewport.isMobile,
+        hasTouch: probeViewport.hasTouch,
+      } : null,
+      maxTouchPoints: typeof navigator.maxTouchPoints === "number" ? navigator.maxTouchPoints : 0,
+      paymentRequest: { available: typeof (window as typeof window & { PaymentRequest?: unknown }).PaymentRequest === "function" },
+      permissions,
+    }
+  }, viewport).catch(() => fallback)
+}
+
+function browserProbeCapabilityViewport(viewport: BrowserProbeViewport): BrowserProbeCapabilityDiagnostics["viewport"] {
+  return {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: viewport.deviceScaleFactor,
+    isMobile: viewport.isMobile,
+    hasTouch: viewport.hasTouch,
   }
 }
 
