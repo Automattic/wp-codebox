@@ -3,6 +3,7 @@ import type {
   BrowserProbeCheckpointRecord,
   BrowserProbeMemoryArtifact,
   BrowserProbeMetricsSnapshot,
+  BrowserProbeNetworkRecord,
   BrowserProbePerformanceArtifact,
   BrowserProbeReplayability,
   BrowserProbeViewport,
@@ -122,7 +123,7 @@ export function browserProbeReplayability(capture: Set<string>): BrowserProbeRep
 export interface BrowserProbeAssertionSpec {
   raw: string
   advisory: boolean
-  type: "exists" | "not-exists" | "visible" | "hidden" | "count" | "text" | "attr" | "no-console-errors" | "no-page-errors" | "no-errors"
+  type: "exists" | "not-exists" | "visible" | "hidden" | "count" | "text" | "attr" | "no-console-errors" | "no-page-errors" | "no-errors" | "request-count-by-host" | "request-count-by-type" | "total-transfer-size" | "metric"
   selector?: string
   operator?: "=" | "==" | "!=" | ">" | ">=" | "<" | "<="
   expected?: string | number | boolean
@@ -140,12 +141,22 @@ export async function executeBrowserProbeAssertions(
   assertions: BrowserProbeAssertionSpec[],
   consoleMessages: Record<string, unknown>[],
   pageErrors: Array<{ type?: string }>,
+  network: BrowserProbeNetworkRecord[],
+  metrics: Record<string, number>,
 ): Promise<BrowserStepAssertion[]> {
   const results: BrowserStepAssertion[] = []
   for (const assertion of assertions) {
-    results.push(await executeBrowserProbeAssertion(page, assertion, consoleMessages, pageErrors))
+    results.push(await executeBrowserProbeAssertion(page, assertion, consoleMessages, pageErrors, network, metrics))
   }
   return results
+}
+
+export function browserProbeAssertionsNeedNetwork(assertions: BrowserProbeAssertionSpec[]): boolean {
+  return assertions.some((assertion) => assertion.type === "request-count-by-host" || assertion.type === "request-count-by-type" || assertion.type === "total-transfer-size")
+}
+
+export function browserProbeAssertionsNeedMetrics(assertions: BrowserProbeAssertionSpec[]): boolean {
+  return assertions.some((assertion) => assertion.type === "metric")
 }
 
 function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
@@ -205,7 +216,42 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
     return { raw: value, advisory, type: raw }
   }
 
-  throw new Error(`wordpress.browser-probe assert supports exists, not-exists, visible, hidden, count, text contains, attr, no-console-errors, no-page-errors, and no-errors: ${value}`)
+  for (const type of ["request-count-by-host", "request-count-by-type"] as const) {
+    const prefix = `${type}:`
+    if (raw.startsWith(prefix)) {
+      const parsed = parseBudgetBody(raw.slice(prefix.length).trim(), value)
+      return { raw: value, advisory, type, name: parsed.name, operator: parsed.operator, expected: parsed.expected }
+    }
+  }
+
+  if (raw.startsWith("total-transfer-size")) {
+    const parsed = parseBudgetBody(raw.slice("total-transfer-size".length).trim(), value, false)
+    return { raw: value, advisory, type: "total-transfer-size", operator: parsed.operator, expected: parsed.expected }
+  }
+
+  if (raw.startsWith("metric:")) {
+    const parsed = parseBudgetBody(raw.slice("metric:".length).trim(), value)
+    return { raw: value, advisory, type: "metric", name: parsed.name, operator: parsed.operator, expected: parsed.expected }
+  }
+
+  throw new Error(`wordpress.browser-probe assert supports exists, not-exists, visible, hidden, count, text contains, attr, no-console-errors, no-page-errors, no-errors, request-count-by-host, request-count-by-type, total-transfer-size, and metric budgets: ${value}`)
+}
+
+function parseBudgetBody(body: string, raw: string, requiresName = true): { name?: string; operator: NonNullable<BrowserProbeAssertionSpec["operator"]>; expected: number } {
+  const pattern = requiresName ? /^(.*?)(>=|<=|==|!=|=|>|<)\s*(\d+(?:\.\d+)?)$/ : /^(>=|<=|==|!=|=|>|<)\s*(\d+(?:\.\d+)?)$/
+  const parsed = body.match(pattern)
+  if (!parsed) {
+    throw new Error(`wordpress.browser-probe budget assertion must look like <name><op><number> or total-transfer-size<op><number>: ${raw}`)
+  }
+
+  const operator = (requiresName ? parsed[2] : parsed[1]) as NonNullable<BrowserProbeAssertionSpec["operator"]>
+  const expected = Number.parseFloat(requiresName ? parsed[3] : parsed[2])
+  const name = requiresName ? parsed[1].trim() : undefined
+  if (requiresName && !name) {
+    throw new Error(`wordpress.browser-probe budget assertion requires a name: ${raw}`)
+  }
+
+  return { name, operator, expected }
 }
 
 function requireSelectorAssertion(raw: string, advisory: boolean, type: BrowserProbeAssertionSpec["type"], selector: string): BrowserProbeAssertionSpec {
@@ -220,9 +266,12 @@ async function executeBrowserProbeAssertion(
   assertion: BrowserProbeAssertionSpec,
   consoleMessages: Record<string, unknown>[],
   pageErrors: Array<{ type?: string }>,
+  network: BrowserProbeNetworkRecord[],
+  metrics: Record<string, number>,
 ): Promise<BrowserStepAssertion> {
   const base = {
     kind: "probe" as const,
+    id: assertion.raw,
     assertion: assertion.raw,
     advisory: assertion.advisory,
     selector: assertion.selector,
@@ -235,50 +284,95 @@ async function executeBrowserProbeAssertion(
   switch (assertion.type) {
     case "exists": {
       const actual = await page.locator(assertion.selector ?? "").count()
-      return { ...base, actual, passed: actual > 0 }
+      return finalizeProbeAssertion(base, actual, assertion.expected, actual > 0)
     }
     case "not-exists": {
       const actual = await page.locator(assertion.selector ?? "").count()
-      return { ...base, actual, passed: actual === 0 }
+      return finalizeProbeAssertion(base, actual, assertion.expected, actual === 0)
     }
     case "visible": {
       const actual = await page.locator(assertion.selector ?? "").first().isVisible().catch(() => false)
-      return { ...base, actual, passed: actual === true }
+      return finalizeProbeAssertion(base, actual, assertion.expected, actual === true)
     }
     case "hidden": {
       const locator = page.locator(assertion.selector ?? "")
       const count = await locator.count()
       const visible = count > 0 ? await locator.first().isVisible().catch(() => false) : false
-      return { ...base, actual: { count, visible }, passed: !visible }
+      return finalizeProbeAssertion(base, { count, visible }, assertion.expected, !visible)
     }
     case "count": {
       const actual = await page.locator(assertion.selector ?? "").count()
-      return { ...base, actual, passed: compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "=") }
+      return finalizeProbeAssertion(base, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "="))
     }
     case "text": {
       const actual = await page.locator(assertion.selector ?? "").first().textContent().catch(() => null)
       const expected = String(assertion.expected ?? "")
-      return { ...base, actual, passed: typeof actual === "string" && actual.includes(expected) }
+      return finalizeProbeAssertion(base, actual, expected, typeof actual === "string" && actual.includes(expected))
     }
     case "attr": {
       const actual = await page.locator(assertion.selector ?? "").first().getAttribute(assertion.name ?? "").catch(() => null)
       const passed = typeof assertion.expected === "undefined" ? actual !== null : actual === String(assertion.expected)
-      return { ...base, actual, passed }
+      return finalizeProbeAssertion(base, actual, assertion.expected, passed)
     }
     case "no-console-errors": {
       const actual = consoleMessages.filter((message) => message.type === "error").length
-      return { ...base, actual, expected: 0, passed: actual === 0 }
+      return finalizeProbeAssertion(base, actual, 0, actual === 0, ["files/browser/console.jsonl"])
     }
     case "no-page-errors": {
       const actual = pageErrors.filter((error) => error.type === "pageerror").length
-      return { ...base, actual, expected: 0, passed: actual === 0 }
+      return finalizeProbeAssertion(base, actual, 0, actual === 0, ["files/browser/errors.jsonl"])
     }
     case "no-errors": {
       const consoleErrorCount = consoleMessages.filter((message) => message.type === "error").length
       const pageErrorCount = pageErrors.filter((error) => error.type === "pageerror").length
       const actual = { consoleErrors: consoleErrorCount, pageErrors: pageErrorCount }
-      return { ...base, actual, expected: { consoleErrors: 0, pageErrors: 0 }, passed: consoleErrorCount === 0 && pageErrorCount === 0 }
+      return finalizeProbeAssertion(base, actual, { consoleErrors: 0, pageErrors: 0 }, consoleErrorCount === 0 && pageErrorCount === 0, ["files/browser/console.jsonl", "files/browser/errors.jsonl"])
     }
+    case "request-count-by-host": {
+      const actual = network.filter((record) => requestHost(record.url) === assertion.name).length
+      return finalizeProbeAssertion(base, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "<="), ["files/browser/network.jsonl"])
+    }
+    case "request-count-by-type": {
+      const actual = network.filter((record) => record.resourceType === assertion.name).length
+      return finalizeProbeAssertion(base, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "<="), ["files/browser/network.jsonl"])
+    }
+    case "total-transfer-size": {
+      const actual = network.reduce((total, record) => total + (typeof record.transferSize === "number" && Number.isFinite(record.transferSize) ? record.transferSize : 0), 0)
+      return finalizeProbeAssertion(base, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "<="), ["files/browser/network.jsonl"])
+    }
+    case "metric": {
+      const actual = metrics[assertion.name ?? ""]
+      const observed = typeof actual === "number" && Number.isFinite(actual) ? actual : null
+      const passed = typeof observed === "number" && compareNumbers(observed, Number(assertion.expected), assertion.operator ?? "<=")
+      return finalizeProbeAssertion(base, observed, assertion.expected, passed, ["files/browser/performance.json", "files/browser/memory.json"])
+    }
+  }
+}
+
+function finalizeProbeAssertion(
+  base: Omit<BrowserStepAssertion, "passed">,
+  observed: unknown,
+  expectedBudget: unknown,
+  passed: boolean,
+  supportingArtifacts: string[] = [],
+): BrowserStepAssertion {
+  return {
+    ...base,
+    status: passed ? "pass" : base.advisory ? "warn" : "fail",
+    expected: expectedBudget,
+    expectedBudget,
+    actual: observed,
+    observed,
+    ...(supportingArtifacts.length > 0 ? { supportingArtifacts } : {}),
+    passed,
+  }
+}
+
+function requestHost(url: string): string | undefined {
+  try {
+    return new URL(url).host
+  } catch {
+    return undefined
   }
 }
 
