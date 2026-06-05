@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
@@ -52,6 +52,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   validateRecipeRuntimeBackendPackage(recipe.runtime?.backendPackage, recipePath)
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
+  validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
 
   const workspaces = recipe.inputs?.workspaces ?? []
@@ -161,6 +162,50 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   }
 
   return recipe
+}
+
+function validateRecipeRuntimePreview(preview: RuntimePreviewSpec | undefined, recipePath: string): void {
+  if (preview === undefined) {
+    return
+  }
+
+  if (!preview || typeof preview !== "object" || Array.isArray(preview)) {
+    throw new Error(`Recipe runtime preview must be an object: ${recipePath}`)
+  }
+
+  for (const key of ["publicUrl", "siteUrl"] as const) {
+    if (preview[key] !== undefined) {
+      if (typeof preview[key] !== "string") {
+        throw new Error(`Recipe runtime preview ${key} must be a string: ${recipePath}`)
+      }
+      validatePreviewHttpUrl(preview[key], `Recipe runtime preview ${key}`, recipePath)
+    }
+  }
+
+  if (preview.port !== undefined && (!Number.isSafeInteger(preview.port) || preview.port < 1 || preview.port > 65535)) {
+    throw new Error(`Recipe runtime preview port must be an integer between 1 and 65535: ${recipePath}`)
+  }
+
+  if (preview.bind !== undefined && (typeof preview.bind !== "string" || preview.bind.trim() === "" || /[/\\\s]/.test(preview.bind))) {
+    throw new Error(`Recipe runtime preview bind must be a hostname or IP address: ${recipePath}`)
+  }
+
+  if (preview.bind !== undefined && preview.port === undefined) {
+    throw new Error(`Recipe runtime preview bind requires port: ${recipePath}`)
+  }
+}
+
+function validatePreviewHttpUrl(value: string, label: string, recipePath: string): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`${label} must be an http or https URL with a hostname: ${recipePath}`)
+  }
+
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
+    throw new Error(`${label} must be an http or https URL with a hostname: ${recipePath}`)
+  }
 }
 
 function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recipePath: string): void {

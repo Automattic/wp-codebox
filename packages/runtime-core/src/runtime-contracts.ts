@@ -229,6 +229,7 @@ export interface WorkspaceRecipe {
     name?: string
     wp?: string
     blueprint?: unknown
+    preview?: RuntimePreviewSpec
     assets?: RuntimeAssetSpec
     backendPackage?: WorkspaceRecipeRuntimeBackendPackage
     stack?: WorkspaceRecipeRuntimeStack

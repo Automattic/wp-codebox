@@ -98,6 +98,9 @@ export interface ArtifactReviewBrowserSummary {
   probes: Array<{
     url: string
     requestedUrl?: string
+    localPreviewOrigin?: string
+    requestedPreviewOrigin?: string
+    effectivePreviewOrigin?: string
     finalUrl?: string
     viewport?: {
       width: number

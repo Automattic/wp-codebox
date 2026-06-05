@@ -91,6 +91,7 @@
     "preview-port-smoke": "tsx scripts/preview-port-smoke.ts",
     "preview-options-contract-smoke": "tsx scripts/preview-options-contract-smoke.ts",
     "preview-public-url-canonical-smoke": "tsx scripts/preview-public-url-canonical-smoke.ts",
+    "recipe-preview-routing-browser-probe-smoke": "tsx scripts/recipe-preview-routing-browser-probe-smoke.ts",
     "preview-response-body-smoke": "tsx scripts/preview-response-body-smoke.ts",
     "browser-startup-progress-smoke": "tsx scripts/browser-startup-progress-smoke.ts",
     "recipe-browser-probe-liveness-smoke": "tsx scripts/recipe-browser-probe-liveness-smoke.ts",

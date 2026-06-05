@@ -30,11 +30,13 @@ export function isBrowserCommandArtifactError(error: unknown): error is BrowserC
 export async function runBrowserProbeCommand({
   artifactRoot,
   command = "wordpress.browser-probe",
+  runtimeSpec,
   server,
   spec,
 }: {
   artifactRoot: string
   command?: string
+  runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -71,7 +73,8 @@ export async function runBrowserProbeCommand({
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
+  const previewOrigins = browserProbePreviewOrigins(runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserProbeUrl(urlArg, previewOrigins.effectivePreviewOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -253,6 +256,7 @@ export async function runBrowserProbeCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
@@ -285,6 +289,7 @@ export async function runBrowserProbeCommand({
     await writeFile(summaryPath, `${JSON.stringify({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
+      ...previewOrigins,
       finalUrl,
       waitFor,
       durationMs,
@@ -317,6 +322,7 @@ export async function runBrowserProbeCommand({
     output: `${JSON.stringify({
       command,
       requestedUrl: targetUrl,
+      ...previewOrigins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -333,6 +339,7 @@ function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata 
 
 export async function runHtmlCaptureCommand(input: {
   artifactRoot: string
+  runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -1251,6 +1258,14 @@ echo wp_json_encode( $cookies );
 
 function now(): string {
   return new Date().toISOString()
+}
+
+function browserProbePreviewOrigins(runtimeSpec: RuntimeCreateSpec, localPreviewOrigin: string): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
+  return {
+    localPreviewOrigin,
+    requestedPreviewOrigin: runtimeSpec.preview?.publicUrl,
+    effectivePreviewOrigin: runtimeSpec.preview?.publicUrl ?? localPreviewOrigin,
+  }
 }
 
 function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {

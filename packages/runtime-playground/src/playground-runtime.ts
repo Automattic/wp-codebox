@@ -429,7 +429,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
     try {
-      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, server, spec })
+      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -442,7 +442,7 @@ class PlaygroundRuntime implements Runtime {
 
   async runHtmlCapture(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, server, spec })
+    const result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
     this.browserProbes.push(result.artifact)
     return result.output
   }

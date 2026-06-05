@@ -26,6 +26,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string" },
           wp: { type: "string" },
           blueprint: { type: "object" },
+          preview: { $ref: "#/$defs/runtimePreview" },
           assets: { $ref: "#/$defs/runtimeAssets" },
           backendPackage: { $ref: "#/$defs/runtimeBackendPackage" },
           stack: { $ref: "#/$defs/runtimeStack" },
@@ -143,6 +144,31 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       metadata: {
         type: "object",
         additionalProperties: true,
+      },
+      runtimePreview: {
+        type: "object",
+        additionalProperties: false,
+        description: "Recipe-declared preview defaults. CLI preview flags override these values for a run.",
+        properties: {
+          publicUrl: {
+            type: "string",
+            description: "Public http/https preview URL used for metadata and relative browser-probe URL resolution.",
+          },
+          siteUrl: {
+            type: "string",
+            description: "Optional WordPress site URL passed to the sandbox. Defaults to publicUrl or the local preview URL.",
+          },
+          port: {
+            type: "integer",
+            minimum: 1,
+            maximum: 65535,
+            description: "Optional fixed local preview proxy port.",
+          },
+          bind: {
+            type: "string",
+            description: "Optional fixed-port preview proxy bind host or IP. Requires port.",
+          },
+        },
       },
       runtimeAssets: {
         type: "object",

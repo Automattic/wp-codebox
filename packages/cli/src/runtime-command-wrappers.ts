@@ -99,12 +99,12 @@ export function runtimeMetadata(artifactsDirectory: string | undefined, wpVersio
   }
 }
 
-export function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string } | undefined {
+export function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined, siteUrl?: string): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string } | undefined {
   if (bind && port === undefined) {
     throw new Error("--preview-bind requires --preview-port because upstream Playground does not expose bind-host control yet")
   }
 
-  if (!publicUrl && port === undefined && !bind) {
+  if (!publicUrl && !siteUrl && port === undefined && !bind) {
     return undefined
   }
 
@@ -112,7 +112,7 @@ export function previewSpec(publicUrl: string | undefined, port: number | undefi
 
   return stripUndefined({
     publicUrl,
-    siteUrl: publicUrl ?? localUrl,
+    siteUrl: siteUrl ?? publicUrl ?? localUrl,
     port,
     bind,
   })
