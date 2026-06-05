@@ -68,6 +68,9 @@ $multisite = ${JSON.stringify(options.multisite)};
 
 function pg_log($msg) {
     global $result_file;
+    if (!in_array('file', stream_get_wrappers(), true)) {
+        @stream_wrapper_restore('file');
+    }
     file_put_contents($result_file, $msg . "\n", FILE_APPEND);
 }
 
@@ -271,6 +274,7 @@ function pg_run_boot_stage(array $cfg = []): ?string {
     pg_stage_begin('boot');
     try {
         $extra_defines = $cfg['extra_defines'] ?? array();
+        $table_prefix = isset($cfg['table_prefix']) && is_string($cfg['table_prefix']) && $cfg['table_prefix'] !== '' ? $cfg['table_prefix'] : 'wptests_';
         $config_path = '/tmp/wp-tests-config.php';
         $config = "<?php\n";
         if (!empty($extra_defines) && is_array($extra_defines)) {
@@ -283,8 +287,8 @@ function pg_run_boot_stage(array $cfg = []): ?string {
                 $config .= sprintf("if (!defined('%s')) { define('%s', %s); }\n", $name, $name, var_export($value, true));
             }
         }
+        $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
         $config .= <<<'CONFIG'
-$table_prefix = 'wptests_';
 define('DB_NAME', ':memory:');
 define('DB_USER', 'root');
 define('DB_PASSWORD', '');
@@ -361,7 +365,15 @@ function pg_prepare_project_bootstrap_environment(string $config_path): void {
     }
 }
 
+function pg_skip_project_bootstrap_shell_install(): void {
+    putenv('WP_TESTS_SKIP_INSTALL=1');
+    $_ENV['WP_TESTS_SKIP_INSTALL'] = '1';
+    $_SERVER['WP_TESTS_SKIP_INSTALL'] = '1';
+    pg_log('NOTICE:using existing Playground install; project bootstrap shell install skipped');
+}
+
 function pg_run_project_bootstrap_stage(array $cfg): void {
+    global $pg_stage_output_buffering;
     pg_stage_begin('project_bootstrap');
     try {
         $bootstrap = trim((string) ($cfg['project_bootstrap'] ?? ''));
@@ -373,9 +385,16 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
             throw new RuntimeException('project bootstrap not found; pass project-bootstrap=<relative path> or declare phpunit bootstrap');
         }
         pg_log('PROJECT_BOOTSTRAP:' . $bootstrap);
+        $pg_stage_output_buffering = true;
+        ob_start();
         require_once $bootstrap_real;
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+        $pg_stage_output_buffering = false;
         pg_stage_ok('project_bootstrap');
     } catch (Throwable $e) {
+        $pg_stage_output_buffering = false;
         pg_stage_fail('project_bootstrap', $e);
         exit(1);
     }
@@ -590,9 +609,10 @@ if ($multisite) {
     $_ENV['WP_MULTISITE'] = '1';
 }
 
-$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines));
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_'));
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
+    pg_skip_project_bootstrap_shell_install();
     pg_run_project_bootstrap_stage(array('project_bootstrap' => $project_bootstrap, 'phpunit_xml' => ${JSON.stringify(options.phpunitXml)}));
 } else {
     if ($bootstrap_mode !== 'managed') {
