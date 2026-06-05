@@ -80,17 +80,26 @@ export interface BrowserProbePermissionState {
 
 export interface BrowserProbeContextDetails {
   requested: {
+    browser?: string
     device?: string
     locale?: string
+    permissions?: string[]
+    profile?: string
+    timezone?: string
+    userAgent?: string
     viewport?: {
       width: number
       height: number
     }
   }
   effective: {
+    browser?: string
     device?: string
     locale?: string
+    permissions?: string[]
+    profile?: string
     timezone?: string
+    userAgent?: string
     viewport: BrowserProbeViewport | null
   }
 }
