@@ -141,7 +141,7 @@ try {
   assert.equal(metadata.provenance.packages.environment.nodeVersion, process.versions.node)
   assert.equal(metadata.provenance.task.kind, "recipe-run")
   assert.equal(metadata.provenance.task.recipePath.endsWith("examples/recipes/seeded-plugin-workspace.json"), true)
-  assert.equal(metadata.provenance.task.previewPublicUrl, "https://preview.example.test/codebox/")
+  assert.equal(metadata.provenance.task.preview.effective.publicUrl, "https://preview.example.test/codebox/")
   assert.ok(metadata.provenance.task.inputs.workspaces.length > 0)
   assert.equal(metadata.provenance.workspace.schema, "wp-codebox/sandbox-workspace/v1")
   assert.equal(metadata.provenance.workspace.root, "/workspace")

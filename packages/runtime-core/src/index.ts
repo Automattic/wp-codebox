@@ -98,6 +98,20 @@ export interface ArtifactReviewBrowserSummary {
   probes: Array<{
     url: string
     requestedUrl?: string
+    preview?: {
+      requestedMode: "local" | "public" | "secure"
+      effectiveMode: "local" | "public" | "secure"
+      localOrigin: string
+      effectiveOrigin: string
+      publicOrigin?: string
+      secureContext?: boolean
+      diagnostics: Array<{
+        code: string
+        severity: "error" | "warning" | "info"
+        message: string
+        details?: Record<string, unknown>
+      }>
+    }
     localPreviewOrigin?: string
     requestedPreviewOrigin?: string
     effectivePreviewOrigin?: string

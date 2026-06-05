@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -171,8 +171,9 @@ async function runSingleBrowserProbeCommand({
   const capturesNetworkForAssertions = browserProbeAssertionsNeedNetwork(assertions)
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory") || browserProbeAssertionsNeedMetrics(assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const previewOrigins = browserProbePreviewOrigins(runtimeSpec, server.serverUrl)
-  const targetUrl = resolveBrowserProbeUrl(urlArg, previewOrigins.effectivePreviewOrigin)
+  const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
+  const previewOrigins = browserProbePreviewOrigins(preview)
+  const targetUrl = resolveBrowserProbeUrl(urlArg, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, browserFilesDirectory)
   await mkdir(browserDirectory, { recursive: true })
 
@@ -273,8 +274,18 @@ async function runSingleBrowserProbeCommand({
       })
     }
 
+    const previewReadinessError = browserProbePreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
+
     await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs))
     progress.mark("navigation")
+    preview.secureContext = await page.evaluate(() => window.isSecureContext).catch(() => undefined)
+    const secureContextError = browserProbeSecureContextError(preview)
+    if (secureContextError) {
+      throw secureContextError
+    }
     if (capturesBrowserMetrics) {
       checkpoints.push(await browserProbeCheckpoint(page, "after-navigation"))
     }
@@ -393,6 +404,7 @@ async function runSingleBrowserProbeCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      preview,
       ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
@@ -430,6 +442,7 @@ async function runSingleBrowserProbeCommand({
     await writeFile(summaryPath, `${JSON.stringify({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
+      preview,
       ...previewOrigins,
       finalUrl,
       waitFor,
@@ -466,6 +479,7 @@ async function runSingleBrowserProbeCommand({
     output: `${JSON.stringify({
       command,
       requestedUrl: targetUrl,
+      preview,
       ...previewOrigins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
@@ -707,7 +721,8 @@ export async function runBrowserActionsCommand({
   const startedAtMs = Date.now()
   const { chromium } = await import("playwright")
   const browser = await chromium.launch()
-  let requestedUrl = initialUrl ? resolveBrowserProbeUrl(initialUrl, server.serverUrl) : server.serverUrl
+  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
+  let requestedUrl = initialUrl ? resolveBrowserProbeUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
@@ -822,6 +837,7 @@ export async function runBrowserActionsCommand({
     artifact = {
       requestedUrl,
       url: requestedUrl,
+      preview,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
@@ -848,6 +864,7 @@ export async function runBrowserActionsCommand({
     await writeFile(summaryPath, `${JSON.stringify({
       schema: "wp-codebox/browser-actions/v1",
       requestedUrl,
+      preview,
       finalUrl,
       capture: [...capture].sort(),
       stepTimeoutMs,
@@ -875,6 +892,7 @@ export async function runBrowserActionsCommand({
     output: `${JSON.stringify({
       command: "wordpress.browser-actions",
       requestedUrl,
+      preview,
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -1176,7 +1194,8 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const targetUrl = resolveBrowserProbeUrl(target.url, server.serverUrl)
+  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserProbeUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -1269,6 +1288,7 @@ export async function runEditorOpenCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      preview,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
@@ -1295,6 +1315,7 @@ export async function runEditorOpenCommand({
       schema: "wp-codebox/editor-open/v1",
       target,
       requestedUrl: targetUrl,
+      preview,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -1321,6 +1342,7 @@ export async function runEditorOpenCommand({
       command: "wordpress.editor-open",
       target,
       requestedUrl: targetUrl,
+      preview,
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -1363,7 +1385,8 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const targetUrl = resolveBrowserProbeUrl(target.url, server.serverUrl)
+  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserProbeUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -1480,6 +1503,7 @@ export async function runEditorActionsCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      preview,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-action-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-action-console.jsonl" } : {}),
@@ -1508,6 +1532,7 @@ export async function runEditorActionsCommand({
       target,
       actions: actionSteps,
       requestedUrl: targetUrl,
+      preview,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -1537,6 +1562,7 @@ export async function runEditorActionsCommand({
       target,
       actions: actionSteps.length,
       requestedUrl: targetUrl,
+      preview,
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -1801,11 +1827,90 @@ function now(): string {
   return new Date().toISOString()
 }
 
-function browserProbePreviewOrigins(runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
+function browserProbePreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
   return {
-    localPreviewOrigin,
-    requestedPreviewOrigin: runtimeSpec?.preview?.publicUrl,
-    effectivePreviewOrigin: runtimeSpec?.preview?.publicUrl ?? localPreviewOrigin,
+    localPreviewOrigin: preview.localOrigin,
+    requestedPreviewOrigin: preview.publicOrigin,
+    effectivePreviewOrigin: preview.effectiveOrigin,
+  }
+}
+
+function browserProbePreviewRouting(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserProbePreviewRouting {
+  const requestedMode = browserProbePreviewMode(args)
+  const publicOrigin = runtimeSpec?.preview?.publicUrl
+  const effectiveMode: BrowserProbePreviewMode = requestedMode === "local" || !publicOrigin ? "local" : requestedMode
+  const effectiveOrigin = effectiveMode === "local" ? localPreviewOrigin : (publicOrigin ?? localPreviewOrigin)
+  const diagnostics: BrowserProbePreviewRouting["diagnostics"] = []
+
+  if ((requestedMode === "public" || requestedMode === "secure") && !publicOrigin) {
+    diagnostics.push({
+      code: "preview-public-origin-missing",
+      severity: "error",
+      message: `wordpress.browser-probe preview-mode=${requestedMode} requires runtime.preview.publicUrl or --preview-public-url`,
+      details: { requestedMode, localOrigin: localPreviewOrigin },
+    })
+  }
+
+  if (requestedMode === "secure" && publicOrigin) {
+    const protocol = urlProtocol(publicOrigin)
+    if (protocol !== "https:") {
+      diagnostics.push({
+        code: "preview-public-origin-not-https",
+        severity: "error",
+        message: "wordpress.browser-probe preview-mode=secure requires an HTTPS public preview origin",
+        details: { publicOrigin, protocol },
+      })
+    }
+  }
+
+  return {
+    requestedMode,
+    effectiveMode,
+    localOrigin: localPreviewOrigin,
+    effectiveOrigin,
+    ...(publicOrigin ? { publicOrigin } : {}),
+    diagnostics,
+  }
+}
+
+function browserProbePreviewMode(args: string[]): BrowserProbePreviewMode {
+  const raw = argValue(args, "preview-mode")?.trim() || "local"
+  if (raw === "local" || raw === "public" || raw === "secure") {
+    return raw
+  }
+
+  throw new Error(`wordpress.browser-probe preview-mode supports local, public, secure: ${raw}`)
+}
+
+function browserProbePreviewReadinessError(preview: BrowserProbePreviewRouting): Error | undefined {
+  const diagnostic = preview.diagnostics.find((item) => item.severity === "error")
+  if (!diagnostic) {
+    return undefined
+  }
+
+  return new Error(diagnostic.message)
+}
+
+function browserProbeSecureContextError(preview: BrowserProbePreviewRouting): Error | undefined {
+  if (preview.requestedMode !== "secure" || preview.secureContext !== false) {
+    return undefined
+  }
+
+  const diagnostic = {
+    code: "preview-secure-context-unavailable",
+    severity: "error" as const,
+    message: "wordpress.browser-probe preview-mode=secure reached the preview, but the page did not report a secure browser context",
+    details: { effectiveOrigin: preview.effectiveOrigin, secureContext: preview.secureContext },
+  }
+  preview.diagnostics.push(diagnostic)
+  return new Error(diagnostic.message)
+}
+
+function urlProtocol(url: string): string | undefined {
+  try {
+    return new URL(url).protocol
+  } catch {
+    return undefined
   }
 }
 
