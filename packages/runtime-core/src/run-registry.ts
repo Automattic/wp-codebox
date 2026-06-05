@@ -258,6 +258,12 @@ export function artifactBundleRunRef(bundle: ArtifactBundle | undefined): Runtim
       id: bundle.id,
       digest: normalizeArtifactDigest(bundle.contentDigest),
     }),
+    ...(bundle.previewSessionEvidenceRef ? [stripUndefined({
+      kind: bundle.previewSessionEvidenceRef.kind,
+      path: bundle.previewSessionEvidenceRef.path,
+      id: `${bundle.id}:preview-session-evidence`,
+      digest: normalizeArtifactDigest(bundle.previewSessionEvidenceRef.sha256),
+    })] : []),
   ]
 }
 

@@ -3,14 +3,20 @@ import { join, relative } from "node:path"
 import {
   buildRuntimeReferenceManifest,
   buildRuntimeReplayReferenceIndex,
+  artifactFileDigest,
   artifactManifestFile,
   artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
+  stripUndefined,
+  type ArtifactEvidenceRef,
   type ArtifactBundle,
   type ArtifactManifest,
   type ArtifactManifestFile,
   type ArtifactPreview,
+  type ArtifactPreviewEvidence,
+  type ArtifactPreviewSessionEvidence,
+  type ArtifactPackageProvenance,
   type ArtifactPreviewEvidence,
   type ArtifactReviewBrowserSummary,
   type ArtifactSpec,
@@ -105,6 +111,8 @@ export class ArtifactBundleBuilder {
     const runtimeReferenceIndexPath = join(filesDirectory, "runtime-reference-index.json")
     const runtimeReplayReferenceIndexPath = join(filesDirectory, "runtime-replay-index.json")
     const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
+    const previewSessionEvidencePath = join(filesDirectory, "preview-session-evidence.json")
+    const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
     const redactor = new ArtifactRedactor(source.spec.secretEnv)
 
     await source.redactBrowserArtifacts(redactor)
@@ -150,6 +158,32 @@ export class ArtifactBundleBuilder {
       packages: provenance.packages,
       artifactBundleRef,
     })
+    const previewSessionEvidenceRelativePath = relative(source.artifactRoot, previewSessionEvidencePath)
+    const previewSessionEvidence = buildPreviewSessionEvidence({
+      artifactId: bundleId,
+      createdAt,
+      runtime,
+      preview,
+      contentDigest,
+      packages: provenance.packages,
+      browser,
+      paths: {
+        manifest: relative(source.artifactRoot, manifestPath),
+        review: relative(source.artifactRoot, reviewPath),
+        runtimeEvents: relative(source.artifactRoot, eventsPath),
+        runtimeLog: relative(source.artifactRoot, runtimeLogPath),
+        runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
+        runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
+        browserSummary: browser ? browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" : undefined,
+      },
+    })
+    const previewSessionEvidenceJson = `${JSON.stringify(previewSessionEvidence, null, 2)}\n`
+    const previewSessionEvidenceRef: ArtifactEvidenceRef = {
+      path: previewSessionEvidenceRelativePath,
+      kind: "preview-session-evidence",
+      contentType: "application/json",
+      sha256: artifactFileDigest(previewSessionEvidenceJson),
+    }
     const metadata: Record<string, unknown> = {
       id: bundleId,
       contentDigest: contentDigestMetadata,
@@ -182,6 +216,8 @@ export class ArtifactBundleBuilder {
       mounts: source.mounts,
       preview,
       previewEvidencePath: "files/preview-evidence.json",
+      previewSessionEvidencePath: previewSessionEvidenceRelativePath,
+      previewEvidencePath: "files/preview-evidence.json",
       browser,
       diagnosticsPath: "files/diagnostics.json",
     })
@@ -200,6 +236,7 @@ export class ArtifactBundleBuilder {
       diagnostics: relative(source.artifactRoot, diagnosticsPath),
       testResults: relative(source.artifactRoot, testResultsPath),
       review: relative(source.artifactRoot, reviewPath),
+      previewSessionEvidence: previewSessionEvidenceRelativePath,
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
       runtimeReferenceIndex: relative(source.artifactRoot, runtimeReferenceIndexPath),
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
@@ -242,6 +279,7 @@ export class ArtifactBundleBuilder {
       artifactManifestFile(diagnosticsPath, "diagnostics", "application/json"),
       artifactManifestFile(testResultsPath, "test-results", "application/json"),
       artifactManifestFile(reviewPath, "review", "application/json"),
+      artifactManifestFile(previewSessionEvidencePath, "preview-session-evidence", "application/json"),
       artifactManifestFile(runtimeReferenceManifestPath, "runtime-reference-manifest", "application/json"),
       artifactManifestFile(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
       artifactManifestFile(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
@@ -258,6 +296,7 @@ export class ArtifactBundleBuilder {
     ]
 
     metadata.preview = preview
+    metadata.previewSessionEvidence = previewSessionEvidenceRef
 
     await writeRedactedArtifact(redactor, blueprintAfterPath, source.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
     await writeRedactedArtifact(redactor, blueprintAfterNotesPath, source.artifactRoot, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
@@ -274,6 +313,8 @@ export class ArtifactBundleBuilder {
     await writeFile(patchPath, redactedPatch)
     await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
     await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
+    await writeFile(previewSessionEvidencePath, previewSessionEvidenceJson)
     await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
@@ -370,6 +411,8 @@ export class ArtifactBundleBuilder {
       diagnosticsPath,
       testResultsPath,
       reviewPath,
+      previewSessionEvidencePath,
+      previewSessionEvidenceRef,
       runtimeReferenceManifestPath,
       runtimeReferenceIndexPath,
       runtimeReplayReferenceIndexPath,
@@ -518,6 +561,80 @@ function isLocalPreviewHost(hostname: string): boolean {
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
   await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
+}
+
+function buildPreviewSessionEvidence({
+  artifactId,
+  browser,
+  contentDigest,
+  createdAt,
+  packages,
+  paths,
+  preview,
+  runtime,
+}: {
+  artifactId: string
+  browser?: ArtifactReviewBrowserSummary
+  contentDigest: string
+  createdAt: string
+  packages?: ArtifactPackageProvenance
+  paths: {
+    manifest: string
+    review: string
+    runtimeEvents: string
+    runtimeLog: string
+    runtimeReferenceManifest: string
+    runtimeReplayReferenceIndex: string
+    browserSummary?: string
+  }
+  preview?: ArtifactPreview
+  runtime: RuntimeInfo
+}): ArtifactPreviewSessionEvidence {
+  return stripUndefined({
+    schema: "wp-codebox/preview-session-evidence/v1" as const,
+    artifactId,
+    createdAt,
+    session: {
+      runtimeId: runtime.id,
+      backend: runtime.backend,
+      createdAt: runtime.createdAt,
+      status: runtime.status,
+      environment: stripUndefined({
+        kind: runtime.environment.kind,
+        name: runtime.environment.name,
+        version: runtime.environment.version,
+      }),
+    },
+    preview: preview ? stripUndefined({
+      status: preview.status,
+      lifecycle: preview.lifecycle,
+      source: preview.source,
+      createdAt: preview.createdAt,
+      expiresAt: preview.expiresAt,
+      holdSeconds: preview.holdSeconds,
+      hasPublicUrl: Boolean(preview.publicUrl),
+      hasSiteUrl: Boolean(preview.siteUrl),
+    }) : undefined,
+    refs: stripUndefined({
+      artifactBundle: {
+        kind: "artifact-bundle" as const,
+        id: artifactId,
+        digest: { algorithm: "sha256" as const, value: contentDigest },
+      },
+      manifest: evidenceRef(paths.manifest, "manifest"),
+      review: evidenceRef(paths.review, "review"),
+      runtimeEvents: evidenceRef(paths.runtimeEvents, "events", "application/x-ndjson"),
+      runtimeLog: evidenceRef(paths.runtimeLog, "runtime-log", "text/plain"),
+      runtimeReferenceManifest: evidenceRef(paths.runtimeReferenceManifest, "runtime-reference-manifest"),
+      runtimeReplayReferenceIndex: evidenceRef(paths.runtimeReplayReferenceIndex, "runtime-replay-index"),
+      browserSummary: browser && paths.browserSummary ? evidenceRef(paths.browserSummary, "browser-summary") : undefined,
+    }),
+    components: packages,
+  })
+}
+
+function evidenceRef(path: string, kind: string, contentType = "application/json"): ArtifactEvidenceRef {
+  return { path, kind, contentType }
 }
 
 async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {

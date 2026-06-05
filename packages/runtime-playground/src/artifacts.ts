@@ -272,6 +272,7 @@ export function buildArtifactReview({
   mounts,
   preview,
   previewEvidencePath,
+  previewSessionEvidencePath,
   browser,
   diagnosticsPath,
 }: {
@@ -285,6 +286,7 @@ export function buildArtifactReview({
   mounts: MountSpec[]
   preview?: ArtifactPreview
   previewEvidencePath?: string
+  previewSessionEvidencePath?: string
   browser?: ArtifactReviewBrowserSummary
   diagnosticsPath?: string
 }): ArtifactReview {
@@ -368,6 +370,8 @@ export function buildArtifactReview({
       testResults: "files/test-results.json",
       runtimeReferenceManifest: "files/runtime-reference-manifest.json",
       runtimeReplayReferenceIndex: "files/runtime-replay-index.json",
+      ...(previewEvidencePath ? { previewEvidence: previewEvidencePath } : {}),
+      ...(previewSessionEvidencePath ? { previewSessionEvidence: previewSessionEvidencePath } : {}),
       ...(previewEvidencePath ? { previewEvidence: previewEvidencePath } : {}),
     },
     ...(browser ? { browser } : {}),

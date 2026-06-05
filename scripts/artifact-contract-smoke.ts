@@ -68,6 +68,9 @@ try {
   const testResults = JSON.parse(await readFile(artifacts.testResultsPath, "utf8"))
   const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
   const previewEvidence = JSON.parse(await readFile(artifacts.previewEvidencePath, "utf8"))
+  const previewSessionEvidence = JSON.parse(await readFile(artifacts.previewSessionEvidencePath, "utf8"))
+  const previewSessionEvidenceText = await readFile(artifacts.previewSessionEvidencePath, "utf8")
+  const previewEvidence = JSON.parse(await readFile(artifacts.previewEvidencePath, "utf8"))
   const runtimeReferenceManifest = JSON.parse(await readFile(artifacts.runtimeReferenceManifestPath, "utf8"))
   const runtimeReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReferenceIndexPath, "utf8"))
   const runtimeReplayReferenceIndex = JSON.parse(await readFile(artifacts.runtimeReplayReferenceIndexPath, "utf8"))
@@ -95,6 +98,7 @@ try {
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/diagnostics.json" && file.kind === "diagnostics"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/review.json" && file.kind === "review"))
+  assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/preview-session-evidence.json" && file.kind === "preview-session-evidence"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-index.json" && file.kind === "runtime-reference-index"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-replay-index.json" && file.kind === "runtime-replay-index"))
@@ -109,6 +113,7 @@ try {
     diagnostics: "files/diagnostics.json",
     testResults: "files/test-results.json",
     review: "files/review.json",
+    previewSessionEvidence: "files/preview-session-evidence.json",
     runtimeReferenceManifest: "files/runtime-reference-manifest.json",
     runtimeReferenceIndex: "files/runtime-reference-index.json",
     runtimeReplayReferenceIndex: "files/runtime-replay-index.json",
@@ -188,6 +193,7 @@ try {
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")
   assert.equal(review.evidence.diagnostics, "files/diagnostics.json")
   assert.equal(review.evidence.testResults, "files/test-results.json")
+  assert.equal(review.evidence.previewSessionEvidence, "files/preview-session-evidence.json")
   assert.equal(review.evidence.runtimeReferenceManifest, "files/runtime-reference-manifest.json")
   assert.equal(review.evidence.previewEvidence, "files/preview-evidence.json")
   assert.equal(previewEvidence.schema, "wp-codebox/preview-evidence/v1")
@@ -207,6 +213,27 @@ try {
   assert.equal(previewEvidence.readiness.ready, true)
   assert.ok(previewEvidence.readiness.events.some((event: { phase: string; status: string }) => event.phase === "preview:ready" && event.status === "complete"))
   assert.deepEqual(previewEvidence.components.packages, metadata.provenance.packages)
+  assert.equal(artifacts.previewSessionEvidenceRef.path, "files/preview-session-evidence.json")
+  assert.match(artifacts.previewSessionEvidenceRef.sha256.value, /^[a-f0-9]{64}$/)
+  assert.equal(metadata.previewSessionEvidence.path, "files/preview-session-evidence.json")
+  assert.equal(metadata.previewSessionEvidence.sha256.value, artifacts.previewSessionEvidenceRef.sha256.value)
+  assert.doesNotMatch(previewSessionEvidenceText, /localhost|127\.0\.0\.1|\/Users\/|\/private\/|\/tmp\//)
+  assert.equal(previewSessionEvidence.schema, "wp-codebox/preview-session-evidence/v1")
+  assert.equal(previewSessionEvidence.artifactId, artifacts.id)
+  assert.equal(previewSessionEvidence.session.runtimeId, output.runtime.id)
+  assert.equal(previewSessionEvidence.session.backend, "wordpress-playground")
+  assert.equal(previewSessionEvidence.session.environment.version, "latest")
+  assert.equal(previewSessionEvidence.preview.source, "public-url-override")
+  assert.equal(previewSessionEvidence.preview.hasPublicUrl, true)
+  assert.equal(previewSessionEvidence.preview.hasSiteUrl, true)
+  assert.equal(previewSessionEvidence.refs.artifactBundle.id, artifacts.id)
+  assert.equal(previewSessionEvidence.refs.manifest.path, "manifest.json")
+  assert.equal(previewSessionEvidence.refs.review.path, "files/review.json")
+  assert.equal(previewSessionEvidence.refs.runtimeEvents.path, "events.jsonl")
+  assert.equal(previewSessionEvidence.refs.runtimeLog.path, "logs/runtime.log")
+  assert.equal(previewSessionEvidence.refs.runtimeReferenceManifest.path, "files/runtime-reference-manifest.json")
+  assert.equal(previewSessionEvidence.refs.runtimeReplayReferenceIndex.path, "files/runtime-replay-index.json")
+  assert.equal(previewSessionEvidence.components.schema, packageProvenanceFixture.schema)
   assert.equal(runtimeReferenceIndex.schema, "wp-codebox/runtime-reference-index/v1")
   assert.equal(runtimeReferenceIndex.summary.references, runtimeReferenceIndex.references.length)
   assert.equal(runtimeReferenceIndex.summary.present, runtimeReferenceIndex.present.length)

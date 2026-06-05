@@ -510,6 +510,55 @@ export interface ArtifactPackageIdentity {
   }
 }
 
+export interface ArtifactEvidenceRef {
+  path: string
+  kind: string
+  contentType?: string
+  sha256?: ArtifactFileDigest
+}
+
+export interface ArtifactPreviewSessionEvidence {
+  schema: "wp-codebox/preview-session-evidence/v1"
+  artifactId: string
+  createdAt: string
+  session: {
+    runtimeId: string
+    backend: RuntimeBackendKind
+    createdAt: string
+    status: RuntimeInfo["status"]
+    environment: {
+      kind: string
+      name?: string
+      version?: string
+    }
+  }
+  preview?: {
+    status: ArtifactPreview["status"]
+    lifecycle: ArtifactPreview["lifecycle"]
+    source: ArtifactPreview["source"]
+    createdAt: string
+    expiresAt?: string
+    holdSeconds?: number
+    hasPublicUrl: boolean
+    hasSiteUrl: boolean
+  }
+  refs: {
+    artifactBundle: {
+      kind: "artifact-bundle"
+      id: string
+      digest: RuntimeEpisodeContentDigest
+    }
+    manifest: ArtifactEvidenceRef
+    review: ArtifactEvidenceRef
+    runtimeEvents: ArtifactEvidenceRef
+    runtimeLog: ArtifactEvidenceRef
+    runtimeReferenceManifest: ArtifactEvidenceRef
+    runtimeReplayReferenceIndex: ArtifactEvidenceRef
+    browserSummary?: ArtifactEvidenceRef
+  }
+  components?: ArtifactPackageProvenance
+}
+
 export interface ArtifactPreview {
   url: string
   localUrl?: string
@@ -610,6 +659,8 @@ export interface ArtifactBundle {
   runtimeReferenceIndexPath?: string
   runtimeReplayReferenceIndexPath?: string
   previewEvidencePath?: string
+  previewSessionEvidencePath?: string
+  previewSessionEvidenceRef?: ArtifactEvidenceRef
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string
