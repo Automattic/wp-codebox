@@ -138,6 +138,18 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   files: { checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; screenshot?: string }
   hashes: { html?: { value: string }; screenshot?: { value: string } }
   viewport: { width: number; height: number; userAgent: string }
+  capabilities?: {
+    secureContext: boolean
+    userAgent: string
+    language?: string
+    languages?: string[]
+    locale?: string
+    timezone?: string
+    viewport: { width: number; height: number; deviceScaleFactor: number; isMobile: boolean; hasTouch: boolean } | null
+    maxTouchPoints: number
+    paymentRequest: { available: boolean }
+    permissions: Record<string, { state: string }>
+  }
   summary: {
     replayability: string
     networkEvents: number
@@ -145,6 +157,18 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
     scriptResult?: { title?: string; hasBody?: boolean; observedCapabilities?: { applePay?: boolean; paymentRequest?: boolean; marker?: string } }
     memory?: { usedJSHeapSize: { final: number | null; peak: number | null }; domNodes: { final: number | null; peak: number | null } }
     performance?: { resources: number; domNodes: { final: number | null; peak: number | null }; longTasks: number }
+    capabilities?: {
+      secureContext: boolean
+      userAgent: string
+      language?: string
+      languages?: string[]
+      locale?: string
+      timezone?: string
+      viewport: { width: number; height: number; deviceScaleFactor: number; isMobile: boolean; hasTouch: boolean } | null
+      maxTouchPoints: number
+      paymentRequest: { available: boolean }
+      permissions: Record<string, { state: string }>
+    }
   }
 }
 assert.equal(summary.requestedUrl.endsWith("/"), true, "summary should include requested URL")
@@ -172,6 +196,19 @@ assert.ok((summary.summary.memory?.domNodes.final ?? 0) > 0, "summary should inc
 assert.ok((summary.summary.performance?.resources ?? 0) >= 1, "summary should include performance resource counts")
 assert.ok((summary.summary.performance?.domNodes.final ?? 0) > 0, "summary should include performance DOM node counts")
 assert.ok(summary.viewport.userAgent.length > 0, "summary should include user agent")
+assert.equal(summary.capabilities?.secureContext, false, "summary should record secure-context status")
+assert.equal(summary.summary.capabilities?.secureContext, false, "probe summary should expose capability diagnostics")
+assert.equal(summary.capabilities?.userAgent, summary.viewport.userAgent, "capabilities should include user agent")
+assert.equal(typeof summary.capabilities?.language, "string", "capabilities should include navigator language")
+assert.ok(Array.isArray(summary.capabilities?.languages), "capabilities should include navigator languages")
+assert.equal(typeof summary.capabilities?.locale, "string", "capabilities should include locale")
+assert.equal(typeof summary.capabilities?.timezone, "string", "capabilities should include timezone")
+assert.equal(summary.capabilities?.viewport?.width, 390, "capabilities should include viewport width")
+assert.equal(summary.capabilities?.viewport?.height, 844, "capabilities should include viewport height")
+assert.equal(typeof summary.capabilities?.maxTouchPoints, "number", "capabilities should include max touch points")
+assert.equal(typeof summary.capabilities?.paymentRequest.available, "boolean", "capabilities should include PaymentRequest presence")
+assert.ok(summary.capabilities?.permissions.geolocation, "capabilities should include safe permission states")
+assert.ok(["granted", "denied", "prompt", "unsupported", "error"].includes(summary.capabilities?.permissions.geolocation.state ?? ""), "permission state should be normalized")
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
 assert.ok(manifest.files.some((file) => file.path === "files/browser/console.jsonl" && file.kind === "browser-console"))
@@ -183,7 +220,7 @@ assert.ok(manifest.files.some((file) => file.path === "files/browser/network.jso
 assert.ok(manifest.files.some((file) => file.path === "files/browser/performance.json" && file.kind === "browser-performance"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/screenshot.png" && file.kind === "browser-screenshot"))
 
-const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; finalUrl?: string; replayability?: string; viewport?: { width: number; height: number } }> } }
+const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; finalUrl?: string; replayability?: string; viewport?: { width: number; height: number }; capabilities?: { secureContext: boolean; paymentRequest: { available: boolean }; maxTouchPoints: number; permissions: Record<string, { state: string }> } }> } }
 assert.ok(review.browser?.probes?.[0], "review should include browser probe summary")
 assert.ok(review.browser.probes[0].consoleMessages >= 1, "review should count console messages")
 assert.ok(review.browser.probes[0].errors >= 1, "review should count browser errors")
@@ -195,6 +232,8 @@ assert.equal(review.browser.probes[0].performance, "files/browser/performance.js
 assert.equal(review.browser.probes[0].replayability, "artifact-backed")
 assert.equal(review.browser.probes[0].viewport?.width, 390, "review should record requested viewport width")
 assert.equal(review.browser.probes[0].viewport?.height, 844, "review should record requested viewport height")
+assert.equal(review.browser.probes[0].capabilities?.secureContext, false, "review should include capability diagnostics")
+assert.equal(typeof review.browser.probes[0].capabilities?.paymentRequest.available, "boolean", "review should include PaymentRequest presence")
 assert.equal(review.browser.probes[0].finalUrl?.endsWith("/"), true, "review should include final URL")
 
 console.log(`Browser probe artifact smoke passed: ${artifactDirectory}`)

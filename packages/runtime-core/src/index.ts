@@ -110,6 +110,7 @@ export interface ArtifactReviewBrowserSummary {
       hasTouch: boolean
       userAgent: string
     } | null
+    capabilities?: ArtifactReviewBrowserCapabilities
     replayability?: "artifact-backed" | "partial" | "diagnostic-only"
     consoleMessages: number
     errors: number
@@ -134,6 +135,27 @@ export interface ArtifactReviewBrowserSummary {
     }
     summaryFile?: string
   }>
+}
+
+export interface ArtifactReviewBrowserCapabilities {
+  secureContext: boolean
+  userAgent: string
+  language?: string
+  languages?: string[]
+  locale?: string
+  timezone?: string
+  viewport: {
+    width: number
+    height: number
+    deviceScaleFactor: number
+    isMobile: boolean
+    hasTouch: boolean
+  } | null
+  maxTouchPoints: number
+  paymentRequest: {
+    available: boolean
+  }
+  permissions: Record<string, { state: "granted" | "denied" | "prompt" | "unsupported" | "error" }>
 }
 
 export interface ArtifactRedactionArtifactSummary {

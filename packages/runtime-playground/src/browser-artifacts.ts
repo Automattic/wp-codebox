@@ -45,11 +45,37 @@ export interface BrowserProbeArtifact {
     performance?: BrowserProbePerformanceSummary
     progress?: BrowserProbeProgressSummary
     context?: BrowserProbeContextDetails
+    capabilities?: BrowserProbeCapabilityDiagnostics
     replayability: BrowserProbeReplayability
     screenshot: boolean
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
+}
+
+export interface BrowserProbeCapabilityDiagnostics {
+  secureContext: boolean
+  userAgent: string
+  language?: string
+  languages?: string[]
+  locale?: string
+  timezone?: string
+  viewport: {
+    width: number
+    height: number
+    deviceScaleFactor: number
+    isMobile: boolean
+    hasTouch: boolean
+  } | null
+  maxTouchPoints: number
+  paymentRequest: {
+    available: boolean
+  }
+  permissions: Record<string, BrowserProbePermissionState>
+}
+
+export interface BrowserProbePermissionState {
+  state: "granted" | "denied" | "prompt" | "unsupported" | "error"
 }
 
 export interface BrowserProbeContextDetails {
@@ -291,6 +317,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       effectivePreviewOrigin: probe.effectivePreviewOrigin,
       finalUrl: probe.summary.finalUrl,
       viewport: probe.summary.viewport,
+      capabilities: probe.summary.capabilities,
       replayability: probe.summary.replayability,
       consoleMessages: probe.summary.consoleMessages,
       errors: probe.summary.errors,
