@@ -105,16 +105,23 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 
 	foreach ( $runtime['themes'] as $theme ) {
 		if ( ! empty( $theme['url'] ) ) {
-			$steps[] = array(
-				'step'      => 'installTheme',
-				'themeData' => array(
-					'resource' => 'url',
-					'url'      => $theme['url'],
-				),
-				'options'   => array(
-					'activate' => (bool) $theme['activate'],
-				),
-			);
+			if ( ! empty( $theme['local_package'] ) ) {
+				$steps[] = array(
+					'step' => 'runPHP',
+					'code' => self::browser_theme_package_install_php( $theme ),
+				);
+			} else {
+				$steps[] = array(
+					'step'      => 'installTheme',
+					'themeData' => array(
+						'resource' => 'url',
+						'url'      => $theme['url'],
+					),
+					'options'   => array(
+						'activate' => (bool) $theme['activate'],
+					),
+				);
+			}
 		}
 
 		if ( ! empty( $theme['files'] ) ) {
@@ -144,6 +151,39 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	return $blueprint;
+}
+
+/** @param array<string,mixed> $prepared Prepared runtime descriptor. @param array<string,mixed> $fallback_blueprint Full dynamic blueprint. @param array<string,mixed> $playground Playground settings. @return array<string,mixed> */
+private static function browser_prepared_runtime_with_blueprints( array $prepared, array $fallback_blueprint, array $playground = array() ): array {
+	if ( 'wp-codebox/browser-prepared-runtime/v1' !== ( $prepared['schema'] ?? '' ) || 'disabled' === ( $prepared['status'] ?? '' ) ) {
+		return $prepared;
+	}
+
+	$prepared_blueprint = is_array( $prepared['blueprint'] ?? null ) ? $prepared['blueprint'] : array();
+	if ( ! empty( $prepared_blueprint ) ) {
+		$prepared_blueprint = self::browser_playground_blueprint( $prepared_blueprint, $playground );
+	}
+
+	return array_filter(
+		array_merge(
+			$prepared,
+			array(
+				'blueprint'          => $prepared_blueprint,
+				'fallback_blueprint' => self::browser_playground_blueprint( $fallback_blueprint, $playground ),
+				'selected'           => 'hit' === ( $prepared['status'] ?? '' ) && ! empty( $prepared_blueprint ) ? 'prepared' : 'fallback',
+			)
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $prepared Prepared runtime descriptor. @param array<string,mixed> $fallback_blueprint Full dynamic blueprint. @return array<string,mixed> */
+private static function browser_selected_prepared_runtime_blueprint( array $prepared, array $fallback_blueprint ): array {
+	if ( 'prepared' === ( $prepared['selected'] ?? '' ) && is_array( $prepared['blueprint'] ?? null ) && ! empty( $prepared['blueprint'] ) ) {
+		return $prepared['blueprint'];
+	}
+
+	return $fallback_blueprint;
 }
 
 /** @param array<string,mixed> $plugin Plugin spec. */
@@ -273,6 +313,52 @@ if ( ! is_dir( $loader_directory ) ) {
 mkdir( $loader_directory, 0777, true );
 }
 file_put_contents( $loader_path, "<?php\nrequire_once " . var_export( $entry_path, true ) . ";\n" );
+';
+}
+
+/** @param array<string,mixed> $theme Theme package spec. */
+private static function browser_theme_package_install_php( array $theme ): string {
+	$package_url = (string) ( $theme['url'] ?? '' );
+	$slug        = (string) ( $theme['slug'] ?? '' );
+
+	return '<?php
+$package_url = ' . var_export( $package_url, true ) . ';
+$expected_sha256 = ' . var_export( (string) ( $theme['sha256'] ?? '' ), true ) . ';
+$slug = ' . var_export( $slug, true ) . ';
+$activate = ' . ( ! empty( $theme['activate'] ) ? 'true' : 'false' ) . ';
+
+$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
+: file_get_contents( $package_url );
+if ( ! is_string( $archive ) || "" === $archive ) {
+throw new RuntimeException( "Could not read browser theme package." );
+}
+if ( "" !== $expected_sha256 && ! hash_equals( $expected_sha256, hash( "sha256", $archive ) ) ) {
+throw new RuntimeException( "Browser theme package hash mismatch." );
+}
+
+$tmp_zip = tempnam( sys_get_temp_dir(), "wp-codebox-theme-" );
+if ( false === $tmp_zip || false === file_put_contents( $tmp_zip, $archive ) ) {
+throw new RuntimeException( "Could not stage browser theme package." );
+}
+
+$zip = new ZipArchive();
+if ( true !== $zip->open( $tmp_zip ) ) {
+@unlink( $tmp_zip );
+throw new RuntimeException( "Could not open browser theme package." );
+}
+
+$themes_directory = "/wordpress/wp-content/themes";
+if ( ! is_dir( $themes_directory ) ) {
+mkdir( $themes_directory, 0777, true );
+}
+$zip->extractTo( $themes_directory );
+$zip->close();
+@unlink( $tmp_zip );
+
+if ( $activate ) {
+' . self::browser_theme_activation_php( $slug ) . '
+}
 ';
 }
 
