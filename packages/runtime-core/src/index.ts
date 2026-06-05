@@ -115,6 +115,7 @@ export interface ArtifactReviewBrowserSummary {
     consoleMessages: number
     errors: number
     html?: string
+    lifecycle?: string
     network?: string
     networkEvents?: number
     checkpoints?: string

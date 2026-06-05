@@ -3,8 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
+import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
@@ -66,7 +67,7 @@ export async function runBrowserProbeCommand({
 }: {
   artifactRoot: string
   command?: string
-  runtimeSpec: RuntimeCreateSpec
+  runtimeSpec?: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
@@ -128,7 +129,7 @@ async function runSingleBrowserProbeCommand({
 }: {
   artifactRoot: string
   command: string
-  runtimeSpec: RuntimeCreateSpec
+  runtimeSpec?: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
   browserFilesDirectory: string
@@ -163,6 +164,7 @@ async function runSingleBrowserProbeCommand({
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
+  const lifecycleSelectors = commaListArg(args, "observe")
   const assertions = browserProbeAssertionsFromArgs(args)
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
@@ -184,6 +186,7 @@ async function runSingleBrowserProbeCommand({
   const errorsPath = join(browserDirectory, "errors.jsonl")
   const htmlPath = join(browserDirectory, "snapshot.html")
   const memoryPath = join(browserDirectory, "memory.json")
+  const lifecyclePath = join(browserDirectory, "lifecycle.json")
   const networkPath = join(browserDirectory, "network.jsonl")
   const performancePath = join(browserDirectory, "performance.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
@@ -204,6 +207,7 @@ async function runSingleBrowserProbeCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let scriptResult: unknown
+  let lifecycleArtifact: BrowserProbeLifecycleArtifact | undefined
   let memoryArtifact: BrowserProbeMemoryArtifact | undefined
   let performanceArtifact: BrowserProbePerformanceArtifact | undefined
   let page: import("playwright").Page | null = null
@@ -231,6 +235,9 @@ async function runSingleBrowserProbeCommand({
       await page.setViewportSize(requestedViewport)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
+    if (lifecycleSelectors.length > 0) {
+      await page.addInitScript(browserProbeLifecycleInitScript(lifecycleSelectors))
+    }
     if (capturesBrowserMetrics) {
       await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
     }
@@ -321,6 +328,10 @@ async function runSingleBrowserProbeCommand({
           performanceArtifact = browserProbePerformanceArtifact(checkpoints)
         }
       }
+      const lifecycle = lifecycleSelectors.length > 0 ? await collectBrowserProbeLifecycle(page) : undefined
+      if (lifecycle) {
+        lifecycleArtifact = browserProbeLifecycleArtifact(lifecycle)
+      }
 
       if (capture.has("html")) {
         try {
@@ -360,6 +371,9 @@ async function runSingleBrowserProbeCommand({
     if (memoryArtifact) {
       await writeFile(memoryPath, `${JSON.stringify(memoryArtifact, null, 2)}\n`)
     }
+    if (lifecycleArtifact) {
+      await writeFile(lifecyclePath, `${JSON.stringify(lifecycleArtifact, null, 2)}\n`)
+    }
     if (performanceArtifact) {
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
@@ -386,6 +400,7 @@ async function runSingleBrowserProbeCommand({
         ...(checkpoints.length > 0 ? { checkpoints: `${browserFilesDirectory}/checkpoints.jsonl` } : {}),
         ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: `${browserFilesDirectory}/errors.jsonl` } : {}),
         ...(capture.has("html") ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
+        ...(lifecycleArtifact ? { lifecycle: `${browserFilesDirectory}/lifecycle.json` } : {}),
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
@@ -398,6 +413,7 @@ async function runSingleBrowserProbeCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
         networkEvents: network.length,
@@ -418,6 +434,7 @@ async function runSingleBrowserProbeCommand({
       finalUrl,
       waitFor,
       durationMs,
+      ...(lifecycleSelectors.length > 0 ? { observe: lifecycleSelectors } : {}),
       failFast,
       stallTimeoutMs,
       capture: [...capture].sort(),
@@ -1784,11 +1801,11 @@ function now(): string {
   return new Date().toISOString()
 }
 
-function browserProbePreviewOrigins(runtimeSpec: RuntimeCreateSpec, localPreviewOrigin: string): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
+function browserProbePreviewOrigins(runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
   return {
     localPreviewOrigin,
-    requestedPreviewOrigin: runtimeSpec.preview?.publicUrl,
-    effectivePreviewOrigin: runtimeSpec.preview?.publicUrl ?? localPreviewOrigin,
+    requestedPreviewOrigin: runtimeSpec?.preview?.publicUrl,
+    effectivePreviewOrigin: runtimeSpec?.preview?.publicUrl ?? localPreviewOrigin,
   }
 }
 

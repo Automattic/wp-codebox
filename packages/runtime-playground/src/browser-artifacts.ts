@@ -17,6 +17,7 @@ export interface BrowserProbeArtifact {
     console?: string
     errors?: string
     html?: string
+    lifecycle?: string
     memory?: string
     network?: string
     performance?: string
@@ -39,6 +40,7 @@ export interface BrowserProbeArtifact {
     errors: number
     finalUrl: string
     htmlSnapshot: boolean
+    lifecycle?: BrowserProbeLifecycleSummary
     memory?: BrowserProbeMemorySummary
     metrics?: Record<string, number>
     networkEvents: number
@@ -149,6 +151,44 @@ export interface BrowserProbeMemorySummary {
   domNodes: BrowserProbeMetricDigest
   documents: BrowserProbeMetricDigest
   jsEventListeners: BrowserProbeMetricDigest
+}
+
+export interface BrowserProbeLifecycleMetric {
+  selector: string
+  first_seen_ms: number | null
+  first_visible_ms: number | null
+  first_child_ms: number | null
+  first_iframe_ms: number | null
+  first_visible_iframe_ms: number | null
+  first_button_ms: number | null
+  first_visible_button_ms: number | null
+  stable_visible_ms: number | null
+  removed_count: number
+  peak_child_count: number
+  peak_iframe_count: number
+  peak_visible_iframe_count: number
+  peak_button_count: number
+  peak_visible_button_count: number
+  final_child_count: number
+  final_iframe_count: number
+  final_visible_iframe_count: number
+  final_button_count: number
+  final_visible_button_count: number
+}
+
+export interface BrowserProbeLifecycleSummary {
+  schema: "wp-codebox/browser-lifecycle/v1"
+  version: 1
+  startedAtMs: number
+  selectors: Record<string, BrowserProbeLifecycleMetric>
+}
+
+export interface BrowserProbeLifecycleArtifact {
+  schema: "wp-codebox/browser-lifecycle/v1"
+  version: 1
+  capturedAt: string
+  startedAtMs: number
+  selectors: Record<string, BrowserProbeLifecycleMetric>
 }
 
 export interface BrowserProbePerformanceSummary {
@@ -336,6 +376,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       consoleMessages: probe.summary.consoleMessages,
       errors: probe.summary.errors,
       html: probe.files.html,
+      lifecycle: probe.files.lifecycle,
       network: probe.files.network,
       networkEvents: probe.summary.networkEvents,
       screenshot: probe.files.screenshot,
@@ -383,6 +424,9 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     if (probe.files.html) {
       files.set(probe.files.html, { kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8" })
     }
+    if (probe.files.lifecycle) {
+      files.set(probe.files.lifecycle, { kind: "browser-lifecycle", contentType: "application/json" })
+    }
     if (probe.files.memory) {
       files.set(probe.files.memory, { kind: "browser-memory", contentType: "application/json" })
     }
@@ -402,6 +446,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }
