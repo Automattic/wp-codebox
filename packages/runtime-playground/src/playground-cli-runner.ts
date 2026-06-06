@@ -1,5 +1,5 @@
 import { playgroundBlueprint } from "./blueprint.js"
-import { PlaygroundCliExitError } from "./playground-command-errors.js"
+import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
@@ -558,10 +558,11 @@ async function portAvailable(port: number): Promise<boolean> {
 
 async function runPlaygroundCliWithoutProcessExit<T>(callback: () => Promise<T>): Promise<T> {
   const exit = process.exit
+  const outputCapture = capturePlaygroundCliProcessOutput()
   const activeHandles = activeProcessHandles()
   process.exit = ((code?: string | number | null | undefined): never => {
     const exitCode = typeof code === "number" ? code : 1
-    throw new PlaygroundCliExitError(exitCode)
+    throw new PlaygroundCliExitError(exitCode, outputCapture.output())
   }) as typeof process.exit
 
   try {
@@ -570,7 +571,70 @@ async function runPlaygroundCliWithoutProcessExit<T>(callback: () => Promise<T>)
     await disposeNewProcessHandles(activeHandles)
     throw error
   } finally {
+    outputCapture.dispose()
     process.exit = exit
+  }
+}
+
+function capturePlaygroundCliProcessOutput(maxBytes = 32_768): { output: () => PlaygroundCliBufferedOutput | undefined; dispose: () => void } {
+  const stdoutWrite = process.stdout.write.bind(process.stdout)
+  const stderrWrite = process.stderr.write.bind(process.stderr)
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  let stdoutBytes = 0
+  let stderrBytes = 0
+  let truncated = false
+
+  const capture = (chunks: Buffer[], currentBytes: number, chunk: string | Uint8Array): number => {
+    if (currentBytes >= maxBytes) {
+      truncated = true
+      return currentBytes
+    }
+
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    const remaining = maxBytes - currentBytes
+    if (buffer.byteLength > remaining) {
+      chunks.push(buffer.subarray(0, remaining))
+      truncated = true
+      return maxBytes
+    }
+
+    chunks.push(buffer)
+    return currentBytes + buffer.byteLength
+  }
+
+  const acknowledgeWrite = (encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): true => {
+    if (typeof encodingOrCallback === "function") {
+      encodingOrCallback()
+    } else if (callback) {
+      callback()
+    }
+
+    return true
+  }
+
+  process.stdout.write = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stdoutBytes = capture(stdout, stdoutBytes, chunk)
+    return acknowledgeWrite(encodingOrCallback, callback)
+  }) as typeof process.stdout.write
+  process.stderr.write = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stderrBytes = capture(stderr, stderrBytes, chunk)
+    return acknowledgeWrite(encodingOrCallback, callback)
+  }) as typeof process.stderr.write
+
+  return {
+    output: () => {
+      const output: PlaygroundCliBufferedOutput = {
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        ...(truncated ? { truncated } : {}),
+      }
+      return output.stdout || output.stderr || output.truncated ? output : undefined
+    },
+    dispose: () => {
+      process.stdout.write = stdoutWrite as typeof process.stdout.write
+      process.stderr.write = stderrWrite as typeof process.stderr.write
+    },
   }
 }
 

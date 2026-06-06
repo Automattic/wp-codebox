@@ -119,6 +119,7 @@
     "recipe-runtime-evidence-smoke": "tsx scripts/recipe-runtime-evidence-smoke.ts",
     "recipe-run-timeout-smoke": "tsx scripts/recipe-run-timeout-smoke.ts",
     "playground-archive-cache-validation-smoke": "tsx scripts/playground-archive-cache-validation-smoke.ts",
+    "playground-cli-startup-output-smoke": "tsx scripts/playground-cli-startup-output-smoke.ts",
     "recipe-run-concurrent-playground-cache-smoke": "tsx scripts/recipe-run-concurrent-playground-cache-smoke.ts",
     "playground-sqlite-alias-smoke": "tsx scripts/playground-sqlite-alias-smoke.ts",
     "php-wasm-preflight-smoke": "tsx scripts/php-wasm-preflight-smoke.ts",

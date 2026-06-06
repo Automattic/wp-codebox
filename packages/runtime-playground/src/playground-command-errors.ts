@@ -4,6 +4,12 @@ export interface PlaygroundRunResponse {
   text: string
 }
 
+export interface PlaygroundCliBufferedOutput {
+  stdout?: string
+  stderr?: string
+  truncated?: boolean
+}
+
 export class PlaygroundCommandError extends Error {
   readonly code = "wp-codebox-playground-command-failed"
 
@@ -25,8 +31,8 @@ export class PlaygroundCommandCrashError extends Error {
 export class PlaygroundCliExitError extends Error {
   readonly code = "wp-codebox-playground-cli-exited"
 
-  constructor(readonly exitCode: number) {
-    super(`WordPress Playground CLI exited while booting the runtime with exit code ${exitCode}.`)
+  constructor(readonly exitCode: number, readonly output?: PlaygroundCliBufferedOutput) {
+    super(playgroundCliExitMessage(exitCode, output))
     this.name = "PlaygroundCliExitError"
   }
 }
@@ -90,6 +96,26 @@ function playgroundFailureMessage(command: string, response: PlaygroundRunRespon
 
   if (text) {
     lines.push("", "--- Playground output ---", text)
+  }
+
+  return lines.join("\n")
+}
+
+function playgroundCliExitMessage(exitCode: number, output: PlaygroundCliBufferedOutput | undefined): string {
+  const lines = [`WordPress Playground CLI exited while booting the runtime with exit code ${exitCode}.`]
+  const stderr = output?.stderr?.trim()
+  const stdout = output?.stdout?.trim()
+
+  if (stderr) {
+    lines.push("", "--- Playground CLI stderr ---", stderr)
+  }
+
+  if (stdout) {
+    lines.push("", "--- Playground CLI stdout ---", stdout)
+  }
+
+  if (output?.truncated) {
+    lines.push("", "[Playground CLI output was truncated]")
   }
 
   return lines.join("\n")
