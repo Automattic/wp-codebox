@@ -5,6 +5,7 @@ import type { Request } from "playwright"
 export interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
+  preview: BrowserProbePreviewRouting
   localPreviewOrigin?: string
   requestedPreviewOrigin?: string
   effectivePreviewOrigin?: string
@@ -78,6 +79,25 @@ export interface BrowserProbeCapabilityDiagnostics {
 
 export interface BrowserProbePermissionState {
   state: "granted" | "denied" | "prompt" | "unsupported" | "error"
+}
+
+export type BrowserProbePreviewMode = "local" | "public" | "secure"
+
+export interface BrowserProbePreviewRouting {
+  requestedMode: BrowserProbePreviewMode
+  effectiveMode: BrowserProbePreviewMode
+  localOrigin: string
+  effectiveOrigin: string
+  publicOrigin?: string
+  secureContext?: boolean
+  diagnostics: BrowserProbePreviewDiagnostic[]
+}
+
+export interface BrowserProbePreviewDiagnostic {
+  code: string
+  severity: "error" | "warning" | "info"
+  message: string
+  details?: Record<string, unknown>
 }
 
 export interface BrowserProbeContextDetails {
@@ -366,6 +386,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
     probes: probes.map((probe) => ({
       url: probe.url,
       requestedUrl: probe.requestedUrl,
+      preview: probe.preview,
       localPreviewOrigin: probe.localPreviewOrigin,
       requestedPreviewOrigin: probe.requestedPreviewOrigin,
       effectivePreviewOrigin: probe.effectivePreviewOrigin,
