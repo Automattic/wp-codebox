@@ -383,7 +383,9 @@ $fanout_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-ag
 $assert( 'run-agent-task-fanout ability registered', is_array( $fanout_ability ) );
 $assert( 'fanout ability is REST visible', true === ( $fanout_ability['meta']['show_in_rest'] ?? false ) );
 $assert( 'fanout ability requires workers and exposes concurrency', array( 'workers' ) === ( $fanout_ability['input_schema']['required'] ?? array() ) && 'integer' === ( $fanout_ability['input_schema']['properties']['concurrency']['type'] ?? '' ) );
+$assert( 'fanout ability exposes canonical request and worker schemas', 'wp-codebox/agent-fanout-request/v1' === ( $fanout_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/agent-fanout-worker/v1' === ( $fanout_ability['input_schema']['properties']['workers']['items']['properties']['schema']['const'] ?? '' ) );
 $assert( 'fanout ability output exposes parent child rollup fields', isset( $fanout_ability['output_schema']['properties']['completed'] ) && isset( $fanout_ability['output_schema']['properties']['cancelled'] ) && isset( $fanout_ability['output_schema']['properties']['failures'] ) && isset( $fanout_ability['output_schema']['properties']['runs'] ) );
+$assert( 'fanout ability pins result and artifact event references', 'wp-codebox/agent-fanout-result/v1' === ( $fanout_ability['output_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/agent-fanout-artifacts/v1' === ( $fanout_ability['output_schema']['properties']['artifacts']['properties']['schema']['const'] ?? '' ) && 'string' === ( $fanout_ability['output_schema']['properties']['artifacts']['properties']['events']['type'] ?? '' ) );
 
 $browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
 $assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
@@ -2686,10 +2688,14 @@ $fanout_result = $fanout_runner->run_fanout(
 	)
 );
 $fanout_active = json_decode( (string) file_get_contents( $root . '/artifacts/fanout-success/fanout/active.json' ), true );
+$fanout_event_lines = array_values( array_filter( explode( "\n", trim( (string) file_get_contents( $root . '/artifacts/fanout-success/fanout/events.jsonl' ) ) ) ) );
+$fanout_events      = array_map( static fn( string $line ): array => json_decode( $line, true ), $fanout_event_lines );
+$fanout_event_names = array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $fanout_events );
 $assert( 'fanout runner succeeds with bounded parallel workers', ! is_wp_error( $fanout_result ) && true === ( $fanout_result['success'] ?? false ) && 3 === ( $fanout_result['completed'] ?? 0 ) && 0 === ( $fanout_result['failed'] ?? -1 ) && 2 === ( $fanout_result['concurrency'] ?? 0 ) );
 $assert( 'fanout runner enforces concurrency bound while running concurrently', ! is_wp_error( $fanout_result ) && 2 === ( $fanout_active['max'] ?? 0 ) );
 $assert( 'fanout runner assigns parent and child session envelopes', ! is_wp_error( $fanout_result ) && 'parent-fanout-123' === ( $fanout_result['session']['id'] ?? '' ) && 'parent-fanout-123:alpha' === ( $fanout_result['runs'][0]['session']['id'] ?? '' ) && 'parent-fanout-123:bravo' === ( $fanout_result['session']['children'][1]['session_id'] ?? '' ) );
-$assert( 'fanout runner writes stable namespaced artifacts', ! is_wp_error( $fanout_result ) && is_file( $root . '/artifacts/fanout-success/fanout/plan.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/events.jsonl' ) && is_file( $root . '/artifacts/fanout-success/fanout/workers/alpha/result.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/aggregate/result.json' ) && 'alpha' === ( $fanout_result['runs'][0]['artifacts']['namespace'] ?? '' ) );
+$assert( 'fanout runner writes stable namespaced artifacts', ! is_wp_error( $fanout_result ) && is_file( $root . '/artifacts/fanout-success/fanout/plan.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/events.jsonl' ) && is_file( $root . '/artifacts/fanout-success/fanout/workers/alpha/result.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/aggregate/result.json' ) && 'wp-codebox/agent-fanout-artifacts/v1' === ( $fanout_result['artifacts']['schema'] ?? '' ) && 'alpha' === ( $fanout_result['runs'][0]['artifacts']['namespace'] ?? '' ) );
+$assert( 'fanout runner emits canonical lifecycle events', ! is_wp_error( $fanout_result ) && array( 'fanout.started', 'worker.started', 'worker.completed', 'aggregation.started', 'aggregation.completed', 'fanout.completed' ) === array_values( array_intersect( array( 'fanout.started', 'worker.started', 'worker.completed', 'aggregation.started', 'aggregation.completed', 'fanout.completed' ), $fanout_event_names ) ) && count( array_filter( $fanout_events, static fn( array $event ): bool => 'wp-codebox/agent-fanout-event/v1' === ( $event['schema'] ?? '' ) ) ) === count( $fanout_events ) );
 $assert( 'fanout runner preserves opaque orchestrator metadata', ! is_wp_error( $fanout_result ) && 'studio-web' === ( $fanout_result['orchestrator']['type'] ?? '' ) && 'fanout-smoke' === ( $fanout_result['session']['orchestrator']['id'] ?? '' ) );
 
 $fanout_failure = $fanout_runner->run_fanout(
@@ -2707,6 +2713,10 @@ $fanout_failure = $fanout_runner->run_fanout(
 );
 $assert( 'fanout runner rolls up worker failures', ! is_wp_error( $fanout_failure ) && false === ( $fanout_failure['success'] ?? true ) && 1 === ( $fanout_failure['completed'] ?? 0 ) && 1 === ( $fanout_failure['failed'] ?? 0 ) && 'fail-worker' === ( $fanout_failure['failures'][0]['worker_id'] ?? '' ) );
 $assert( 'fanout failure includes worker id agent error and artifact refs', ! is_wp_error( $fanout_failure ) && 'wp_codebox_run_failed' === ( $fanout_failure['failures'][0]['error']['code'] ?? '' ) && str_contains( (string) ( $fanout_failure['failures'][0]['artifacts']['path'] ?? '' ), '/workers/fail-worker/artifacts' ) );
+$fanout_failure_event_lines = array_values( array_filter( explode( "\n", trim( (string) file_get_contents( $root . '/artifacts/fanout-failure/fanout/events.jsonl' ) ) ) ) );
+$fanout_failure_events      = array_map( static fn( string $line ): array => json_decode( $line, true ), $fanout_failure_event_lines );
+$fanout_failure_names       = array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $fanout_failure_events );
+$assert( 'fanout runner emits failure lifecycle events', in_array( 'worker.failed', $fanout_failure_names, true ) && in_array( 'fanout.failed', $fanout_failure_names, true ) );
 
 $fanout_timeout = $fanout_runner->run_fanout(
 	array(

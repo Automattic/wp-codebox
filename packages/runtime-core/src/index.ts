@@ -22,6 +22,7 @@ export * from "./artifact-bundle-verifier.js"
 export * from "./transfer-proof.js"
 export * from "./host-tool-registry.js"
 export * from "./run-registry.js"
+export * from "./fanout-contracts.js"
 export * from "./fanout-aggregation.js"
 
 export type ArtifactReviewProgressEventType =

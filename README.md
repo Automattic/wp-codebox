@@ -11,6 +11,8 @@ For the Automattic transfer review surface, see
 [`docs/transfer-readiness-checklist.md`](./docs/transfer-readiness-checklist.md).
 For browser runtime dependency classification and packaging provenance, see
 [`docs/browser-runtime-dependency-audit.md`](./docs/browser-runtime-dependency-audit.md).
+For the generic multi-agent fanout contract, see
+[`docs/agent-fanout-contract.md`](./docs/agent-fanout-contract.md).
 
 ```text
 Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...

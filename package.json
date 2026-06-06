@@ -54,6 +54,7 @@
     "host-command-tool-smoke": "tsx scripts/host-command-tool-smoke.ts",
     "sandbox-tool-policy-smoke": "tsx scripts/sandbox-tool-policy-smoke.ts",
     "task-input-contract-smoke": "tsx scripts/task-input-contract-smoke.ts",
+    "fanout-contract-smoke": "tsx scripts/fanout-contract-smoke.ts",
     "fanout-aggregation-contract-smoke": "tsx scripts/fanout-aggregation-contract-smoke.ts",
     "run-registry-smoke": "tsx scripts/run-registry-smoke.ts",
     "benchmark-substrate-smoke": "tsx scripts/benchmark-substrate-smoke.ts",

@@ -395,6 +395,7 @@ final class WP_Codebox_Abilities {
 						'type'       => 'object',
 						'required'   => array( 'workers' ),
 						'properties' => array(
+							'schema'                => array( 'type' => 'string', 'const' => 'wp-codebox/agent-fanout-request/v1' ),
 							'workers'               => array(
 								'type'        => 'array',
 								'description' => 'Explicit fanout worker definitions. Each worker runs in its own isolated sandbox and artifact namespace.',
@@ -402,6 +403,7 @@ final class WP_Codebox_Abilities {
 									'type'       => 'object',
 									'required'   => array( 'id', 'goal' ),
 									'properties' => array(
+										'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/agent-fanout-worker/v1' ),
 										'id'                 => array( 'type' => 'string' ),
 										'goal'               => $task_input_schema['properties']['goal'],
 										'task'               => array( 'type' => 'string' ),
@@ -453,7 +455,7 @@ final class WP_Codebox_Abilities {
 						'type'       => 'object',
 						'properties' => array(
 							'success'     => array( 'type' => 'boolean' ),
-							'schema'      => array( 'type' => 'string' ),
+							'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/agent-fanout-result/v1' ),
 							'execution'   => array( 'type' => 'string' ),
 							'session'     => array( 'type' => 'object' ),
 							'concurrency' => array( 'type' => 'integer' ),
@@ -462,7 +464,14 @@ final class WP_Codebox_Abilities {
 							'failed'      => array( 'type' => 'integer' ),
 							'cancelled'   => array( 'type' => 'integer' ),
 							'timings'     => array( 'type' => 'object' ),
-							'artifacts'   => array( 'type' => 'object' ),
+							'artifacts'   => array(
+								'type'       => 'object',
+								'properties' => array(
+									'schema' => array( 'type' => 'string', 'const' => 'wp-codebox/agent-fanout-artifacts/v1' ),
+									'plan'   => array( 'type' => 'string' ),
+									'events' => array( 'type' => 'string' ),
+								),
+							),
 							'orchestrator' => array( 'type' => 'object' ),
 							'runs'        => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 							'failures'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),

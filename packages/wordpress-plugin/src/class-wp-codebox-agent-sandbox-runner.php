@@ -11,6 +11,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	private const SCHEMA = 'wp-codebox/agent-task-run/v1';
 	private const BATCH_SCHEMA = 'wp-codebox/agent-task-batch/v1';
+	private const FANOUT_PLAN_SCHEMA = 'wp-codebox/agent-fanout-plan/v1';
+	private const FANOUT_EVENT_SCHEMA = 'wp-codebox/agent-fanout-event/v1';
 	private const FANOUT_SCHEMA = 'wp-codebox/agent-fanout-result/v1';
 	private const FANOUT_MAX_CONCURRENCY = 8;
 	private const SESSION_SCHEMA = WP_Codebox_Agent_Task::SESSION_SCHEMA;
@@ -89,7 +91,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$plan = array(
-			'schema'      => 'wp-codebox/agent-fanout-plan/v1',
+			'schema'      => self::FANOUT_PLAN_SCHEMA,
 			'session_id'  => $parent_session_id,
 			'concurrency' => $concurrency,
 			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
@@ -104,6 +106,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			),
 		);
 		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'plan.json', $plan );
+		$this->append_fanout_event( $fanout_path, array( 'event' => 'fanout.started', 'total' => count( $workers ), 'concurrency' => $concurrency ) );
 
 		$prepared_workers = array();
 		foreach ( $workers as $index => $worker ) {
@@ -141,6 +144,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
 		$failed    = count( $runs ) - $completed - $cancelled;
 		$success   = 0 === $failed && 0 === $cancelled;
+		$this->append_fanout_event( $fanout_path, array( 'event' => 'aggregation.started', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
 
 		$result = array(
 			'success'     => $success,
@@ -172,7 +176,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 
 		$this->write_json_file( $aggregate_path . DIRECTORY_SEPARATOR . 'result.json', array( 'schema' => 'wp-codebox/agent-fanout-aggregate/v1', 'status' => $success ? 'completed' : 'failed', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
+		$this->append_fanout_event( $fanout_path, array( 'event' => 'aggregation.completed', 'status' => $success ? 'completed' : 'failed' ) );
 		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'result.json', $result );
+		$this->append_fanout_event( $fanout_path, array( 'event' => $success ? 'fanout.completed' : 'fanout.failed', 'status' => $success ? 'completed' : 'failed', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
 
 		return $result;
 	}
@@ -544,7 +550,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				}
 
 				$active[] = $started;
-				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker_started', 'worker_id' => (string) $item['id'], 'active' => count( $active ) ) );
+				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker.started', 'worker_id' => (string) $item['id'], 'active' => count( $active ) ) );
 			}
 
 			foreach ( $active as $active_index => &$worker ) {
@@ -586,7 +592,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				$completed = $this->complete_agent_task_run( $worker['prepared'], $result );
 				$runs[ (int) $worker['index'] ] = is_wp_error( $completed ) ? $this->fanout_worker_error_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) ) : $this->fanout_worker_success_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) );
 				$this->write_json_file( (string) $worker['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $worker['index'] ] );
-				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker_finished', 'worker_id' => (string) $worker['id'], 'status' => (string) $runs[ (int) $worker['index'] ]['status'] ) );
+				$this->append_fanout_event( $fanout_path, array( 'event' => true === ( $runs[ (int) $worker['index'] ]['success'] ?? false ) ? 'worker.completed' : 'worker.failed', 'worker_id' => (string) $worker['id'], 'status' => (string) $runs[ (int) $worker['index'] ]['status'] ) );
 				unset( $active[ $active_index ] );
 			}
 			unset( $worker );
@@ -742,7 +748,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $event Event data. */
 	private function append_fanout_event( string $fanout_path, array $event ): void {
-		$event = array_merge( array( 'schema' => 'wp-codebox/agent-fanout-event/v1', 'time' => gmdate( 'c' ) ), $event );
+		$event = array_merge( array( 'schema' => self::FANOUT_EVENT_SCHEMA, 'time' => gmdate( 'c' ) ), $event );
 		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $event, JSON_UNESCAPED_SLASHES ) : json_encode( $event, JSON_UNESCAPED_SLASHES );
 		if ( is_string( $encoded ) ) {
 			file_put_contents( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', $encoded . "\n", FILE_APPEND );
