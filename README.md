@@ -1112,6 +1112,26 @@ present as regular files under the bundle directory. Symlinks, special files, an
 regular files with multiple hard links are rejected so downstream consumers do
 not trust artifact evidence that may alias protected content outside the bundle.
 
+### Partial Artifact Discovery
+
+When a run fails, is killed, or times out before its normal result envelope is
+available, callers can recover partial evidence with:
+
+```bash
+wp-codebox artifacts discover-partial --artifacts <dir> --session-id <id> --started-at <iso> --finished-at <iso> --json
+```
+
+The TypeScript API is `discoverPartialRunArtifacts({ artifactsRoot, sessionId,
+startedAt, finishedAt })` from `@automattic/wp-codebox-core`. Discovery scans
+artifact directories under `artifactsRoot`, filters by the run timestamp window,
+prefers directories whose path includes `sessionId`, and falls back to all
+timestamp-matching candidates when no session match exists.
+
+Stable contract paths returned by discovery are `manifest.json`,
+`files/changed-files.json`, and `files/runtime-reference-manifest.json`. The
+directory `mtime`, recursive byte size, missing-manifest status, and redacted
+runtime-reference payload are best-effort diagnostics for failure enrichment.
+
 ### `files/review.json`
 
 `files/review.json` is the frontend contract for chat and owner review flows. It is derived from canonical artifacts and should be safe for a generic frontend to render without parsing unified diffs.
