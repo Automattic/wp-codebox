@@ -199,6 +199,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 				'session'          => $session_envelope,
 				'primary'          => $primary,
 				'phases'           => array(),
+				'execution_metrics' => self::browser_contract_execution_metrics( $primary, array() ),
 			),
 			static fn( mixed $value ): bool => array() !== $value && '' !== $value
 		);
@@ -221,6 +222,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 		'session'          => $session_envelope,
 		'primary'          => $primary,
 		'phases'           => $phases,
+		'execution_metrics' => self::browser_contract_execution_metrics( $primary, $phases ),
 		'provenance'       => array(
 			'generated_by' => 'wp-codebox/browser-task-contract',
 			'source'       => 'wp-codebox/create-browser-playground-session',
@@ -264,10 +266,94 @@ private static function compact_browser_task_contract_dto( array $contract ): ar
 			'session'          => is_array( $contract['session'] ?? null ) ? self::compact_browser_dto_value( $contract['session'] ) : array(),
 			'primary'          => is_array( $contract['primary'] ?? null ) ? self::compact_browser_session_dto( $contract['primary'] ) : array(),
 			'phases'           => $phases,
+			'execution_metrics' => is_array( $contract['execution_metrics'] ?? null ) ? self::compact_browser_dto_value( $contract['execution_metrics'] ) : array(),
 			'provenance'       => is_array( $contract['provenance'] ?? null ) ? self::compact_browser_dto_value( $contract['provenance'] ) : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
+}
+
+/** @param array<string,mixed> $primary Primary browser session. @param array<int,array<string,mixed>> $phases Browser phases. @return array<string,mixed> */
+private static function browser_contract_execution_metrics( array $primary, array $phases ): array {
+	$recipe       = is_array( $primary['recipe'] ?? null ) ? $primary['recipe'] : array();
+	$playground   = is_array( $primary['playground'] ?? null ) ? $primary['playground'] : array();
+	$blueprint    = is_array( $playground['blueprint'] ?? null ) ? $playground['blueprint'] : array();
+	$browser      = is_array( $recipe['browser'] ?? null ) ? $recipe['browser'] : array();
+	$captures     = is_array( $browser['captures'] ?? null ) ? $browser['captures'] : array();
+	$task_payload = is_array( $primary['task_payload'] ?? null ) ? $primary['task_payload'] : array();
+	$artifacts    = is_array( $primary['artifacts'] ?? null ) ? $primary['artifacts'] : array();
+	$error        = is_array( $primary['error'] ?? null ) ? $primary['error'] : array();
+
+	return array_filter(
+		array(
+			'schema'           => 'agents-api/execution-metrics/v1',
+			'executor'         => 'wp-codebox/browser-playground',
+			'phase'            => 'contract',
+			'status'           => true === ( $primary['success'] ?? false ) ? 'pending' : (string) ( $primary['status'] ?? 'blocked' ),
+			'execution'        => 'browser-playground',
+			'execution_scope'  => 'disposable-playground',
+			'permission_model' => 'runtime-principal',
+			'timings_ms'       => array(
+				'browser_startup_ms'    => null,
+				'playground_startup_ms' => null,
+				'blueprint_run_ms'      => null,
+				'agent_loop_ms'         => null,
+			),
+			'payload_bytes'    => array_filter(
+				array(
+					'task_payload' => self::browser_metrics_json_bytes( $task_payload ),
+					'recipe'       => self::browser_metrics_json_bytes( $recipe ),
+					'blueprint'    => self::browser_metrics_json_bytes( $blueprint ),
+				),
+				static fn( int $bytes ): bool => $bytes > 0
+			),
+			'artifacts'        => array(
+				'expected_count'       => is_array( $artifacts['expected_artifacts'] ?? null ) ? count( $artifacts['expected_artifacts'] ) : 0,
+				'declared_file_count'  => is_array( $artifacts['files'] ?? null ) ? count( $artifacts['files'] ) : 0,
+				'capture_path_count'   => count( $captures ),
+				'materializer_phases'  => count( $phases ),
+			),
+			'diagnostics_refs' => array_filter(
+				array(
+					'materialization_result_path' => (string) ( $browser['result_path'] ?? '' ),
+					'event_stream_path'           => '/tmp/wp-codebox-agent-events.jsonl',
+					'capture_paths'               => array_values( array_filter( array_map( static fn( mixed $capture ): string => is_array( $capture ) ? (string) ( $capture['path'] ?? '' ) : '', $captures ) ) ),
+					'provider_proxy'              => 'browser-result.diagnostics.provider_proxy',
+				),
+				static fn( mixed $value ): bool => array() !== $value && '' !== $value
+			),
+			'failure'          => empty( $error ) ? array() : array(
+				'class' => self::browser_metrics_failure_class( (string) ( $error['code'] ?? '' ) ),
+				'code'  => (string) ( $error['code'] ?? '' ),
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+private static function browser_metrics_json_bytes( mixed $value ): int {
+	$encoded = wp_json_encode( $value, JSON_UNESCAPED_SLASHES );
+	return is_string( $encoded ) ? strlen( $encoded ) : 0;
+}
+
+private static function browser_metrics_failure_class( string $code ): string {
+	if ( '' === $code ) {
+		return '';
+	}
+	if ( str_contains( $code, 'timeout' ) ) {
+		return 'timeout';
+	}
+	if ( str_contains( $code, 'permission' ) || str_contains( $code, 'authorization' ) || str_contains( $code, 'not_playground' ) ) {
+		return 'authorization';
+	}
+	if ( str_contains( $code, 'unavailable' ) || str_contains( $code, 'missing' ) ) {
+		return 'dependency_unavailable';
+	}
+	if ( str_contains( $code, 'invalid' ) ) {
+		return 'invalid_request';
+	}
+
+	return 'runtime_error';
 }
 
 /** @param array<string,mixed> $contract Browser materializer contract. @return array<string,mixed> */

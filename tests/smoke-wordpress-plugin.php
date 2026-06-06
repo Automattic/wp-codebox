@@ -886,6 +886,9 @@ $agents_api_browser_executor_result = apply_filters(
 	'wp-codebox/browser-playground'
 );
 $assert( 'Agents API browser executor returns the legacy browser task contract shape', ! is_wp_error( $agents_api_browser_executor_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $agents_api_browser_executor_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $agents_api_browser_executor_result['session']['id'] ?? '' ) && ( $browser_task_contract['compact']['schema'] ?? '' ) === ( $agents_api_browser_executor_result['compact']['schema'] ?? '' ) );
+$agents_api_browser_executor_metrics_encoded = wp_json_encode( $agents_api_browser_executor_result['execution_metrics'] ?? array() );
+$assert( 'Agents API browser executor exposes normalized execution metrics', ! is_wp_error( $agents_api_browser_executor_result ) && 'agents-api/execution-metrics/v1' === ( $agents_api_browser_executor_result['execution_metrics']['schema'] ?? '' ) && 'wp-codebox/browser-playground' === ( $agents_api_browser_executor_result['execution_metrics']['executor'] ?? '' ) && 'contract' === ( $agents_api_browser_executor_result['execution_metrics']['phase'] ?? '' ) && 'pending' === ( $agents_api_browser_executor_result['execution_metrics']['status'] ?? '' ) && isset( $agents_api_browser_executor_result['execution_metrics']['payload_bytes']['task_payload'] ) && '/tmp/wp-codebox-agent-events.jsonl' === ( $agents_api_browser_executor_result['execution_metrics']['diagnostics_refs']['event_stream_path'] ?? '' ) );
+$assert( 'Agents API browser executor metrics are secret-safe summaries', is_string( $agents_api_browser_executor_metrics_encoded ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'sk-browser-provider-secret' ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'data:application/zip;base64' ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'pluginData' ) );
 
 $wp_agent_browser_task_handler_result = apply_filters(
 	'wp_agent_task_handler',
@@ -916,6 +919,21 @@ $runner_report_path = $root . '/browser-materialization-report.json';
 add_filter(
 	'caller_runtime_task',
 	static function ( $result, array $input, array $payload ) use ( $runner_report_path ): array {
+		file_put_contents(
+			'/tmp/wp-codebox-agent-events.jsonl',
+			wp_json_encode(
+				array(
+					'schema'     => 'wp-codebox/browser-agent-event/v1',
+					'event'      => 'tool.completed',
+					'payload'    => array(
+						'tool_name'   => 'client/filesystem-write',
+						'duration_ms' => 37,
+						'success'     => true,
+					),
+					'emitted_at' => gmdate( 'c' ),
+				)
+			) . "\n"
+		);
 		file_put_contents(
 			$runner_report_path,
 			wp_json_encode(
@@ -1013,6 +1031,9 @@ $assert( 'browser Playground generated runner captures normalized materializatio
 $assert( 'browser Playground generated runner writes result evidence file', is_array( $runner_result_file ) && $runner_result === $runner_result_file );
 $assert( 'browser Playground generated runner records diagnostics and provenance', is_array( $runner_result ) && array() === ( $runner_result['errors'] ?? null ) && 'wp-codebox/browser-runner' === ( $runner_result['provenance']['generated_by'] ?? '' ) && '/tmp/wp-codebox-agent-result.json' === ( $runner_result['provenance']['result_path'] ?? '' ) );
 $assert( 'browser Playground generated runner captures agent event stream diagnostics', is_array( $runner_result ) && 2 === ( $runner_result['diagnostics']['capture_count'] ?? 0 ) && '/tmp/wp-codebox-agent-events.jsonl' === ( $runner_result['diagnostics']['event_stream']['path'] ?? '' ) && false === ( $runner_result['diagnostics']['event_stream']['sink_attached'] ?? true ) && '/tmp/wp-codebox-agent-events.jsonl' === ( $runner_result['captures'][1]['path'] ?? '' ) && 'events' === ( $runner_result['captures'][1]['kind'] ?? '' ) );
+$runner_metrics_encoded = wp_json_encode( $runner_result['execution_metrics'] ?? array() );
+$assert( 'browser Playground generated runner emits normalized execution metrics', is_array( $runner_result ) && 'agents-api/execution-metrics/v1' === ( $runner_result['execution_metrics']['schema'] ?? '' ) && 'wp-codebox/browser-playground' === ( $runner_result['execution_metrics']['executor'] ?? '' ) && 'execution' === ( $runner_result['execution_metrics']['phase'] ?? '' ) && 'completed' === ( $runner_result['execution_metrics']['status'] ?? '' ) && 1 === ( $runner_result['execution_metrics']['tool_calls']['count'] ?? 0 ) && 37 === ( $runner_result['execution_metrics']['tool_calls']['duration_ms'] ?? 0 ) && 2 === ( $runner_result['execution_metrics']['artifacts']['capture_count'] ?? 0 ) );
+$assert( 'browser Playground execution metrics summarize artifacts without raw payloads or secrets', is_string( $runner_metrics_encoded ) && isset( $runner_result['execution_metrics']['artifact_bytes']['captures'] ) && ! str_contains( $runner_metrics_encoded, 'sk-browser-provider-secret' ) && ! str_contains( $runner_metrics_encoded, '<main>Generic caller artifact</main>' ) && ! str_contains( $runner_metrics_encoded, 'RIFFfixtureWEBP' ) );
 $assert( 'browser Playground generated runner captures caller-owned artifact schema', is_array( $runner_result ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['artifact_bundle']['schema'] ?? '' ) && 'caller/generic-browser-artifact-bundle/v1' === ( $runner_result['response']['artifact_bundle']['schema'] ?? '' ) );
 $assert( 'browser Playground generated runner preserves caller artifact metadata and roles', is_array( $runner_result ) && array( 'non-studio-web' ) === ( $runner_result['artifact_bundle']['metadata']['labels'] ?? array() ) && array( 'preview' => 'generic-output/index.html' ) === ( $runner_result['artifact_bundle']['roles'] ?? array() ) && array( 'preview' ) === ( $runner_result['artifact_bundle']['files'][0]['roles'] ?? array() ) && 'entrypoint' === ( $runner_result['artifact_bundle']['files'][0]['metadata']['opaque'] ?? '' ) );
 $assert( 'browser Playground generated runner captures text and base64 artifact files', is_array( $runner_result ) && 2 === count( $runner_result['artifact_bundle']['files'] ?? array() ) && '<main>Generic caller artifact</main>' === ( $runner_result['artifact_bundle']['files'][0]['content'] ?? '' ) && 'utf-8' === ( $runner_result['artifact_bundle']['files'][0]['encoding'] ?? '' ) && 'base64' === ( $runner_result['artifact_bundle']['files'][1]['encoding'] ?? '' ) && hash( 'sha256', "\x89PNG\r\n\x1a\ngeneric" ) === ( $runner_result['artifact_bundle']['files'][1]['sha256'] ?? '' ) );

@@ -203,6 +203,7 @@ $payload = ' . var_export( $default_payload, true ) . ';
 $invocation = ' . var_export( $default_invocation, true ) . ';
 $capture_paths = ' . var_export( $default_captures, true ) . ';
 $started_at = gmdate( \'c\' );
+$started_monotonic = microtime( true );
 
 function wp_codebox_browser_normalize_error( $error ) {
 if ( is_wp_error( $error ) ) {
@@ -256,7 +257,7 @@ if ( $max_bytes > 0 ) {
 		$record[\'encoding\'] = \'base64\';
 	}
 }
-return array_filter( $record, static fn( $value ) => \'\' !== $value );
+return array_filter( $record, static fn( $value ) => array() !== $value && \'\' !== $value );
 }
 
 function wp_codebox_browser_event_scalar( $value, string $key = "" ) {
@@ -747,6 +748,185 @@ return array_filter( array(
 ) );
 }
 
+function wp_codebox_browser_json_bytes( $value ): int {
+$encoded = wp_json_encode( $value, JSON_UNESCAPED_SLASHES );
+return is_string( $encoded ) ? strlen( $encoded ) : 0;
+}
+
+function wp_codebox_browser_failure_class( string $code ): string {
+if ( "" === $code ) {
+    return "";
+}
+if ( str_contains( $code, "timeout" ) ) {
+    return "timeout";
+}
+if ( str_contains( $code, "permission" ) || str_contains( $code, "authorization" ) || str_contains( $code, "not_playground" ) ) {
+    return "authorization";
+}
+if ( str_contains( $code, "unavailable" ) || str_contains( $code, "missing" ) ) {
+    return "dependency_unavailable";
+}
+if ( str_contains( $code, "invalid" ) ) {
+    return "invalid_request";
+}
+
+return "runtime_error";
+}
+
+function wp_codebox_browser_artifact_metrics( array $artifact_bundle ): array {
+$files = is_array( $artifact_bundle["files"] ?? null ) ? $artifact_bundle["files"] : array();
+$bytes = 0;
+foreach ( $files as $file ) {
+    if ( ! is_array( $file ) ) {
+        continue;
+    }
+    if ( is_string( $file["content"] ?? null ) ) {
+        $bytes += strlen( $file["content"] );
+    } elseif ( is_string( $file["content_base64"] ?? null ) ) {
+        $decoded = base64_decode( $file["content_base64"], true );
+        $bytes += is_string( $decoded ) ? strlen( $decoded ) : strlen( $file["content_base64"] );
+    }
+}
+
+return array_filter( array(
+    "schema" => (string) ( $artifact_bundle["schema"] ?? "" ),
+    "file_count" => count( $files ),
+    "bytes" => $bytes,
+    "entrypoint" => (string) ( $artifact_bundle["entrypoint"] ?? "" ),
+) );
+}
+
+function wp_codebox_browser_capture_metrics( array $captures ): array {
+$records = array();
+$bytes = 0;
+foreach ( $captures as $capture ) {
+    if ( ! is_array( $capture ) ) {
+        continue;
+    }
+    $size = isset( $capture["size"] ) ? (int) $capture["size"] : 0;
+    $bytes += $size;
+    $records[] = array_filter( array(
+        "path" => (string) ( $capture["path"] ?? "" ),
+        "name" => (string) ( $capture["name"] ?? "" ),
+        "kind" => (string) ( $capture["kind"] ?? "" ),
+        "exists" => isset( $capture["exists"] ) ? (bool) $capture["exists"] : null,
+        "bytes" => $size,
+        "sha256" => (string) ( $capture["sha256"] ?? "" ),
+        "truncated" => isset( $capture["truncated"] ) ? (bool) $capture["truncated"] : null,
+    ), static fn( $value ) => null !== $value && "" !== $value );
+}
+
+return array(
+    "count" => count( $captures ),
+    "bytes" => $bytes,
+    "records" => $records,
+);
+}
+
+function wp_codebox_browser_event_metrics( string $event_path ): array {
+$metrics = array(
+    "path" => $event_path,
+    "exists" => is_readable( $event_path ),
+    "bytes" => is_readable( $event_path ) ? (int) filesize( $event_path ) : 0,
+    "event_count" => 0,
+    "tool_call_count" => 0,
+    "tool_duration_ms" => 0,
+    "tools" => array(),
+);
+if ( ! is_readable( $event_path ) ) {
+    return $metrics;
+}
+
+$lines = file( $event_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES );
+foreach ( is_array( $lines ) ? $lines : array() as $line ) {
+    $event = json_decode( (string) $line, true );
+    if ( ! is_array( $event ) ) {
+        continue;
+    }
+    ++$metrics["event_count"];
+    $payload = is_array( $event["payload"] ?? null ) ? $event["payload"] : array();
+    $tool_name = is_scalar( $payload["tool_name"] ?? null ) ? (string) $payload["tool_name"] : "";
+    if ( "" === $tool_name && is_string( $event["event"] ?? null ) && str_contains( (string) $event["event"], "tool" ) ) {
+        $tool_name = "unknown";
+    }
+    if ( "" === $tool_name ) {
+        continue;
+    }
+
+    ++$metrics["tool_call_count"];
+    $duration = isset( $payload["duration_ms"] ) && is_numeric( $payload["duration_ms"] ) ? (int) $payload["duration_ms"] : ( isset( $payload["elapsed_ms"] ) && is_numeric( $payload["elapsed_ms"] ) ? (int) $payload["elapsed_ms"] : 0 );
+    $metrics["tool_duration_ms"] += $duration;
+    if ( ! isset( $metrics["tools"][ $tool_name ] ) ) {
+        $metrics["tools"][ $tool_name ] = array( "count" => 0, "duration_ms" => 0 );
+    }
+    ++$metrics["tools"][ $tool_name ]["count"];
+    $metrics["tools"][ $tool_name ]["duration_ms"] += $duration;
+}
+
+ksort( $metrics["tools"] );
+return $metrics;
+}
+
+function wp_codebox_browser_execution_metrics( array $payload, array $invocation_metadata, array $captures, array $artifact_bundle, array $diagnostics, $response, float $started_monotonic ): array {
+$failed = is_wp_error( $response ) || $response instanceof Throwable;
+$error = $failed ? wp_codebox_browser_normalize_error( $response ) : array();
+$event_metrics = wp_codebox_browser_event_metrics( (string) ( $diagnostics["event_stream"]["path"] ?? "/tmp/wp-codebox-agent-events.jsonl" ) );
+$capture_metrics = wp_codebox_browser_capture_metrics( $captures );
+$artifact_metrics = wp_codebox_browser_artifact_metrics( $artifact_bundle );
+$elapsed_ms = max( 0, (int) round( ( microtime( true ) - $started_monotonic ) * 1000 ) );
+
+return array_filter( array(
+    "schema" => "agents-api/execution-metrics/v1",
+    "executor" => "wp-codebox/browser-playground",
+    "phase" => "execution",
+    "status" => $failed ? "error" : "completed",
+    "execution" => "browser-playground",
+    "execution_scope" => "disposable-playground",
+    "permission_model" => "runtime-principal",
+    "timings_ms" => array(
+        "total_ms" => $elapsed_ms,
+        "agent_loop_ms" => $elapsed_ms,
+        "tool_calls_ms" => (int) $event_metrics["tool_duration_ms"],
+        "browser_startup_ms" => null,
+        "playground_startup_ms" => null,
+        "blueprint_run_ms" => null,
+    ),
+    "tool_calls" => array(
+        "count" => (int) $event_metrics["tool_call_count"],
+        "duration_ms" => (int) $event_metrics["tool_duration_ms"],
+        "by_tool" => $event_metrics["tools"],
+    ),
+    "payload_bytes" => array_filter( array(
+        "task_payload" => wp_codebox_browser_json_bytes( $payload ),
+        "invocation" => wp_codebox_browser_json_bytes( $invocation_metadata ),
+        "response_summary" => wp_codebox_browser_json_bytes( $diagnostics["response"] ?? array() ),
+    ), static fn( $bytes ) => is_int( $bytes ) && $bytes > 0 ),
+    "artifact_bytes" => array(
+        "captures" => (int) $capture_metrics["bytes"],
+        "artifact_bundle" => (int) ( $artifact_metrics["bytes"] ?? 0 ),
+    ),
+    "artifacts" => array(
+        "capture_count" => (int) $capture_metrics["count"],
+        "artifact_file_count" => (int) ( $artifact_metrics["file_count"] ?? 0 ),
+        "artifact_schema" => (string) ( $artifact_metrics["schema"] ?? "" ),
+        "entrypoint" => (string) ( $artifact_metrics["entrypoint"] ?? "" ),
+    ),
+    "diagnostics_refs" => array(
+        "event_stream" => array_diff_key( $event_metrics, array( "tools" => true ) ),
+        "captures" => $capture_metrics["records"],
+        "provider_proxy" => array_filter( array(
+            "installed" => isset( $diagnostics["provider_proxy"]["installed"] ) ? (bool) $diagnostics["provider_proxy"]["installed"] : null,
+            "early_return" => (string) ( $diagnostics["provider_proxy"]["early_return"] ?? "" ),
+            "connector_count" => isset( $diagnostics["provider_proxy"]["connector_count"] ) ? (int) $diagnostics["provider_proxy"]["connector_count"] : null,
+        ), static fn( $value ) => null !== $value && "" !== $value ),
+    ),
+    "failure" => $failed ? array(
+        "class" => wp_codebox_browser_failure_class( (string) ( $error["code"] ?? "" ) ),
+        "code" => (string) ( $error["code"] ?? "" ),
+    ) : array(),
+) );
+}
+
 function wp_codebox_browser_input_control_diagnostics( array $input ): array {
 return array_filter( array(
 	\'has_tool_policy\' => is_array( $input[\'tool_policy\'] ?? null ),
@@ -1136,6 +1316,7 @@ $diagnostics = array(
 \'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),
 \'response\' => wp_codebox_browser_response_diagnostics( $response ?? null ),
 );
+$execution_metrics = wp_codebox_browser_execution_metrics( $payload, $invocation_metadata, $captures, $artifact_bundle, $diagnostics, $response ?? null, $started_monotonic );
 $provenance = array(
 \'generated_by\' => \'wp-codebox/browser-runner\',
 \'session_id\' => $session_id,
@@ -1161,6 +1342,7 @@ $result = array(
 		\'invocation\' => $invocation_metadata,
 		\'captures\' => $captures,
 		\'diagnostics\' => $diagnostics,
+		\'execution_metrics\' => $execution_metrics,
 		\'error\' => $error,
 		\'errors\' => array( $error ),
 		\'provenance\' => $provenance,
@@ -1178,6 +1360,7 @@ $result = array(
 		\'response\' => $response,
 		\'captures\' => $captures,
 		\'diagnostics\' => $diagnostics,
+		\'execution_metrics\' => $execution_metrics,
 		\'errors\' => array(),
 		\'provenance\' => $provenance,
 		\'artifacts\' => $payload[\'artifacts\'] ?? array(),

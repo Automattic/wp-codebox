@@ -379,6 +379,7 @@ private static function browser_task_contract_schema(): array {
 				'description' => 'Named browser task phases. The first supported kind is materializer, which returns a browser-materializer-contract envelope.',
 				'items'       => array( 'type' => 'object' ),
 			),
+			'execution_metrics' => array( 'type' => 'object' ),
 			'provenance'       => array( 'type' => 'object' ),
 			'compact'          => self::browser_product_dto_schema(),
 		),
@@ -407,6 +408,7 @@ private static function browser_product_dto_schema(): array {
 			'playground'       => array( 'type' => 'object' ),
 			'recipe'           => array( 'type' => 'object' ),
 			'artifacts'        => array( 'type' => 'object' ),
+			'execution_metrics' => array( 'type' => 'object' ),
 		),
 	);
 }
