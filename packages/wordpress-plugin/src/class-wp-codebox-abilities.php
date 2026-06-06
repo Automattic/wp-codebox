@@ -17,6 +17,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runner.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-connectors.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-agents-api-executors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 
 final class WP_Codebox_Abilities {
@@ -39,6 +40,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Browser_Blueprint;
 	use WP_Codebox_Abilities_Browser_Runner;
 	use WP_Codebox_Abilities_Browser_Connectors;
+	use WP_Codebox_Abilities_Agents_API_Executors;
 	use WP_Codebox_Abilities_Utils;
 
 	public function __construct() {
@@ -51,6 +53,7 @@ final class WP_Codebox_Abilities {
 		}
 
 		$this->register_category();
+		$this->register_agents_api_executor_adapters();
 		$this->register();
 		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
 		self::$registered = true;

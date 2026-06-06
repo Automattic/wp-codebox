@@ -4,6 +4,7 @@ import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {})
 
 export const TASK_INPUT_SCHEMA = "wp-codebox/task-input/v1" as const
+export const AGENTS_API_TASK_INPUT_SCHEMA = "agents-api/task-input/v1" as const
 export const TASK_INPUT_VERSION = 1 as const
 
 export interface TaskTarget {
@@ -30,7 +31,7 @@ export interface TaskInputAgentBundle {
 }
 
 export interface TaskInput {
-  schema: typeof TASK_INPUT_SCHEMA
+  schema: typeof TASK_INPUT_SCHEMA | typeof AGENTS_API_TASK_INPUT_SCHEMA
   version: typeof TASK_INPUT_VERSION
   goal: string
   target: Partial<TaskTarget>
@@ -53,7 +54,7 @@ export const TASK_INPUT_JSON_SCHEMA = {
   type: "object",
   required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
   properties: {
-    schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
+    schema: { enum: [TASK_INPUT_SCHEMA, AGENTS_API_TASK_INPUT_SCHEMA], description: "Task input contract schema id. The legacy WP Codebox schema remains accepted alongside the generic Agents API schema." },
     version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
     goal: { type: "string", description: "User-facing outcome the sandboxed coding agent should accomplish." },
     target: {

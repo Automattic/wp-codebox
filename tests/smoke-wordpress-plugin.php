@@ -403,6 +403,16 @@ $assert( 'browser task contract ability is REST visible', true === ( $browser_ta
 $assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
 $assert( 'browser task contract exposes phase and compact schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && array( 'materializer' ) === ( $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array() ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) && 'object' === ( $browser_task_contract_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
 
+$agents_api_executor_targets = apply_filters( 'agents_api_executor_targets', array() );
+$wp_agent_executor_targets = apply_filters( 'wp_agent_executor_targets', array() );
+$assert( 'Agents API executor registry advertises browser and host targets', isset( $agents_api_executor_targets['wp-codebox/browser-playground'] ) && isset( $agents_api_executor_targets['wp-codebox/host-playground'] ) );
+$assert( 'WP Agent executor registry alias advertises browser and host targets', isset( $wp_agent_executor_targets['wp-codebox/browser-playground'] ) && isset( $wp_agent_executor_targets['wp-codebox/host-playground'] ) );
+$assert( 'Agents API browser executor target delegates to browser task contract shape', 'wp-codebox/browser-playground' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['id'] ?? '' ) && 'wp-codebox/create-browser-task-contract' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['legacy_abilities'][0] ?? '' ) && 'wp-codebox/browser-task-contract/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'Agents API host executor target delegates to host sandbox result shape', 'wp-codebox/host-playground' === ( $agents_api_executor_targets['wp-codebox/host-playground']['id'] ?? '' ) && 'wp-codebox/run-agent-task' === ( $agents_api_executor_targets['wp-codebox/host-playground']['legacy_abilities'][0] ?? '' ) );
+$assert( 'Agents API executor targets accept generic and legacy task input schemas', 'agents-api/task-input/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['properties']['schema']['const'] ?? '' ) && in_array( 'wp-codebox/task-input/v1', $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['x-wp-codebox-accepted-schemas'] ?? array(), true ) );
+$sentinel_executor_result = array( 'schema' => 'sentinel/result' );
+$assert( 'Agents API executor dispatch leaves unrelated targets untouched', $sentinel_executor_result === apply_filters( 'agents_api_execute_task', $sentinel_executor_result, array( 'goal' => 'Ignore unrelated target.' ), 'other/executor' ) );
+
 $browser_connector_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/browser-connector-request'] ?? null;
 $assert( 'browser connector request ability registered', is_array( $browser_connector_ability ) );
 $assert( 'browser connector request ability is REST visible', true === ( $browser_connector_ability['meta']['show_in_rest'] ?? false ) );
@@ -865,6 +875,27 @@ $browser_task_compact_encoded = wp_json_encode( $browser_task_contract['compact'
 $assert( 'browser task contract exposes compact product DTO with primary runner fields', ! is_wp_error( $browser_task_contract ) && 'wp-codebox/browser-task-product-dto/v1' === ( $browser_task_contract['compact']['schema'] ?? '' ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_task_contract['compact']['primary']['schema'] ?? '' ) && 'wp-codebox/browser-session-product-dto/v1' === ( $browser_task_contract['compact']['primary']['dto_schema'] ?? '' ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_task_contract['compact']['primary']['recipe']['schema'] ?? '' ) && isset( $browser_task_contract['compact']['primary']['recipe']['workflow'] ) && isset( $browser_task_contract['compact']['primary']['recipe']['browser']['task_path'] ) && isset( $browser_task_contract['compact']['primary']['task_payload']['schema'] ) );
 $assert( 'browser task compact DTO preserves named materializer phases', ! is_wp_error( $browser_task_contract ) && 'static-site-materializer' === ( $browser_task_contract['compact']['phases'][0]['name'] ?? '' ) && 'materializer' === ( $browser_task_contract['compact']['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-product-dto/v1' === ( $browser_task_contract['compact']['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/materializer-result.json' === ( $browser_task_contract['compact']['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
 $assert( 'browser task compact DTO omits raw runtime payloads', is_string( $browser_task_compact_encoded ) && ! str_contains( $browser_task_compact_encoded, '"pluginData"' ) && ! str_contains( $browser_task_compact_encoded, '"content"' ) && ! str_contains( $browser_task_compact_encoded, '"content_base64"' ) && ! str_contains( $browser_task_compact_encoded, 'data:application/zip;base64' ) && ! str_contains( $browser_task_compact_encoded, 'sk-browser-provider-secret' ) );
+
+$agents_api_browser_executor_result = apply_filters(
+	'agents_api_execute_task',
+	null,
+	array(
+		'target'     => 'wp-codebox/browser-playground',
+		'task_input' => array_replace( $browser_task_contract_input, array( 'schema' => 'agents-api/task-input/v1' ) ),
+	),
+	'wp-codebox/browser-playground'
+);
+$assert( 'Agents API browser executor returns the legacy browser task contract shape', ! is_wp_error( $agents_api_browser_executor_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $agents_api_browser_executor_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $agents_api_browser_executor_result['session']['id'] ?? '' ) && ( $browser_task_contract['compact']['schema'] ?? '' ) === ( $agents_api_browser_executor_result['compact']['schema'] ?? '' ) );
+
+$wp_agent_browser_task_handler_result = apply_filters(
+	'wp_agent_task_handler',
+	null,
+	array(
+		'target' => 'wp-codebox/browser-playground',
+		'input'  => $browser_task_contract_input,
+	)
+);
+$assert( 'WP Agent task handler alias returns the legacy browser task contract shape', ! is_wp_error( $wp_agent_browser_task_handler_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $wp_agent_browser_task_handler_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $wp_agent_browser_task_handler_result['session']['id'] ?? '' ) );
 
 $invalid_browser_task_contract = call_user_func(
 	$browser_task_contract_ability['execute_callback'],
