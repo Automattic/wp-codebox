@@ -40,6 +40,7 @@
     "package-installed-binary-smoke": "tsx scripts/package-installed-binary-smoke.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
     "artifact-bundle-verifier-smoke": "tsx scripts/artifact-bundle-verifier-smoke.ts",
+    "artifact-apply-adapter-smoke": "tsx scripts/artifact-apply-adapter-smoke.ts",
     "transfer-proof-smoke": "tsx scripts/transfer-proof-smoke.ts",
     "artifact-redaction-smoke": "tsx scripts/artifact-redaction-smoke.ts",
     "artifact-patch-git-apply-smoke": "tsx scripts/artifact-patch-git-apply-smoke.ts",
