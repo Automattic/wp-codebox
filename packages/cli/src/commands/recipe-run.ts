@@ -624,6 +624,10 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
 }
 
 function stdinCanSignalParentDisconnect(): boolean {
+  if (process.env.WP_CODEBOX_RECIPE_RUN_STDIN_DISCONNECT !== "1") {
+    return false
+  }
+
   try {
     const stats = fstatSync(0)
     return stats.isFIFO() || stats.isSocket()

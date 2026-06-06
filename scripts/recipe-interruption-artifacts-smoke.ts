@@ -100,6 +100,72 @@ try {
   assertManifestFile(manifest, "files/runtime-evidence/artifact-bundle-verification.json", "artifact-bundle-verification")
   assertManifestFile(manifest, "files/runtime-evidence/workspace-policy.json", "workspace-policy-result")
 
+  const closedStdinSource = join(workspace, "closed-stdin-source")
+  const closedStdinArtifacts = join(workspace, "closed-stdin-artifacts")
+  const closedStdinRecipePath = join(workspace, "closed-stdin-recipe.json")
+  await mkdir(join(closedStdinSource, "src"), { recursive: true })
+  await writeFile(join(closedStdinSource, "src", "index.php"), "<?php\n")
+  await writeFile(closedStdinRecipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    runtime: { wp: "7.0" },
+    inputs: {
+      workspaces: [
+        {
+          target: "/workspace",
+          mode: "readwrite",
+          seed: { type: "directory", source: closedStdinSource },
+        },
+      ],
+    },
+    workflow: {
+      steps: [
+        {
+          command: "wordpress.run-php",
+          args: ["code=<?php echo 'stdin already closed should not cancel';"],
+        },
+      ],
+    },
+    artifacts: {
+      directory: closedStdinArtifacts,
+      verify: true,
+      workspacePolicy: { strict: false, writableRoots: ["."], gitBacked: false },
+    },
+  }, null, 2)}\n`)
+
+  const closedStdinChild = spawn(process.execPath, [
+    "packages/cli/dist/index.js",
+    "recipe-run",
+    "--recipe",
+    closedStdinRecipePath,
+    "--artifacts",
+    closedStdinArtifacts,
+    "--json",
+  ], {
+    cwd: root,
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+
+  let closedStdinStdout = ""
+  let closedStdinStderr = ""
+  closedStdinChild.stdout.on("data", (chunk) => {
+    closedStdinStdout += chunk.toString()
+  })
+  closedStdinChild.stderr.on("data", (chunk) => {
+    closedStdinStderr += chunk.toString()
+  })
+  closedStdinChild.stdin.end()
+
+  const closedStdinExit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    closedStdinChild.once("close", (code, signal) => resolveExit({ code, signal }))
+  })
+
+  assert.equal(closedStdinExit.code, 0, `Initially closed stdin should not interrupt recipe-run; stderr: ${closedStdinStderr}`)
+  assert.equal(closedStdinExit.signal, null, `Initially closed stdin should exit normally; stderr: ${closedStdinStderr}`)
+  const closedStdinOutput = JSON.parse(closedStdinStdout)
+  assert.equal(closedStdinOutput.schema, "wp-codebox/recipe-run/v1")
+  assert.equal(closedStdinOutput.success, true)
+  assert.equal(closedStdinOutput.interruption, undefined)
+
   const disconnectSource = join(workspace, "disconnect-source")
   const disconnectArtifacts = join(workspace, "disconnect-artifacts")
   const disconnectRecipePath = join(workspace, "disconnect-recipe.json")
@@ -143,6 +209,7 @@ try {
   ], {
     cwd: root,
     stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, WP_CODEBOX_RECIPE_RUN_STDIN_DISCONNECT: "1" },
   })
 
   let disconnectStdout = ""
