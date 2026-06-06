@@ -17,6 +17,7 @@ interface CliCommandRouter {
   artifactsTransferVerify: CliCommandHandler
   artifactsTransferProbes: CliCommandHandler
   artifactsBenchmark: CliCommandHandler
+  artifactsDiscoverPartial: CliCommandHandler
   artifactsBenchResults: CliCommandHandler
   benchMatrix: CliCommandHandler
   artifactsBenchCompare: CliCommandHandler
@@ -96,6 +97,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       }
       if (subcommand === "benchmark") {
         return router.artifactsBenchmark(args)
+      }
+      if (subcommand === "discover-partial") {
+        return router.artifactsDiscoverPartial(args)
       }
       if (subcommand === "bench-results") {
         return router.artifactsBenchResults(args)

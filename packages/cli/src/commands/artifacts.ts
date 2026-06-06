@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildTransferProbeDiagnostics, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type PartialArtifactDiscoveryResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 
@@ -16,6 +16,14 @@ interface ArtifactApplyPreflightOptions extends ArtifactVerifyOptions {
 interface BenchmarkArtifactsOptions extends ArtifactVerifyOptions {
   scenarioId?: string
   copyTo?: string
+}
+
+interface ArtifactDiscoverPartialOptions {
+  artifactsRoot: string
+  sessionId?: string
+  startedAt?: string
+  finishedAt?: string
+  json: boolean
 }
 
 interface BenchmarkArtifactRef {
@@ -115,6 +123,18 @@ export async function runArtifactsBenchmarkCommand(args: string[]): Promise<numb
   return 0
 }
 
+export async function runArtifactsDiscoverPartialCommand(args: string[]): Promise<number> {
+  const options = parseArtifactDiscoverPartialOptions(args)
+  const output = await discoverPartialArtifacts(options)
+  if (!options.json) {
+    printArtifactDiscoverPartialHumanOutput(output)
+    return 0
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
+
 async function verifyArtifacts(options: ArtifactVerifyOptions): Promise<ArtifactBundleVerificationResult> {
   return verifyArtifactBundle(resolve(options.bundleDirectory))
 }
@@ -152,6 +172,56 @@ async function benchmarkArtifacts(options: BenchmarkArtifactsOptions): Promise<B
   }
 
   return output
+}
+
+async function discoverPartialArtifacts(options: ArtifactDiscoverPartialOptions): Promise<PartialArtifactDiscoveryResult> {
+  return discoverPartialRunArtifacts({
+    artifactsRoot: resolve(options.artifactsRoot),
+    sessionId: options.sessionId,
+    startedAt: options.startedAt,
+    finishedAt: options.finishedAt,
+  })
+}
+
+function parseArtifactDiscoverPartialOptions(args: string[]): ArtifactDiscoverPartialOptions {
+  const options: Partial<ArtifactDiscoverPartialOptions> = { json: false }
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--artifacts":
+      case "--artifacts-root":
+        options.artifactsRoot = value
+        break
+      case "--session-id":
+        options.sessionId = value
+        break
+      case "--started-at":
+        options.startedAt = value
+        break
+      case "--finished-at":
+        options.finishedAt = value
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
+  }
+
+  if (!options.artifactsRoot) {
+    throw new Error("Missing required option: --artifacts")
+  }
+
+  return options as ArtifactDiscoverPartialOptions
 }
 
 function parseArtifactBrowserMetricsOptions(args: string[]): ArtifactVerifyOptions {
@@ -310,6 +380,19 @@ function printBenchmarkArtifactsHumanOutput(output: BenchmarkArtifactsOutput): v
     for (const copy of output.copied) {
       console.log(`  ${copy.from} -> ${copy.to}`)
     }
+  }
+}
+
+function printArtifactDiscoverPartialHumanOutput(output: PartialArtifactDiscoveryResult): void {
+  console.log("WP Codebox partial artifact discovery")
+  console.log(`Artifacts root: ${output.artifactsRoot}`)
+  console.log(`Selected by: ${output.selectedBy}`)
+  console.log(`Artifacts: ${output.artifacts.length}/${output.candidateCount}`)
+  for (const artifact of output.artifacts) {
+    console.log(`  ${artifact.directory}`)
+    console.log(`    manifest: ${artifact.hasManifest ? "yes" : "no"}`)
+    console.log(`    changed files: ${artifact.hasChangedFiles ? artifact.changedFiles.path : "no"}`)
+    console.log(`    runtime reference manifest: ${artifact.hasRuntimeReferenceManifest ? artifact.runtimeReferenceManifest.path : "no"}`)
   }
 }
 

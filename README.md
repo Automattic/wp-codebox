@@ -1112,6 +1112,26 @@ present as regular files under the bundle directory. Symlinks, special files, an
 regular files with multiple hard links are rejected so downstream consumers do
 not trust artifact evidence that may alias protected content outside the bundle.
 
+### Partial Artifact Discovery
+
+When a run fails, is killed, or times out before its normal result envelope is
+available, callers can recover partial evidence with:
+
+```bash
+wp-codebox artifacts discover-partial --artifacts <dir> --session-id <id> --started-at <iso> --finished-at <iso> --json
+```
+
+The TypeScript API is `discoverPartialRunArtifacts({ artifactsRoot, sessionId,
+startedAt, finishedAt })` from `@automattic/wp-codebox-core`. Discovery scans
+artifact directories under `artifactsRoot`, filters by the run timestamp window,
+prefers directories whose path includes `sessionId`, and falls back to all
+timestamp-matching candidates when no session match exists.
+
+Stable contract paths returned by discovery are `manifest.json`,
+`files/changed-files.json`, and `files/runtime-reference-manifest.json`. The
+directory `mtime`, recursive byte size, missing-manifest status, and redacted
+runtime-reference payload are best-effort diagnostics for failure enrichment.
+
 ### `files/review.json`
 
 `files/review.json` is the frontend contract for chat and owner review flows. It is derived from canonical artifacts and should be safe for a generic frontend to render without parsing unified diffs.
@@ -1286,6 +1306,8 @@ For Homeboy executor integration, `request.json` may use this shape:
 ```
 
 WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
+
+Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response and compatibility aliases from older orchestrator integrations, including `agentResult`, `agent_result`, `completionOutcome`, `completion_outcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 
