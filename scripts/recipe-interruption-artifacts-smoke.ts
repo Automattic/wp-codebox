@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -27,7 +27,12 @@ try {
       ],
     },
     workflow: {
-      steps: [{ command: "inspect-mounted-inputs" }],
+      steps: [
+        {
+          command: "wordpress.run-php",
+          args: ["code=<?php sleep(120); echo 'unreachable';"],
+        },
+      ],
     },
     artifacts: {
       directory: artifacts,
@@ -43,8 +48,6 @@ try {
     recipePath,
     "--artifacts",
     artifacts,
-    "--preview-hold",
-    "120s",
     "--json",
   ], {
     cwd: root,
@@ -60,7 +63,7 @@ try {
     stderr += chunk.toString()
   })
 
-  await waitForManifest(artifacts, 60_000)
+  await waitForPointerCommand(artifacts, "workflow.steps[0]:wordpress.run-php", 60_000)
   child.kill("SIGTERM")
 
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
@@ -78,6 +81,20 @@ try {
   assert.equal(output.interruption?.artifactsFinalized, true)
   assert.ok(output.artifacts?.directory, "Interrupted recipe should report artifact directory")
 
+  const latestRuntime = JSON.parse(await readFile(join(artifacts, "latest-runtime.json"), "utf8"))
+  const topLevelManifest = JSON.parse(await readFile(join(artifacts, "manifest.json"), "utf8"))
+  assert.equal(latestRuntime.schema, "wp-codebox/recipe-run-artifact-pointer/v1")
+  assert.equal(topLevelManifest.schema, "wp-codebox/recipe-run-artifact-pointer/v1")
+  assert.equal(latestRuntime.runtimeId, output.runtime.id)
+  assert.equal(latestRuntime.commandStatus, "failed")
+  assert.equal(latestRuntime.failure.code, "recipe-interrupted")
+  assert.equal(latestRuntime.paths.runtimeManifest, `${output.runtime.id}/manifest.json`)
+  assert.equal(latestRuntime.paths.commandLog, `${output.runtime.id}/logs/commands.log`)
+  assert.equal(latestRuntime.paths.runtimeLog, `${output.runtime.id}/logs/runtime.log`)
+  assert.equal(latestRuntime.paths.eventLog, `${output.runtime.id}/events.jsonl`)
+  assert.equal(latestRuntime.paths.runtimeMetadata, `${output.runtime.id}/metadata.json`)
+  assert.equal(latestRuntime.paths.browserArtifacts, `${output.runtime.id}/files/browser`)
+
   const manifest = JSON.parse(await readFile(join(output.artifacts.directory, "manifest.json"), "utf8"))
   assertManifestFile(manifest, "files/runtime-evidence/run-attestation.json", "run-attestation")
   assertManifestFile(manifest, "files/runtime-evidence/artifact-bundle-verification.json", "artifact-bundle-verification")
@@ -88,43 +105,21 @@ try {
   await rm(workspace, { recursive: true, force: true })
 }
 
-async function waitForManifest(directory: string, timeoutMs: number): Promise<void> {
+async function waitForPointerCommand(directory: string, command: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      await readFile(join(directory, "manifest.json"), "utf8")
-      return
-    } catch {
-      // Custom artifact directories may be used directly instead of nesting runtime-*.
-    }
-
-    const runtimeDirectory = await latestRuntimeDirectory(directory)
-    if (runtimeDirectory) {
-      try {
-        await readFile(join(runtimeDirectory, "manifest.json"), "utf8")
+      const pointer = JSON.parse(await readFile(join(directory, "latest-runtime.json"), "utf8"))
+      if (pointer.currentCommand === command && pointer.commandStatus === "running") {
         return
-      } catch {
-        // Artifact collection creates the runtime directory before the manifest is ready.
       }
+    } catch {
+      // The pointer is created early, but not necessarily before runtime startup begins.
     }
     await delay(250)
   }
 
-  throw new Error(`Timed out waiting for artifact manifest in ${directory}`)
-}
-
-async function latestRuntimeDirectory(directory: string): Promise<string | undefined> {
-  try {
-    const entries = await readdir(directory, { withFileTypes: true })
-    const runtimeDirectories = entries
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("runtime-"))
-      .map((entry) => join(directory, entry.name))
-      .sort()
-      .reverse()
-    return runtimeDirectories[0]
-  } catch {
-    return undefined
-  }
+  throw new Error(`Timed out waiting for artifact pointer command ${command} in ${directory}`)
 }
 
 function assertManifestFile(manifest: { files: Array<{ path: string; kind: string }> }, path: string, kind: string): void {

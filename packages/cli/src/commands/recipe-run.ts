@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { readdir, readFile, stat, writeFile } from "node:fs/promises"
-import { basename, dirname, join, resolve } from "node:path"
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
@@ -102,6 +102,17 @@ type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
+}
+
+type RecipeArtifactPointerCommandStatus = "queued" | "running" | "completed" | "failed"
+
+interface RecipeArtifactPointerState {
+  command?: string
+  commandStatus?: RecipeArtifactPointerCommandStatus
+  runtime?: RuntimeInfo
+  artifacts?: ArtifactBundle
+  failure?: RunOutput["error"]
+  phases?: RecipePhaseEvidence[]
 }
 
 type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_workloads" | "run_probes" | "collect_artifacts"
@@ -439,6 +450,51 @@ class RecipePhaseTracker {
   }
 }
 
+class RecipeArtifactPointerTracker {
+  private command: string | undefined
+  private commandStatus: RecipeArtifactPointerCommandStatus = "queued"
+  private runtime: RuntimeInfo | undefined
+  private artifacts: ArtifactBundle | undefined
+  private failure: RunOutput["error"] | undefined
+  private phases: RecipePhaseEvidence[] = []
+
+  constructor(private readonly directory: string | undefined, private readonly runId: string, private readonly recipePath: string, private readonly startedAt: string) {}
+
+  async update(state: RecipeArtifactPointerState = {}): Promise<void> {
+    if (!this.directory) {
+      return
+    }
+
+    this.command = state.command ?? this.command
+    this.commandStatus = state.commandStatus ?? this.commandStatus
+    this.runtime = state.runtime ?? this.runtime
+    this.artifacts = state.artifacts ?? this.artifacts
+    this.failure = state.failure ?? this.failure
+    this.phases = state.phases ?? this.phases
+
+    const pointer = stripUndefined({
+      schema: "wp-codebox/recipe-run-artifact-pointer/v1",
+      runId: this.runId,
+      recipePath: this.recipePath,
+      startedAt: this.startedAt,
+      updatedAt: new Date().toISOString(),
+      runtimeId: this.runtime?.id,
+      runtime: this.runtime,
+      currentCommand: this.commandStatus === "running" ? this.command : undefined,
+      lastCommand: this.command,
+      commandStatus: this.commandStatus,
+      failure: this.failure,
+      failurePhase: recipeArtifactPointerFailurePhase(this.failure, this.phases),
+      paths: recipeArtifactPointerPaths(this.directory, this.runtime, this.artifacts),
+    })
+
+    await mkdir(this.directory, { recursive: true })
+    const contents = `${JSON.stringify(pointer, null, 2)}\n`
+    await writeFile(join(this.directory, "latest-runtime.json"), contents)
+    await writeFile(join(this.directory, "manifest.json"), contents)
+  }
+}
+
 function createRecipeInterruptionController(): RecipeInterruptionController {
   let metadata: RecipeInterruptionMetadata | undefined
   let rejectInterrupted: ((error: RecipeInterruptedError) => void) | undefined
@@ -528,12 +584,16 @@ function interruptedRecipeOutput<T extends RecipeRunCommandOutput>(output: T, in
     ...output,
     success: false,
     interruption: interruption.metadata,
-    error: {
-      name: "RecipeInterruptedError",
-      message: `Recipe run interrupted by ${interruption.metadata.signal}`,
-      code: "recipe-interrupted",
-    },
+    error: recipeInterruptionSerializedError(interruption.metadata),
   } as T
+}
+
+function recipeInterruptionSerializedError(metadata: RecipeInterruptionMetadata): RunOutput["error"] {
+  return {
+    name: "RecipeInterruptedError",
+    message: `Recipe run interrupted by ${metadata.signal}`,
+    code: "recipe-interrupted",
+  }
 }
 
 function remainingRecipeTimeoutMs(startedAtMs: number, timeoutMs: number): number {
@@ -591,6 +651,45 @@ function serializeRecipeRunError(error: unknown): RunOutput["error"] {
   return serialized
 }
 
+function recipeArtifactPointerFailurePhase(error: RunOutput["error"] | undefined, phases: RecipePhaseEvidence[]): string | undefined {
+  const failedPhase = [...phases].reverse().find((phase) => phase.status === "failed")
+  if (failedPhase) {
+    return failedPhase.name
+  }
+
+  if (typeof error?.activeOperation === "string") {
+    return error.activeOperation
+  }
+
+  return undefined
+}
+
+function recipeArtifactPointerPaths(directory: string, runtime: RuntimeInfo | undefined, artifacts: ArtifactBundle | undefined): Record<string, string> {
+  const paths: Record<string, string | undefined> = {}
+  if (runtime) {
+    const runtimeDirectory = join(directory, runtime.id)
+    paths.runtimeDirectory = relative(directory, runtimeDirectory) || "."
+    paths.eventLog = relative(directory, join(runtimeDirectory, "events.jsonl"))
+    paths.commandLog = relative(directory, join(runtimeDirectory, "logs", "commands.log"))
+    paths.runtimeLog = relative(directory, join(runtimeDirectory, "logs", "runtime.log"))
+    paths.runtimeMetadata = relative(directory, join(runtimeDirectory, "metadata.json"))
+    paths.runtimeManifest = relative(directory, join(runtimeDirectory, "manifest.json"))
+    paths.browserArtifacts = relative(directory, join(runtimeDirectory, "files", "browser"))
+  }
+
+  if (artifacts) {
+    paths.runtimeDirectory = relative(directory, artifacts.directory) || "."
+    paths.eventLog = relative(directory, artifacts.eventsPath)
+    paths.commandLog = relative(directory, artifacts.commandsLogPath)
+    paths.runtimeLog = relative(directory, artifacts.runtimeLogPath)
+    paths.runtimeMetadata = relative(directory, artifacts.metadataPath)
+    paths.runtimeManifest = relative(directory, artifacts.manifestPath)
+    paths.browserArtifacts = relative(directory, join(artifacts.directory, "files", "browser"))
+  }
+
+  return stripUndefined(paths) as Record<string, string>
+}
+
 async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
@@ -611,6 +710,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       recipePath,
     },
   })
+  const artifactPointer = new RecipeArtifactPointerTracker(resolve(configuredArtifactsDirectory ?? "artifacts"), runRecord.runId, recipePath, new Date(startedAtMs).toISOString())
+  await artifactPointer.update({ commandStatus: "queued" })
   const issues = await validateWorkspaceRecipe(recipe, recipePath)
   if (issues.length > 0) {
     const failure = {
@@ -622,6 +723,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", failure }) },
       error: failure,
     })
+    await artifactPointer.update({ command: "recipe.validate", commandStatus: "failed", failure })
     return {
       success: false,
       schema: "wp-codebox/recipe-run/v1",
@@ -651,8 +753,19 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
   const phaseTracker = new RecipePhaseTracker()
   const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
-    const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
-    return interruption ? interruption.interruptible(guarded) : guarded
+    return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
+      .then(() => {
+        const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
+        return interruption ? interruption.interruptible(guarded) : guarded
+      })
+      .then(async (result) => {
+        await artifactPointer.update({ command: operation, commandStatus: "completed", phases: phaseTracker.list() })
+        return result
+      })
+      .catch(async (error: unknown) => {
+        await artifactPointer.update({ command: operation, commandStatus: "failed", failure: serializeRecipeRunError(error), phases: phaseTracker.list() })
+        throw error
+      })
   }
 
   try {
@@ -731,6 +844,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       throw new Error("Runtime creation did not return a runtime")
     }
     runRecord = await runRegistry.update(runRecord.runId, { status: "running", runtime: await runtime.info() })
+    await artifactPointer.update({ runtime: await runtime.info(), phases: phaseTracker.list() })
     const blueprintSteps = recipeBlueprintSteps(runtimeEnvironment.blueprint)
     phaseTracker.complete("run_blueprint_steps", {
       stepCount: blueprintSteps.length,
@@ -872,6 +986,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
+      await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list() })
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
@@ -890,6 +1005,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const successfulRecipe = !strictFailure && !agentFailure
     if (successfulRecipe && options.previewHoldSeconds) {
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }))
+      await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list() })
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
@@ -920,6 +1036,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure, phaseEvidence: phaseTracker.list() }) },
         error: strictFailure ?? agentFailure,
       })
+      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: strictFailure ?? agentFailure, phases: phaseTracker.list() })
       return {
         success: false,
         schema: "wp-codebox/recipe-run/v1",
@@ -950,6 +1067,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       artifactRefs: artifactBundleRunRef(artifacts),
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }) },
     })
+    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list() })
     return {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
@@ -985,6 +1103,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption,
       }))
       if (artifacts) {
+        await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list() })
         try {
           if (declaredArtifacts.length === 0) {
             declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
@@ -1011,7 +1130,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays))
     runRecord = await runRegistry.read(runRecord.runId)
-    const serializedError = serializeRecipeRunError(error)
+    const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     runRecord = await runRegistry.update(runRecord.runId, {
       status: recipeRunFailureStatus(error, interruption),
       ...(runtime ? { runtime: await runtime.info() } : {}),
@@ -1019,6 +1138,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
       error: serializedError,
     })
+    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list() })
 
     return {
       success: false,
