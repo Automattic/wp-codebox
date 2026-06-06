@@ -37,11 +37,13 @@ export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
 
 export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
 (() => {
-  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [] };
+  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [], layoutShifts: [], cls: 0 };
   state.checkpoints = state.checkpoints || [];
   state.longTasks = state.longTasks || [];
+  state.layoutShifts = state.layoutShifts || [];
+  state.cls = typeof state.cls === 'number' ? state.cls : 0;
   if (state.longTaskObserverInstalled || typeof PerformanceObserver === 'undefined') {
-    return;
+    return installLayoutShiftObserver();
   }
   try {
     const observer = new PerformanceObserver((list) => {
@@ -57,6 +59,94 @@ export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
     state.longTaskObserverInstalled = true;
   } catch {
     state.longTaskObserverInstalled = false;
+  }
+  installLayoutShiftObserver();
+
+  function installLayoutShiftObserver() {
+    if (state.layoutShiftObserverInstalled || typeof PerformanceObserver === 'undefined') {
+      return;
+    }
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const value = Number(entry.value || 0);
+          const hadRecentInput = entry.hadRecentInput === true;
+          if (!hadRecentInput && Number.isFinite(value) && value > 0) {
+            state.cls += value;
+          }
+          state.layoutShifts.push({
+            name: String(entry.name || 'layout-shift'),
+            startTime: entry.startTime,
+            duration: entry.duration,
+            value,
+            hadRecentInput,
+            sources: Array.from(entry.sources || []).slice(0, 5).map((source) => ({
+              selector: sourceSelector(source.node),
+              node: sourceNodeName(source.node),
+              previousRect: sourceRect(source.previousRect),
+              currentRect: sourceRect(source.currentRect),
+            })),
+          });
+          if (state.layoutShifts.length > 100) {
+            state.layoutShifts.splice(0, state.layoutShifts.length - 100);
+          }
+        }
+      });
+      observer.observe({ type: 'layout-shift', buffered: true });
+      state.layoutShiftObserverInstalled = true;
+    } catch {
+      state.layoutShiftObserverInstalled = false;
+    }
+  }
+
+  function sourceNodeName(node) {
+    return node && typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : null;
+  }
+
+  function sourceSelector(node) {
+    if (!node || node.nodeType !== 1) {
+      return null;
+    }
+    const parts = [];
+    let current = node;
+    while (current && current.nodeType === 1 && parts.length < 4) {
+      let part = current.nodeName.toLowerCase();
+      if (current.id) {
+        part += '#' + cssEscape(current.id);
+        parts.unshift(part);
+        break;
+      }
+      if (current.classList && current.classList.length > 0) {
+        part += '.' + Array.from(current.classList).slice(0, 2).map(cssEscape).join('.');
+      }
+      parts.unshift(part);
+      current = current.parentElement;
+    }
+    return parts.join(' > ') || null;
+  }
+
+  function cssEscape(value) {
+    if (globalThis.CSS && typeof globalThis.CSS.escape === 'function') {
+      return globalThis.CSS.escape(String(value));
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+  }
+
+  function sourceRect(rect) {
+    return {
+      x: finiteNumberOrNull(rect && rect.x),
+      y: finiteNumberOrNull(rect && rect.y),
+      width: finiteNumberOrNull(rect && rect.width),
+      height: finiteNumberOrNull(rect && rect.height),
+      top: finiteNumberOrNull(rect && rect.top),
+      right: finiteNumberOrNull(rect && rect.right),
+      bottom: finiteNumberOrNull(rect && rect.bottom),
+      left: finiteNumberOrNull(rect && rect.left),
+    };
+  }
+
+  function finiteNumberOrNull(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 })();
 `
@@ -430,6 +520,40 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
       const longTasks = ((globalThis as typeof globalThis & { __wpCodeboxBrowserProbe?: { longTasks?: Array<{ duration?: number }> } }).__wpCodeboxBrowserProbe?.longTasks ?? [])
         .map((entry) => Number(entry.duration ?? 0))
         .filter((duration) => Number.isFinite(duration) && duration >= 0)
+      const layoutShiftState = (globalThis as typeof globalThis & {
+        __wpCodeboxBrowserProbe?: {
+          cls?: number
+          layoutShifts?: Array<{
+            name?: string
+            startTime?: number
+            duration?: number
+            value?: number
+            hadRecentInput?: boolean
+            sources?: Array<{
+              selector?: string | null
+              node?: string | null
+              previousRect?: Record<string, number | null>
+              currentRect?: Record<string, number | null>
+            }>
+          }>
+        }
+      }).__wpCodeboxBrowserProbe
+      const layoutShifts = (layoutShiftState?.layoutShifts ?? [])
+        .map((entry) => ({
+          name: typeof entry.name === "string" ? entry.name : "layout-shift",
+          startTime: finiteNumberOrZero(entry.startTime),
+          duration: finiteNumberOrZero(entry.duration),
+          value: finiteNumberOrZero(entry.value),
+          hadRecentInput: entry.hadRecentInput === true,
+          sources: Array.isArray(entry.sources) ? entry.sources.map((source) => ({
+            selector: typeof source.selector === "string" ? source.selector : null,
+            node: typeof source.node === "string" ? source.node : null,
+            previousRect: source.previousRect && typeof source.previousRect === "object" ? source.previousRect : {},
+            currentRect: source.currentRect && typeof source.currentRect === "object" ? source.currentRect : {},
+          })) : [],
+        }))
+        .filter((entry) => entry.value >= 0)
+      const layoutShiftsWithoutRecentInput = layoutShifts.filter((entry) => !entry.hadRecentInput)
 
       return {
         performanceMemory: {
@@ -453,10 +577,21 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
           totalDurationMs: longTasks.reduce((total, duration) => total + duration, 0),
           maxDurationMs: longTasks.reduce((max, duration) => Math.max(max, duration), 0),
         },
+        layoutShifts: {
+          cls: finiteNumberOrZero(layoutShiftState?.cls),
+          count: layoutShiftsWithoutRecentInput.length,
+          totalCount: layoutShifts.length,
+          max: layoutShiftsWithoutRecentInput.reduce((max, entry) => Math.max(max, entry.value), 0),
+          entries: layoutShifts,
+        },
       }
 
       function finiteNumberOrNull(value: unknown): number | null {
         return typeof value === "number" && Number.isFinite(value) ? value : null
+      }
+
+      function finiteNumberOrZero(value: unknown): number {
+        return typeof value === "number" && Number.isFinite(value) ? value : 0
       }
 
       function resourceTotal(resources: PerformanceResourceTiming[], field: "transferSize" | "encodedBodySize" | "decodedBodySize"): number {
@@ -485,6 +620,7 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
       },
       resources: pageMetrics.resources,
       longTasks: pageMetrics.longTasks,
+      layoutShifts: pageMetrics.layoutShifts,
     },
   }
 }
@@ -545,6 +681,7 @@ export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpo
     dom: { nodes: 0, documents: 0, iframes: 0 },
     resources: { count: 0, transferSizeBytes: 0, encodedBodySizeBytes: 0, decodedBodySizeBytes: 0 },
     longTasks: { count: 0, totalDurationMs: 0, maxDurationMs: 0 },
+    layoutShifts: { cls: 0, count: 0, totalCount: 0, max: 0, entries: [] },
   }
 
   return {

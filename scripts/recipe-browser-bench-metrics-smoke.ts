@@ -82,10 +82,16 @@ const expectedBrowserMetrics = {
   browser_transfer_size_bytes: metrics.browser_transfer_size_bytes.samples.mean,
   browser_long_task_count: metrics.browser_long_task_count.samples.mean,
   browser_long_task_total_ms: metrics.browser_long_task_total_ms.samples.mean,
+  browser_cls: metrics.browser_cls.samples.mean,
+  browser_layout_shift_count: metrics.browser_layout_shift_count.samples.mean,
+  browser_layout_shift_max: metrics.browser_layout_shift_max.samples.mean,
 }
 assert.equal(metrics.browser_peak_used_js_heap_bytes.unit, "bytes")
 assert.equal(metrics.browser_long_task_total_ms.unit, "ms")
 assert.equal(metrics.browser_checkpoint_count.unit, "count")
+assert.equal(metrics.browser_cls.unit, "unitless")
+assert.equal(metrics.browser_layout_shift_count.unit, "count")
+assert.equal(metrics.browser_layout_shift_max.unit, "unitless")
 assert.ok(metrics.browser_checkpoint_count.samples.mean >= 3, "browser_checkpoint_count should include probe checkpoints")
 assert.ok(metrics.browser_dom_node_count.samples.mean > 0, "browser_dom_node_count should be numeric")
 assert.equal(metrics.browser_iframe_count.samples.mean, 1)
@@ -93,6 +99,9 @@ assert.ok(metrics.browser_resource_count.samples.mean >= 0, "browser_resource_co
 assert.ok(metrics.browser_transfer_size_bytes.samples.mean >= 0, "browser_transfer_size_bytes should be numeric")
 assert.ok(metrics.browser_long_task_count.samples.mean >= 0, "browser_long_task_count should be numeric")
 assert.ok(metrics.browser_long_task_total_ms.samples.mean >= 0, "browser_long_task_total_ms should be numeric")
+assert.ok(metrics.browser_cls.samples.mean >= 0, "browser_cls should be numeric")
+assert.ok(metrics.browser_layout_shift_count.samples.mean >= 0, "browser_layout_shift_count should be numeric")
+assert.ok(metrics.browser_layout_shift_max.samples.mean >= 0, "browser_layout_shift_max should be numeric")
 assert.ok(metrics.browser_peak_used_js_heap_bytes.samples.mean >= 0, "browser_peak_used_js_heap_bytes should be numeric")
 assert.ok(metrics.browser_final_used_js_heap_bytes.samples.mean >= 0, "browser_final_used_js_heap_bytes should be numeric")
 assert.ok(artifactRefs.some((ref: { path: string; source: string }) => ref.path === "files/browser/performance.json" && ref.source === "browser-artifact"), "browser performance artifact should be scenario-linked")

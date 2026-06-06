@@ -57,6 +57,12 @@ export function browserProbePerformanceSummary(checkpoints: BrowserProbeCheckpoi
     decodedBodySizeBytes: final?.resources.decodedBodySizeBytes ?? 0,
     longTasks: final?.longTasks.count ?? 0,
     longTaskDurationMs: final?.longTasks.totalDurationMs ?? 0,
+    layoutShifts: {
+      cls: final?.layoutShifts.cls ?? 0,
+      count: final?.layoutShifts.count ?? 0,
+      totalCount: final?.layoutShifts.totalCount ?? 0,
+      max: final?.layoutShifts.max ?? 0,
+    },
     domNodes: metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.performance.dom.nodes)),
     cdpMetrics: Object.fromEntries([...metricNames].sort().map((name) => [name, metricDigest(checkpoints.map((checkpoint) => checkpoint.metrics.performance.cdpMetrics[name]))])),
   }
@@ -130,6 +136,9 @@ export function browserProbeBenchMetrics(memoryArtifact?: BrowserProbeMemoryArti
     browser_transfer_size_bytes: performance?.resources.transferSizeBytes ?? 0,
     browser_long_task_count: performance?.longTasks.count ?? 0,
     browser_long_task_total_ms: performance?.longTasks.totalDurationMs ?? 0,
+    browser_cls: performance?.layoutShifts.cls ?? 0,
+    browser_layout_shift_count: performance?.layoutShifts.count ?? 0,
+    browser_layout_shift_max: performance?.layoutShifts.max ?? 0,
   }
 }
 
@@ -257,11 +266,18 @@ function combinedBrowserBenchMetrics(probes: BrowserProbeArtifact[]): Record<str
     browser_transfer_size_bytes: finalMetrics.browser_transfer_size_bytes ?? 0,
     browser_long_task_count: sumMetric(metricSets, "browser_long_task_count"),
     browser_long_task_total_ms: sumMetric(metricSets, "browser_long_task_total_ms"),
+    browser_cls: sumMetric(metricSets, "browser_cls"),
+    browser_layout_shift_count: sumMetric(metricSets, "browser_layout_shift_count"),
+    browser_layout_shift_max: maxMetric(metricSets, "browser_layout_shift_max"),
   }
 }
 
 function sumMetric(metricSets: Array<Record<string, number>>, name: string): number {
   return metricSets.reduce((total, metrics) => total + (metrics[name] ?? 0), 0)
+}
+
+function maxMetric(metricSets: Array<Record<string, number>>, name: string): number {
+  return Math.max(...metricSets.map((metrics) => metrics[name] ?? 0))
 }
 
 export async function serializeBrowserFinishedRequest(request: Request): Promise<BrowserProbeNetworkRecord> {

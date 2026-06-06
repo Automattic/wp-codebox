@@ -219,8 +219,32 @@ export interface BrowserProbePerformanceSummary {
   decodedBodySizeBytes: number
   longTasks: number
   longTaskDurationMs: number
+  layoutShifts: BrowserProbeLayoutShiftSummary
   domNodes: BrowserProbeMetricDigest
   cdpMetrics: Record<string, BrowserProbeMetricDigest>
+}
+
+export interface BrowserProbeLayoutShiftSummary {
+  cls: number
+  count: number
+  totalCount: number
+  max: number
+}
+
+export interface BrowserProbeLayoutShiftSourceRecord {
+  selector: string | null
+  node: string | null
+  previousRect: Record<string, number | null>
+  currentRect: Record<string, number | null>
+}
+
+export interface BrowserProbeLayoutShiftRecord {
+  name: string
+  startTime: number
+  duration: number
+  value: number
+  hadRecentInput: boolean
+  sources: BrowserProbeLayoutShiftSourceRecord[]
 }
 
 export interface BrowserProbeCheckpointRecord {
@@ -266,6 +290,9 @@ export interface BrowserProbeMetricsSnapshot {
       count: number
       totalDurationMs: number
       maxDurationMs: number
+    }
+    layoutShifts: BrowserProbeLayoutShiftSummary & {
+      entries: BrowserProbeLayoutShiftRecord[]
     }
   }
 }

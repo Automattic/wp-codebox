@@ -84,6 +84,7 @@
     "headless-browser-agent-recipe-smoke": "tsx scripts/headless-browser-agent-recipe-smoke.ts",
     "browser-probe-artifact-smoke": "tsx scripts/browser-probe-artifact-smoke.ts",
     "browser-probe-assertions-smoke": "tsx scripts/browser-probe-assertions-smoke.ts",
+    "browser-probe-layout-shift-smoke": "tsx scripts/browser-probe-layout-shift-smoke.ts",
     "browser-probe-context-smoke": "tsx scripts/browser-probe-context-smoke.ts",
     "browser-probe-public-url-routing-smoke": "tsx scripts/browser-probe-public-url-routing-smoke.ts",
     "browser-probe-profile-matrix-smoke": "tsx scripts/browser-probe-profile-matrix-smoke.ts",
