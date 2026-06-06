@@ -401,7 +401,8 @@ $browser_task_contract_ability = $GLOBALS['wp_codebox_registered_abilities']['wp
 $assert( 'browser task contract ability registered', is_array( $browser_task_contract_ability ) );
 $assert( 'browser task contract ability is REST visible', true === ( $browser_task_contract_ability['meta']['show_in_rest'] ?? false ) );
 $assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
-$assert( 'browser task contract exposes phase and compact schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && array( 'materializer' ) === ( $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array() ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) && 'object' === ( $browser_task_contract_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
+$browser_task_phase_kinds = $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array();
+$assert( 'browser task contract exposes phase and compact schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && in_array( 'materializer', $browser_task_phase_kinds, true ) && in_array( 'agent', $browser_task_phase_kinds, true ) && in_array( 'aggregator', $browser_task_phase_kinds, true ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) && 'object' === ( $browser_task_contract_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
 
 $agents_api_executor_targets = apply_filters( 'agents_api_executor_targets', array() );
 $wp_agent_executor_targets = apply_filters( 'wp_agent_executor_targets', array() );
@@ -875,6 +876,54 @@ $browser_task_compact_encoded = wp_json_encode( $browser_task_contract['compact'
 $assert( 'browser task contract exposes compact product DTO with primary runner fields', ! is_wp_error( $browser_task_contract ) && 'wp-codebox/browser-task-product-dto/v1' === ( $browser_task_contract['compact']['schema'] ?? '' ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_task_contract['compact']['primary']['schema'] ?? '' ) && 'wp-codebox/browser-session-product-dto/v1' === ( $browser_task_contract['compact']['primary']['dto_schema'] ?? '' ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_task_contract['compact']['primary']['recipe']['schema'] ?? '' ) && isset( $browser_task_contract['compact']['primary']['recipe']['workflow'] ) && isset( $browser_task_contract['compact']['primary']['recipe']['browser']['task_path'] ) && isset( $browser_task_contract['compact']['primary']['task_payload']['schema'] ) );
 $assert( 'browser task compact DTO preserves named materializer phases', ! is_wp_error( $browser_task_contract ) && 'static-site-materializer' === ( $browser_task_contract['compact']['phases'][0]['name'] ?? '' ) && 'materializer' === ( $browser_task_contract['compact']['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-product-dto/v1' === ( $browser_task_contract['compact']['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/materializer-result.json' === ( $browser_task_contract['compact']['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
 $assert( 'browser task compact DTO omits raw runtime payloads', is_string( $browser_task_compact_encoded ) && ! str_contains( $browser_task_compact_encoded, '"pluginData"' ) && ! str_contains( $browser_task_compact_encoded, '"content"' ) && ! str_contains( $browser_task_compact_encoded, '"content_base64"' ) && ! str_contains( $browser_task_compact_encoded, 'data:application/zip;base64' ) && ! str_contains( $browser_task_compact_encoded, 'sk-browser-provider-secret' ) );
+
+$legacy_materializer_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	array_replace_recursive(
+		$browser_session_input,
+		array(
+			'materializers' => array(
+				array(
+					'goal'           => 'Materialize generated browser artifacts through legacy input.',
+					'browser_runner' => array(
+						'result_path' => '/tmp/legacy-materializer-result.json',
+					),
+				),
+			),
+		)
+	)
+);
+$assert( 'browser task contract preserves legacy materializers input compatibility', ! is_wp_error( $legacy_materializer_task_contract ) && 1 === count( $legacy_materializer_task_contract['phases'] ?? array() ) && 'materializer' === ( $legacy_materializer_task_contract['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-contract/v1' === ( $legacy_materializer_task_contract['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/legacy-materializer-result.json' === ( $legacy_materializer_task_contract['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
+
+$generic_phase_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	array_replace_recursive(
+		$browser_session_input,
+		array(
+			'phases' => array(
+				array(
+					'name'     => 'agent-fanout',
+					'kind'     => 'agent',
+					'label'    => 'Agent Fanout',
+					'status'   => 'queued',
+					'metadata' => array(
+						'runner' => 'browser-playground',
+					),
+				),
+				array(
+					'name'     => 'aggregate-results',
+					'kind'     => 'aggregator',
+					'label'    => 'Aggregate Results',
+					'metadata' => array(
+						'inputs' => array( 'agent-fanout' ),
+					),
+				),
+			),
+		)
+	)
+);
+$assert( 'browser task contract accepts agent and aggregator phase descriptors', ! is_wp_error( $generic_phase_task_contract ) && 2 === count( $generic_phase_task_contract['phases'] ?? array() ) && 'agent' === ( $generic_phase_task_contract['phases'][0]['kind'] ?? '' ) && 'aggregator' === ( $generic_phase_task_contract['phases'][1]['kind'] ?? '' ) && ! isset( $generic_phase_task_contract['phases'][0]['contract'] ) && 'queued' === ( $generic_phase_task_contract['phases'][0]['status'] ?? '' ) && 'pending' === ( $generic_phase_task_contract['phases'][1]['status'] ?? '' ) );
+$assert( 'browser task compact DTO preserves generic phase metadata for product UIs', ! is_wp_error( $generic_phase_task_contract ) && 'agent-fanout' === ( $generic_phase_task_contract['compact']['phases'][0]['name'] ?? '' ) && 0 === ( $generic_phase_task_contract['compact']['phases'][0]['index'] ?? null ) && 'Agent Fanout' === ( $generic_phase_task_contract['compact']['phases'][0]['label'] ?? '' ) && 'browser-playground' === ( $generic_phase_task_contract['compact']['phases'][0]['metadata']['runner'] ?? '' ) && 'aggregate-results' === ( $generic_phase_task_contract['compact']['phases'][1]['name'] ?? '' ) && 1 === ( $generic_phase_task_contract['compact']['phases'][1]['index'] ?? null ) );
 
 $agents_api_browser_executor_result = apply_filters(
 	'agents_api_execute_task',

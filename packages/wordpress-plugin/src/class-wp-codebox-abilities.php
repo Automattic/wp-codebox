@@ -641,13 +641,16 @@ final class WP_Codebox_Abilities {
 							'artifact_files'     => array( 'type' => 'array' ),
 							'phases'             => array(
 								'type'        => 'array',
-								'description' => 'Optional named browser task phases. Each materializer phase may override any primary session input through input.',
+								'description' => 'Optional named browser task phases. Generic phases describe product-owned agent fanout steps; materializer phases may override any primary session input through input.',
 								'items'       => array(
 									'type'       => 'object',
 									'properties' => array(
-										'name'  => array( 'type' => 'string' ),
-										'kind'  => array( 'type' => 'string', 'enum' => array( 'materializer' ) ),
-										'input' => array( 'type' => 'object' ),
+										'name'     => array( 'type' => 'string' ),
+										'kind'     => array( 'type' => 'string', 'enum' => self::browser_task_phase_kinds() ),
+										'label'    => array( 'type' => 'string' ),
+										'status'   => array( 'type' => 'string' ),
+										'metadata' => array( 'type' => 'object' ),
+										'input'    => array( 'type' => 'object' ),
 									),
 								),
 							),
