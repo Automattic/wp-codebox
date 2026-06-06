@@ -59,6 +59,28 @@ WP Codebox records the adapter result in `apply-audit.jsonl` with sensitive keys
 redacted. The external system remains responsible for durable branch, commit, PR,
 and reviewer workflow records.
 
+## Apply Preflight Adapter
+
+Codebox exports the canonical Node adapter from `@automattic/wp-codebox-core`:
+
+```ts
+loadArtifactBundleForApply(bundlePath, { approvedFiles })
+normalizeArtifactApplyPreflight(input)
+createArtifactApplyRequest(input)
+```
+
+The adapter accepts bundle directories, preflight JSON files, canonical
+`wp-codebox/artifact-bundle-apply-preflight/v1` results, canonical bundle apply
+payloads, and compatibility `wp-codebox/artifact-apply-preflight/v1` payloads.
+It normalizes them to `wp-codebox/artifact-apply-preflight/v1` with a payload
+that carries `artifact_id`, `artifact_content_digest`, `patch_sha256`,
+`approved_files`, `patch`, and normalized artifact metadata.
+
+Normalization validates bundle identity, artifact content digest, patch digest,
+changed files, approved file coverage, and required patch/changed-files inputs.
+Invalid inputs return `ready: false` with structured violations; request creation
+throws only when asked to create a request from a non-ready preflight.
+
 ## Smoke Fixture
 
 `npm run external-adapter-contract-smoke` demonstrates the contract without
@@ -97,3 +119,7 @@ plane adapter, and persists this external record shape:
 The smoke asserts that the external record includes adapter metadata, explicit
 owner approval metadata, bot-authored PR metadata, branch, commit, and artifact
 digest while excluding the raw patch body.
+
+`npm run artifact-apply-adapter-smoke` covers Codebox-owned adapter
+normalization for bundle-path input, preflight-file input, payload input,
+approved-file mismatch, digest mismatch, and missing patch/changed-files cases.
