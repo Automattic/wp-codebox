@@ -16,7 +16,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
-const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "timezone", "user-agent", "viewport"])
+const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 
 interface BrowserProbeProfileDefinition {
   id: string
@@ -35,6 +35,11 @@ const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
     browser: "chromium",
     args: ["browser=chromium", "device=Pixel 5"],
   },
+  "low-end-mobile-slow-4g": {
+    id: "low-end-mobile-slow-4g",
+    browser: "chromium",
+    args: ["browser=chromium", "device=Pixel 5", "throttle=low-end-mobile-slow-4g"],
+  },
   "desktop-webkit": {
     id: "desktop-webkit",
     browser: "webkit",
@@ -44,6 +49,30 @@ const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
     id: "mobile-webkit",
     browser: "webkit",
     args: ["browser=webkit", "device=iPhone 13"],
+  },
+}
+
+interface BrowserProbeThrottleProfileDefinition {
+  id: string
+  cpuSlowdownRate: number
+  network: {
+    offline: boolean
+    latencyMs: number
+    downloadThroughputBytesPerSecond: number
+    uploadThroughputBytesPerSecond: number
+  }
+}
+
+const BROWSER_PROBE_THROTTLE_PROFILES: Record<string, BrowserProbeThrottleProfileDefinition> = {
+  "low-end-mobile-slow-4g": {
+    id: "low-end-mobile-slow-4g",
+    cpuSlowdownRate: 4,
+    network: {
+      offline: false,
+      latencyMs: 150,
+      downloadThroughputBytesPerSecond: 1_600_000 / 8,
+      uploadThroughputBytesPerSecond: 750_000 / 8,
+    },
   },
 }
 
@@ -73,13 +102,29 @@ export async function runBrowserProbeCommand({
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   const profileIds = browserProbeProfileIds(spec.args ?? [])
   if (profileIds.length === 0) {
+    const profileId = argValue(spec.args ?? [], "profile")?.trim()
+    if (profileId) {
+      const profile = browserProbeProfile(profileId)
+      if (profile.browser !== "chromium") {
+        throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
+      }
+      return runSingleBrowserProbeCommand({
+        artifactRoot,
+        command,
+        runtimeSpec,
+        server,
+        spec: { ...spec, args: browserProbeProfileArgs(spec.args ?? [], profile) },
+        browserFilesDirectory: "files/browser",
+        profileId: profile.id,
+      })
+    }
     return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, server, spec, browserFilesDirectory: "files/browser" })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
   for (const profile of profiles) {
     if (profile.browser !== "chromium") {
-      throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported profiles: desktop-chrome, mobile-chrome.`)
+      throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
     }
   }
 
@@ -159,7 +204,8 @@ async function runSingleBrowserProbeCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
-  const requestedContext = browserProbeContextRequest(args, requestedViewport, profileId)
+  const throttleProfile = browserProbeThrottleProfile(args)
+  const requestedContext = browserProbeContextRequest(args, requestedViewport, profileId, throttleProfile?.id)
   const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
@@ -235,6 +281,9 @@ async function runSingleBrowserProbeCommand({
     page = context ? await context.newPage() : await browser.newPage()
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
+    }
+    if (throttleProfile) {
+      await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -513,13 +562,44 @@ function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
 function browserProbeProfileArgs(args: string[], profile: BrowserProbeProfileDefinition): string[] {
   const explicitOverrideKeys = new Set(args.map((arg) => arg.match(/^([^=]+)=/)?.[1]).filter((key): key is string => typeof key === "string" && BROWSER_PROBE_PROFILE_OVERRIDES.has(key)))
   return [
-    ...args.filter((arg) => !arg.startsWith("profiles=")),
+    ...args.filter((arg) => !arg.startsWith("profiles=") && !arg.startsWith("profile=")),
     `profile=${profile.id}`,
     ...profile.args.filter((arg) => {
       const key = arg.match(/^([^=]+)=/)?.[1]
       return !key || !explicitOverrideKeys.has(key)
     }),
   ]
+}
+
+function browserProbeThrottleProfile(args: string[]): BrowserProbeThrottleProfileDefinition | undefined {
+  const profileId = argValue(args, "throttle")?.trim()
+  if (!profileId || profileId === "none") {
+    return undefined
+  }
+
+  const profile = BROWSER_PROBE_THROTTLE_PROFILES[profileId]
+  if (!profile) {
+    throw new Error(`wordpress.browser-probe unknown throttle profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_THROTTLE_PROFILES).join(", ")}`)
+  }
+  return profile
+}
+
+async function applyBrowserProbeThrottleProfile(page: import("playwright").Page, profile: BrowserProbeThrottleProfileDefinition): Promise<void> {
+  const session = await page.context().newCDPSession(page)
+  try {
+    await Promise.all([
+      session.send("Network.enable").catch(() => undefined),
+      session.send("Emulation.setCPUThrottlingRate", { rate: profile.cpuSlowdownRate }).catch(() => undefined),
+    ])
+    await session.send("Network.emulateNetworkConditions", {
+      offline: profile.network.offline,
+      latency: profile.network.latencyMs,
+      downloadThroughput: profile.network.downloadThroughputBytesPerSecond,
+      uploadThroughput: profile.network.uploadThroughputBytesPerSecond,
+    }).catch(() => undefined)
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
 }
 
 function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata {
@@ -529,7 +609,7 @@ function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata 
   }
 }
 
-function browserProbeContextRequest(args: string[], viewport: { width: number; height: number } | undefined, profileId?: string): BrowserProbeContextDetails["requested"] {
+function browserProbeContextRequest(args: string[], viewport: { width: number; height: number } | undefined, profileId?: string, throttleProfileId?: string): BrowserProbeContextDetails["requested"] {
   const browser = argValue(args, "browser")?.trim()
   const device = argValue(args, "device")?.trim()
   const locale = argValue(args, "locale")?.trim()
@@ -542,6 +622,7 @@ function browserProbeContextRequest(args: string[], viewport: { width: number; h
     ...(locale ? { locale } : {}),
     ...(permissions.length > 0 ? { permissions } : {}),
     ...(profileId ? { profile: profileId } : {}),
+    ...(throttleProfileId ? { throttle: throttleProfileId } : {}),
     ...(timezone ? { timezone } : {}),
     ...(userAgent ? { userAgent } : {}),
     ...(viewport ? { viewport } : {}),
@@ -562,6 +643,7 @@ async function browserProbeContextDetails(page: import("playwright").Page, reque
       ...(effective.locale ? { locale: effective.locale } : {}),
       ...(requested.permissions ? { permissions: requested.permissions } : {}),
       ...(requested.profile ? { profile: requested.profile } : {}),
+      ...(requested.throttle ? { throttle: requested.throttle } : {}),
       ...(effective.timezone ? { timezone: effective.timezone } : {}),
       ...(viewport?.userAgent ? { userAgent: viewport.userAgent } : {}),
       viewport,

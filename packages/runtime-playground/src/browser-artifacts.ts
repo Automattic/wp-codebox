@@ -108,6 +108,7 @@ export interface BrowserProbeContextDetails {
     locale?: string
     permissions?: string[]
     profile?: string
+    throttle?: string
     timezone?: string
     userAgent?: string
     viewport?: {
@@ -121,6 +122,7 @@ export interface BrowserProbeContextDetails {
     locale?: string
     permissions?: string[]
     profile?: string
+    throttle?: string
     timezone?: string
     userAgent?: string
     viewport: BrowserProbeViewport | null
@@ -213,6 +215,8 @@ export interface BrowserProbeLifecycleArtifact {
 }
 
 export interface BrowserProbePerformanceSummary {
+  navigation: BrowserProbeNavigationTimingSummary
+  paint: BrowserProbePaintTimingSummary
   resources: number
   transferSizeBytes: number
   encodedBodySizeBytes: number
@@ -222,6 +226,27 @@ export interface BrowserProbePerformanceSummary {
   layoutShifts: BrowserProbeLayoutShiftSummary
   domNodes: BrowserProbeMetricDigest
   cdpMetrics: Record<string, BrowserProbeMetricDigest>
+}
+
+export interface BrowserProbeNavigationTimingSummary {
+  type: string | null
+  redirectCount: number
+  durationMs: number | null
+  domContentLoadedMs: number | null
+  loadEventMs: number | null
+  responseStartMs: number | null
+  responseEndMs: number | null
+  requestStartMs: number | null
+  ttfbMs: number | null
+  redirectMs: number | null
+}
+
+export interface BrowserProbePaintTimingSummary {
+  firstPaintMs: number | null
+  firstContentfulPaintMs: number | null
+  largestContentfulPaintMs: number | null
+  largestContentfulPaintSize: number | null
+  largestContentfulPaintElement: string | null
 }
 
 export interface BrowserProbeLayoutShiftSummary {
@@ -275,6 +300,8 @@ export interface BrowserProbeMetricsSnapshot {
   }
   performance: {
     cdpMetrics: Record<string, number>
+    navigation: BrowserProbeNavigationTimingSummary
+    paint: BrowserProbePaintTimingSummary
     dom: {
       nodes: number
       documents: number

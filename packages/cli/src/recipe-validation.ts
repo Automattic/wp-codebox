@@ -940,10 +940,20 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const profiles = recipeStepArgValue(step.args ?? [], "profiles")
     if (profiles) {
       for (const profile of profiles.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit"].includes(profile)) {
+        if (!["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit", "low-end-mobile-slow-4g"].includes(profile)) {
           addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
         }
       }
+    }
+
+    const profile = recipeStepArgValue(step.args ?? [], "profile")
+    if (profile && !["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit", "low-end-mobile-slow-4g"].includes(profile)) {
+      addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
+    }
+
+    const throttle = recipeStepArgValue(step.args ?? [], "throttle")
+    if (throttle && !["none", "low-end-mobile-slow-4g"].includes(throttle)) {
+      addIssue("invalid-throttle", `${path}.args`, `wordpress.browser-probe throttle is unsupported: ${throttle}`)
     }
 
     const browser = recipeStepArgValue(step.args ?? [], "browser")
@@ -982,6 +992,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         && !normalized.startsWith("request-count-by-type:")
         && !normalized.startsWith("total-transfer-size")
         && !normalized.startsWith("metric:")
+        && !/^[a-zA-Z_][a-zA-Z0-9_]*(>=|<=|==|!=|=|>|<)\s*\d+(?:\.\d+)?$/.test(normalized)
       ) {
         addIssue("invalid-assert", `${path}.args`, `wordpress.browser-probe assert does not support: ${assertion}`)
       }

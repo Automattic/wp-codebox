@@ -37,13 +37,15 @@ export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
 
 export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
 (() => {
-  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [], layoutShifts: [], cls: 0 };
+  const state = globalThis.__wpCodeboxBrowserProbe = globalThis.__wpCodeboxBrowserProbe || { checkpoints: [], longTasks: [], layoutShifts: [], cls: 0, paintEntries: [], largestContentfulPaint: null };
   state.checkpoints = state.checkpoints || [];
   state.longTasks = state.longTasks || [];
   state.layoutShifts = state.layoutShifts || [];
+  state.paintEntries = state.paintEntries || [];
   state.cls = typeof state.cls === 'number' ? state.cls : 0;
   if (state.longTaskObserverInstalled || typeof PerformanceObserver === 'undefined') {
-    return installLayoutShiftObserver();
+    installLayoutShiftObserver();
+    return installPaintObservers();
   }
   try {
     const observer = new PerformanceObserver((list) => {
@@ -61,6 +63,53 @@ export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
     state.longTaskObserverInstalled = false;
   }
   installLayoutShiftObserver();
+  installPaintObservers();
+
+  function installPaintObservers() {
+    if (typeof PerformanceObserver === 'undefined') {
+      return;
+    }
+    if (!state.paintObserverInstalled) {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            state.paintEntries.push({
+              name: String(entry.name || ''),
+              startTime: entry.startTime,
+              duration: entry.duration,
+            });
+          }
+        });
+        observer.observe({ type: 'paint', buffered: true });
+        state.paintObserverInstalled = true;
+      } catch {
+        state.paintObserverInstalled = false;
+      }
+    }
+    if (!state.lcpObserverInstalled) {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          const entries = list.getEntries();
+          const entry = entries[entries.length - 1];
+          if (entry) {
+            state.largestContentfulPaint = {
+              name: String(entry.name || 'largest-contentful-paint'),
+              startTime: entry.startTime,
+              renderTime: entry.renderTime,
+              loadTime: entry.loadTime,
+              size: entry.size,
+              element: sourceSelector(entry.element),
+              url: typeof entry.url === 'string' ? entry.url : '',
+            };
+          }
+        });
+        observer.observe({ type: 'largest-contentful-paint', buffered: true });
+        state.lcpObserverInstalled = true;
+      } catch {
+        state.lcpObserverInstalled = false;
+      }
+    }
+  }
 
   function installLayoutShiftObserver() {
     if (state.layoutShiftObserverInstalled || typeof PerformanceObserver === 'undefined') {
@@ -321,10 +370,32 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
 
   if (raw.startsWith("metric:")) {
     const parsed = parseBudgetBody(raw.slice("metric:".length).trim(), value)
-    return { raw: value, advisory, type: "metric", name: parsed.name, operator: parsed.operator, expected: parsed.expected }
+    return { raw: value, advisory, type: "metric", name: normalizeBrowserMetricName(parsed.name), operator: parsed.operator, expected: parsed.expected }
+  }
+
+  const metricBudget = parseBudgetBodyOrUndefined(raw)
+  if (metricBudget) {
+    return { raw: value, advisory, type: "metric", name: normalizeBrowserMetricName(metricBudget.name), operator: metricBudget.operator, expected: metricBudget.expected }
   }
 
   throw new Error(`wordpress.browser-probe assert supports exists, not-exists, visible, hidden, count, text contains, attr, no-console-errors, no-page-errors, no-errors, request-count-by-host, request-count-by-type, total-transfer-size, and metric budgets: ${value}`)
+}
+
+function parseBudgetBodyOrUndefined(body: string): { name?: string; operator: NonNullable<BrowserProbeAssertionSpec["operator"]>; expected: number } | undefined {
+  const parsed = body.match(/^(.*?)(>=|<=|==|!=|=|>|<)\s*(\d+(?:\.\d+)?)$/)
+  if (!parsed || !parsed[1].trim()) {
+    return undefined
+  }
+
+  return { name: parsed[1].trim(), operator: parsed[2] as NonNullable<BrowserProbeAssertionSpec["operator"]>, expected: Number.parseFloat(parsed[3]) }
+}
+
+function normalizeBrowserMetricName(name: string | undefined): string | undefined {
+  if (!name || name.startsWith("browser_")) {
+    return name
+  }
+
+  return `browser_${name}`
 }
 
 function parseBudgetBody(body: string, raw: string, requiresName = true): { name?: string; operator: NonNullable<BrowserProbeAssertionSpec["operator"]>; expected: number } {
@@ -536,8 +607,18 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
               currentRect?: Record<string, number | null>
             }>
           }>
+          paintEntries?: Array<{ name?: string; startTime?: number; duration?: number }>
+          largestContentfulPaint?: {
+            startTime?: number
+            renderTime?: number
+            loadTime?: number
+            size?: number
+            element?: string | null
+          } | null
         }
       }).__wpCodeboxBrowserProbe
+      const navigation = navigationTimingSummary(performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
+      const paint = paintTimingSummary(layoutShiftState?.paintEntries ?? [], layoutShiftState?.largestContentfulPaint ?? null)
       const layoutShifts = (layoutShiftState?.layoutShifts ?? [])
         .map((entry) => ({
           name: typeof entry.name === "string" ? entry.name : "layout-shift",
@@ -572,6 +653,8 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
           encodedBodySizeBytes: resourceTotal(resources, "encodedBodySize"),
           decodedBodySizeBytes: resourceTotal(resources, "decodedBodySize"),
         },
+        navigation,
+        paint,
         longTasks: {
           count: longTasks.length,
           totalDurationMs: longTasks.reduce((total, duration) => total + duration, 0),
@@ -600,6 +683,62 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
           return total + (Number.isFinite(value) && value > 0 ? value : 0)
         }, 0)
       }
+
+      function navigationTimingSummary(entry: PerformanceNavigationTiming | undefined) {
+        return {
+          type: typeof entry?.type === "string" ? entry.type : null,
+          redirectCount: finiteNumberOrZero(entry?.redirectCount),
+          durationMs: relativeTiming(entry?.duration),
+          domContentLoadedMs: relativeTiming(entry?.domContentLoadedEventEnd),
+          loadEventMs: relativeTiming(entry?.loadEventEnd),
+          responseStartMs: relativeTiming(entry?.responseStart),
+          responseEndMs: relativeTiming(entry?.responseEnd),
+          requestStartMs: relativeTiming(entry?.requestStart),
+          ttfbMs: ttfbTiming(entry),
+          redirectMs: entry ? durationBetween(entry.redirectStart, entry.redirectEnd) : null,
+        }
+      }
+
+      function paintTimingSummary(entries: Array<{ name?: string; startTime?: number }>, lcp: { startTime?: number; renderTime?: number; loadTime?: number; size?: number; element?: string | null } | null) {
+        const paintEntries = [...performance.getEntriesByType("paint"), ...entries]
+        return {
+          firstPaintMs: firstEntryStartTime(paintEntries, "first-paint"),
+          firstContentfulPaintMs: firstEntryStartTime(paintEntries, "first-contentful-paint"),
+          largestContentfulPaintMs: lcpTiming(lcp),
+          largestContentfulPaintSize: finiteNumberOrNull(lcp?.size),
+          largestContentfulPaintElement: typeof lcp?.element === "string" ? lcp.element : null,
+        }
+      }
+
+      function firstEntryStartTime(entries: Array<{ name?: string; startTime?: number }>, name: string): number | null {
+        const entry = entries.find((candidate) => candidate.name === name)
+        return finiteNumberOrNull(entry?.startTime)
+      }
+
+      function lcpTiming(entry: { startTime?: number; renderTime?: number; loadTime?: number } | null): number | null {
+        return finiteNumberOrNull(entry?.renderTime) ?? finiteNumberOrNull(entry?.loadTime) ?? finiteNumberOrNull(entry?.startTime)
+      }
+
+      function ttfbTiming(entry: PerformanceNavigationTiming | undefined): number | null {
+        if (!entry) {
+          return null
+        }
+        return durationBetween(entry.requestStart, entry.responseStart) ?? relativeTiming(entry.responseStart)
+      }
+
+      function relativeTiming(value: unknown): number | null {
+        const timing = finiteNumberOrNull(value)
+        return timing !== null && timing >= 0 ? timing : null
+      }
+
+      function durationBetween(start: unknown, end: unknown): number | null {
+        const startTime = finiteNumberOrNull(start)
+        const endTime = finiteNumberOrNull(end)
+        if (startTime === null || endTime === null || endTime < startTime) {
+          return null
+        }
+        return endTime - startTime
+      }
     }),
     browserProbeCdpMetrics(page),
   ])
@@ -613,6 +752,8 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
     },
     performance: {
       cdpMetrics: cdpMetrics.performance,
+      navigation: pageMetrics.navigation,
+      paint: pageMetrics.paint,
       dom: {
         nodes: cdpMetrics.domCounters.nodes ?? pageMetrics.dom.nodes,
         documents: cdpMetrics.domCounters.documents ?? pageMetrics.dom.documents,
@@ -678,6 +819,8 @@ export function browserProbeMemoryArtifact(checkpoints: BrowserProbeCheckpointRe
 export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbePerformanceArtifact {
   const final = checkpoints.at(-1)?.metrics.performance ?? {
     cdpMetrics: {},
+    navigation: emptyNavigationTimingSummary(),
+    paint: emptyPaintTimingSummary(),
     dom: { nodes: 0, documents: 0, iframes: 0 },
     resources: { count: 0, transferSizeBytes: 0, encodedBodySizeBytes: 0, decodedBodySizeBytes: 0 },
     longTasks: { count: 0, totalDurationMs: 0, maxDurationMs: 0 },
@@ -691,5 +834,30 @@ export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpo
     final,
     peak: browserProbePerformanceSummary(checkpoints),
     checkpoints,
+  }
+}
+
+function emptyNavigationTimingSummary() {
+  return {
+    type: null,
+    redirectCount: 0,
+    durationMs: null,
+    domContentLoadedMs: null,
+    loadEventMs: null,
+    responseStartMs: null,
+    responseEndMs: null,
+    requestStartMs: null,
+    ttfbMs: null,
+    redirectMs: null,
+  }
+}
+
+function emptyPaintTimingSummary() {
+  return {
+    firstPaintMs: null,
+    firstContentfulPaintMs: null,
+    largestContentfulPaintMs: null,
+    largestContentfulPaintSize: null,
+    largestContentfulPaintElement: null,
   }
 }
