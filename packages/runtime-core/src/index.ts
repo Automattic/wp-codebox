@@ -25,6 +25,7 @@ export * from "./host-tool-registry.js"
 export * from "./run-registry.js"
 export * from "./fanout-contracts.js"
 export * from "./fanout-aggregation.js"
+export * from "./partial-artifact-discovery.js"
 
 export type ArtifactReviewProgressEventType =
   | "boot"

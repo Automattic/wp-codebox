@@ -6,6 +6,7 @@ export const RUNTIME_EPISODE_TRACE_ARTIFACT_PATH = "files/runtime-episode-trace.
 export const RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH = "files/runtime-episode.jsonl" as const
 export const RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH = "files/runtime-reference-manifest.json" as const
 export const RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH = "files/runtime-replay-index.json" as const
+export const CHANGED_FILES_ARTIFACT_PATH = "files/changed-files.json" as const
 export const ARTIFACT_MANIFEST_PATH = "manifest.json" as const
 
 export interface ArtifactReferenceDigestInput {

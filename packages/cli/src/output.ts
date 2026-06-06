@@ -260,6 +260,7 @@ export function printHelp(): void {
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox artifacts transfer-verify --bundle <dir> [--json]
   wp-codebox artifacts transfer-probes --bundle <dir> [--json]
+  wp-codebox artifacts discover-partial --artifacts <dir> [--session-id <id>] [--started-at <iso>] [--finished-at <iso>] [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox artifacts bench-results --bundle <dir> [--json]
   wp-codebox artifacts bench-compare --baseline-bundle <dir> --candidate-bundle <dir> [--json]
@@ -302,6 +303,9 @@ Options:
   --candidate-index <n>
                        Benchmark envelope index to compare when a source has multiple results.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
+  --session-id <id>   Prefer partial artifact directories matching this sandbox/session id.
+  --started-at <iso>  Lower timestamp bound for partial artifact discovery.
+  --finished-at <iso> Upper timestamp bound for partial artifact discovery.
   --run-registry <dir>
                        Durable run registry directory for recipe-run.
   --registry <dir>    Durable run registry directory for runs lookup commands.

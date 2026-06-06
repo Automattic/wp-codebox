@@ -48,6 +48,7 @@ const expectedCommandIds = [
   "wordpress.editor-actions",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
+  "wp-codebox.agent-fanout",
 ]
 
 // Full command catalog (every registered command, including policy-only capabilities
@@ -72,6 +73,7 @@ const expectedCatalogCommandIds = [
   "wordpress.browser-actions.evaluate",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
+  "wp-codebox.agent-fanout",
 ]
 
 const representativeRecipes = [
