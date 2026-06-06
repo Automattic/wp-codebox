@@ -100,6 +100,87 @@ try {
   assertManifestFile(manifest, "files/runtime-evidence/artifact-bundle-verification.json", "artifact-bundle-verification")
   assertManifestFile(manifest, "files/runtime-evidence/workspace-policy.json", "workspace-policy-result")
 
+  const disconnectSource = join(workspace, "disconnect-source")
+  const disconnectArtifacts = join(workspace, "disconnect-artifacts")
+  const disconnectRecipePath = join(workspace, "disconnect-recipe.json")
+  await mkdir(join(disconnectSource, "src"), { recursive: true })
+  await writeFile(join(disconnectSource, "src", "index.php"), "<?php\n")
+  await writeFile(disconnectRecipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    runtime: { wp: "7.0" },
+    inputs: {
+      workspaces: [
+        {
+          target: "/workspace",
+          mode: "readwrite",
+          seed: { type: "directory", source: disconnectSource },
+        },
+      ],
+    },
+    workflow: {
+      steps: [
+        {
+          command: "wordpress.run-php",
+          args: ["code=<?php sleep(120); echo 'unreachable';"],
+        },
+      ],
+    },
+    artifacts: {
+      directory: disconnectArtifacts,
+      verify: true,
+      workspacePolicy: { strict: false, writableRoots: ["."], gitBacked: false },
+    },
+  }, null, 2)}\n`)
+
+  const disconnectChild = spawn(process.execPath, [
+    "packages/cli/dist/index.js",
+    "recipe-run",
+    "--recipe",
+    disconnectRecipePath,
+    "--artifacts",
+    disconnectArtifacts,
+    "--json",
+  ], {
+    cwd: root,
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+
+  let disconnectStdout = ""
+  let disconnectStderr = ""
+  disconnectChild.stdout.on("data", (chunk) => {
+    disconnectStdout += chunk.toString()
+  })
+  disconnectChild.stderr.on("data", (chunk) => {
+    disconnectStderr += chunk.toString()
+  })
+
+  await waitForPointerCommand(disconnectArtifacts, "workflow.steps[0]:wordpress.run-php", 60_000)
+  disconnectChild.stdin.end()
+
+  const disconnectExit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+    disconnectChild.once("close", (code, signal) => resolveExit({ code, signal }))
+  })
+
+  assert.equal(disconnectExit.code, 1, `Parent-disconnected recipe should exit with a failure code; stderr: ${disconnectStderr}`)
+  assert.equal(disconnectExit.signal, null, `Parent-disconnected recipe should not propagate a signal; stderr: ${disconnectStderr}`)
+  assert.ok(disconnectStdout.trim(), `Parent-disconnected recipe should emit JSON output; stderr: ${disconnectStderr}`)
+
+  const disconnectOutput = JSON.parse(disconnectStdout)
+  assert.equal(disconnectOutput.schema, "wp-codebox/recipe-run/v1")
+  assert.equal(disconnectOutput.success, false)
+  assert.equal(disconnectOutput.error?.code, "recipe-interrupted")
+  assert.equal(disconnectOutput.interruption?.signal, "SIGHUP")
+  assert.equal(disconnectOutput.interruption?.reason, "stdio-closed")
+  assert.equal(disconnectOutput.interruption?.artifactsFinalized, true)
+  assert.equal(disconnectOutput.run?.status, "cancelled")
+  assert.ok(disconnectOutput.artifacts?.directory, "Parent-disconnected recipe should report artifact directory")
+
+  const disconnectLatestRuntime = JSON.parse(await readFile(join(disconnectArtifacts, "latest-runtime.json"), "utf8"))
+  assert.equal(disconnectLatestRuntime.schema, "wp-codebox/recipe-run-artifact-pointer/v1")
+  assert.equal(disconnectLatestRuntime.commandStatus, "failed")
+  assert.equal(disconnectLatestRuntime.failure.code, "recipe-interrupted")
+  assert.equal(disconnectLatestRuntime.paths.runtimeManifest, `${disconnectOutput.runtime.id}/manifest.json`)
+
   console.log("Recipe interruption artifact smoke passed")
 } finally {
   await rm(workspace, { recursive: true, force: true })

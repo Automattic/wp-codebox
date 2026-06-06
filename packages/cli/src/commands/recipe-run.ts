@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { fstatSync } from "node:fs"
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -29,9 +30,11 @@ interface RecipeRunOptions {
 }
 
 type RecipeInterruptionSignal = "SIGINT" | "SIGTERM" | "SIGHUP"
+type RecipeInterruptionReason = "signal" | "parent-disconnect" | "stdio-closed"
 
 interface RecipeInterruptionMetadata {
   signal: RecipeInterruptionSignal
+  reason: RecipeInterruptionReason
   receivedAt: string
   artifactsFinalized: boolean
 }
@@ -324,8 +327,8 @@ function printJsonFailureDiagnostic(output: { success: boolean; error?: { messag
 class RecipeInterruptedError extends Error {
   readonly code = "recipe-interrupted"
 
-  constructor(readonly signal: RecipeInterruptionSignal, readonly receivedAt: string) {
-    super(`Recipe run interrupted by ${signal}`)
+  constructor(readonly signal: RecipeInterruptionSignal, readonly reason: RecipeInterruptionReason, readonly receivedAt: string) {
+    super(recipeInterruptionMessage({ signal, reason }))
     this.name = "RecipeInterruptedError"
   }
 }
@@ -499,12 +502,30 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
   let metadata: RecipeInterruptionMetadata | undefined
   let rejectInterrupted: ((error: RecipeInterruptedError) => void) | undefined
   let installed = false
+  let parentWatcher: NodeJS.Timeout | undefined
+  let stdinWatcherInstalled = false
+  let stdioErrorWatcherInstalled = false
+  const initialParentPid = process.ppid
   const signals: RecipeInterruptionSignal[] = ["SIGINT", "SIGTERM", "SIGHUP"]
-  const handler = (signal: RecipeInterruptionSignal): void => {
+  const interrupt = (signal: RecipeInterruptionSignal, reason: RecipeInterruptionReason): void => {
     if (!metadata) {
-      metadata = { signal, receivedAt: new Date().toISOString(), artifactsFinalized: false }
+      metadata = { signal, reason, receivedAt: new Date().toISOString(), artifactsFinalized: false }
     }
-    rejectInterrupted?.(new RecipeInterruptedError(metadata.signal, metadata.receivedAt))
+    rejectInterrupted?.(new RecipeInterruptedError(metadata.signal, metadata.reason, metadata.receivedAt))
+  }
+  const handler = (signal: RecipeInterruptionSignal): void => {
+    interrupt(signal, "signal")
+  }
+  const parentDisconnectHandler = (): void => {
+    interrupt("SIGHUP", "parent-disconnect")
+  }
+  const stdinClosedHandler = (): void => {
+    interrupt("SIGHUP", "stdio-closed")
+  }
+  const stdioErrorHandler = (error: NodeJS.ErrnoException): void => {
+    if (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED") {
+      interrupt("SIGHUP", "stdio-closed")
+    }
   }
 
   const controller: RecipeInterruptionController = {
@@ -518,6 +539,23 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
       for (const signal of signals) {
         process.on(signal, handler)
       }
+      if (initialParentPid > 1) {
+        parentWatcher = setInterval(() => {
+          if (process.ppid === 1 || process.ppid !== initialParentPid) {
+            parentDisconnectHandler()
+          }
+        }, 1_000)
+        parentWatcher.unref()
+      }
+      if (!process.stdin.isTTY && process.stdin.readable && stdinCanSignalParentDisconnect()) {
+        process.stdin.on("end", stdinClosedHandler)
+        process.stdin.on("close", stdinClosedHandler)
+        process.stdin.resume()
+        stdinWatcherInstalled = true
+      }
+      process.stdout.on("error", stdioErrorHandler)
+      process.stderr.on("error", stdioErrorHandler)
+      stdioErrorWatcherInstalled = true
       installed = true
     },
     dispose() {
@@ -527,11 +565,26 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
       for (const signal of signals) {
         process.off(signal, handler)
       }
+      if (parentWatcher) {
+        clearInterval(parentWatcher)
+        parentWatcher = undefined
+      }
+      if (stdinWatcherInstalled) {
+        process.stdin.off("end", stdinClosedHandler)
+        process.stdin.off("close", stdinClosedHandler)
+        process.stdin.pause()
+        stdinWatcherInstalled = false
+      }
+      if (stdioErrorWatcherInstalled) {
+        process.stdout.off("error", stdioErrorHandler)
+        process.stderr.off("error", stdioErrorHandler)
+        stdioErrorWatcherInstalled = false
+      }
       installed = false
     },
     async interruptible<T>(promise: Promise<T>): Promise<T> {
       if (metadata) {
-        throw new RecipeInterruptedError(metadata.signal, metadata.receivedAt)
+        throw new RecipeInterruptedError(metadata.signal, metadata.reason, metadata.receivedAt)
       }
 
       let settled = false
@@ -554,11 +607,11 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
     },
     throwIfInterrupted() {
       if (metadata) {
-        throw new RecipeInterruptedError(metadata.signal, metadata.receivedAt)
+        throw new RecipeInterruptedError(metadata.signal, metadata.reason, metadata.receivedAt)
       }
     },
     propagateIfInterrupted() {
-      if (!metadata) {
+      if (!metadata || metadata.reason !== "signal") {
         return
       }
       controller.dispose()
@@ -567,6 +620,15 @@ function createRecipeInterruptionController(): RecipeInterruptionController {
   }
 
   return controller
+}
+
+function stdinCanSignalParentDisconnect(): boolean {
+  try {
+    const stats = fstatSync(0)
+    return stats.isFIFO() || stats.isSocket()
+  } catch {
+    return false
+  }
 }
 
 function markRecipeArtifactsFinalized(interruption: RecipeInterruptionController | undefined, artifactsFinalized: boolean): void {
@@ -591,9 +653,19 @@ function interruptedRecipeOutput<T extends RecipeRunCommandOutput>(output: T, in
 function recipeInterruptionSerializedError(metadata: RecipeInterruptionMetadata): RunOutput["error"] {
   return {
     name: "RecipeInterruptedError",
-    message: `Recipe run interrupted by ${metadata.signal}`,
+    message: recipeInterruptionMessage(metadata),
     code: "recipe-interrupted",
   }
+}
+
+function recipeInterruptionMessage(metadata: Pick<RecipeInterruptionMetadata, "signal" | "reason">): string {
+  if (metadata.reason === "parent-disconnect") {
+    return "Recipe run interrupted after parent process disconnected"
+  }
+  if (metadata.reason === "stdio-closed") {
+    return "Recipe run interrupted after stdio closed"
+  }
+  return `Recipe run interrupted by ${metadata.signal}`
 }
 
 function remainingRecipeTimeoutMs(startedAtMs: number, timeoutMs: number): number {
