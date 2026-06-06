@@ -242,9 +242,12 @@ private static function compact_browser_task_contract_dto( array $contract ): ar
 		}
 
 		$phase_dto = array(
-			'name'  => (string) ( $phase['name'] ?? '' ),
-			'kind'  => (string) ( $phase['kind'] ?? '' ),
-			'index' => (int) ( $phase['index'] ?? 0 ),
+			'name'     => (string) ( $phase['name'] ?? '' ),
+			'kind'     => (string) ( $phase['kind'] ?? '' ),
+			'index'    => (int) ( $phase['index'] ?? 0 ),
+			'label'    => (string) ( $phase['label'] ?? '' ),
+			'status'   => (string) ( $phase['status'] ?? '' ),
+			'metadata' => is_array( $phase['metadata'] ?? null ) ? self::compact_browser_dto_value( $phase['metadata'] ) : array(),
 		);
 		if ( is_array( $phase['contract'] ?? null ) ) {
 			$phase_dto['contract'] = self::compact_browser_materializer_contract_dto( $phase['contract'] );
@@ -311,7 +314,8 @@ private static function browser_contract_execution_metrics( array $primary, arra
 				'expected_count'       => is_array( $artifacts['expected_artifacts'] ?? null ) ? count( $artifacts['expected_artifacts'] ) : 0,
 				'declared_file_count'  => is_array( $artifacts['files'] ?? null ) ? count( $artifacts['files'] ) : 0,
 				'capture_path_count'   => count( $captures ),
-				'materializer_phases'  => count( $phases ),
+				'phase_count'          => count( $phases ),
+				'materializer_phases'  => count( array_filter( $phases, static fn( mixed $phase ): bool => is_array( $phase ) && 'materializer' === (string) ( $phase['kind'] ?? '' ) ) ),
 			),
 			'diagnostics_refs' => array_filter(
 				array(
@@ -504,8 +508,22 @@ private static function browser_task_contract_phases( array $input, array $sessi
 		}
 
 		$kind = self::safe_key( (string) ( $phase['kind'] ?? 'materializer' ) );
+		if ( ! in_array( $kind, self::browser_task_phase_kinds(), true ) ) {
+			return new WP_Error( 'wp_codebox_browser_phase_kind_invalid', 'Browser task phases support materializer, agent, validator, repair, and aggregator kinds.', array( 'status' => 400, 'index' => $index, 'kind' => $kind ) );
+		}
+
+		$phase_descriptor = array(
+			'name'     => self::safe_key( (string) ( $phase['name'] ?? $kind . '-' . ( $index + 1 ) ) ),
+			'kind'     => $kind,
+			'index'    => $index,
+			'label'    => (string) ( $phase['label'] ?? '' ),
+			'status'   => (string) ( $phase['status'] ?? 'pending' ),
+			'metadata' => is_array( $phase['metadata'] ?? null ) ? self::compact_browser_dto_value( $phase['metadata'] ) : array(),
+		);
+
 		if ( 'materializer' !== $kind ) {
-			return new WP_Error( 'wp_codebox_browser_phase_kind_invalid', 'Browser task phases currently support materializer phases only.', array( 'status' => 400, 'index' => $index, 'kind' => $kind ) );
+			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+			continue;
 		}
 
 		$phase_input = is_array( $phase['input'] ?? null ) ? $phase['input'] : array();
@@ -521,12 +539,8 @@ private static function browser_task_contract_phases( array $input, array $sessi
 			return $contract;
 		}
 
-		$phases[] = array(
-			'name'     => self::safe_key( (string) ( $phase['name'] ?? $kind . '-' . ( $index + 1 ) ) ),
-			'kind'     => $kind,
-			'index'    => $index,
-			'contract' => $contract,
-		);
+		$phase_descriptor['contract'] = $contract;
+		$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 	}
 
 	return $phases;

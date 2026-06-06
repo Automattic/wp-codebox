@@ -376,14 +376,30 @@ private static function browser_task_contract_schema(): array {
 			'primary'          => self::browser_playground_session_schema(),
 			'phases'           => array(
 				'type'        => 'array',
-				'description' => 'Named browser task phases. The first supported kind is materializer, which returns a browser-materializer-contract envelope.',
-				'items'       => array( 'type' => 'object' ),
+				'description' => 'Named browser task phases. Materializer phases include a browser-materializer-contract envelope; generic phases preserve product-neutral phase metadata for product UIs.',
+				'items'       => array(
+					'type'       => 'object',
+					'properties' => array(
+						'name'     => array( 'type' => 'string' ),
+						'kind'     => array( 'type' => 'string', 'enum' => self::browser_task_phase_kinds() ),
+						'index'    => array( 'type' => 'integer' ),
+						'label'    => array( 'type' => 'string' ),
+						'status'   => array( 'type' => 'string' ),
+						'metadata' => array( 'type' => 'object' ),
+						'contract' => array( 'type' => 'object' ),
+					),
+				),
 			),
 			'execution_metrics' => array( 'type' => 'object' ),
 			'provenance'       => array( 'type' => 'object' ),
 			'compact'          => self::browser_product_dto_schema(),
 		),
 	);
+}
+
+/** @return array<int,string> */
+private static function browser_task_phase_kinds(): array {
+	return array( 'materializer', 'agent', 'validator', 'repair', 'aggregator' );
 }
 
 /** @return array<string,mixed> */
