@@ -11,6 +11,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	private const SCHEMA = 'wp-codebox/agent-task-run/v1';
 	private const BATCH_SCHEMA = 'wp-codebox/agent-task-batch/v1';
+	private const FANOUT_SCHEMA = 'wp-codebox/agent-fanout-result/v1';
+	private const FANOUT_MAX_CONCURRENCY = 8;
 	private const SESSION_SCHEMA = WP_Codebox_Agent_Task::SESSION_SCHEMA;
 	private const TASK_INPUT_SCHEMA = WP_Codebox_Agent_Task::INPUT_SCHEMA;
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
@@ -44,6 +46,139 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
+		$prepared = $this->prepare_agent_task_run( $input );
+		if ( is_wp_error( $prepared ) ) {
+			return $prepared;
+		}
+
+		$result = $this->run_command( (string) $prepared['command'], $prepared['secret_env'], (int) $prepared['timeout_seconds'] );
+
+		return $this->complete_agent_task_run( $prepared, $result );
+	}
+
+	/**
+	 * Run multiple workers with bounded host-side concurrency.
+	 *
+	 * @param array<string,mixed> $input Ability input.
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function run_fanout( array $input ): array|WP_Error {
+		if ( ! $this->shell_available() ) {
+			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
+		}
+
+		$workers = $this->fanout_workers( $input );
+		if ( is_wp_error( $workers ) ) {
+			return $workers;
+		}
+
+		$concurrency = $this->fanout_concurrency( $input );
+		if ( is_wp_error( $concurrency ) ) {
+			return $concurrency;
+		}
+
+		$parent_session_id = $this->sandbox_session_id( $input );
+		$base_artifacts    = $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) );
+		$fanout_path       = $base_artifacts . DIRECTORY_SEPARATOR . 'fanout';
+		$workers_path      = $fanout_path . DIRECTORY_SEPARATOR . 'workers';
+		$aggregate_path    = $fanout_path . DIRECTORY_SEPARATOR . 'aggregate';
+		foreach ( array( $workers_path, $aggregate_path . DIRECTORY_SEPARATOR . 'artifacts' ) as $path ) {
+			if ( ! $this->ensure_directory( $path ) ) {
+				return new WP_Error( 'wp_codebox_fanout_artifacts_unwritable', 'Could not create fanout artifact directories.', array( 'status' => 500, 'path' => $path ) );
+			}
+		}
+
+		$plan = array(
+			'schema'      => 'wp-codebox/agent-fanout-plan/v1',
+			'session_id'  => $parent_session_id,
+			'concurrency' => $concurrency,
+			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			'workers'     => array_map(
+				static fn( array $worker ): array => array(
+					'id'                 => (string) $worker['id'],
+					'agent'              => (string) ( $worker['agent'] ?? $input['agent'] ?? '' ),
+					'goal'               => (string) ( $worker['goal'] ?? $worker['task'] ?? '' ),
+					'artifact_namespace' => (string) $worker['id'],
+				),
+				$workers
+			),
+		);
+		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'plan.json', $plan );
+
+		$prepared_workers = array();
+		foreach ( $workers as $index => $worker ) {
+			$worker_id      = (string) $worker['id'];
+			$worker_path    = $workers_path . DIRECTORY_SEPARATOR . $worker_id;
+			$worker_input   = $this->fanout_worker_input( $input, $worker, $parent_session_id, $worker_path );
+			$worker_prepare = $this->prepare_agent_task_run( $worker_input );
+			if ( is_wp_error( $worker_prepare ) ) {
+				$prepared_workers[] = array(
+					'id'       => $worker_id,
+					'index'    => $index,
+					'prepared' => null,
+					'error'    => $worker_prepare,
+					'path'     => $worker_path,
+				);
+				continue;
+			}
+
+			$prepared_workers[] = array(
+				'id'       => $worker_id,
+				'index'    => $index,
+				'prepared' => $worker_prepare,
+				'error'    => null,
+				'path'     => $worker_path,
+			);
+		}
+
+		$started_at = microtime( true );
+		$runs       = $this->execute_prepared_fanout_workers( $prepared_workers, $concurrency, $fanout_path );
+		$ended_at   = microtime( true );
+		ksort( $runs );
+		$runs = array_values( $runs );
+
+		$completed = count( array_filter( $runs, static fn( array $run ): bool => true === ( $run['success'] ?? false ) ) );
+		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
+		$failed    = count( $runs ) - $completed - $cancelled;
+		$success   = 0 === $failed && 0 === $cancelled;
+
+		$result = array(
+			'success'     => $success,
+			'schema'      => self::FANOUT_SCHEMA,
+			'execution'   => 'bounded-concurrent-isolated-sandboxes',
+			'session'     => $this->fanout_parent_session( $parent_session_id, $success ? 'completed' : 'failed', $input, $fanout_path, $runs ),
+			'concurrency' => $concurrency,
+			'total'       => count( $runs ),
+			'completed'   => $completed,
+			'failed'      => $failed,
+			'cancelled'   => $cancelled,
+			'timings'     => array(
+				'started_at'   => gmdate( 'c', (int) $started_at ),
+				'ended_at'     => gmdate( 'c', (int) $ended_at ),
+				'duration_ms'  => (int) round( ( $ended_at - $started_at ) * 1000 ),
+			),
+			'artifacts'   => array(
+				'schema'          => 'wp-codebox/agent-fanout-artifacts/v1',
+				'path'            => $fanout_path,
+				'plan'            => 'plan.json',
+				'events'          => 'events.jsonl',
+				'workers_path'    => 'workers',
+				'aggregate_path'  => 'aggregate',
+				'result'          => 'result.json',
+			),
+			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			'runs'        => $runs,
+			'failures'    => array_values( array_filter( $runs, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) ),
+		);
+
+		$this->write_json_file( $aggregate_path . DIRECTORY_SEPARATOR . 'result.json', array( 'schema' => 'wp-codebox/agent-fanout-aggregate/v1', 'status' => $success ? 'completed' : 'failed', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
+		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'result.json', $result );
+
+		return $result;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function prepare_agent_task_run( array $input ): array|WP_Error {
 		$input = $this->normalize_parent_task_request( $input );
 		if ( is_wp_error( $input ) ) {
 			return $input;
@@ -103,13 +238,50 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 		$command .= $preview_args;
 
-		$result    = $this->run_command( $command, $inheritance_payload['secret_env'], $this->task_timeout_seconds( $input ) );
-		@unlink( $recipe_file );
-		foreach ( $recipe_payload['cleanup_paths'] as $cleanup_path ) {
+		return array(
+			'input'           => $input,
+			'task_input'      => $task_input,
+			'task'            => $task,
+			'session_id'      => $session_id,
+			'paths'           => $paths,
+			'artifacts'       => $artifacts,
+			'wp_version'      => $wp_version,
+			'command'         => $command,
+			'secret_env'      => $inheritance_payload['secret_env'],
+			'timeout_seconds' => $this->task_timeout_seconds( $input ),
+			'recipe_file'     => $recipe_file,
+			'cleanup_paths'   => $recipe_payload['cleanup_paths'],
+		);
+	}
+
+	/** @param array<string,mixed> $prepared Prepared run. @param array<string,mixed> $result Command result. @return array<string,mixed>|WP_Error */
+	private function complete_agent_task_run( array $prepared, array $result ): array|WP_Error {
+		$input      = is_array( $prepared['input'] ?? null ) ? $prepared['input'] : array();
+		$task_input = is_array( $prepared['task_input'] ?? null ) ? $prepared['task_input'] : array();
+		$task       = (string) ( $prepared['task'] ?? '' );
+		$session_id = (string) ( $prepared['session_id'] ?? '' );
+		$paths      = is_array( $prepared['paths'] ?? null ) ? $prepared['paths'] : array();
+		$artifacts  = (string) ( $prepared['artifacts'] ?? '' );
+		$wp_version = (string) ( $prepared['wp_version'] ?? '' );
+
+		@unlink( (string) ( $prepared['recipe_file'] ?? '' ) );
+		foreach ( is_array( $prepared['cleanup_paths'] ?? null ) ? $prepared['cleanup_paths'] : array() as $cleanup_path ) {
 			@unlink( (string) $cleanup_path );
 		}
 		$exit_code = (int) ( $result['exit_code'] ?? 1 );
 		$output    = (string) ( $result['output'] ?? '' );
+		if ( true === ( $result['timed_out'] ?? false ) ) {
+			return new WP_Error(
+				'wp_codebox_run_timeout',
+				'WP Codebox agent sandbox run timed out.',
+				array(
+					'status'          => 500,
+					'exit_code'       => $exit_code,
+					'timeout_seconds' => (int) ( $result['timeout_seconds'] ?? 0 ),
+					'output'          => $this->bound_output( $output ),
+				)
+			);
+		}
 		$decoded   = $this->decode_json_output( $output );
 
 		if ( is_wp_error( $decoded ) ) {
@@ -269,6 +441,312 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'artifacts'   => $artifacts,
 			'runs'        => $runs,
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
+	private function fanout_workers( array $input ): array|WP_Error {
+		$workers = is_array( $input['workers'] ?? null ) ? $input['workers'] : array();
+		if ( empty( $workers ) ) {
+			return new WP_Error( 'wp_codebox_fanout_workers_missing', 'workers must include at least one worker.', array( 'status' => 400 ) );
+		}
+
+		$normalized = array();
+		$seen       = array();
+		foreach ( $workers as $index => $worker ) {
+			if ( ! is_array( $worker ) ) {
+				return new WP_Error( 'wp_codebox_fanout_worker_invalid', 'Each fanout worker must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$id = trim( (string) ( $worker['id'] ?? '' ) );
+			if ( '' === $id || ! preg_match( '/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $id ) ) {
+				return new WP_Error( 'wp_codebox_fanout_worker_id_invalid', 'Each fanout worker requires a stable alphanumeric id.', array( 'status' => 400, 'index' => $index ) );
+			}
+			if ( isset( $seen[ $id ] ) ) {
+				return new WP_Error( 'wp_codebox_fanout_worker_id_duplicate', 'Fanout worker ids must be unique.', array( 'status' => 400, 'worker_id' => $id ) );
+			}
+
+			$goal = trim( (string) ( $worker['goal'] ?? $worker['task'] ?? '' ) );
+			if ( '' === $goal ) {
+				return new WP_Error( 'wp_codebox_fanout_worker_goal_missing', 'Each fanout worker requires goal or task.', array( 'status' => 400, 'worker_id' => $id ) );
+			}
+
+			$seen[ $id ] = true;
+			$worker['id'] = $id;
+			$worker['goal'] = $goal;
+			$normalized[] = $worker;
+		}
+
+		return $normalized;
+	}
+
+	private function fanout_concurrency( array $input ): int|WP_Error {
+		$concurrency = isset( $input['concurrency'] ) ? (int) $input['concurrency'] : 1;
+		$max         = self::FANOUT_MAX_CONCURRENCY;
+		if ( function_exists( 'apply_filters' ) ) {
+			$max = max( 1, (int) apply_filters( 'wp_codebox_agent_fanout_max_concurrency', $max ) );
+		}
+
+		if ( $concurrency < 1 || $concurrency > $max ) {
+			return new WP_Error( 'wp_codebox_fanout_concurrency_invalid', 'Fanout concurrency must be between 1 and ' . $max . '.', array( 'status' => 400, 'max' => $max ) );
+		}
+
+		return $concurrency;
+	}
+
+	/** @param array<string,mixed> $parent Parent input. @param array<string,mixed> $worker Worker input. @return array<string,mixed> */
+	private function fanout_worker_input( array $parent, array $worker, string $parent_session_id, string $worker_path ): array {
+		$worker_artifacts_path = $worker_path . DIRECTORY_SEPARATOR . 'artifacts';
+		$this->ensure_directory( $worker_artifacts_path );
+
+		$input = array_merge( $parent, $worker );
+		unset( $input['workers'], $input['dependencies'], $input['aggregation'], $input['concurrency'], $input['task'] );
+
+		$input['goal']               = (string) $worker['goal'];
+		$input['sandbox_session_id'] = $parent_session_id . ':' . (string) $worker['id'];
+		$input['artifacts_path']     = $worker_artifacts_path;
+		$input['context']            = is_array( $input['context'] ?? null ) ? $input['context'] : array();
+		$input['context']['fanout']  = array(
+			'parent_session_id'  => $parent_session_id,
+			'worker_id'          => (string) $worker['id'],
+			'artifact_namespace' => (string) $worker['id'],
+		);
+
+		if ( isset( $worker['timeout_seconds'] ) && ! isset( $worker['task_timeout_seconds'] ) ) {
+			$input['task_timeout_seconds'] = (int) $worker['timeout_seconds'];
+		}
+
+		return $input;
+	}
+
+	/** @param array<int,array<string,mixed>> $prepared_workers Prepared workers. @return array<int,array<string,mixed>> */
+	private function execute_prepared_fanout_workers( array $prepared_workers, int $concurrency, string $fanout_path ): array {
+		$runs   = array();
+		$active = array();
+		$next   = 0;
+		$total  = count( $prepared_workers );
+
+		while ( $next < $total || ! empty( $active ) ) {
+			while ( count( $active ) < $concurrency && $next < $total ) {
+				$item = $prepared_workers[ $next ];
+				++$next;
+
+				if ( is_wp_error( $item['error'] ?? null ) ) {
+					$runs[ (int) $item['index'] ] = $this->fanout_worker_error_result( $item, $item['error'], 0, 0 );
+					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $item['index'] ] );
+					continue;
+				}
+
+				$started = $this->start_prepared_fanout_worker( $item );
+				if ( is_wp_error( $started ) ) {
+					$runs[ (int) $item['index'] ] = $this->fanout_worker_error_result( $item, $started, 0, 0 );
+					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $item['index'] ] );
+					continue;
+				}
+
+				$active[] = $started;
+				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker_started', 'worker_id' => (string) $item['id'], 'active' => count( $active ) ) );
+			}
+
+			foreach ( $active as $active_index => &$worker ) {
+				$worker['output'] .= (string) stream_get_contents( $worker['pipes'][1] );
+				$worker['error_output'] .= (string) stream_get_contents( $worker['pipes'][2] );
+				$status  = proc_get_status( $worker['process'] );
+				$running = (bool) ( $status['running'] ?? false );
+				$elapsed = microtime( true ) - (float) $worker['started_at'];
+				$timeout = (int) ( $worker['prepared']['timeout_seconds'] ?? 0 );
+
+				if ( $running && $timeout > 0 && $elapsed >= $timeout ) {
+					proc_terminate( $worker['process'] );
+					$worker['timed_out'] = true;
+					$running = false;
+				}
+
+				if ( $running ) {
+					continue;
+				}
+
+				$worker['output'] .= (string) stream_get_contents( $worker['pipes'][1] );
+				$worker['error_output'] .= (string) stream_get_contents( $worker['pipes'][2] );
+				fclose( $worker['pipes'][1] );
+				fclose( $worker['pipes'][2] );
+				$exit_code = proc_close( $worker['process'] );
+				if ( true === ( $worker['timed_out'] ?? false ) ) {
+					$exit_code = 124;
+				}
+
+				$result = array(
+					'exit_code' => $exit_code,
+					'output'    => trim( (string) $worker['output'] . "\n" . (string) $worker['error_output'] ),
+				);
+				if ( true === ( $worker['timed_out'] ?? false ) ) {
+					$result['timed_out'] = true;
+					$result['timeout_seconds'] = $timeout;
+				}
+
+				$completed = $this->complete_agent_task_run( $worker['prepared'], $result );
+				$runs[ (int) $worker['index'] ] = is_wp_error( $completed ) ? $this->fanout_worker_error_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) ) : $this->fanout_worker_success_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) );
+				$this->write_json_file( (string) $worker['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $worker['index'] ] );
+				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker_finished', 'worker_id' => (string) $worker['id'], 'status' => (string) $runs[ (int) $worker['index'] ]['status'] ) );
+				unset( $active[ $active_index ] );
+			}
+			unset( $worker );
+
+			$active = array_values( $active );
+			if ( ! empty( $active ) ) {
+				usleep( 50000 );
+			}
+		}
+
+		return $runs;
+	}
+
+	/** @param array<string,mixed> $item Prepared worker item. @return array<string,mixed>|WP_Error */
+	private function start_prepared_fanout_worker( array $item ): array|WP_Error {
+		if ( ! function_exists( 'proc_open' ) ) {
+			return new WP_Error( 'wp_codebox_proc_open_unavailable', 'Fanout execution requires proc_open support.', array( 'status' => 500 ) );
+		}
+
+		$prepared       = is_array( $item['prepared'] ?? null ) ? $item['prepared'] : array();
+		$descriptor_spec = array(
+			1 => array( 'pipe', 'w' ),
+			2 => array( 'pipe', 'w' ),
+		);
+		$current_env = getenv();
+		$secret_env  = is_array( $prepared['secret_env'] ?? null ) ? $prepared['secret_env'] : array();
+		$process     = proc_open( (string) $prepared['command'], $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
+		if ( ! is_resource( $process ) ) {
+			return new WP_Error( 'wp_codebox_fanout_worker_start_failed', 'Could not start fanout worker process.', array( 'status' => 500, 'worker_id' => (string) $item['id'] ) );
+		}
+
+		stream_set_blocking( $pipes[1], false );
+		stream_set_blocking( $pipes[2], false );
+
+		return array_merge(
+			$item,
+			array(
+				'process'      => $process,
+				'pipes'        => $pipes,
+				'started_at'   => microtime( true ),
+				'output'       => '',
+				'error_output' => '',
+			)
+		);
+	}
+
+	/** @param array<string,mixed> $worker Worker metadata. @param array<string,mixed> $result Worker result. @return array<string,mixed> */
+	private function fanout_worker_success_result( array $worker, array $result, float $started_at, float $ended_at ): array {
+		$session   = is_array( $result['session'] ?? null ) ? $result['session'] : array();
+		$artifacts = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+
+		return array(
+			'worker_id'   => (string) $worker['id'],
+			'index'       => (int) $worker['index'],
+			'success'     => true,
+			'status'      => 'completed',
+			'agent'       => (string) ( $worker['prepared']['input']['agent'] ?? '' ),
+			'exit_code'   => (int) ( $result['exit_code'] ?? 0 ),
+			'session'     => $session,
+			'artifacts'   => array_merge( $artifacts, array( 'namespace' => (string) $worker['id'], 'result' => 'result.json' ) ),
+			'diagnostics' => is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array(),
+			'evidence_refs' => is_array( $result['evidence_refs'] ?? null ) ? $result['evidence_refs'] : array(),
+			'completion_outcome' => is_array( $result['completion_outcome'] ?? null ) ? $result['completion_outcome'] : array(),
+			'timings'     => array(
+				'started_at'  => gmdate( 'c', (int) $started_at ),
+				'ended_at'    => gmdate( 'c', (int) $ended_at ),
+				'duration_ms' => (int) round( ( $ended_at - $started_at ) * 1000 ),
+			),
+		);
+	}
+
+	/** @param array<string,mixed> $worker Worker metadata. */
+	private function fanout_worker_error_result( array $worker, WP_Error $error, float $started_at, float $ended_at ): array {
+		$prepared  = is_array( $worker['prepared'] ?? null ) ? $worker['prepared'] : array();
+		$input     = is_array( $prepared['input'] ?? null ) ? $prepared['input'] : array();
+		$artifacts = (string) ( $prepared['artifacts'] ?? ( (string) $worker['path'] . DIRECTORY_SEPARATOR . 'artifacts' ) );
+
+		return array(
+			'worker_id' => (string) $worker['id'],
+			'index'     => (int) $worker['index'],
+			'success'   => false,
+			'status'    => 'failed',
+			'agent'     => (string) ( $input['agent'] ?? '' ),
+			'session'   => array_filter(
+				array(
+					'schema' => self::SESSION_SCHEMA,
+					'id'     => (string) ( $prepared['session_id'] ?? '' ),
+					'status' => 'failed',
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'artifacts' => array(
+				'path'      => $artifacts,
+				'namespace' => (string) $worker['id'],
+				'result'    => 'result.json',
+			),
+			'error'    => $this->error_payload( $error ),
+			'timings'  => array_filter(
+				array(
+					'started_at'  => $started_at > 0 ? gmdate( 'c', (int) $started_at ) : '',
+					'ended_at'    => $ended_at > 0 ? gmdate( 'c', (int) $ended_at ) : '',
+					'duration_ms' => $started_at > 0 && $ended_at > 0 ? (int) round( ( $ended_at - $started_at ) * 1000 ) : null,
+				),
+				static fn( mixed $value ): bool => null !== $value && '' !== $value
+			),
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $runs Worker runs. */
+	private function fanout_parent_session( string $session_id, string $status, array $input, string $fanout_path, array $runs ): array {
+		$children = array_map(
+			static fn( array $run ): array => array_filter(
+				array(
+					'worker_id' => (string) ( $run['worker_id'] ?? '' ),
+					'session_id' => (string) ( $run['session']['id'] ?? '' ),
+					'status'    => (string) ( $run['status'] ?? '' ),
+					'artifacts' => is_array( $run['artifacts'] ?? null ) ? $run['artifacts'] : array(),
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value
+			),
+			$runs
+		);
+
+		$session = WP_Codebox_Agent_Task::session(
+			$session_id,
+			$status,
+			$input,
+			array(
+				'path'      => $fanout_path,
+				'plan'      => 'plan.json',
+				'events'    => 'events.jsonl',
+				'result'    => 'result.json',
+				'aggregate' => 'aggregate/result.json',
+			)
+		);
+		$session['children'] = $children;
+
+		return $session;
+	}
+
+	private function ensure_directory( string $path ): bool {
+		return is_dir( $path ) || mkdir( $path, 0777, true );
+	}
+
+	/** @param array<string,mixed> $data Data to write. */
+	private function write_json_file( string $path, array $data ): void {
+		$this->ensure_directory( dirname( $path ) );
+		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) : json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		if ( is_string( $encoded ) ) {
+			file_put_contents( $path, $encoded . "\n" );
+		}
+	}
+
+	/** @param array<string,mixed> $event Event data. */
+	private function append_fanout_event( string $fanout_path, array $event ): void {
+		$event = array_merge( array( 'schema' => 'wp-codebox/agent-fanout-event/v1', 'time' => gmdate( 'c' ) ), $event );
+		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $event, JSON_UNESCAPED_SLASHES ) : json_encode( $event, JSON_UNESCAPED_SLASHES );
+		if ( is_string( $encoded ) ) {
+			file_put_contents( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', $encoded . "\n", FILE_APPEND );
+		}
 	}
 
 	/**

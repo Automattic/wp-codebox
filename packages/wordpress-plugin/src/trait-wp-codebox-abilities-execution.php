@@ -19,6 +19,11 @@ public static function run_agent_task_batch( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_agent_task_fanout( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Agent_Sandbox_Runner() )->run_fanout( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_playground_session( array $input ): array|WP_Error {
 	$task_input = self::normalize_task_input( $input );
 	if ( is_wp_error( $task_input ) ) {

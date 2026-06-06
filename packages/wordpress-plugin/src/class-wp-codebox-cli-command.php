@@ -20,6 +20,7 @@ final class WP_Codebox_CLI_Command {
 		\WP_CLI::add_command( 'codebox artifacts apply', array( $command, 'artifacts_apply' ) );
 		\WP_CLI::add_command( 'codebox browser-session create', array( $command, 'browser_session_create' ) );
 		\WP_CLI::add_command( 'codebox run-agent-task', array( $command, 'run_agent_task' ) );
+		\WP_CLI::add_command( 'codebox run-agent-task-fanout', array( $command, 'run_agent_task_fanout' ) );
 	}
 
 	/**
@@ -96,6 +97,17 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	/**
+	 * Run multiple workers with bounded WP Codebox host fanout.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_agent_task_fanout( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_Abilities::run_agent_task_fanout( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
 	 * @param array<int,string>   $args       Positional arguments.
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 * @return array<string,mixed>
@@ -149,15 +161,15 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	private function normalize_value( string $field, mixed $value ): mixed {
-		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target' ), true ) ) {
+		if ( in_array( $field, array( 'target', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target', 'aggregation' ), true ) ) {
 			return $this->json_object( (string) $value, $field );
 		}
 
-		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files' ), true ) ) {
+		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files', 'workers', 'dependencies' ), true ) ) {
 			return $this->json_or_list( (string) $value, $field );
 		}
 
-		if ( in_array( $field, array( 'max_turns', 'task_timeout_seconds', 'preview_hold_seconds', 'preview_port', 'agent_id', 'user_id' ), true ) ) {
+		if ( in_array( $field, array( 'max_turns', 'task_timeout_seconds', 'preview_hold_seconds', 'preview_port', 'agent_id', 'user_id', 'concurrency' ), true ) ) {
 			return (int) $value;
 		}
 

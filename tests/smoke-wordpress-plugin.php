@@ -346,6 +346,7 @@ $assert( 'wp codebox artifacts stage-apply command registered', is_callable( $cl
 $assert( 'wp codebox artifacts apply command registered', is_callable( $cli_commands['codebox artifacts apply'] ?? null ) );
 $assert( 'wp codebox browser-session create command registered', is_callable( $cli_commands['codebox browser-session create'] ?? null ) );
 $assert( 'wp codebox run-agent-task command registered', is_callable( $cli_commands['codebox run-agent-task'] ?? null ) );
+$assert( 'wp codebox run-agent-task-fanout command registered', is_callable( $cli_commands['codebox run-agent-task-fanout'] ?? null ) );
 
 $ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task'] ?? null;
 $assert( 'run-agent-task ability registered', is_array( $ability ) );
@@ -377,6 +378,12 @@ $assert( 'batch ability requires tasks', array( 'tasks' ) === ( $batch_ability['
 $assert( 'batch ability exposes preview configuration schema', 'integer' === ( $batch_ability['input_schema']['properties']['preview_port']['type'] ?? '' ) && 'string' === ( $batch_ability['input_schema']['properties']['preview_bind']['type'] ?? '' ) && 'string' === ( $batch_ability['input_schema']['properties']['preview_public_url']['type'] ?? '' ) );
 $assert( 'batch ability contract does not expose unimplemented concurrency', ! isset( $batch_ability['input_schema']['properties']['concurrency'] ) && ! isset( $batch_ability['output_schema']['properties']['concurrency'] ) );
 $assert( 'batch ability exposes per-task run outputs', isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['artifact_id'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['preview_url'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['error'] ) );
+
+$fanout_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task-fanout'] ?? null;
+$assert( 'run-agent-task-fanout ability registered', is_array( $fanout_ability ) );
+$assert( 'fanout ability is REST visible', true === ( $fanout_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'fanout ability requires workers and exposes concurrency', array( 'workers' ) === ( $fanout_ability['input_schema']['required'] ?? array() ) && 'integer' === ( $fanout_ability['input_schema']['properties']['concurrency']['type'] ?? '' ) );
+$assert( 'fanout ability output exposes parent child rollup fields', isset( $fanout_ability['output_schema']['properties']['completed'] ) && isset( $fanout_ability['output_schema']['properties']['cancelled'] ) && isset( $fanout_ability['output_schema']['properties']['failures'] ) && isset( $fanout_ability['output_schema']['properties']['runs'] ) );
 
 $browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
 $assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
@@ -2542,6 +2549,149 @@ $partial_batch = $failing_batch_runner->run_batch(
 );
 $assert( 'batch runner continues after per-task failure', ! is_wp_error( $partial_batch ) && false === ( $partial_batch['success'] ?? true ) && 1 === ( $partial_batch['completed'] ?? 0 ) && 1 === ( $partial_batch['failed'] ?? 0 ) );
 $assert( 'batch runner returns per-task errors', ! is_wp_error( $partial_batch ) && 'failed' === ( $partial_batch['runs'][1]['status'] ?? '' ) && 'wp_codebox_run_failed' === ( $partial_batch['runs'][1]['error']['code'] ?? '' ) );
+
+$fanout_bin = $root . '/wp-codebox-fanout-fixture';
+file_put_contents(
+	$fanout_bin,
+	<<<'PHP'
+#!/usr/bin/env php
+<?php
+$artifacts = '';
+for ( $i = 1; $i < $argc; $i++ ) {
+	if ( '--artifacts' === $argv[ $i ] && isset( $argv[ $i + 1 ] ) ) {
+		$artifacts = $argv[ $i + 1 ];
+	}
+}
+if ( '' === $artifacts ) {
+	fwrite( STDERR, "missing artifacts\n" );
+	exit( 2 );
+}
+@mkdir( $artifacts, 0777, true );
+$worker_id = basename( dirname( $artifacts ) );
+$fanout_root = dirname( $artifacts, 3 );
+$active_path = $fanout_root . '/active.json';
+$lock_path = $fanout_root . '/active.lock';
+$lock = fopen( $lock_path, 'c+' );
+if ( $lock ) {
+	flock( $lock, LOCK_EX );
+	$active = is_readable( $active_path ) ? json_decode( (string) file_get_contents( $active_path ), true ) : array();
+	$active = is_array( $active ) ? $active : array();
+	$count = (int) ( $active['count'] ?? 0 ) + 1;
+	$active['count'] = $count;
+	$active['max'] = max( (int) ( $active['max'] ?? 0 ), $count );
+	file_put_contents( $active_path, json_encode( $active ) );
+	flock( $lock, LOCK_UN );
+}
+usleep( str_contains( $worker_id, 'timeout' ) ? 2000000 : 350000 );
+if ( $lock ) {
+	flock( $lock, LOCK_EX );
+	$active = is_readable( $active_path ) ? json_decode( (string) file_get_contents( $active_path ), true ) : array();
+	$active = is_array( $active ) ? $active : array();
+	$active['count'] = max( 0, (int) ( $active['count'] ?? 1 ) - 1 );
+	file_put_contents( $active_path, json_encode( $active ) );
+	flock( $lock, LOCK_UN );
+	fclose( $lock );
+}
+$payload = array(
+	'success' => ! str_contains( $worker_id, 'fail' ),
+	'artifacts' => array(
+		'id' => 'fanout-artifact-' . $worker_id,
+		'preview' => array( 'url' => 'http://127.0.0.1/fanout/' . $worker_id ),
+	),
+	'agentResult' => array(
+		'schema' => 'wp-codebox/agent-result/v1',
+		'status' => str_contains( $worker_id, 'fail' ) ? 'failed' : 'completed',
+		'transcript' => array( 'artifact' => 'files/transcript.json' ),
+	),
+	'agentTaskResult' => array(
+		'schema' => 'wp-codebox/agent-task-result/v1',
+		'success' => ! str_contains( $worker_id, 'fail' ),
+		'status' => str_contains( $worker_id, 'fail' ) ? 'failed' : 'completed',
+	),
+	'completionOutcome' => array(
+		'schema' => 'wp-codebox/sandbox-completion-outcome/v1',
+		'success' => ! str_contains( $worker_id, 'fail' ),
+		'status' => str_contains( $worker_id, 'fail' ) ? 'blocked' : 'completed',
+	),
+);
+echo json_encode( $payload, JSON_UNESCAPED_SLASHES ) . "\n";
+exit( str_contains( $worker_id, 'fail' ) ? 7 : 0 );
+PHP
+);
+chmod( $fanout_bin, 0755 );
+
+$fanout_runner = new WP_Codebox_Agent_Sandbox_Runner( array( 'shell_available' => fn() => true ) );
+$fanout_result = $fanout_runner->run_fanout(
+	array(
+		'workers' => array(
+			array( 'id' => 'alpha', 'goal' => 'Run alpha.', 'agent' => 'fanout-a' ),
+			array( 'id' => 'bravo', 'goal' => 'Run bravo.', 'agent' => 'fanout-b' ),
+			array( 'id' => 'charlie', 'goal' => 'Run charlie.', 'agent' => 'fanout-c' ),
+		),
+		'concurrency'        => 2,
+		'sandbox_session_id' => 'parent-fanout-123',
+		'artifacts_path'     => $root . '/artifacts/fanout-success',
+		'wp_codebox_bin'     => $fanout_bin,
+		'agents_api_path'    => $root . '/agents-api',
+		'orchestrator'       => array( 'type' => 'studio-web', 'id' => 'fanout-smoke' ),
+	)
+);
+$fanout_active = json_decode( (string) file_get_contents( $root . '/artifacts/fanout-success/fanout/active.json' ), true );
+$assert( 'fanout runner succeeds with bounded parallel workers', ! is_wp_error( $fanout_result ) && true === ( $fanout_result['success'] ?? false ) && 3 === ( $fanout_result['completed'] ?? 0 ) && 0 === ( $fanout_result['failed'] ?? -1 ) && 2 === ( $fanout_result['concurrency'] ?? 0 ) );
+$assert( 'fanout runner enforces concurrency bound while running concurrently', ! is_wp_error( $fanout_result ) && 2 === ( $fanout_active['max'] ?? 0 ) );
+$assert( 'fanout runner assigns parent and child session envelopes', ! is_wp_error( $fanout_result ) && 'parent-fanout-123' === ( $fanout_result['session']['id'] ?? '' ) && 'parent-fanout-123:alpha' === ( $fanout_result['runs'][0]['session']['id'] ?? '' ) && 'parent-fanout-123:bravo' === ( $fanout_result['session']['children'][1]['session_id'] ?? '' ) );
+$assert( 'fanout runner writes stable namespaced artifacts', ! is_wp_error( $fanout_result ) && is_file( $root . '/artifacts/fanout-success/fanout/plan.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/events.jsonl' ) && is_file( $root . '/artifacts/fanout-success/fanout/workers/alpha/result.json' ) && is_file( $root . '/artifacts/fanout-success/fanout/aggregate/result.json' ) && 'alpha' === ( $fanout_result['runs'][0]['artifacts']['namespace'] ?? '' ) );
+$assert( 'fanout runner preserves opaque orchestrator metadata', ! is_wp_error( $fanout_result ) && 'studio-web' === ( $fanout_result['orchestrator']['type'] ?? '' ) && 'fanout-smoke' === ( $fanout_result['session']['orchestrator']['id'] ?? '' ) );
+
+$fanout_failure = $fanout_runner->run_fanout(
+	array(
+		'workers' => array(
+			array( 'id' => 'ok-worker', 'goal' => 'Succeed.' ),
+			array( 'id' => 'fail-worker', 'goal' => 'Fail.' ),
+		),
+		'concurrency'        => 2,
+		'sandbox_session_id' => 'parent-fanout-fail',
+		'artifacts_path'     => $root . '/artifacts/fanout-failure',
+		'wp_codebox_bin'     => $fanout_bin,
+		'agents_api_path'    => $root . '/agents-api',
+	)
+);
+$assert( 'fanout runner rolls up worker failures', ! is_wp_error( $fanout_failure ) && false === ( $fanout_failure['success'] ?? true ) && 1 === ( $fanout_failure['completed'] ?? 0 ) && 1 === ( $fanout_failure['failed'] ?? 0 ) && 'fail-worker' === ( $fanout_failure['failures'][0]['worker_id'] ?? '' ) );
+$assert( 'fanout failure includes worker id agent error and artifact refs', ! is_wp_error( $fanout_failure ) && 'wp_codebox_run_failed' === ( $fanout_failure['failures'][0]['error']['code'] ?? '' ) && str_contains( (string) ( $fanout_failure['failures'][0]['artifacts']['path'] ?? '' ), '/workers/fail-worker/artifacts' ) );
+
+$fanout_timeout = $fanout_runner->run_fanout(
+	array(
+		'workers' => array( array( 'id' => 'timeout-worker', 'goal' => 'Timeout.', 'timeout_seconds' => 1 ) ),
+		'concurrency'        => 1,
+		'sandbox_session_id' => 'parent-fanout-timeout',
+		'artifacts_path'     => $root . '/artifacts/fanout-timeout',
+		'wp_codebox_bin'     => $fanout_bin,
+		'agents_api_path'    => $root . '/agents-api',
+	)
+);
+$assert( 'fanout runner reports timeout failures', ! is_wp_error( $fanout_timeout ) && false === ( $fanout_timeout['success'] ?? true ) && 1 === ( $fanout_timeout['failed'] ?? 0 ) && 'wp_codebox_run_timeout' === ( $fanout_timeout['failures'][0]['error']['code'] ?? '' ) );
+
+$duplicate_fanout = $fanout_runner->run_fanout(
+	array(
+		'workers' => array(
+			array( 'id' => 'same', 'goal' => 'One.' ),
+			array( 'id' => 'same', 'goal' => 'Two.' ),
+		),
+		'wp_codebox_bin'  => $fanout_bin,
+		'agents_api_path' => $root . '/agents-api',
+	)
+);
+$assert( 'fanout runner rejects artifact namespace collisions', is_wp_error( $duplicate_fanout ) && 'wp_codebox_fanout_worker_id_duplicate' === $duplicate_fanout->get_error_code() );
+
+$invalid_concurrency = $fanout_runner->run_fanout(
+	array(
+		'workers' => array( array( 'id' => 'alpha', 'goal' => 'Run alpha.' ) ),
+		'concurrency'     => 99,
+		'wp_codebox_bin'  => $fanout_bin,
+		'agents_api_path' => $root . '/agents-api',
+	)
+);
+$assert( 'fanout runner rejects unsafe concurrency bounds', is_wp_error( $invalid_concurrency ) && 'wp_codebox_fanout_concurrency_invalid' === $invalid_concurrency->get_error_code() );
 
 $pending_action_handlers_filter     = $GLOBALS['wp_codebox_filters']['datamachine_pending_action_handlers'] ?? null;
 $GLOBALS['wp_codebox_is_multisite'] = true;
