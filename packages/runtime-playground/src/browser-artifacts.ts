@@ -40,6 +40,7 @@ export interface BrowserProbeArtifact {
     consoleMessages: number
     errors: number
     finalUrl: string
+    windowLocationOrigin?: string
     htmlSnapshot: boolean
     lifecycle?: BrowserProbeLifecycleSummary
     memory?: BrowserProbeMemorySummary
@@ -391,6 +392,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       requestedPreviewOrigin: probe.requestedPreviewOrigin,
       effectivePreviewOrigin: probe.effectivePreviewOrigin,
       finalUrl: probe.summary.finalUrl,
+      windowLocationOrigin: probe.summary.windowLocationOrigin,
       viewport: probe.summary.viewport,
       capabilities: probe.summary.capabilities,
       replayability: probe.summary.replayability,

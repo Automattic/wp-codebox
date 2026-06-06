@@ -204,6 +204,7 @@ async function runSingleBrowserProbeCommand({
   }
   const browser = await chromium.launch()
   let finalUrl = targetUrl
+  let windowLocationOrigin: string | undefined
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
@@ -281,7 +282,9 @@ async function runSingleBrowserProbeCommand({
 
     await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs))
     progress.mark("navigation")
-    preview.secureContext = await page.evaluate(() => window.isSecureContext).catch(() => undefined)
+    const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
+    windowLocationOrigin = browserLocation?.origin
+    preview.secureContext = browserLocation?.secureContext
     const secureContextError = browserProbeSecureContextError(preview)
     if (secureContextError) {
       throw secureContextError
@@ -330,6 +333,7 @@ async function runSingleBrowserProbeCommand({
   } finally {
     if (page) {
       finalUrl = page.url()
+      windowLocationOrigin = windowLocationOrigin ?? await page.evaluate(() => window.location.origin).catch(() => undefined)
       if (capturesBrowserMetrics) {
         checkpoints.push(await browserProbeCheckpoint(page, "final"))
         if (capture.has("memory")) {
@@ -424,6 +428,7 @@ async function runSingleBrowserProbeCommand({
         consoleMessages: consoleMessages.length,
         errors: errors.length,
         finalUrl,
+        ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
         htmlSnapshot: capture.has("html"),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
@@ -445,6 +450,7 @@ async function runSingleBrowserProbeCommand({
       preview,
       ...previewOrigins,
       finalUrl,
+      ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
       waitFor,
       durationMs,
       ...(lifecycleSelectors.length > 0 ? { observe: lifecycleSelectors } : {}),
@@ -1836,8 +1842,8 @@ function browserProbePreviewOrigins(preview: BrowserProbePreviewRouting): { loca
 }
 
 function browserProbePreviewRouting(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserProbePreviewRouting {
-  const requestedMode = browserProbePreviewMode(args)
   const publicOrigin = runtimeSpec?.preview?.publicUrl
+  const requestedMode = browserProbePreviewMode(args, publicOrigin)
   const effectiveMode: BrowserProbePreviewMode = requestedMode === "local" || !publicOrigin ? "local" : requestedMode
   const effectiveOrigin = effectiveMode === "local" ? localPreviewOrigin : (publicOrigin ?? localPreviewOrigin)
   const diagnostics: BrowserProbePreviewRouting["diagnostics"] = []
@@ -1873,8 +1879,8 @@ function browserProbePreviewRouting(args: string[], runtimeSpec: RuntimeCreateSp
   }
 }
 
-function browserProbePreviewMode(args: string[]): BrowserProbePreviewMode {
-  const raw = argValue(args, "preview-mode")?.trim() || "local"
+function browserProbePreviewMode(args: string[], publicOrigin: string | undefined): BrowserProbePreviewMode {
+  const raw = argValue(args, "preview-mode")?.trim() || (publicOrigin ? "public" : "local")
   if (raw === "local" || raw === "public" || raw === "secure") {
     return raw
   }

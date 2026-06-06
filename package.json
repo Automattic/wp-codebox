@@ -83,6 +83,7 @@
     "browser-probe-artifact-smoke": "tsx scripts/browser-probe-artifact-smoke.ts",
     "browser-probe-assertions-smoke": "tsx scripts/browser-probe-assertions-smoke.ts",
     "browser-probe-context-smoke": "tsx scripts/browser-probe-context-smoke.ts",
+    "browser-probe-public-url-routing-smoke": "tsx scripts/browser-probe-public-url-routing-smoke.ts",
     "browser-probe-profile-matrix-smoke": "tsx scripts/browser-probe-profile-matrix-smoke.ts",
     "browser-lifecycle-observer-smoke": "tsx scripts/browser-lifecycle-observer-smoke.ts",
     "browser-probe-pre-page-script-smoke": "tsx scripts/browser-probe-pre-page-script-smoke.ts",

@@ -22,6 +22,7 @@ try {
   assert.equal(recipeSummary.preview.requestedMode, "public")
   assert.equal(recipeSummary.preview.effectiveMode, "public")
   assert.equal(recipeSummary.preview.secureContext, true)
+  assert.equal(recipeSummary.windowLocationOrigin, new URL(recipePublicUrl).origin)
   assert.equal(recipeSummary.localPreviewOrigin.startsWith("http://127.0.0.1:"), true)
   assert.equal(recipeSummary.requestedPreviewOrigin, recipePublicUrl)
   assert.equal(recipeSummary.effectivePreviewOrigin, recipePublicUrl)
@@ -38,7 +39,7 @@ try {
 
   const localDefaultPort = await reserveFreePort()
   const localDefaultPublicUrl = `http://127.0.0.1:${localDefaultPort}/public-route/`
-  const localDefaultRecipePath = await writeRecipe("recipe-preview-local-default.json", localDefaultPort, localDefaultPublicUrl, [])
+  const localDefaultRecipePath = await writeRecipe("recipe-preview-local-default.json", localDefaultPort, localDefaultPublicUrl, ["preview-mode=local"])
   const localDefaultOutput = await runCliJson(["recipe-run", "--recipe", localDefaultRecipePath, "--json"])
 
   assert.equal(localDefaultOutput.success, true, localDefaultOutput.error?.message ?? "recipe-run with default local preview failed")
@@ -137,7 +138,7 @@ async function writeRecipe(name: string, port: number, publicUrl: string | undef
   return recipePath
 }
 
-async function browserSummary(output: { artifacts?: { directory?: string } }): Promise<{ requestedUrl: string; preview: { requestedMode: string; effectiveMode: string; localOrigin: string; publicOrigin?: string; effectiveOrigin: string; secureContext?: boolean; diagnostics: Array<{ code: string }> }; localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string }> {
+async function browserSummary(output: { artifacts?: { directory?: string } }): Promise<{ requestedUrl: string; windowLocationOrigin?: string; preview: { requestedMode: string; effectiveMode: string; localOrigin: string; publicOrigin?: string; effectiveOrigin: string; secureContext?: boolean; diagnostics: Array<{ code: string }> }; localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string }> {
   assert.ok(output.artifacts?.directory, "recipe-run should return an artifact directory")
   return JSON.parse(await readFile(join(output.artifacts.directory, "files", "browser", "summary.json"), "utf8"))
 }

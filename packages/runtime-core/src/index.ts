@@ -117,6 +117,7 @@ export interface ArtifactReviewBrowserSummary {
     requestedPreviewOrigin?: string
     effectivePreviewOrigin?: string
     finalUrl?: string
+    windowLocationOrigin?: string
     viewport?: {
       width: number
       height: number
