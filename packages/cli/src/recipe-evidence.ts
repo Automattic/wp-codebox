@@ -19,6 +19,13 @@ export interface RecipeRuntimeEvidenceInput {
   value: unknown
 }
 
+export interface RecipeRuntimeEvidenceFileInput {
+  filename: string
+  kind: string
+  contentType: string
+  contents: string
+}
+
 export interface RecipeArtifactEvidenceResult {
   runAttestation?: RecipeRunAttestation & {
     artifact: RecipeArtifactEvidenceFile
@@ -373,6 +380,28 @@ export async function appendRecipeRuntimeEvidence(artifacts: ArtifactBundle, fil
   const evidenceFiles: RecipeArtifactEvidenceFile[] = []
   for (const file of files) {
     evidenceFiles.push(await writeRecipeEvidenceJson(artifacts.directory, join(evidenceDirectory, file.filename), file.value, file.kind))
+  }
+  await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
+  return evidenceFiles
+}
+
+export async function appendRecipeRuntimeEvidenceFiles(artifacts: ArtifactBundle, files: RecipeRuntimeEvidenceFileInput[]): Promise<RecipeArtifactEvidenceFile[]> {
+  if (files.length === 0) {
+    return []
+  }
+
+  const evidenceDirectory = join(dirname(artifacts.reviewPath), "runtime-evidence")
+  const evidenceFiles: RecipeArtifactEvidenceFile[] = []
+  for (const file of files) {
+    const path = join(evidenceDirectory, file.filename)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, file.contents)
+    evidenceFiles.push({
+      path: relative(artifacts.directory, path),
+      sha256: artifactFileDigest(file.contents).value,
+      kind: file.kind,
+      contentType: file.contentType,
+    })
   }
   await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
   return evidenceFiles

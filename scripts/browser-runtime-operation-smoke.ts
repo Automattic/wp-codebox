@@ -474,6 +474,7 @@ assert.deepEqual(sameRealm(probeResult.phases.map((phase: { name: string }) => p
   "runtime-tool-artifact-write",
   "artifact-capture",
   "generated-runner-artifact-capture",
+  "fanout-aggregation-phase",
   "event-diagnostics",
 ])
 assert.equal(probeResult.phases.every((phase: { status: string }) => phase.status === "passed"), true)
@@ -484,11 +485,19 @@ assert.deepEqual(sameRealm(probeResult.phases.find((phase: { name: string }) => 
   artifact_schema: "wp-codebox/browser-runtime-contract-generated-artifact/v1",
   file_count: 1,
 })
+assert.deepEqual(sameRealm(probeResult.phases.find((phase: { name: string }) => phase.name === "fanout-aggregation-phase")?.data), {
+  schema: "wp-codebox/agent-fanout-aggregation-output/v1",
+  status: "succeeded",
+  final_path: "aggregate/final/result.json",
+  worker_results: 2,
+})
 assert.equal(probeResult.phases.find((phase: { name: string }) => phase.name === "event-diagnostics")?.data.bounded, true)
 assert.equal(probeClient.requests.length > 0, true)
 assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-probe.txt"), true)
 assert.equal(probeClient.targetWrites.some((path: string) => path.endsWith("/tool-output.txt")), true)
 assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-recipe-task.json"), true)
+assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-fanout-aggregation-input.json"), true)
+assert.equal(probeClient.targetWrites.includes("/wordpress/wp-content/uploads/wp-codebox/artifacts/aggregate/final/result.json"), true)
 
 console.log("Browser runtime operation smoke passed")
 

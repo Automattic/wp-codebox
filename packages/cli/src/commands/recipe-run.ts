@@ -3,14 +3,14 @@ import { fstatSync } from "node:fs"
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, RuntimeRunRegistry, aggregateFanoutOutputs, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type FanoutArtifactRef, type FanoutLifecycleEvent, type FanoutRequestContract, type FanoutWorkerResultRef, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, appendRecipeRuntimeEvidenceFiles, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type RecipeRuntimeEvidenceFileInput, type SandboxCompletionOutcome } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -105,6 +105,11 @@ type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
+}
+
+interface RecipeFanoutPhaseEvidence {
+  files: RecipeRuntimeEvidenceFileInput[]
+  result: Record<string, unknown>
 }
 
 type RecipeArtifactPointerCommandStatus = "queued" | "running" | "completed" | "failed"
@@ -820,6 +825,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let fixtureDatabases: RecipeRunFixtureDatabase[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
+  const fanoutPhases: RecipeFanoutPhaseEvidence[] = []
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
@@ -1040,7 +1046,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const workflowSteps = recipeWorkflowSteps(recipe)
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
-        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace)))
+        const execution = workflowStep.step.command === "wp-codebox.agent-fanout"
+          ? await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeFanoutStep(workflowStep, recipeDirectory, fanoutPhases))
+          : await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace))
+        executions.push(execution)
         interruption?.throwIfInterrupted()
       }
     })
@@ -1059,6 +1068,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list() })
+      await appendRecipeRuntimeEvidenceFiles(artifacts, fanoutPhases.flatMap((phase) => phase.files))
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
@@ -1180,6 +1190,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           if (declaredArtifacts.length === 0) {
             declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
           }
+          await appendRecipeRuntimeEvidenceFiles(artifacts, fanoutPhases.flatMap((phase) => phase.files))
           await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
         } catch {
           // Preserve the original recipe failure; failure recovery already kept the base artifact bundle.
@@ -1765,6 +1776,255 @@ async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnT
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
+  }
+}
+
+async function executeRecipeFanoutStep(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, fanoutPhases: RecipeFanoutPhaseEvidence[]): Promise<RecipeExecutionResult> {
+  const startedAt = new Date().toISOString()
+  const commandId = fanoutCommandId(workflowStep, startedAt)
+  try {
+    const request = await recipeFanoutRequest(workflowStep.step.args ?? [], recipeDirectory)
+    const fanout = buildRecipeFanoutPhase(request)
+    fanoutPhases.push(fanout)
+    return withRecipeExecutionPhase({
+      id: commandId,
+      command: workflowStep.step.command,
+      args: workflowStep.step.args ?? [],
+      exitCode: stringField(fanout.result, "status") === "failed" ? 1 : 0,
+      stdout: `${JSON.stringify(fanout.result, null, 2)}\n`,
+      stderr: "",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    }, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
+  }
+}
+
+async function recipeFanoutRequest(args: string[], recipeDirectory: string): Promise<FanoutRequestContract> {
+  const requestJson = recipeArgValue(args, "request-json")
+  const requestFile = recipeArgValue(args, "request-file")
+  if (requestJson && requestFile) {
+    throw new Error("wp-codebox.agent-fanout accepts either request-json=<json> or request-file=<path>, not both")
+  }
+  if (!requestJson && !requestFile) {
+    throw new Error("wp-codebox.agent-fanout requires request-json=<json> or request-file=<path>")
+  }
+
+  const parsed = JSON.parse(requestJson ?? await readFile(resolve(recipeDirectory, requestFile!), "utf8"))
+  if (!isRecord(parsed) || parsed.schema !== FANOUT_REQUEST_SCHEMA || !Array.isArray(parsed.workers)) {
+    throw new Error(`wp-codebox.agent-fanout requires a ${FANOUT_REQUEST_SCHEMA} envelope with workers[]`)
+  }
+  return parsed as FanoutRequestContract
+}
+
+function buildRecipeFanoutPhase(request: FanoutRequestContract): RecipeFanoutPhaseEvidence {
+  const sessionId = stringField(request, "session_id") ?? stringField(request, "sessionId") ?? `fanout-${createHash("sha256").update(JSON.stringify(request)).digest("hex").slice(0, 12)}`
+  const concurrency = Math.max(1, Math.floor(typeof request.concurrency === "number" ? request.concurrency : 1))
+  const workers = request.workers.map((worker) => {
+    if (!/^[A-Za-z0-9._-]+$/.test(worker.id)) {
+      throw new Error(`Fanout worker id "${worker.id}" must be a safe path segment`)
+    }
+    return worker
+  })
+  if (new Set(workers.map((worker) => worker.id)).size !== workers.length) {
+    throw new Error("Fanout worker ids must be unique")
+  }
+
+  const plan = {
+    schema: FANOUT_PLAN_SCHEMA,
+    session_id: sessionId,
+    concurrency,
+    strategy: "bounded-concurrent-isolated-sandboxes",
+    orchestrator: request.orchestrator ?? {},
+    workers: workers.map((worker) => ({
+      id: worker.id,
+      agent: worker.agent ?? request.agent ?? "",
+      goal: worker.goal,
+      artifact_namespace: worker.artifactNamespace ?? `workers/${worker.id}`,
+      child_session_id: `${sessionId}:${worker.id}`,
+    })),
+  }
+  const events: FanoutLifecycleEvent[] = []
+  const emit = (event: FanoutLifecycleEvent["event"], extra: Partial<FanoutLifecycleEvent> = {}) => events.push({ schema: FANOUT_EVENT_SCHEMA, event, time: new Date().toISOString(), ...extra })
+  emit("fanout.started", { status: "running", active: 0, total: workers.length, completed: 0, failed: 0, cancelled: 0 })
+
+  const requestWorkerResults = requestWorkerResultRefs(request)
+  const workerResults = workers.map((worker): FanoutWorkerResultRef => {
+    emit("worker.started", { worker_id: worker.id, status: "running" })
+    const explicitResult = requestWorkerResults.get(worker.id)
+    const result = explicitResult ?? workerResultFromWorker(worker)
+    emit(result.status === "succeeded" ? "worker.completed" : "worker.failed", { worker_id: worker.id, status: result.status })
+    return result
+  })
+
+  const aggregationInput = {
+    schema: FANOUT_AGGREGATION_INPUT_SCHEMA,
+    plan: {
+      id: sessionId,
+      workers: workers.map((worker) => ({
+        id: worker.id,
+        dependsOn: arrayStringField(worker, "dependsOn") ?? arrayStringField(worker, "depends_on") ?? [],
+        required: fieldValue(worker, "required") !== false,
+        artifactNamespace: worker.artifactNamespace ?? `workers/${worker.id}`,
+      })),
+    },
+    policy: stringField(request.aggregation, "policy") ?? stringField(request, "policy") ?? "fail",
+    aggregator: isRecord(request.aggregation) ? request.aggregation : undefined,
+    workerResultRefs: workerResults,
+    artifactRefs: [],
+    conflictCandidates: arrayField(request.aggregation, "conflictCandidates") ?? arrayField(request.aggregation, "conflict_candidates") ?? [],
+  }
+  emit("aggregation.started", { status: "running" })
+  const aggregate = aggregateFanoutOutputs(aggregationInput, {
+    finalArtifactRefs: fanoutFinalArtifactRefs(request),
+  })
+  emit(aggregate.status === "failed" ? "fanout.failed" : "aggregation.completed", { status: aggregate.status, completed: workerResults.filter((result) => result.status === "succeeded").length, failed: workerResults.filter((result) => result.status === "failed").length })
+  if (aggregate.status !== "failed") {
+    emit("fanout.completed", { status: aggregate.status, completed: workerResults.filter((result) => result.status === "succeeded").length, failed: workerResults.filter((result) => result.status === "failed").length })
+  }
+
+  const result = stripUndefined({
+    schema: FANOUT_RESULT_SCHEMA,
+    status: aggregate.status === "failed" ? "failed" : "succeeded",
+    session: {
+      id: sessionId,
+      children: plan.workers.map((worker) => ({ worker_id: worker.id, session_id: worker.child_session_id, artifact_namespace: worker.artifact_namespace, result_ref: `fanout/workers/${worker.id}/result.json` })),
+    },
+    strategy: "bounded-concurrent-isolated-sandboxes",
+    concurrency,
+    counts: {
+      total: workerResults.length,
+      completed: workerResults.filter((worker) => worker.status === "succeeded").length,
+      failed: workerResults.filter((worker) => worker.status === "failed").length,
+    },
+    workers: workerResults,
+    aggregate,
+    artifacts: {
+      schema: "wp-codebox/agent-fanout-artifacts/v1",
+      root: "fanout",
+      plan: "fanout/plan.json",
+      events: "fanout/events.jsonl",
+      result: "fanout/result.json",
+      workers: "fanout/workers",
+      aggregate: "fanout/aggregate/result.json",
+      final: "aggregate/final/result.json",
+    },
+  })
+
+  return {
+    result,
+    files: [
+      fanoutJsonFile("fanout/plan.json", "agent-fanout-plan", plan),
+      { filename: "fanout/events.jsonl", kind: "agent-fanout-event-log", contentType: "application/jsonl", contents: events.map((event) => JSON.stringify(event)).join("\n") + "\n" },
+      ...workerResults.map((worker) => fanoutJsonFile(`fanout/workers/${worker.workerId}/result.json`, `agent-fanout-worker-result:${worker.workerId}`, worker)),
+      fanoutJsonFile("fanout/aggregate/input.json", "agent-fanout-aggregation-input", aggregationInput),
+      fanoutJsonFile("fanout/aggregate/result.json", "agent-fanout-aggregation-output", aggregate),
+      fanoutJsonFile("aggregate/final/result.json", "agent-fanout-aggregate-final", aggregate),
+      fanoutJsonFile("fanout/result.json", "agent-fanout-result", result),
+    ],
+  }
+}
+
+function workerResultFromWorker(worker: FanoutRequestContract["workers"][number]): FanoutWorkerResultRef {
+  const source = firstRecord(fieldValue(worker, "result"), fieldValue(worker, "output"), fieldValue(worker, "workerResult"), fieldValue(worker, "worker_result"))
+  const status = stringField(source, "status") ?? "succeeded"
+  return {
+    workerId: worker.id,
+    status,
+    required: fieldValue(worker, "required") !== false,
+    resultRef: stringField(source, "resultRef") ?? stringField(source, "result_ref") ?? `fanout/workers/${worker.id}/result.json`,
+    artifactRefs: fanoutArtifactRefs(arrayField(source, "artifactRefs") ?? arrayField(source, "artifact_refs") ?? arrayField(worker, "artifactRefs") ?? arrayField(worker, "artifact_refs") ?? [], worker.id, worker.artifactNamespace ?? `workers/${worker.id}`),
+    error: errorRecord(source),
+    metadata: isRecord(source?.metadata) ? source.metadata : undefined,
+  }
+}
+
+function requestWorkerResultRefs(request: FanoutRequestContract): Map<string, FanoutWorkerResultRef> {
+  const results = arrayField(request, "workerResultRefs") ?? arrayField(request, "worker_results") ?? arrayField(request, "workerResults") ?? []
+  return new Map(results.filter(isRecord).map((result) => {
+    const workerId = stringField(result, "workerId") ?? stringField(result, "worker_id") ?? ""
+    return [workerId, {
+      workerId,
+      status: stringField(result, "status") ?? "missing",
+      required: fieldValue(result, "required") !== false,
+      resultRef: stringField(result, "resultRef") ?? stringField(result, "result_ref"),
+      artifactRefs: fanoutArtifactRefs(arrayField(result, "artifactRefs") ?? arrayField(result, "artifact_refs") ?? [], workerId),
+      error: errorRecord(result),
+      metadata: isRecord(result.metadata) ? result.metadata : undefined,
+    }]
+  }))
+}
+
+function fanoutFinalArtifactRefs(request: FanoutRequestContract): FanoutArtifactRef[] {
+  const refs = arrayField(request.aggregation, "finalArtifactRefs") ?? arrayField(request.aggregation, "final_artifact_refs")
+  return refs ? fanoutArtifactRefs(refs) : [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", contentType: "application/json" }]
+}
+
+function fanoutArtifactRefs(refs: unknown[], workerId?: string, namespace?: string): FanoutArtifactRef[] {
+  return refs.filter(isRecord).map((ref) => stripUndefined({
+    id: stringField(ref, "id"),
+    path: stringField(ref, "path") ?? "",
+    kind: stringField(ref, "kind"),
+    workerId: stringField(ref, "workerId") ?? stringField(ref, "worker_id") ?? workerId,
+    namespace: stringField(ref, "namespace") ?? namespace,
+    finalPath: stringField(ref, "finalPath") ?? stringField(ref, "final_path"),
+    contentType: stringField(ref, "contentType") ?? stringField(ref, "content_type"),
+    sha256: stringField(ref, "sha256"),
+    bytes: typeof ref.bytes === "number" ? ref.bytes : undefined,
+    metadata: isRecord(ref.metadata) ? ref.metadata : undefined,
+  }))
+}
+
+function fanoutJsonFile(filename: string, kind: string, value: unknown): RecipeRuntimeEvidenceFileInput {
+  return { filename, kind, contentType: "application/json", contents: `${JSON.stringify(value, null, 2)}\n` }
+}
+
+function recipeArgValue(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
+}
+
+function fanoutCommandId(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], startedAt: string): string {
+  return `fanout-${createHash("sha256").update(`${startedAt}:${workflowStep.phase}:${workflowStep.index}`).digest("hex").slice(0, 12)}`
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {
+  return values.find(isRecord)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function fieldValue(source: unknown, key: string): unknown {
+  return isRecord(source) ? source[key] : undefined
+}
+
+function stringField(source: unknown, key: string): string | undefined {
+  const value = fieldValue(source, key)
+  return typeof value === "string" && value !== "" ? value : undefined
+}
+
+function arrayField(source: unknown, key: string): unknown[] | undefined {
+  const value = fieldValue(source, key)
+  return Array.isArray(value) ? value : undefined
+}
+
+function arrayStringField(source: unknown, key: string): string[] | undefined {
+  return arrayField(source, key)?.filter((value): value is string => typeof value === "string")
+}
+
+function errorRecord(source: unknown): FanoutWorkerResultRef["error"] {
+  const error = fieldValue(source, "error")
+  if (!isRecord(error)) return undefined
+  const message = stringField(error, "message")
+  if (!message) return undefined
+  return {
+    code: stringField(error, "code"),
+    message,
+    details: isRecord(error.details) ? error.details : undefined,
   }
 }
 

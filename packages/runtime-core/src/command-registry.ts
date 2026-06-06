@@ -318,6 +318,18 @@ export const commandRegistry = [
     recipe: true,
     handler: { kind: "recipe-alias", command: "wordpress.run-php" },
   },
+  {
+    id: "wp-codebox.agent-fanout",
+    description: "Recipe-only helper that persists a generic browser fanout phase envelope, worker result refs, lifecycle events, and aggregate output refs.",
+    acceptedArgs: [
+      { name: "request-json", description: "Inline wp-codebox/agent-fanout-request/v1 envelope.", format: "JSON object" },
+      { name: "request-file", description: "Recipe-relative path to a wp-codebox/agent-fanout-request/v1 envelope.", format: "path" },
+    ],
+    outputShape: "JSON wp-codebox/agent-fanout-result/v1 envelope plus fanout/plan.json, fanout/events.jsonl, worker result refs, and aggregate/final refs in runtime evidence artifacts.",
+    policyRequirement: "Host-side recipe helper; it writes generic Codebox artifact envelopes and does not expose product or Data Machine internals.",
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox.agent-fanout" },
+  },
 ] as const satisfies readonly CommandDefinition[]
 
 export type CommandId = typeof commandRegistry[number]["id"]

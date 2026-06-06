@@ -90,6 +90,7 @@ export interface FanoutAggregationInput {
 
 export interface FanoutAggregationResultOptions {
   finalArtifactRefs?: FanoutArtifactRef[]
+  outputNamespace?: string
   aggregationError?: {
     code?: string
     message: string
@@ -162,6 +163,8 @@ export function aggregateFanoutOutputs(input: FanoutAggregationInputRequest, opt
     })
   }
 
+  const hasError = conflicts.some((conflict) => conflict.severity === "error")
+
   return {
     schema: FANOUT_AGGREGATION_OUTPUT_SCHEMA,
     status: resolveAggregationStatus(normalized.policy, conflicts),
@@ -170,10 +173,24 @@ export function aggregateFanoutOutputs(input: FanoutAggregationInputRequest, opt
     aggregator: normalized.aggregator,
     workerResultRefs: normalized.workerResultRefs,
     rawWorkerArtifactRefs: normalized.artifactRefs,
-    finalArtifactRefs: conflicts.some((conflict) => conflict.severity === "error") ? [] : (options.finalArtifactRefs ?? []),
+    finalArtifactRefs: hasError ? [] : (options.finalArtifactRefs ?? defaultFinalArtifactRefs(normalized, options.outputNamespace)),
     conflicts,
     metadata: options.metadata ?? normalized.metadata,
   }
+}
+
+export function defaultFanoutAggregationOutputPath(input: FanoutAggregationInputRequest, outputNamespace?: string): string {
+  const normalized = normalizeFanoutAggregationInput(input)
+  return `${normalizeOutputNamespace(outputNamespace ?? normalized.aggregator?.outputNamespace)}/result.json`
+}
+
+export function defaultFinalArtifactRefs(input: FanoutAggregationInputRequest | FanoutAggregationInput, outputNamespace?: string): FanoutArtifactRef[] {
+  const path = defaultFanoutAggregationOutputPath(input, outputNamespace)
+  return [{
+    path,
+    kind: "fanout-aggregate-output",
+    contentType: "application/json",
+  }]
 }
 
 export function detectDuplicateFinalArtifactPathConflicts(artifactRefs: FanoutArtifactRef[]): FanoutConflictRecord[] {
@@ -348,4 +365,13 @@ function isString(value: unknown): value is string {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function normalizeOutputNamespace(outputNamespace: unknown): string {
+  const raw = isString(outputNamespace) ? outputNamespace : "aggregate/final"
+  return raw
+    .split("/")
+    .map((segment) => segment.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean)
+    .join("/") || "aggregate/final"
 }

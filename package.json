@@ -56,6 +56,7 @@
     "task-input-contract-smoke": "tsx scripts/task-input-contract-smoke.ts",
     "fanout-contract-smoke": "tsx scripts/fanout-contract-smoke.ts",
     "fanout-aggregation-contract-smoke": "tsx scripts/fanout-aggregation-contract-smoke.ts",
+    "recipe-agent-fanout-phase-smoke": "tsx scripts/recipe-agent-fanout-phase-smoke.ts",
     "run-registry-smoke": "tsx scripts/run-registry-smoke.ts",
     "benchmark-substrate-smoke": "tsx scripts/benchmark-substrate-smoke.ts",
     "benchmark-matrix-cli-smoke": "tsx scripts/benchmark-matrix-cli-smoke.ts",

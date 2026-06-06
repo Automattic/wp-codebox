@@ -3,6 +3,7 @@ import {
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
   aggregateFanoutOutputs,
+  defaultFanoutAggregationOutputPath,
   normalizeFanoutAggregationInput,
 } from "@automattic/wp-codebox-core"
 
@@ -51,6 +52,14 @@ assert.equal(success.status, "succeeded")
 assert.equal(success.rawWorkerArtifactRefs.length, 2)
 assert.deepEqual(success.finalArtifactRefs, [{ path: "aggregate/final/report.json", kind: "aggregate-report" }])
 assert.deepEqual(success.conflicts, [])
+
+const deterministic = aggregateFanoutOutputs(successfulInput)
+assert.equal(defaultFanoutAggregationOutputPath(successfulInput), "aggregate/final/result.json")
+assert.deepEqual(deterministic.finalArtifactRefs, [{
+  path: "aggregate/final/result.json",
+  kind: "fanout-aggregate-output",
+  contentType: "application/json",
+}])
 
 const duplicatePath = aggregateFanoutOutputs({
   ...successfulInput,
