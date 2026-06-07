@@ -29,6 +29,7 @@ export interface BrowserProbeArtifact {
     candidateScreenshot?: string
     diffScreenshot?: string
     visualDiff?: string
+    visualExplanation?: string
     summary: string
   }
   summary: {
@@ -68,6 +69,7 @@ export interface BrowserProbeArtifact {
       mismatchPixels?: number
       totalPixels?: number
       dimensionMismatch?: boolean
+      explanation?: string
     }
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
@@ -726,6 +728,9 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     if (probe.files.visualDiff) {
       files.set(probe.files.visualDiff, { kind: "browser-visual-diff", contentType: "application/json" })
     }
+    if (probe.files.visualExplanation) {
+      files.set(probe.files.visualExplanation, { kind: "browser-visual-explanation", contentType: "application/json" })
+    }
     files.set(probe.files.summary, { kind: "browser-summary", contentType: "application/json" })
   }
 
@@ -733,6 +738,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, probe.files.visualDiff, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, probe.files.visualDiff, probe.files.visualExplanation, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }

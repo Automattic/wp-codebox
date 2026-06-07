@@ -79,6 +79,7 @@ const sourcePath = join(artifactDirectory, "files", "browser", "visual-compare",
 const candidatePath = join(artifactDirectory, "files", "browser", "visual-compare", "candidate.png")
 const diffPath = join(artifactDirectory, "files", "browser", "visual-compare", "diff.png")
 const summaryPath = join(artifactDirectory, "files", "browser", "visual-compare", "visual-diff.json")
+const explanationPath = join(artifactDirectory, "files", "browser", "visual-compare", "visual-explanation.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
 const reviewPath = join(artifactDirectory, "files", "review.json")
 
@@ -86,11 +87,13 @@ assert.equal(existsSync(sourcePath), true, "source screenshot should be captured
 assert.equal(existsSync(candidatePath), true, "candidate screenshot should be captured")
 assert.equal(existsSync(diffPath), true, "diff screenshot should be captured")
 assert.equal(existsSync(summaryPath), true, "visual diff summary should be captured")
+assert.equal(existsSync(explanationPath), true, "visual explanation should be captured for URL targets")
 
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   schema: string
   status: string
   files: Record<string, string>
+  limitations: string[]
   comparison: { mismatchPixels: number; mismatchRatio: number; dimensionMismatch: boolean; regions: unknown[] }
 }
 assert.equal(summary.schema, "wp-codebox/visual-compare/v1")
@@ -99,20 +102,44 @@ assert.equal(summary.files.sourceScreenshot, "files/browser/visual-compare/sourc
 assert.equal(summary.files.candidateScreenshot, "files/browser/visual-compare/candidate.png")
 assert.equal(summary.files.diffScreenshot, "files/browser/visual-compare/diff.png")
 assert.equal(summary.files.visualDiff, "files/browser/visual-compare/visual-diff.json")
+assert.equal(summary.files.visualExplanation, "files/browser/visual-compare/visual-explanation.json")
 assert.ok(summary.comparison.mismatchPixels > 0, "comparison should report mismatched pixels")
 assert.ok(summary.comparison.mismatchRatio > 0, "comparison should report mismatch ratio")
 assert.equal(summary.comparison.dimensionMismatch, false, "fixture screenshots should share dimensions")
 assert.ok(summary.comparison.regions.length > 0, "comparison should report mismatch regions")
+assert.ok(summary.limitations.some((limitation) => limitation.includes("heuristic evidence")), "summary should document visual explanation limitations")
+
+const explanation = JSON.parse(await readFile(explanationPath, "utf8")) as {
+  schema: string
+  source: { label: string; capturedElements: number }
+  candidate: { label: string; capturedElements: number }
+  summary: { changedElements: number }
+  changes: Array<{ path: string; changes: { text?: unknown; styles?: Record<string, unknown> } }>
+  mismatchRegions: unknown[]
+  limitations: string[]
+}
+assert.equal(explanation.schema, "wp-codebox/visual-explanation/v1")
+assert.equal(explanation.source.label, "source-fixture")
+assert.equal(explanation.candidate.label, "candidate-fixture")
+assert.ok(explanation.source.capturedElements > 0, "explanation should include source DOM context")
+assert.ok(explanation.candidate.capturedElements > 0, "explanation should include candidate DOM context")
+assert.ok(explanation.summary.changedElements > 0, "explanation should report changed elements")
+assert.ok(explanation.changes.some((change) => change.path.includes("main") && change.changes.text), "explanation should report text changes")
+assert.ok(explanation.changes.some((change) => change.changes.styles?.["background-color"]), "explanation should report computed style changes")
+assert.ok(explanation.mismatchRegions.length > 0, "explanation should include mismatch regions")
+assert.ok(explanation.limitations.length > 0, "explanation should include limitations")
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
 assert.ok(manifest.files.some((file) => file.path === "files/browser/visual-compare/source.png" && file.kind === "browser-visual-source-screenshot"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/visual-compare/candidate.png" && file.kind === "browser-visual-candidate-screenshot"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/visual-compare/diff.png" && file.kind === "browser-visual-diff-screenshot"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/visual-compare/visual-diff.json" && file.kind === "browser-visual-diff"))
+assert.ok(manifest.files.some((file) => file.path === "files/browser/visual-compare/visual-explanation.json" && file.kind === "browser-visual-explanation"))
 
-const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ visualCompare?: { status?: string; mismatchPixels?: number } }> } }
+const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ visualCompare?: { status?: string; mismatchPixels?: number; explanation?: string } }> } }
 assert.equal(review.browser?.probes?.[0]?.visualCompare?.status, "different", "review summary should expose visual compare status")
 assert.ok((review.browser?.probes?.[0]?.visualCompare?.mismatchPixels ?? 0) > 0, "review summary should expose visual compare mismatch count")
+assert.equal(review.browser?.probes?.[0]?.visualCompare?.explanation, "files/browser/visual-compare/visual-explanation.json", "review summary should expose visual explanation artifact")
 
 console.log("Browser visual compare smoke passed")
 

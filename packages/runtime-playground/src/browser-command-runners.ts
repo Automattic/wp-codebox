@@ -24,11 +24,56 @@ const EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR = ".block-editor-block-list__layout"
 const EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR = ".block-editor-block-list__block, [data-block]"
 const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
+const VISUAL_EXPLANATION_STYLE_PROPERTIES = ["display", "position", "box-sizing", "width", "height", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "color", "background-color", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "opacity", "transform", "visibility"] as const
+const VISUAL_EXPLANATION_ATTRIBUTE_NAMES = ["id", "class", "role", "aria-label", "title", "href", "src", "type", "name"] as const
 
 interface BrowserProbeProfileDefinition {
   id: string
   browser: "chromium" | "webkit"
   args: string[]
+}
+
+interface VisualCompareDomElementSnapshot {
+  path: string
+  tag: string
+  text: string
+  attributes: Record<string, string>
+  boundingBox: { x: number; y: number; width: number; height: number }
+  styles: Record<string, string>
+}
+
+interface VisualCompareDomSnapshot {
+  url: string
+  title: string
+  elementCount: number
+  capturedElements: VisualCompareDomElementSnapshot[]
+  truncated: boolean
+}
+
+interface VisualCompareElementDelta {
+  path: string
+  tag: string
+  changes: {
+    text?: { source: string; candidate: string }
+    boundingBox?: { source: VisualCompareDomElementSnapshot["boundingBox"]; candidate: VisualCompareDomElementSnapshot["boundingBox"]; delta: { x: number; y: number; width: number; height: number } }
+    attributes?: Record<string, { source: string | null; candidate: string | null }>
+    styles?: Record<string, { source: string; candidate: string }>
+  }
+}
+
+interface VisualCompareExplanation {
+  schema: "wp-codebox/visual-explanation/v1"
+  source: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
+  candidate: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
+  viewport: BrowserProbeViewport | null
+  mismatchRegions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+  limits: { maxElements: number; maxCandidates: number }
+  truncation: { changed: boolean; added: boolean; removed: boolean }
+  summary: { changedElements: number; addedElements: number; removedElements: number; sourceCapturedElements: number; candidateCapturedElements: number }
+  changes: VisualCompareElementDelta[]
+  added: VisualCompareDomElementSnapshot[]
+  removed: VisualCompareDomElementSnapshot[]
+  limitations: string[]
 }
 
 const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
@@ -2418,6 +2463,8 @@ export async function runVisualCompareCommand({
   const threshold = numberArg(args, "threshold", 0.1)
   const includeAA = strictBooleanArg(args, "include-aa", false)
   const maxRegions = positiveIntegerArg(args, "max-regions", 8)
+  const maxExplanationElements = positiveIntegerArg(args, "max-explanation-elements", 25)
+  const maxExplanationCandidates = positiveIntegerArg(args, "max-explanation-candidates", 160)
 
   if (threshold < 0 || threshold > 1) {
     throw new Error("threshold must be between 0 and 1")
@@ -2435,6 +2482,7 @@ export async function runVisualCompareCommand({
   const candidatePath = join(browserDirectory, "candidate.png")
   const diffPath = join(browserDirectory, "diff.png")
   const visualDiffPath = join(browserDirectory, "visual-diff.json")
+  const visualExplanationPath = join(browserDirectory, "visual-explanation.json")
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
   const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
@@ -2443,6 +2491,8 @@ export async function runVisualCompareCommand({
   let finalSourceUrl = sourceTargetUrl
   let finalCandidateUrl = candidateTargetUrl
   let viewport: BrowserProbeViewport | null = null
+  let sourceDomSnapshot: VisualCompareDomSnapshot | undefined
+  let candidateDomSnapshot: VisualCompareDomSnapshot | undefined
 
   if (sourceTargetUrl && candidateTargetUrl) {
     const { chromium } = await import("playwright")
@@ -2450,8 +2500,12 @@ export async function runVisualCompareCommand({
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
-      finalSourceUrl = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage)
-      finalCandidateUrl = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage)
+      const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates)
+      finalSourceUrl = sourceCapture.finalUrl
+      sourceDomSnapshot = sourceCapture.domSnapshot
+      const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates)
+      finalCandidateUrl = candidateCapture.finalUrl
+      candidateDomSnapshot = candidateCapture.domSnapshot
     } finally {
       await browser.close()
     }
@@ -2461,12 +2515,22 @@ export async function runVisualCompareCommand({
   }
 
   const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
+  const explanation = createVisualCompareExplanation({
+    source: sourceDomSnapshot,
+    candidate: candidateDomSnapshot,
+    sourceLabel,
+    candidateLabel,
+    viewport,
+    comparison,
+    limits: { maxElements: maxExplanationElements, maxCandidates: maxExplanationCandidates },
+  })
   const finishedAt = now()
   const files = {
     sourceScreenshot: "files/browser/visual-compare/source.png",
     candidateScreenshot: "files/browser/visual-compare/candidate.png",
     diffScreenshot: "files/browser/visual-compare/diff.png",
     visualDiff: "files/browser/visual-compare/visual-diff.json",
+    ...(explanation ? { visualExplanation: "files/browser/visual-compare/visual-explanation.json" } : {}),
     summary: "files/browser/visual-compare/summary.json",
   }
   const summary = {
@@ -2483,7 +2547,10 @@ export async function runVisualCompareCommand({
       ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
       ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
     },
-    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions },
+    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates },
+    limitations: explanation
+      ? explanation.limitations
+      : ["visual explanations require source-url and candidate-url targets so WP Codebox can capture DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
     preview,
     viewport,
     startedAt,
@@ -2498,6 +2565,9 @@ export async function runVisualCompareCommand({
   }
   const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
   await writeFile(visualDiffPath, summaryJson)
+  if (explanation) {
+    await writeFile(visualExplanationPath, `${JSON.stringify(explanation, null, 2)}\n`)
+  }
   await writeFile(summaryPath, summaryJson)
 
   const artifact: BrowserProbeArtifact = {
@@ -2520,6 +2590,7 @@ export async function runVisualCompareCommand({
         mismatchPixels: comparison.mismatchPixels,
         totalPixels: comparison.totalPixels,
         dimensionMismatch: comparison.dimensionMismatch,
+        ...(explanation ? { explanation: files.visualExplanation } : {}),
       },
       viewport,
     },
@@ -2550,7 +2621,7 @@ async function resolveVisualCompareScreenshotPath(requestedPath: string, artifac
   }
 }
 
-async function captureVisualCompareUrl(page: import("playwright").Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean): Promise<string> {
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
     if (durationMs > 0) {
@@ -2570,8 +2641,224 @@ async function captureVisualCompareUrl(page: import("playwright").Page, targetUr
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
+  const domSnapshot = await captureVisualCompareDomSnapshot(page, maxExplanationCandidates)
   await page.screenshot({ path: outputPath, fullPage })
-  return page.url()
+  return { finalUrl: page.url(), domSnapshot }
+}
+
+async function captureVisualCompareDomSnapshot(page: Page, maxElements: number): Promise<VisualCompareDomSnapshot> {
+  return page.evaluate(({ maxElements: maxElementsInput, styleProperties, attributeNames }) => {
+    const maxElements = Math.max(1, Number(maxElementsInput) || 1)
+    const elements = Array.from(document.body?.querySelectorAll("*") ?? [])
+    const visibleElements = elements
+      .map((element) => elementSnapshot(element, styleProperties, attributeNames))
+      .filter((element): element is VisualCompareDomElementSnapshot => Boolean(element))
+
+    return {
+      url: window.location.href,
+      title: document.title || "",
+      elementCount: visibleElements.length,
+      capturedElements: visibleElements.slice(0, maxElements),
+      truncated: visibleElements.length > maxElements,
+    }
+
+    function elementSnapshot(element: Element, styles: string[], attributes: string[]): VisualCompareDomElementSnapshot | null {
+      const rect = element.getBoundingClientRect()
+      const computed = window.getComputedStyle(element)
+      if (rect.width <= 0 || rect.height <= 0 || computed.display === "none" || computed.visibility === "hidden" || computed.opacity === "0") {
+        return null
+      }
+      return {
+        path: elementPath(element),
+        tag: element.tagName.toLowerCase(),
+        text: compactText(element.textContent || "", 180),
+        attributes: Object.fromEntries(attributes.flatMap((name) => {
+          const value = element.getAttribute(name)
+          return value === null ? [] : [[name, compactText(value, 180)]]
+        })),
+        boundingBox: {
+          x: roundNumber(rect.x),
+          y: roundNumber(rect.y),
+          width: roundNumber(rect.width),
+          height: roundNumber(rect.height),
+        },
+        styles: Object.fromEntries(styles.map((name) => [name, computed.getPropertyValue(name)])),
+      }
+    }
+
+    function elementPath(element: Element): string {
+      const parts: string[] = []
+      let current: Element | null = element
+      while (current && current !== document.body && parts.length < 6) {
+        let part = current.tagName.toLowerCase()
+        const id = current.getAttribute("id")
+        if (id) {
+          part += `#${cssEscape(id)}`
+          parts.unshift(part)
+          break
+        }
+        const classes = Array.from(current.classList || []).slice(0, 2).map(cssEscape)
+        if (classes.length > 0) {
+          part += `.${classes.join(".")}`
+        }
+        const parent: Element | null = current.parentElement
+        if (parent) {
+          const sameTagSiblings = Array.from(parent.children).filter((child: Element) => child.tagName === current?.tagName)
+          if (sameTagSiblings.length > 1) {
+            part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`
+          }
+        }
+        parts.unshift(part)
+        current = parent
+      }
+      return parts.length > 0 ? parts.join(" > ") : element.tagName.toLowerCase()
+    }
+
+    function compactText(value: string, maxLength: number): string {
+      const compact = value.replace(/\s+/g, " ").trim()
+      return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact
+    }
+
+    function roundNumber(value: number): number {
+      return Math.round(value * 100) / 100
+    }
+
+    function cssEscape(value: string): string {
+      if (globalThis.CSS && typeof globalThis.CSS.escape === "function") {
+        return globalThis.CSS.escape(String(value))
+      }
+      return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&")
+    }
+  }, { maxElements, styleProperties: [...VISUAL_EXPLANATION_STYLE_PROPERTIES], attributeNames: [...VISUAL_EXPLANATION_ATTRIBUTE_NAMES] })
+}
+
+function createVisualCompareExplanation({
+  source,
+  candidate,
+  sourceLabel,
+  candidateLabel,
+  viewport,
+  comparison,
+  limits,
+}: {
+  source?: VisualCompareDomSnapshot
+  candidate?: VisualCompareDomSnapshot
+  sourceLabel: string
+  candidateLabel: string
+  viewport: BrowserProbeViewport | null
+  comparison: Awaited<ReturnType<typeof comparePngFiles>>
+  limits: { maxElements: number; maxCandidates: number }
+}): VisualCompareExplanation | undefined {
+  if (!source || !candidate) {
+    return undefined
+  }
+
+  const sourceElements = new Map(source.capturedElements.map((element) => [element.path, element]))
+  const candidateElements = new Map(candidate.capturedElements.map((element) => [element.path, element]))
+  const changed: VisualCompareElementDelta[] = []
+  const added: VisualCompareDomElementSnapshot[] = []
+  const removed: VisualCompareDomElementSnapshot[] = []
+
+  for (const sourceElement of source.capturedElements) {
+    const candidateElement = candidateElements.get(sourceElement.path)
+    if (!candidateElement) {
+      removed.push(sourceElement)
+      continue
+    }
+    const delta = visualCompareElementDelta(sourceElement, candidateElement)
+    if (delta) {
+      changed.push(delta)
+    }
+  }
+
+  for (const candidateElement of candidate.capturedElements) {
+    if (!sourceElements.has(candidateElement.path)) {
+      added.push(candidateElement)
+    }
+  }
+
+  const maxElements = limits.maxElements
+  const limitations = [
+    "visual explanations are heuristic evidence generated from URL target DOM snapshots and computed styles; pixel screenshots remain the source of visual truth",
+    "elements are matched by deterministic CSS-like paths, so large structural moves can appear as added and removed elements",
+  ]
+  if (source.truncated || candidate.truncated || changed.length > maxElements || added.length > maxElements || removed.length > maxElements) {
+    limitations.push("element explanation output was truncated to keep the artifact bounded")
+  }
+
+  return {
+    schema: "wp-codebox/visual-explanation/v1",
+    source: { label: sourceLabel, url: source.url, title: source.title, elementCount: source.elementCount, capturedElements: source.capturedElements.length, truncated: source.truncated },
+    candidate: { label: candidateLabel, url: candidate.url, title: candidate.title, elementCount: candidate.elementCount, capturedElements: candidate.capturedElements.length, truncated: candidate.truncated },
+    viewport,
+    mismatchRegions: comparison.regions,
+    limits,
+    truncation: {
+      changed: changed.length > maxElements,
+      added: added.length > maxElements,
+      removed: removed.length > maxElements,
+    },
+    summary: {
+      changedElements: changed.length,
+      addedElements: added.length,
+      removedElements: removed.length,
+      sourceCapturedElements: source.capturedElements.length,
+      candidateCapturedElements: candidate.capturedElements.length,
+    },
+    changes: changed.slice(0, maxElements),
+    added: added.slice(0, maxElements),
+    removed: removed.slice(0, maxElements),
+    limitations,
+  }
+}
+
+function visualCompareElementDelta(source: VisualCompareDomElementSnapshot, candidate: VisualCompareDomElementSnapshot): VisualCompareElementDelta | undefined {
+  const changes: VisualCompareElementDelta["changes"] = {}
+  if (source.text !== candidate.text) {
+    changes.text = { source: source.text, candidate: candidate.text }
+  }
+  if (visualCompareBoundingBoxChanged(source.boundingBox, candidate.boundingBox)) {
+    changes.boundingBox = {
+      source: source.boundingBox,
+      candidate: candidate.boundingBox,
+      delta: {
+        x: roundVisualDelta(candidate.boundingBox.x - source.boundingBox.x),
+        y: roundVisualDelta(candidate.boundingBox.y - source.boundingBox.y),
+        width: roundVisualDelta(candidate.boundingBox.width - source.boundingBox.width),
+        height: roundVisualDelta(candidate.boundingBox.height - source.boundingBox.height),
+      },
+    }
+  }
+  const attributes = visualCompareRecordDelta(source.attributes, candidate.attributes, true)
+  if (Object.keys(attributes).length > 0) {
+    changes.attributes = attributes
+  }
+  const styles = visualCompareRecordDelta(source.styles, candidate.styles, false) as Record<string, { source: string; candidate: string }>
+  if (Object.keys(styles).length > 0) {
+    changes.styles = styles
+  }
+  return Object.keys(changes).length > 0 ? { path: source.path, tag: source.tag, changes } : undefined
+}
+
+function visualCompareBoundingBoxChanged(source: VisualCompareDomElementSnapshot["boundingBox"], candidate: VisualCompareDomElementSnapshot["boundingBox"]): boolean {
+  return Math.abs(source.x - candidate.x) >= 0.5 || Math.abs(source.y - candidate.y) >= 0.5 || Math.abs(source.width - candidate.width) >= 0.5 || Math.abs(source.height - candidate.height) >= 0.5
+}
+
+function visualCompareRecordDelta(source: Record<string, string>, candidate: Record<string, string>, nullable: boolean): Record<string, { source: string | null; candidate: string | null }> {
+  const keys = [...new Set([...Object.keys(source), ...Object.keys(candidate)])]
+  const delta: Record<string, { source: string | null; candidate: string | null }> = {}
+  for (const key of keys) {
+    const sourceValue = source[key]
+    const candidateValue = candidate[key]
+    if (sourceValue !== candidateValue) {
+      delta[key] = { source: sourceValue ?? (nullable ? null : ""), candidate: candidateValue ?? (nullable ? null : "") }
+    }
+  }
+  return delta
+}
+
+function roundVisualDelta(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 async function comparePngFiles(sourcePath: string, candidatePath: string, diffPath: string, options: { threshold: number; includeAA: boolean; maxRegions: number }): Promise<{
