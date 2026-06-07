@@ -7,8 +7,6 @@ import { join, resolve } from "node:path"
 const repoRoot = resolve(import.meta.dirname, "..")
 const workspace = resolve(repoRoot, "artifacts", "browser-probe-web-performance-smoke")
 const pluginDir = join(workspace, "browser-web-performance-fixture")
-const recipePath = join(workspace, "recipe.json")
-const artifactsRoot = join(workspace, "artifacts")
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(pluginDir, { recursive: true })
@@ -22,45 +20,23 @@ add_action('wp_footer', function () {
 });
 `)
 
-await writeFile(recipePath, `${JSON.stringify({
-  schema: "wp-codebox/workspace-recipe/v1",
-  inputs: {
-    extraPlugins: [
-      {
-        source: "./browser-web-performance-fixture",
-        pluginFile: "browser-web-performance-fixture/browser-web-performance-fixture.php",
-        activate: true,
-      },
-    ],
-  },
-  workflow: {
-    steps: [
-      {
-        command: "wordpress.browser-probe",
-        args: [
-          "url=/",
-          "wait-for=load",
-          "duration=750ms",
-          "profile=low-end-mobile-slow-4g",
-          "capture=performance,memory,html",
-          "assert=lcp_ms<=10000",
-          "assert=fcp_ms<=10000",
-          "assert=ttfb_ms>=0",
-          "assert=nav_duration_ms>=0",
-        ],
-      },
-    ],
-  },
-  artifacts: {
-    directory: artifactsRoot,
-  },
-}, null, 2)}\n`)
+const passingRecipePath = await writeRecipe("passing", [
+  "url=/",
+  "wait-for=load",
+  "duration=750ms",
+  "profile=low-end-mobile-slow-4g",
+  "capture=performance,memory,html",
+  "assert=lcp_ms<=10000",
+  "assert=fcp_ms<=10000",
+  "assert=ttfb_ms>=0",
+  "assert=nav_duration_ms>=0",
+])
 
 const output = await runCli([
   "packages/cli/dist/index.js",
   "recipe-run",
   "--recipe",
-  recipePath,
+  passingRecipePath,
   "--json",
 ])
 
@@ -102,9 +78,66 @@ assert.equal(typeof summary.summary?.metrics?.browser_fcp_ms, "number", "summary
 assert.equal(typeof summary.summary?.metrics?.browser_ttfb_ms, "number", "summary metrics should expose browser_ttfb_ms")
 assert.equal(typeof summary.summary?.metrics?.browser_nav_duration_ms, "number", "summary metrics should expose browser_nav_duration_ms")
 
+const failingRecipePath = await writeRecipe("failing", [
+  "url=/",
+  "wait-for=load",
+  "duration=250ms",
+  "profile=desktop-chrome",
+  "capture=performance,memory,html",
+  "assert=lcp_ms<0",
+])
+
+const failingOutput = await runCli([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  failingRecipePath,
+  "--json",
+], { allowFailure: true })
+
+assert.equal(failingOutput.success, false, "impossible web performance budget should fail")
+assert.notEqual(failingOutput.__exitCode, 0, "failing web performance budget should set non-zero exit")
+const failingArtifactDirectory = failingOutput.artifacts?.directory ?? failingOutput.run?.artifactRefs?.find((ref: { kind?: string }) => ref.kind === "artifact-bundle")?.directory
+assert.equal(typeof failingArtifactDirectory, "string", "failing run should still return artifacts")
+const failingSummary = JSON.parse(await readFile(join(failingArtifactDirectory, "files", "browser", "summary.json"), "utf8"))
+const failingBudget = failingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "lcp_ms<0")
+assert.equal(failingSummary.context?.requested?.profile, "desktop-chrome", "failing summary should record requested profile")
+assert.equal(failingBudget.status, "fail")
+assert.equal(failingBudget.expectedBudget, 0)
+assert.equal(typeof failingBudget.observed, "number")
+assert.deepEqual(failingBudget.supportingArtifacts, ["files/browser/performance.json", "files/browser/memory.json"])
+
 console.log(`Browser probe web performance smoke passed: ${artifactDirectory}`)
 
-async function runCli(args: string[]): Promise<any> {
+async function writeRecipe(name: string, args: string[]): Promise<string> {
+  const recipePath = join(workspace, `${name}.recipe.json`)
+  await writeFile(recipePath, `${JSON.stringify({
+    schema: "wp-codebox/workspace-recipe/v1",
+    inputs: {
+      extraPlugins: [
+        {
+          source: "./browser-web-performance-fixture",
+          pluginFile: "browser-web-performance-fixture/browser-web-performance-fixture.php",
+          activate: true,
+        },
+      ],
+    },
+    workflow: {
+      steps: [
+        {
+          command: "wordpress.browser-probe",
+          args,
+        },
+      ],
+    },
+    artifacts: {
+      directory: join(workspace, `${name}-artifacts`),
+    },
+  }, null, 2)}\n`)
+  return recipePath
+}
+
+async function runCli(args: string[], options: { allowFailure?: boolean } = {}): Promise<any> {
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
@@ -120,7 +153,10 @@ async function runCli(args: string[]): Promise<any> {
   })
 
   const exitCode = await new Promise<number | null>((resolveExit) => child.once("exit", (code) => resolveExit(code)))
-  assert.equal(exitCode, 0, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   assert.ok(stdout.trim().length > 0, `CLI should emit JSON. STDERR:\n${stderr}`)
-  return JSON.parse(stdout)
+  const output = JSON.parse(stdout)
+  if (!options.allowFailure) {
+    assert.equal(exitCode, 0, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
+  }
+  return { ...output, __exitCode: exitCode }
 }
