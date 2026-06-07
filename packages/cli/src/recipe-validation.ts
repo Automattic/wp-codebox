@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { evaluateRecipeSourcePolicy, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
@@ -21,9 +21,32 @@ export const defaultPolicy: RuntimePolicy = {
 
 const supportedRecipeCommands = new Set(recipeCommandDefinitions().map((command) => command.id))
 
-export function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe {
-  const recipe = JSON.parse(raw) as WorkspaceRecipe
+export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
+  return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
+}
 
+export function parseWorkspaceRecipe(raw: string, recipePath: string): WorkspaceRecipe {
+  const recipe = parseWorkspaceRecipeJson(raw)
+  normalizeWorkspaceRecipeCompatibility(recipe)
+  validateWorkspaceRecipeShape(recipe, recipePath)
+
+  return recipe
+}
+
+export function parseWorkspaceRecipeJson(raw: string): WorkspaceRecipe {
+  return JSON.parse(raw) as WorkspaceRecipe
+}
+
+export function normalizeWorkspaceRecipeCompatibility(recipe: WorkspaceRecipe): WorkspaceRecipe {
+  if (recipe.inputs?.extraPlugins !== undefined) {
+    recipe.inputs.extra_plugins ??= recipe.inputs.extraPlugins
+    delete recipe.inputs.extraPlugins
+  }
+
+  return recipe
+}
+
+export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath: string): void {
   if (recipe.schema !== "wp-codebox/workspace-recipe/v1") {
     throw new Error(`Unsupported recipe schema in ${recipePath}`)
   }
@@ -107,7 +130,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
     }
   }
 
-  const rawExtraPlugins = recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins
+  const rawExtraPlugins = recipe.inputs?.extra_plugins
   if (rawExtraPlugins && !Array.isArray(rawExtraPlugins)) {
     throw new Error(`Recipe extra_plugins must be an array: ${recipePath}`)
   }
@@ -186,7 +209,6 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
     }
   }
 
-  return recipe
 }
 
 function validateRecipeRuntimePreview(preview: RuntimePreviewSpec | undefined, recipePath: string): void {
@@ -334,6 +356,10 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
 }
 
 export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: string): Promise<RecipeValidationIssue[]> {
+  return validateWorkspaceRecipeSemantics(recipe, recipePath)
+}
+
+export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, recipePath: string): Promise<RecipeValidationIssue[]> {
   const recipeDirectory = dirname(recipePath)
   const issues: RecipeValidationIssue[] = []
   const addIssue = (code: string, path: string, message: string): void => {

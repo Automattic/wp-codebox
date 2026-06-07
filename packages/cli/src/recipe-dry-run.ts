@@ -1,9 +1,8 @@
-import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { serializeError } from "./output.js"
 import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
-import { hasExplicitSiteSeedSelectors, parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
+import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 
 export interface RecipeDryRunOptions {
   recipePath: string
@@ -237,8 +236,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
   const recipePath = resolve(options.recipePath)
   try {
     const recipeDirectory = dirname(recipePath)
-    const raw = await readFile(recipePath, "utf8")
-    const recipe = parseWorkspaceRecipe(raw, recipePath)
+    const recipe = await loadWorkspaceRecipe(recipePath)
     const issues = await validateWorkspaceRecipe(recipe, recipePath)
 
     if (issues.length > 0) {

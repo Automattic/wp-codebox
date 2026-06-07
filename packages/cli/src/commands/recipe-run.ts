@@ -14,7 +14,7 @@ import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStep
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
-import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
+import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 
 interface RecipeRunOptions {
@@ -787,7 +787,7 @@ function recipeArtifactPointerPaths(directory: string, runtime: RuntimeInfo | un
 async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const recipePath = resolve(options.recipePath)
   const recipeDirectory = dirname(recipePath)
-  const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
+  const recipe = await loadWorkspaceRecipe(recipePath)
   const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
   const runRegistry = new RuntimeRunRegistry(options.runRegistryDirectory ?? defaultRunRegistryDirectory(configuredArtifactsDirectory))
   const startedAtMs = Date.now()
@@ -1463,8 +1463,7 @@ async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recip
 async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeValidateOutput> {
   const recipePath = resolve(options.recipePath)
   try {
-    const raw = await readFile(recipePath, "utf8")
-    const recipe = parseWorkspaceRecipe(raw, recipePath)
+    const recipe = await loadWorkspaceRecipe(recipePath)
     const issues = await validateWorkspaceRecipe(recipe, recipePath)
 
     return {

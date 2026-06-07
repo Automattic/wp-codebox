@@ -13,6 +13,7 @@ const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
 const externalUntrustedHostRecipePath = resolve(workspace, "external-untrusted-host-recipe.json")
 const externalStrictDigestRecipePath = resolve(workspace, "external-strict-digest-recipe.json")
+const legacyExtraPluginsRecipePath = resolve(workspace, "legacy-extra-plugins-recipe.json")
 const distributionRecipePath = resolve(workspace, "distribution-recipe.json")
 const invalidDistributionRecipePath = resolve(workspace, "invalid-distribution-recipe.json")
 const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
@@ -182,6 +183,19 @@ const externalRecipe = {
 
 writeFileSync(externalRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
 writeFileSync(externalDisabledRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
+writeFileSync(legacyExtraPluginsRecipePath, `${JSON.stringify({
+  ...externalRecipe,
+  inputs: {
+    extraPlugins: [
+      {
+        source: "../../examples/simple-plugin",
+        slug: "simple-plugin",
+        pluginFile: "simple-plugin/simple-plugin.php",
+        activate: false,
+      },
+    ],
+  },
+}, null, 2)}\n`)
 writeFileSync(externalUntrustedHostRecipePath, `${JSON.stringify({
   ...externalRecipe,
   inputs: {
@@ -416,6 +430,21 @@ assert.equal(externalOutput.plan.extra_plugins[0].provenance.resolvedUrl, "https
 assert.equal(externalOutput.plan.extra_plugins[1].sourceType, "https_zip")
 assert.equal(externalOutput.plan.extra_plugins[1].provenance.kind, "https_zip")
 assert.equal(externalOutput.plan.extra_plugins[1].provenance.policy.host, "example.com")
+
+const legacyExtraPluginsResult = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  legacyExtraPluginsRecipePath,
+  "--dry-run",
+  "--json",
+], { cwd: root, encoding: "utf8" })
+
+assert.equal(legacyExtraPluginsResult.status, 0, legacyExtraPluginsResult.stderr || legacyExtraPluginsResult.stdout)
+const legacyExtraPluginsOutput = JSON.parse(legacyExtraPluginsResult.stdout)
+assert.equal(legacyExtraPluginsOutput.success, true)
+assert.equal(legacyExtraPluginsOutput.plan.extra_plugins.length, 1)
+assert.equal(legacyExtraPluginsOutput.plan.extra_plugins[0].slug, "simple-plugin")
 
 const externalUntrustedHostResult = spawnSync(process.execPath, [
   cli,
