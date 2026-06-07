@@ -564,6 +564,8 @@ export interface BrowserStepAssertion {
   advisory?: boolean
   message?: string
   selector?: string
+  frameSelector?: string
+  frameUrl?: string
   name?: string
   state?: string
   expression?: string

@@ -16,10 +16,12 @@ await writeFile(join(pluginDir, "browser-assertion-fixture.php"), `<?php
  * Plugin Name: Browser Assertion Fixture
  */
 add_action('wp_footer', function () {
+    $frame_srcdoc = esc_attr('<!doctype html><html><body><div id="frame-target" data-frame-state="ready">Frame Target Ready</div><ul id="frame-list"><li>Alpha</li><li>Beta</li></ul></body></html>');
     echo '<style>.wp-codebox-hidden-fixture{display:none}</style>';
     echo '<div id="probe-target" data-state="ready">Probe Target Ready</div>';
     echo '<div id="probe-hidden" class="wp-codebox-hidden-fixture">Hidden Fixture</div>';
     echo '<ul id="probe-list"><li>One</li><li>Two</li></ul>';
+    echo '<iframe id="probe-frame" title="Probe Frame" srcdoc="' . $frame_srcdoc . '"></iframe>';
 });
 `)
 
@@ -34,6 +36,10 @@ const passing = await runRecipe("passing", [
   "assert=count:#probe-list li>=2",
   "assert=text:#probe-target contains Target Ready",
   "assert=attr:#probe-target[data-state]=ready",
+  "assert=frame:#probe-frame|exists:#frame-target",
+  "assert=frame:#probe-frame|text:#frame-target contains Frame Target Ready",
+  "assert=frame:#probe-frame|count:#frame-list li=2",
+  "assert=frame:#probe-frame|attr:#frame-target[data-frame-state]=ready",
   "assert=no-console-errors",
   "assert=no-page-errors",
   "assert=no-errors",
@@ -44,10 +50,14 @@ const passing = await runRecipe("passing", [
 
 assert.equal(passing.success, true, passing.error?.message ?? "passing assertions should succeed")
 const passingSummary = await readSummary(passing)
-assert.equal(passingSummary.assertions.total, 13)
+assert.equal(passingSummary.assertions.total, 17)
 assert.equal(passingSummary.assertions.failed, 0)
-assert.equal(passingSummary.summary.assertions.total, 13)
+assert.equal(passingSummary.summary.assertions.total, 17)
 assert.equal(passingSummary.summary.assertions.failed, 0)
+const passingFrameAssertion = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "frame:#probe-frame|exists:#frame-target")
+assert.equal(passingFrameAssertion.status, "pass")
+assert.equal(passingFrameAssertion.frameSelector, "#probe-frame")
+assert.equal(typeof passingFrameAssertion.frameUrl, "string")
 const passingRequestBudget = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "request-count-by-type:document>=1")
 assert.equal(passingRequestBudget.status, "pass")
 assert.equal(passingRequestBudget.expectedBudget, 1)
@@ -58,7 +68,7 @@ assert.equal(passingMetricBudget.status, "pass")
 assert.equal(passingMetricBudget.expectedBudget, 0)
 assert.equal(typeof passingMetricBudget.observed, "number")
 assert.deepEqual(passingMetricBudget.supportingArtifacts, ["files/browser/performance.json", "files/browser/memory.json"])
-assert.equal(commandOutput(passing).summary.assertions.total, 13, "command JSON should include assertion totals")
+assert.equal(commandOutput(passing).summary.assertions.total, 17, "command JSON should include assertion totals")
 
 const advisory = await runRecipe("advisory", [
   "url=/",

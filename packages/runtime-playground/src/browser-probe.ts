@@ -1,4 +1,4 @@
-import type { Page } from "playwright"
+import type { Frame, Page } from "playwright"
 import type {
   BrowserProbeCheckpointRecord,
   BrowserProbeMemoryArtifact,
@@ -264,6 +264,7 @@ export interface BrowserProbeAssertionSpec {
   advisory: boolean
   type: "exists" | "not-exists" | "visible" | "hidden" | "count" | "text" | "attr" | "no-console-errors" | "no-page-errors" | "no-errors" | "request-count-by-host" | "request-count-by-type" | "total-transfer-size" | "metric"
   selector?: string
+  frameSelector?: string
   operator?: "=" | "==" | "!=" | ">" | ">=" | "<" | "<="
   expected?: string | number | boolean
   name?: string
@@ -310,10 +311,14 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
     raw = raw.slice("advisory:".length).trim()
   }
 
+  const framed = parseBrowserProbeAssertionFrame(raw)
+  const frameSelector = framed.frameSelector
+  raw = framed.raw
+
   for (const type of ["not-exists", "exists", "visible", "hidden"] as const) {
     const prefix = `${type}:`
     if (raw.startsWith(prefix)) {
-      return requireSelectorAssertion(value, advisory, type, raw.slice(prefix.length).trim())
+      return requireSelectorAssertion(value, advisory, type, raw.slice(prefix.length).trim(), frameSelector)
     }
   }
 
@@ -327,6 +332,7 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
       advisory,
       type: "count",
       selector: parsed[1].trim(),
+      frameSelector,
       operator: parsed[2] as BrowserProbeAssertionSpec["operator"],
       expected: Number.parseInt(parsed[3], 10),
     }
@@ -337,7 +343,7 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
     if (!parsed) {
       throw new Error(`wordpress.browser-probe text assertion must look like text:<selector> contains <text>: ${value}`)
     }
-    return { raw: value, advisory, type: "text", selector: parsed[1].trim(), operator: "contains" as BrowserProbeAssertionSpec["operator"], expected: parsed[2] }
+    return { raw: value, advisory, type: "text", selector: parsed[1].trim(), frameSelector, operator: "contains" as BrowserProbeAssertionSpec["operator"], expected: parsed[2] }
   }
 
   if (raw.startsWith("attr:")) {
@@ -348,7 +354,11 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
     if (!parsed) {
       throw new Error(`wordpress.browser-probe attr assertion must look like attr:<selector>[name][=value] or attr:<selector>@name[=value]: ${value}`)
     }
-    return { raw: value, advisory, type: "attr", selector: parsed[1].trim(), name: parsed[2].trim(), operator: typeof parsed[3] === "undefined" ? undefined : "=", expected: parsed[3] }
+    return { raw: value, advisory, type: "attr", selector: parsed[1].trim(), frameSelector, name: parsed[2].trim(), operator: typeof parsed[3] === "undefined" ? undefined : "=", expected: parsed[3] }
+  }
+
+  if (frameSelector) {
+    throw new Error(`wordpress.browser-probe frame assertions support selector assertions only: ${value}`)
   }
 
   if (raw === "no-console-errors" || raw === "no-page-errors" || raw === "no-errors") {
@@ -379,6 +389,26 @@ function parseBrowserProbeAssertion(value: string): BrowserProbeAssertionSpec {
   }
 
   throw new Error(`wordpress.browser-probe assert supports exists, not-exists, visible, hidden, count, text contains, attr, no-console-errors, no-page-errors, no-errors, request-count-by-host, request-count-by-type, total-transfer-size, and metric budgets: ${value}`)
+}
+
+function parseBrowserProbeAssertionFrame(raw: string): { raw: string; frameSelector?: string } {
+  const prefix = "frame:"
+  if (!raw.startsWith(prefix)) {
+    return { raw }
+  }
+
+  const separator = raw.indexOf("|")
+  if (separator === -1) {
+    throw new Error(`wordpress.browser-probe frame assertion must look like frame:<iframe-selector>|<assertion>: ${raw}`)
+  }
+
+  const frameSelector = raw.slice(prefix.length, separator).trim()
+  const assertion = raw.slice(separator + 1).trim()
+  if (!frameSelector || !assertion) {
+    throw new Error(`wordpress.browser-probe frame assertion requires an iframe selector and assertion: ${raw}`)
+  }
+
+  return { raw: assertion, frameSelector }
 }
 
 function parseBudgetBodyOrUndefined(body: string): { name?: string; operator: NonNullable<BrowserProbeAssertionSpec["operator"]>; expected: number } | undefined {
@@ -415,12 +445,14 @@ function parseBudgetBody(body: string, raw: string, requiresName = true): { name
   return { name, operator, expected }
 }
 
-function requireSelectorAssertion(raw: string, advisory: boolean, type: BrowserProbeAssertionSpec["type"], selector: string): BrowserProbeAssertionSpec {
+function requireSelectorAssertion(raw: string, advisory: boolean, type: BrowserProbeAssertionSpec["type"], selector: string, frameSelector?: string): BrowserProbeAssertionSpec {
   if (!selector) {
     throw new Error(`wordpress.browser-probe ${type} assertion requires a selector: ${raw}`)
   }
-  return { raw, advisory, type, selector }
+  return { raw, advisory, type, selector, frameSelector }
 }
+
+type BrowserProbeDomTarget = Page | Frame
 
 async function executeBrowserProbeAssertion(
   page: Page,
@@ -436,44 +468,47 @@ async function executeBrowserProbeAssertion(
     assertion: assertion.raw,
     advisory: assertion.advisory,
     selector: assertion.selector,
+    frameSelector: assertion.frameSelector,
     name: assertion.name,
     state: assertion.type,
     operator: assertion.operator,
     expected: assertion.expected,
   }
+  const target = await browserProbeAssertionTarget(page, assertion)
+  const targetBase = assertion.frameSelector ? { ...base, frameUrl: target.url() } : base
 
   switch (assertion.type) {
     case "exists": {
-      const actual = await page.locator(assertion.selector ?? "").count()
-      return finalizeProbeAssertion(base, actual, assertion.expected, actual > 0)
+      const actual = await target.locator(assertion.selector ?? "").count()
+      return finalizeProbeAssertion(targetBase, actual, assertion.expected, actual > 0)
     }
     case "not-exists": {
-      const actual = await page.locator(assertion.selector ?? "").count()
-      return finalizeProbeAssertion(base, actual, assertion.expected, actual === 0)
+      const actual = await target.locator(assertion.selector ?? "").count()
+      return finalizeProbeAssertion(targetBase, actual, assertion.expected, actual === 0)
     }
     case "visible": {
-      const actual = await page.locator(assertion.selector ?? "").first().isVisible().catch(() => false)
-      return finalizeProbeAssertion(base, actual, assertion.expected, actual === true)
+      const actual = await target.locator(assertion.selector ?? "").first().isVisible().catch(() => false)
+      return finalizeProbeAssertion(targetBase, actual, assertion.expected, actual === true)
     }
     case "hidden": {
-      const locator = page.locator(assertion.selector ?? "")
+      const locator = target.locator(assertion.selector ?? "")
       const count = await locator.count()
       const visible = count > 0 ? await locator.first().isVisible().catch(() => false) : false
-      return finalizeProbeAssertion(base, { count, visible }, assertion.expected, !visible)
+      return finalizeProbeAssertion(targetBase, { count, visible }, assertion.expected, !visible)
     }
     case "count": {
-      const actual = await page.locator(assertion.selector ?? "").count()
-      return finalizeProbeAssertion(base, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "="))
+      const actual = await target.locator(assertion.selector ?? "").count()
+      return finalizeProbeAssertion(targetBase, actual, assertion.expected, compareNumbers(actual, Number(assertion.expected), assertion.operator ?? "="))
     }
     case "text": {
-      const actual = await page.locator(assertion.selector ?? "").first().textContent().catch(() => null)
+      const actual = await target.locator(assertion.selector ?? "").first().textContent().catch(() => null)
       const expected = String(assertion.expected ?? "")
-      return finalizeProbeAssertion(base, actual, expected, typeof actual === "string" && actual.includes(expected))
+      return finalizeProbeAssertion(targetBase, actual, expected, typeof actual === "string" && actual.includes(expected))
     }
     case "attr": {
-      const actual = await page.locator(assertion.selector ?? "").first().getAttribute(assertion.name ?? "").catch(() => null)
+      const actual = await target.locator(assertion.selector ?? "").first().getAttribute(assertion.name ?? "").catch(() => null)
       const passed = typeof assertion.expected === "undefined" ? actual !== null : actual === String(assertion.expected)
-      return finalizeProbeAssertion(base, actual, assertion.expected, passed)
+      return finalizeProbeAssertion(targetBase, actual, assertion.expected, passed)
     }
     case "no-console-errors": {
       const actual = consoleMessages.filter((message) => message.type === "error").length
@@ -508,6 +543,26 @@ async function executeBrowserProbeAssertion(
       return finalizeProbeAssertion(base, observed, assertion.expected, passed, ["files/browser/performance.json", "files/browser/memory.json"])
     }
   }
+}
+
+async function browserProbeAssertionTarget(page: Page, assertion: BrowserProbeAssertionSpec): Promise<BrowserProbeDomTarget> {
+  if (!assertion.frameSelector) {
+    return page
+  }
+
+  const locator = page.locator(assertion.frameSelector).first()
+  await locator.waitFor({ state: "attached", timeout: 30_000 })
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 30_000) {
+    const element = await locator.elementHandle().catch(() => null)
+    const frame = await element?.contentFrame().catch(() => null)
+    if (frame) {
+      return frame
+    }
+    await page.waitForTimeout(100)
+  }
+
+  throw new Error(`wordpress.browser-probe frame assertion could not resolve iframe: ${assertion.frameSelector}`)
 }
 
 function finalizeProbeAssertion(

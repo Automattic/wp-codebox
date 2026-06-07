@@ -987,9 +987,13 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     }
 
     for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
-      const normalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
+      const rawNormalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
+      const frameSeparator = rawNormalized.startsWith("frame:") ? rawNormalized.indexOf("|") : -1
+      const normalized = frameSeparator > -1 ? rawNormalized.slice(frameSeparator + 1).trim() : rawNormalized
+      const frameAssertionIsSupported = frameSeparator === -1 || normalized.startsWith("exists:") || normalized.startsWith("not-exists:") || normalized.startsWith("visible:") || normalized.startsWith("hidden:") || normalized.startsWith("count:") || normalized.startsWith("text:") || normalized.startsWith("attr:")
       if (
-        !normalized.startsWith("exists:")
+        !frameAssertionIsSupported
+        || !normalized.startsWith("exists:")
         && !normalized.startsWith("not-exists:")
         && !normalized.startsWith("visible:")
         && !normalized.startsWith("hidden:")
