@@ -5,6 +5,14 @@ assertEqual(success.status, "succeeded", "completed success normalizes to succee
 assertEqual(success.success, true, "succeeded result is successful")
 assertEqual(success.refs.runtimes[0]?.id, "runtime-ok", "runtime ref is exposed")
 
+const explicitArtifacts = normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  artifacts: [{ id: "screenshot-1", kind: "screenshot", path: "/artifacts/screenshot.png" }],
+})
+assertEqual(explicitArtifacts.artifacts[0]?.kind, "screenshot", "explicit top-level artifact kind is preserved")
+assertEqual(explicitArtifacts.artifacts[0]?.path, "/artifacts/screenshot.png", "explicit top-level artifact path is preserved")
+
 const failed = normalizeAgentTaskRunResult({ success: false, status: "completed" })
 assertEqual(failed.status, "failed", "completed failure normalizes to failed")
 assertEqual(failed.failure_classification, "runtime", "failed result classifies as runtime")

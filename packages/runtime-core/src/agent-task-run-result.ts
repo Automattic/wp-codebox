@@ -116,6 +116,10 @@ function normalizeStatus(result: Record<string, unknown>, agentResult: Record<st
 
 function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record<string, unknown>, completionOutcome: Record<string, unknown>): AgentTaskRunArtifactRef[] {
   const artifacts: AgentTaskRunArtifactRef[] = []
+  for (const artifact of arrayObjects(result.artifacts)) {
+    appendUniqueArtifact(artifacts, artifactFromResultArtifact(artifact))
+  }
+
   for (const ref of arrayObjects(runRecord(result).artifactRefs)) {
     const digest = objectValue(ref.digest)
     appendUniqueArtifact(artifacts, stripUndefined({
@@ -161,6 +165,18 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   }))
 
   return artifacts
+}
+
+function artifactFromResultArtifact(artifact: Record<string, unknown>): AgentTaskRunArtifactRef {
+  return stripUndefined({
+    id: stringValue(artifact.id),
+    kind: stringValue(artifact.kind),
+    path: stringValue(artifact.path),
+    url: stringValue(artifact.url) || stringValue(artifact.uri),
+    sha256: stringValue(artifact.sha256),
+    size_bytes: numberValue(artifact.size_bytes) ?? numberValue(artifact.sizeBytes),
+    metadata: objectValue(artifact.metadata),
+  }) as AgentTaskRunArtifactRef
 }
 
 function artifactFromAgentResult(id: string, kind: string, root: string, metadata: Record<string, unknown>): AgentTaskRunArtifactRef {
