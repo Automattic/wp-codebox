@@ -98,6 +98,11 @@ export interface ParsedRecipeSource {
   wporgSlug?: string
 }
 
+export interface RecipeSourcePolicyIssue {
+  code: string
+  message: string
+}
+
 export const ALLOW_NETWORK_DOWNLOADS_ENV = "WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS"
 export const ALLOWED_DOWNLOAD_HOSTS_ENV = "WP_CODEBOX_ALLOWED_DOWNLOAD_HOSTS"
 export const REQUIRE_SOURCE_SHA256_ENV = "WP_CODEBOX_REQUIRE_SOURCE_SHA256"
@@ -115,6 +120,43 @@ const PHP_SCOPER_URL = `https://github.com/humbug/php-scoper/releases/download/$
 
 export function isSha256(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value)
+}
+
+export function evaluateRecipeSourcePolicy(source: ParsedRecipeSource, expectedSha256?: string): RecipeSourcePolicyIssue[] {
+  if (source.type === "local") {
+    return []
+  }
+
+  const issues: RecipeSourcePolicyIssue[] = []
+  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
+    issues.push({
+      code: "network-downloads-disabled",
+      message: `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,
+    })
+  }
+
+  if (!allowedDownloadHosts().includes(source.host)) {
+    issues.push({
+      code: "download-host-not-allowed",
+      message: `External recipe source host is not allowed: ${source.host}`,
+    })
+  }
+
+  if (expectedSha256 !== undefined && !isSha256(expectedSha256)) {
+    issues.push({
+      code: "invalid-source-sha256",
+      message: "External recipe source sha256 must be a 64-character hex digest.",
+    })
+  }
+
+  if (sourceSha256Required() && !expectedSha256) {
+    issues.push({
+      code: "missing-source-sha256",
+      message: `External recipe sources require sha256 when ${REQUIRE_SOURCE_SHA256_ENV}=1.`,
+    })
+  }
+
+  return issues
 }
 
 export function sourceSha256Required(): boolean {
@@ -663,12 +705,9 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
     }
   }
 
-  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
-    throw new Error(`External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`)
-  }
-
-  if (!allowedDownloadHosts().includes(source.host)) {
-    throw new Error(`External recipe source host is not allowed: ${source.host}`)
+  const [policyIssue] = evaluateRecipeSourcePolicy(source, expectedSha256)
+  if (policyIssue) {
+    throw new Error(policyIssue.message)
   }
 
   const directory = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))

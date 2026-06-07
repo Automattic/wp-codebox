@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
-import { ALLOW_NETWORK_DOWNLOADS_ENV, REQUIRE_SOURCE_SHA256_ENV, allowedDownloadHosts, isSha256, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile, sourceSha256Required } from "./recipe-sources.js"
+import { evaluateRecipeSourcePolicy, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
   code: string
@@ -1302,28 +1302,8 @@ function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: 
 }
 
 function validateRecipeSource(source: ReturnType<typeof recipeSource>, issuePath: string, addIssue: (code: string, path: string, message: string) => void, expectedSha256?: string): void {
-  if (source.type === "local") {
-    return
-  }
-
-  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
-    addIssue(
-      "network-downloads-disabled",
-      issuePath,
-      `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,
-    )
-  }
-
-  if (!allowedDownloadHosts().includes(source.host)) {
-    addIssue("download-host-not-allowed", issuePath, `External recipe source host is not allowed: ${source.host}`)
-  }
-
-  if (expectedSha256 !== undefined && !isSha256(expectedSha256)) {
-    addIssue("invalid-source-sha256", issuePath, "External recipe source sha256 must be a 64-character hex digest.")
-  }
-
-  if (sourceSha256Required() && !expectedSha256) {
-    addIssue("missing-source-sha256", issuePath, `External recipe sources require sha256 when ${REQUIRE_SOURCE_SHA256_ENV}=1.`)
+  for (const issue of evaluateRecipeSourcePolicy(source, expectedSha256)) {
+    addIssue(issue.code, issuePath, issue.message)
   }
 }
 
