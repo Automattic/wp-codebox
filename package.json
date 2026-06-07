@@ -106,6 +106,7 @@
     "browser-lifecycle-observer-smoke": "tsx scripts/browser-lifecycle-observer-smoke.ts",
     "browser-probe-pre-page-script-smoke": "tsx scripts/browser-probe-pre-page-script-smoke.ts",
     "browser-actions-artifact-smoke": "tsx scripts/browser-actions-artifact-smoke.ts",
+    "browser-actions-painted-readiness-smoke": "tsx scripts/browser-actions-painted-readiness-smoke.ts",
     "browser-scenario-artifact-smoke": "tsx scripts/browser-scenario-artifact-smoke.ts",
     "browser-visual-compare-smoke": "tsx scripts/browser-visual-compare-smoke.ts",
     "browser-action-visual-compare-smoke": "tsx scripts/browser-action-visual-compare-smoke.ts",
