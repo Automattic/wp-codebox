@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises"
-import { join, relative } from "node:path"
+import { dirname, join, relative } from "node:path"
 import {
   buildRuntimeReferenceManifest,
   buildRuntimeReplayReferenceIndex,
@@ -11,6 +11,7 @@ import {
   stripUndefined,
   type ArtifactEvidenceRef,
   type ArtifactBundle,
+  type ArtifactDurablePreviewRef,
   type ArtifactManifest,
   type ArtifactManifestFile,
   type ArtifactPreview,
@@ -120,6 +121,12 @@ export class ArtifactBundleBuilder {
     const preview = await source.previewInfo(createdAt, spec.previewHoldSeconds)
     const browser = source.browserReviewSummary()
     const runtime = await source.info()
+    const durablePreview = await buildDurableStaticPreview({
+      artifactRoot: source.artifactRoot,
+      createdAt,
+      probes: source.browserArtifacts(),
+      redactor,
+    })
     const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])
@@ -152,6 +159,7 @@ export class ArtifactBundleBuilder {
       createdAt,
       runtime,
       preview,
+      durablePreview: durablePreview?.preview,
       events: source.events,
       packages: provenance.packages,
       artifactBundleRef,
@@ -162,6 +170,7 @@ export class ArtifactBundleBuilder {
       createdAt,
       runtime,
       preview,
+      durablePreview: durablePreview?.preview,
       contentDigest,
       packages: provenance.packages,
       browser,
@@ -172,6 +181,7 @@ export class ArtifactBundleBuilder {
         runtimeLog: relative(source.artifactRoot, runtimeLogPath),
         runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
         runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
+        durablePreview: durablePreview?.preview.manifest.path,
         browserSummary: browser ? browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" : undefined,
       },
     })
@@ -238,6 +248,7 @@ export class ArtifactBundleBuilder {
       runtimeReferenceIndex: relative(source.artifactRoot, runtimeReferenceIndexPath),
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
       previewEvidence: relative(source.artifactRoot, previewEvidencePath),
+      ...(durablePreview ? { durablePreview: durablePreview.preview.manifest.path } : {}),
       mountDiffs: relative(source.artifactRoot, diffsPath),
       ...(runtimeSnapshotFiles.length > 0 ? { runtimeSnapshots: runtimeSnapshotFiles.map((file) => relative(source.artifactRoot, file.path)) } : {}),
       ...(browser ? { browser: browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" } : {}),
@@ -281,6 +292,7 @@ export class ArtifactBundleBuilder {
       artifactManifestFile(runtimeReferenceIndexPath, "runtime-reference-index", "application/json"),
       artifactManifestFile(runtimeReplayReferenceIndexPath, "runtime-replay-index", "application/json"),
       artifactManifestFile(previewEvidencePath, "preview-evidence", "application/json"),
+      ...(durablePreview ? durablePreview.manifestFiles : []),
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
       ...source.pluginCheckManifestFiles(),
@@ -293,6 +305,9 @@ export class ArtifactBundleBuilder {
     ]
 
     metadata.preview = preview
+    if (durablePreview) {
+      metadata.durablePreview = durablePreview.preview
+    }
     metadata.previewSessionEvidence = previewSessionEvidenceRef
 
     await writeRedactedArtifact(redactor, blueprintAfterPath, source.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
@@ -409,6 +424,7 @@ export class ArtifactBundleBuilder {
       reviewPath,
       previewSessionEvidencePath,
       previewSessionEvidenceRef,
+      ...(durablePreview ? { durablePreviewPath: join(source.artifactRoot, durablePreview.preview.manifest.path), durablePreview: durablePreview.preview } : {}),
       runtimeReferenceManifestPath,
       runtimeReferenceIndexPath,
       runtimeReplayReferenceIndexPath,
@@ -423,6 +439,7 @@ export class ArtifactBundleBuilder {
 function buildPreviewEvidence({
   artifactBundleRef,
   createdAt,
+  durablePreview,
   events,
   packages,
   preview,
@@ -430,6 +447,7 @@ function buildPreviewEvidence({
 }: {
   artifactBundleRef: RuntimeEpisodeTraceRef
   createdAt: string
+  durablePreview?: ArtifactDurablePreviewRef
   events: LifecycleEvent[]
   packages?: ArtifactPreviewEvidence["components"]["packages"]
   preview?: ArtifactPreview
@@ -483,6 +501,7 @@ function buildPreviewEvidence({
       ...(preview?.publicUrl ? { publicUrl: safePreviewUrlRef(preview.publicUrl) } : {}),
       ...(preview?.localUrl ? { localUrl: safePreviewUrlRef(preview.localUrl) } : {}),
       ...(preview?.siteUrl ? { siteUrl: safePreviewUrlRef(preview.siteUrl) } : {}),
+      ...(durablePreview ? { durablePreview } : {}),
     },
     readiness: {
       ready,
@@ -564,6 +583,7 @@ function buildPreviewSessionEvidence({
   browser,
   contentDigest,
   createdAt,
+  durablePreview,
   packages,
   paths,
   preview,
@@ -573,6 +593,7 @@ function buildPreviewSessionEvidence({
   browser?: ArtifactReviewBrowserSummary
   contentDigest: string
   createdAt: string
+  durablePreview?: ArtifactDurablePreviewRef
   packages?: ArtifactPackageProvenance
   paths: {
     manifest: string
@@ -581,6 +602,7 @@ function buildPreviewSessionEvidence({
     runtimeLog: string
     runtimeReferenceManifest: string
     runtimeReplayReferenceIndex: string
+    durablePreview?: string
     browserSummary?: string
   }
   preview?: ArtifactPreview
@@ -624,6 +646,7 @@ function buildPreviewSessionEvidence({
       runtimeReferenceManifest: evidenceRef(paths.runtimeReferenceManifest, "runtime-reference-manifest"),
       runtimeReplayReferenceIndex: evidenceRef(paths.runtimeReplayReferenceIndex, "runtime-replay-index"),
       browserSummary: browser && paths.browserSummary ? evidenceRef(paths.browserSummary, "browser-summary") : undefined,
+      durablePreview: durablePreview && paths.durablePreview ? evidenceRef(paths.durablePreview, "static-artifact-preview") : undefined,
     }),
     components: packages,
   })
@@ -631,6 +654,240 @@ function buildPreviewSessionEvidence({
 
 function evidenceRef(path: string, kind: string, contentType = "application/json"): ArtifactEvidenceRef {
   return { path, kind, contentType }
+}
+
+interface DurableStaticPreviewBuildResult {
+  preview: ArtifactDurablePreviewRef
+  manifestFiles: ArtifactManifestFile[]
+}
+
+interface BrowserStaticArtifactBundle {
+  probe: number
+  schema?: string
+  root?: string
+  entrypoint?: string
+  files: BrowserStaticArtifactFile[]
+}
+
+interface BrowserStaticArtifactFile {
+  path: string
+  content: string
+  encoding: string
+  contentType: string
+}
+
+async function buildDurableStaticPreview({
+  artifactRoot,
+  createdAt,
+  probes,
+  redactor,
+}: {
+  artifactRoot: string
+  createdAt: string
+  probes: BrowserProbeArtifact[]
+  redactor: ArtifactRedactor
+}): Promise<DurableStaticPreviewBuildResult | undefined> {
+  const bundle = findBrowserStaticArtifactBundle(probes)
+  if (!bundle) {
+    return undefined
+  }
+
+  const staticRoot = "files/static-preview/site"
+  const manifestPath = "files/static-preview/manifest.json"
+  const files: ArtifactEvidenceRef[] = []
+  const manifestFiles: ArtifactManifestFile[] = []
+  const writtenPaths = new Set<string>()
+
+  for (const file of bundle.files) {
+    const relativePath = safeStaticPreviewPath(file.path)
+    if (!relativePath || writtenPaths.has(relativePath)) {
+      continue
+    }
+
+    const artifactPath = `${staticRoot}/${relativePath}`
+    const absolutePath = join(artifactRoot, artifactPath)
+    const contents = file.encoding === "base64" ? Buffer.from(file.content, "base64") : Buffer.from(file.content, "utf8")
+    const writtenContents = file.encoding === "base64" ? contents : Buffer.from(redactor.redact(artifactPath, contents.toString("utf8")), "utf8")
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, writtenContents)
+
+    const ref = {
+      path: artifactPath,
+      kind: relativePath === "index.html" ? "static-preview-entrypoint" : "static-preview-file",
+      contentType: file.contentType,
+      sha256: artifactFileDigest(writtenContents),
+    }
+    files.push(ref)
+    manifestFiles.push(artifactManifestFile(join(artifactRoot, artifactPath), ref.kind, ref.contentType))
+    writtenPaths.add(relativePath)
+  }
+
+  if (files.length === 0) {
+    return undefined
+  }
+
+  const entrypoint = durablePreviewEntrypoint(bundle, files, staticRoot)
+  if (!entrypoint) {
+    return undefined
+  }
+
+  const preview: ArtifactDurablePreviewRef = {
+    kind: "static-artifact-preview",
+    reviewerSafe: true,
+    durable: true,
+    entrypoint,
+    manifest: evidenceRef(manifestPath, "static-artifact-preview"),
+    source: stripUndefined({
+      kind: "browser-runtime-artifact-bundle" as const,
+      probe: bundle.probe,
+      schema: bundle.schema,
+      root: bundle.root,
+      entrypoint: bundle.entrypoint,
+    }),
+    files,
+  }
+  const manifest = {
+    schema: "wp-codebox/static-artifact-preview/v1",
+    createdAt,
+    reviewerSafe: true,
+    durable: true,
+    entrypoint,
+    source: preview.source,
+    files,
+  }
+  const manifestJson = redactor.redact(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  await writeFile(join(artifactRoot, manifestPath), manifestJson)
+  preview.manifest.sha256 = artifactFileDigest(manifestJson)
+  manifestFiles.unshift(artifactManifestFile(join(artifactRoot, manifestPath), "static-artifact-preview", "application/json"))
+
+  return { preview, manifestFiles }
+}
+
+function findBrowserStaticArtifactBundle(probes: BrowserProbeArtifact[]): BrowserStaticArtifactBundle | undefined {
+  for (const [index, probe] of probes.entries()) {
+    const scriptResult = asRecord(probe.summary.scriptResult)
+    const candidate = asRecord(scriptResult?.artifact_bundle) ?? asRecord(scriptResult?.artifactBundle) ?? scriptResult
+    const files = Array.isArray(candidate?.files) ? candidate.files : undefined
+    if (!candidate || !files || files.length === 0) {
+      continue
+    }
+
+    const entrypoint = stringValue(candidate.entrypoint) ?? stringValue(candidate.entryPoint)
+    if (!entrypoint) {
+      continue
+    }
+
+    const materializableFiles = files.flatMap((file) => materializableStaticFile(file))
+    if (materializableFiles.length === 0) {
+      continue
+    }
+
+    return {
+      probe: index,
+      schema: stringValue(candidate.schema),
+      root: stringValue(candidate.root),
+      entrypoint,
+      files: materializableFiles,
+    }
+  }
+
+  return undefined
+}
+
+function materializableStaticFile(value: unknown): BrowserStaticArtifactFile[] {
+  const file = asRecord(value)
+  if (!file) {
+    return []
+  }
+
+  const path = stringValue(file.path) ?? stringValue(file.name)
+  const content = stringValue(file.content) ?? stringValue(file.contents) ?? stringValue(file.data) ?? stringValue(file.body)
+  if (!path || typeof content !== "string") {
+    return []
+  }
+
+  const encoding = (stringValue(file.encoding) ?? "utf8").toLowerCase()
+  if (!["utf8", "utf-8", "base64"].includes(encoding)) {
+    return []
+  }
+
+  return [{
+    path,
+    content,
+    encoding: encoding === "utf-8" ? "utf8" : encoding,
+    contentType: stringValue(file.contentType) ?? stringValue(file.content_type) ?? stringValue(file.mime_type) ?? staticPreviewContentType(path),
+  }]
+}
+
+function durablePreviewEntrypoint(bundle: BrowserStaticArtifactBundle, files: ArtifactEvidenceRef[], staticRoot: string): string | undefined {
+  const relativePaths = new Set(files.map((file) => file.path.slice(`${staticRoot}/`.length)))
+  const candidates = [
+    bundle.entrypoint,
+    stripStaticPreviewRoot(bundle.entrypoint, bundle.root),
+    "index.html",
+  ].flatMap((path) => path ? [safeStaticPreviewPath(path)] : []).filter((path): path is string => Boolean(path))
+
+  for (const candidate of candidates) {
+    if (relativePaths.has(candidate)) {
+      return `${staticRoot}/${candidate}`
+    }
+  }
+
+  return files.find((file) => file.path.endsWith(".html"))?.path ?? files[0]?.path
+}
+
+function stripStaticPreviewRoot(path: string | undefined, root: string | undefined): string | undefined {
+  const safeRoot = root ? safeStaticPreviewPath(root) : undefined
+  const safePath = path ? safeStaticPreviewPath(path) : undefined
+  if (!safeRoot || !safePath || safePath === safeRoot) {
+    return undefined
+  }
+
+  return safePath.startsWith(`${safeRoot}/`) ? safePath.slice(safeRoot.length + 1) : undefined
+}
+
+function safeStaticPreviewPath(path: string): string | undefined {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part.length > 0 && part !== ".")
+  if (normalized.length === 0 || normalized.some((part) => part === "..")) {
+    return undefined
+  }
+
+  return normalized.join("/")
+}
+
+function staticPreviewContentType(path: string): string {
+  const normalized = path.toLowerCase()
+  if (normalized.endsWith(".html") || normalized.endsWith(".htm")) {
+    return "text/html; charset=utf-8"
+  }
+  if (normalized.endsWith(".css")) {
+    return "text/css; charset=utf-8"
+  }
+  if (normalized.endsWith(".js")) {
+    return "text/javascript; charset=utf-8"
+  }
+  if (normalized.endsWith(".json")) {
+    return "application/json"
+  }
+  if (normalized.endsWith(".svg")) {
+    return "image/svg+xml"
+  }
+  if (normalized.endsWith(".png")) {
+    return "image/png"
+  }
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+    return "image/jpeg"
+  }
+
+  return "application/octet-stream"
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {

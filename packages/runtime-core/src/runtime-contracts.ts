@@ -662,6 +662,7 @@ export interface ArtifactPreviewSessionEvidence {
     runtimeReferenceManifest: ArtifactEvidenceRef
     runtimeReplayReferenceIndex: ArtifactEvidenceRef
     browserSummary?: ArtifactEvidenceRef
+    durablePreview?: ArtifactEvidenceRef
   }
   components?: ArtifactPackageProvenance
 }
@@ -685,6 +686,22 @@ export interface ArtifactPreviewUrlRef {
   reviewerSafe: boolean
   url?: string
   reason?: string
+}
+
+export interface ArtifactDurablePreviewRef {
+  kind: "static-artifact-preview"
+  reviewerSafe: true
+  durable: true
+  entrypoint: string
+  manifest: ArtifactEvidenceRef
+  source: {
+    kind: "browser-runtime-artifact-bundle"
+    probe: number
+    schema?: string
+    root?: string
+    entrypoint?: string
+  }
+  files: ArtifactEvidenceRef[]
 }
 
 export interface ArtifactPreviewEvidence {
@@ -713,6 +730,7 @@ export interface ArtifactPreviewEvidence {
     publicUrl?: ArtifactPreviewUrlRef
     localUrl?: ArtifactPreviewUrlRef
     siteUrl?: ArtifactPreviewUrlRef
+    durablePreview?: ArtifactDurablePreviewRef
   }
   readiness: {
     ready: boolean
@@ -768,6 +786,8 @@ export interface ArtifactBundle {
   previewEvidencePath?: string
   previewSessionEvidencePath?: string
   previewSessionEvidenceRef?: ArtifactEvidenceRef
+  durablePreviewPath?: string
+  durablePreview?: ArtifactDurablePreviewRef
   preview?: ArtifactPreview
   contentDigest: string
   createdAt: string

@@ -52,6 +52,7 @@
     "policy-validation-smoke": "tsx scripts/policy-validation-smoke.ts",
     "workspace-policy-smoke": "tsx scripts/workspace-policy-smoke.ts",
     "artifact-contract-smoke": "tsx scripts/artifact-contract-smoke.ts",
+    "durable-static-preview-smoke": "tsx scripts/durable-static-preview-smoke.ts",
     "external-adapter-contract-smoke": "tsx scripts/external-adapter-contract-smoke.ts",
     "command-registry-smoke": "tsx scripts/command-registry-smoke.ts",
     "host-tool-registry-smoke": "tsx scripts/host-tool-registry-smoke.ts",
