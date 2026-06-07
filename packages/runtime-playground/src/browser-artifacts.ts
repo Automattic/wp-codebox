@@ -565,6 +565,7 @@ export interface BrowserStepAssertion {
   message?: string
   selector?: string
   frameSelector?: string
+  frameTarget?: BrowserStepAssertionFrameTarget
   frameUrl?: string
   name?: string
   state?: string
@@ -576,6 +577,13 @@ export interface BrowserStepAssertion {
   observed?: unknown
   supportingArtifacts?: string[]
   passed: boolean
+}
+
+export interface BrowserStepAssertionFrameTarget {
+  kind: "selector" | "url"
+  value: string
+  status: "resolved"
+  url: string
 }
 
 export interface BrowserProbeErrorRecord {

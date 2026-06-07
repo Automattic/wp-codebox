@@ -16,7 +16,8 @@ await writeFile(join(pluginDir, "browser-assertion-fixture.php"), `<?php
  * Plugin Name: Browser Assertion Fixture
  */
 add_action('wp_footer', function () {
-    $frame_srcdoc = esc_attr('<!doctype html><html><body><div id="frame-target" data-frame-state="ready">Frame Target Ready</div><ul id="frame-list"><li>Alpha</li><li>Beta</li></ul></body></html>');
+    $large_text = str_repeat('Large Frame Body ', 700);
+    $frame_srcdoc = esc_attr('<!doctype html><html><body><div id="frame-target" data-frame-state="ready">Frame Target Ready</div><div id="large-frame-body">' . $large_text . 'Needle Text</div><ul id="frame-list"><li>Alpha</li><li>Beta</li></ul></body></html>');
     echo '<style>.wp-codebox-hidden-fixture{display:none}</style>';
     echo '<div id="probe-target" data-state="ready">Probe Target Ready</div>';
     echo '<div id="probe-hidden" class="wp-codebox-hidden-fixture">Hidden Fixture</div>';
@@ -38,6 +39,7 @@ const passing = await runRecipe("passing", [
   "assert=attr:#probe-target[data-state]=ready",
   "assert=frame:#probe-frame|exists:#frame-target",
   "assert=frame:#probe-frame|text:#frame-target contains Frame Target Ready",
+  "assert=frame-url:about:srcdoc|text:#large-frame-body contains Needle Text",
   "assert=frame:#probe-frame|count:#frame-list li=2",
   "assert=frame:#probe-frame|attr:#frame-target[data-frame-state]=ready",
   "assert=no-console-errors",
@@ -50,14 +52,26 @@ const passing = await runRecipe("passing", [
 
 assert.equal(passing.success, true, passing.error?.message ?? "passing assertions should succeed")
 const passingSummary = await readSummary(passing)
-assert.equal(passingSummary.assertions.total, 17)
+const passingCheckpoints = await readCheckpointNames(passing)
+assert.equal(passingSummary.assertions.total, 18)
 assert.equal(passingSummary.assertions.failed, 0)
-assert.equal(passingSummary.summary.assertions.total, 17)
+assert.equal(passingSummary.summary.assertions.total, 18)
 assert.equal(passingSummary.summary.assertions.failed, 0)
+assert.equal(passingCheckpoints.includes("after-assertions"), true, "browser-probe should capture a deterministic checkpoint after assertions complete")
 const passingFrameAssertion = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "frame:#probe-frame|exists:#frame-target")
 assert.equal(passingFrameAssertion.status, "pass")
 assert.equal(passingFrameAssertion.frameSelector, "#probe-frame")
 assert.equal(typeof passingFrameAssertion.frameUrl, "string")
+assert.deepEqual(passingFrameAssertion.frameTarget, { kind: "selector", value: "#probe-frame", status: "resolved", url: passingFrameAssertion.frameUrl })
+const passingFrameUrlAssertion = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "frame-url:about:srcdoc|text:#large-frame-body contains Needle Text")
+assert.equal(passingFrameUrlAssertion.status, "pass")
+assert.equal(passingFrameUrlAssertion.frameTarget.kind, "url")
+assert.equal(passingFrameUrlAssertion.frameTarget.value, "about:srcdoc")
+assert.equal(typeof passingFrameUrlAssertion.frameUrl, "string")
+assert.equal(passingFrameUrlAssertion.observed.type, "string")
+assert.equal(passingFrameUrlAssertion.observed.truncated, true)
+assert.equal(passingFrameUrlAssertion.observed.preview.length <= 512, true)
+assert.equal(commandOutput(passing).summary.assertions.results.find((result: { assertion?: string }) => result.assertion === passingFrameUrlAssertion.assertion).observed.truncated, true, "command stdout should include compact frame assertion evidence")
 const passingRequestBudget = passingSummary.assertions.results.find((result: { assertion?: string }) => result.assertion === "request-count-by-type:document>=1")
 assert.equal(passingRequestBudget.status, "pass")
 assert.equal(passingRequestBudget.expectedBudget, 1)
@@ -68,7 +82,8 @@ assert.equal(passingMetricBudget.status, "pass")
 assert.equal(passingMetricBudget.expectedBudget, 0)
 assert.equal(typeof passingMetricBudget.observed, "number")
 assert.deepEqual(passingMetricBudget.supportingArtifacts, ["files/browser/performance.json", "files/browser/memory.json"])
-assert.equal(commandOutput(passing).summary.assertions.total, 17, "command JSON should include assertion totals")
+assert.equal(commandOutput(passing).summary.assertions.total, 18, "command JSON should include assertion totals")
+assert.equal(commandOutput(passing).summary.assertions.results.map((result: unknown) => JSON.stringify(result)).join("\n").includes("Large Frame Body ".repeat(100)), false, "command stdout should not include unbounded large frame text")
 
 const advisory = await runRecipe("advisory", [
   "url=/",
@@ -146,11 +161,27 @@ async function runRecipe(name: string, args: string[]): Promise<any> {
 }
 
 async function readSummary(output: any): Promise<any> {
-  const artifactDirectory = output.artifacts?.directory ?? output.run?.artifactRefs?.find((ref: { kind?: string }) => ref.kind === "artifact-bundle")?.directory
-  assert.equal(typeof artifactDirectory, "string", "recipe-run should return artifact bundle directory")
+  const artifactDirectory = artifactDirectoryFromOutput(output)
   const summaryPath = join(artifactDirectory, "files", "browser", "summary.json")
   assert.equal(existsSync(summaryPath), true, "summary.json should be captured")
   return JSON.parse(await readFile(summaryPath, "utf8"))
+}
+
+async function readCheckpointNames(output: any): Promise<string[]> {
+  const artifactDirectory = artifactDirectoryFromOutput(output)
+  const checkpointPath = join(artifactDirectory, "files", "browser", "checkpoints.jsonl")
+  assert.equal(existsSync(checkpointPath), true, "checkpoints.jsonl should be captured")
+  return (await readFile(checkpointPath, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line).name)
+}
+
+function artifactDirectoryFromOutput(output: any): string {
+  const artifactDirectory = output.artifacts?.directory ?? output.run?.artifactRefs?.find((ref: { kind?: string }) => ref.kind === "artifact-bundle")?.directory
+  assert.equal(typeof artifactDirectory, "string", "recipe-run should return artifact bundle directory")
+  return artifactDirectory
 }
 
 function commandOutput(output: any): any {

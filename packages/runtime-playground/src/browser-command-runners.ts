@@ -406,6 +406,9 @@ async function runSingleBrowserProbeCommand({
       }
       const assertionMetrics = capturesBrowserMetrics ? browserProbeBenchMetrics(browserProbeMemoryArtifact(checkpoints), browserProbePerformanceArtifact(checkpoints)) : {}
       assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors, network, assertionMetrics)
+      if (capturesBrowserMetrics) {
+        checkpoints.push(await browserProbeCheckpoint(page, "after-assertions"))
+      }
       const fatalFailures = assertionResults.filter((assertion) => !assertion.passed && !assertion.advisory)
       if (fatalFailures.length > 0) {
         pendingError = new Error(`wordpress.browser-probe assertion failed: ${fatalFailures.map((assertion) => assertion.assertion).join(", ")}`)
