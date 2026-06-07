@@ -205,6 +205,24 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runHtmlCapture" },
   },
   {
+    id: "wordpress.editor-canvas-probe",
+    description: "Open a WordPress editor URL and wait for the iframe-backed block canvas to become visible, non-loading, and populated before capturing selector diagnostics and optional canvas screenshot evidence.",
+    acceptedArgs: [
+      { name: "url", description: "Editor path or absolute URL to visit.", required: true, format: "path or URL" },
+      { name: "iframe-selector", description: "Editor canvas iframe selector; defaults to iframe[name=\"editor-canvas\"].", format: "CSS selector" },
+      { name: "layout-selector", description: "Canvas layout selector inside the editor iframe; defaults to .block-editor-block-list__layout.", format: "CSS selector" },
+      { name: "block-selector", description: "Block selector inside the editor canvas layout; defaults to .block-editor-block-list__block, [data-block].", format: "CSS selector" },
+      { name: "timeout-ms", description: "Readiness timeout in milliseconds; defaults to 30000.", format: "milliseconds" },
+      { name: "capture", description: "Comma-separated optional artifacts to capture.", format: "screenshot" },
+      { name: "screenshot", description: "Boolean alias for capture=screenshot.", format: "boolean" },
+      { name: "selector-groups-json", description: "Optional selector summary groups evaluated inside the editor iframe. Each group supports name plus selector or selectors.", format: "JSON array" },
+    ],
+    outputShape: "JSON summary plus files/browser/editor-canvas-summary.json and optional files/browser/editor-canvas-screenshot.png, including readyMs, selector summary, and diagnostics for missing iframe/layout/blocks or loading state.",
+    policyRequirement: "Runtime policy commands must include wordpress.editor-canvas-probe.",
+    recipe: true,
+    handler: { kind: "playground", method: "runEditorCanvasProbe" },
+  },
+  {
     id: "wordpress.browser-actions",
     description: "Drive the live Playground preview with an ordered interaction script and capture replay/audit evidence artifacts, including per-step results and machine-readable assertions.",
     acceptedArgs: [

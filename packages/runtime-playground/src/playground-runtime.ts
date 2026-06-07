@@ -3,7 +3,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
+import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -443,6 +443,21 @@ class PlaygroundRuntime implements Runtime {
   async runHtmlCapture(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+    this.browserProbes.push(result.artifact)
+    return result.output
+  }
+
+  async runEditorCanvasProbe(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    let result: Awaited<ReturnType<typeof runEditorCanvasProbeCommand>>
+    try {
+      result = await runEditorCanvasProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }

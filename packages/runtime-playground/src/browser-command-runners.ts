@@ -3,12 +3,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
-import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
+import { argValue, cleanWpCliOutput, commaListArg, jsonArrayArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -16,6 +16,10 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
+const EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR = 'iframe[name="editor-canvas"]'
+const EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR = ".block-editor-block-list__layout"
+const EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR = ".block-editor-block-list__block, [data-block]"
+const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 
 interface BrowserProbeProfileDefinition {
@@ -738,6 +742,449 @@ export async function runHtmlCaptureCommand(input: {
     command: "wordpress.capture-html",
     spec: { ...input.spec, args },
   })
+}
+
+export async function runEditorCanvasProbeCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = spec.args ?? []
+  const urlArg = argValue(args, "url")?.trim()
+  if (!urlArg) {
+    throw new Error("wordpress.editor-canvas-probe requires url=<path-or-url>")
+  }
+
+  const capture = new Set(commaListArg(args, "capture"))
+  if (booleanArg(args, "screenshot", false)) {
+    capture.add("screenshot")
+  }
+  for (const item of capture) {
+    if (item !== "screenshot") {
+      throw new Error(`wordpress.editor-canvas-probe capture supports screenshot: ${item}`)
+    }
+  }
+
+  const iframeSelector = argValue(args, "iframe-selector")?.trim() || argValue(args, "iframeSelector")?.trim() || EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR
+  const layoutSelector = argValue(args, "layout-selector")?.trim() || argValue(args, "layoutSelector")?.trim() || EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR
+  const blockSelector = argValue(args, "block-selector")?.trim() || argValue(args, "blockSelector")?.trim() || EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR
+  const timeoutMs = editorCanvasTimeoutMs(args)
+  const selectorGroups = editorCanvasSelectorGroups(args, layoutSelector, blockSelector)
+  const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
+  const previewOrigins = browserProbePreviewOrigins(preview)
+  const targetUrl = resolveBrowserProbeUrl(urlArg, preview.effectiveOrigin)
+  const browserDirectory = join(artifactRoot, "files", "browser")
+  await mkdir(browserDirectory, { recursive: true })
+
+  const summaryPath = join(browserDirectory, "editor-canvas-summary.json")
+  const screenshotPath = join(browserDirectory, "editor-canvas-screenshot.png")
+  const startedAt = now()
+  const startedAtMs = Date.now()
+  const { chromium } = await import("playwright")
+  const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
+  const errors: BrowserProbeErrorRecord[] = []
+  let artifact: BrowserProbeArtifact | undefined
+  let finalUrl = targetUrl
+  let windowLocationOrigin: string | undefined
+  let viewport: BrowserProbeViewport | null = null
+  let screenshotSha256: string | undefined
+  let pendingError: Error | undefined
+
+  try {
+    const previewReadinessError = browserProbePreviewReadinessError(preview)
+    if (previewReadinessError) {
+      throw previewReadinessError
+    }
+
+    const page = await browser.newPage()
+    viewport = await browserProbeViewport(page)
+    page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+    finalUrl = page.url()
+    const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
+    windowLocationOrigin = browserLocation?.origin
+    preview.secureContext = browserLocation?.secureContext
+    const secureContextError = browserProbeSecureContextError(preview)
+    if (secureContextError) {
+      throw secureContextError
+    }
+
+    const probe = await waitForEditorCanvasProbe(page, {
+      blockSelector,
+      iframeSelector,
+      layoutSelector,
+      selectorGroups,
+      startedAtMs,
+      timeoutMs,
+    })
+
+    if (probe.ready && capture.has("screenshot")) {
+      try {
+        await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+        screenshotSha256 = await fileSha256(screenshotPath)
+      } catch (error) {
+        probe.summary.diagnostics.push({
+          code: "screenshot-failed",
+          severity: "warning",
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    const summary = probe.summary
+    artifact = {
+      requestedUrl: targetUrl,
+      url: targetUrl,
+      preview,
+      ...previewOrigins,
+      files: {
+        ...(screenshotSha256 ? { screenshot: "files/browser/editor-canvas-screenshot.png" } : {}),
+        summary: "files/browser/editor-canvas-summary.json",
+      },
+      summary: {
+        consoleMessages: 0,
+        errors: errors.length,
+        finalUrl,
+        ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
+        htmlSnapshot: false,
+        networkEvents: 0,
+        replayability: screenshotSha256 ? "artifact-backed" : "diagnostic-only",
+        screenshot: Boolean(screenshotSha256),
+        viewport,
+        editorCanvas: summary,
+      },
+    }
+
+    await writeFile(summaryPath, `${JSON.stringify({
+      schema: "wp-codebox/editor-canvas-probe/v1",
+      requestedUrl: targetUrl,
+      preview,
+      ...previewOrigins,
+      finalUrl,
+      ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
+      startedAt,
+      finishedAt: now(),
+      timeoutMs,
+      files: artifact.files,
+      hashes: {
+        ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
+      },
+      viewport,
+      summary,
+    }, null, 2)}\n`)
+
+    if (!summary.ready) {
+      pendingError = new Error(`wordpress.editor-canvas-probe failed: ${summary.diagnostics.map((diagnostic) => diagnostic.code).join(", ") || "not-ready"}`)
+    }
+  } catch (error) {
+    pendingError = error instanceof Error ? error : new Error(String(error))
+    errors.push(serializeBrowserError("probe-error", error))
+    if (!artifact) {
+      const diagnostics: BrowserEditorCanvasProbeDiagnostic[] = [{ code: "timeout", severity: "error", message: pendingError.message }]
+      const summary: BrowserEditorCanvasProbeSummary = {
+        ready: false,
+        readyMs: null,
+        iframeSelector,
+        layoutSelector,
+        blockSelector,
+        diagnostics,
+        selectorSummary: emptyEditorCanvasSelectorSummary(selectorGroups),
+      }
+      artifact = {
+        requestedUrl: targetUrl,
+        url: targetUrl,
+        preview,
+        ...previewOrigins,
+        files: { summary: "files/browser/editor-canvas-summary.json" },
+        summary: {
+          consoleMessages: 0,
+          errors: errors.length,
+          finalUrl,
+          htmlSnapshot: false,
+          networkEvents: 0,
+          replayability: "diagnostic-only",
+          screenshot: false,
+          viewport,
+          editorCanvas: summary,
+        },
+      }
+      await writeFile(summaryPath, `${JSON.stringify({
+        schema: "wp-codebox/editor-canvas-probe/v1",
+        requestedUrl: targetUrl,
+        preview,
+        ...previewOrigins,
+        finalUrl,
+        startedAt,
+        finishedAt: now(),
+        timeoutMs,
+        files: artifact.files,
+        hashes: {},
+        viewport,
+        summary,
+      }, null, 2)}\n`)
+    }
+  } finally {
+    await browser.close()
+  }
+
+  if (pendingError) {
+    throw new BrowserCommandArtifactError(pendingError.message, artifact)
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify({
+      command: "wordpress.editor-canvas-probe",
+      requestedUrl: targetUrl,
+      finalUrl: artifact.summary.finalUrl,
+      files: artifact.files,
+      summary: artifact.summary.editorCanvas,
+    }, null, 2)}\n`,
+  }
+}
+
+interface EditorCanvasSelectorGroupInput {
+  name: string
+  selectors: string[]
+}
+
+interface EditorCanvasReadyProbe {
+  ready: boolean
+  frame: import("playwright").Frame
+  summary: BrowserEditorCanvasProbeSummary
+}
+
+async function waitForEditorCanvasProbe(page: import("playwright").Page, options: {
+  blockSelector: string
+  iframeSelector: string
+  layoutSelector: string
+  selectorGroups: EditorCanvasSelectorGroupInput[]
+  startedAtMs: number
+  timeoutMs: number
+}): Promise<EditorCanvasReadyProbe> {
+  const deadlineMs = Date.now() + options.timeoutMs
+  let frame: import("playwright").Frame | null = null
+  let latest: Awaited<ReturnType<typeof evaluateEditorCanvasState>> | null = null
+
+  while (Date.now() <= deadlineMs) {
+    frame = await resolveEditorCanvasFrame(page, options.iframeSelector)
+    if (frame) {
+      latest = await evaluateEditorCanvasState(frame, options.layoutSelector, options.blockSelector, options.selectorGroups)
+      if (latest.ready) {
+        return {
+          ready: true,
+          frame,
+          summary: {
+            ready: true,
+            readyMs: Date.now() - options.startedAtMs,
+            iframeSelector: options.iframeSelector,
+            layoutSelector: options.layoutSelector,
+            blockSelector: options.blockSelector,
+            diagnostics: latest.diagnostics,
+            selectorSummary: latest.selectorSummary,
+          },
+        }
+      }
+    }
+    await page.waitForTimeout(100)
+  }
+
+  const diagnostics = latest?.diagnostics.length
+    ? [...latest.diagnostics, { code: "timeout", severity: "error", message: `Editor canvas was not ready within ${options.timeoutMs}ms.` } satisfies BrowserEditorCanvasProbeDiagnostic]
+    : [{ code: "iframe-missing", severity: "error", message: `Editor canvas iframe was not found: ${options.iframeSelector}` }, { code: "timeout", severity: "error", message: `Editor canvas was not ready within ${options.timeoutMs}ms.` }] satisfies BrowserEditorCanvasProbeDiagnostic[]
+
+  return {
+    ready: false,
+    frame: frame ?? page.mainFrame(),
+    summary: {
+      ready: false,
+      readyMs: null,
+      iframeSelector: options.iframeSelector,
+      layoutSelector: options.layoutSelector,
+      blockSelector: options.blockSelector,
+      diagnostics,
+      selectorSummary: latest?.selectorSummary ?? emptyEditorCanvasSelectorSummary(options.selectorGroups),
+    },
+  }
+}
+
+async function resolveEditorCanvasFrame(page: import("playwright").Page, iframeSelector: string): Promise<import("playwright").Frame | null> {
+  const namedFrame = page.frame({ name: "editor-canvas" })
+  if (namedFrame) {
+    return namedFrame
+  }
+  const handle = await page.locator(iframeSelector).elementHandle().catch(() => null)
+  return handle ? await handle.contentFrame() : null
+}
+
+async function evaluateEditorCanvasState(frame: import("playwright").Frame, layoutSelector: string, blockSelector: string, selectorGroups: EditorCanvasSelectorGroupInput[]): Promise<{
+  ready: boolean
+  diagnostics: BrowserEditorCanvasProbeDiagnostic[]
+  selectorSummary: BrowserEditorCanvasSelectorSummary
+}> {
+  return frame.evaluate(({ layoutSelector: innerLayoutSelector, blockSelector: innerBlockSelector, selectorGroups: innerSelectorGroups }) => {
+    function elementVisible(element: Element): boolean {
+      const rect = element.getBoundingClientRect()
+      const style = window.getComputedStyle(element)
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0
+    }
+
+    function summarizeSelector(selector: string) {
+      try {
+        const matches = Array.from(document.querySelectorAll(selector)).map((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            visible: elementVisible(element),
+            boundingBox: {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            },
+            text: String(element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 160),
+          }
+        })
+        return {
+          selector,
+          count: matches.length,
+          visible_count: matches.filter((match) => match.visible).length,
+          nonzero_bounding_box_count: matches.filter((match) => match.boundingBox.width > 0 && match.boundingBox.height > 0).length,
+          first_match: matches[0] || null,
+          error: "",
+        }
+      } catch (error) {
+        return {
+          selector,
+          count: 0,
+          visible_count: 0,
+          nonzero_bounding_box_count: 0,
+          first_match: null,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    }
+
+    const layout = document.querySelector(innerLayoutSelector)
+    const diagnostics: BrowserEditorCanvasProbeDiagnostic[] = []
+    if (!layout) {
+      diagnostics.push({ code: "layout-missing", severity: "error", message: `Editor canvas layout was not found: ${innerLayoutSelector}` })
+    }
+    const loading = Boolean(layout?.matches('.is-loading, [aria-busy="true"]') || layout?.querySelector('.is-loading, [aria-busy="true"], .components-spinner'))
+    if (loading) {
+      diagnostics.push({ code: "loading-state", severity: "warning", message: "Editor canvas layout is still marked as loading." })
+    }
+    const blocks = layout ? Array.from(layout.querySelectorAll(innerBlockSelector)) : []
+    if (layout && blocks.length === 0) {
+      diagnostics.push({ code: "no-blocks", severity: "error", message: `Editor canvas has no blocks matching: ${innerBlockSelector}` })
+    }
+    const rect = layout?.getBoundingClientRect()
+    const ready = Boolean(layout && rect && rect.width > 0 && rect.height > 0 && !loading && blocks.length > 0)
+
+    const groups = innerSelectorGroups.map((group) => {
+      const selectors = group.selectors.map(summarizeSelector)
+      return {
+        name: group.name,
+        selectors,
+        selector_count: selectors.length,
+        missing_selector_count: selectors.filter((item) => item.count === 0).length,
+        errored_selector_count: selectors.filter((item) => item.error).length,
+        matched_selector_count: selectors.filter((item) => item.count > 0).length,
+        visible_selector_count: selectors.filter((item) => item.visible_count > 0).length,
+        nonzero_bounding_box_selector_count: selectors.filter((item) => item.nonzero_bounding_box_count > 0).length,
+      }
+    })
+
+    return {
+      ready,
+      diagnostics,
+      selectorSummary: {
+        groups,
+        totals: groups.reduce((totals, group) => {
+          totals.selector_count += group.selector_count
+          totals.missing_selector_count += group.missing_selector_count
+          totals.errored_selector_count += group.errored_selector_count
+          totals.matched_selector_count += group.matched_selector_count
+          totals.visible_selector_count += group.visible_selector_count
+          totals.nonzero_bounding_box_selector_count += group.nonzero_bounding_box_selector_count
+          return totals
+        }, {
+          selector_count: 0,
+          missing_selector_count: 0,
+          errored_selector_count: 0,
+          matched_selector_count: 0,
+          visible_selector_count: 0,
+          nonzero_bounding_box_selector_count: 0,
+        }),
+      },
+    }
+  }, { layoutSelector, blockSelector, selectorGroups })
+}
+
+function editorCanvasSelectorGroups(args: string[], layoutSelector: string, blockSelector: string): EditorCanvasSelectorGroupInput[] {
+  const groups = jsonArrayArg(args, "selector-groups-json")
+  if (groups.length === 0) {
+    return [
+      { name: "editor_canvas", selectors: [layoutSelector] },
+      { name: "blocks", selectors: [blockSelector] },
+    ]
+  }
+
+  return groups.map((group, index) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) {
+      throw new Error(`wordpress.editor-canvas-probe selector-groups-json[${index}] must be an object`)
+    }
+    const input = group as Record<string, unknown>
+    const selectors = Array.isArray(input.selectors) ? input.selectors : [input.selector].filter(Boolean)
+    const normalizedSelectors = selectors.map((selector) => String(selector || "").trim()).filter(Boolean)
+    if (normalizedSelectors.length === 0) {
+      throw new Error(`wordpress.editor-canvas-probe selector-groups-json[${index}] requires selector or selectors`)
+    }
+    return {
+      name: String(input.name || `group_${index + 1}`),
+      selectors: normalizedSelectors,
+    }
+  })
+}
+
+function emptyEditorCanvasSelectorSummary(groups: EditorCanvasSelectorGroupInput[]): BrowserEditorCanvasSelectorSummary {
+  return {
+    groups: groups.map((group): BrowserEditorCanvasSelectorGroupSummary => ({
+      name: group.name,
+      selectors: group.selectors.map((selector) => ({ selector, count: 0, visible_count: 0, nonzero_bounding_box_count: 0, first_match: null, error: "" })),
+      selector_count: group.selectors.length,
+      missing_selector_count: group.selectors.length,
+      errored_selector_count: 0,
+      matched_selector_count: 0,
+      visible_selector_count: 0,
+      nonzero_bounding_box_selector_count: 0,
+    })),
+    totals: {
+      selector_count: groups.reduce((total, group) => total + group.selectors.length, 0),
+      missing_selector_count: groups.reduce((total, group) => total + group.selectors.length, 0),
+      errored_selector_count: 0,
+      matched_selector_count: 0,
+      visible_selector_count: 0,
+      nonzero_bounding_box_selector_count: 0,
+    },
+  }
+}
+
+function editorCanvasTimeoutMs(args: string[]): number {
+  const rawMs = argValue(args, "timeout-ms") ?? argValue(args, "timeoutMs")
+  if (rawMs) {
+    const parsed = Number.parseInt(rawMs, 10)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`wordpress.editor-canvas-probe timeout-ms must be a positive integer: ${rawMs}`)
+    }
+    return parsed
+  }
+  return durationArg(args, "timeout", EDITOR_CANVAS_DEFAULT_TIMEOUT_MS)
 }
 
 export async function runBrowserActionsCommand({

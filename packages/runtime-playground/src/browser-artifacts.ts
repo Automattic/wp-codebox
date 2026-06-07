@@ -35,6 +35,7 @@ export interface BrowserProbeArtifact {
       blockCount?: number
       storesAvailable: boolean
     }
+    editorCanvas?: BrowserEditorCanvasProbeSummary
     steps?: number
     assertions?: BrowserAssertionsSummary
     consoleMessages: number
@@ -55,6 +56,59 @@ export interface BrowserProbeArtifact {
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
+}
+
+export interface BrowserEditorCanvasProbeSummary {
+  ready: boolean
+  readyMs: number | null
+  iframeSelector: string
+  layoutSelector: string
+  blockSelector: string
+  diagnostics: BrowserEditorCanvasProbeDiagnostic[]
+  selectorSummary: BrowserEditorCanvasSelectorSummary
+}
+
+export interface BrowserEditorCanvasProbeDiagnostic {
+  code: "iframe-missing" | "layout-missing" | "no-blocks" | "loading-state" | "timeout" | "screenshot-failed"
+  severity: "error" | "warning" | "info"
+  message: string
+  details?: Record<string, unknown>
+}
+
+export interface BrowserEditorCanvasSelectorSummary {
+  groups: BrowserEditorCanvasSelectorGroupSummary[]
+  totals: {
+    selector_count: number
+    missing_selector_count: number
+    errored_selector_count: number
+    matched_selector_count: number
+    visible_selector_count: number
+    nonzero_bounding_box_selector_count: number
+  }
+}
+
+export interface BrowserEditorCanvasSelectorGroupSummary {
+  name: string
+  selectors: BrowserEditorCanvasSelectorMatchSummary[]
+  selector_count: number
+  missing_selector_count: number
+  errored_selector_count: number
+  matched_selector_count: number
+  visible_selector_count: number
+  nonzero_bounding_box_selector_count: number
+}
+
+export interface BrowserEditorCanvasSelectorMatchSummary {
+  selector: string
+  count: number
+  visible_count: number
+  nonzero_bounding_box_count: number
+  first_match: {
+    visible: boolean
+    boundingBox: { x: number; y: number; width: number; height: number }
+    text: string
+  } | null
+  error: string
 }
 
 export interface BrowserProbeCapabilityDiagnostics {

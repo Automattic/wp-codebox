@@ -1000,6 +1000,49 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     return
   }
 
+  if (step.command === "wordpress.editor-canvas-probe") {
+    if (!recipeStepArgValue(step.args ?? [], "url")?.trim()) {
+      addIssue("missing-url", `${path}.args`, "wordpress.editor-canvas-probe requires url=<path-or-url>.")
+    }
+
+    const timeoutMs = recipeStepArgValue(step.args ?? [], "timeout-ms") ?? recipeStepArgValue(step.args ?? [], "timeoutMs")
+    if (timeoutMs && !/^[1-9]\d*$/.test(timeoutMs)) {
+      addIssue("invalid-timeout-ms", `${path}.args`, "wordpress.editor-canvas-probe timeout-ms must be a positive integer.")
+    }
+
+    const timeout = recipeStepArgValue(step.args ?? [], "timeout")
+    if (timeout && /^\d+(?:\.\d+)?(?:ms|s)$/.test(timeout) === false) {
+      addIssue("invalid-duration", `${path}.args`, "wordpress.editor-canvas-probe timeout must look like 500ms or 2s.")
+    }
+
+    const screenshot = recipeStepArgValue(step.args ?? [], "screenshot")
+    if (screenshot && !["1", "0", "true", "false", "yes", "no", "on", "off"].includes(screenshot.toLowerCase())) {
+      addIssue("invalid-screenshot", `${path}.args`, "wordpress.editor-canvas-probe screenshot must be true or false.")
+    }
+
+    const capture = recipeStepArgValue(step.args ?? [], "capture")
+    if (capture) {
+      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
+        if (item !== "screenshot") {
+          addIssue("invalid-capture", `${path}.args`, `wordpress.editor-canvas-probe capture does not support: ${item}`)
+        }
+      }
+    }
+
+    const selectorGroupsJson = recipeStepArgValue(step.args ?? [], "selector-groups-json")
+    if (selectorGroupsJson && !selectorGroupsJson.startsWith("@")) {
+      try {
+        const parsed = JSON.parse(selectorGroupsJson) as unknown
+        if (!Array.isArray(parsed)) {
+          addIssue("invalid-selector-groups-json", `${path}.args`, "wordpress.editor-canvas-probe selector-groups-json must be a JSON array.")
+        }
+      } catch (error) {
+        addIssue("invalid-selector-groups-json", `${path}.args`, `wordpress.editor-canvas-probe selector-groups-json must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    return
+  }
+
   if (step.command === "wordpress.browser-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
     const actionsJson = recipeStepArgValue(step.args ?? [], "actions-json")
