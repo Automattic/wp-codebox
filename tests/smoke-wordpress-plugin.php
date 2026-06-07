@@ -192,7 +192,7 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-cli-comman
 $source_root            = dirname( __DIR__ );
 $browser_runtime_source = (string) file_get_contents( $source_root . '/packages/wordpress-plugin/assets/browser-runtime.js' );
 $root                   = sys_get_temp_dir() . '/wp-codebox-wordpress-plugin-' . getmypid();
-foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root' ) as $dir ) {
+foreach ( array( 'agents-api', 'data-machine', 'data-machine-code', 'plugin-root/agents-api', 'ai-provider-test', 'ai-provider-inherited', 'editable-plugin', 'artifacts', 'artifact-network-root', 'theme-package' ) as $dir ) {
 	mkdir( $root . '/' . $dir, 0777, true );
 }
 $GLOBALS['wp_codebox_upload_dir'] = array(
@@ -207,6 +207,8 @@ foreach ( array( 'ai-provider-test', 'ai-provider-inherited' ) as $provider_slug
 	file_put_contents( $root . '/' . $provider_slug . '/' . $provider_slug . '.php', '<?php /* Plugin Name: ' . $provider_slug . ' */' );
 }
 file_put_contents( $root . '/wp-codebox.js', "#!/usr/bin/env node\n" );
+file_put_contents( $root . '/theme-package/style.css', '/* Theme Name: Packaged Starter */' );
+file_put_contents( $root . '/theme-package/index.php', '<?php echo "packaged starter";' );
 mkdir( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin', 0777, true );
 mkdir( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/vendor/node/bin', 0777, true );
 file_put_contents( WP_CODEBOX_PLUGIN_PATH . 'vendor/wp-codebox-cli/bin/wp-codebox', "#!/usr/bin/env bash\n" );
@@ -680,6 +682,10 @@ $browser_session_input = array(
 			),
 		),
 		'runtime'               => array(
+			'prepared'   => array(
+				'enabled' => true,
+				'cache_key' => 'known-site-runtime',
+			),
 			'plugins'    => array(
 				array(
 					'slug'     => 'generic-runtime-helper',
@@ -721,6 +727,11 @@ $browser_session_input = array(
 							'content' => '/* Theme Name: Example Starter */',
 						),
 					),
+				),
+				array(
+					'slug'     => 'packaged-starter',
+					'path'     => $root . '/theme-package',
+					'activate' => false,
 				),
 			),
 			'bootstrap'  => array(
@@ -818,13 +829,17 @@ $browser_steps = ! is_wp_error( $browser_session ) ? ( $browser_session['playgro
 $browser_plugin_by_slug = static fn( string $slug ): array => array_values( array_filter( $browser_session['plugins'] ?? array(), static fn( array $plugin ): bool => $slug === ( $plugin['slug'] ?? '' ) ) )[0] ?? array();
 $browser_step_with_plugin_slug = static fn( string $slug ): array => array_values( array_filter( $browser_steps, static fn( array $step ): bool => $slug === ( $step['options']['targetFolderName'] ?? $step['pluginData']['targetFolderName'] ?? $step['pluginData']['slug'] ?? '' ) ) )[0] ?? array();
 $browser_step_with_code = static fn( string $needle ): array => array_values( array_filter( $browser_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) && str_contains( (string) ( $step['code'] ?? '' ), $needle ) ) )[0] ?? array();
-$assert( 'browser Playground session accepts structured runtime dependencies', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-runtime-dependencies/v1' === ( $browser_session['runtime']['schema'] ?? '' ) && 8 === ( $browser_session['runtime']['summary']['plugins'] ?? 0 ) && 2 === ( $browser_session['runtime']['component_plugins'] ?? 0 ) && 1 === ( $browser_session['runtime']['summary']['mu_plugins'] ?? 0 ) && 1 === ( $browser_session['runtime']['summary']['themes'] ?? 0 ) && 1 === ( $browser_session['runtime']['summary']['bootstrap'] ?? 0 ) );
+$assert( 'browser Playground session accepts structured runtime dependencies', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-runtime-dependencies/v1' === ( $browser_session['runtime']['schema'] ?? '' ) && 8 === ( $browser_session['runtime']['summary']['plugins'] ?? 0 ) && 2 === ( $browser_session['runtime']['component_plugins'] ?? 0 ) && 1 === ( $browser_session['runtime']['summary']['mu_plugins'] ?? 0 ) && 2 === ( $browser_session['runtime']['summary']['themes'] ?? 0 ) && 1 === ( $browser_session['runtime']['summary']['bootstrap'] ?? 0 ) );
 $assert( 'browser Playground session server-packages remote runtime plugins after required components', ! is_wp_error( $browser_session ) && str_starts_with( (string) ( $browser_plugin_by_slug( 'generic-runtime-helper' )['url'] ?? '' ), 'data:application/zip;base64,' ) && false === ( $browser_plugin_by_slug( 'generic-runtime-helper' )['activate'] ?? true ) && 'runtime-plugin-remote-package' === ( $browser_plugin_by_slug( 'generic-runtime-helper' )['provenance']['source'] ?? '' ) );
 $assert( 'browser Playground session packages release ZIP runtime plugins without exposing source URLs', ! is_wp_error( $browser_session ) && str_starts_with( (string) ( $browser_plugin_by_slug( 'static-site-importer' )['url'] ?? '' ), 'data:application/zip;base64,' ) && ! str_contains( (string) ( $browser_step_with_plugin_slug( 'static-site-importer' )['pluginData']['url'] ?? '' ), 'github.com' ) && 'runtime-plugin-remote-package' === ( $browser_plugin_by_slug( 'static-site-importer' )['provenance']['source'] ?? '' ) );
 $assert( 'browser Playground session packages server runtime plugin paths', ! is_wp_error( $browser_session ) && str_starts_with( (string) ( $browser_plugin_by_slug( 'generic-caller-plugin' )['url'] ?? '' ), 'data:application/zip;base64,' ) && 64 === strlen( (string) ( $browser_plugin_by_slug( 'generic-caller-plugin' )['provenance']['sha256'] ?? '' ) ) && 'runtime-plugin-path' === ( $browser_plugin_by_slug( 'generic-caller-plugin' )['provenance']['source'] ?? '' ) );
 $assert( 'browser Playground session compiles git directory runtime plugins', ! is_wp_error( $browser_session ) && 'git:directory' === ( $browser_step_with_plugin_slug( 'example-git-plugin' )['pluginData']['resource'] ?? '' ) && 'plugins/example-git-plugin' === ( $browser_step_with_plugin_slug( 'example-git-plugin' )['pluginData']['path'] ?? '' ) && 'example-git-plugin' === ( $browser_step_with_plugin_slug( 'example-git-plugin' )['options']['targetFolderName'] ?? '' ) );
 $assert( 'browser Playground session compiles caller mu-plugin runtime dependency', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/mu-plugins/caller-runtime.php' )['code'] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground session compiles theme runtime dependency', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "require_once '/wordpress/wp-load.php'" ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "require_once ABSPATH . WPINC . '/theme.php'" ) && str_contains( (string) ( $browser_step_with_code( '/wordpress/wp-content/themes/example-starter/style.css' )['code'] ?? '' ), "switch_theme( 'example-starter' )" ) );
+$packaged_theme = array_values( array_filter( $browser_session['runtime']['themes'] ?? array(), static fn( array $theme ): bool => 'packaged-starter' === ( $theme['slug'] ?? '' ) ) )[0] ?? array();
+$assert( 'browser Playground session packages runtime theme paths', ! is_wp_error( $browser_session ) && true === ( $packaged_theme['local_package'] ?? false ) && str_starts_with( (string) ( $packaged_theme['url'] ?? '' ), 'data:application/zip;base64,' ) && 'runtime-theme-path' === ( $packaged_theme['provenance']['source'] ?? '' ) && 64 === strlen( (string) ( $packaged_theme['provenance']['sha256'] ?? '' ) ) );
+$assert( 'browser Playground session compiles packaged theme installer', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( 'Could not read browser theme package' )['code'] ?? '' ), '/wordpress/wp-content/themes' ) && str_contains( (string) ( $browser_step_with_code( 'Could not read browser theme package' )['code'] ?? '' ), 'Browser theme package hash mismatch' ) );
+$assert( 'browser Playground session exposes prepared runtime miss and fallback blueprint', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-prepared-runtime/v1' === ( $browser_session['runtime']['prepared_runtime']['schema'] ?? '' ) && 'miss' === ( $browser_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'fallback' === ( $browser_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'known-site-runtime' === ( $browser_session['runtime']['prepared_runtime']['cache_key'] ?? '' ) && 64 === strlen( (string) ( $browser_session['runtime']['prepared_runtime']['input_hash'] ?? '' ) ) && isset( $browser_session['playground']['prepared_runtime']['fallback_blueprint']['steps'] ) );
 $assert( 'browser Playground session compiles named bootstrap runtime operation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( "update_option( 'blogname', 'Browser Preview' )" )['code'] ?? '' ), "require_once '/wordpress/wp-load.php'" ) );
 $assert( 'browser Playground session records trusted origins', ! is_wp_error( $browser_session ) && 'https://playground.wordpress.net' === ( $browser_session['playground']['provenance']['client_module_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session records browser plugin provenance', ! is_wp_error( $browser_session ) && 'example.test' === ( $browser_session['plugins'][0]['provenance']['host'] ?? '' ) && str_repeat( 'a', 64 ) === ( $browser_session['plugins'][0]['provenance']['sha256'] ?? '' ) );
@@ -842,6 +857,23 @@ $assert( 'browser Playground recipe loads WordPress as internal REST runner requ
 $assert( 'browser Playground recipe installs caller mu-plugin before invocation', ! is_wp_error( $browser_session ) && ! empty( $browser_step_with_code( 'caller_runtime_task' ) ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'caller_runtime_task' ) );
 $assert( 'browser Playground recipe keeps invocation fixed after parent validation', ! is_wp_error( $browser_session ) && ! str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), '$payload[\'invocation\']' ) );
 $assert( 'browser Playground recipe guards runtime-principal authorization to Playground', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "'/wordpress/' === \$wp_codebox_playground_root" ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER' ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_codebox_browser_runner_not_playground' ) );
+
+$prepared_hit_input = $browser_session_input;
+$prepared_hit_input['runtime']['prepared']['input_hash'] = (string) ( $browser_session['runtime']['prepared_runtime']['input_hash'] ?? '' );
+$prepared_hit_input['runtime']['prepared']['blueprint'] = array(
+	'steps' => array(
+		array(
+			'step' => 'runPHP',
+			'code' => '<?php echo "prepared runtime restored";',
+		),
+	),
+);
+$prepared_hit_session = call_user_func( $browser_session_ability['execute_callback'], $prepared_hit_input );
+$assert( 'browser Playground session selects prepared blueprint on hash hit', ! is_wp_error( $prepared_hit_session ) && 'hit' === ( $prepared_hit_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'prepared' === ( $prepared_hit_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'prepared' === ( $prepared_hit_session['playground']['prepared_runtime']['selected'] ?? '' ) && 1 === count( $prepared_hit_session['playground']['blueprint']['steps'] ?? array() ) && str_contains( (string) ( $prepared_hit_session['playground']['blueprint']['steps'][0]['code'] ?? '' ), 'prepared runtime restored' ) );
+$prepared_stale_input = $prepared_hit_input;
+$prepared_stale_input['runtime']['prepared']['input_hash'] = str_repeat( '0', 64 );
+$prepared_stale_session = call_user_func( $browser_session_ability['execute_callback'], $prepared_stale_input );
+$assert( 'browser Playground session invalidates prepared blueprint by input hash', ! is_wp_error( $prepared_stale_session ) && 'miss' === ( $prepared_stale_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'fallback' === ( $prepared_stale_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'input-hash-mismatch' === ( $prepared_stale_session['runtime']['prepared_runtime']['invalidation']['reason'] ?? '' ) && count( $prepared_stale_session['playground']['blueprint']['steps'] ?? array() ) > 1 );
 
 $browser_materializer_contract = call_user_func(
 	$browser_materializer_ability['execute_callback'],

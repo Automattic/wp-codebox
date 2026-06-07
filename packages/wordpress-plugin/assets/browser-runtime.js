@@ -1210,6 +1210,48 @@ try {
 		return recipe;
 	};
 
+	const preparedBrowserRuntimeContract = ( session ) => {
+		const playground = session?.playground && typeof session.playground === 'object' ? session.playground : {};
+		const runtime = session?.runtime && typeof session.runtime === 'object' ? session.runtime : {};
+		const prepared = playground.prepared_runtime && typeof playground.prepared_runtime === 'object'
+			? playground.prepared_runtime
+			: ( runtime.prepared_runtime && typeof runtime.prepared_runtime === 'object' ? runtime.prepared_runtime : null );
+		if ( ! prepared || prepared.schema !== 'wp-codebox/browser-prepared-runtime/v1' ) {
+			return {
+				schema: 'wp-codebox/browser-prepared-runtime/v1',
+				status: 'disabled',
+				selected: 'fallback',
+			};
+		}
+
+		return prepared;
+	};
+
+	const selectPreparedBrowserBlueprint = ( session ) => {
+		const prepared = preparedBrowserRuntimeContract( session );
+		if ( prepared.selected === 'prepared' && prepared.blueprint && typeof prepared.blueprint === 'object' ) {
+			return prepared.blueprint;
+		}
+
+		if ( prepared.fallback_blueprint && typeof prepared.fallback_blueprint === 'object' ) {
+			return prepared.fallback_blueprint;
+		}
+
+		return session?.playground?.blueprint && typeof session.playground.blueprint === 'object' ? session.playground.blueprint : null;
+	};
+
+	const preparedBrowserRuntimeStatus = ( session ) => {
+		const prepared = preparedBrowserRuntimeContract( session );
+		return {
+			schema: 'wp-codebox/browser-prepared-runtime-status/v1',
+			status: prepared.status || 'disabled',
+			selected: prepared.selected || 'fallback',
+			cache_key: prepared.cache_key || '',
+			input_hash: prepared.input_hash || '',
+			invalidation: prepared.invalidation || null,
+		};
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -1370,7 +1412,7 @@ try {
 		const probeText = 'wp-codebox-browser-runtime-contract-probe';
 
 		await browserRuntimeContractPhase( phases, 'runtime-bootstrap', async () => {
-			const functions = [ 'runPhpRequest', 'runRecipe', 'runBrowserSessionRecipe', 'runWordPressOperation', 'writeFile' ];
+			const functions = [ 'runPhpRequest', 'runRecipe', 'runBrowserSessionRecipe', 'runWordPressOperation', 'writeFile', 'preparedBrowserRuntimeContract', 'selectPreparedBrowserBlueprint', 'preparedBrowserRuntimeStatus' ];
 			const missing = functions.filter( ( name ) => typeof window.wpCodeboxBrowser?.[ name ] !== 'function' );
 			if ( missing.length > 0 ) {
 				throw new Error( `Missing browser runtime functions: ${ missing.join( ', ' ) }` );
@@ -1617,11 +1659,14 @@ echo wp_json_encode( array(
 		installTheme,
 		normalizeOperationResult,
 		parseJsonResponse,
+		preparedBrowserRuntimeContract,
+		preparedBrowserRuntimeStatus,
 		runBrowserRuntimeContractProbe,
 		runBrowserSessionRecipe,
 		runPhpRequest,
 		runRecipe,
 		runWordPressOperation,
+		selectPreparedBrowserBlueprint,
 		setFrontendAdminBarVisible,
 		writeFile,
 		writeReviewFile,
