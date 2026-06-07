@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { normalizeTaskInput } from "@automattic/wp-codebox-core"
 import { buildAgentTaskRecipe } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentSandboxRunCode } from "../packages/cli/src/agent-code.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 
 const input = {
@@ -54,6 +55,7 @@ assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine"
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
+const sandboxCode = agentSandboxRunCode("Run a bundle", "echo json_encode(array('ok' => true));", [])
 assert.ok(
   agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode, success)"),
   "successful normalized agent-bundle workloads should not keep stale recipe-run failure diagnostics",
@@ -69,6 +71,14 @@ assert.ok(
 assert.ok(
   recipeEvidenceSource.includes('agentTaskResult?.success !== true || agentResult.status !== "failed"'),
   "only successful agent task results should override failed sandbox evidence",
+)
+assert.ok(
+  sandboxCode.includes("JSON_INVALID_UTF8_SUBSTITUTE"),
+  "sandbox runtime payload encoding should preserve results with invalid UTF-8 instead of returning an empty output",
+)
+assert.ok(
+  sandboxCode.includes("runtime_payload_json_encode_failed"),
+  "sandbox runtime payload encoding failures should surface as structured diagnostics",
 )
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))

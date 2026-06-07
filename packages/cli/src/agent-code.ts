@@ -273,6 +273,25 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     return $imports;
 }
 
+function wp_codebox_json_encode_runtime_payload($value): string {
+    $json = wp_json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if (false !== $json) {
+        return $json;
+    }
+
+    $fallback = array(
+        'agent_runtime' => array(
+            'success' => false,
+            'error' => array(
+                'code' => 'runtime_payload_json_encode_failed',
+                'message' => function_exists('json_last_error_msg') ? json_last_error_msg() : 'Runtime payload JSON encoding failed.',
+            ),
+        ),
+    );
+
+    return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
 $ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
@@ -329,7 +348,7 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
     }
 }
 
-echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
+echo wp_codebox_json_encode_runtime_payload($sandbox_agent_runtime);
 `
 }
 
@@ -527,6 +546,25 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     return $entries;
 }
 
+function wp_codebox_json_encode_runtime_payload($value): string {
+    $json = wp_json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if (false !== $json) {
+        return $json;
+    }
+
+    $fallback = array(
+        'command' => 'agent-sandbox.run',
+        'wp_loaded' => function_exists('wp_insert_post'),
+        'output' => '',
+        'error' => array(
+            'code' => 'runtime_payload_json_encode_failed',
+            'message' => function_exists('json_last_error_msg') ? json_last_error_msg() : 'Runtime payload JSON encoding failed.',
+        ),
+    );
+
+    return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
 $activation_results = array();
 
 foreach ($plugins as $plugin) {
@@ -571,15 +609,14 @@ ob_start();
 ${phpBody(code)}
 $sandbox_output = ob_get_clean();
 
-echo json_encode(
+echo wp_codebox_json_encode_runtime_payload(
     array(
         'command' => 'agent-sandbox.run',
         'task' => $sandbox_task,
         'wp_loaded' => function_exists('wp_insert_post'),
         'stack' => $sandbox_stack,
         'output' => $sandbox_output,
-    ),
-    JSON_PRETTY_PRINT
+    )
 );
 `
 }
