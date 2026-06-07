@@ -9,10 +9,12 @@ const workspace = resolve(repoRoot, "artifacts", "recipe-browser-bench-metrics-s
 const recipePath = join(workspace, "recipe.json")
 const artifactsRoot = join(workspace, "artifacts")
 const emptyArtifactsRoot = join(workspace, "empty-artifacts")
+const shapedArtifactsRoot = join(workspace, "shaped-artifacts")
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(workspace, { recursive: true })
 await mkdir(emptyArtifactsRoot, { recursive: true })
+await mkdir(join(shapedArtifactsRoot, "files", "browser"), { recursive: true })
 
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
@@ -168,6 +170,40 @@ assert.equal(emptyBrowserMetrics.schema, "wp-codebox/browser-metrics/v1")
 assert.equal(emptyBrowserMetrics.hasBrowserMetrics, false)
 assert.deepEqual(emptyBrowserMetrics.metrics, {})
 assert.deepEqual(emptyBrowserMetrics.artifacts, {})
+
+await writeFile(join(shapedArtifactsRoot, "manifest.json"), `${JSON.stringify({
+  id: "shaped-browser-summary",
+  contentDigest: { algorithm: "sha256", inputs: [], value: "0".repeat(64) },
+  createdAt: new Date(0).toISOString(),
+  runtime: { kind: "test" },
+  files: [
+    { path: "files/browser/editor-action-summary.json", kind: "browser-summary", contentType: "application/json", sha256: { algorithm: "sha256", value: "0".repeat(64) } },
+  ],
+}, null, 2)}\n`)
+await writeFile(join(shapedArtifactsRoot, "files", "browser", "editor-action-summary.json"), `${JSON.stringify({
+  schema: "wp-codebox/browser-probe/v1",
+  summary: {
+    metrics: {
+      browser_checkpoint_count: 7,
+      browser_dom_node_count: 42,
+    },
+  },
+}, null, 2)}\n`)
+
+const shapedBrowserMetrics = await runCli([
+  "packages/cli/dist/index.js",
+  "artifacts",
+  "browser-metrics",
+  "--bundle",
+  shapedArtifactsRoot,
+  "--json",
+])
+
+assert.equal(shapedBrowserMetrics.schema, "wp-codebox/browser-metrics/v1")
+assert.equal(shapedBrowserMetrics.hasBrowserMetrics, true)
+assert.equal(shapedBrowserMetrics.metrics.browser_checkpoint_count, 7)
+assert.equal(shapedBrowserMetrics.metrics.browser_dom_node_count, 42)
+assert.equal(shapedBrowserMetrics.artifacts.summary.path, "files/browser/editor-action-summary.json")
 
 console.log(`Recipe browser bench metrics smoke passed: ${artifactDirectory}`)
 
