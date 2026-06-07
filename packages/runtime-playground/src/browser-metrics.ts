@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
+import type { ArtifactManifest } from "@automattic/wp-codebox-core"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
   BrowserProbeArtifact,
@@ -226,23 +227,30 @@ function benchMetricUnit(name: string): string {
 }
 
 export async function browserArtifactMetrics(bundleDirectory: string): Promise<BrowserArtifactMetricsResult> {
-  const summaryPath = join(bundleDirectory, "files", "browser", "summary.json")
   const artifacts: BrowserArtifactMetricsResult["artifacts"] = {}
 
-  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "summary", "summary.json", "json")
+  const summaryPaths = await browserSummaryArtifactPaths(bundleDirectory)
+  for (const [index, summaryPath] of summaryPaths.entries()) {
+    artifacts[index === 0 ? "summary" : `summary_${index + 1}`] = { path: summaryPath, kind: "json" }
+  }
+
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "lifecycle", "lifecycle.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "memory", "memory.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "performance", "performance.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "checkpoints", "checkpoints.jsonl", "jsonl")
 
   let metrics: Record<string, number> = {}
-  try {
-    const summary = JSON.parse(await readFile(summaryPath, "utf8")) as Record<string, unknown>
-    const browserSummary = isRecord(summary.summary) ? summary.summary : {}
-    metrics = isNumericMetricRecord(browserSummary.metrics) ? browserSummary.metrics : {}
-  } catch (error) {
-    if (!isMissingFileError(error)) {
-      throw error
+  for (const summaryPath of summaryPaths) {
+    try {
+      const summary = JSON.parse(await readFile(join(bundleDirectory, summaryPath), "utf8")) as Record<string, unknown>
+      const browserSummary = isRecord(summary.summary) ? summary.summary : {}
+      if (isNumericMetricRecord(browserSummary.metrics)) {
+        metrics = { ...metrics, ...browserSummary.metrics }
+      }
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error
+      }
     }
   }
 
@@ -253,6 +261,34 @@ export async function browserArtifactMetrics(bundleDirectory: string): Promise<B
     metrics,
     artifacts,
   }
+}
+
+async function browserSummaryArtifactPaths(bundleDirectory: string): Promise<string[]> {
+  const paths = new Set<string>()
+
+  try {
+    const manifest = JSON.parse(await readFile(join(bundleDirectory, "manifest.json"), "utf8")) as ArtifactManifest
+    for (const file of Array.isArray(manifest.files) ? manifest.files : []) {
+      if (file.kind === "browser-summary" && typeof file.path === "string" && file.path.length > 0) {
+        paths.add(file.path)
+      }
+    }
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error
+    }
+  }
+
+  try {
+    await access(join(bundleDirectory, "files", "browser", "summary.json"))
+    paths.add("files/browser/summary.json")
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error
+    }
+  }
+
+  return [...paths]
 }
 
 async function addBrowserArtifactIfPresent(artifacts: BrowserArtifactMetricsResult["artifacts"], bundleDirectory: string, name: string, file: string, kind: "json" | "jsonl"): Promise<void> {
