@@ -58,6 +58,7 @@ export interface BrowserProbeArtifact {
     progress?: BrowserProbeProgressSummary
     review?: BrowserProbeReviewSummary
     context?: BrowserProbeContextDetails
+    auth?: BrowserProbeAuthSummary
     capabilities?: BrowserProbeCapabilityDiagnostics
     replayability: BrowserProbeReplayability
     screenshot: boolean
@@ -71,6 +72,12 @@ export interface BrowserProbeArtifact {
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
+}
+
+export interface BrowserProbeAuthSummary {
+  mode: "wordpress-admin"
+  userId: number
+  cookieCount: number
 }
 
 export interface BrowserEditorCanvasProbeSummary {

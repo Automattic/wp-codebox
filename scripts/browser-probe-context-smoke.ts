@@ -21,6 +21,8 @@ try {
           "capture=html",
           "device=iPhone 13",
           "locale=fr-FR",
+          "auth=wordpress-admin",
+          "script=return document.body.classList.contains('logged-in')",
         ],
       }],
     },
@@ -46,6 +48,11 @@ try {
   assert.equal(summary.context?.effective?.viewport?.isMobile, true)
   assert.equal(summary.context?.effective?.viewport?.width, summary.viewport.width)
   assert.equal(summary.context?.effective?.viewport?.height, summary.viewport.height)
+  assert.equal(summary.auth?.mode, "wordpress-admin")
+  assert.equal(summary.auth?.userId, 1)
+  assert.ok(summary.auth?.cookieCount >= 2, "authenticated probe should install WordPress auth cookies")
+  assert.equal(summary.summary?.scriptResult, true, "authenticated probe should see logged-in browser state")
+  assert.doesNotMatch(JSON.stringify(summary), /wordpress_logged_in|wordpress_sec|wordpress_test_cookie/i, "summary should not expose auth cookie names or values")
   assert.equal(summary.files?.review, "files/browser/review.json")
   assert.equal(summary.summary?.review?.timings?.ttfbMs?.status, "missing", "review should explicitly mark missing TTFB without performance capture")
   assert.equal(summary.summary?.review?.timings?.ttfbMs?.reason, "capture=performance was not requested")

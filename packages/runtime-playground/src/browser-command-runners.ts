@@ -5,7 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -98,12 +98,14 @@ export async function runBrowserProbeCommand({
   artifactRoot,
   command = "wordpress.browser-probe",
   runtimeSpec,
+  runPlaygroundCommand,
   server,
   spec,
 }: {
   artifactRoot: string
   command?: string
   runtimeSpec?: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
@@ -119,13 +121,14 @@ export async function runBrowserProbeCommand({
         artifactRoot,
         command,
         runtimeSpec,
+        runPlaygroundCommand,
         server,
         spec: { ...spec, args: browserProbeProfileArgs(spec.args ?? [], profile) },
         browserFilesDirectory: "files/browser",
         profileId: profile.id,
       })
     }
-    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, server, spec, browserFilesDirectory: "files/browser" })
+    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
@@ -142,6 +145,7 @@ export async function runBrowserProbeCommand({
       artifactRoot,
       command,
       runtimeSpec,
+      runPlaygroundCommand,
       server,
       spec: {
         ...spec,
@@ -174,6 +178,7 @@ async function runSingleBrowserProbeCommand({
   artifactRoot,
   command,
   runtimeSpec,
+  runPlaygroundCommand,
   server,
   spec,
   browserFilesDirectory,
@@ -182,6 +187,7 @@ async function runSingleBrowserProbeCommand({
   artifactRoot: string
   command: string
   runtimeSpec?: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
   browserFilesDirectory: string
@@ -215,6 +221,7 @@ async function runSingleBrowserProbeCommand({
   const requestedContext = browserProbeContextRequest(args, requestedViewport, profileId, throttleProfile?.id)
   const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
+  const authRequest = browserAuthRequest(args)
   const failFast = booleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
   const lifecycleSelectors = commaListArg(args, "observe")
@@ -281,6 +288,7 @@ async function runSingleBrowserProbeCommand({
   let page: import("playwright").Page | null = null
   let context: import("playwright").BrowserContext | null = null
   let contextDetails: BrowserProbeContextDetails | undefined
+  let authSummary: BrowserProbeAuthSummary | undefined
   let capabilityDiagnostics: BrowserProbeCapabilityDiagnostics | undefined
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
@@ -302,6 +310,9 @@ async function runSingleBrowserProbeCommand({
       await routeBrowserProbeContextNetwork(context, networkPolicy, preview.localOrigin)
     }
     page = context ? await context.newPage() : await browser.newPage()
+    if (authRequest) {
+      authSummary = await installWordPressAdminAuthCookies({ command, page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+    }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
@@ -546,6 +557,7 @@ async function runSingleBrowserProbeCommand({
         progress: progress.summary(),
         review,
         context: contextDetails,
+        auth: authSummary,
         capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -577,6 +589,7 @@ async function runSingleBrowserProbeCommand({
         ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
       },
       context: contextDetails,
+      auth: authSummary,
       capabilities: capabilityDiagnostics,
       review,
       viewport,
@@ -973,6 +986,7 @@ function safeBrowserProbeUrl(value: string | undefined): string | null {
 export async function runHtmlCaptureCommand(input: {
   artifactRoot: string
   runtimeSpec: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -1434,11 +1448,13 @@ function editorCanvasTimeoutMs(args: string[]): number {
 export async function runBrowserActionsCommand({
   artifactRoot,
   runtimeSpec,
+  runPlaygroundCommand,
   server,
   spec,
 }: {
   artifactRoot: string
   runtimeSpec: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -1484,6 +1500,7 @@ export async function runBrowserActionsCommand({
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
   const requestedViewport = viewportArg(args, "viewport")
+  const authRequest = browserAuthRequest(args)
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1510,11 +1527,15 @@ export async function runBrowserActionsCommand({
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
+  let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
 
   try {
     const page = await browser.newPage()
+    if (authRequest) {
+      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+    }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
@@ -1641,6 +1662,7 @@ export async function runBrowserActionsCommand({
         networkEvents: network.length,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
+        auth: authSummary,
         viewport,
       },
     }
@@ -1697,6 +1719,9 @@ interface BrowserScenarioInput {
   viewport?: string
   device?: string
   locale?: string
+  auth?: string
+  authUserId?: string | number
+  auth_user_id?: string | number
   waitFor?: string
   wait_for?: string
   duration?: string
@@ -1708,11 +1733,13 @@ interface BrowserScenarioInput {
 export async function runBrowserScenarioCommand({
   artifactRoot,
   runtimeSpec,
+  runPlaygroundCommand,
   server,
   spec,
 }: {
   artifactRoot: string
   runtimeSpec: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -1731,6 +1758,8 @@ export async function runBrowserScenarioCommand({
   const device = scenario.device ?? (scenario.profile && scenario.profile !== "desktop-chrome" ? scenario.profile : undefined) ?? argValue(args, "device")
   const locale = scenario.locale ?? argValue(args, "locale")
   const prePageScript = scenario.prePageScript ?? scenario.pre_page_script ?? browserScenarioObserverScript(scenario.observers) ?? argValue(args, "pre-page-script")
+  const auth = scenario.auth ?? argValue(args, "auth")
+  const authUserId = scenario.authUserId ?? scenario.auth_user_id ?? argValue(args, "auth-user-id")
   const startedAt = now()
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1752,9 +1781,11 @@ export async function runBrowserScenarioCommand({
     if (device) probeArgs.push(`device=${device}`)
     if (locale) probeArgs.push(`locale=${locale}`)
     if (prePageScript) probeArgs.push(`pre-page-script=${prePageScript}`)
+    if (auth) probeArgs.push(`auth=${auth}`)
+    if (authUserId) probeArgs.push(`auth-user-id=${authUserId}`)
 
     try {
-      probeResult = await runBrowserProbeCommand({ artifactRoot, runtimeSpec, server, spec: { ...spec, command: "wordpress.browser-probe", args: probeArgs } })
+      probeResult = await runBrowserProbeCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args: probeArgs } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         probeResult = { artifact: error.artifact, output: "" }
@@ -1774,9 +1805,11 @@ export async function runBrowserScenarioCommand({
     if (requestedViewport) actionsArgs.push(`viewport=${requestedViewport}`)
     if (stepTimeout) actionsArgs.push(`step-timeout=${stepTimeout}`)
     if (timeout) actionsArgs.push(`timeout=${timeout}`)
+    if (auth) actionsArgs.push(`auth=${auth}`)
+    if (authUserId) actionsArgs.push(`auth-user-id=${authUserId}`)
 
     try {
-      actionsResult = await runBrowserActionsCommand({ artifactRoot, runtimeSpec, server, spec: { ...spec, command: "wordpress.browser-actions", args: actionsArgs } })
+      actionsResult = await runBrowserActionsCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args: actionsArgs } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         actionsResult = { artifact: error.artifact, output: "" }
@@ -1805,6 +1838,7 @@ export async function runBrowserScenarioCommand({
     startedAt,
     finishedAt: now(),
     context: primaryArtifact.summary.context,
+    auth: primaryArtifact.summary.auth,
     viewport: primaryArtifact.summary.viewport,
     files: {
       ...(probeResult ? { probeSummary: probeResult.artifact.files.summary } : {}),
@@ -1815,6 +1849,7 @@ export async function runBrowserScenarioCommand({
       probe: probeResult ? probeResult.artifact.summary : undefined,
       actions: actionsResult ? actionsResult.artifact.summary : undefined,
       assertions: actionsResult?.artifact.summary.assertions ?? probeResult?.artifact.summary.assertions,
+      auth: primaryArtifact.summary.auth,
     },
   }
   await writeFile(scenarioSummaryPath, `${JSON.stringify(scenarioSummary, null, 2)}\n`)
@@ -1831,6 +1866,7 @@ export async function runBrowserScenarioCommand({
       steps: actionsResult?.artifact.summary.steps ?? primaryArtifact.summary.steps,
       assertions: actionsResult?.artifact.summary.assertions ?? probeResult?.artifact.summary.assertions,
       context: primaryArtifact.summary.context,
+      auth: primaryArtifact.summary.auth,
       finalUrl,
     },
   }
@@ -2005,7 +2041,7 @@ export async function runEditorOpenCommand({
 
   try {
     const page = await browser.newPage()
-    await installEditorAuthCookies({ page, runPlaygroundCommand, runtimeSpec, server })
+    await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     if (capture.has("console")) {
       page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
@@ -2197,7 +2233,7 @@ export async function runEditorActionsCommand({
 
   try {
     const page = await browser.newPage()
-    await installEditorAuthCookies({ page, runPlaygroundCommand, runtimeSpec, server })
+    await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     if (capture.has("console")) {
       page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
@@ -2784,19 +2820,31 @@ function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs
   }
 }
 
-async function installEditorAuthCookies({
+async function installWordPressAdminAuthCookies({
+  command,
   page,
   runPlaygroundCommand,
   runtimeSpec,
   server,
+  userId,
 }: {
+  command: string
   page: import("playwright").Page
-  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
-  runtimeSpec: RuntimeCreateSpec
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec?: RuntimeCreateSpec
   server: PlaygroundCliServer
-}): Promise<void> {
-  const response = await runPlaygroundCommand("wordpress.editor-open.auth", server, { code: bootstrapPhpCode(runtimeSpec, editorAuthCookiePhpCode(server.serverUrl), []) })
-  assertPlaygroundResponseOk("wordpress.editor-open.auth", response)
+  userId: number
+}): Promise<BrowserProbeAuthSummary> {
+  if (!runPlaygroundCommand) {
+    throw new Error(`${command} auth=wordpress-admin requires Playground PHP command support`)
+  }
+  if (!runtimeSpec) {
+    throw new Error(`${command} auth=wordpress-admin requires a runtime spec`)
+  }
+
+  const authCommand = `${command}.auth`
+  const response = await runPlaygroundCommand(authCommand, server, { code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode(server.serverUrl, userId), []) })
+  assertPlaygroundResponseOk(authCommand, response)
   const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
   const cookieDomain = new URL(server.serverUrl).hostname
   await page.context().addCookies(cookies.map((cookie) => ({
@@ -2809,14 +2857,16 @@ async function installEditorAuthCookies({
     secure: cookie.secure === true,
     sameSite: cookie.sameSite ?? "Lax",
   })))
+
+  return { mode: "wordpress-admin", userId, cookieCount: cookies.length }
 }
 
-function editorAuthCookiePhpCode(browserUrl: string): string {
+function wordpressAdminAuthCookiePhpCode(browserUrl: string, userId: number): string {
   return `
-$user_id = 1;
+$user_id = ${JSON.stringify(userId)};
 $user = get_user_by( 'id', $user_id );
 if ( ! $user ) {
-    throw new RuntimeException( 'wordpress.editor-open requires admin user ID 1 to exist.' );
+    throw new RuntimeException( 'Browser auth requires the requested WordPress user to exist.' );
 }
 wp_set_current_user( $user_id );
 $expiration = time() + HOUR_IN_SECONDS;
@@ -2858,6 +2908,17 @@ if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEP
 }
 echo wp_json_encode( $cookies );
 `
+}
+
+function browserAuthRequest(args: string[]): { userId: number } | undefined {
+  const auth = argValue(args, "auth")?.trim()
+  if (!auth) {
+    return undefined
+  }
+  if (auth !== "wordpress-admin") {
+    throw new Error(`Browser auth supports wordpress-admin: ${auth}`)
+  }
+  return { userId: positiveIntegerArg(args, "auth-user-id", 1) }
 }
 
 function now(): string {
