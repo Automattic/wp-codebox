@@ -145,7 +145,15 @@ export interface ArtifactReviewBrowserSummary {
     checkpoints?: string
     memory?: string
     performance?: string
+    review?: string
     screenshot?: string
+    visualCompare?: {
+      status: string
+      mismatchRatio?: number
+      mismatchPixels?: number
+      totalPixels?: number
+      dimensionMismatch?: boolean
+    }
     console?: string
     errorsFile?: string
     actions?: string

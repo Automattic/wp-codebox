@@ -46,6 +46,14 @@ try {
   assert.equal(summary.context?.effective?.viewport?.isMobile, true)
   assert.equal(summary.context?.effective?.viewport?.width, summary.viewport.width)
   assert.equal(summary.context?.effective?.viewport?.height, summary.viewport.height)
+  assert.equal(summary.files?.review, "files/browser/review.json")
+  assert.equal(summary.summary?.review?.timings?.ttfbMs?.status, "missing", "review should explicitly mark missing TTFB without performance capture")
+  assert.equal(summary.summary?.review?.timings?.ttfbMs?.reason, "capture=performance was not requested")
+  assert.equal(summary.summary?.review?.network?.status, "not-captured", "review should explicitly mark missing network capture")
+
+  const browserReview = JSON.parse(await readFile(join(output.artifacts.directory, "files", "browser", "review.json"), "utf8"))
+  assert.equal(browserReview.timings.ttfbMs.status, "missing")
+  assert.equal(browserReview.timings.ttfbMs.reason, "capture=performance was not requested")
 
   console.log("Browser probe context smoke passed")
 } finally {

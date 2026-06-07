@@ -69,6 +69,7 @@ export function browserProbePerformanceSummary(checkpoints: BrowserProbeCheckpoi
       largestContentfulPaintMs: null,
       largestContentfulPaintSize: null,
       largestContentfulPaintElement: null,
+      largestContentfulPaintUrl: null,
     },
     resources: final?.resources.count ?? 0,
     transferSizeBytes: final?.resources.transferSizeBytes ?? 0,

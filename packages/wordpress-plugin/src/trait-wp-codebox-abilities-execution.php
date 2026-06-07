@@ -68,6 +68,9 @@ public static function create_browser_playground_session( array $input ): array|
 
 	$base_blueprint = self::browser_blueprint_with_site_artifact( is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(), $site_blueprint_artifact );
 	$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
+	$prepared_runtime = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $blueprint, $playground );
+	$runtime['prepared_runtime'] = $prepared_runtime;
+	$blueprint = self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint );
 	$artifacts      = self::browser_artifact_files( $input );
 	if ( is_wp_error( $artifacts ) ) {
 		return $artifacts;
@@ -111,6 +114,7 @@ public static function create_browser_playground_session( array $input ): array|
 			'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
 			'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
 			'blueprint'          => self::browser_playground_blueprint( $blueprint, $playground ),
+			'prepared_runtime'   => $prepared_runtime,
 			'capabilities'       => array(
 				'compile_blueprint' => true,
 				'run_blueprint'     => true,

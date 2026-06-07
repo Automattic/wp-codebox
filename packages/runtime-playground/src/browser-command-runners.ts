@@ -2,8 +2,10 @@ import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import pixelmatch from "pixelmatch"
+import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -243,9 +245,11 @@ async function runSingleBrowserProbeCommand({
   const lifecyclePath = join(browserDirectory, "lifecycle.json")
   const networkPath = join(browserDirectory, "network.jsonl")
   const performancePath = join(browserDirectory, "performance.json")
+  const reviewPath = join(browserDirectory, "review.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
+  const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { chromium, devices } = await import("playwright")
   if (requestedContext.browser && requestedContext.browser !== "chromium") {
@@ -260,6 +264,11 @@ async function runSingleBrowserProbeCommand({
       ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
       : undefined,
   )
+  const browserMetadata = {
+    name: "chromium",
+    channel: process.env.WP_CODEBOX_BROWSER_CHANNEL || "bundled",
+    version: browser.version(),
+  }
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
   let htmlSha256: string | undefined
@@ -471,6 +480,36 @@ async function runSingleBrowserProbeCommand({
       results: assertionResults,
     }
 
+    const finishedAt = now()
+    const review = browserProbeReviewSummary({
+      browser: browserMetadata,
+      capture,
+      checkpoints,
+      consoleMessages,
+      durationMs,
+      errors,
+      files: browserProbeArtifactRefs(browserFilesDirectory, capture, {
+        checkpoints: checkpoints.length > 0,
+        console: capture.has("console") || capturesConsoleForAssertions,
+        errors: capture.has("errors") || capturesErrorsForAssertions,
+        html: capture.has("html") ? htmlSha256 : undefined,
+        lifecycle: Boolean(lifecycleArtifact),
+        memory: Boolean(memoryArtifact),
+        network: capture.has("network") || capturesNetworkForAssertions,
+        performance: Boolean(performanceArtifact),
+        screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
+      }),
+      finishedAt,
+      network,
+      performanceArtifact,
+      startedAt,
+      throttle: throttleProfile?.id ?? null,
+      totalDurationMs: Date.now() - startedAtMs,
+      viewport,
+      waitFor,
+    })
+    await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
+
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
@@ -487,6 +526,7 @@ async function runSingleBrowserProbeCommand({
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
+        review: `${browserFilesDirectory}/review.json`,
         ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
         summary: `${browserFilesDirectory}/summary.json`,
       },
@@ -504,6 +544,7 @@ async function runSingleBrowserProbeCommand({
         networkEvents: network.length,
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
+        review,
         context: contextDetails,
         capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
@@ -529,7 +570,7 @@ async function runSingleBrowserProbeCommand({
       ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       startedAt,
-      finishedAt: now(),
+      finishedAt,
       files: artifact.files,
       hashes: {
         ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
@@ -537,6 +578,7 @@ async function runSingleBrowserProbeCommand({
       },
       context: contextDetails,
       capabilities: capabilityDiagnostics,
+      review,
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -737,6 +779,195 @@ function browserProbeCapabilityViewport(viewport: BrowserProbeViewport): Browser
     isMobile: viewport.isMobile,
     hasTouch: viewport.hasTouch,
   }
+}
+
+function browserProbeReviewSummary(input: {
+  browser: BrowserProbeReviewSummary["browser"]
+  capture: Set<string>
+  checkpoints: BrowserProbeCheckpointRecord[]
+  consoleMessages: Record<string, unknown>[]
+  durationMs: number
+  errors: BrowserProbeErrorRecord[]
+  files: Record<string, BrowserProbeArtifactRef>
+  finishedAt: string
+  network: BrowserProbeNetworkRecord[]
+  performanceArtifact?: BrowserProbePerformanceArtifact
+  startedAt: string
+  throttle: string | null
+  totalDurationMs: number
+  viewport: BrowserProbeViewport | null
+  waitFor: string
+}): BrowserProbeReviewSummary {
+  const performance = input.performanceArtifact?.final
+  const paint = performance?.paint
+  const navigation = performance?.navigation ?? {
+    type: null,
+    redirectCount: 0,
+    durationMs: null,
+    domContentLoadedMs: null,
+    loadEventMs: null,
+    responseStartMs: null,
+    responseEndMs: null,
+    requestStartMs: null,
+    ttfbMs: null,
+    redirectMs: null,
+  }
+  const missingReason = input.capture.has("performance")
+    ? "metric not reported by browser"
+    : "capture=performance was not requested"
+  const pageErrors = input.errors.filter((error) => error.type === "pageerror")
+  const probeErrors = input.errors.filter((error) => error.type === "probe-error")
+  const consoleErrors = input.consoleMessages.filter((message) => message.type === "error")
+  const lcpUrl = safeBrowserProbeUrl(paint?.largestContentfulPaintUrl ?? undefined)
+
+  return {
+    schema: "wp-codebox/browser-probe-review/v1",
+    version: 1,
+    browser: input.browser,
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    profile: {
+      viewport: input.viewport,
+      userAgent: input.viewport?.userAgent ?? null,
+      throttle: input.throttle,
+      waitFor: input.waitFor,
+      durationMs: input.durationMs,
+    },
+    timings: {
+      startedAt: input.startedAt,
+      finishedAt: input.finishedAt,
+      totalDurationMs: browserProbeMetric(input.totalDurationMs, "probe wall-clock duration unavailable"),
+      navigation,
+      ttfbMs: browserProbeMetric(navigation.ttfbMs, missingReason),
+      firstContentfulPaintMs: browserProbeMetric(paint?.firstContentfulPaintMs, missingReason),
+      largestContentfulPaintMs: browserProbeMetric(paint?.largestContentfulPaintMs, missingReason),
+      loadEventMs: browserProbeMetric(navigation.loadEventMs, missingReason),
+    },
+    lcp: {
+      status: typeof paint?.largestContentfulPaintMs === "number" ? "available" : "missing",
+      ...(typeof paint?.largestContentfulPaintMs === "number" ? {} : { reason: missingReason }),
+      element: paint?.largestContentfulPaintElement ?? null,
+      size: paint?.largestContentfulPaintSize ?? null,
+      url: lcpUrl ?? null,
+    },
+    errors: {
+      console: browserProbeIssueSummary(consoleErrors.length, Boolean(input.files.console), input.files.console?.path),
+      page: browserProbeIssueSummary(pageErrors.length, Boolean(input.files.errors), input.files.errors?.path),
+      probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
+    },
+    network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    milestones: {
+      status: input.checkpoints.length > 0 ? "captured" : "not-captured",
+      count: input.checkpoints.length,
+      names: [...new Set(input.checkpoints.map((checkpoint) => checkpoint.name).filter(Boolean))].sort(),
+      ...(input.files.checkpoints ? { artifact: input.files.checkpoints.path } : {}),
+    },
+    artifacts: input.files,
+  }
+}
+
+function browserProbeMetric(value: number | null | undefined, reason: string): BrowserProbeMeasuredMetric {
+  return typeof value === "number" && Number.isFinite(value)
+    ? { status: "available", value, unit: "ms" }
+    : { status: "missing", value: null, unit: "ms", reason }
+}
+
+function browserProbeIssueSummary(count: number, captured: boolean, artifact?: string): BrowserProbeReviewSummary["errors"]["console"] {
+  if (!captured && count === 0) {
+    return { count: 0, status: "not-captured" }
+  }
+  return {
+    count,
+    status: count > 0 ? "issues" : "ok",
+    ...(artifact ? { artifact } : {}),
+  }
+}
+
+function browserProbeNetworkReviewSummary(network: BrowserProbeNetworkRecord[], artifact?: BrowserProbeArtifactRef): BrowserProbeNetworkReviewSummary {
+  if (!artifact) {
+    return { status: "not-captured", events: 0, responses: 0, failures: 0, byHost: {}, byType: {} }
+  }
+
+  const byHost: Record<string, BrowserProbeNetworkCountSummary> = {}
+  const byType: Record<string, BrowserProbeNetworkCountSummary> = {}
+  for (const record of network) {
+    addBrowserProbeNetworkCount(byHost, requestHost(record.url) || "unknown", record)
+    addBrowserProbeNetworkCount(byType, record.resourceType || "unknown", record)
+  }
+
+  return {
+    status: "captured",
+    events: network.length,
+    responses: network.filter((record) => record.type === "response").length,
+    failures: network.filter((record) => record.type === "requestfailed").length,
+    byHost: sortBrowserProbeNetworkCounts(byHost),
+    byType: sortBrowserProbeNetworkCounts(byType),
+    waterfall: artifact,
+  }
+}
+
+function addBrowserProbeNetworkCount(target: Record<string, BrowserProbeNetworkCountSummary>, key: string, record: BrowserProbeNetworkRecord): void {
+  const summary = target[key] ?? { requests: 0, responses: 0, failures: 0, transferSizeBytes: 0 }
+  summary.requests += 1
+  if (record.type === "response") {
+    summary.responses += 1
+  }
+  if (record.type === "requestfailed") {
+    summary.failures += 1
+  }
+  summary.transferSizeBytes += typeof record.transferSize === "number" && Number.isFinite(record.transferSize) ? record.transferSize : 0
+  target[key] = summary
+}
+
+function sortBrowserProbeNetworkCounts(value: Record<string, BrowserProbeNetworkCountSummary>): Record<string, BrowserProbeNetworkCountSummary> {
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function requestHost(url: string): string | undefined {
+  try {
+    return new URL(url).host
+  } catch {
+    return undefined
+  }
+}
+
+function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<string>, input: {
+  checkpoints: boolean
+  console: boolean
+  errors: boolean
+  html?: string
+  lifecycle: boolean
+  memory: boolean
+  network: boolean
+  performance: boolean
+  screenshot?: string
+}): Record<string, BrowserProbeArtifactRef> {
+  return {
+    ...(input.console ? { console: { path: `${browserFilesDirectory}/console.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.checkpoints ? { checkpoints: { path: `${browserFilesDirectory}/checkpoints.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.errors ? { errors: { path: `${browserFilesDirectory}/errors.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(capture.has("html") ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, ...(input.html ? { sha256: input.html } : {}) } } : {}),
+    ...(input.lifecycle ? { lifecycle: { path: `${browserFilesDirectory}/lifecycle.json`, kind: "json" as const } } : {}),
+    ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
+    ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
+    review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
+    ...(capture.has("screenshot") ? { screenshot: { path: `${browserFilesDirectory}/screenshot.png`, kind: "png" as const, ...(input.screenshot ? { sha256: input.screenshot } : {}) } } : {}),
+    summary: { path: `${browserFilesDirectory}/summary.json`, kind: "json" as const },
+  }
+}
+
+function safeBrowserProbeUrl(value: string | undefined): string | null {
+  if (!value) {
+    return null
+  }
+  if (/^data:/i.test(value)) {
+    return "data:[redacted]"
+  }
+  return value
 }
 
 export async function runHtmlCaptureCommand(input: {
@@ -2123,6 +2354,260 @@ export async function runEditorActionsCommand({
   }
 }
 
+export async function runVisualCompareCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runtimeSpec?: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = spec.args ?? []
+  const sourceUrl = argValue(args, "source-url")?.trim()
+  const candidateUrl = argValue(args, "candidate-url")?.trim()
+  const sourceScreenshot = argValue(args, "source-screenshot")?.trim()
+  const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
+  const sourceLabel = argValue(args, "source-label")?.trim() || "source"
+  const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
+  const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
+  const durationMs = durationArg(args, "duration", 0)
+  const requestedViewport = viewportArg(args, "viewport")
+  const fullPage = booleanArg(args, "full-page", true)
+  const threshold = numberArg(args, "threshold", 0.1)
+  const includeAA = booleanArg(args, "include-aa", false)
+  const maxRegions = positiveIntegerArg(args, "max-regions", 8)
+
+  if (threshold < 0 || threshold > 1) {
+    throw new Error("threshold must be between 0 and 1")
+  }
+  if (Boolean(sourceUrl) !== Boolean(candidateUrl) || Boolean(sourceScreenshot) !== Boolean(candidateScreenshot)) {
+    throw new Error("wordpress.visual-compare requires source-url and candidate-url, or source-screenshot and candidate-screenshot")
+  }
+  if (!sourceUrl && !sourceScreenshot) {
+    throw new Error("wordpress.visual-compare requires source-url/candidate-url or source-screenshot/candidate-screenshot")
+  }
+
+  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
+  await mkdir(browserDirectory, { recursive: true })
+  const sourcePath = join(browserDirectory, "source.png")
+  const candidatePath = join(browserDirectory, "candidate.png")
+  const diffPath = join(browserDirectory, "diff.png")
+  const visualDiffPath = join(browserDirectory, "visual-diff.json")
+  const summaryPath = join(browserDirectory, "summary.json")
+  const startedAt = now()
+  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
+  const sourceTargetUrl = sourceUrl ? resolveBrowserProbeUrl(sourceUrl, preview.effectiveOrigin) : undefined
+  const candidateTargetUrl = candidateUrl ? resolveBrowserProbeUrl(candidateUrl, preview.effectiveOrigin) : undefined
+  let finalSourceUrl = sourceTargetUrl
+  let finalCandidateUrl = candidateTargetUrl
+  let viewport: BrowserProbeViewport | null = null
+
+  if (sourceTargetUrl && candidateTargetUrl) {
+    const { chromium } = await import("playwright")
+    const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
+    try {
+      const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
+      viewport = await browserProbeViewport(page)
+      finalSourceUrl = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage)
+      finalCandidateUrl = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage)
+    } finally {
+      await browser.close()
+    }
+  } else if (sourceScreenshot && candidateScreenshot) {
+    await writeFile(sourcePath, await readFile(sourceScreenshot))
+    await writeFile(candidatePath, await readFile(candidateScreenshot))
+  }
+
+  const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
+  const finishedAt = now()
+  const files = {
+    sourceScreenshot: "files/browser/visual-compare/source.png",
+    candidateScreenshot: "files/browser/visual-compare/candidate.png",
+    diffScreenshot: "files/browser/visual-compare/diff.png",
+    visualDiff: "files/browser/visual-compare/visual-diff.json",
+    summary: "files/browser/visual-compare/summary.json",
+  }
+  const summary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different",
+    source: {
+      label: sourceLabel,
+      ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
+      ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
+    },
+    candidate: {
+      label: candidateLabel,
+      ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
+      ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
+    },
+    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions },
+    preview,
+    viewport,
+    startedAt,
+    finishedAt,
+    files,
+    hashes: {
+      sourceScreenshot: { algorithm: "sha256", value: await fileSha256(sourcePath) },
+      candidateScreenshot: { algorithm: "sha256", value: await fileSha256(candidatePath) },
+      diffScreenshot: { algorithm: "sha256", value: await fileSha256(diffPath) },
+    },
+    comparison,
+  }
+  const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
+  await writeFile(visualDiffPath, summaryJson)
+  await writeFile(summaryPath, summaryJson)
+
+  const artifact: BrowserProbeArtifact = {
+    requestedUrl: sourceTargetUrl ?? sourceScreenshot ?? sourceLabel,
+    url: candidateTargetUrl ?? candidateScreenshot ?? candidateLabel,
+    preview,
+    files,
+    summary: {
+      steps: 0,
+      consoleMessages: 0,
+      errors: 0,
+      finalUrl: finalCandidateUrl ?? finalSourceUrl ?? "",
+      htmlSnapshot: false,
+      networkEvents: 0,
+      replayability: "artifact-backed",
+      screenshot: true,
+      visualCompare: {
+        status: summary.status,
+        mismatchRatio: comparison.mismatchRatio,
+        mismatchPixels: comparison.mismatchPixels,
+        totalPixels: comparison.totalPixels,
+        dimensionMismatch: comparison.dimensionMismatch,
+      },
+      viewport,
+    },
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify(summary, null, 2)}\n`,
+  }
+}
+
+async function captureVisualCompareUrl(page: import("playwright").Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean): Promise<string> {
+  if (waitFor === "duration") {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else if (waitFor.startsWith("selector:")) {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible" })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
+    await page.goto(targetUrl, { waitUntil: waitFor })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else {
+    throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
+  }
+  await page.screenshot({ path: outputPath, fullPage })
+  return page.url()
+}
+
+async function comparePngFiles(sourcePath: string, candidatePath: string, diffPath: string, options: { threshold: number; includeAA: boolean; maxRegions: number }): Promise<{
+  source: { width: number; height: number }
+  candidate: { width: number; height: number }
+  diff: { width: number; height: number }
+  dimensionMismatch: boolean
+  mismatchPixels: number
+  totalPixels: number
+  mismatchRatio: number
+  regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+}> {
+  const source = PNG.sync.read(await readFile(sourcePath))
+  const candidate = PNG.sync.read(await readFile(candidatePath))
+  const width = Math.max(source.width, candidate.width)
+  const height = Math.max(source.height, candidate.height)
+  const sourceCanvas = visualCompareCanvas(source, width, height)
+  const candidateCanvas = visualCompareCanvas(candidate, width, height)
+  const diff = new PNG({ width, height })
+  const mismatchPixels = pixelmatch(sourceCanvas.data, candidateCanvas.data, diff.data, width, height, { threshold: options.threshold, includeAA: options.includeAA })
+  await writeFile(diffPath, PNG.sync.write(diff))
+
+  return {
+    source: { width: source.width, height: source.height },
+    candidate: { width: candidate.width, height: candidate.height },
+    diff: { width, height },
+    dimensionMismatch: source.width !== candidate.width || source.height !== candidate.height,
+    mismatchPixels,
+    totalPixels: width * height,
+    mismatchRatio: width * height > 0 ? mismatchPixels / (width * height) : 0,
+    regions: visualCompareMismatchRegions(diff, options.maxRegions),
+  }
+}
+
+function visualCompareCanvas(image: PNG, width: number, height: number): PNG {
+  if (image.width === width && image.height === height) {
+    return image
+  }
+  const canvas = new PNG({ width, height })
+  for (let y = 0; y < image.height; y += 1) {
+    const sourceStart = (image.width * y) << 2
+    const targetStart = (width * y) << 2
+    image.data.copy(canvas.data, targetStart, sourceStart, sourceStart + (image.width << 2))
+  }
+  return canvas
+}
+
+function visualCompareMismatchRegions(diff: PNG, maxRegions: number): Array<{ x: number; y: number; width: number; height: number; pixels: number }> {
+  const visited = new Uint8Array(diff.width * diff.height)
+  const regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }> = []
+  for (let y = 0; y < diff.height; y += 1) {
+    for (let x = 0; x < diff.width; x += 1) {
+      const index = y * diff.width + x
+      if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
+        continue
+      }
+      regions.push(visualCompareFloodRegion(diff, x, y, visited))
+    }
+  }
+  return regions.sort((a, b) => b.pixels - a.pixels).slice(0, maxRegions)
+}
+
+function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, visited: Uint8Array): { x: number; y: number; width: number; height: number; pixels: number } {
+  const stack: Array<[number, number]> = [[startX, startY]]
+  let minX = startX
+  let maxX = startX
+  let minY = startY
+  let maxY = startY
+  let pixels = 0
+  while (stack.length > 0) {
+    const [x, y] = stack.pop() ?? [0, 0]
+    if (x < 0 || y < 0 || x >= diff.width || y >= diff.height) {
+      continue
+    }
+    const index = y * diff.width + x
+    if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
+      continue
+    }
+    visited[index] = 1
+    pixels += 1
+    minX = Math.min(minX, x)
+    maxX = Math.max(maxX, x)
+    minY = Math.min(minY, y)
+    maxY = Math.max(maxY, y)
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1])
+  }
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, pixels }
+}
+
+function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
+  const offset = ((y * diff.width) + x) << 2
+  return diff.data[offset] > 0 || diff.data[offset + 1] > 0 || diff.data[offset + 2] > 0
+}
+
 async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number): Promise<Omit<EditorStateSnapshot, "schema" | "capturedAt" | "target"> | undefined> {
   switch (step.kind) {
     case "open":
@@ -2826,6 +3311,30 @@ function booleanArg(args: string[], name: string, fallback: boolean): boolean {
     return false
   }
   throw new Error(`${name} must be true or false`)
+}
+
+function numberArg(args: string[], name: string, fallback: number): number {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a number`)
+  }
+  return parsed
+}
+
+function positiveIntegerArg(args: string[], name: string, fallback: number): number {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) {
+    return fallback
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`)
+  }
+  return parsed
 }
 
 function durationArg(args: string[], name: string, fallbackMs: number): number {

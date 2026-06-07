@@ -23,7 +23,12 @@ export interface BrowserProbeArtifact {
     memory?: string
     network?: string
     performance?: string
+    review?: string
     screenshot?: string
+    sourceScreenshot?: string
+    candidateScreenshot?: string
+    diffScreenshot?: string
+    visualDiff?: string
     summary: string
   }
   summary: {
@@ -51,10 +56,18 @@ export interface BrowserProbeArtifact {
     networkEvents: number
     performance?: BrowserProbePerformanceSummary
     progress?: BrowserProbeProgressSummary
+    review?: BrowserProbeReviewSummary
     context?: BrowserProbeContextDetails
     capabilities?: BrowserProbeCapabilityDiagnostics
     replayability: BrowserProbeReplayability
     screenshot: boolean
+    visualCompare?: {
+      status: string
+      mismatchRatio?: number
+      mismatchPixels?: number
+      totalPixels?: number
+      dimensionMismatch?: boolean
+    }
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
@@ -111,6 +124,96 @@ export interface BrowserEditorCanvasSelectorMatchSummary {
     text: string
   } | null
   error: string
+}
+
+export interface BrowserProbeReviewSummary {
+  schema: "wp-codebox/browser-probe-review/v1"
+  version: 1
+  browser: {
+    name: string
+    channel: string
+    version: string | null
+  }
+  runtime: {
+    node: string
+    platform: string
+    arch: string
+  }
+  profile: {
+    viewport: BrowserProbeViewport | null
+    userAgent: string | null
+    throttle: string | null
+    waitFor: string
+    durationMs: number
+  }
+  timings: {
+    startedAt: string
+    finishedAt: string
+    totalDurationMs: BrowserProbeMeasuredMetric
+    navigation: BrowserProbeNavigationTimingSummary
+    ttfbMs: BrowserProbeMeasuredMetric
+    firstContentfulPaintMs: BrowserProbeMeasuredMetric
+    largestContentfulPaintMs: BrowserProbeMeasuredMetric
+    loadEventMs: BrowserProbeMeasuredMetric
+  }
+  lcp: {
+    status: "available" | "missing"
+    reason?: string
+    element: string | null
+    size: number | null
+    url: string | null
+  }
+  errors: {
+    console: BrowserProbeIssueSummary
+    page: BrowserProbeIssueSummary
+    probe: BrowserProbeIssueSummary
+  }
+  network: BrowserProbeNetworkReviewSummary
+  milestones: BrowserProbeMilestoneSummary
+  artifacts: Record<string, BrowserProbeArtifactRef>
+}
+
+export interface BrowserProbeMeasuredMetric {
+  status: "available" | "missing"
+  value: number | null
+  unit: "ms"
+  reason?: string
+}
+
+export interface BrowserProbeIssueSummary {
+  count: number
+  status: "ok" | "issues" | "not-captured"
+  artifact?: string
+}
+
+export interface BrowserProbeNetworkReviewSummary {
+  status: "captured" | "not-captured"
+  events: number
+  responses: number
+  failures: number
+  byHost: Record<string, BrowserProbeNetworkCountSummary>
+  byType: Record<string, BrowserProbeNetworkCountSummary>
+  waterfall?: BrowserProbeArtifactRef
+}
+
+export interface BrowserProbeNetworkCountSummary {
+  requests: number
+  responses: number
+  failures: number
+  transferSizeBytes: number
+}
+
+export interface BrowserProbeMilestoneSummary {
+  status: "captured" | "not-captured"
+  count: number
+  names: string[]
+  artifact?: string
+}
+
+export interface BrowserProbeArtifactRef {
+  path: string
+  kind: "json" | "jsonl" | "html" | "png"
+  sha256?: string
 }
 
 export interface BrowserProbeCapabilityDiagnostics {
@@ -319,6 +422,7 @@ export interface BrowserProbePaintTimingSummary {
   largestContentfulPaintMs: number | null
   largestContentfulPaintSize: number | null
   largestContentfulPaintElement: string | null
+  largestContentfulPaintUrl: string | null
 }
 
 export interface BrowserProbeLayoutShiftSummary {
@@ -534,12 +638,14 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       errorsFile: probe.files.errors,
       editorState: probe.files.editorState,
       memory: probe.files.memory,
+      review: probe.files.review,
       actions: probe.files.steps ?? probe.files.actions,
       actionCount: probe.summary.steps ?? probe.summary.actions,
       steps: probe.files.steps,
       stepCount: probe.summary.steps,
       ...(probe.summary.assertions ? { assertions: { total: probe.summary.assertions.total, passed: probe.summary.assertions.passed, failed: probe.summary.assertions.failed } } : {}),
       performance: probe.files.performance,
+      visualCompare: probe.summary.visualCompare,
       summaryFile: probe.files.summary,
     })),
   }
@@ -585,8 +691,23 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     if (probe.files.performance) {
       files.set(probe.files.performance, { kind: "browser-performance", contentType: "application/json" })
     }
+    if (probe.files.review) {
+      files.set(probe.files.review, { kind: "browser-review", contentType: "application/json" })
+    }
     if (probe.files.screenshot) {
       files.set(probe.files.screenshot, { kind: "browser-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.sourceScreenshot) {
+      files.set(probe.files.sourceScreenshot, { kind: "browser-visual-source-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.candidateScreenshot) {
+      files.set(probe.files.candidateScreenshot, { kind: "browser-visual-candidate-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.diffScreenshot) {
+      files.set(probe.files.diffScreenshot, { kind: "browser-visual-diff-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.visualDiff) {
+      files.set(probe.files.visualDiff, { kind: "browser-visual-diff", contentType: "application/json" })
     }
     files.set(probe.files.summary, { kind: "browser-summary", contentType: "application/json" })
   }
@@ -595,6 +716,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, probe.files.visualDiff, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }
