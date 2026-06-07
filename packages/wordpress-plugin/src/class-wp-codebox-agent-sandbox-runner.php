@@ -1044,12 +1044,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array{connectors:string[],settings:string[]} */
 	private function inheritance_request( array $input ): array {
-		$inherit = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
-
-		return array(
-			'connectors' => $this->string_list( $inherit['connectors'] ?? array() ),
-			'settings'   => $this->string_list( $inherit['settings'] ?? array() ),
-		);
+		return WP_Codebox_Inheritance::request( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} */
@@ -1059,37 +1054,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array{inheritance_audit:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},process_secret_env:array<string,string>} */
 	private function inheritance_resolution_payload( array $input ): array {
-		$request    = $this->inheritance_request( $input );
-		$resolution = array(
-			'connectors' => array_map(
-				static fn( string $name ): array => array(
-					'name'   => $name,
-					'status' => 'unresolved',
-				),
-				$request['connectors']
-			),
-			'settings'   => array_map(
-				static fn( string $name ): array => array(
-					'name'   => $name,
-					'status' => 'unresolved',
-				),
-				$request['settings']
-			),
-		);
-
-		if ( function_exists( 'apply_filters' ) && ( ! empty( $request['connectors'] ) || ! empty( $request['settings'] ) ) ) {
-			$filtered = apply_filters( 'wp_codebox_resolve_inheritance', $resolution, $request, $input );
-			if ( is_array( $filtered ) ) {
-				$resolution = $filtered;
-			}
-		}
+		$payload = WP_Codebox_Inheritance::resolution_payload( $input, fn( string $path ): string => $this->clean_path( $path ) );
 
 		return array(
-			'inheritance_audit'  => array(
-				'connectors' => $this->sanitize_inheritance_connectors( $resolution['connectors'] ?? array() ),
-				'settings'   => $this->sanitize_inheritance_settings( $resolution['settings'] ?? array() ),
-			),
-			'process_secret_env' => $this->inheritance_process_secret_env_values( $resolution['connectors'] ?? array() ),
+			'inheritance_audit'  => $payload['inheritance'],
+			'process_secret_env' => $this->inheritance_process_secret_env_values( $payload['resolution']['connectors'] ?? array() ),
 		);
 	}
 
@@ -1152,186 +1121,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $values;
 	}
 
-	/** @param array<int,mixed> $connectors Inheritance connector rows. @return array<int,array<string,mixed>> */
-	private function sanitize_inheritance_connectors( array $connectors ): array {
-		$sanitized = array();
-		foreach ( $connectors as $connector ) {
-			if ( ! is_array( $connector ) ) {
-				continue;
-			}
-
-			$name = trim( (string) ( $connector['name'] ?? '' ) );
-			if ( '' === $name ) {
-				continue;
-			}
-
-			$entry = array(
-				'name'   => $name,
-				'status' => trim( (string) ( $connector['status'] ?? 'resolved' ) ),
-			);
-
-			foreach ( array( 'provider', 'model' ) as $field ) {
-				$value = trim( (string) ( $connector[ $field ] ?? '' ) );
-				if ( '' !== $value ) {
-					$entry[ $field ] = $value;
-				}
-			}
-
-			$provider_plugin_paths = $this->string_list( $connector['provider_plugin_paths'] ?? $connector['providerPluginPaths'] ?? array() );
-			$provider_plugin_paths = array_values(
-				array_filter(
-					array_map( fn( string $path ): string => $this->clean_path( $path ), $provider_plugin_paths ),
-					static fn( string $path ): bool => '' !== $path && is_dir( $path )
-				)
-			);
-			if ( ! empty( $provider_plugin_paths ) ) {
-				$entry['providerPluginPaths'] = array_values( array_unique( $provider_plugin_paths ) );
-			}
-
-			$secret_env = $this->string_list( $connector['secret_env'] ?? $connector['secretEnv'] ?? array() );
-			$secret_env = array_values( array_filter( $secret_env, static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) );
-			if ( ! empty( $secret_env ) ) {
-				$entry['secretEnv'] = array_values( array_unique( $secret_env ) );
-			}
-
-			$credentials = $this->sanitize_connector_credentials( $connector['credentials'] ?? null, $name );
-			if ( ! empty( $credentials ) ) {
-				$entry['credentials'] = $credentials;
-			}
-
-			$sanitized[] = $entry;
-		}
-
-		return $sanitized;
-	}
-
-	/** @return array<string,mixed> */
-	private function sanitize_connector_credentials( mixed $credentials, string $connector_name ): array {
-		if ( ! is_array( $credentials ) ) {
-			return array();
-		}
-
-		$status = $this->credential_status( (string) ( $credentials['status'] ?? 'missing' ) );
-		$entry  = array(
-			'schema'    => 'wp-codebox/connector-credentials/v1',
-			'connector' => $connector_name,
-			'scope'     => 'connector',
-			'status'    => $status,
-			'secrets'   => array(),
-		);
-
-		$reason = $this->redacted_reason( $credentials['reason'] ?? '' );
-		if ( '' !== $reason ) {
-			$entry['reason'] = $reason;
-		}
-
-		foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
-			if ( ! is_array( $secret ) ) {
-				continue;
-			}
-
-			$name = trim( (string) ( $secret['name'] ?? '' ) );
-			if ( 1 !== preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
-				continue;
-			}
-
-			$secret_entry = array(
-				'name'   => $name,
-				'status' => $this->credential_status( (string) ( $secret['status'] ?? $status ) ),
-			);
-
-			foreach ( array( 'scope', 'source', 'reason' ) as $field ) {
-				$value = 'reason' === $field ? $this->redacted_reason( $secret[ $field ] ?? '' ) : trim( (string) ( $secret[ $field ] ?? '' ) );
-				if ( '' !== $value ) {
-					$secret_entry[ $field ] = $value;
-				}
-			}
-
-			$entry['secrets'][] = $secret_entry;
-		}
-
-		return $entry;
-	}
-
-	private function credential_status( string $status ): string {
-		return in_array( $status, array( 'available', 'missing', 'denied' ), true ) ? $status : 'missing';
-	}
-
-	private function redacted_reason( mixed $reason ): string {
-		$reason = trim( (string) $reason );
-		if ( '' === $reason ) {
-			return '';
-		}
-
-		return substr( preg_replace( '/[^A-Za-z0-9 .:_-]/', '', $reason ) ?? '', 0, 160 );
-	}
-
 	/** @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance */
 	private function connector_credentials_error( array $inheritance ): WP_Error|null {
-		$failures = array();
-		foreach ( $inheritance['connectors'] as $connector ) {
-			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
-			if ( empty( $credentials ) ) {
-				continue;
-			}
-
-			$status = (string) ( $credentials['status'] ?? 'missing' );
-			$secrets = array_filter(
-				is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array(),
-				static fn( mixed $secret ): bool => is_array( $secret ) && in_array( (string) ( $secret['status'] ?? '' ), array( 'missing', 'denied' ), true )
-			);
-
-			if ( in_array( $status, array( 'missing', 'denied' ), true ) || ! empty( $secrets ) ) {
-				$failures[] = array(
-					'name'        => (string) ( $connector['name'] ?? '' ),
-					'status'      => (string) ( $connector['status'] ?? '' ),
-					'credentials' => $credentials,
-				);
-			}
-		}
-
-		if ( empty( $failures ) ) {
-			return null;
-		}
-
-		return new WP_Error(
-			'wp_codebox_connector_credentials_unavailable',
-			'Requested connector credentials are missing or denied for this sandbox scope.',
-			array(
-				'status'     => 403,
-				'schema'     => 'wp-codebox/connector-credential-failure/v1',
-				'connectors' => $failures,
-			)
-		);
-	}
-
-	/** @param array<int,mixed> $settings Inheritance setting rows. @return array<int,array<string,mixed>> */
-	private function sanitize_inheritance_settings( array $settings ): array {
-		$sanitized = array();
-		foreach ( $settings as $setting ) {
-			if ( ! is_array( $setting ) ) {
-				continue;
-			}
-
-			$name = trim( (string) ( $setting['name'] ?? '' ) );
-			if ( '' === $name ) {
-				continue;
-			}
-
-			$entry = array(
-				'name'   => $name,
-				'status' => trim( (string) ( $setting['status'] ?? 'resolved' ) ),
-			);
-
-			$scope = trim( (string) ( $setting['scope'] ?? '' ) );
-			if ( '' !== $scope ) {
-				$entry['scope'] = $scope;
-			}
-
-			$sanitized[] = $entry;
-		}
-
-		return $sanitized;
+		return WP_Codebox_Inheritance::connector_credentials_error( $inheritance, 'Requested connector credentials are missing or denied for this sandbox scope.' );
 	}
 
 	/** @param array<string,mixed> $input Ability input. */
@@ -1370,21 +1162,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
 	private function inheritance_secret_env_names( array $input, ?array $inheritance = null ): array {
-		$names = array();
-		foreach ( ( $inheritance ?? $this->inheritance_resolution( $input ) )['connectors'] as $connector ) {
-			if ( is_array( $connector['secretEnv'] ?? null ) ) {
-				$names = array_merge( $names, $connector['secretEnv'] );
-			}
-
-			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
-			foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
-				if ( is_array( $secret ) && 'available' === ( $secret['status'] ?? '' ) ) {
-					$names[] = (string) ( $secret['name'] ?? '' );
-				}
-			}
-		}
-
-		return $names;
+		return WP_Codebox_Inheritance::secret_env_names( $inheritance ?? $this->inheritance_resolution( $input ) );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */

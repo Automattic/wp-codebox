@@ -55,16 +55,17 @@ trait WP_Codebox_Abilities_Browser_Connectors {
 			return new WP_Error( 'wp_codebox_browser_connector_request_invalid', 'Browser connector requests require connector and operation.', array( 'status' => 400, 'schema' => 'wp-codebox/browser-connector-response/v1' ) );
 		}
 
-		$raw_resolution = self::browser_connector_raw_resolution( $connector_name, $input );
-		$inheritance_payload = self::browser_inheritance_resolution_payload( array( 'inherit' => array( 'connectors' => array( $connector_name ) ) ) );
-		if ( is_wp_error( $inheritance_payload ) ) {
-			$error_data       = $inheritance_payload->get_error_data();
+		$inheritance_payload = WP_Codebox_Inheritance::resolution_payload( array_merge( $input, array( 'inherit' => array( 'connectors' => array( $connector_name ) ) ) ), static fn( string $path ): string => self::browser_clean_path( $path ) );
+		$raw_resolution      = array_values( array_filter( is_array( $inheritance_payload['resolution']['connectors'] ?? null ) ? $inheritance_payload['resolution']['connectors'] : array(), 'is_array' ) );
+		$credential_error    = self::browser_connector_credentials_error( $inheritance_payload['inheritance'] );
+		if ( null !== $credential_error ) {
+			$error_data       = $credential_error->get_error_data();
 			$error_connectors = is_array( $error_data['connectors'] ?? null ) ? $error_data['connectors'] : array();
 			$error_connector  = is_array( $error_connectors[0] ?? null ) ? $error_connectors[0] : array();
-			return self::browser_connector_error_response( $input, $connector_name, $operation, $inheritance_payload, $error_connector );
+			return self::browser_connector_error_response( $input, $connector_name, $operation, $credential_error, $error_connector );
 		}
 
-		$connector = self::browser_resolved_connector( $inheritance_payload['inheritance']['connectors'] ?? array(), $connector_name );
+		$connector = WP_Codebox_Inheritance::resolved_connector( $inheritance_payload['inheritance']['connectors'] ?? array(), $connector_name );
 		if ( empty( $connector ) || 'resolved' !== (string) ( $connector['status'] ?? '' ) ) {
 			return self::browser_connector_error_response( $input, $connector_name, $operation, new WP_Error( 'wp_codebox_browser_connector_unresolved', 'Requested browser connector is not available for this scope.', array( 'status' => 403 ) ) );
 		}
@@ -102,39 +103,6 @@ trait WP_Codebox_Abilities_Browser_Connectors {
 		}
 
 		return self::sanitize_browser_connector_response( $response, $connector, $operation, $input );
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
-	private static function browser_connector_raw_resolution( string $connector_name, array $input ): array {
-		$resolution = array(
-			'connectors' => array(
-				array(
-					'name'   => $connector_name,
-					'status' => 'unresolved',
-				),
-			),
-			'settings'   => array(),
-		);
-
-		if ( function_exists( 'apply_filters' ) ) {
-			$filtered = apply_filters( 'wp_codebox_resolve_inheritance', $resolution, array( 'connectors' => array( $connector_name ), 'settings' => array() ), $input );
-			if ( is_array( $filtered ) ) {
-				$resolution = $filtered;
-			}
-		}
-
-		return array_values( array_filter( is_array( $resolution['connectors'] ?? null ) ? $resolution['connectors'] : array(), 'is_array' ) );
-	}
-
-	/** @param array<int,array<string,mixed>> $connectors Resolved connectors. @return array<string,mixed> */
-	private static function browser_resolved_connector( array $connectors, string $connector_name ): array {
-		foreach ( $connectors as $connector ) {
-			if ( $connector_name === (string) ( $connector['name'] ?? '' ) ) {
-				return $connector;
-			}
-		}
-
-		return array();
 	}
 
 	/** @param array<string,mixed> $connector Resolved connector. @return array<string,string> */
