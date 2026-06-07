@@ -45,6 +45,7 @@
     "artifact-redaction-smoke": "tsx scripts/artifact-redaction-smoke.ts",
     "artifact-patch-git-apply-smoke": "tsx scripts/artifact-patch-git-apply-smoke.ts",
     "artifact-reference-normalization-smoke": "tsx scripts/artifact-reference-normalization-smoke.ts",
+    "browser-result-shapes-smoke": "tsx scripts/browser-result-shapes-smoke.ts",
     "partial-artifact-discovery-smoke": "tsx scripts/partial-artifact-discovery-smoke.ts",
     "mounted-workspace-diff-smoke": "tsx scripts/mounted-workspace-diff-smoke.ts",
     "policy-validation-smoke": "tsx scripts/policy-validation-smoke.ts",
