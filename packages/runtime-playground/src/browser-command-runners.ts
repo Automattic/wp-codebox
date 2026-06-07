@@ -286,7 +286,7 @@ async function runSingleBrowserProbeCommand({
   let artifact: BrowserProbeArtifact | undefined
 
   try {
-    context = requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
+    context = routedHosts.length > 0 || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
@@ -297,6 +297,9 @@ async function runSingleBrowserProbeCommand({
     if (context && requestedContext.permissions && requestedContext.permissions.length > 0) {
       await context.grantPermissions(requestedContext.permissions)
     }
+    if (context && routedHosts.length > 0) {
+      await routeBrowserProbeContextHosts(context, routedHosts, preview.localOrigin)
+    }
     page = context ? await context.newPage() : await browser.newPage()
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -304,8 +307,8 @@ async function runSingleBrowserProbeCommand({
     if (throttleProfile) {
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
-    if (routedHosts.length > 0) {
-      await routeBrowserProbeHosts(page, routedHosts, preview.localOrigin)
+    if (!context && routedHosts.length > 0) {
+      await routeBrowserProbePageHosts(page, routedHosts, preview.localOrigin)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -2856,14 +2859,22 @@ function now(): string {
   return new Date().toISOString()
 }
 
-async function routeBrowserProbeHosts(page: Page, hosts: string[], localPreviewOrigin: string): Promise<void> {
+async function routeBrowserProbePageHosts(page: Page, hosts: string[], localPreviewOrigin: string): Promise<void> {
+  await routeBrowserProbeHosts(page.route.bind(page), hosts, localPreviewOrigin)
+}
+
+async function routeBrowserProbeContextHosts(context: import("playwright").BrowserContext, hosts: string[], localPreviewOrigin: string): Promise<void> {
+  await routeBrowserProbeHosts(context.route.bind(context), hosts, localPreviewOrigin)
+}
+
+async function routeBrowserProbeHosts(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, hosts: string[], localPreviewOrigin: string): Promise<void> {
   const routedHosts = new Set(hosts.map((host) => host.trim().toLowerCase()).filter(Boolean))
   if (routedHosts.size === 0) {
     return
   }
 
   const localOrigin = new URL(localPreviewOrigin)
-  await page.context().route("**/*", async (route) => {
+  await routePattern("**/*", async (route) => {
     const request = route.request()
     let requestUrl: URL
     try {
@@ -2878,7 +2889,15 @@ async function routeBrowserProbeHosts(page: Page, hosts: string[], localPreviewO
       return
     }
 
-    const routedUrl = new URL(requestUrl.toString())
+    const response = await fetchBrowserProbeRoutedHost(route, requestUrl, routedHosts, localOrigin)
+    await route.fulfill({ response })
+  })
+}
+
+async function fetchBrowserProbeRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>>> {
+  let currentUrl = requestUrl
+  for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
+    const routedUrl = new URL(currentUrl.toString())
     routedUrl.protocol = localOrigin.protocol
     routedUrl.hostname = localOrigin.hostname
     routedUrl.port = localOrigin.port
@@ -2886,16 +2905,29 @@ async function routeBrowserProbeHosts(page: Page, hosts: string[], localPreviewO
     const response = await route.fetch({
       url: routedUrl.toString(),
       headers: {
-        ...request.headers(),
-        host: requestUrl.host,
-        "x-forwarded-host": requestUrl.host,
-        "x-forwarded-port": requestUrl.port || (requestUrl.protocol === "https:" ? "443" : "80"),
-        "x-forwarded-proto": requestUrl.protocol.replace(":", ""),
+        ...route.request().headers(),
+        host: currentUrl.host,
+        "x-forwarded-host": currentUrl.host,
+        "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
+        "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
       },
       maxRedirects: 0,
     })
-    await route.fulfill({ response })
-  })
+
+    const location = response.headers().location
+    if (!location || response.status() < 300 || response.status() >= 400) {
+      return response
+    }
+
+    const redirectedUrl = new URL(location, currentUrl)
+    if (!routedHosts.has(redirectedUrl.hostname.toLowerCase())) {
+      return response
+    }
+
+    currentUrl = redirectedUrl
+  }
+
+  throw new Error(`wordpress.browser-probe route-host exceeded redirect limit for ${requestUrl.href}`)
 }
 
 function browserProbePreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {

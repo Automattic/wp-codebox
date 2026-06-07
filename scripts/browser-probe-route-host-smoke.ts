@@ -16,6 +16,11 @@ try {
     const forwardedHost = request.headers["x-forwarded-host"] ?? ""
     const forwardedPort = request.headers["x-forwarded-port"] ?? ""
     const forwardedProto = request.headers["x-forwarded-proto"] ?? ""
+    if (request.url === "/redirect-to-https/") {
+      response.writeHead(301, { location: `https://${host}/redirected/` })
+      response.end("redirect")
+      return
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
     response.end(`<!doctype html><title>Probe</title><main data-path="${request.url ?? "/"}" data-host="${host}" data-forwarded-host="${forwardedHost}" data-forwarded-port="${forwardedPort}" data-forwarded-proto="${forwardedProto}">OK</main>`)
   })
@@ -65,6 +70,29 @@ try {
   assert.match(html, /data-forwarded-host="example\.test"/)
   assert.match(html, /data-forwarded-port="443"/)
   assert.match(html, /data-forwarded-proto="https"/)
+
+  const redirectProbe = await runBrowserProbeCommand({
+    artifactRoot: workspace,
+    runtimeSpec,
+    server: serverRef,
+    spec: {
+      command: "wordpress.browser-probe",
+      args: [
+        "url=http://example.test/redirect-to-https/",
+        "route-host=example.test",
+        "wait-for=domcontentloaded",
+        "capture=html,network",
+      ],
+    },
+  })
+
+  assert.equal(redirectProbe.artifact.requestedUrl, "http://example.test/redirect-to-https/")
+  assert.equal(redirectProbe.artifact.summary.finalUrl, "http://example.test/redirect-to-https/")
+
+  const redirectedHtml = await readFile(join(workspace, "files", "browser", "snapshot.html"), "utf8")
+  assert.match(redirectedHtml, /data-path="\/redirected\/"/)
+  assert.match(redirectedHtml, /data-host="example\.test"/)
+  assert.match(redirectedHtml, /data-forwarded-proto="https"/)
 
   console.log("Browser probe route-host smoke passed")
 } finally {
