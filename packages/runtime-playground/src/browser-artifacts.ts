@@ -562,9 +562,21 @@ export interface BrowserStepRecord {
   duration?: string
   /** Machine-readable assertion outcome for expect/evaluate steps. */
   assertion?: BrowserStepAssertion
+  readiness?: BrowserStepReadiness
   screenshot?: string
   finalUrl?: string
   error?: BrowserProbeErrorRecord
+}
+
+export interface BrowserStepReadiness {
+  mode: "page" | "frame-selector" | "frame-url"
+  selector?: string
+  urlFragment?: string
+  ready: boolean
+  waitedMs: number
+  visibleElementCount: number
+  textLength: number
+  frameUrl?: string
 }
 
 export interface BrowserStepAssertion {

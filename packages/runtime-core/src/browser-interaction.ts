@@ -50,7 +50,7 @@ export interface BrowserInteractionStep {
   value?: string
   /** Keyboard key for `press`. */
   key?: string
-  /** Wait/load condition: domcontentloaded|load|networkidle|selector:<sel>|duration. */
+  /** Wait/load condition: domcontentloaded|load|networkidle|selector:<sel>|duration|painted|frame-painted:<iframe-selector>|frame-url-painted:<url-fragment>. */
   waitFor?: string
   /** Drag source selector for `drag`. */
   from?: string
@@ -64,7 +64,7 @@ export interface BrowserInteractionStep {
   assert?: unknown
   /** Expected locator state for `expect`. */
   state?: BrowserInteractionExpectState
-  /** Optional screenshot name for `screenshot`. */
+  /** Optional screenshot name for `screenshot`; screenshot steps may also use waitFor for painted-readiness waits before capture. */
   name?: string
   /** Optional wait duration (e.g. 500ms, 2s) for `waitFor`/`navigate`. */
   duration?: string

@@ -1,14 +1,25 @@
 import { basename, join } from "node:path"
 import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
-import type { Page } from "playwright"
+import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
 
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
+  readiness?: BrowserPaintedReadinessSummary
   screenshot?: string
   screenshotIsDefault?: boolean
   error?: BrowserProbeErrorRecord
+}
+
+type BrowserPaintedReadinessSummary = BrowserStepReadiness
+type BrowserPaintedReadinessWait = "painted" | `frame-painted:${string}` | `frame-url-painted:${string}`
+
+interface BrowserPaintedReadinessTarget {
+  mode: "page" | "frame-selector" | "frame-url"
+  frame: Page | Frame
+  selector?: string
+  urlFragment?: string
 }
 
 function now(): string {
@@ -28,7 +39,12 @@ export async function executeBrowserInteractionStep(
   switch (step.kind) {
     case "navigate": {
       const url = resolveBrowserActionUrl((step.url ?? "").trim(), baseUrl)
-      await page.goto(url, { waitUntil: browserActionLoadState(step.waitFor), timeout })
+      const waitFor = step.waitFor
+      if (isPaintedReadinessWait(waitFor)) {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout })
+        return { readiness: await waitForPaintedReadiness(page, waitFor, timeout) }
+      }
+      await page.goto(url, { waitUntil: browserActionLoadState(waitFor), timeout })
       return {}
     }
     case "click": {
@@ -80,8 +96,7 @@ export async function executeBrowserInteractionStep(
       return {}
     }
     case "waitFor": {
-      await browserStepWaitFor(page, step, timeout)
-      return {}
+      return await browserStepWaitFor(page, step, timeout)
     }
     case "evaluate": {
       const result = await page.evaluate(async (source) => {
@@ -107,12 +122,14 @@ export async function executeBrowserInteractionStep(
       return { assertion: { kind: "expect", selector, state, passed } }
     }
     case "screenshot": {
+      const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
       const path = typeof step.name === "string" && step.name.length > 0
         ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
         : defaultScreenshotPath
       await page.screenshot({ path, fullPage: true })
       const isDefault = path === defaultScreenshotPath
       return {
+        ...(readiness ? { readiness } : {}),
         screenshot: isDefault ? "files/browser/screenshot.png" : `files/browser/${basename(path)}`,
         screenshotIsDefault: isDefault,
       }
@@ -148,25 +165,106 @@ function requireFrom(step: BrowserInteractionStep): string {
   return step.from
 }
 
-async function browserStepWaitFor(page: Page, step: BrowserInteractionStep, timeout: number): Promise<void> {
+async function browserStepWaitFor(page: Page, step: BrowserInteractionStep, timeout: number): Promise<BrowserStepOutcome> {
   if (typeof step.selector === "string" && step.selector.length > 0) {
     await page.locator(step.selector).waitFor({ timeout })
-    return
+    return {}
   }
-  const waitFor = typeof step.waitFor === "string" ? step.waitFor : "load"
+  const waitFor: string = typeof step.waitFor === "string" ? step.waitFor : "load"
+  if (isPaintedReadinessWait(waitFor)) {
+    return { readiness: await waitForPaintedReadiness(page, waitFor, timeout) }
+  }
   if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
     await page.waitForLoadState(waitFor)
-    return
+    return {}
   }
   if (waitFor === "duration") {
     await page.waitForTimeout(durationStringMs(step.duration))
-    return
+    return {}
   }
   if (waitFor.startsWith("selector:")) {
     await page.locator(waitFor.slice("selector:".length)).waitFor({ timeout })
-    return
+    return {}
   }
-  throw new Error(`wordpress.browser-actions waitFor supports selector, domcontentloaded, load, networkidle, duration, selector:<sel>: ${waitFor}`)
+  throw new Error(`wordpress.browser-actions waitFor supports selector, domcontentloaded, load, networkidle, duration, selector:<sel>, painted, frame-painted:<iframe-selector>, frame-url-painted:<url-fragment>: ${waitFor}`)
+}
+
+function isPaintedReadinessWait(waitFor: unknown): waitFor is BrowserPaintedReadinessWait {
+  return waitFor === "painted" || (typeof waitFor === "string" && (waitFor.startsWith("frame-painted:") || waitFor.startsWith("frame-url-painted:")))
+}
+
+async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadinessWait, timeout: number): Promise<BrowserPaintedReadinessSummary> {
+  const startedAt = Date.now()
+  const target = await paintedReadinessTarget(page, waitFor, timeout)
+  const result = await target.frame.waitForFunction(() => {
+    const visible = Array.from(document.body?.querySelectorAll("*") ?? [])
+      .map((element) => {
+        const rect = element.getBoundingClientRect()
+        const computed = window.getComputedStyle(element)
+        if (rect.width <= 0 || rect.height <= 0 || computed.display === "none" || computed.visibility === "hidden" || computed.opacity === "0") {
+          return null
+        }
+        const text = (element.textContent || "").replace(/\s+/g, " ").trim()
+        const hasPaintedBox = computed.backgroundColor !== "rgba(0, 0, 0, 0)" || computed.backgroundImage !== "none" || Number.parseFloat(computed.borderTopWidth || "0") > 0 || Number.parseFloat(computed.borderRightWidth || "0") > 0 || Number.parseFloat(computed.borderBottomWidth || "0") > 0 || Number.parseFloat(computed.borderLeftWidth || "0") > 0
+        return { textLength: text.length, hasPaintedBox }
+      })
+      .filter((entry): entry is { textLength: number; hasPaintedBox: boolean } => Boolean(entry))
+    const visibleElementCount = visible.length
+    const textLength = visible.reduce((total, entry) => total + entry.textLength, 0)
+    const paintedBoxCount = visible.filter((entry) => entry.hasPaintedBox).length
+    if (visibleElementCount === 0 || (textLength === 0 && paintedBoxCount === 0)) {
+      return false
+    }
+    return { visibleElementCount, textLength }
+  }, undefined, { timeout })
+  const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number }
+  await target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  return {
+    mode: target.mode,
+    ...(target.selector ? { selector: target.selector } : {}),
+    ...(target.urlFragment ? { urlFragment: target.urlFragment } : {}),
+    ready: true,
+    waitedMs: Math.max(0, Date.now() - startedAt),
+    visibleElementCount: summary.visibleElementCount,
+    textLength: summary.textLength,
+    ...(target.frame.url() ? { frameUrl: target.frame.url() } : {}),
+  }
+}
+
+async function paintedReadinessTarget(page: Page, waitFor: BrowserPaintedReadinessWait, timeout: number): Promise<BrowserPaintedReadinessTarget> {
+  if (waitFor === "painted") {
+    return { mode: "page", frame: page }
+  }
+  if (waitFor.startsWith("frame-painted:")) {
+    const selector = waitFor.slice("frame-painted:".length).trim()
+    if (!selector) {
+      throw new Error("wordpress.browser-actions frame-painted wait requires an iframe selector")
+    }
+    const locator = page.locator(selector).first()
+    await locator.waitFor({ state: "attached", timeout })
+    const handle = await locator.elementHandle({ timeout })
+    const frame = await handle?.contentFrame()
+    if (!frame) {
+      throw new Error(`wordpress.browser-actions frame-painted wait could not resolve iframe: ${selector}`)
+    }
+    return { mode: "frame-selector", frame, selector }
+  }
+  if (waitFor.startsWith("frame-url-painted:")) {
+    const urlFragment = waitFor.slice("frame-url-painted:".length).trim()
+    if (!urlFragment) {
+      throw new Error("wordpress.browser-actions frame-url-painted wait requires a URL fragment")
+    }
+    const deadline = Date.now() + timeout
+    while (Date.now() <= deadline) {
+      const frame = page.frames().find((candidate) => candidate !== page.mainFrame() && candidate.url().includes(urlFragment))
+      if (frame) {
+        return { mode: "frame-url", frame, urlFragment }
+      }
+      await page.waitForTimeout(100)
+    }
+    throw new Error(`wordpress.browser-actions frame-url-painted wait could not resolve iframe URL fragment: ${urlFragment}`)
+  }
+  throw new Error(`Unsupported painted readiness wait: ${waitFor}`)
 }
 
 async function browserExpectState(page: Page, selector: string, state: string, timeout: number): Promise<boolean> {
@@ -225,6 +323,7 @@ export function browserStepRecord(
     ...(typeof step.waitFor === "string" ? { waitFor: step.waitFor } : {}),
     ...(typeof step.duration === "string" ? { duration: step.duration } : {}),
     ...(outcome.assertion ? { assertion: outcome.assertion } : {}),
+    ...(outcome.readiness ? { readiness: outcome.readiness } : {}),
     ...(outcome.screenshot ? { screenshot: outcome.screenshot } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),
