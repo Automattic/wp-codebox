@@ -1,4 +1,5 @@
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount } from "./runtime-contracts.js"
+import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
 type JsonObject = Record<string, unknown>
 
@@ -75,7 +76,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
   return {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: {
-      wp: options.wordpressVersion,
+      wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
       blueprint: options.blueprint ?? { steps: [] },
     },
     inputs: {
@@ -111,7 +112,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
   return {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: {
-      wp: options.wordpressVersion,
+      wp: options.wordpressVersion ?? DEFAULT_WORDPRESS_VERSION,
       blueprint: blueprintWithWpConfigDefines(options.blueprint ?? {}, options.wpConfigDefines ?? {}),
     },
     inputs: {

@@ -1,11 +1,10 @@
-import { createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { serializeError } from "./output.js"
 import { recipeMountType } from "./recipe-sources.js"
 import { defaultPolicy, runPolicy } from "./recipe-validation.js"
 
 export const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
-export const DEFAULT_WORDPRESS_VERSION = "7.0"
 
 export interface RunOptions {
   mounts: Array<{ type?: MountSpec["type"]; source: string; target: string; mode: "readonly" | "readwrite"; metadata?: Record<string, unknown> }>

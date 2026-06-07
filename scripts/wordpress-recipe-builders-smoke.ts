@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const recipeCommandIds = recipeCommandDefinitions().filter((command) => command.recipe).map((command) => command.id)
@@ -26,6 +26,9 @@ const phpunitRecipe = buildWordPressPhpunitRecipe({
     { source: "/repo/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
   ],
 })
+
+assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "demo-plugin" }).runtime?.wp, DEFAULT_WORDPRESS_VERSION)
+assert.equal(buildWordPressBenchRecipe({ pluginSlug: "demo-plugin" }).runtime?.wp, DEFAULT_WORDPRESS_VERSION)
 
 assert.equal(phpunitRecipe.inputs?.mounts?.[0]?.mode, "readwrite")
 assert.deepEqual(phpunitRecipe.workflow.steps[0]?.args, [

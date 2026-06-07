@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { spawnSync } from "node:child_process"
-import { normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -78,7 +78,7 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
 export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptions): Promise<AgentTaskRunOutput> {
   const taskInput = normalizeTaskInput(input)
   const task = taskInput.goal
-  const wpVersion = stringValue(input.wp) || "trunk"
+  const wpVersion = stringValue(input.wp) || DEFAULT_WORDPRESS_VERSION
   const artifacts = stringValue(input.artifacts_path) || await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-artifacts-"))
   const recipeDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-recipe-"))
   const recipePath = join(recipeDirectory, "recipe.json")

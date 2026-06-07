@@ -755,7 +755,7 @@ It records `files/browser/steps.jsonl` (per-step index, kind, selector, ok/fail,
 ]
 ```
 
-WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
+WP Codebox defaults to WordPress `latest` because the agent and AI plugin stacks need the current WordPress runtime surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 
 `--preview-port` fixes the local WP Codebox proxy port for tunnel/proxy wiring. Omit it to keep the current random-port behavior from upstream Playground. `--preview-bind` changes that fixed-port proxy bind address and requires `--preview-port`; it does not change the upstream Playground server bind. `--preview-public-url` is metadata and site-url alignment only; it does not make a loopback-only preview reachable without a tunnel/proxy or explicit proxy bind.
 

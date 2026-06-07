@@ -3,6 +3,7 @@ import type { ArtifactPreview, ArtifactProvenance } from "./runtime-contracts.js
 export * from "./artifact-manifest.js"
 export * from "./artifact-references.js"
 export * from "./runtime-contracts.js"
+export * from "./runtime-defaults.js"
 export * from "./runtime-policy.js"
 export * from "./workspace-policy.js"
 export * from "./sandbox-tool-policy.js"

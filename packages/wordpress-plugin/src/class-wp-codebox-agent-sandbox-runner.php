@@ -14,6 +14,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const FANOUT_PLAN_SCHEMA = 'wp-codebox/agent-fanout-plan/v1';
 	private const FANOUT_EVENT_SCHEMA = 'wp-codebox/agent-fanout-event/v1';
 	private const FANOUT_SCHEMA = 'wp-codebox/agent-fanout-result/v1';
+	private const DEFAULT_WORDPRESS_VERSION = 'latest';
 	private const FANOUT_MAX_CONCURRENCY = 8;
 	private const SESSION_SCHEMA = WP_Codebox_Agent_Task::SESSION_SCHEMA;
 	private const TASK_INPUT_SCHEMA = WP_Codebox_Agent_Task::INPUT_SCHEMA;
@@ -209,9 +210,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$artifacts = $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) );
-		$wp_version = trim( (string) ( $input['wp'] ?? 'trunk' ) );
+		$wp_version = trim( (string) ( $input['wp'] ?? self::DEFAULT_WORDPRESS_VERSION ) );
 		if ( '' === $wp_version ) {
-			$wp_version = 'trunk';
+			$wp_version = self::DEFAULT_WORDPRESS_VERSION;
 		}
 
 		$bin = trim( (string) ( $input['wp_codebox_bin'] ?? $this->default_bin() ) );
@@ -379,9 +380,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$artifacts  = $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) );
-		$wp_version = trim( (string) ( $input['wp'] ?? 'trunk' ) );
+		$wp_version = trim( (string) ( $input['wp'] ?? self::DEFAULT_WORDPRESS_VERSION ) );
 		if ( '' === $wp_version ) {
-			$wp_version = 'trunk';
+			$wp_version = self::DEFAULT_WORDPRESS_VERSION;
 		}
 
 		$bin = trim( (string) ( $input['wp_codebox_bin'] ?? $this->default_bin() ) );
