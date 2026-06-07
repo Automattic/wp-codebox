@@ -552,7 +552,8 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'provider_plugin_paths'  => self::string_array_property_schema( $detailed ? 'AI provider plugin directories to mount and activate inside the sandbox.' : '' ),
 		'agent_bundles'          => self::agent_bundle_schema(),
 		'runtime_task'           => self::object_property_schema( $detailed ? 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.' : '' ),
-		'parent_request'         => self::object_property_schema( $detailed ? 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.' : '' ),
+		'parent_request'         => self::object_property_schema( $detailed ? 'External orchestrator task request normalized by wp_codebox_normalize_parent_task_request adapters into the WP Codebox runner contract.' : '' ),
+		'component_contracts'    => self::component_contracts_schema( $detailed ? 'Caller-declared runtime components WP Codebox should package, mount, or probe.' : '' ),
 		'mounts'                 => $mount_schema,
 		'workspaces'             => self::object_array_property_schema( $detailed ? 'Recipe workspace entries to seed as policy-checked writable repositories.' : '' ),
 		'runtime_stack_mounts'   => self::object_array_property_schema( $detailed ? 'Runtime stack mounts to pass through to recipe.runtime.stack.mounts.' : '' ),
@@ -572,9 +573,9 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'wp'                     => self::string_property_schema( $detailed ? 'WordPress version passed to Playground. Defaults to trunk.' : '' ),
 		'artifacts_path'         => self::string_property_schema( $detailed ? 'Directory where WP Codebox should write artifact bundles.' : '' ),
 		'wp_codebox_bin'         => self::string_property_schema( $detailed ? 'WP Codebox CLI binary or path. JS dist files are run through node.' : '' ),
-		'agents_api_path'        => self::string_property_schema(),
-		'data_machine_path'      => self::string_property_schema(),
-		'data_machine_code_path' => self::string_property_schema(),
+		'agents_api_path'        => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
+		'data_machine_path'      => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
+		'data_machine_code_path' => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
 	);
 
 	if ( ! empty( $options['task_fields'] ) ) {
@@ -609,6 +610,37 @@ private static function host_agent_task_input_properties( array $task_input_sche
 	}
 
 	return $properties;
+}
+
+/** @return array<string,mixed> */
+private static function component_contracts_schema( string $description = '' ): array {
+	$schema = array(
+		'type'  => 'array',
+		'items' => array(
+			'type'       => 'object',
+			'properties' => array(
+				'slug'            => self::string_property_schema( 'Component plugin slug.' ),
+				'path'            => self::string_property_schema( 'Host filesystem path to package for the sandbox.' ),
+				'source'          => self::string_property_schema( 'Alias for path.' ),
+				'activate'        => array( 'type' => 'boolean' ),
+				'loadAs'          => self::string_property_schema( 'Recipe loading mode, such as mu-plugin.' ),
+				'required'        => array( 'type' => 'boolean' ),
+				'readiness_probe' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'type' => array( 'type' => 'string', 'enum' => array( 'ability', 'filter' ) ),
+						'name' => array( 'type' => 'string' ),
+					),
+				),
+				'provenance'      => array( 'type' => 'object' ),
+			),
+		),
+	);
+	if ( '' !== $description ) {
+		$schema['description'] = $description;
+	}
+
+	return $schema;
 }
 
 /**

@@ -758,60 +758,137 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/**
 	 * @param array<string,mixed> $input Ability input.
-	 * @return array{agents_api:string,data_machine:string,data_machine_code:string}|WP_Error
+	 * @return array<int,array<string,mixed>>|WP_Error
 	 */
 	private function resolve_component_paths( array $input ): array|WP_Error {
-		$configured = array_merge( $this->default_component_paths(), $this->configured_paths() );
-		$paths      = array(
-			'agents_api'        => $this->clean_path( (string) ( $input['agents_api_path'] ?? $configured['agents_api'] ?? '' ) ),
-			'data_machine'      => $this->clean_path( (string) ( $input['data_machine_path'] ?? $configured['data_machine'] ?? '' ) ),
-			'data_machine_code' => $this->clean_path( (string) ( $input['data_machine_code_path'] ?? $configured['data_machine_code'] ?? '' ) ),
-		);
-
-		foreach ( $paths as $key => $path ) {
+		$contracts = $this->component_contracts( $input );
+		foreach ( $contracts as $contract ) {
+			$path = (string) ( $contract['path'] ?? '' );
 			if ( '' === $path ) {
-				if ( 'agents_api' !== $key ) {
-					continue;
+				if ( ! empty( $contract['required'] ) ) {
+					return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', (string) ( $contract['slug'] ?? 'unknown' ) ), array( 'status' => 400 ) );
 				}
 
-				return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
+				continue;
 			}
 
 			if ( ! is_dir( $path ) ) {
-				return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', $key ), array( 'status' => 400 ) );
+				return new WP_Error( 'wp_codebox_component_path_missing', sprintf( 'WP Codebox component path %s is missing or not a directory.', (string) ( $contract['slug'] ?? 'unknown' ) ), array( 'status' => 400, 'slug' => (string) ( $contract['slug'] ?? '' ), 'path' => $path ) );
 			}
 		}
 
-		return $paths;
+		return $contracts;
 	}
 
-	/** @return array{agents_api:string,data_machine:string,data_machine_code:string} */
+	/** @return array<string,string> */
 	private function default_component_paths(): array {
-		$paths = array(
-			'agents_api'        => '',
-			'data_machine'      => '',
-			'data_machine_code' => '',
-		);
+		$paths = array();
 
 		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 			return $paths;
 		}
 
 		$plugin_dir = $this->clean_path( (string) WP_PLUGIN_DIR );
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
+		foreach ( array( 'agents-api', 'data-machine', 'data-machine-code' ) as $slug ) {
 			$path = $plugin_dir . DIRECTORY_SEPARATOR . $slug;
 			if ( is_dir( $path ) ) {
-				$paths[ $key ] = $path;
+				$paths[ $slug ] = $path;
 			}
 		}
 
 		return $paths;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private function component_contracts( array $input ): array {
+		$contracts = array();
+		foreach ( $this->configured_component_contracts() as $contract ) {
+			if ( is_array( $contract ) ) {
+				$contracts[] = $contract;
+			}
+		}
+		foreach ( is_array( $input['component_contracts'] ?? null ) ? $input['component_contracts'] : array() as $contract ) {
+			if ( is_array( $contract ) ) {
+				$contracts[] = $contract;
+			}
+		}
+		foreach ( $this->legacy_component_contracts( $input ) as $contract ) {
+			$contracts[] = $contract;
+		}
+
+		$normalized = array();
+		foreach ( $contracts as $contract ) {
+			$slug = $this->component_slug( (string) ( $contract['slug'] ?? $contract['component'] ?? $contract['name'] ?? '' ) );
+			if ( '' === $slug ) {
+				continue;
+			}
+
+			$path = $this->clean_path( (string) ( $contract['path'] ?? $contract['source'] ?? '' ) );
+			$normalized[ $slug ] = array_filter(
+				array_merge(
+					$contract,
+					array(
+						'slug'     => $slug,
+						'path'     => $path,
+						'activate' => (bool) ( $contract['activate'] ?? false ),
+						'loadAs'   => (string) ( $contract['loadAs'] ?? 'mu-plugin' ),
+					)
+				),
+				static fn( mixed $value ): bool => null !== $value && '' !== $value
+			);
+		}
+
+		return array_values( $normalized );
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private function configured_component_contracts(): array {
+		$contracts = array();
+		$option    = $this->config_option( 'wp_codebox_component_contracts', array() );
+		if ( is_array( $option ) ) {
+			$contracts = $option;
+		}
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$contracts = apply_filters( 'wp_codebox_component_contracts', $contracts );
+		}
+
+		return is_array( $contracts ) ? $contracts : array();
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private function legacy_component_contracts( array $input ): array {
+		if ( function_exists( 'apply_filters' ) && false === apply_filters( 'wp_codebox_enable_legacy_component_path_adapter', true, $input ) ) {
+			return array();
+		}
+
+		$configured = array_merge( $this->default_component_paths(), $this->configured_paths() );
+		$legacy     = array(
+			'agents-api'        => array( 'field' => 'agents_api_path', 'configured' => $configured['agents-api'] ?? $configured['agents_api'] ?? '', 'required' => true ),
+			'data-machine'      => array( 'field' => 'data_machine_path', 'configured' => $configured['data-machine'] ?? $configured['data_machine'] ?? '', 'required' => false ),
+			'data-machine-code' => array( 'field' => 'data_machine_code_path', 'configured' => $configured['data-machine-code'] ?? $configured['data_machine_code'] ?? '', 'required' => false ),
+		);
+		$contracts  = array();
+
+		foreach ( $legacy as $slug => $settings ) {
+			$path = $this->clean_path( (string) ( $input[ $settings['field'] ] ?? $settings['configured'] ?? '' ) );
+			$contracts[] = array(
+				'slug'       => $slug,
+				'path'       => $path,
+				'activate'   => false,
+				'loadAs'     => 'mu-plugin',
+				'required'   => (bool) $settings['required'],
+				'provenance' => array( 'source' => 'legacy-component-path-adapter' ),
+			);
+		}
+
+		return $contracts;
+	}
+
+	private function component_slug( string $slug ): string {
+		$slug = strtolower( trim( $slug ) );
+		$slug = str_replace( '_', '-', $slug );
+		return preg_replace( '/[^a-z0-9-]+/', '', $slug ) ?? '';
 	}
 
 	/** @return array<string,mixed> */
@@ -864,9 +941,16 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function normalize_parent_task_request( array $input ): array|WP_Error {
+		if ( function_exists( 'apply_filters' ) ) {
+			$filtered = apply_filters( 'wp_codebox_normalize_parent_task_request', null, $input );
+			if ( is_wp_error( $filtered ) || is_array( $filtered ) ) {
+				return $filtered;
+			}
+		}
+
 		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
 		$schema  = (string) ( $request['schema'] ?? '' );
-		if ( 'homeboy/wp-codebox-task-request/v1' !== $schema ) {
+		if ( 'homeboy/wp-codebox-task-request/v1' !== $schema || ( function_exists( 'apply_filters' ) && false === apply_filters( 'wp_codebox_enable_legacy_parent_task_adapter', true, $input, $request ) ) ) {
 			return $input;
 		}
 
@@ -929,6 +1013,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'agents_api_path'        => (string) ( $input['agents_api_path'] ?? $request['agents_api'] ?? '' ),
 					'data_machine_path'      => (string) ( $input['data_machine_path'] ?? $request['data_machine'] ?? '' ),
 					'data_machine_code_path' => (string) ( $input['data_machine_code_path'] ?? $request['data_machine_code'] ?? '' ),
+					'component_contracts'    => $this->merge_array_lists( $input['component_contracts'] ?? array(), $this->parent_request_component_contracts( $request ) ),
 				),
 				static fn( mixed $value ): bool => '' !== $value && array() !== $value && 0 !== $value
 			)
@@ -937,6 +1022,28 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		unset( $normalized['parent_request'] );
 
 		return $normalized;
+	}
+
+	/** @param array<string,mixed> $request Parent task request. @return array<int,array<string,mixed>> */
+	private function parent_request_component_contracts( array $request ): array {
+		$contracts = array();
+		foreach ( array( 'agents_api' => 'agents-api', 'data_machine' => 'data-machine', 'data_machine_code' => 'data-machine-code' ) as $field => $slug ) {
+			$path = $this->clean_path( (string) ( $request[ $field ] ?? '' ) );
+			if ( '' === $path ) {
+				continue;
+			}
+
+			$contracts[] = array(
+				'slug'       => $slug,
+				'path'       => $path,
+				'activate'   => false,
+				'loadAs'     => 'mu-plugin',
+				'required'   => 'agents_api' === $field,
+				'provenance' => array( 'source' => 'legacy-parent-task-adapter' ),
+			);
+		}
+
+		return $contracts;
 	}
 
 	private function agent_slug( array $input ): string {
@@ -2134,7 +2241,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/**
-	 * @param array{agents_api:string,data_machine:string,data_machine_code:string} $paths Component paths.
+	 * @param array<int,array<string,mixed>> $paths Component contracts.
 	 * @param array<string,mixed> $input Ability input.
 	 * @param string[] $task_prompts Encoded task prompts.
 	 */
@@ -2533,27 +2640,22 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/**
-	 * @param array{agents_api:string,data_machine:string,data_machine_code:string} $paths Component paths.
+	 * @param array<int,array<string,mixed>> $paths Component contracts.
 	 * @return array<int,array{source:string,slug:string,activate:bool}>
 	 */
 	private function component_plugins( array $paths ): array {
 		$plugins = array();
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
-			if ( '' === $paths[ $key ] ) {
+		foreach ( $paths as $contract ) {
+			$path = (string) ( $contract['path'] ?? '' );
+			if ( '' === $path ) {
 				continue;
 			}
 
 			$plugins[] = array(
-				'source'   => $paths[ $key ],
-				'slug'     => $slug,
-				'activate' => false,
-				'loadAs'   => 'mu-plugin',
+				'source'   => $path,
+				'slug'     => (string) ( $contract['slug'] ?? basename( $path ) ),
+				'activate' => (bool) ( $contract['activate'] ?? false ),
+				'loadAs'   => (string) ( $contract['loadAs'] ?? 'mu-plugin' ),
 			);
 		}
 
