@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { access, mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
@@ -2417,8 +2417,8 @@ export async function runVisualCompareCommand({
       await browser.close()
     }
   } else if (sourceScreenshot && candidateScreenshot) {
-    await writeFile(sourcePath, await readFile(sourceScreenshot))
-    await writeFile(candidatePath, await readFile(candidateScreenshot))
+    await writeFile(sourcePath, await readFile(await resolveVisualCompareScreenshotPath(sourceScreenshot, artifactRoot)))
+    await writeFile(candidatePath, await readFile(await resolveVisualCompareScreenshotPath(candidateScreenshot, artifactRoot)))
   }
 
   const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
@@ -2489,6 +2489,25 @@ export async function runVisualCompareCommand({
   return {
     artifact,
     output: `${JSON.stringify(summary, null, 2)}\n`,
+  }
+}
+
+async function resolveVisualCompareScreenshotPath(requestedPath: string, artifactRoot: string): Promise<string> {
+  try {
+    await access(requestedPath)
+    return requestedPath
+  } catch {
+    // Recipes are authored before the runtime id exists, so callers may point to
+    // the stable artifacts root while browser captures live under the current runtime root.
+    const stableBrowserRoot = join(dirname(artifactRoot), "files", "browser")
+    const browserRelativePath = relative(stableBrowserRoot, requestedPath)
+    if (browserRelativePath && !browserRelativePath.startsWith("..")) {
+      const runtimePath = join(artifactRoot, "files", "browser", browserRelativePath)
+      await access(runtimePath)
+      return runtimePath
+    }
+
+    throw new Error(`Visual compare screenshot not found: ${requestedPath}`)
   }
 }
 
