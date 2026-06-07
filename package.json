@@ -47,6 +47,7 @@
     "artifact-reference-normalization-smoke": "tsx scripts/artifact-reference-normalization-smoke.ts",
     "browser-result-shapes-smoke": "tsx scripts/browser-result-shapes-smoke.ts",
     "partial-artifact-discovery-smoke": "tsx scripts/partial-artifact-discovery-smoke.ts",
+    "interrupted-run-evidence-smoke": "tsx scripts/interrupted-run-evidence-smoke.ts",
     "mounted-workspace-diff-smoke": "tsx scripts/mounted-workspace-diff-smoke.ts",
     "policy-validation-smoke": "tsx scripts/policy-validation-smoke.ts",
     "workspace-policy-smoke": "tsx scripts/workspace-policy-smoke.ts",
