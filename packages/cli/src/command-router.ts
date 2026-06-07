@@ -2,35 +2,63 @@ import { spawn } from "node:child_process"
 
 type CliCommandHandler = (args: string[]) => Promise<number>
 
-interface CliCommandRouter {
+const cliCommandRoutes = {
+  boot: "boot",
+  "validate-blueprint": "validateBlueprint",
+  "recipe-run": "recipeRun",
+  "agent-task-run": "agentTaskRun",
+  recipe: {
+    validate: "recipeValidate",
+    build: "recipeBuild",
+  },
+  "workspace-policy": {
+    check: "workspacePolicyCheck",
+  },
+  artifacts: {
+    verify: "artifactsVerify",
+    "apply-preflight": "artifactsApplyPreflight",
+    "browser-metrics": "artifactsBrowserMetrics",
+    diagnostics: "artifactsDiagnostics",
+    "transfer-verify": "artifactsTransferVerify",
+    "transfer-probes": "artifactsTransferProbes",
+    benchmark: "artifactsBenchmark",
+    "discover-partial": "artifactsDiscoverPartial",
+    "bench-results": "artifactsBenchResults",
+    "bench-compare": "artifactsBenchCompare",
+  },
+  bench: {
+    summarize: "benchSummarize",
+    matrix: "benchMatrix",
+    compare: "benchCompare",
+  },
+  runs: {
+    status: "runsStatus",
+    artifacts: "runsArtifacts",
+  },
+  commands: "commands",
+  doctor: "doctor",
+  cleanup: "cleanup",
+  schema: {
+    recipe: "recipeSchema",
+  },
+  run: "run",
+} as const
+
+type CliCommandRoutes = typeof cliCommandRoutes
+type CliRoute = CliCommandRoutes[keyof CliCommandRoutes]
+type RouteHandlerName<Route> = Route extends string ? Route : Route extends Record<string, infer HandlerName extends string> ? HandlerName : never
+type CliCommandHandlerName = RouteHandlerName<CliRoute>
+
+type CliCommandRouter = {
   printHelp(): void
-  boot: CliCommandHandler
-  validateBlueprint: CliCommandHandler
-  recipeValidate: CliCommandHandler
-  recipeBuild: CliCommandHandler
-  recipeRun: CliCommandHandler
-  agentTaskRun: CliCommandHandler
-  workspacePolicyCheck: CliCommandHandler
-  artifactsVerify: CliCommandHandler
-  artifactsApplyPreflight: CliCommandHandler
-  artifactsBrowserMetrics: CliCommandHandler
-  artifactsDiagnostics: CliCommandHandler
-  artifactsTransferVerify: CliCommandHandler
-  artifactsTransferProbes: CliCommandHandler
-  artifactsBenchmark: CliCommandHandler
-  artifactsDiscoverPartial: CliCommandHandler
-  artifactsBenchResults: CliCommandHandler
-  benchMatrix: CliCommandHandler
-  artifactsBenchCompare: CliCommandHandler
-  benchSummarize: CliCommandHandler
-  benchCompare: CliCommandHandler
-  runsStatus: CliCommandHandler
-  runsArtifacts: CliCommandHandler
-  commands: CliCommandHandler
-  recipeSchema: CliCommandHandler
-  doctor: CliCommandHandler
-  cleanup: CliCommandHandler
-  run: CliCommandHandler
+} & Record<CliCommandHandlerName, CliCommandHandler>
+
+function isCommandHandlerName(route: CliRoute): route is Extract<CliRoute, string> {
+  return typeof route === "string"
+}
+
+function routeForCommand(command: string): CliRoute | undefined {
+  return Object.prototype.hasOwnProperty.call(cliCommandRoutes, command) ? cliCommandRoutes[command as keyof CliCommandRoutes] : undefined
 }
 
 export async function routeCliCommand(argv: string[], router: CliCommandRouter): Promise<number> {
@@ -47,123 +75,26 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
     return command ? 0 : 1
   }
 
-  switch (command) {
-    case "boot":
-      return router.boot(args)
-    case "validate-blueprint":
-      return router.validateBlueprint(args)
-    case "recipe-run":
-      return router.recipeRun(args)
-    case "agent-task-run":
-      return router.agentTaskRun(args)
-    case "recipe": {
-      const subcommand = args.shift()
-      if (subcommand === "validate") {
-        return router.recipeValidate(args)
-      }
-      if (subcommand === "build") {
-        return router.recipeBuild(args)
-      }
-      {
-        console.error(`Unknown recipe command: ${subcommand ?? ""}`)
-        router.printHelp()
-        return 1
-      }
-    }
-    case "workspace-policy": {
-      const subcommand = args.shift()
-      if (subcommand !== "check") {
-        console.error(`Unknown workspace-policy command: ${subcommand ?? ""}`)
-        router.printHelp()
-        return 1
-      }
-      return router.workspacePolicyCheck(args)
-    }
-    case "artifacts": {
-      const subcommand = args.shift()
-      if (subcommand === "verify") {
-        return router.artifactsVerify(args)
-      }
-      if (subcommand === "apply-preflight") {
-        return router.artifactsApplyPreflight(args)
-      }
-      if (subcommand === "browser-metrics") {
-        return router.artifactsBrowserMetrics(args)
-      }
-      if (subcommand === "diagnostics") {
-        return router.artifactsDiagnostics(args)
-      }
-      if (subcommand === "transfer-verify") {
-        return router.artifactsTransferVerify(args)
-      }
-      if (subcommand === "transfer-probes") {
-        return router.artifactsTransferProbes(args)
-      }
-      if (subcommand === "benchmark") {
-        return router.artifactsBenchmark(args)
-      }
-      if (subcommand === "discover-partial") {
-        return router.artifactsDiscoverPartial(args)
-      }
-      if (subcommand === "bench-results") {
-        return router.artifactsBenchResults(args)
-      }
-      if (subcommand === "bench-compare") {
-        return router.artifactsBenchCompare(args)
-      }
-      console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
-      router.printHelp()
-      return 1
-    }
-    case "bench": {
-      const subcommand = args.shift()
-      if (subcommand === "summarize") {
-        return router.benchSummarize(args)
-      }
-      if (subcommand === "matrix") {
-        return router.benchMatrix(args)
-      }
-      if (subcommand === "compare") {
-        return router.benchCompare(args)
-      }
-      console.error(`Unknown bench command: ${subcommand ?? ""}`)
-      router.printHelp()
-      return 1
-    }
-    case "runs": {
-      const subcommand = args.shift()
-      if (subcommand === "status") {
-        return router.runsStatus(args)
-      }
-      if (subcommand === "artifacts") {
-        return router.runsArtifacts(args)
-      }
-      console.error(`Unknown runs command: ${subcommand ?? ""}`)
-      router.printHelp()
-      return 1
-    }
-    case "commands":
-      return router.commands(args)
-    case "doctor":
-      return router.doctor(args)
-    case "cleanup":
-      return router.cleanup(args)
-    case "schema": {
-      const subcommand = args.shift()
-      if (subcommand !== "recipe") {
-        console.error(`Unknown schema command: ${subcommand ?? ""}`)
-        router.printHelp()
-        return 1
-      }
-      return router.recipeSchema(args)
-    }
-    case "run":
-      return router.run(args)
-    default:
-      console.error(`Unknown command: ${command}`)
-      router.printHelp()
-      return 1
+  const route = routeForCommand(command)
+  if (!route) {
+    console.error(`Unknown command: ${command}`)
+    router.printHelp()
+    return 1
   }
+
+  if (isCommandHandlerName(route)) {
+    return router[route](args)
+  }
+
+  const subcommand = args.shift()
+  const handlerName = subcommand ? (route as Partial<Record<string, CliCommandHandlerName>>)[subcommand] : undefined
+  if (!handlerName) {
+    console.error(`Unknown ${command} command: ${subcommand ?? ""}`)
+    router.printHelp()
+    return 1
+  }
+
+  return router[handlerName](args)
 }
 
 async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
