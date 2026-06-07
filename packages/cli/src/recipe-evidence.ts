@@ -1178,10 +1178,15 @@ async function updateRecipeArtifactEvidenceReferences(artifacts: ArtifactBundle,
   review.evidence = { ...reviewEvidence, runtimeEvidence: { ...(isRecord(reviewEvidence.runtimeEvidence) ? reviewEvidence.runtimeEvidence : {}), ...evidence } }
   await writeFile(artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
-  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
-  await refreshRuntimeReferenceFiles(artifacts.directory, manifest)
-  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
+  await refreshManifestAfterEvidenceMutation(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+async function refreshManifestAfterEvidenceMutation(artifactRoot: string, manifest: ArtifactManifest): Promise<void> {
+  // Runtime reference files embed manifest hashes, then become manifest-hashed artifacts themselves.
+  await refreshArtifactManifestFileSha256s(artifactRoot, manifest)
+  await refreshRuntimeReferenceFiles(artifactRoot, manifest)
+  await refreshArtifactManifestFileSha256s(artifactRoot, manifest)
 }
 
 async function refreshRuntimeReferenceFiles(artifactRoot: string, manifest: ArtifactManifest): Promise<void> {
