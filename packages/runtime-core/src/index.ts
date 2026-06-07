@@ -291,13 +291,17 @@ function diagnosticsFromArtifactObservation(observation: unknown, observationInd
     ...arrayPayload(payload.diagnostic),
   ]
 
-  if (rawDiagnostics.length === 0 && !("data" in record)) {
+  if (rawDiagnostics.length === 0 && !("data" in record) && !hasDiagnosticContainer(record)) {
     rawDiagnostics.push(record)
   }
 
   return rawDiagnostics
     .map((raw, diagnosticIndex) => normalizeArtifactDiagnostic(raw, record, observationIndex, diagnosticIndex, options))
     .filter((diagnostic): diagnostic is ArtifactDiagnostic => diagnostic !== null)
+}
+
+function hasDiagnosticContainer(record: Record<string, unknown>): boolean {
+  return ["diagnostics", "findings", "issues", "diagnostic"].some((key) => key in record)
 }
 
 function normalizeArtifactDiagnostic(raw: unknown, observation: Record<string, unknown>, observationIndex: number, diagnosticIndex: number, options: ArtifactDiagnosticNormalizerOptions): ArtifactDiagnostic | null {

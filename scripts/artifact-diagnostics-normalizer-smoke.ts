@@ -66,6 +66,11 @@ try {
   assert.equal(observation.diagnostics[0]?.provenance?.observationId, "plugin-check")
   assert.equal(observation.diagnostics[0]?.provenance?.observationType, "wordpress.plugin-check")
 
+  const emptyContainer = buildArtifactDiagnostics({ diagnostics: [] })
+  assert.equal(emptyContainer.status, "clean")
+  assert.deepEqual(emptyContainer.summary, { total: 0, error: 0, warning: 0, notice: 0, info: 0 })
+  assert.deepEqual(emptyContainer.diagnostics, [])
+
   const { stdout } = await execFileAsync(
     process.execPath,
     [
