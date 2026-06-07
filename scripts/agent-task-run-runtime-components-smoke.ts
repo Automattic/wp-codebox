@@ -26,6 +26,13 @@ assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.sourc
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/components/data-machine")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/components/data-machine-code")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")?.source, "/components/ai-provider-for-openai")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.loadAs, "mu-plugin")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.loadAs, "mu-plugin")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")?.loadAs, undefined)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.activate, false)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.activate, false)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.activate, false)
 
 const legacyInput = {
   goal: "Run a Data Machine bundle",
@@ -39,6 +46,7 @@ const legacyExtraPlugins = legacyRecipe.inputs?.extraPlugins ?? []
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "agents-api")?.source, "/legacy/agents-api")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/legacy/data-machine")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/legacy/data-machine-code")
+assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")

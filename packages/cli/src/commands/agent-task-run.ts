@@ -364,9 +364,9 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string): Array<Re
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
 }
 
-function componentPlugin(source: unknown, slug: string, artifactsRoot: string): { source: string; slug: string; activate: boolean } | undefined {
+function componentPlugin(source: unknown, slug: string, artifactsRoot: string): { source: string; slug: string; activate: boolean; loadAs: "mu-plugin" } | undefined {
   const path = stringValue(source)
-  return path ? { source: prepareComposerPluginSource(path, slug, artifactsRoot), slug, activate: true } : undefined
+  return path ? { source: prepareComposerPluginSource(path, slug, artifactsRoot), slug, activate: false, loadAs: "mu-plugin" } : undefined
 }
 
 function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {
