@@ -19,8 +19,10 @@ export interface PlaygroundCliModule {
     verbosity?: "quiet"
     skipBrowser: boolean
     mount: Array<{ hostPath: string; vfsPath: string }>
+    "mount-before-install"?: Array<{ hostPath: string; vfsPath: string }>
     blueprint?: unknown
     wp?: string
+    wordpressInstallMode?: "install-from-existing-files"
     "site-url"?: string
   }): Promise<PlaygroundCliServer>
 }
@@ -60,9 +62,15 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     emitProgress("preview:loading-wordpress", "running", "Loading your site", {
       wordpressVersion: spec.environment.version,
     })
-    const wordpressStartupAsset = await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
-    const cacheValidation = wordpressStartupAsset.cacheValidation
-    const localAssetServer = wordpressStartupAsset.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
+    const wordpressDirectory = spec.environment.assets?.wordpressDirectory
+    const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
+    const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
+      version: spec.environment.version ?? "mounted-wordpress-source",
+      sourceUrl: wordpressDirectory ?? "",
+      source: "pre-resolved" as const,
+      invalidArchives: [],
+    }
+    const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
     const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
     const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
     if (blueprintSummary.steps > 0) {
@@ -87,7 +95,11 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
             hostPath: mount.source,
             vfsPath: mount.target,
           })),
-          wp: localAssetServer?.url ?? wordpressStartupAsset.wp,
+          ...(wordpressDirectory ? {
+            "mount-before-install": [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }],
+            wordpressInstallMode: "install-from-existing-files" as const,
+          } : {}),
+          wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
         })

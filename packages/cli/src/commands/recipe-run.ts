@@ -284,9 +284,26 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
 }
 
 function exitAfterPlaygroundCliBootFailure(output: RecipeRunCommandOutput): void {
-  if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "wp-codebox-playground-cli-exited") {
+  if (output.schema === "wp-codebox/recipe-run/v1" && hasSerializedErrorCode(output.error, "wp-codebox-playground-cli-exited")) {
     process.exit(output.success ? 0 : 1)
   }
+}
+
+function hasSerializedErrorCode(error: RunOutput["error"] | undefined, code: string): boolean {
+  if (!error) {
+    return false
+  }
+
+  if (error.code === code) {
+    return true
+  }
+
+  const cause = error.cause
+  if (!cause || typeof cause !== "object" || Array.isArray(cause)) {
+    return false
+  }
+
+  return hasSerializedErrorCode(cause as RunOutput["error"], code)
 }
 
 function exitAfterRecipeRunTimeout(output: RecipeRunCommandOutput): void {
@@ -1239,13 +1256,14 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
 function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {
   const assets = recipe.runtime?.assets
-  if (!assets?.wordpressZip) {
+  if (!assets?.wordpressDirectory && !assets?.wordpressZip) {
     return undefined
   }
 
   return {
     ...assets,
-    wordpressZip: isUrl(assets.wordpressZip) ? assets.wordpressZip : resolve(recipeDirectory, assets.wordpressZip),
+    ...(assets.wordpressDirectory ? { wordpressDirectory: resolve(recipeDirectory, assets.wordpressDirectory) } : {}),
+    ...(assets.wordpressZip ? { wordpressZip: isUrl(assets.wordpressZip) ? assets.wordpressZip : resolve(recipeDirectory, assets.wordpressZip) } : {}),
   }
 }
 

@@ -313,6 +313,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         additionalProperties: false,
         description: "Pre-resolved runtime assets. Use local paths or URLs to make recipe startup deterministic without live release metadata lookups.",
         properties: {
+          wordpressDirectory: {
+            type: "string",
+            description: "Local WordPress source directory mounted at /wordpress before Playground installs or boots WordPress. Use a disposable source snapshot because Playground may write setup files into the mounted tree.",
+          },
           wordpressZip: {
             type: "string",
             description: "Local path or HTTP(S) URL for a WordPress release zip used to boot the Playground runtime.",

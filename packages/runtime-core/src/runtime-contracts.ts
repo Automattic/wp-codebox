@@ -23,6 +23,7 @@ export interface EnvironmentSpec {
 }
 
 export interface RuntimeAssetSpec {
+  wordpressDirectory?: string
   wordpressZip?: string
 }
 
