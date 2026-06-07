@@ -7,7 +7,6 @@ import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint
 import { artifactFileDigest, stripUndefined } from "@automattic/wp-codebox-core"
 import type {
   ArtifactDiagnostic,
-  ArtifactDiagnostics,
   ArtifactPackageIdentity,
   ArtifactPackageProvenance,
   ArtifactPreview,
@@ -22,6 +21,8 @@ import type {
   RuntimeInfo,
   SandboxWorkspaceContract,
 } from "@automattic/wp-codebox-core"
+
+export { buildArtifactDiagnostics } from "@automattic/wp-codebox-core"
 
 export interface CapturedMountFile {
   mountIndex: number
@@ -446,128 +447,9 @@ export function buildWorkspacePatchArtifact({
   }
 }
 
-export function buildArtifactDiagnostics(observations: ObservationResult[]): ArtifactDiagnostics {
-  const diagnostics = observations.flatMap((observation, observationIndex) => diagnosticsFromObservation(observation, observationIndex))
-  const summary = {
-    total: diagnostics.length,
-    error: diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
-    warning: diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length,
-    notice: diagnostics.filter((diagnostic) => diagnostic.severity === "notice").length,
-    info: diagnostics.filter((diagnostic) => diagnostic.severity === "info").length,
-  }
-
-  return {
-    schema: "wp-codebox/artifact-diagnostics/v1",
-    status: diagnostics.length > 0 ? "reported" : "clean",
-    summary,
-    diagnostics,
-  }
-}
-
-function diagnosticsFromObservation(observation: ObservationResult, observationIndex: number): ArtifactDiagnostic[] {
-  const payload = observation.data && typeof observation.data === "object" ? observation.data as Record<string, unknown> : {}
-  const rawDiagnostics = [
-    ...arrayPayload(payload.diagnostics),
-    ...arrayPayload(payload.findings),
-    ...arrayPayload(payload.issues),
-    ...arrayPayload(payload.diagnostic),
-  ]
-
-  return rawDiagnostics
-    .map((raw, diagnosticIndex) => normalizeArtifactDiagnostic(raw, observation, observationIndex, diagnosticIndex))
-    .filter((diagnostic): diagnostic is ArtifactDiagnostic => diagnostic !== null)
-}
-
-function normalizeArtifactDiagnostic(raw: unknown, observation: ObservationResult, observationIndex: number, diagnosticIndex: number): ArtifactDiagnostic | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null
-  }
-
-  const value = raw as Record<string, unknown>
-  const type = stringField(value.type) || stringField(value.kind) || stringField(value.code) || "diagnostic"
-  const message = stringField(value.message) || stringField(value.summary) || stringField(value.reason) || type
-  const details = stripUndefined(Object.fromEntries(Object.entries(value).filter(([key]) => ![
-    "id",
-    "diagnostic_id",
-    "type",
-    "kind",
-    "code",
-    "message",
-    "summary",
-    "reason",
-    "severity",
-    "category",
-    "source",
-    "path",
-    "source_path",
-    "selector",
-    "stage",
-    "refs",
-    "references",
-    "artifactRefs",
-  ].includes(key))))
-
-  return stripUndefined({
-    id: stringField(value.id) || stringField(value.diagnostic_id) || `${observation.id ?? `observation-${observationIndex}`}-diagnostic-${diagnosticIndex + 1}`,
-    type,
-    severity: normalizeSeverity(value.severity),
-    message,
-    category: stringField(value.category),
-    source: stringField(value.source),
-    path: stringField(value.path) || stringField(value.source_path),
-    selector: stringField(value.selector),
-    stage: stringField(value.stage),
-    code: stringField(value.code),
-    provenance: stripUndefined({
-      observationId: observation.id,
-      observationType: observation.type,
-      observedAt: observation.observedAt,
-    }),
-    refs: artifactDiagnosticRefs(value.refs ?? value.references ?? value.artifactRefs),
-    details: Object.keys(details).length > 0 ? details : undefined,
-  }) as ArtifactDiagnostic
-}
-
-function artifactDiagnosticRefs(raw: unknown): ArtifactDiagnostic["refs"] {
-  return arrayPayload(raw)
-    .filter((value) => value && typeof value === "object" && !Array.isArray(value))
-    .map((value) => {
-      const record = value as Record<string, unknown>
-      return stripUndefined({
-        path: stringField(record.path),
-        kind: stringField(record.kind),
-        id: stringField(record.id),
-        url: stringField(record.url),
-      })
-    })
-    .filter((value) => Object.keys(value).length > 0)
-}
-
-function arrayPayload(value: unknown): unknown[] {
-  if (Array.isArray(value)) {
-    return value
-  }
-  return value && typeof value === "object" ? [value] : []
-}
-
-function stringField(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim() !== "") {
-    return value
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value)
-  }
-  return undefined
-}
-
 function stringMetadata(metadata: Record<string, unknown>, key: string): string | undefined {
   const value = metadata[key]
   return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-function normalizeSeverity(value: unknown): ArtifactDiagnostic["severity"] {
-  const severity = stringField(value)?.toLowerCase()
-  return severity === "error" || severity === "warning" || severity === "notice" || severity === "info" ? severity : "warning"
 }
 
 export function buildTestResults(): ArtifactTestResults {

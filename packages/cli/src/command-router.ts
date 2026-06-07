@@ -14,6 +14,7 @@ interface CliCommandRouter {
   artifactsVerify: CliCommandHandler
   artifactsApplyPreflight: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
+  artifactsDiagnostics: CliCommandHandler
   artifactsTransferVerify: CliCommandHandler
   artifactsTransferProbes: CliCommandHandler
   artifactsBenchmark: CliCommandHandler
@@ -88,6 +89,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       }
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
+      }
+      if (subcommand === "diagnostics") {
+        return router.artifactsDiagnostics(args)
       }
       if (subcommand === "transfer-verify") {
         return router.artifactsTransferVerify(args)

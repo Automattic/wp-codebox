@@ -258,6 +258,7 @@ export function printHelp(): void {
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
+  wp-codebox artifacts diagnostics --input <json> [--source <id>] [--stage <id>] [--observation-type <id>] [--ref <path[:kind]>] [--json]
   wp-codebox artifacts transfer-verify --bundle <dir> [--json]
   wp-codebox artifacts transfer-probes --bundle <dir> [--json]
   wp-codebox artifacts discover-partial --artifacts <dir> [--session-id <id>] [--started-at <iso>] [--finished-at <iso>] [--json]
@@ -282,6 +283,11 @@ Options:
   --preview-public-url <url>
                     Public preview URL passed through to agent-task-run/recipe-run.
   --bundle <dir>      Artifact bundle directory for artifact verification/probe commands.
+  --source <id>       Default source for artifacts diagnostics normalization.
+  --stage <id>        Default stage for artifacts diagnostics normalization.
+  --observation-type <id>
+                       Default observation type for artifacts diagnostics normalization.
+  --ref <path[:kind]> Default artifact diagnostic reference. Repeatable.
   --approved-file <path>
                        Changed file approved for artifacts apply-preflight. Repeatable.
   --approved-files <paths>
