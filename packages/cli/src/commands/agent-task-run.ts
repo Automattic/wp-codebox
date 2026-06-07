@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -28,6 +28,7 @@ export interface AgentTaskRunInput {
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
   runtime_task?: Record<string, unknown>
+  agent_bundle?: Record<string, unknown>
   sandbox_tool_policy?: SandboxToolPolicySnapshot
   max_turns?: number | string
   task_timeout_seconds?: number | string
@@ -59,6 +60,7 @@ interface AgentTaskRunOutput {
   diagnostics: Array<Record<string, unknown>>
   evidence_refs: Array<Record<string, unknown>>
   run_metadata: Record<string, unknown>
+  metadata: Record<string, unknown>
 }
 
 export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
@@ -98,7 +100,14 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const runRecord = objectValue(run.run) || {}
     const artifactsRecord = objectValue(run.artifacts) || {}
     const runtimeRecord = objectValue(run.runtime) || {}
-    const success = Boolean(run.success)
+    const agentBundle = objectValue(input.agent_bundle) || {}
+    const workload = normalizeAgentRuntimeWorkload(run, {
+      requiredOutputs: stringRecord(agentBundle.engine_data_outputs),
+      toolRecorders: agentBundle.tool_recorders,
+      workloadId: stringValue(agentBundle.workload_id) || stringValue(agentBundle.agent_slug) || stringValue(agentBundle.flow_slug) || undefined,
+    })
+    const hasAgentBundle = Object.keys(agentBundle).length > 0
+    const success = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const output: AgentTaskRunOutput = {
       success,
       schema: "wp-codebox/agent-task-run/v1",
@@ -112,7 +121,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_task_result: objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {},
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       run,
-      diagnostics: diagnostics(run, capture.exitCode),
+      diagnostics: [...diagnostics(run, capture.exitCode), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
       evidence_refs: evidenceRefs(run, artifacts),
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
@@ -123,6 +132,11 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
         orchestrator: input.orchestrator,
         parent_request_schema: stringValue(input.parent_request?.schema),
       }),
+      metadata: {
+        agent_runtime: {
+          workload,
+        },
+      },
     }
     return output
   } finally {
@@ -370,6 +384,12 @@ function stringList(value: unknown): string[] {
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  const record = objectValue(value)
+  if (!record) return undefined
+  return Object.fromEntries(Object.entries(record).filter(([, entry]) => typeof entry === "string")) as Record<string, string>
 }
 
 function stringValue(value: unknown): string {
