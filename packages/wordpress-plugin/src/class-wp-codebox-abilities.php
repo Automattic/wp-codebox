@@ -458,9 +458,14 @@ final class WP_Codebox_Abilities {
 							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
 						'properties' => $browser_contract_properties + array(
+							'execute_phases'     => array(
+								'type'        => 'boolean',
+								'description' => 'When true, explicitly execute host-side fanout and host-delegation phase requests after preparing the browser task contract. Defaults to false so contract creation remains side-effect-light.',
+								'default'     => false,
+							),
 							'phases'             => array(
 								'type'        => 'array',
-								'description' => 'Optional named browser task phases. Generic phases may carry wp-codebox/agent-fanout-request/v1 or wp-codebox/host-delegation-request/v1 in request/input for WP Codebox execution; materializer phases may override any primary session input through input.',
+								'description' => 'Optional named browser task phases. Generic phases may carry wp-codebox/agent-fanout-request/v1 or wp-codebox/host-delegation-request/v1 in request/input for explicit WP Codebox execution when execute_phases is true; materializer phases may override any primary session input through input.',
 								'items'       => array(
 									'type'       => 'object',
 									'properties' => array(

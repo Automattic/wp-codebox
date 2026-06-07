@@ -428,6 +428,7 @@ $assert( 'browser task contract ability is REST visible', true === ( $browser_ta
 $assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
 $browser_task_phase_kinds = $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array();
 $assert( 'browser task contract exposes phase and compact schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && in_array( 'materializer', $browser_task_phase_kinds, true ) && in_array( 'agent', $browser_task_phase_kinds, true ) && in_array( 'aggregator', $browser_task_phase_kinds, true ) && in_array( 'host-delegation', $browser_task_phase_kinds, true ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) && 'object' === ( $browser_task_contract_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
+$assert( 'browser task contract exposes explicit host-side phase execution flag', 'boolean' === ( $browser_task_contract_ability['input_schema']['properties']['execute_phases']['type'] ?? '' ) && false === ( $browser_task_contract_ability['input_schema']['properties']['execute_phases']['default'] ?? null ) );
 
 $agents_api_executor_targets = apply_filters( 'agents_api_executor_targets', array() );
 $wp_agent_executor_targets = apply_filters( 'wp_agent_executor_targets', array() );
@@ -1006,6 +1007,45 @@ $generic_phase_task_contract = call_user_func(
 						'workers'         => array(
 							array( 'id' => 'browser_worker', 'goal' => 'Cook the browser phase worker.' ),
 						),
+						'artifacts_path'  => $root . '/artifacts/browser-phase-fanout-prepare',
+						'wp_codebox_bin'  => $browser_phase_fanout_bin,
+						'orchestrator'    => array( 'type' => 'browser-task-contract' ),
+					),
+				),
+				array(
+					'name'     => 'aggregate-results',
+					'kind'     => 'aggregator',
+					'label'    => 'Aggregate Results',
+					'metadata' => array(
+						'inputs' => array( 'agent-fanout' ),
+					),
+				),
+			),
+		)
+	)
+);
+$assert( 'browser task contract prepares agent and aggregator phase descriptors without executing host-side fanout', ! is_wp_error( $generic_phase_task_contract ) && 2 === count( $generic_phase_task_contract['phases'] ?? array() ) && 'agent' === ( $generic_phase_task_contract['phases'][0]['kind'] ?? '' ) && 'aggregator' === ( $generic_phase_task_contract['phases'][1]['kind'] ?? '' ) && ! isset( $generic_phase_task_contract['phases'][0]['contract'] ) && ! isset( $generic_phase_task_contract['phases'][0]['result'] ) && 'queued' === ( $generic_phase_task_contract['phases'][0]['status'] ?? '' ) && 'pending' === ( $generic_phase_task_contract['phases'][1]['status'] ?? '' ) && ! is_file( $root . '/artifacts/browser-phase-fanout-prepare/fanout/result.json' ) );
+$generic_phase_executed_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	array_replace_recursive(
+		$browser_session_input,
+		array(
+			'execute_phases' => true,
+			'phases'         => array(
+				array(
+					'name'     => 'agent-fanout',
+					'kind'     => 'agent',
+					'label'    => 'Agent Fanout',
+					'status'   => 'queued',
+					'metadata' => array(
+						'runner' => 'browser-playground',
+					),
+					'request'  => array(
+						'schema'          => 'wp-codebox/agent-fanout-request/v1',
+						'concurrency'     => 1,
+						'workers'         => array(
+							array( 'id' => 'browser_worker', 'goal' => 'Cook the browser phase worker.' ),
+						),
 						'artifacts_path'  => $root . '/artifacts/browser-phase-fanout',
 						'wp_codebox_bin'  => $browser_phase_fanout_bin,
 						'orchestrator'    => array( 'type' => 'browser-task-contract' ),
@@ -1023,9 +1063,8 @@ $generic_phase_task_contract = call_user_func(
 		)
 	)
 );
-$assert( 'browser task contract accepts agent and aggregator phase descriptors', ! is_wp_error( $generic_phase_task_contract ) && 2 === count( $generic_phase_task_contract['phases'] ?? array() ) && 'agent' === ( $generic_phase_task_contract['phases'][0]['kind'] ?? '' ) && 'aggregator' === ( $generic_phase_task_contract['phases'][1]['kind'] ?? '' ) && ! isset( $generic_phase_task_contract['phases'][0]['contract'] ) && 'completed' === ( $generic_phase_task_contract['phases'][0]['status'] ?? '' ) && 'pending' === ( $generic_phase_task_contract['phases'][1]['status'] ?? '' ) );
-$assert( 'browser task contract executes agent fanout phase requests', ! is_wp_error( $generic_phase_task_contract ) && 'wp-codebox/agent-fanout-result/v1' === ( $generic_phase_task_contract['phases'][0]['result']['schema'] ?? '' ) && 1 === ( $generic_phase_task_contract['phases'][0]['result']['completed'] ?? 0 ) && is_file( $root . '/artifacts/browser-phase-fanout/fanout/result.json' ) && is_file( $root . '/artifacts/browser-phase-fanout/fanout/events.jsonl' ) );
-$assert( 'browser task compact DTO preserves generic phase metadata and fanout result for product UIs', ! is_wp_error( $generic_phase_task_contract ) && 'agent-fanout' === ( $generic_phase_task_contract['compact']['phases'][0]['name'] ?? '' ) && 0 === ( $generic_phase_task_contract['compact']['phases'][0]['index'] ?? null ) && 'Agent Fanout' === ( $generic_phase_task_contract['compact']['phases'][0]['label'] ?? '' ) && 'browser-playground' === ( $generic_phase_task_contract['compact']['phases'][0]['metadata']['runner'] ?? '' ) && 'wp-codebox/agent-fanout-result/v1' === ( $generic_phase_task_contract['compact']['phases'][0]['result']['schema'] ?? '' ) && 'aggregate-results' === ( $generic_phase_task_contract['compact']['phases'][1]['name'] ?? '' ) && 1 === ( $generic_phase_task_contract['compact']['phases'][1]['index'] ?? null ) );
+$assert( 'browser task contract executes agent fanout phase requests only when execute_phases is explicit', ! is_wp_error( $generic_phase_executed_task_contract ) && 'completed' === ( $generic_phase_executed_task_contract['phases'][0]['status'] ?? '' ) && 'wp-codebox/agent-fanout-result/v1' === ( $generic_phase_executed_task_contract['phases'][0]['result']['schema'] ?? '' ) && 1 === ( $generic_phase_executed_task_contract['phases'][0]['result']['completed'] ?? 0 ) && is_file( $root . '/artifacts/browser-phase-fanout/fanout/result.json' ) && is_file( $root . '/artifacts/browser-phase-fanout/fanout/events.jsonl' ) );
+$assert( 'browser task compact DTO preserves generic phase metadata and explicit fanout result for product UIs', ! is_wp_error( $generic_phase_executed_task_contract ) && 'agent-fanout' === ( $generic_phase_executed_task_contract['compact']['phases'][0]['name'] ?? '' ) && 0 === ( $generic_phase_executed_task_contract['compact']['phases'][0]['index'] ?? null ) && 'Agent Fanout' === ( $generic_phase_executed_task_contract['compact']['phases'][0]['label'] ?? '' ) && 'browser-playground' === ( $generic_phase_executed_task_contract['compact']['phases'][0]['metadata']['runner'] ?? '' ) && 'wp-codebox/agent-fanout-result/v1' === ( $generic_phase_executed_task_contract['compact']['phases'][0]['result']['schema'] ?? '' ) && 'aggregate-results' === ( $generic_phase_executed_task_contract['compact']['phases'][1]['name'] ?? '' ) && 1 === ( $generic_phase_executed_task_contract['compact']['phases'][1]['index'] ?? null ) );
 
 $GLOBALS['wp_codebox_host_delegation_requests'] = array();
 add_filter(
@@ -1073,9 +1112,34 @@ $host_delegation_phase_task_contract = call_user_func(
 		)
 	)
 );
-$host_delegation_phase_events = ! is_wp_error( $host_delegation_phase_task_contract ) ? array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $host_delegation_phase_task_contract['phases'][0]['result']['events'] ?? array() ) : array();
-$assert( 'browser task contract executes host delegation phase requests', ! is_wp_error( $host_delegation_phase_task_contract ) && 1 === count( $GLOBALS['wp_codebox_host_delegation_requests'] ?? array() ) && 'browser-session-123' === ( $GLOBALS['wp_codebox_host_delegation_requests'][0]['sandbox_session_id'] ?? '' ) && 'wp-codebox/host-delegation-result/v1' === ( $host_delegation_phase_task_contract['phases'][0]['result']['schema'] ?? '' ) && 'completed' === ( $host_delegation_phase_task_contract['phases'][0]['status'] ?? '' ) && 'smoke-host-provider' === ( $host_delegation_phase_task_contract['phases'][0]['result']['provider'] ?? '' ) && array( 'host-delegation.requested', 'host-delegation.completed' ) === $host_delegation_phase_events );
-$assert( 'browser task compact DTO preserves host delegation result for product UIs', ! is_wp_error( $host_delegation_phase_task_contract ) && 'host-delegation' === ( $host_delegation_phase_task_contract['compact']['phases'][0]['kind'] ?? '' ) && 'server-workspace-offload' === ( $host_delegation_phase_task_contract['compact']['phases'][0]['name'] ?? '' ) && 'workspace-required' === ( $host_delegation_phase_task_contract['compact']['phases'][0]['metadata']['reason'] ?? '' ) && 'wp-codebox/host-delegation-result/v1' === ( $host_delegation_phase_task_contract['compact']['phases'][0]['result']['schema'] ?? '' ) );
+$assert( 'browser task contract prepares host delegation phase requests without executing host providers', ! is_wp_error( $host_delegation_phase_task_contract ) && 0 === count( $GLOBALS['wp_codebox_host_delegation_requests'] ?? array() ) && ! isset( $host_delegation_phase_task_contract['phases'][0]['result'] ) && 'pending' === ( $host_delegation_phase_task_contract['phases'][0]['status'] ?? '' ) );
+$host_delegation_phase_executed_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	array_replace_recursive(
+		$browser_session_input,
+		array(
+			'execute_phases' => true,
+			'phases'         => array(
+				array(
+					'name'     => 'server-workspace-offload',
+					'kind'     => 'host-delegation',
+					'label'    => 'Server Workspace Offload',
+					'metadata' => array( 'reason' => 'workspace-required' ),
+					'request'  => array(
+						'schema'     => 'wp-codebox/host-delegation-request/v1',
+						'request_id' => 'host-delegation-phase-1',
+						'goal'       => 'Run the workspace phase on a host provider.',
+						'execution'  => array( 'capability' => 'workspace-task' ),
+						'orchestrator' => array( 'type' => 'browser-task-contract' ),
+					),
+				),
+			),
+		)
+	)
+);
+$host_delegation_phase_events = ! is_wp_error( $host_delegation_phase_executed_task_contract ) ? array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $host_delegation_phase_executed_task_contract['phases'][0]['result']['events'] ?? array() ) : array();
+$assert( 'browser task contract executes host delegation phase requests only when execute_phases is explicit', ! is_wp_error( $host_delegation_phase_executed_task_contract ) && 1 === count( $GLOBALS['wp_codebox_host_delegation_requests'] ?? array() ) && 'browser-session-123' === ( $GLOBALS['wp_codebox_host_delegation_requests'][0]['sandbox_session_id'] ?? '' ) && 'wp-codebox/host-delegation-result/v1' === ( $host_delegation_phase_executed_task_contract['phases'][0]['result']['schema'] ?? '' ) && 'completed' === ( $host_delegation_phase_executed_task_contract['phases'][0]['status'] ?? '' ) && 'smoke-host-provider' === ( $host_delegation_phase_executed_task_contract['phases'][0]['result']['provider'] ?? '' ) && array( 'host-delegation.requested', 'host-delegation.completed' ) === $host_delegation_phase_events );
+$assert( 'browser task compact DTO preserves host delegation result for product UIs', ! is_wp_error( $host_delegation_phase_executed_task_contract ) && 'host-delegation' === ( $host_delegation_phase_executed_task_contract['compact']['phases'][0]['kind'] ?? '' ) && 'server-workspace-offload' === ( $host_delegation_phase_executed_task_contract['compact']['phases'][0]['name'] ?? '' ) && 'workspace-required' === ( $host_delegation_phase_executed_task_contract['compact']['phases'][0]['metadata']['reason'] ?? '' ) && 'wp-codebox/host-delegation-result/v1' === ( $host_delegation_phase_executed_task_contract['compact']['phases'][0]['result']['schema'] ?? '' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_host_delegation_request'] = static fn(): array => array( 'artifact_refs' => array( array( 'path' => 'bare-provider/result.json' ) ) );
 $host_delegation_bare_provider = call_user_func(
 	$host_delegation_ability['execute_callback'],

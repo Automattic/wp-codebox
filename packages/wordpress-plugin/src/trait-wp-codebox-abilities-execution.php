@@ -194,6 +194,16 @@ public static function create_browser_materializer_contract( array $input ): arr
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_task_contract( array $input ): array|WP_Error {
+	$contract = self::prepare_browser_task_contract( $input );
+	if ( is_wp_error( $contract ) || true !== ( $input['execute_phases'] ?? false ) ) {
+		return $contract;
+	}
+
+	return self::execute_browser_task_phases( $contract );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+private static function prepare_browser_task_contract( array $input ): array|WP_Error {
 	$primary = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $primary ) ) {
 		return $primary;
@@ -222,7 +232,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 		return $contract;
 	}
 
-	$phases = self::browser_task_contract_phases( $input, $session_envelope );
+	$phases = self::prepare_browser_task_contract_phases( $input, $session_envelope );
 	if ( is_wp_error( $phases ) ) {
 		return $phases;
 	}
@@ -245,6 +255,70 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 	$contract['compact'] = self::compact_browser_task_contract_dto( $contract );
 
 	return $contract;
+}
+
+/** @param array<string,mixed> $contract Browser task contract. @return array<string,mixed>|WP_Error */
+private static function execute_browser_task_phases( array $contract ): array|WP_Error {
+	$session_envelope = is_array( $contract['session'] ?? null ) ? $contract['session'] : array();
+	$phases           = array();
+
+	foreach ( is_array( $contract['phases'] ?? null ) ? $contract['phases'] : array() as $phase ) {
+		if ( ! is_array( $phase ) ) {
+			continue;
+		}
+
+		$executed_phase = self::execute_browser_task_phase( $phase, $session_envelope );
+		if ( is_wp_error( $executed_phase ) ) {
+			return $executed_phase;
+		}
+
+		$phases[] = $executed_phase;
+	}
+
+	$contract['phases']            = $phases;
+	$contract['execution_metrics'] = self::browser_contract_execution_metrics( is_array( $contract['primary'] ?? null ) ? $contract['primary'] : array(), $phases );
+	$contract['compact']           = self::compact_browser_task_contract_dto( $contract );
+
+	return $contract;
+}
+
+/** @param array<string,mixed> $phase Browser task phase. @param array<string,mixed> $session_envelope Primary browser session envelope. @return array<string,mixed>|WP_Error */
+private static function execute_browser_task_phase( array $phase, array $session_envelope ): array|WP_Error {
+	$fanout_request = self::browser_task_phase_fanout_request( $phase );
+	if ( is_array( $fanout_request ) ) {
+		if ( empty( $fanout_request['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
+			$fanout_request['sandbox_session_id'] = (string) $session_envelope['id'];
+		}
+
+		$result = self::run_agent_task_fanout( $fanout_request );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$phase['status'] = true === ( $result['success'] ?? false ) ? 'completed' : 'failed';
+		$phase['result'] = $result;
+
+		return array_filter( $phase, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+	}
+
+	$host_delegation_request = self::browser_task_phase_host_delegation_request( $phase );
+	if ( is_array( $host_delegation_request ) ) {
+		if ( empty( $host_delegation_request['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
+			$host_delegation_request['sandbox_session_id'] = (string) $session_envelope['id'];
+		}
+
+		$result = self::request_host_delegation( $host_delegation_request );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$phase['status'] = true === ( $result['success'] ?? false ) ? (string) ( $result['status'] ?? 'completed' ) : (string) ( $result['status'] ?? 'failed' );
+		$phase['result'] = $result;
+
+		return array_filter( $phase, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+	}
+
+	return array_filter( $phase, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 }
 
 /** @param array<string,mixed> $contract Browser task contract. @return array<string,mixed> */
@@ -506,7 +580,7 @@ private static function compact_browser_dto_key_should_redact( string $key ): bo
 }
 
 /** @param array<string,mixed> $input Ability input. @param array<string,mixed> $session_envelope Primary browser session envelope. @return array<int,array<string,mixed>>|WP_Error */
-private static function browser_task_contract_phases( array $input, array $session_envelope ): array|WP_Error {
+private static function prepare_browser_task_contract_phases( array $input, array $session_envelope ): array|WP_Error {
 	$phase_specs = is_array( $input['phases'] ?? null ) ? $input['phases'] : array();
 	if ( empty( $phase_specs ) && is_array( $input['materializers'] ?? null ) ) {
 		$phase_specs = array_map(
@@ -544,13 +618,7 @@ private static function browser_task_contract_phases( array $input, array $sessi
 				$fanout_request['sandbox_session_id'] = (string) $session_envelope['id'];
 			}
 
-			$result = self::run_agent_task_fanout( $fanout_request );
-			if ( is_wp_error( $result ) ) {
-				return $result;
-			}
-
-			$phase_descriptor['status'] = true === ( $result['success'] ?? false ) ? 'completed' : 'failed';
-			$phase_descriptor['result'] = $result;
+			$phase_descriptor['request'] = $fanout_request;
 			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 			continue;
 		}
@@ -561,13 +629,7 @@ private static function browser_task_contract_phases( array $input, array $sessi
 				$host_delegation_request['sandbox_session_id'] = (string) $session_envelope['id'];
 			}
 
-			$result = self::request_host_delegation( $host_delegation_request );
-			if ( is_wp_error( $result ) ) {
-				return $result;
-			}
-
-			$phase_descriptor['status'] = true === ( $result['success'] ?? false ) ? (string) ( $result['status'] ?? 'completed' ) : (string) ( $result['status'] ?? 'failed' );
-			$phase_descriptor['result'] = $result;
+			$phase_descriptor['request'] = $host_delegation_request;
 			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 			continue;
 		}
