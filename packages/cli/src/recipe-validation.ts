@@ -72,6 +72,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   validateRecipeRuntimeBackendPackage(recipe.runtime?.backendPackage, recipePath)
   validateRecipeRuntimeOverlays(recipe.runtime?.overlays, recipePath)
   validateRecipeRuntimeAssets(recipe.runtime?.assets, recipePath)
+  validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
 
@@ -243,6 +244,16 @@ function validateRecipeRuntimeAssets(assets: RuntimeAssetSpec | undefined, recip
 
   if (assets.wordpressZip !== undefined && typeof assets.wordpressZip !== "string") {
     throw new Error(`Recipe runtime assets wordpressZip must be a string: ${recipePath}`)
+  }
+}
+
+function validateRecipeRuntimeWordPressInstallMode(mode: NonNullable<WorkspaceRecipe["runtime"]>["wordpressInstallMode"] | undefined, recipePath: string): void {
+  if (mode === undefined) {
+    return
+  }
+
+  if (!["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"].includes(mode)) {
+    throw new Error(`Recipe runtime wordpressInstallMode is unsupported: ${recipePath}`)
   }
 }
 

@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   await assertMissingAsyncifyWasmFailsEarly()
   await assertCorruptAsyncifyWasmFailsEarly()
   await assertHealthyRuntimeProvenance()
+  await assertInstalledPhp84RuntimePreflights()
   await assertNoJspiRespawnSelectsAsyncify()
   await assertRecipeRunJsonReportsPreflightDiagnostic()
   console.log("PHP wasm runtime preflight smoke passed")
@@ -109,6 +110,14 @@ async function assertNoJspiRespawnSelectsAsyncify(): Promise<void> {
   }
 }
 
+async function assertInstalledPhp84RuntimePreflights(): Promise<void> {
+  const preflight = await preflightPhpWasmRuntimeAssets({ phpVersion: "8.4", mode: "jspi" })
+  assert.equal(preflight.packageName, "@php-wasm/node-8-4")
+  assert.equal(preflight.phpVersion, "8.4")
+  assert.equal(preflight.mode, "jspi")
+  assert.match(preflight.wasmPath, /jspi\/.+\/php_8_4\.wasm$/)
+}
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name]
@@ -144,6 +153,7 @@ async function assertRecipeRunJsonReportsPreflightDiagnostic(): Promise<void> {
   }).catch((error: unknown) => error as { stdout?: string; stderr?: string; code?: number })
 
   assert.equal(child.code, 1)
+  assert.ok(child.stdout, `Expected recipe-run JSON on stdout. stderr=${child.stderr ?? ""}`)
   const output = JSON.parse(String(child.stdout)) as {
     success: boolean
     diagnostics?: Array<{ schema: string; phase: string; runtime?: Record<string, unknown>; repair?: string }>

@@ -879,11 +879,12 @@ async function buildRecipeRunAttestation(args: {
   const runtime = manifest.runtime ?? {
     id: "unknown",
     backend: args.recipe.runtime?.backend ?? "wordpress-playground",
-    environment: {
-      kind: "wordpress",
-      name: args.recipe.runtime?.name ?? "wp-codebox-recipe",
-      version: args.recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
-    },
+      environment: {
+        kind: "wordpress",
+        name: args.recipe.runtime?.name ?? "wp-codebox-recipe",
+        version: args.recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
+        phpVersion: args.recipe.runtime?.phpVersion,
+      },
     createdAt: args.artifacts.createdAt,
     status: "destroyed" as const,
   }
@@ -919,6 +920,7 @@ async function buildRecipeRunAttestation(args: {
       name: runtime.environment.name,
       version: runtime.environment.version,
       immutableRef: runtime.environment.version,
+      phpVersion: runtime.environment.phpVersion,
     }),
     policy: {
       command: {

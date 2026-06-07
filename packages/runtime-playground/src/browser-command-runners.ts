@@ -13,6 +13,7 @@ import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionS
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
+import type { Page, Route } from "playwright"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -215,6 +216,7 @@ async function runSingleBrowserProbeCommand({
   const failFast = booleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
   const lifecycleSelectors = commaListArg(args, "observe")
+  const routedHosts = commaListArg(args, "route-host")
   const assertions = browserProbeAssertionsFromArgs(args)
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
@@ -292,6 +294,9 @@ async function runSingleBrowserProbeCommand({
     }
     if (throttleProfile) {
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
+    }
+    if (routedHosts.length > 0) {
+      await routeBrowserProbeHosts(page, routedHosts, preview.localOrigin)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -2364,6 +2369,48 @@ echo wp_json_encode( $cookies );
 
 function now(): string {
   return new Date().toISOString()
+}
+
+async function routeBrowserProbeHosts(page: Page, hosts: string[], localPreviewOrigin: string): Promise<void> {
+  const routedHosts = new Set(hosts.map((host) => host.trim().toLowerCase()).filter(Boolean))
+  if (routedHosts.size === 0) {
+    return
+  }
+
+  const localOrigin = new URL(localPreviewOrigin)
+  await page.context().route("**/*", async (route) => {
+    const request = route.request()
+    let requestUrl: URL
+    try {
+      requestUrl = new URL(request.url())
+    } catch {
+      await route.continue()
+      return
+    }
+
+    if (!routedHosts.has(requestUrl.hostname.toLowerCase())) {
+      await route.continue()
+      return
+    }
+
+    const routedUrl = new URL(requestUrl.toString())
+    routedUrl.protocol = localOrigin.protocol
+    routedUrl.hostname = localOrigin.hostname
+    routedUrl.port = localOrigin.port
+
+    const response = await route.fetch({
+      url: routedUrl.toString(),
+      headers: {
+        ...request.headers(),
+        host: requestUrl.host,
+        "x-forwarded-host": requestUrl.host,
+        "x-forwarded-port": requestUrl.port || (requestUrl.protocol === "https:" ? "443" : "80"),
+        "x-forwarded-proto": requestUrl.protocol.replace(":", ""),
+      },
+      maxRedirects: 0,
+    })
+    await route.fulfill({ response })
+  })
 }
 
 function browserProbePreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {

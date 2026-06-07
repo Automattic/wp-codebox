@@ -26,6 +26,15 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           backend: { const: "wordpress-playground" },
           name: { type: "string" },
           wp: { type: "string" },
+          phpVersion: {
+            type: "string",
+            pattern: "^[0-9]+\\.[0-9]+$",
+            description: "PHP runtime version passed to WordPress Playground, for example 8.3 or 8.4.",
+          },
+          wordpressInstallMode: {
+            enum: ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"],
+            description: "Controls how Playground prepares a mounted WordPress directory. Use do-not-attempt-installing for custom distributions that own their own boot/readiness probes.",
+          },
           blueprint: { type: "object" },
           preview: { $ref: "#/$defs/runtimePreview" },
           assets: { $ref: "#/$defs/runtimeAssets" },

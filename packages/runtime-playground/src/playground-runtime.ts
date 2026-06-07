@@ -89,7 +89,7 @@ class PlaygroundRuntime implements Runtime {
   }
 
   static async create(spec: RuntimeCreateSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<PlaygroundRuntime> {
-    const phpWasmRuntimeAssetPreflight = await preflightPhpWasmRuntimeAssets()
+    const phpWasmRuntimeAssetPreflight = await preflightPhpWasmRuntimeAssets({ phpVersion: spec.environment.phpVersion })
     const runtime = new PlaygroundRuntime({
       ...spec,
       metadata: {

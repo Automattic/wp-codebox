@@ -846,9 +846,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
   const phaseTracker = new RecipePhaseTracker()
-  const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
+  const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
       .then(() => {
+        const promise = typeof promiseOrFactory === "function" ? promiseOrFactory() : promiseOrFactory
         const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
         return interruption ? interruption.interruptible(guarded) : guarded
       })
@@ -875,6 +876,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       kind: "wordpress" as const,
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
+      phpVersion: recipe.runtime?.phpVersion,
+      wordpressInstallMode: recipe.runtime?.wordpressInstallMode,
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
     }
@@ -899,7 +902,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         backend: runtimeCreateSpec.backend,
         ...(backendPackage ? { backendPackage: backendPackage.provenance } : {}),
         runtime: runtimeEnvironment,
-      }, async () => await awaitRecipe("runtime.create", createRuntime(
+      }, async () => await awaitRecipe("runtime.create", () => createRuntime(
         runtimeCreateSpec,
         createPlaygroundRuntimeBackend({ cliModule: backendPackage?.cliModule }),
       )))

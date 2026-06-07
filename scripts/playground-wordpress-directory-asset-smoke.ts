@@ -27,6 +27,7 @@ try {
       name: "playground-wordpress-directory-asset-smoke",
       version: "mounted-wordpress-source",
       assets: { wordpressDirectory },
+      wordpressInstallMode: "do-not-attempt-installing",
       blueprint: { steps: [] },
     },
     policy: {
@@ -45,7 +46,7 @@ try {
 
   assert.ok(cliOptions)
   assert.deepEqual(cliOptions["mount-before-install"], [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }])
-  assert.equal(cliOptions.wordpressInstallMode, "install-from-existing-files")
+  assert.equal(cliOptions.wordpressInstallMode, "do-not-attempt-installing")
   assert.equal(cliOptions.wp, undefined)
 
   console.log("Playground WordPress directory asset smoke passed")

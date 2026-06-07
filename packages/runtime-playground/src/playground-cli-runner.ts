@@ -22,7 +22,8 @@ export interface PlaygroundCliModule {
     "mount-before-install"?: Array<{ hostPath: string; vfsPath: string }>
     blueprint?: unknown
     wp?: string
-    wordpressInstallMode?: "install-from-existing-files"
+    php?: string
+    wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
     "site-url"?: string
   }): Promise<PlaygroundCliServer>
 }
@@ -63,6 +64,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       wordpressVersion: spec.environment.version,
     })
     const wordpressDirectory = spec.environment.assets?.wordpressDirectory
+    const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
@@ -97,9 +99,10 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           })),
           ...(wordpressDirectory ? {
             "mount-before-install": [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }],
-            wordpressInstallMode: "install-from-existing-files" as const,
+            wordpressInstallMode,
           } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
+          php: spec.environment.phpVersion,
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
         })

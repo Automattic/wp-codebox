@@ -19,8 +19,12 @@ export interface EnvironmentSpec {
   name?: string
   blueprint?: unknown
   version?: string
+  phpVersion?: string
   assets?: RuntimeAssetSpec
+  wordpressInstallMode?: RuntimeWordPressInstallMode
 }
+
+export type RuntimeWordPressInstallMode = "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
 
 export interface RuntimeAssetSpec {
   wordpressDirectory?: string
@@ -324,6 +328,8 @@ export interface WorkspaceRecipe {
     backend?: RuntimeBackendKind
     name?: string
     wp?: string
+    phpVersion?: string
+    wordpressInstallMode?: RuntimeWordPressInstallMode
     blueprint?: unknown
     preview?: RuntimePreviewSpec
     assets?: RuntimeAssetSpec
@@ -630,6 +636,7 @@ export interface ArtifactPreviewSessionEvidence {
       kind: string
       name?: string
       version?: string
+      phpVersion?: string
     }
   }
   preview?: {
