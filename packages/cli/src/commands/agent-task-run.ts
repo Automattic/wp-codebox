@@ -122,7 +122,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_task_result: objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {},
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       run,
-      diagnostics: [...diagnostics(run, capture.exitCode), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
+      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
       evidence_refs: evidenceRefs(run, artifacts),
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
