@@ -60,6 +60,10 @@ export interface PreparedExtraPlugin {
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
 
+function phpSingleQuotedLiteral(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
+}
+
 export interface RecipeStagedFileProvenance {
   kind: "local"
   original: string
@@ -1053,6 +1057,8 @@ export function installMuPluginsCode(extraPlugins: PreparedExtraPlugin[]): strin
     return null
   }
 
+  const workspaceRootLiteral = phpSingleQuotedLiteral(SANDBOX_WORKSPACE_ROOT)
+
   return `$plugins = ${JSON.stringify(muPlugins)};
 $runtime_dir = WPMU_PLUGIN_DIR . '/wp-codebox-runtime';
 if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
@@ -1072,7 +1078,7 @@ $lines = array(
     "defined( 'ABSPATH' ) || exit;",
     '',
     "if ( ! defined( 'DATAMACHINE_WORKSPACE_PATH' ) ) {",
-    "    define( 'DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)} );",
+    "    define( 'DATAMACHINE_WORKSPACE_PATH', ${workspaceRootLiteral} );",
     "}",
     "add_filter( 'datamachine_should_load_full_runtime', '__return_true', 1 );",
     '',
