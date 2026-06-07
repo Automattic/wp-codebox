@@ -273,7 +273,7 @@ function wp_codebox_import_sandbox_agent_bundles(array $bundle_specs): array {
     return $imports;
 }
 
-function wp_codebox_json_encode_runtime_payload($value): string {
+function wp_codebox_json_encode_agent_runtime_payload($value): string {
     $json = wp_json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     if (false !== $json) {
         return $json;
@@ -348,7 +348,7 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
     }
 }
 
-echo wp_codebox_json_encode_runtime_payload($sandbox_agent_runtime);
+echo wp_codebox_json_encode_agent_runtime_payload($sandbox_agent_runtime);
 `
 }
 
@@ -546,7 +546,7 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     return $entries;
 }
 
-function wp_codebox_json_encode_runtime_payload($value): string {
+function wp_codebox_json_encode_sandbox_payload($value): string {
     $json = wp_json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     if (false !== $json) {
         return $json;
@@ -609,7 +609,7 @@ ob_start();
 ${phpBody(code)}
 $sandbox_output = ob_get_clean();
 
-echo wp_codebox_json_encode_runtime_payload(
+echo wp_codebox_json_encode_sandbox_payload(
     array(
         'command' => 'agent-sandbox.run',
         'task' => $sandbox_task,

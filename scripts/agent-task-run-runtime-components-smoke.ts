@@ -54,6 +54,7 @@ assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
+const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts", import.meta.url), "utf8")
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
 const sandboxCode = agentSandboxRunCode("Run a bundle", "echo json_encode(array('ok' => true));", [])
 assert.ok(
@@ -79,6 +80,14 @@ assert.ok(
 assert.ok(
   sandboxCode.includes("runtime_payload_json_encode_failed"),
   "sandbox runtime payload encoding failures should surface as structured diagnostics",
+)
+assert.ok(
+  agentCodeSource.includes("wp_codebox_json_encode_agent_runtime_payload"),
+  "nested agent runtime payloads should use their own encoder helper",
+)
+assert.ok(
+  agentCodeSource.includes("wp_codebox_json_encode_sandbox_payload"),
+  "outer sandbox payloads should use a distinct encoder helper",
 )
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
