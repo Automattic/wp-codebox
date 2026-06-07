@@ -41,6 +41,239 @@ export interface CorePhpunitRunCodeOptions {
 export const CORE_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-core-phpunit-result.txt"
 export const PLUGIN_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-phpunit-result.txt"
 
+interface PhpunitConfigDiscoveryPhpOptions {
+  functionName: string
+  logFunction: string
+  missingConfigMessage: string
+  parseFailureMessage: string
+  includeParseFailureDetail: boolean
+  loadedConfigMessage: string
+  fallbackXmlDist: boolean
+  restrictDirectoriesToTests: boolean
+  basePathExpression: string
+  uniqueReturnValues: boolean
+  replaceDefaultMatchers: boolean
+}
+
+interface PhpunitChangedTestFilterPhpOptions {
+  relativeFunctionName: string
+  filterFunctionName: string
+  logFunction: string
+  rootParameterName: string
+  testsPathFallback: boolean
+  emptyWantedNotice: boolean
+}
+
+function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): string {
+  const fallbackXmlDist = options.fallbackXmlDist ? `
+    if (!is_readable($xml_path) && basename($xml_path) === 'phpunit.xml.dist') {
+        $alternate = dirname($xml_path) . '/phpunit.xml';
+        if (is_readable($alternate)) {
+            $xml_path = $alternate;
+        }
+    }` : ""
+  const directoryRestriction = options.restrictDirectoriesToTests ? `
+        $normalized = trim(str_replace('\\\\', '/', $raw), '/');
+        if ($raw === '' || ($normalized !== 'tests' && strpos($normalized, 'tests/') !== 0)) {
+            continue;
+        }` : `
+        if ($raw === '') {
+            continue;
+        }`
+  const returnValues = options.uniqueReturnValues
+    ? "array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes)"
+    : "array($directories, $suffixes, $prefixes, $excludes)"
+  const parseFailureLog = options.includeParseFailureDetail
+    ? `${options.logFunction}('${options.parseFailureMessage}' . $first . '); using defaults');`
+    : `${options.logFunction}('${options.parseFailureMessage}');`
+  const suffixAssignment = options.replaceDefaultMatchers ? "$suffixes = $config_suffixes;" : "$suffixes = array_merge($suffixes, $config_suffixes);"
+  const prefixAssignment = options.replaceDefaultMatchers ? "$prefixes = $config_prefixes;" : "$prefixes = array_merge($prefixes, $config_prefixes);"
+
+  return `function ${options.functionName}($xml_path, $test_dir_default) {
+    $directories = array($test_dir_default);
+    $suffixes = array('Test.php');
+    $prefixes = array('test-');
+    $excludes = array();${fallbackXmlDist}
+    if (!is_readable($xml_path)) {
+        ${options.logFunction}('${options.missingConfigMessage}' . $xml_path . '; using defaults');
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $prev = libxml_use_internal_errors(true);
+    $xml = @simplexml_load_file($xml_path);
+    $errors = libxml_get_errors();
+    libxml_clear_errors();
+    libxml_use_internal_errors($prev);
+    if ($xml === false) {
+        $first = $errors ? trim($errors[0]->message) : 'unknown';
+        ${parseFailureLog}
+        return array($directories, $suffixes, $prefixes, $excludes);
+    }
+    $base = ${options.basePathExpression};
+    $config_dirs = array();
+    $config_suffixes = array();
+    $config_prefixes = array();
+    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
+        $raw = trim((string) $dir);${directoryRestriction}
+        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
+        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
+            $suffix = trim($suffix);
+            if ($suffix !== '') {
+                $config_suffixes[] = $suffix;
+            }
+        }
+        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
+            $prefix = trim($prefix);
+            if ($prefix !== '') {
+                $config_prefixes[] = $prefix;
+            }
+        }
+    }
+    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
+        $raw = trim((string) $exclude);
+        if ($raw !== '') {
+            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
+        }
+    }
+    if (!empty($config_dirs)) {
+        $directories = $config_dirs;
+        ${options.logFunction}('${options.loadedConfigMessage}' . $xml_path);
+    }
+    if (!empty($config_suffixes)) {
+        ${suffixAssignment}
+    }
+    if (!empty($config_prefixes)) {
+        ${prefixAssignment}
+    }
+    return ${returnValues};
+}`
+}
+
+function phpunitDiscoveryPhp(functionName: string, logFunction: string): string {
+  return `function ${functionName}(array $directories, array $suffixes, array $prefixes, array $excludes) {
+    $found = array();
+    foreach ($directories as $dir) {
+        if (!is_dir($dir)) {
+            ${logFunction}('NOTICE:test directory does not exist: ' . $dir);
+            continue;
+        }
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $path = $file->getPathname();
+            foreach ($excludes as $exclude) {
+                if (strpos($path, $exclude) === 0) {
+                    continue 2;
+                }
+            }
+            $base = $file->getBasename();
+            $matches = false;
+            foreach ($suffixes as $suffix) {
+                if ($suffix !== '' && substr($base, -strlen($suffix)) === $suffix) {
+                    $matches = true;
+                    break;
+                }
+            }
+            if (!$matches) {
+                foreach ($prefixes as $prefix) {
+                    if ($prefix !== '' && strpos($base, $prefix) === 0) {
+                        $matches = true;
+                        break;
+                    }
+                }
+            }
+            if ($matches) {
+                $found[] = $path;
+            }
+        }
+    }
+    sort($found);
+    return array_values(array_unique($found));
+}`
+}
+
+function phpunitChangedTestFilterPhp(options: PhpunitChangedTestFilterPhpOptions): string {
+  const testsPathFallback = options.testsPathFallback ? ` elseif (strpos($path, '/tests/') !== false) {
+        $path = substr($path, strpos($path, '/tests/') + 1);
+    }` : ""
+  const emptyWantedNotice = options.emptyWantedNotice ? `
+    if (empty($wanted)) {
+        ${options.logFunction}('NOTICE:changed tests did not contain usable test paths');
+        return array();
+    }` : ""
+
+  return `function ${options.filterFunctionName}(array $test_files, string $changed_files_json, string $${options.rootParameterName}): array {
+    $decoded = json_decode($changed_files_json, true);
+    if (!is_array($decoded) || empty($decoded)) {
+        return $test_files;
+    }
+    $wanted = array();
+    foreach ($decoded as $entry) {
+        if (!is_scalar($entry)) {
+            continue;
+        }
+        $normalized = ${options.relativeFunctionName}((string) $entry, $${options.rootParameterName});
+        if ($normalized !== '') {
+            $wanted[$normalized] = true;
+        }
+    }${emptyWantedNotice}
+    $filtered = array();
+    foreach ($test_files as $file) {
+        if (isset($wanted[${options.relativeFunctionName}((string) $file, $${options.rootParameterName})])) {
+            $filtered[] = $file;
+        }
+    }
+    ${options.logFunction}('SCOPED_TEST_FILES requested=' . count($wanted) . ' matched=' . count($filtered));
+    return $filtered;
+}
+
+function ${options.relativeFunctionName}(string $path, string $${options.rootParameterName}): string {
+    $path = trim(str_replace('\\\\', '/', $path));
+    $${options.rootParameterName} = rtrim(str_replace('\\\\', '/', $${options.rootParameterName}), '/');
+    if (strpos($path, $${options.rootParameterName} . '/') === 0) {
+        $path = substr($path, strlen($${options.rootParameterName}) + 1);
+    }${testsPathFallback}
+    while (strpos($path, './') === 0) {
+        $path = substr($path, 2);
+    }
+    return ltrim($path, '/');
+}`
+}
+
+function phpunitArgsPhp(functionName: string, logFunction: string): string {
+  return `function ${functionName}(array $argv) {
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
+    $args = array_slice($argv, 1);
+    for ($i = 0; $i < count($args); $i++) {
+        $arg = $args[$i];
+        if ($arg === '--filter' && isset($args[$i + 1])) {
+            $arguments['filter'] = $args[++$i];
+            ${logFunction}('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if (strpos($arg, '--filter=') === 0) {
+            $arguments['filter'] = substr($arg, strlen('--filter='));
+            ${logFunction}('NOTICE:phpunit filter applied: ' . $arguments['filter']);
+            continue;
+        }
+        if ($arg === '--list-tests') {
+            $arguments['listTests'] = true;
+            continue;
+        }
+        if ($arg === '--no-testdox') {
+            $arguments['testdox'] = false;
+            continue;
+        }
+        if ($arg === '--verbose' || $arg === '-v') {
+            $arguments['verbose'] = true;
+            continue;
+        }
+    }
+    return $arguments;
+}`
+}
+
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -535,48 +768,14 @@ function pg_mark_plugin_active(string $plugin_basename, bool $network_wide): voi
     }
 }
 
-function pg_filter_changed_test_files(array $test_files, string $changed_files_json, string $plugin_path): array {
-    $decoded = json_decode($changed_files_json, true);
-    if (!is_array($decoded) || empty($decoded)) {
-        return $test_files;
-    }
-    $wanted = array();
-    foreach ($decoded as $entry) {
-        if (!is_scalar($entry)) {
-            continue;
-        }
-        $normalized = pg_component_relative_path((string) $entry, $plugin_path);
-        if ($normalized !== '') {
-            $wanted[$normalized] = true;
-        }
-    }
-    if (empty($wanted)) {
-        pg_log('NOTICE:changed tests did not contain usable test paths');
-        return array();
-    }
-    $filtered = array();
-    foreach ($test_files as $file) {
-        if (isset($wanted[pg_component_relative_path((string) $file, $plugin_path)])) {
-            $filtered[] = $file;
-        }
-    }
-    pg_log('SCOPED_TEST_FILES requested=' . count($wanted) . ' matched=' . count($filtered));
-    return $filtered;
-}
-
-function pg_component_relative_path(string $path, string $plugin_path): string {
-    $path = trim(str_replace('\\\\', '/', $path));
-    $plugin_path = rtrim(str_replace('\\\\', '/', $plugin_path), '/');
-    if (strpos($path, $plugin_path . '/') === 0) {
-        $path = substr($path, strlen($plugin_path) + 1);
-    } elseif (strpos($path, '/tests/') !== false) {
-        $path = substr($path, strpos($path, '/tests/') + 1);
-    }
-    while (strpos($path, './') === 0) {
-        $path = substr($path, 2);
-    }
-    return ltrim($path, '/');
-}
+${phpunitChangedTestFilterPhp({
+    relativeFunctionName: "pg_component_relative_path",
+    filterFunctionName: "pg_filter_changed_test_files",
+    logFunction: "pg_log",
+    rootParameterName: "plugin_path",
+    testsPathFallback: true,
+    emptyWantedNotice: true,
+  })}
 
 pg_install_diagnostics_handlers();
 
@@ -700,116 +899,21 @@ try {
 }
 }
 
-function wp_codebox_phpunit_parse_config($xml_path, $test_dir_default) {
-    $directories = array($test_dir_default);
-    $suffixes = array('Test.php');
-    $prefixes = array('test-');
-    $excludes = array();
-    if (!is_readable($xml_path) && basename($xml_path) === 'phpunit.xml.dist') {
-        $alternate = dirname($xml_path) . '/phpunit.xml';
-        if (is_readable($alternate)) {
-            $xml_path = $alternate;
-        }
-    }
-    if (!is_readable($xml_path)) {
-        pg_log('NOTICE:phpunit.xml.dist not readable at ' . $xml_path . '; using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes);
-    }
-    $prev = libxml_use_internal_errors(true);
-    $xml = @simplexml_load_file($xml_path);
-    $errors = libxml_get_errors();
-    libxml_clear_errors();
-    libxml_use_internal_errors($prev);
-    if ($xml === false) {
-        $first = $errors ? trim($errors[0]->message) : 'unknown';
-        pg_log('NOTICE:phpunit.xml.dist parse failed (' . $first . '); using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes);
-    }
-    $plugin_base = dirname($test_dir_default);
-    $config_dirs = array();
-    $config_suffixes = array();
-    $config_prefixes = array();
-    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
-        $raw = trim((string) $dir);
-        $normalized = trim(str_replace('\\\\', '/', $raw), '/');
-        if ($raw === '' || ($normalized !== 'tests' && strpos($normalized, 'tests/') !== 0)) {
-            continue;
-        }
-        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($plugin_base . '/' . $raw, '/');
-        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
-            $suffix = trim($suffix);
-            if ($suffix !== '') {
-                $config_suffixes[] = $suffix;
-            }
-        }
-        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
-            $prefix = trim($prefix);
-            if ($prefix !== '') {
-                $config_prefixes[] = $prefix;
-            }
-        }
-    }
-    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
-        $raw = trim((string) $exclude);
-        if ($raw !== '') {
-            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($plugin_base . '/' . $raw, '/');
-        }
-    }
-    if (!empty($config_dirs)) {
-        $directories = $config_dirs;
-        pg_log('NOTICE:phpunit.xml.dist loaded from ' . $xml_path);
-    }
-    if (!empty($config_suffixes)) {
-        $suffixes = $config_suffixes;
-    }
-    if (!empty($config_prefixes)) {
-        $prefixes = $config_prefixes;
-    }
-    return array($directories, $suffixes, $prefixes, $excludes);
-}
+${phpunitConfigDiscoveryPhp({
+    functionName: "wp_codebox_phpunit_parse_config",
+    logFunction: "pg_log",
+    missingConfigMessage: "NOTICE:phpunit.xml.dist not readable at ",
+    parseFailureMessage: "NOTICE:phpunit.xml.dist parse failed (",
+    includeParseFailureDetail: true,
+    loadedConfigMessage: "NOTICE:phpunit.xml.dist loaded from ",
+    fallbackXmlDist: true,
+    restrictDirectoriesToTests: true,
+    basePathExpression: "dirname($test_dir_default)",
+    uniqueReturnValues: false,
+    replaceDefaultMatchers: true,
+  })}
 
-function wp_codebox_phpunit_discover(array $directories, array $suffixes, array $prefixes, array $excludes) {
-    $found = array();
-    foreach ($directories as $dir) {
-        if (!is_dir($dir)) {
-            pg_log('NOTICE:test directory does not exist: ' . $dir);
-            continue;
-        }
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            $path = $file->getPathname();
-            foreach ($excludes as $exclude) {
-                if (strpos($path, $exclude) === 0) {
-                    continue 2;
-                }
-            }
-            $base = $file->getBasename();
-            $matches = false;
-            foreach ($suffixes as $suffix) {
-                if ($suffix !== '' && substr($base, -strlen($suffix)) === $suffix) {
-                    $matches = true;
-                    break;
-                }
-            }
-            if (!$matches) {
-                foreach ($prefixes as $prefix) {
-                    if ($prefix !== '' && strpos($base, $prefix) === 0) {
-                        $matches = true;
-                        break;
-                    }
-                }
-            }
-            if ($matches) {
-                $found[] = $path;
-            }
-        }
-    }
-    sort($found);
-    return array_values(array_unique($found));
-}
+${phpunitDiscoveryPhp("wp_codebox_phpunit_discover", "pg_log")}
 
 pg_stage_begin('discover_tests');
 try {
@@ -875,36 +979,7 @@ foreach (array_diff($after_classes, $before_classes) as $class_name) {
 }
 pg_stage_ok('load_tests');
 
-function wp_codebox_phpunit_args(array $argv) {
-    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
-    $args = array_slice($argv, 1);
-    for ($i = 0; $i < count($args); $i++) {
-        $arg = $args[$i];
-        if ($arg === '--filter' && isset($args[$i + 1])) {
-            $arguments['filter'] = $args[++$i];
-            pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
-            continue;
-        }
-        if (strpos($arg, '--filter=') === 0) {
-            $arguments['filter'] = substr($arg, strlen('--filter='));
-            pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
-            continue;
-        }
-        if ($arg === '--list-tests') {
-            $arguments['listTests'] = true;
-            continue;
-        }
-        if ($arg === '--no-testdox') {
-            $arguments['testdox'] = false;
-            continue;
-        }
-        if ($arg === '--verbose' || $arg === '-v') {
-            $arguments['verbose'] = true;
-            continue;
-        }
-    }
-    return $arguments;
-}
+${phpunitArgsPhp("wp_codebox_phpunit_args", "pg_log")}
 
 function wp_codebox_phpunit_print_test_list($test) {
     if ($test instanceof PHPUnit\\Framework\\TestSuite) {
@@ -1093,160 +1168,32 @@ function core_pg_write_tests_config(string $core_root, array $extra_defines): st
     return $config_path;
 }
 
-function core_pg_parse_phpunit_config(string $xml_path, string $default_dir): array {
-    $directories = array($default_dir);
-    $suffixes = array('Test.php');
-    $prefixes = array('test-');
-    $excludes = array();
-    if (!is_readable($xml_path)) {
-        core_pg_log('NOTICE:phpunit config not readable at ' . $xml_path . '; using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes);
-    }
-    $xml = @simplexml_load_file($xml_path);
-    if ($xml === false) {
-        core_pg_log('NOTICE:phpunit config parse failed; using defaults');
-        return array($directories, $suffixes, $prefixes, $excludes);
-    }
-    $base = dirname($xml_path);
-    $config_dirs = array();
-    foreach ($xml->xpath('//testsuite/directory') ?: array() as $dir) {
-        $raw = trim((string) $dir);
-        if ($raw === '') {
-            continue;
-        }
-        $config_dirs[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
-        foreach (explode(',', (string) ($dir['suffix'] ?? '')) as $suffix) {
-            $suffix = trim($suffix);
-            if ($suffix !== '') {
-                $suffixes[] = $suffix;
-            }
-        }
-        foreach (explode(',', (string) ($dir['prefix'] ?? '')) as $prefix) {
-            $prefix = trim($prefix);
-            if ($prefix !== '') {
-                $prefixes[] = $prefix;
-            }
-        }
-    }
-    foreach ($xml->xpath('//testsuite/exclude') ?: array() as $exclude) {
-        $raw = trim((string) $exclude);
-        if ($raw !== '') {
-            $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
-        }
-    }
-    if (!empty($config_dirs)) {
-        $directories = $config_dirs;
-        core_pg_log('NOTICE:phpunit config loaded from ' . $xml_path);
-    }
-    return array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes);
-}
+${phpunitConfigDiscoveryPhp({
+    functionName: "core_pg_parse_phpunit_config",
+    logFunction: "core_pg_log",
+    missingConfigMessage: "NOTICE:phpunit config not readable at ",
+    parseFailureMessage: "NOTICE:phpunit config parse failed; using defaults",
+    includeParseFailureDetail: false,
+    loadedConfigMessage: "NOTICE:phpunit config loaded from ",
+    fallbackXmlDist: false,
+    restrictDirectoriesToTests: false,
+    basePathExpression: "dirname($xml_path)",
+    uniqueReturnValues: true,
+    replaceDefaultMatchers: false,
+  })}
 
-function core_pg_discover_tests(array $directories, array $suffixes, array $prefixes, array $excludes): array {
-    $found = array();
-    foreach ($directories as $dir) {
-        if (!is_dir($dir)) {
-            core_pg_log('NOTICE:test directory does not exist: ' . $dir);
-            continue;
-        }
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY);
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            $path = $file->getPathname();
-            foreach ($excludes as $exclude) {
-                if (strpos($path, $exclude) === 0) {
-                    continue 2;
-                }
-            }
-            $base = $file->getBasename();
-            $matches = false;
-            foreach ($suffixes as $suffix) {
-                if ($suffix !== '' && substr($base, -strlen($suffix)) === $suffix) {
-                    $matches = true;
-                    break;
-                }
-            }
-            if (!$matches) {
-                foreach ($prefixes as $prefix) {
-                    if ($prefix !== '' && strpos($base, $prefix) === 0) {
-                        $matches = true;
-                        break;
-                    }
-                }
-            }
-            if ($matches) {
-                $found[] = $path;
-            }
-        }
-    }
-    sort($found);
-    return array_values(array_unique($found));
-}
+${phpunitDiscoveryPhp("core_pg_discover_tests", "core_pg_log")}
 
-function core_pg_relative_path(string $path, string $core_root): string {
-    $path = trim(str_replace('\\\\', '/', $path));
-    $core_root = rtrim(str_replace('\\\\', '/', $core_root), '/');
-    if (strpos($path, $core_root . '/') === 0) {
-        $path = substr($path, strlen($core_root) + 1);
-    }
-    while (strpos($path, './') === 0) {
-        $path = substr($path, 2);
-    }
-    return ltrim($path, '/');
-}
+${phpunitChangedTestFilterPhp({
+    relativeFunctionName: "core_pg_relative_path",
+    filterFunctionName: "core_pg_filter_changed_test_files",
+    logFunction: "core_pg_log",
+    rootParameterName: "core_root",
+    testsPathFallback: false,
+    emptyWantedNotice: false,
+  })}
 
-function core_pg_filter_changed_test_files(array $test_files, string $changed_files_json, string $core_root): array {
-    $decoded = json_decode($changed_files_json, true);
-    if (!is_array($decoded) || empty($decoded)) {
-        return $test_files;
-    }
-    $wanted = array();
-    foreach ($decoded as $entry) {
-        if (is_scalar($entry)) {
-            $wanted[core_pg_relative_path((string) $entry, $core_root)] = true;
-        }
-    }
-    $filtered = array();
-    foreach ($test_files as $file) {
-        if (isset($wanted[core_pg_relative_path((string) $file, $core_root)])) {
-            $filtered[] = $file;
-        }
-    }
-    core_pg_log('SCOPED_TEST_FILES requested=' . count($wanted) . ' matched=' . count($filtered));
-    return $filtered;
-}
-
-function core_pg_phpunit_args(array $argv) {
-    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'extensions' => array());
-    $args = array_slice($argv, 1);
-    for ($i = 0; $i < count($args); $i++) {
-        $arg = $args[$i];
-        if ($arg === '--filter' && isset($args[$i + 1])) {
-            $arguments['filter'] = $args[++$i];
-            core_pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
-            continue;
-        }
-        if (strpos($arg, '--filter=') === 0) {
-            $arguments['filter'] = substr($arg, strlen('--filter='));
-            core_pg_log('NOTICE:phpunit filter applied: ' . $arguments['filter']);
-            continue;
-        }
-        if ($arg === '--list-tests') {
-            $arguments['listTests'] = true;
-            continue;
-        }
-        if ($arg === '--no-testdox') {
-            $arguments['testdox'] = false;
-            continue;
-        }
-        if ($arg === '--verbose' || $arg === '-v') {
-            $arguments['verbose'] = true;
-            continue;
-        }
-    }
-    return $arguments;
-}
+${phpunitArgsPhp("core_pg_phpunit_args", "core_pg_log")}
 
 core_pg_install_diagnostics_handlers();
 
