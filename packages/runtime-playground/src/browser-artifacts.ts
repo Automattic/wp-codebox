@@ -6,6 +6,7 @@ export interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
   preview: BrowserProbePreviewRouting
+  networkPolicy?: BrowserProbeNetworkPolicySummary
   localPreviewOrigin?: string
   requestedPreviewOrigin?: string
   effectivePreviewOrigin?: string
@@ -43,6 +44,7 @@ export interface BrowserProbeArtifact {
     finalUrl: string
     windowLocationOrigin?: string
     htmlSnapshot: boolean
+    networkPolicy?: BrowserProbeNetworkPolicySummary
     lifecycle?: BrowserProbeLifecycleSummary
     memory?: BrowserProbeMemorySummary
     metrics?: Record<string, number>
@@ -153,6 +155,22 @@ export interface BrowserProbePreviewDiagnostic {
   severity: "error" | "warning" | "info"
   message: string
   details?: Record<string, unknown>
+}
+
+export interface BrowserProbeNetworkPolicySummary {
+  mode: "allow" | "block" | "record"
+  allowHosts: string[]
+  blockHosts: string[]
+  routeHosts: string[]
+  recordExternal: boolean
+  externalRequests: number
+  blockedRequests: number
+  hosts: Record<string, {
+    requests: number
+    external: boolean
+    blocked: number
+    routed: number
+  }>
 }
 
 export interface BrowserProbeContextDetails {

@@ -97,6 +97,7 @@
     "browser-probe-context-smoke": "tsx scripts/browser-probe-context-smoke.ts",
     "browser-probe-public-url-routing-smoke": "tsx scripts/browser-probe-public-url-routing-smoke.ts",
     "browser-probe-route-host-smoke": "tsx scripts/browser-probe-route-host-smoke.ts",
+    "browser-probe-network-policy-smoke": "tsx scripts/browser-probe-network-policy-smoke.ts",
     "browser-probe-profile-matrix-smoke": "tsx scripts/browser-probe-profile-matrix-smoke.ts",
     "browser-lifecycle-observer-smoke": "tsx scripts/browser-lifecycle-observer-smoke.ts",
     "browser-probe-pre-page-script-smoke": "tsx scripts/browser-probe-pre-page-script-smoke.ts",
