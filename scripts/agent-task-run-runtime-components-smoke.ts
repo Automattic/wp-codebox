@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { normalizeTaskInput } from "@automattic/wp-codebox-core"
 import { buildAgentTaskRecipe } from "../packages/cli/src/commands/agent-task-run.js"
+import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 
 const input = {
   goal: "Run a Data Machine bundle",
@@ -33,6 +34,10 @@ assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-ope
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.activate, false)
+
+const muPluginInstallCode = installMuPluginsCode(extraPlugins)
+assert.ok(muPluginInstallCode?.includes("define( 'DATAMACHINE_WORKSPACE_PATH', '/workspace' );"))
+assert.ok(!muPluginInstallCode?.includes('define( \'DATAMACHINE_WORKSPACE_PATH\', "/workspace" );'))
 
 const legacyInput = {
   goal: "Run a Data Machine bundle",
