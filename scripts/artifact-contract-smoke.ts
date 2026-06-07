@@ -238,6 +238,8 @@ try {
   assert.equal(runtimeReferenceIndex.summary.present, runtimeReferenceIndex.present.length)
   assert.equal(runtimeReferenceIndex.summary.missing, runtimeReferenceIndex.missing.length)
   assert.equal(runtimeReplayReferenceIndex.schema, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA)
+  const runtimeReplayManifestFile = manifestFile(manifest, "files/runtime-replay-index.json")
+  assert.equal(runtimeReplayManifestFile.sha256.value, sha256(await readFile(join(artifacts.directory, "files/runtime-replay-index.json"))))
   assert.equal(runtimeReplayReferenceIndex.artifactBundle.id, artifacts.id)
   assert.equal(runtimeReplayReferenceIndex.artifactBundle.digest.value, artifacts.contentDigest)
   assert.equal(runtimeReplayReferenceIndex.digest.value, runtimeReplayReferenceIndexDigest(runtimeReplayReferenceIndex).value)
@@ -248,6 +250,8 @@ try {
   assert.equal(runtimeReplayReferenceIndex.replay.status, "partial")
   assert.equal(runtimeReplayReferenceIndex.snapshots.length, 0)
   assert.equal(runtimeReferenceManifest.schema, RUNTIME_REFERENCE_MANIFEST_SCHEMA)
+  const runtimeReferenceManifestFile = manifestFile(manifest, "files/runtime-reference-manifest.json")
+  assert.equal(runtimeReferenceManifestFile.sha256.value, sha256(await readFile(join(artifacts.directory, "files/runtime-reference-manifest.json"))))
   assert.equal(runtimeReferenceManifest.artifactBundle.id, artifacts.id)
   assert.equal(runtimeReferenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
   assert.equal(runtimeReferenceManifest.digest.value, runtimeReferenceManifestDigest(runtimeReferenceManifest).value)
@@ -510,4 +514,14 @@ try {
   console.log("Artifact contract smoke passed")
 } finally {
   await rm(artifactsDirectory, { recursive: true, force: true })
+}
+
+function manifestFile(manifest: { files: Array<{ path: string; sha256: { value: string } }> }, path: string): { sha256: { value: string } } {
+  const file = manifest.files.find((entry) => entry.path === path)
+  assert.ok(file, `Expected manifest file ${path}`)
+  return file
+}
+
+function sha256(contents: Buffer): string {
+  return createHash("sha256").update(contents).digest("hex")
 }
