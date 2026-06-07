@@ -1,4 +1,8 @@
 import assert from "node:assert/strict"
+import { mkdirSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { normalizeTaskInput } from "@automattic/wp-codebox-core"
 import { buildAgentTaskRecipe } from "../packages/cli/src/commands/agent-task-run.js"
 
@@ -35,3 +39,28 @@ const legacyExtraPlugins = legacyRecipe.inputs?.extraPlugins ?? []
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "agents-api")?.source, "/legacy/agents-api")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/legacy/data-machine")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/legacy/data-machine-code")
+
+const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
+const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
+const phpAiClientPath = join(profileRoot, "php-ai-client@custom-provider-auth")
+mkdirSync(codexProviderPath, { recursive: true })
+mkdirSync(phpAiClientPath, { recursive: true })
+process.env.WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH = codexProviderPath
+process.env.WP_CODEBOX_PHP_AI_CLIENT_PATH = phpAiClientPath
+
+const codexProfileInput = {
+  goal: "Run a Codex subscription-backed agent",
+  provider: "codex",
+  model: "gpt-5.5",
+  runtime_overlay_profiles: ["codex-subscription"],
+  artifacts_path: "/tmp/wp-codebox-artifacts",
+}
+const codexProfileRecipe = buildAgentTaskRecipe(codexProfileInput, normalizeTaskInput(codexProfileInput), "trunk")
+const codexPlugins = codexProfileRecipe.inputs?.extraPlugins ?? []
+const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
+
+assert.equal(codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")?.source, codexProviderPath)
+assert.equal(codexOverlays[0]?.kind, "bundled-library")
+assert.equal(codexOverlays[0]?.library, "php-ai-client")
+assert.equal(codexOverlays[0]?.source, phpAiClientPath)
+assert.equal(codexOverlays[0]?.strategy, "wordpress-scoped-bundle")

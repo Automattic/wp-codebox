@@ -21,6 +21,7 @@ export interface AgentTaskRunInput {
   provider?: string
   model?: string
   provider_plugin_paths?: string[]
+  runtime_overlay_profiles?: string[]
   secret_env?: string[]
   mounts?: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
@@ -146,7 +147,9 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
 
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
-  const providerPlugins = stringList(input.provider_plugin_paths).map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
+  const profile = runtimeOverlayProfileDefaults(input)
+  const providerPlugins = uniqueStrings([...profile.providerPluginPaths, ...stringList(input.provider_plugin_paths)])
+    .map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
     `task=${taskInput.goal}`,
@@ -180,7 +183,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       wp: wpVersion,
       blueprint: { steps: [] },
       stack: Array.isArray(input.runtime_stack_mounts) && input.runtime_stack_mounts.length > 0 ? { mounts: input.runtime_stack_mounts } : undefined,
-      overlays: Array.isArray(input.runtime_overlays) && input.runtime_overlays.length > 0 ? input.runtime_overlays : undefined,
+      overlays: runtimeOverlays(input, profile),
     }),
     inputs: stripUndefined({
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
@@ -196,6 +199,61 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
     }),
     workflow: { steps: [{ command: "wp-codebox.agent-sandbox-run", args: workflowArgs }] },
   }) as WorkspaceRecipe
+}
+
+interface RuntimeOverlayProfileDefaults {
+  providerPluginPaths: string[]
+  runtimeOverlays: Array<Record<string, unknown>>
+}
+
+function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
+  const profiles = stringList(input.runtime_overlay_profiles)
+  if (profiles.length === 0) return { providerPluginPaths: [], runtimeOverlays: [] }
+
+  const defaults: RuntimeOverlayProfileDefaults = { providerPluginPaths: [], runtimeOverlays: [] }
+  for (const profile of profiles) {
+    if (profile === "codex-subscription") {
+      defaults.providerPluginPaths.push(requiredProfilePath("codex-subscription", "WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH", [
+        "~/Developer/ai-provider-for-openai@codex-oauth-provider",
+        "~/Developer/ai-provider-for-openai",
+      ]))
+      defaults.runtimeOverlays.push({
+        kind: "bundled-library",
+        library: "php-ai-client",
+        source: requiredProfilePath("codex-subscription", "WP_CODEBOX_PHP_AI_CLIENT_PATH", [
+          "~/Developer/php-ai-client@custom-provider-auth",
+          "~/Developer/php-ai-client",
+        ]),
+        target: "/wordpress/wp-includes/php-ai-client",
+        strategy: "wordpress-scoped-bundle",
+        metadata: { profile, component: "php-ai-client", ref: "custom-provider-auth" },
+      })
+      continue
+    }
+    throw new Error(`Unknown runtime overlay profile: ${profile}`)
+  }
+  return defaults
+}
+
+function requiredProfilePath(profile: string, envName: string, candidates: string[]): string {
+  const resolved = stringValue(process.env[envName]) || candidates.map(resolveProfilePathCandidate).find((candidate) => existsSync(candidate)) || ""
+  if (!resolved) {
+    throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")}`)
+  }
+  return resolved
+}
+
+function resolveProfilePathCandidate(candidate: string): string {
+  return candidate.startsWith("~/") ? join(process.env.HOME || "", candidate.slice(2)) : candidate
+}
+
+function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {
+  const overlays = [...profile.runtimeOverlays, ...(Array.isArray(input.runtime_overlays) ? input.runtime_overlays : [])]
+  return overlays.length > 0 ? overlays : undefined
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)))
 }
 
 function runtimeComponentPath(input: AgentTaskRunInput, key: string, fallback: unknown): unknown {
