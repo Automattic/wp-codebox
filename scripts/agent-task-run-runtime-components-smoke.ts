@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdirSync } from "node:fs"
-import { mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { normalizeTaskInput } from "@automattic/wp-codebox-core"
@@ -57,7 +56,9 @@ const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-")
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
 const phpAiClientPath = join(profileRoot, "php-ai-client@custom-provider-auth")
 mkdirSync(codexProviderPath, { recursive: true })
-mkdirSync(phpAiClientPath, { recursive: true })
+mkdirSync(join(phpAiClientPath, "vendor"), { recursive: true })
+writeFileSync(join(codexProviderPath, "composer.json"), "{}\n")
+writeFileSync(join(phpAiClientPath, "composer.json"), "{}\n")
 process.env.WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH = codexProviderPath
 process.env.WP_CODEBOX_PHP_AI_CLIENT_PATH = phpAiClientPath
 
@@ -72,7 +73,8 @@ const codexProfileRecipe = buildAgentTaskRecipe(codexProfileInput, normalizeTask
 const codexPlugins = codexProfileRecipe.inputs?.extraPlugins ?? []
 const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
 
-assert.equal(codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")?.source, codexProviderPath)
+const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")
+assert.equal(codexProviderPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/ai-provider-for-openai-codex-oauth-provider")
 assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)

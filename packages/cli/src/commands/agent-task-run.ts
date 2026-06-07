@@ -206,24 +206,28 @@ interface RuntimeOverlayProfileDefaults {
   runtimeOverlays: Array<Record<string, unknown>>
 }
 
+const CODEX_SUBSCRIPTION_PROFILE = "codex-subscription"
+const CODEX_PROVIDER_PLUGIN_ENV = "WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH"
+const CODEX_PHP_AI_CLIENT_ENV = "WP_CODEBOX_PHP_AI_CLIENT_PATH"
+
 function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
   const profiles = stringList(input.runtime_overlay_profiles)
   if (profiles.length === 0) return { providerPluginPaths: [], runtimeOverlays: [] }
 
   const defaults: RuntimeOverlayProfileDefaults = { providerPluginPaths: [], runtimeOverlays: [] }
   for (const profile of profiles) {
-    if (profile === "codex-subscription") {
-      defaults.providerPluginPaths.push(requiredProfilePath("codex-subscription", "WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH", [
+    if (profile === CODEX_SUBSCRIPTION_PROFILE) {
+      defaults.providerPluginPaths.push(requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
         "~/Developer/ai-provider-for-openai@codex-oauth-provider",
         "~/Developer/ai-provider-for-openai",
-      ]))
+      ], hasComposerPackage))
       defaults.runtimeOverlays.push({
         kind: "bundled-library",
         library: "php-ai-client",
-        source: requiredProfilePath("codex-subscription", "WP_CODEBOX_PHP_AI_CLIENT_PATH", [
+        source: requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PHP_AI_CLIENT_ENV, [
           "~/Developer/php-ai-client@custom-provider-auth",
           "~/Developer/php-ai-client",
-        ]),
+        ], hasInstalledComposerPackage),
         target: "/wordpress/wp-includes/php-ai-client",
         strategy: "wordpress-scoped-bundle",
         metadata: { profile, component: "php-ai-client", ref: "custom-provider-auth" },
@@ -235,16 +239,28 @@ function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlay
   return defaults
 }
 
-function requiredProfilePath(profile: string, envName: string, candidates: string[]): string {
-  const resolved = stringValue(process.env[envName]) || candidates.map(resolveProfilePathCandidate).find((candidate) => existsSync(candidate)) || ""
+function requiredProfilePath(profile: string, envName: string, candidates: string[], isUsablePath: (path: string) => boolean = existsSync): string {
+  const explicit = stringValue(process.env[envName])
+  const resolved = explicit || candidates.map(resolveProfilePathCandidate).find((candidate) => isUsablePath(candidate)) || ""
   if (!resolved) {
     throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")}`)
+  }
+  if (!isUsablePath(resolved)) {
+    throw new Error(`${profile} runtime overlay profile path from ${envName} is not prepared: ${resolved}`)
   }
   return resolved
 }
 
 function resolveProfilePathCandidate(candidate: string): string {
   return candidate.startsWith("~/") ? join(process.env.HOME || "", candidate.slice(2)) : candidate
+}
+
+function hasComposerPackage(candidate: string): boolean {
+  return existsSync(join(candidate, "composer.json"))
+}
+
+function hasInstalledComposerPackage(candidate: string): boolean {
+  return hasComposerPackage(candidate) && existsSync(join(candidate, "vendor"))
 }
 
 function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {

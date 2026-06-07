@@ -1309,6 +1309,23 @@ For Homeboy executor integration, `request.json` may use this shape:
 
 WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
+`runtime_overlay_profiles` is a convenience layer for reusable runtime stack examples. The raw primitives remain `provider_plugin_paths`, `runtime_stack_mounts`, `runtime_overlays`, `secret_env`, and `runtime_component_paths`; profiles only expand those fields before the private recipe is written.
+
+The built-in `codex-subscription` profile is an example of packaging a provider plugin plus a scoped bundled-library overlay for subscription-backed model access. It expands to:
+
+- `provider_plugin_paths`: the OpenAI/Codex provider plugin checkout from `WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH`
+- `runtime_overlays`: a `php-ai-client` bundled-library overlay from `WP_CODEBOX_PHP_AI_CLIENT_PATH` using `strategy: "wordpress-scoped-bundle"`
+
+Prepare the profile checkouts before running it:
+
+```bash
+export WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH=/path/to/ai-provider-for-openai
+export WP_CODEBOX_PHP_AI_CLIENT_PATH=/path/to/php-ai-client
+composer install --working-dir "$WP_CODEBOX_PHP_AI_CLIENT_PATH"
+```
+
+Callers can skip the profile and pass the expanded fields directly when they own a different provider/library stack. Parent orchestrators such as Homeboy select the profile through the generic `runtime_overlay_profiles` field; WP Codebox still owns only recipe expansion, sandbox lifecycle, and artifact capture.
+
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response and compatibility aliases from older orchestrator integrations, including `agentResult`, `agent_result`, `completionOutcome`, `completion_outcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
