@@ -122,7 +122,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_task_result: objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {},
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       run,
-      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
+      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
       evidence_refs: evidenceRefs(run, artifacts),
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
@@ -357,8 +357,11 @@ function sandboxSession(input: AgentTaskRunInput, run: Record<string, unknown>, 
   })
 }
 
-function diagnostics(run: Record<string, unknown>, exitCode: number): Array<Record<string, unknown>> {
+function diagnostics(run: Record<string, unknown>, exitCode: number, normalizedSuccess = false): Array<Record<string, unknown>> {
   const existing = Array.isArray(run.diagnostics) ? run.diagnostics.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
+  if (normalizedSuccess) {
+    return existing.filter((entry) => stringValue(entry.class) !== "wp-codebox.agent_task_run_failed")
+  }
   if (existing.length > 0) {
     return existing
   }
