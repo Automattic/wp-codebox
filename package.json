@@ -58,6 +58,7 @@
     "task-input-contract-smoke": "tsx scripts/task-input-contract-smoke.ts",
     "agent-task-run-result-normalizer-smoke": "tsx scripts/agent-task-run-result-normalizer-smoke.ts",
     "fanout-contract-smoke": "tsx scripts/fanout-contract-smoke.ts",
+    "host-delegation-contract-smoke": "tsx scripts/host-delegation-contract-smoke.ts",
     "fanout-aggregation-contract-smoke": "tsx scripts/fanout-aggregation-contract-smoke.ts",
     "agent-fanout-execution-smoke": "tsx scripts/agent-fanout-execution-smoke.ts",
     "run-registry-smoke": "tsx scripts/run-registry-smoke.ts",

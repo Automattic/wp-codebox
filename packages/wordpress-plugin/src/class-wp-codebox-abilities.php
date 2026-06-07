@@ -484,6 +484,55 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/request-host-delegation',
+				array(
+					'label'               => 'Request Host Delegation',
+					'description'         => 'Request an explicit product-neutral host-side delegation. Product hosts may satisfy the request through the wp_codebox_host_delegation_request filter; WP Codebox returns structured unavailable evidence when no provider handles it.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'properties' => array(
+							'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/host-delegation-request/v1' ),
+							'request_id'         => array( 'type' => 'string' ),
+							'goal'               => $task_input_schema['properties']['goal'],
+							'task'               => array( 'type' => 'string' ),
+							'target'             => $task_input_schema['properties']['target'],
+							'context'            => $task_input_schema['properties']['context'],
+							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
+							'execution'          => array(
+								'type'        => 'object',
+								'description' => 'Product-neutral host execution preferences or requirements. WP Codebox preserves this for the host provider without interpreting product policy.',
+							),
+							'orchestrator'       => $session_input['orchestrator'],
+							'sandbox_session_id' => $session_input['sandbox_session_id'],
+							'metadata'           => array( 'type' => 'object' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'    => array( 'type' => 'boolean' ),
+							'schema'     => array( 'type' => 'string', 'const' => 'wp-codebox/host-delegation-result/v1' ),
+							'execution'  => array( 'type' => 'string', 'const' => 'host-delegation' ),
+							'status'     => array( 'type' => 'string', 'enum' => array( 'unavailable', 'accepted', 'completed', 'failed' ) ),
+							'request_id' => array( 'type' => 'string' ),
+							'session_id' => array( 'type' => 'string' ),
+							'request'    => array( 'type' => 'object' ),
+							'provider'   => array( 'type' => 'string' ),
+							'result'     => array( 'type' => 'object' ),
+							'error'      => array( 'type' => 'object' ),
+							'events'     => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'artifacts'  => array( 'type' => 'object' ),
+							'timings'    => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'request_host_delegation' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/create-browser-playground-session',
 				array(
 					'label'               => 'Create Browser Playground Session',
@@ -739,7 +788,7 @@ final class WP_Codebox_Abilities {
 							'artifact_files'     => array( 'type' => 'array' ),
 							'phases'             => array(
 								'type'        => 'array',
-								'description' => 'Optional named browser task phases. Generic phases may carry wp-codebox/agent-fanout-request/v1 in request/input for WP Codebox execution; materializer phases may override any primary session input through input.',
+								'description' => 'Optional named browser task phases. Generic phases may carry wp-codebox/agent-fanout-request/v1 or wp-codebox/host-delegation-request/v1 in request/input for WP Codebox execution; materializer phases may override any primary session input through input.',
 								'items'       => array(
 									'type'       => 'object',
 									'properties' => array(

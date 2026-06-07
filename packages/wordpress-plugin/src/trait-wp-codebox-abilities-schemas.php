@@ -376,7 +376,7 @@ private static function browser_task_contract_schema(): array {
 			'primary'          => self::browser_playground_session_schema(),
 			'phases'           => array(
 				'type'        => 'array',
-				'description' => 'Named browser task phases. Materializer phases include a browser-materializer-contract envelope; fanout phases execute wp-codebox/agent-fanout-request/v1 through WP Codebox; other generic phases preserve product-neutral phase metadata for product UIs.',
+				'description' => 'Named browser task phases. Materializer phases include a browser-materializer-contract envelope; fanout phases execute wp-codebox/agent-fanout-request/v1 through WP Codebox; host-delegation phases execute wp-codebox/host-delegation-request/v1 through a host provider filter; other generic phases preserve product-neutral phase metadata for product UIs.',
 				'items'       => array(
 					'type'       => 'object',
 					'properties' => array(
@@ -400,7 +400,7 @@ private static function browser_task_contract_schema(): array {
 
 /** @return array<int,string> */
 private static function browser_task_phase_kinds(): array {
-	return array( 'materializer', 'agent', 'validator', 'repair', 'aggregator' );
+	return array( 'materializer', 'agent', 'validator', 'repair', 'aggregator', 'host-delegation' );
 }
 
 /** @return array<string,mixed> */

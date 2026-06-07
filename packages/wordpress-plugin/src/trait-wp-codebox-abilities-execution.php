@@ -24,6 +24,11 @@ public static function run_agent_task_fanout( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function request_host_delegation( array $input ): array|WP_Error {
+	return self::execute_host_delegation_request( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_playground_session( array $input ): array|WP_Error {
 	$task_input = self::normalize_task_input( $input );
 	if ( is_wp_error( $task_input ) ) {
@@ -517,7 +522,7 @@ private static function browser_task_contract_phases( array $input, array $sessi
 
 		$kind = self::safe_key( (string) ( $phase['kind'] ?? 'materializer' ) );
 		if ( ! in_array( $kind, self::browser_task_phase_kinds(), true ) ) {
-			return new WP_Error( 'wp_codebox_browser_phase_kind_invalid', 'Browser task phases support materializer, agent, validator, repair, and aggregator kinds.', array( 'status' => 400, 'index' => $index, 'kind' => $kind ) );
+			return new WP_Error( 'wp_codebox_browser_phase_kind_invalid', 'Browser task phases support materializer, agent, validator, repair, aggregator, and host-delegation kinds.', array( 'status' => 400, 'index' => $index, 'kind' => $kind ) );
 		}
 
 		$phase_descriptor = array(
@@ -541,6 +546,23 @@ private static function browser_task_contract_phases( array $input, array $sessi
 			}
 
 			$phase_descriptor['status'] = true === ( $result['success'] ?? false ) ? 'completed' : 'failed';
+			$phase_descriptor['result'] = $result;
+			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+			continue;
+		}
+
+		$host_delegation_request = self::browser_task_phase_host_delegation_request( $phase );
+		if ( is_array( $host_delegation_request ) ) {
+			if ( empty( $host_delegation_request['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
+				$host_delegation_request['sandbox_session_id'] = (string) $session_envelope['id'];
+			}
+
+			$result = self::request_host_delegation( $host_delegation_request );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+
+			$phase_descriptor['status'] = true === ( $result['success'] ?? false ) ? (string) ( $result['status'] ?? 'completed' ) : (string) ( $result['status'] ?? 'failed' );
 			$phase_descriptor['result'] = $result;
 			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 			continue;
@@ -581,6 +603,125 @@ private static function browser_task_phase_fanout_request( array $phase ): ?arra
 	}
 
 	return null;
+}
+
+/** @param array<string,mixed> $phase Browser task phase. @return array<string,mixed>|null */
+private static function browser_task_phase_host_delegation_request( array $phase ): ?array {
+	$candidates = array( $phase['request'] ?? null, $phase['input'] ?? null );
+	foreach ( $candidates as $candidate ) {
+		if ( is_array( $candidate ) && 'wp-codebox/host-delegation-request/v1' === (string) ( $candidate['schema'] ?? '' ) ) {
+			return $candidate;
+		}
+	}
+
+	return null;
+}
+
+/** @param array<string,mixed> $request Host delegation request. @return array<string,mixed>|WP_Error */
+private static function execute_host_delegation_request( array $request ): array|WP_Error {
+	if ( isset( $request['schema'] ) && 'wp-codebox/host-delegation-request/v1' !== (string) $request['schema'] ) {
+		return new WP_Error( 'wp_codebox_host_delegation_schema_invalid', 'Host delegation requests must use wp-codebox/host-delegation-request/v1.', array( 'status' => 400 ) );
+	}
+
+	$request['schema'] = 'wp-codebox/host-delegation-request/v1';
+	$request_id        = self::safe_key( (string) ( $request['request_id'] ?? $request['id'] ?? '' ) );
+	if ( '' === $request_id ) {
+		$request_id = self::generate_id();
+	}
+	$request['request_id'] = $request_id;
+	$started_at            = microtime( true );
+	$events                = array( self::host_delegation_event( 'host-delegation.requested', $request_id ) );
+
+	/**
+	 * Lets products satisfy an explicit host-delegation request.
+	 *
+	 * Return an array shaped like wp-codebox/host-delegation-result/v1, a provider
+	 * payload to wrap, or null when the host has no delegation provider.
+	 *
+	 * @param mixed               $result  Provider result. Null means unavailable.
+	 * @param array<string,mixed> $request Canonical host delegation request.
+	 */
+	$provider_result = apply_filters( 'wp_codebox_host_delegation_request', null, $request );
+	$ended_at        = microtime( true );
+
+	if ( null === $provider_result ) {
+		$events[] = self::host_delegation_event( 'host-delegation.unavailable', $request_id, 'unavailable' );
+		return self::host_delegation_result( false, 'unavailable', $request, null, array( 'code' => 'wp_codebox_host_delegation_unavailable', 'message' => 'No host delegation provider handled the request.', 'data' => null ), $events, $started_at, $ended_at );
+	}
+
+	if ( is_wp_error( $provider_result ) ) {
+		$events[] = self::host_delegation_event( 'host-delegation.failed', $request_id, 'failed' );
+		return self::host_delegation_result( false, 'failed', $request, null, array( 'code' => $provider_result->get_error_code(), 'message' => $provider_result->get_error_message(), 'data' => $provider_result->get_error_data() ), $events, $started_at, $ended_at );
+	}
+
+	if ( ! is_array( $provider_result ) ) {
+		$events[] = self::host_delegation_event( 'host-delegation.failed', $request_id, 'failed' );
+		return self::host_delegation_result( false, 'failed', $request, null, array( 'code' => 'wp_codebox_host_delegation_provider_result_invalid', 'message' => 'Host delegation providers must return an array, WP_Error, or null.', 'data' => array( 'type' => get_debug_type( $provider_result ) ) ), $events, $started_at, $ended_at );
+	}
+
+	$has_success = array_key_exists( 'success', $provider_result );
+	$has_status  = array_key_exists( 'status', $provider_result );
+	$status      = self::safe_key( (string) ( $provider_result['status'] ?? ( $has_success && false === $provider_result['success'] ? 'failed' : 'completed' ) ) );
+	$success     = $has_success ? true === $provider_result['success'] : in_array( $status, array( 'accepted', 'completed' ), true );
+	if ( ! $has_status && ! $has_success && isset( $provider_result['error'] ) ) {
+		$status  = 'failed';
+		$success = false;
+	}
+	if ( ! in_array( $status, array( 'accepted', 'completed', 'failed', 'unavailable' ), true ) ) {
+		$status = $success ? 'completed' : 'failed';
+	}
+
+	$events[] = self::host_delegation_event( $success ? ( 'accepted' === $status ? 'host-delegation.accepted' : 'host-delegation.completed' ) : ( 'unavailable' === $status ? 'host-delegation.unavailable' : 'host-delegation.failed' ), $request_id, $status, (string) ( $provider_result['provider'] ?? '' ) );
+	$error    = is_array( $provider_result['error'] ?? null ) ? $provider_result['error'] : null;
+	$result   = is_array( $provider_result['result'] ?? null ) ? $provider_result['result'] : $provider_result;
+
+	$envelope = self::host_delegation_result( $success, $status, $request, $result, $success ? null : $error, $events, $started_at, $ended_at );
+	foreach ( array( 'provider', 'artifacts', 'orchestrator' ) as $field ) {
+		if ( isset( $provider_result[ $field ] ) ) {
+			$envelope[ $field ] = $provider_result[ $field ];
+		}
+	}
+
+	return $envelope;
+}
+
+private static function host_delegation_event( string $event, string $request_id, string $status = '', string $provider = '' ): array {
+	return array_filter(
+		array(
+			'schema'     => 'wp-codebox/host-delegation-event/v1',
+			'event'      => $event,
+			'time'       => gmdate( 'c' ),
+			'request_id' => $request_id,
+			'status'     => $status,
+			'provider'   => $provider,
+		),
+		static fn( mixed $value ): bool => '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $request Host delegation request. @param array<string,mixed>|null $result Provider result. @param array<string,mixed>|null $error Error payload. @param array<int,array<string,mixed>> $events Events. @return array<string,mixed> */
+private static function host_delegation_result( bool $success, string $status, array $request, ?array $result, ?array $error, array $events, float $started_at, float $ended_at ): array {
+	return array_filter(
+		array(
+			'success'   => $success,
+			'schema'    => 'wp-codebox/host-delegation-result/v1',
+			'execution' => 'host-delegation',
+			'status'    => $status,
+			'request_id' => (string) ( $request['request_id'] ?? '' ),
+			'session_id' => (string) ( $request['sandbox_session_id'] ?? $request['session_id'] ?? '' ),
+			'request'   => $request,
+			'result'    => $result,
+			'error'     => $error,
+			'events'    => $events,
+			'timings'   => array(
+				'started_at'  => gmdate( 'c', (int) $started_at ),
+				'ended_at'    => gmdate( 'c', (int) $ended_at ),
+				'duration_ms' => (int) round( ( $ended_at - $started_at ) * 1000 ),
+			),
+			'orchestrator' => is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array(),
+		),
+		static fn( mixed $value ): bool => array() !== $value && null !== $value && '' !== $value
+	);
 }
 
 /**
