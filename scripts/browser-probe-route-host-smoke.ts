@@ -28,7 +28,7 @@ try {
   assert.ok(address && typeof address === "object")
 
   const localUrl = `http://127.0.0.1:${address.port}/`
-  const canonicalUrl = "http://example.test/canonical-route/"
+  const canonicalUrl = "https://example.test/canonical-route/"
   const runtimeSpec: RuntimeCreateSpec = { preview: { publicUrl: canonicalUrl } }
   const serverRef: PlaygroundCliServer = {
     playground: {
@@ -57,14 +57,14 @@ try {
 
   assert.equal(probe.artifact.requestedUrl, canonicalUrl)
   assert.equal(probe.artifact.summary.finalUrl, canonicalUrl)
-  assert.equal(probe.artifact.summary.windowLocationOrigin, "http://example.test")
+  assert.equal(probe.artifact.summary.windowLocationOrigin, "https://example.test")
 
   const html = await readFile(join(workspace, "files", "browser", "snapshot.html"), "utf8")
   assert.match(html, /data-path="\/canonical-route\/"/)
   assert.match(html, /data-host="example\.test"/)
   assert.match(html, /data-forwarded-host="example\.test"/)
-  assert.match(html, /data-forwarded-port="80"/)
-  assert.match(html, /data-forwarded-proto="http"/)
+  assert.match(html, /data-forwarded-port="443"/)
+  assert.match(html, /data-forwarded-proto="https"/)
 
   console.log("Browser probe route-host smoke passed")
 } finally {

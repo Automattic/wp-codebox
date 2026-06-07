@@ -2378,7 +2378,7 @@ async function routeBrowserProbeHosts(page: Page, hosts: string[], localPreviewO
   }
 
   const localOrigin = new URL(localPreviewOrigin)
-  await page.route("**/*", async (route) => {
+  await page.context().route("**/*", async (route) => {
     const request = route.request()
     let requestUrl: URL
     try {
