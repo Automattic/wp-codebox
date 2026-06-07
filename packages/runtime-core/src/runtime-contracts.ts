@@ -689,7 +689,7 @@ export interface ArtifactPreviewUrlRef {
 }
 
 export interface ArtifactDurablePreviewRef {
-  kind: "static-artifact-preview"
+  kind: "artifact-preview"
   reviewerSafe: true
   durable: true
   entrypoint: string

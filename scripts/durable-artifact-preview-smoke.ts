@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ArtifactBundleBuilder, type ArtifactBundleBuilderSource } from "../packages/runtime-playground/src/artifact-bundle-builder.js"
 
-const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-durable-static-preview-"))
+const artifactRoot = await mkdtemp(join(tmpdir(), "wp-codebox-durable-artifact-preview-"))
 
 try {
   const browserArtifact = {
@@ -30,7 +30,7 @@ try {
       scriptResult: {
         phase: "editable_preview_ready",
         artifact_bundle: {
-          schema: "wp-codebox/browser-runtime-website-artifact/v1",
+          schema: "wp-codebox/browser-runtime-artifact-bundle/v1",
           root: "public",
           entrypoint: "public/index.html",
           files: [
@@ -53,11 +53,11 @@ try {
 
   const source: ArtifactBundleBuilderSource = {
     artifactRoot,
-    runtimeId: "runtime-durable-static-preview-smoke",
+    runtimeId: "runtime-durable-artifact-preview-smoke",
     runtimeCreatedAt: "2026-01-01T00:00:00.000Z",
     spec: {
       backend: "wordpress-playground",
-      environment: { kind: "wordpress", name: "durable-static-preview-smoke", version: "latest" },
+      environment: { kind: "wordpress", name: "durable-artifact-preview-smoke", version: "latest" },
       policy: { network: "allow", filesystem: "readwrite-mounts", commands: ["wordpress.browser-probe"], secrets: "none", approvals: "never" },
     },
     mounts: [],
@@ -67,9 +67,9 @@ try {
     events: [],
     async info() {
       return {
-        id: "runtime-durable-static-preview-smoke",
+        id: "runtime-durable-artifact-preview-smoke",
         backend: "wordpress-playground",
-        environment: { kind: "wordpress", name: "durable-static-preview-smoke", version: "latest" },
+        environment: { kind: "wordpress", name: "durable-artifact-preview-smoke", version: "latest" },
         createdAt: "2026-01-01T00:00:00.000Z",
         status: "destroyed",
       }
@@ -120,30 +120,30 @@ try {
   }
 
   const bundle = await new ArtifactBundleBuilder(source).build()
-  assert.equal(bundle.durablePreview?.kind, "static-artifact-preview")
+  assert.equal(bundle.durablePreview?.kind, "artifact-preview")
   assert.equal(bundle.durablePreview?.reviewerSafe, true)
   assert.equal(bundle.durablePreview?.durable, true)
-  assert.equal(bundle.durablePreview?.entrypoint, "files/static-preview/site/public/index.html")
+  assert.equal(bundle.durablePreview?.entrypoint, "files/artifact-preview/files/public/index.html")
   assert.equal(bundle.durablePreview?.source.kind, "browser-runtime-artifact-bundle")
-  assert.equal(bundle.durablePreview?.source.schema, "wp-codebox/browser-runtime-website-artifact/v1")
+  assert.equal(bundle.durablePreview?.source.schema, "wp-codebox/browser-runtime-artifact-bundle/v1")
 
-  const staticHtml = await readFile(join(artifactRoot, "files/static-preview/site/public/index.html"), "utf8")
-  assert.match(staticHtml, /Reviewer safe/)
+  const artifactHtml = await readFile(join(artifactRoot, "files/artifact-preview/files/public/index.html"), "utf8")
+  assert.match(artifactHtml, /Reviewer safe/)
 
-  const staticManifest = JSON.parse(await readFile(join(artifactRoot, "files/static-preview/manifest.json"), "utf8"))
-  assert.equal(staticManifest.schema, "wp-codebox/static-artifact-preview/v1")
-  assert.equal(staticManifest.entrypoint, "files/static-preview/site/public/index.html")
-  assert.equal(staticManifest.files.length, 2)
+  const previewManifest = JSON.parse(await readFile(join(artifactRoot, "files/artifact-preview/manifest.json"), "utf8"))
+  assert.equal(previewManifest.schema, "wp-codebox/artifact-preview/v1")
+  assert.equal(previewManifest.entrypoint, "files/artifact-preview/files/public/index.html")
+  assert.equal(previewManifest.files.length, 2)
 
   const metadata = JSON.parse(await readFile(bundle.metadataPath, "utf8"))
   const previewEvidence = JSON.parse(await readFile(bundle.previewEvidencePath ?? "", "utf8"))
   const previewSessionEvidence = JSON.parse(await readFile(bundle.previewSessionEvidencePath ?? "", "utf8"))
-  assert.equal(metadata.artifacts.durablePreview, "files/static-preview/manifest.json")
-  assert.equal(metadata.durablePreview.entrypoint, "files/static-preview/site/public/index.html")
-  assert.equal(previewEvidence.preview.durablePreview.entrypoint, "files/static-preview/site/public/index.html")
-  assert.equal(previewSessionEvidence.refs.durablePreview.path, "files/static-preview/manifest.json")
+  assert.equal(metadata.artifacts.durablePreview, "files/artifact-preview/manifest.json")
+  assert.equal(metadata.durablePreview.entrypoint, "files/artifact-preview/files/public/index.html")
+  assert.equal(previewEvidence.preview.durablePreview.entrypoint, "files/artifact-preview/files/public/index.html")
+  assert.equal(previewSessionEvidence.refs.durablePreview.path, "files/artifact-preview/manifest.json")
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
 }
 
-console.log("Durable static preview smoke passed")
+console.log("Durable artifact preview smoke passed")

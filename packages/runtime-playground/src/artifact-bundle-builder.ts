@@ -121,7 +121,7 @@ export class ArtifactBundleBuilder {
     const preview = await source.previewInfo(createdAt, spec.previewHoldSeconds)
     const browser = source.browserReviewSummary()
     const runtime = await source.info()
-    const durablePreview = await buildDurableStaticPreview({
+    const durablePreview = await buildDurableArtifactPreview({
       artifactRoot: source.artifactRoot,
       createdAt,
       probes: source.browserArtifacts(),
@@ -646,7 +646,7 @@ function buildPreviewSessionEvidence({
       runtimeReferenceManifest: evidenceRef(paths.runtimeReferenceManifest, "runtime-reference-manifest"),
       runtimeReplayReferenceIndex: evidenceRef(paths.runtimeReplayReferenceIndex, "runtime-replay-index"),
       browserSummary: browser && paths.browserSummary ? evidenceRef(paths.browserSummary, "browser-summary") : undefined,
-      durablePreview: durablePreview && paths.durablePreview ? evidenceRef(paths.durablePreview, "static-artifact-preview") : undefined,
+      durablePreview: durablePreview && paths.durablePreview ? evidenceRef(paths.durablePreview, "artifact-preview") : undefined,
     }),
     components: packages,
   })
@@ -656,27 +656,27 @@ function evidenceRef(path: string, kind: string, contentType = "application/json
   return { path, kind, contentType }
 }
 
-interface DurableStaticPreviewBuildResult {
+interface DurableArtifactPreviewBuildResult {
   preview: ArtifactDurablePreviewRef
   manifestFiles: ArtifactManifestFile[]
 }
 
-interface BrowserStaticArtifactBundle {
+interface BrowserArtifactBundleWithFiles {
   probe: number
   schema?: string
   root?: string
   entrypoint?: string
-  files: BrowserStaticArtifactFile[]
+  files: BrowserArtifactFile[]
 }
 
-interface BrowserStaticArtifactFile {
+interface BrowserArtifactFile {
   path: string
   content: string
   encoding: string
   contentType: string
 }
 
-async function buildDurableStaticPreview({
+async function buildDurableArtifactPreview({
   artifactRoot,
   createdAt,
   probes,
@@ -686,25 +686,25 @@ async function buildDurableStaticPreview({
   createdAt: string
   probes: BrowserProbeArtifact[]
   redactor: ArtifactRedactor
-}): Promise<DurableStaticPreviewBuildResult | undefined> {
-  const bundle = findBrowserStaticArtifactBundle(probes)
+}): Promise<DurableArtifactPreviewBuildResult | undefined> {
+  const bundle = findBrowserArtifactBundleWithFiles(probes)
   if (!bundle) {
     return undefined
   }
 
-  const staticRoot = "files/static-preview/site"
-  const manifestPath = "files/static-preview/manifest.json"
+  const previewRoot = "files/artifact-preview/files"
+  const manifestPath = "files/artifact-preview/manifest.json"
   const files: ArtifactEvidenceRef[] = []
   const manifestFiles: ArtifactManifestFile[] = []
   const writtenPaths = new Set<string>()
 
   for (const file of bundle.files) {
-    const relativePath = safeStaticPreviewPath(file.path)
+    const relativePath = safeArtifactPreviewPath(file.path)
     if (!relativePath || writtenPaths.has(relativePath)) {
       continue
     }
 
-    const artifactPath = `${staticRoot}/${relativePath}`
+    const artifactPath = `${previewRoot}/${relativePath}`
     const absolutePath = join(artifactRoot, artifactPath)
     const contents = file.encoding === "base64" ? Buffer.from(file.content, "base64") : Buffer.from(file.content, "utf8")
     const writtenContents = file.encoding === "base64" ? contents : Buffer.from(redactor.redact(artifactPath, contents.toString("utf8")), "utf8")
@@ -713,7 +713,7 @@ async function buildDurableStaticPreview({
 
     const ref = {
       path: artifactPath,
-      kind: relativePath === "index.html" ? "static-preview-entrypoint" : "static-preview-file",
+      kind: relativePath === "index.html" ? "artifact-preview-entrypoint" : "artifact-preview-file",
       contentType: file.contentType,
       sha256: artifactFileDigest(writtenContents),
     }
@@ -726,17 +726,17 @@ async function buildDurableStaticPreview({
     return undefined
   }
 
-  const entrypoint = durablePreviewEntrypoint(bundle, files, staticRoot)
+  const entrypoint = durablePreviewEntrypoint(bundle, files, previewRoot)
   if (!entrypoint) {
     return undefined
   }
 
   const preview: ArtifactDurablePreviewRef = {
-    kind: "static-artifact-preview",
+    kind: "artifact-preview",
     reviewerSafe: true,
     durable: true,
     entrypoint,
-    manifest: evidenceRef(manifestPath, "static-artifact-preview"),
+    manifest: evidenceRef(manifestPath, "artifact-preview"),
     source: stripUndefined({
       kind: "browser-runtime-artifact-bundle" as const,
       probe: bundle.probe,
@@ -747,7 +747,7 @@ async function buildDurableStaticPreview({
     files,
   }
   const manifest = {
-    schema: "wp-codebox/static-artifact-preview/v1",
+    schema: "wp-codebox/artifact-preview/v1",
     createdAt,
     reviewerSafe: true,
     durable: true,
@@ -758,12 +758,12 @@ async function buildDurableStaticPreview({
   const manifestJson = redactor.redact(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   await writeFile(join(artifactRoot, manifestPath), manifestJson)
   preview.manifest.sha256 = artifactFileDigest(manifestJson)
-  manifestFiles.unshift(artifactManifestFile(join(artifactRoot, manifestPath), "static-artifact-preview", "application/json"))
+  manifestFiles.unshift(artifactManifestFile(join(artifactRoot, manifestPath), "artifact-preview", "application/json"))
 
   return { preview, manifestFiles }
 }
 
-function findBrowserStaticArtifactBundle(probes: BrowserProbeArtifact[]): BrowserStaticArtifactBundle | undefined {
+function findBrowserArtifactBundleWithFiles(probes: BrowserProbeArtifact[]): BrowserArtifactBundleWithFiles | undefined {
   for (const [index, probe] of probes.entries()) {
     const scriptResult = asRecord(probe.summary.scriptResult)
     const candidate = asRecord(scriptResult?.artifact_bundle) ?? asRecord(scriptResult?.artifactBundle) ?? scriptResult
@@ -777,7 +777,7 @@ function findBrowserStaticArtifactBundle(probes: BrowserProbeArtifact[]): Browse
       continue
     }
 
-    const materializableFiles = files.flatMap((file) => materializableStaticFile(file))
+    const materializableFiles = files.flatMap((file) => materializableArtifactFile(file))
     if (materializableFiles.length === 0) {
       continue
     }
@@ -794,7 +794,7 @@ function findBrowserStaticArtifactBundle(probes: BrowserProbeArtifact[]): Browse
   return undefined
 }
 
-function materializableStaticFile(value: unknown): BrowserStaticArtifactFile[] {
+function materializableArtifactFile(value: unknown): BrowserArtifactFile[] {
   const file = asRecord(value)
   if (!file) {
     return []
@@ -815,30 +815,30 @@ function materializableStaticFile(value: unknown): BrowserStaticArtifactFile[] {
     path,
     content,
     encoding: encoding === "utf-8" ? "utf8" : encoding,
-    contentType: stringValue(file.contentType) ?? stringValue(file.content_type) ?? stringValue(file.mime_type) ?? staticPreviewContentType(path),
+    contentType: stringValue(file.contentType) ?? stringValue(file.content_type) ?? stringValue(file.mime_type) ?? artifactPreviewContentType(path),
   }]
 }
 
-function durablePreviewEntrypoint(bundle: BrowserStaticArtifactBundle, files: ArtifactEvidenceRef[], staticRoot: string): string | undefined {
-  const relativePaths = new Set(files.map((file) => file.path.slice(`${staticRoot}/`.length)))
+function durablePreviewEntrypoint(bundle: BrowserArtifactBundleWithFiles, files: ArtifactEvidenceRef[], previewRoot: string): string | undefined {
+  const relativePaths = new Set(files.map((file) => file.path.slice(`${previewRoot}/`.length)))
   const candidates = [
     bundle.entrypoint,
-    stripStaticPreviewRoot(bundle.entrypoint, bundle.root),
+    stripArtifactPreviewRoot(bundle.entrypoint, bundle.root),
     "index.html",
-  ].flatMap((path) => path ? [safeStaticPreviewPath(path)] : []).filter((path): path is string => Boolean(path))
+  ].flatMap((path) => path ? [safeArtifactPreviewPath(path)] : []).filter((path): path is string => Boolean(path))
 
   for (const candidate of candidates) {
     if (relativePaths.has(candidate)) {
-      return `${staticRoot}/${candidate}`
+      return `${previewRoot}/${candidate}`
     }
   }
 
   return files.find((file) => file.path.endsWith(".html"))?.path ?? files[0]?.path
 }
 
-function stripStaticPreviewRoot(path: string | undefined, root: string | undefined): string | undefined {
-  const safeRoot = root ? safeStaticPreviewPath(root) : undefined
-  const safePath = path ? safeStaticPreviewPath(path) : undefined
+function stripArtifactPreviewRoot(path: string | undefined, root: string | undefined): string | undefined {
+  const safeRoot = root ? safeArtifactPreviewPath(root) : undefined
+  const safePath = path ? safeArtifactPreviewPath(path) : undefined
   if (!safeRoot || !safePath || safePath === safeRoot) {
     return undefined
   }
@@ -846,7 +846,7 @@ function stripStaticPreviewRoot(path: string | undefined, root: string | undefin
   return safePath.startsWith(`${safeRoot}/`) ? safePath.slice(safeRoot.length + 1) : undefined
 }
 
-function safeStaticPreviewPath(path: string): string | undefined {
+function safeArtifactPreviewPath(path: string): string | undefined {
   const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part.length > 0 && part !== ".")
   if (normalized.length === 0 || normalized.some((part) => part === "..")) {
     return undefined
@@ -855,7 +855,7 @@ function safeStaticPreviewPath(path: string): string | undefined {
   return normalized.join("/")
 }
 
-function staticPreviewContentType(path: string): string {
+function artifactPreviewContentType(path: string): string {
   const normalized = path.toLowerCase()
   if (normalized.endsWith(".html") || normalized.endsWith(".htm")) {
     return "text/html; charset=utf-8"
