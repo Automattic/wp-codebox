@@ -966,6 +966,9 @@ foreach ( $bundle_specs as $index => $spec ) {
 			$input[ $field ] = trim( (string) $spec[ $field ] );
 		}
 	}
+	if ( isset( $spec[\'bundle\'] ) && is_array( $spec[\'bundle\'] ) ) {
+		$input[\'bundle\'] = $spec[\'bundle\'];
+	}
 	$input[\'owner_id\'] = isset( $spec[\'owner_id\'] ) && (int) $spec[\'owner_id\'] > 0 ? (int) $spec[\'owner_id\'] : ( get_current_user_id() ?: 1 );
 	if ( isset( $spec[\'import_principal\'] ) && is_array( $spec[\'import_principal\'] ) ) {
 		$input[\'import_principal\'] = $spec[\'import_principal\'];
