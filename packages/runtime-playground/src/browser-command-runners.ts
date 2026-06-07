@@ -248,7 +248,11 @@ async function runSingleBrowserProbeCommand({
   if (requestedContext.device && !deviceProfile) {
     throw new Error(`wordpress.browser-probe unknown Playwright device profile: ${requestedContext.device}`)
   }
-  const browser = await chromium.launch()
+  const browser = await chromium.launch(
+    process.env.WP_CODEBOX_BROWSER_CHANNEL
+      ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
+      : undefined,
+  )
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
   let htmlSha256: string | undefined
