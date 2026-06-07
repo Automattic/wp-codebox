@@ -129,7 +129,11 @@ const browserMetrics = await runCli([
 
 assert.equal(browserMetrics.schema, "wp-codebox/browser-metrics/v1")
 assert.equal(browserMetrics.hasBrowserMetrics, true)
-assert.deepEqual(browserMetrics.metrics, expectedBrowserMetrics)
+assert.deepEqual(pick(browserMetrics.metrics, Object.keys(expectedBrowserMetrics)), expectedBrowserMetrics)
+for (const metric of ["browser_nav_duration_ms", "browser_dom_content_loaded_ms", "browser_load_event_ms", "browser_response_start_ms", "browser_response_end_ms", "browser_request_start_ms", "browser_ttfb_ms", "browser_redirect_ms", "browser_first_paint_ms", "browser_fcp_ms", "browser_lcp_ms", "browser_lcp_size"]) {
+  assert.equal(typeof browserMetrics.metrics[metric], "number", `${metric} should be exposed by browser-metrics`)
+  assert.ok(browserMetrics.metrics[metric] >= 0, `${metric} should be non-negative`)
+}
 assert.equal(browserMetrics.artifacts.summary.path, "files/browser/summary.json")
 assert.equal(browserMetrics.artifacts.memory.path, "files/browser/memory.json")
 assert.equal(browserMetrics.artifacts.performance.path, "files/browser/performance.json")
@@ -185,4 +189,8 @@ async function runCli(args: string[]): Promise<any> {
   const exitCode = await new Promise<number | null>((resolveExit) => child.once("exit", (code) => resolveExit(code)))
   assert.equal(exitCode, 0, `CLI exited with ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   return JSON.parse(stdout)
+}
+
+function pick(source: Record<string, number>, keys: string[]): Record<string, number> {
+  return Object.fromEntries(keys.map((key) => [key, source[key]]))
 }

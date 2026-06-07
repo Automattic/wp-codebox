@@ -75,6 +75,7 @@ const htmlPath = join(artifactDirectory, "files", "browser", "snapshot.html")
 const memoryPath = join(artifactDirectory, "files", "browser", "memory.json")
 const networkPath = join(artifactDirectory, "files", "browser", "network.jsonl")
 const performancePath = join(artifactDirectory, "files", "browser", "performance.json")
+const browserReviewPath = join(artifactDirectory, "files", "browser", "review.json")
 const screenshotPath = join(artifactDirectory, "files", "browser", "screenshot.png")
 const summaryPath = join(artifactDirectory, "files", "browser", "summary.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
@@ -87,6 +88,7 @@ assert.equal(existsSync(htmlPath), true, "snapshot.html should be captured")
 assert.equal(existsSync(memoryPath), true, "memory.json should be captured")
 assert.equal(existsSync(networkPath), true, "network.jsonl should be captured")
 assert.equal(existsSync(performancePath), true, "performance.json should be captured")
+assert.equal(existsSync(browserReviewPath), true, "review.json should be captured")
 assert.equal(existsSync(screenshotPath), true, "screenshot.png should be captured")
 assert.equal(existsSync(summaryPath), true, "summary.json should be captured")
 
@@ -135,7 +137,7 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   requestedUrl: string
   finalUrl: string
   prePageScript?: { sha256?: string; bytes?: number }
-  files: { checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; screenshot?: string }
+  files: { checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; review?: string; screenshot?: string }
   hashes: { html?: { value: string }; screenshot?: { value: string } }
   viewport: { width: number; height: number; userAgent: string }
   capabilities?: {
@@ -157,6 +159,7 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
     scriptResult?: { title?: string; hasBody?: boolean; observedCapabilities?: { applePay?: boolean; paymentRequest?: boolean; marker?: string } }
     memory?: { usedJSHeapSize: { final: number | null; peak: number | null }; domNodes: { final: number | null; peak: number | null } }
     performance?: { resources: number; domNodes: { final: number | null; peak: number | null }; longTasks: number }
+    review?: { schema: string; timings: { totalDurationMs: { status: string; value: number | null }; ttfbMs: { status: string }; firstContentfulPaintMs: { status: string }; largestContentfulPaintMs: { status: string }; loadEventMs: { status: string } }; network: { status: string; events: number; byHost: Record<string, { requests: number; responses: number; failures: number }>; waterfall?: { path: string } }; milestones: { status: string; count: number; names: string[] }; artifacts: { network?: { path: string }; performance?: { path: string }; screenshot?: { sha256?: string } } }
     capabilities?: {
       secureContext: boolean
       userAgent: string
@@ -178,6 +181,7 @@ assert.equal(summary.files.checkpoints, "files/browser/checkpoints.jsonl")
 assert.equal(summary.files.memory, "files/browser/memory.json")
 assert.equal(summary.files.network, "files/browser/network.jsonl")
 assert.equal(summary.files.performance, "files/browser/performance.json")
+assert.equal(summary.files.review, "files/browser/review.json")
 assert.match(summary.hashes.html?.value ?? "", /^[a-f0-9]{64}$/)
 assert.match(summary.hashes.screenshot?.value ?? "", /^[a-f0-9]{64}$/)
 assert.equal(summary.viewport.width, 390, "summary should record requested viewport width")
@@ -210,6 +214,24 @@ assert.equal(typeof summary.capabilities?.paymentRequest.available, "boolean", "
 assert.ok(summary.capabilities?.permissions.geolocation, "capabilities should include safe permission states")
 assert.ok(["granted", "denied", "prompt", "unsupported", "error"].includes(summary.capabilities?.permissions.geolocation.state ?? ""), "permission state should be normalized")
 
+const browserReview = JSON.parse(await readFile(browserReviewPath, "utf8")) as NonNullable<typeof summary.summary.review>
+assert.equal(browserReview.schema, "wp-codebox/browser-probe-review/v1")
+assert.equal(browserReview.timings.totalDurationMs.status, "available", "review should include wall-clock duration status")
+assert.equal(typeof browserReview.timings.totalDurationMs.value, "number", "review should include wall-clock duration value")
+assert.equal(browserReview.timings.ttfbMs.status, "available", "review should include TTFB status")
+assert.equal(browserReview.timings.firstContentfulPaintMs.status, "available", "review should include FCP status")
+assert.equal(browserReview.timings.largestContentfulPaintMs.status, "available", "review should include LCP status")
+assert.equal(browserReview.timings.loadEventMs.status, "available", "review should include load status")
+assert.equal(browserReview.network.status, "captured", "review should include network status")
+assert.ok(browserReview.network.events >= 1, "review should include network event count")
+assert.ok(Object.keys(browserReview.network.byHost).length >= 1, "review should include network counts by host")
+assert.equal(browserReview.network.waterfall?.path, "files/browser/network.jsonl", "review should link waterfall-friendly network events")
+assert.equal(browserReview.milestones.status, "captured", "review should include script milestone status")
+assert.ok(browserReview.milestones.names.includes("fixture-before-return"), "review should include script milestone names")
+assert.equal(browserReview.artifacts.performance?.path, "files/browser/performance.json", "review should include performance artifact ref")
+assert.match(browserReview.artifacts.screenshot?.sha256 ?? "", /^[a-f0-9]{64}$/)
+assert.deepEqual(summary.summary.review, browserReview, "summary should embed the same stable browser review artifact")
+
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
 assert.ok(manifest.files.some((file) => file.path === "files/browser/console.jsonl" && file.kind === "browser-console"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/checkpoints.jsonl" && file.kind === "browser-checkpoints"))
@@ -218,6 +240,7 @@ assert.ok(manifest.files.some((file) => file.path === "files/browser/snapshot.ht
 assert.ok(manifest.files.some((file) => file.path === "files/browser/memory.json" && file.kind === "browser-memory"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/network.jsonl" && file.kind === "browser-network"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/performance.json" && file.kind === "browser-performance"))
+assert.ok(manifest.files.some((file) => file.path === "files/browser/review.json" && file.kind === "browser-review"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/screenshot.png" && file.kind === "browser-screenshot"))
 
 const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ consoleMessages: number; errors: number; checkpoints?: string; html?: string; memory?: string; network?: string; performance?: string; finalUrl?: string; replayability?: string; viewport?: { width: number; height: number }; capabilities?: { secureContext: boolean; paymentRequest: { available: boolean }; maxTouchPoints: number; permissions: Record<string, { state: string }> } }> } }
