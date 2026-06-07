@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import pixelmatch from "pixelmatch"
+import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
 import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
@@ -2344,6 +2346,260 @@ export async function runEditorActionsCommand({
   }
 }
 
+export async function runVisualCompareCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runtimeSpec?: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = spec.args ?? []
+  const sourceUrl = argValue(args, "source-url")?.trim()
+  const candidateUrl = argValue(args, "candidate-url")?.trim()
+  const sourceScreenshot = argValue(args, "source-screenshot")?.trim()
+  const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
+  const sourceLabel = argValue(args, "source-label")?.trim() || "source"
+  const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
+  const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
+  const durationMs = durationArg(args, "duration", 0)
+  const requestedViewport = viewportArg(args, "viewport")
+  const fullPage = booleanArg(args, "full-page", true)
+  const threshold = numberArg(args, "threshold", 0.1)
+  const includeAA = booleanArg(args, "include-aa", false)
+  const maxRegions = positiveIntegerArg(args, "max-regions", 8)
+
+  if (threshold < 0 || threshold > 1) {
+    throw new Error("threshold must be between 0 and 1")
+  }
+  if (Boolean(sourceUrl) !== Boolean(candidateUrl) || Boolean(sourceScreenshot) !== Boolean(candidateScreenshot)) {
+    throw new Error("wordpress.visual-compare requires source-url and candidate-url, or source-screenshot and candidate-screenshot")
+  }
+  if (!sourceUrl && !sourceScreenshot) {
+    throw new Error("wordpress.visual-compare requires source-url/candidate-url or source-screenshot/candidate-screenshot")
+  }
+
+  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
+  await mkdir(browserDirectory, { recursive: true })
+  const sourcePath = join(browserDirectory, "source.png")
+  const candidatePath = join(browserDirectory, "candidate.png")
+  const diffPath = join(browserDirectory, "diff.png")
+  const visualDiffPath = join(browserDirectory, "visual-diff.json")
+  const summaryPath = join(browserDirectory, "summary.json")
+  const startedAt = now()
+  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
+  const sourceTargetUrl = sourceUrl ? resolveBrowserProbeUrl(sourceUrl, preview.effectiveOrigin) : undefined
+  const candidateTargetUrl = candidateUrl ? resolveBrowserProbeUrl(candidateUrl, preview.effectiveOrigin) : undefined
+  let finalSourceUrl = sourceTargetUrl
+  let finalCandidateUrl = candidateTargetUrl
+  let viewport: BrowserProbeViewport | null = null
+
+  if (sourceTargetUrl && candidateTargetUrl) {
+    const { chromium } = await import("playwright")
+    const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
+    try {
+      const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
+      viewport = await browserProbeViewport(page)
+      finalSourceUrl = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage)
+      finalCandidateUrl = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage)
+    } finally {
+      await browser.close()
+    }
+  } else if (sourceScreenshot && candidateScreenshot) {
+    await writeFile(sourcePath, await readFile(sourceScreenshot))
+    await writeFile(candidatePath, await readFile(candidateScreenshot))
+  }
+
+  const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
+  const finishedAt = now()
+  const files = {
+    sourceScreenshot: "files/browser/visual-compare/source.png",
+    candidateScreenshot: "files/browser/visual-compare/candidate.png",
+    diffScreenshot: "files/browser/visual-compare/diff.png",
+    visualDiff: "files/browser/visual-compare/visual-diff.json",
+    summary: "files/browser/visual-compare/summary.json",
+  }
+  const summary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different",
+    source: {
+      label: sourceLabel,
+      ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
+      ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
+    },
+    candidate: {
+      label: candidateLabel,
+      ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
+      ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
+    },
+    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions },
+    preview,
+    viewport,
+    startedAt,
+    finishedAt,
+    files,
+    hashes: {
+      sourceScreenshot: { algorithm: "sha256", value: await fileSha256(sourcePath) },
+      candidateScreenshot: { algorithm: "sha256", value: await fileSha256(candidatePath) },
+      diffScreenshot: { algorithm: "sha256", value: await fileSha256(diffPath) },
+    },
+    comparison,
+  }
+  const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
+  await writeFile(visualDiffPath, summaryJson)
+  await writeFile(summaryPath, summaryJson)
+
+  const artifact: BrowserProbeArtifact = {
+    requestedUrl: sourceTargetUrl ?? sourceScreenshot ?? sourceLabel,
+    url: candidateTargetUrl ?? candidateScreenshot ?? candidateLabel,
+    preview,
+    files,
+    summary: {
+      steps: 0,
+      consoleMessages: 0,
+      errors: 0,
+      finalUrl: finalCandidateUrl ?? finalSourceUrl ?? "",
+      htmlSnapshot: false,
+      networkEvents: 0,
+      replayability: "artifact-backed",
+      screenshot: true,
+      visualCompare: {
+        status: summary.status,
+        mismatchRatio: comparison.mismatchRatio,
+        mismatchPixels: comparison.mismatchPixels,
+        totalPixels: comparison.totalPixels,
+        dimensionMismatch: comparison.dimensionMismatch,
+      },
+      viewport,
+    },
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify(summary, null, 2)}\n`,
+  }
+}
+
+async function captureVisualCompareUrl(page: import("playwright").Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean): Promise<string> {
+  if (waitFor === "duration") {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else if (waitFor.startsWith("selector:")) {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible" })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
+    await page.goto(targetUrl, { waitUntil: waitFor })
+    if (durationMs > 0) {
+      await page.waitForTimeout(durationMs)
+    }
+  } else {
+    throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
+  }
+  await page.screenshot({ path: outputPath, fullPage })
+  return page.url()
+}
+
+async function comparePngFiles(sourcePath: string, candidatePath: string, diffPath: string, options: { threshold: number; includeAA: boolean; maxRegions: number }): Promise<{
+  source: { width: number; height: number }
+  candidate: { width: number; height: number }
+  diff: { width: number; height: number }
+  dimensionMismatch: boolean
+  mismatchPixels: number
+  totalPixels: number
+  mismatchRatio: number
+  regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+}> {
+  const source = PNG.sync.read(await readFile(sourcePath))
+  const candidate = PNG.sync.read(await readFile(candidatePath))
+  const width = Math.max(source.width, candidate.width)
+  const height = Math.max(source.height, candidate.height)
+  const sourceCanvas = visualCompareCanvas(source, width, height)
+  const candidateCanvas = visualCompareCanvas(candidate, width, height)
+  const diff = new PNG({ width, height })
+  const mismatchPixels = pixelmatch(sourceCanvas.data, candidateCanvas.data, diff.data, width, height, { threshold: options.threshold, includeAA: options.includeAA })
+  await writeFile(diffPath, PNG.sync.write(diff))
+
+  return {
+    source: { width: source.width, height: source.height },
+    candidate: { width: candidate.width, height: candidate.height },
+    diff: { width, height },
+    dimensionMismatch: source.width !== candidate.width || source.height !== candidate.height,
+    mismatchPixels,
+    totalPixels: width * height,
+    mismatchRatio: width * height > 0 ? mismatchPixels / (width * height) : 0,
+    regions: visualCompareMismatchRegions(diff, options.maxRegions),
+  }
+}
+
+function visualCompareCanvas(image: PNG, width: number, height: number): PNG {
+  if (image.width === width && image.height === height) {
+    return image
+  }
+  const canvas = new PNG({ width, height })
+  for (let y = 0; y < image.height; y += 1) {
+    const sourceStart = (image.width * y) << 2
+    const targetStart = (width * y) << 2
+    image.data.copy(canvas.data, targetStart, sourceStart, sourceStart + (image.width << 2))
+  }
+  return canvas
+}
+
+function visualCompareMismatchRegions(diff: PNG, maxRegions: number): Array<{ x: number; y: number; width: number; height: number; pixels: number }> {
+  const visited = new Uint8Array(diff.width * diff.height)
+  const regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }> = []
+  for (let y = 0; y < diff.height; y += 1) {
+    for (let x = 0; x < diff.width; x += 1) {
+      const index = y * diff.width + x
+      if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
+        continue
+      }
+      regions.push(visualCompareFloodRegion(diff, x, y, visited))
+    }
+  }
+  return regions.sort((a, b) => b.pixels - a.pixels).slice(0, maxRegions)
+}
+
+function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, visited: Uint8Array): { x: number; y: number; width: number; height: number; pixels: number } {
+  const stack: Array<[number, number]> = [[startX, startY]]
+  let minX = startX
+  let maxX = startX
+  let minY = startY
+  let maxY = startY
+  let pixels = 0
+  while (stack.length > 0) {
+    const [x, y] = stack.pop() ?? [0, 0]
+    if (x < 0 || y < 0 || x >= diff.width || y >= diff.height) {
+      continue
+    }
+    const index = y * diff.width + x
+    if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
+      continue
+    }
+    visited[index] = 1
+    pixels += 1
+    minX = Math.min(minX, x)
+    maxX = Math.max(maxX, x)
+    minY = Math.min(minY, y)
+    maxY = Math.max(maxY, y)
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1])
+  }
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, pixels }
+}
+
+function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
+  const offset = ((y * diff.width) + x) << 2
+  return diff.data[offset] > 0 || diff.data[offset + 1] > 0 || diff.data[offset + 2] > 0
+}
+
 async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number): Promise<Omit<EditorStateSnapshot, "schema" | "capturedAt" | "target"> | undefined> {
   switch (step.kind) {
     case "open":
@@ -2921,6 +3177,30 @@ function booleanArg(args: string[], name: string, fallback: boolean): boolean {
     return false
   }
   throw new Error(`${name} must be true or false`)
+}
+
+function numberArg(args: string[], name: string, fallback: number): number {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a number`)
+  }
+  return parsed
+}
+
+function positiveIntegerArg(args: string[], name: string, fallback: number): number {
+  const raw = argValue(args, name)?.trim()
+  if (!raw) {
+    return fallback
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`)
+  }
+  return parsed
 }
 
 function durationArg(args: string[], name: string, fallbackMs: number): number {
