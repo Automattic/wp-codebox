@@ -9,6 +9,7 @@ const workspace = resolve(repoRoot, "artifacts", "browser-actions-painted-readin
 const pluginDir = join(workspace, "browser-painted-readiness-fixture")
 const recipePath = join(workspace, "recipe.json")
 const artifactsRoot = join(workspace, "artifacts")
+const SMOKE_TIMEOUT_MS = 120_000
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(pluginDir, { recursive: true })
@@ -88,15 +89,16 @@ assert.equal(existsSync(summaryPath), true, "action summary should be captured")
 const steps = (await readFile(stepsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line)) as Array<{
   kind: string
   screenshot?: string
-  readiness?: { mode: string; selector?: string; ready: boolean; visibleElementCount: number; textLength: number; frameUrl?: string }
+  readiness?: { mode: string; selector?: string; ready: boolean; criteria: string; visibleElementCount: number; textLength: number; paintedBoxCount: number; frameUrl?: string }
 }>
 const screenshotStep = steps.find((step) => step.kind === "screenshot")
 assert.equal(screenshotStep?.screenshot, "files/browser/screenshot-frame-painted.png")
 assert.equal(screenshotStep?.readiness?.mode, "frame-selector")
 assert.equal(screenshotStep?.readiness?.selector, "#preview-frame")
 assert.equal(screenshotStep?.readiness?.ready, true)
+assert.equal(screenshotStep?.readiness?.criteria, "visible-content-or-painted-box/v1")
 assert.ok((screenshotStep?.readiness?.visibleElementCount ?? 0) > 0, "readiness should observe visible rendered iframe elements")
-assert.ok((screenshotStep?.readiness?.textLength ?? 0) > 0, "readiness should observe rendered iframe text")
+assert.ok(((screenshotStep?.readiness?.textLength ?? 0) > 0 || (screenshotStep?.readiness?.paintedBoxCount ?? 0) > 0), "readiness should observe rendered iframe text or painted boxes")
 assert.match(screenshotStep?.readiness?.frameUrl ?? "", /about:srcdoc|wp_codebox_painted_readiness_fixture/)
 
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { steps: Array<{ kind: string; readiness?: unknown }>; files: { domSnapshots?: string[] } }
@@ -109,9 +111,13 @@ async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: 
   const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] })
   let stdout = ""
   let stderr = ""
-  child.stdout.on("data", (chunk) => { stdout += chunk })
-  child.stderr.on("data", (chunk) => { stderr += chunk })
-  const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
+  const timer = setTimeout(() => child.kill("SIGKILL"), SMOKE_TIMEOUT_MS)
+  child.stdout.on("data", (chunk) => { stdout = `${stdout}${chunk}`.slice(-100_000) })
+  child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-100_000) })
+  const code = await new Promise<number | null>((resolveCode, reject) => {
+    child.on("error", reject)
+    child.on("close", resolveCode)
+  }).finally(() => clearTimeout(timer))
   if (code !== 0) {
     throw new Error(`CLI exited with ${code}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }

@@ -13,7 +13,10 @@ export interface BrowserStepOutcome {
 }
 
 type BrowserPaintedReadinessSummary = BrowserStepReadiness
-type BrowserPaintedReadinessWait = "painted" | `frame-painted:${string}` | `frame-url-painted:${string}`
+type BrowserPaintedReadinessWait =
+  | { mode: "page" }
+  | { mode: "frame-selector"; selector: string }
+  | { mode: "frame-url"; urlFragment: string }
 
 interface BrowserPaintedReadinessTarget {
   mode: "page" | "frame-selector" | "frame-url"
@@ -21,6 +24,8 @@ interface BrowserPaintedReadinessTarget {
   selector?: string
   urlFragment?: string
 }
+
+const PAINTED_READINESS_SETTLE_MS = 750
 
 function now(): string {
   return new Date().toISOString()
@@ -39,12 +44,12 @@ export async function executeBrowserInteractionStep(
   switch (step.kind) {
     case "navigate": {
       const url = resolveBrowserActionUrl((step.url ?? "").trim(), baseUrl)
-      const waitFor = step.waitFor
-      if (isPaintedReadinessWait(waitFor)) {
+      const readinessWait = parsePaintedReadinessWait(step.waitFor)
+      if (readinessWait) {
         await page.goto(url, { waitUntil: "domcontentloaded", timeout })
-        return { readiness: await waitForPaintedReadiness(page, waitFor, timeout) }
+        return { readiness: await waitForPaintedReadiness(page, readinessWait, timeout) }
       }
-      await page.goto(url, { waitUntil: browserActionLoadState(waitFor), timeout })
+      await page.goto(url, { waitUntil: browserActionLoadState(step.waitFor), timeout })
       return {}
     }
     case "click": {
@@ -122,7 +127,8 @@ export async function executeBrowserInteractionStep(
       return { assertion: { kind: "expect", selector, state, passed } }
     }
     case "screenshot": {
-      const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
+      const readinessWait = parsePaintedReadinessWait(step.waitFor)
+      const readiness = readinessWait ? await waitForPaintedReadiness(page, readinessWait, timeout) : undefined
       const path = typeof step.name === "string" && step.name.length > 0
         ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
         : defaultScreenshotPath
@@ -166,14 +172,18 @@ function requireFrom(step: BrowserInteractionStep): string {
 }
 
 async function browserStepWaitFor(page: Page, step: BrowserInteractionStep, timeout: number): Promise<BrowserStepOutcome> {
+  const readinessWait = parsePaintedReadinessWait(step.waitFor)
+  if (readinessWait && typeof step.selector === "string" && step.selector.length > 0) {
+    throw new Error("wordpress.browser-actions waitFor step cannot combine selector with painted readiness; use selector:<selector>, painted, frame-painted:<iframe-selector>, or frame-url-painted:<url-fragment>")
+  }
+  if (readinessWait) {
+    return { readiness: await waitForPaintedReadiness(page, readinessWait, timeout) }
+  }
   if (typeof step.selector === "string" && step.selector.length > 0) {
     await page.locator(step.selector).waitFor({ timeout })
     return {}
   }
   const waitFor: string = typeof step.waitFor === "string" ? step.waitFor : "load"
-  if (isPaintedReadinessWait(waitFor)) {
-    return { readiness: await waitForPaintedReadiness(page, waitFor, timeout) }
-  }
   if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
     await page.waitForLoadState(waitFor)
     return {}
@@ -189,82 +199,119 @@ async function browserStepWaitFor(page: Page, step: BrowserInteractionStep, time
   throw new Error(`wordpress.browser-actions waitFor supports selector, domcontentloaded, load, networkidle, duration, selector:<sel>, painted, frame-painted:<iframe-selector>, frame-url-painted:<url-fragment>: ${waitFor}`)
 }
 
-function isPaintedReadinessWait(waitFor: unknown): waitFor is BrowserPaintedReadinessWait {
-  return waitFor === "painted" || (typeof waitFor === "string" && (waitFor.startsWith("frame-painted:") || waitFor.startsWith("frame-url-painted:")))
-}
-
-async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadinessWait, timeout: number): Promise<BrowserPaintedReadinessSummary> {
-  const startedAt = Date.now()
-  const target = await paintedReadinessTarget(page, waitFor, timeout)
-  const result = await target.frame.waitForFunction(() => {
-    const visible = Array.from(document.body?.querySelectorAll("*") ?? [])
-      .map((element) => {
-        const rect = element.getBoundingClientRect()
-        const computed = window.getComputedStyle(element)
-        if (rect.width <= 0 || rect.height <= 0 || computed.display === "none" || computed.visibility === "hidden" || computed.opacity === "0") {
-          return null
-        }
-        const text = (element.textContent || "").replace(/\s+/g, " ").trim()
-        const hasPaintedBox = computed.backgroundColor !== "rgba(0, 0, 0, 0)" || computed.backgroundImage !== "none" || Number.parseFloat(computed.borderTopWidth || "0") > 0 || Number.parseFloat(computed.borderRightWidth || "0") > 0 || Number.parseFloat(computed.borderBottomWidth || "0") > 0 || Number.parseFloat(computed.borderLeftWidth || "0") > 0
-        return { textLength: text.length, hasPaintedBox }
-      })
-      .filter((entry): entry is { textLength: number; hasPaintedBox: boolean } => Boolean(entry))
-    const visibleElementCount = visible.length
-    const textLength = visible.reduce((total, entry) => total + entry.textLength, 0)
-    const paintedBoxCount = visible.filter((entry) => entry.hasPaintedBox).length
-    if (visibleElementCount === 0 || (textLength === 0 && paintedBoxCount === 0)) {
-      return false
-    }
-    return { visibleElementCount, textLength }
-  }, undefined, { timeout })
-  const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number }
-  await target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-  return {
-    mode: target.mode,
-    ...(target.selector ? { selector: target.selector } : {}),
-    ...(target.urlFragment ? { urlFragment: target.urlFragment } : {}),
-    ready: true,
-    waitedMs: Math.max(0, Date.now() - startedAt),
-    visibleElementCount: summary.visibleElementCount,
-    textLength: summary.textLength,
-    ...(target.frame.url() ? { frameUrl: target.frame.url() } : {}),
-  }
-}
-
-async function paintedReadinessTarget(page: Page, waitFor: BrowserPaintedReadinessWait, timeout: number): Promise<BrowserPaintedReadinessTarget> {
+function parsePaintedReadinessWait(waitFor: unknown): BrowserPaintedReadinessWait | undefined {
   if (waitFor === "painted") {
-    return { mode: "page", frame: page }
+    return { mode: "page" }
+  }
+  if (typeof waitFor !== "string") {
+    return undefined
   }
   if (waitFor.startsWith("frame-painted:")) {
     const selector = waitFor.slice("frame-painted:".length).trim()
     if (!selector) {
       throw new Error("wordpress.browser-actions frame-painted wait requires an iframe selector")
     }
-    const locator = page.locator(selector).first()
-    await locator.waitFor({ state: "attached", timeout })
-    const handle = await locator.elementHandle({ timeout })
-    const frame = await handle?.contentFrame()
-    if (!frame) {
-      throw new Error(`wordpress.browser-actions frame-painted wait could not resolve iframe: ${selector}`)
-    }
-    return { mode: "frame-selector", frame, selector }
+    return { mode: "frame-selector", selector }
   }
   if (waitFor.startsWith("frame-url-painted:")) {
     const urlFragment = waitFor.slice("frame-url-painted:".length).trim()
     if (!urlFragment) {
       throw new Error("wordpress.browser-actions frame-url-painted wait requires a URL fragment")
     }
-    const deadline = Date.now() + timeout
-    while (Date.now() <= deadline) {
-      const frame = page.frames().find((candidate) => candidate !== page.mainFrame() && candidate.url().includes(urlFragment))
+    return { mode: "frame-url", urlFragment }
+  }
+  return undefined
+}
+
+async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadinessWait, timeout: number): Promise<BrowserPaintedReadinessSummary> {
+  const startedAt = Date.now()
+  const deadline = startedAt + timeout
+  const target = await paintedReadinessTarget(page, waitFor, deadline)
+  const result = await target.frame.waitForFunction(() => {
+    let visibleElementCount = 0
+    let textLength = 0
+    let paintedBoxCount = 0
+    for (const element of document.body?.querySelectorAll("*") ?? []) {
+      const rect = element.getBoundingClientRect()
+      const computed = window.getComputedStyle(element)
+      if (rect.width <= 0 || rect.height <= 0 || computed.display === "none" || computed.visibility === "hidden" || computed.opacity === "0") {
+        continue
+      }
+      visibleElementCount += 1
+      textLength += (element.textContent || "").replace(/\s+/g, " ").trim().length
+      if (computed.backgroundColor !== "rgba(0, 0, 0, 0)" || computed.backgroundImage !== "none" || Number.parseFloat(computed.borderTopWidth || "0") > 0 || Number.parseFloat(computed.borderRightWidth || "0") > 0 || Number.parseFloat(computed.borderBottomWidth || "0") > 0 || Number.parseFloat(computed.borderLeftWidth || "0") > 0) {
+        paintedBoxCount += 1
+      }
+      if (textLength > 0 || paintedBoxCount > 0) {
+        return { visibleElementCount, textLength, paintedBoxCount }
+      }
+    }
+    return false
+  }, undefined, { polling: 100, timeout: remainingTimeoutMs(deadline) })
+  const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number; paintedBoxCount: number }
+  await settleAnimationFrames(target.frame, Math.min(PAINTED_READINESS_SETTLE_MS, remainingTimeoutMs(deadline)))
+  return {
+    mode: target.mode,
+    ...(target.selector ? { selector: target.selector } : {}),
+    ...(target.urlFragment ? { urlFragment: target.urlFragment } : {}),
+    ready: true,
+    criteria: "visible-content-or-painted-box/v1",
+    waitedMs: Math.max(0, Date.now() - startedAt),
+    visibleElementCount: summary.visibleElementCount,
+    textLength: summary.textLength,
+    paintedBoxCount: summary.paintedBoxCount,
+    ...(target.frame.url() ? { frameUrl: target.frame.url() } : {}),
+  }
+}
+
+async function paintedReadinessTarget(page: Page, waitFor: BrowserPaintedReadinessWait, deadline: number): Promise<BrowserPaintedReadinessTarget> {
+  if (waitFor.mode === "page") {
+    return { mode: "page", frame: page }
+  }
+  if (waitFor.mode === "frame-selector") {
+    const locator = page.locator(waitFor.selector).first()
+    await locator.waitFor({ state: "attached", timeout: remainingTimeoutMs(deadline) })
+    const frame = await waitForContentFrame(locator, deadline)
+    return { mode: "frame-selector", frame, selector: waitFor.selector }
+  }
+  if (waitFor.mode === "frame-url") {
+    while (remainingTimeoutMs(deadline) > 0) {
+      const frame = page.frames().find((candidate) => candidate !== page.mainFrame() && candidate.url().includes(waitFor.urlFragment))
       if (frame) {
-        return { mode: "frame-url", frame, urlFragment }
+        return { mode: "frame-url", frame, urlFragment: waitFor.urlFragment }
       }
       await page.waitForTimeout(100)
     }
-    throw new Error(`wordpress.browser-actions frame-url-painted wait could not resolve iframe URL fragment: ${urlFragment}`)
+    throw new Error(`wordpress.browser-actions frame-url-painted wait could not resolve iframe URL fragment: ${waitFor.urlFragment}`)
   }
-  throw new Error(`Unsupported painted readiness wait: ${waitFor}`)
+  throw new Error("Unsupported painted readiness wait")
+}
+
+async function waitForContentFrame(locator: ReturnType<Page["locator"]>, deadline: number): Promise<Frame> {
+  while (remainingTimeoutMs(deadline) > 0) {
+    const handle = await locator.elementHandle({ timeout: remainingTimeoutMs(deadline) })
+    try {
+      const frame = await handle?.contentFrame()
+      if (frame) {
+        return frame
+      }
+    } finally {
+      await handle?.dispose()
+    }
+    await locator.page().waitForTimeout(100)
+  }
+  throw new Error("wordpress.browser-actions frame-painted wait could not resolve iframe content frame")
+}
+
+async function settleAnimationFrames(frame: Page | Frame, timeout: number): Promise<void> {
+  await Promise.race([
+    frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))),
+    new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, timeout))),
+  ])
+}
+
+function remainingTimeoutMs(deadline: number): number {
+  return Math.max(1, deadline - Date.now())
 }
 
 async function browserExpectState(page: Page, selector: string, state: string, timeout: number): Promise<boolean> {

@@ -573,9 +573,11 @@ export interface BrowserStepReadiness {
   selector?: string
   urlFragment?: string
   ready: boolean
+  criteria: "visible-content-or-painted-box/v1"
   waitedMs: number
   visibleElementCount: number
   textLength: number
+  paintedBoxCount: number
   frameUrl?: string
 }
 
