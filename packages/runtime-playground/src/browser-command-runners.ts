@@ -5,7 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -226,6 +226,7 @@ async function runSingleBrowserProbeCommand({
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory") || browserProbeAssertionsNeedMetrics(assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserProbeNetworkPolicy(args, routedHosts, preview)
   const previewOrigins = browserProbePreviewOrigins(preview)
   const targetUrl = resolveBrowserProbeUrl(urlArg, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, browserFilesDirectory)
@@ -286,7 +287,7 @@ async function runSingleBrowserProbeCommand({
   let artifact: BrowserProbeArtifact | undefined
 
   try {
-    context = routedHosts.length > 0 || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
+    context = browserProbeNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
@@ -297,8 +298,8 @@ async function runSingleBrowserProbeCommand({
     if (context && requestedContext.permissions && requestedContext.permissions.length > 0) {
       await context.grantPermissions(requestedContext.permissions)
     }
-    if (context && routedHosts.length > 0) {
-      await routeBrowserProbeContextHosts(context, routedHosts, preview.localOrigin)
+    if (context && browserProbeNeedsContextRouting(networkPolicy)) {
+      await routeBrowserProbeContextNetwork(context, networkPolicy, preview.localOrigin)
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (requestedViewport) {
@@ -307,8 +308,8 @@ async function runSingleBrowserProbeCommand({
     if (throttleProfile) {
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
-    if (!context && routedHosts.length > 0) {
-      await routeBrowserProbePageHosts(page, routedHosts, preview.localOrigin)
+    if (!context && browserProbeNeedsContextRouting(networkPolicy)) {
+      await routeBrowserProbePageNetwork(page, networkPolicy, preview.localOrigin)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -513,6 +514,7 @@ async function runSingleBrowserProbeCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
@@ -535,6 +537,7 @@ async function runSingleBrowserProbeCommand({
         finalUrl,
         ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
         htmlSnapshot: capture.has("html"),
+        ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
@@ -554,6 +557,7 @@ async function runSingleBrowserProbeCommand({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
       preview,
+      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       finalUrl,
       ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
@@ -593,6 +597,7 @@ async function runSingleBrowserProbeCommand({
       command,
       requestedUrl: targetUrl,
       preview,
+      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
@@ -2859,17 +2864,26 @@ function now(): string {
   return new Date().toISOString()
 }
 
-async function routeBrowserProbePageHosts(page: Page, hosts: string[], localPreviewOrigin: string): Promise<void> {
-  await routeBrowserProbeHosts(page.route.bind(page), hosts, localPreviewOrigin)
+interface BrowserProbeNetworkPolicy {
+  mode: "allow" | "block" | "record"
+  allowHosts: Set<string>
+  blockHosts: Set<string>
+  routeHosts: Set<string>
+  firstPartyHosts: Set<string>
+  recordExternal: boolean
+  stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
 }
 
-async function routeBrowserProbeContextHosts(context: import("playwright").BrowserContext, hosts: string[], localPreviewOrigin: string): Promise<void> {
-  await routeBrowserProbeHosts(context.route.bind(context), hosts, localPreviewOrigin)
+async function routeBrowserProbePageNetwork(page: Page, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
+  await routeBrowserProbeNetwork(page.route.bind(page), policy, localPreviewOrigin)
 }
 
-async function routeBrowserProbeHosts(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, hosts: string[], localPreviewOrigin: string): Promise<void> {
-  const routedHosts = new Set(hosts.map((host) => host.trim().toLowerCase()).filter(Boolean))
-  if (routedHosts.size === 0) {
+async function routeBrowserProbeContextNetwork(context: import("playwright").BrowserContext, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
+  await routeBrowserProbeNetwork(context.route.bind(context), policy, localPreviewOrigin)
+}
+
+async function routeBrowserProbeNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
+  if (!browserProbeNeedsContextRouting(policy)) {
     return
   }
 
@@ -2884,14 +2898,102 @@ async function routeBrowserProbeHosts(routePattern: (url: string, handler: (rout
       return
     }
 
-    if (!routedHosts.has(requestUrl.hostname.toLowerCase())) {
+    const host = normalizeBrowserProbeHost(requestUrl.hostname)
+    const stat = browserProbeNetworkPolicyHostStat(policy, host)
+    stat.requests += 1
+    stat.external = !policy.firstPartyHosts.has(host)
+
+    if (policy.blockHosts.has(host) || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host))) {
+      stat.blocked += 1
+      await route.abort("blockedbyclient")
+      return
+    }
+
+    if (!policy.routeHosts.has(host)) {
       await route.continue()
       return
     }
 
-    const response = await fetchBrowserProbeRoutedHost(route, requestUrl, routedHosts, localOrigin)
+    stat.routed += 1
+    const response = await fetchBrowserProbeRoutedHost(route, requestUrl, policy.routeHosts, localOrigin)
     await route.fulfill({ response })
   })
+}
+
+function browserProbeNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting): BrowserProbeNetworkPolicy {
+  const mode = browserProbeNetworkPolicyMode(args)
+  const allowHosts = new Set(commaListArg(args, "allow-host").map(normalizeBrowserProbeHost).filter(Boolean))
+  const blockHosts = new Set(commaListArg(args, "block-host").map(normalizeBrowserProbeHost).filter(Boolean))
+  const routedHosts = new Set(routeHosts.map(normalizeBrowserProbeHost).filter(Boolean))
+  const firstPartyHosts = new Set<string>()
+  for (const origin of [preview.localOrigin, preview.effectiveOrigin, preview.publicOrigin]) {
+    const host = origin ? browserProbeUrlHostname(origin) : undefined
+    if (host) {
+      firstPartyHosts.add(host)
+    }
+  }
+
+  return {
+    mode,
+    allowHosts,
+    blockHosts,
+    routeHosts: routedHosts,
+    firstPartyHosts,
+    recordExternal: booleanArg(args, "record-external", false),
+    stats: new Map(),
+  }
+}
+
+function browserProbeNetworkPolicyMode(args: string[]): BrowserProbeNetworkPolicy["mode"] {
+  const raw = argValue(args, "network-policy")?.trim() || "record"
+  if (raw === "allow" || raw === "block" || raw === "record") {
+    return raw
+  }
+
+  throw new Error(`wordpress.browser-probe network-policy supports allow, block, record: ${raw}`)
+}
+
+function browserProbeNetworkPolicyIsActive(policy: BrowserProbeNetworkPolicy): boolean {
+  return policy.mode !== "record" || policy.allowHosts.size > 0 || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
+}
+
+function browserProbeNeedsContextRouting(policy: BrowserProbeNetworkPolicy): boolean {
+  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
+}
+
+function browserProbeNetworkPolicySummary(policy: BrowserProbeNetworkPolicy): BrowserProbeNetworkPolicySummary {
+  const hosts = Object.fromEntries([...policy.stats.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([host, stat]) => [host, { ...stat }]))
+  return {
+    mode: policy.mode,
+    allowHosts: [...policy.allowHosts].sort(),
+    blockHosts: [...policy.blockHosts].sort(),
+    routeHosts: [...policy.routeHosts].sort(),
+    recordExternal: policy.recordExternal,
+    externalRequests: Object.values(hosts).filter((stat) => stat.external).reduce((total, stat) => total + stat.requests, 0),
+    blockedRequests: Object.values(hosts).reduce((total, stat) => total + stat.blocked, 0),
+    hosts: policy.recordExternal ? hosts : Object.fromEntries(Object.entries(hosts).filter(([, stat]) => stat.blocked > 0 || stat.routed > 0)),
+  }
+}
+
+function browserProbeNetworkPolicyHostStat(policy: BrowserProbeNetworkPolicy, host: string): { requests: number; external: boolean; blocked: number; routed: number } {
+  let stat = policy.stats.get(host)
+  if (!stat) {
+    stat = { requests: 0, external: false, blocked: 0, routed: 0 }
+    policy.stats.set(host, stat)
+  }
+  return stat
+}
+
+function browserProbeUrlHostname(url: string): string | undefined {
+  try {
+    return normalizeBrowserProbeHost(new URL(url).hostname)
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeBrowserProbeHost(host: string): string {
+  return host.trim().toLowerCase().replace(/:\d+$/, "")
 }
 
 async function fetchBrowserProbeRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>>> {
