@@ -53,9 +53,11 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
     throw new Error("wp-codebox.agent-sandbox-run requires sandbox-tool-policy-json for agent runs")
   }
   const runtimeToolIds = sandboxAllowedRuntimeToolIds(sandboxToolPolicy)
+  const sandboxWorkspace = options.sandboxWorkspace
+  const defaultWorkspace = defaultSandboxWorkspace(sandboxWorkspace)
   const input: Record<string, unknown> = {
     agent: options.agent,
-    message: options.task,
+    message: sandboxTaskMessage(options.task, sandboxWorkspace, defaultWorkspace),
     mode,
     modes: agentModes,
     client_context: {
@@ -66,8 +68,8 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       mode,
       agent_modes: agentModes,
       workspace_root: SANDBOX_WORKSPACE_ROOT,
-      sandbox_workspace: options.sandboxWorkspace ?? null,
-      default_workspace: defaultSandboxWorkspace(options.sandboxWorkspace),
+      sandbox_workspace: sandboxWorkspace,
+      default_workspace: defaultWorkspace,
       tool_contract: sandboxToolContract(sandboxToolPolicy),
     },
     principal: runtimePrincipal(options.agent, options.sessionId, mode),
@@ -329,6 +331,36 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
 
 echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
 `
+}
+
+function sandboxTaskMessage(task: string, workspace: SandboxWorkspaceContract | undefined, defaultWorkspace: Record<string, unknown> | null): string {
+  const guidance = sandboxWorkspaceGuidance(workspace, defaultWorkspace)
+  return guidance ? `${guidance}\n\n${task}` : task
+}
+
+function sandboxWorkspaceGuidance(workspace: SandboxWorkspaceContract | undefined, defaultWorkspace: Record<string, unknown> | null): string {
+  if (!workspace && !defaultWorkspace) return ""
+
+  const target = typeof defaultWorkspace?.target === "string" && defaultWorkspace.target.trim()
+    ? defaultWorkspace.target.trim()
+    : workspace?.root || SANDBOX_WORKSPACE_ROOT
+  const mounts = Array.isArray(workspace?.mounts) ? workspace.mounts : []
+  const mountLines = mounts
+    .filter((mount) => typeof mount?.target === "string" && mount.target.trim())
+    .map((mount) => {
+      const mode = typeof mount.mode === "string" && mount.mode.trim() ? ` (${mount.mode.trim()})` : ""
+      const sourceMode = typeof mount.sourceMode === "string" && mount.sourceMode.trim() ? `, source: ${mount.sourceMode.trim()}` : ""
+      return `- mounted workspace: ${mount.target.trim()}${mode}${sourceMode}`
+    })
+
+  return [
+    "WP Codebox sandbox workspace guidance:",
+    `- current repository root: ${target}`,
+    ...mountLines,
+    "- Use the current repository root above as the mounted filesystem workspace for this task.",
+    "- Use the exact mounted target from this context when the task refers to the repo, workspace, or project.",
+    "- For sandbox file inspection, report the workspace root you verified and the sandbox capability needed for any deeper inspection.",
+  ].join("\n")
 }
 
 function sandboxToolContract(policy: SandboxToolPolicySnapshot): Record<string, unknown> {
