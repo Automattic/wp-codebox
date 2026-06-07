@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { normalizeTaskInput } from "@automattic/wp-codebox-core"
@@ -51,6 +51,12 @@ assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "agents-api")?
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/legacy/data-machine")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/legacy/data-machine-code")
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
+
+const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
+assert.ok(
+  agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode)"),
+  "successful normalized agent-bundle workloads should not keep stale recipe-run failure diagnostics",
+)
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
