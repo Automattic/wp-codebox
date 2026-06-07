@@ -53,6 +53,7 @@ assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-
 assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
+const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
 assert.ok(
   agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode, success)"),
   "successful normalized agent-bundle workloads should not keep stale recipe-run failure diagnostics",
@@ -60,6 +61,14 @@ assert.ok(
 assert.ok(
   agentTaskRunSource.includes('stringValue(entry.class) !== "wp-codebox.agent_task_run_failed"'),
   "successful normalized agent-bundle workloads should filter stale agent-task failure diagnostics",
+)
+assert.ok(
+  recipeEvidenceSource.includes("reconcileAgentSandboxResult("),
+  "successful agent task results should reconcile stale failed sandbox summaries",
+)
+assert.ok(
+  recipeEvidenceSource.includes('agentTaskResult?.success !== true || agentResult.status !== "failed"'),
+  "only successful agent task results should override failed sandbox evidence",
 )
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))

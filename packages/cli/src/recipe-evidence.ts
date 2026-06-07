@@ -417,9 +417,12 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
   const agentTaskResultPath = join(dirname(artifacts.reviewPath), "agent-task-result.json")
   const completionOutcomePath = join(dirname(artifacts.reviewPath), "completion-outcome.json")
   const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
-  const agentResult = await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path)
-  const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
   const agentTaskResult = buildAgentTaskSingleResult(transcript)
+  const agentResult = reconcileAgentSandboxResult(
+    await buildAgentSandboxResultSummary(artifacts, transcript, transcriptFile.path),
+    agentTaskResult,
+  )
+  const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
   const agentTaskResultFile = agentTaskResult ? await writeRecipeEvidenceJson(artifacts.directory, agentTaskResultPath, agentTaskResult, "agent-task-result") : undefined
   const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
   const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
@@ -431,6 +434,24 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
     completionOutcome: { ...completionOutcome, artifact: completionOutcomeFile },
     transcript: { ...transcript, artifact: transcriptFile },
   }
+}
+
+function reconcileAgentSandboxResult(agentResult: AgentSandboxResultSummary, agentTaskResult: AgentTaskSingleResult | undefined): AgentSandboxResultSummary {
+  if (agentTaskResult?.success !== true || agentResult.status !== "failed") {
+    return agentResult
+  }
+
+  const actionable = agentResult.changedFiles.count > 0 || agentResult.patch.bytes > 0
+  return stripUndefined({
+    ...agentResult,
+    status: "completed" as const,
+    actionable,
+    summary: actionable
+      ? `Agent sandbox produced ${agentResult.changedFiles.count === 1 ? "1 changed file" : `${agentResult.changedFiles.count} changed files`} and a ${agentResult.patch.bytes}-byte patch.`
+      : "Agent sandbox completed successfully without actionable file changes.",
+    failures: [],
+    noOpReason: actionable ? undefined : "no_file_changes",
+  })
 }
 
 function buildAgentSandboxTranscript(executions: RecipeEvidenceExecutionResult[]): AgentSandboxTranscript {
