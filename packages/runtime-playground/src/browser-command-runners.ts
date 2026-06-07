@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -240,9 +240,11 @@ async function runSingleBrowserProbeCommand({
   const lifecyclePath = join(browserDirectory, "lifecycle.json")
   const networkPath = join(browserDirectory, "network.jsonl")
   const performancePath = join(browserDirectory, "performance.json")
+  const reviewPath = join(browserDirectory, "review.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
+  const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { chromium, devices } = await import("playwright")
   if (requestedContext.browser && requestedContext.browser !== "chromium") {
@@ -257,6 +259,11 @@ async function runSingleBrowserProbeCommand({
       ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
       : undefined,
   )
+  const browserMetadata = {
+    name: "chromium",
+    channel: process.env.WP_CODEBOX_BROWSER_CHANNEL || "bundled",
+    version: browser.version(),
+  }
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
   let htmlSha256: string | undefined
@@ -462,6 +469,36 @@ async function runSingleBrowserProbeCommand({
       results: assertionResults,
     }
 
+    const finishedAt = now()
+    const review = browserProbeReviewSummary({
+      browser: browserMetadata,
+      capture,
+      checkpoints,
+      consoleMessages,
+      durationMs,
+      errors,
+      files: browserProbeArtifactRefs(browserFilesDirectory, capture, {
+        checkpoints: checkpoints.length > 0,
+        console: capture.has("console") || capturesConsoleForAssertions,
+        errors: capture.has("errors") || capturesErrorsForAssertions,
+        html: capture.has("html") ? htmlSha256 : undefined,
+        lifecycle: Boolean(lifecycleArtifact),
+        memory: Boolean(memoryArtifact),
+        network: capture.has("network") || capturesNetworkForAssertions,
+        performance: Boolean(performanceArtifact),
+        screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
+      }),
+      finishedAt,
+      network,
+      performanceArtifact,
+      startedAt,
+      throttle: throttleProfile?.id ?? null,
+      totalDurationMs: Date.now() - startedAtMs,
+      viewport,
+      waitFor,
+    })
+    await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
+
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
@@ -477,6 +514,7 @@ async function runSingleBrowserProbeCommand({
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
+        review: `${browserFilesDirectory}/review.json`,
         ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
         summary: `${browserFilesDirectory}/summary.json`,
       },
@@ -493,6 +531,7 @@ async function runSingleBrowserProbeCommand({
         networkEvents: network.length,
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
+        review,
         context: contextDetails,
         capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
@@ -517,7 +556,7 @@ async function runSingleBrowserProbeCommand({
       ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       startedAt,
-      finishedAt: now(),
+      finishedAt,
       files: artifact.files,
       hashes: {
         ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
@@ -525,6 +564,7 @@ async function runSingleBrowserProbeCommand({
       },
       context: contextDetails,
       capabilities: capabilityDiagnostics,
+      review,
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -724,6 +764,195 @@ function browserProbeCapabilityViewport(viewport: BrowserProbeViewport): Browser
     isMobile: viewport.isMobile,
     hasTouch: viewport.hasTouch,
   }
+}
+
+function browserProbeReviewSummary(input: {
+  browser: BrowserProbeReviewSummary["browser"]
+  capture: Set<string>
+  checkpoints: BrowserProbeCheckpointRecord[]
+  consoleMessages: Record<string, unknown>[]
+  durationMs: number
+  errors: BrowserProbeErrorRecord[]
+  files: Record<string, BrowserProbeArtifactRef>
+  finishedAt: string
+  network: BrowserProbeNetworkRecord[]
+  performanceArtifact?: BrowserProbePerformanceArtifact
+  startedAt: string
+  throttle: string | null
+  totalDurationMs: number
+  viewport: BrowserProbeViewport | null
+  waitFor: string
+}): BrowserProbeReviewSummary {
+  const performance = input.performanceArtifact?.final
+  const paint = performance?.paint
+  const navigation = performance?.navigation ?? {
+    type: null,
+    redirectCount: 0,
+    durationMs: null,
+    domContentLoadedMs: null,
+    loadEventMs: null,
+    responseStartMs: null,
+    responseEndMs: null,
+    requestStartMs: null,
+    ttfbMs: null,
+    redirectMs: null,
+  }
+  const missingReason = input.capture.has("performance")
+    ? "metric not reported by browser"
+    : "capture=performance was not requested"
+  const pageErrors = input.errors.filter((error) => error.type === "pageerror")
+  const probeErrors = input.errors.filter((error) => error.type === "probe-error")
+  const consoleErrors = input.consoleMessages.filter((message) => message.type === "error")
+  const lcpUrl = safeBrowserProbeUrl(paint?.largestContentfulPaintUrl ?? undefined)
+
+  return {
+    schema: "wp-codebox/browser-probe-review/v1",
+    version: 1,
+    browser: input.browser,
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    profile: {
+      viewport: input.viewport,
+      userAgent: input.viewport?.userAgent ?? null,
+      throttle: input.throttle,
+      waitFor: input.waitFor,
+      durationMs: input.durationMs,
+    },
+    timings: {
+      startedAt: input.startedAt,
+      finishedAt: input.finishedAt,
+      totalDurationMs: browserProbeMetric(input.totalDurationMs, "probe wall-clock duration unavailable"),
+      navigation,
+      ttfbMs: browserProbeMetric(navigation.ttfbMs, missingReason),
+      firstContentfulPaintMs: browserProbeMetric(paint?.firstContentfulPaintMs, missingReason),
+      largestContentfulPaintMs: browserProbeMetric(paint?.largestContentfulPaintMs, missingReason),
+      loadEventMs: browserProbeMetric(navigation.loadEventMs, missingReason),
+    },
+    lcp: {
+      status: typeof paint?.largestContentfulPaintMs === "number" ? "available" : "missing",
+      ...(typeof paint?.largestContentfulPaintMs === "number" ? {} : { reason: missingReason }),
+      element: paint?.largestContentfulPaintElement ?? null,
+      size: paint?.largestContentfulPaintSize ?? null,
+      url: lcpUrl ?? null,
+    },
+    errors: {
+      console: browserProbeIssueSummary(consoleErrors.length, Boolean(input.files.console), input.files.console?.path),
+      page: browserProbeIssueSummary(pageErrors.length, Boolean(input.files.errors), input.files.errors?.path),
+      probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
+    },
+    network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    milestones: {
+      status: input.checkpoints.length > 0 ? "captured" : "not-captured",
+      count: input.checkpoints.length,
+      names: [...new Set(input.checkpoints.map((checkpoint) => checkpoint.name).filter(Boolean))].sort(),
+      ...(input.files.checkpoints ? { artifact: input.files.checkpoints.path } : {}),
+    },
+    artifacts: input.files,
+  }
+}
+
+function browserProbeMetric(value: number | null | undefined, reason: string): BrowserProbeMeasuredMetric {
+  return typeof value === "number" && Number.isFinite(value)
+    ? { status: "available", value, unit: "ms" }
+    : { status: "missing", value: null, unit: "ms", reason }
+}
+
+function browserProbeIssueSummary(count: number, captured: boolean, artifact?: string): BrowserProbeReviewSummary["errors"]["console"] {
+  if (!captured && count === 0) {
+    return { count: 0, status: "not-captured" }
+  }
+  return {
+    count,
+    status: count > 0 ? "issues" : "ok",
+    ...(artifact ? { artifact } : {}),
+  }
+}
+
+function browserProbeNetworkReviewSummary(network: BrowserProbeNetworkRecord[], artifact?: BrowserProbeArtifactRef): BrowserProbeNetworkReviewSummary {
+  if (!artifact) {
+    return { status: "not-captured", events: 0, responses: 0, failures: 0, byHost: {}, byType: {} }
+  }
+
+  const byHost: Record<string, BrowserProbeNetworkCountSummary> = {}
+  const byType: Record<string, BrowserProbeNetworkCountSummary> = {}
+  for (const record of network) {
+    addBrowserProbeNetworkCount(byHost, requestHost(record.url) || "unknown", record)
+    addBrowserProbeNetworkCount(byType, record.resourceType || "unknown", record)
+  }
+
+  return {
+    status: "captured",
+    events: network.length,
+    responses: network.filter((record) => record.type === "response").length,
+    failures: network.filter((record) => record.type === "requestfailed").length,
+    byHost: sortBrowserProbeNetworkCounts(byHost),
+    byType: sortBrowserProbeNetworkCounts(byType),
+    waterfall: artifact,
+  }
+}
+
+function addBrowserProbeNetworkCount(target: Record<string, BrowserProbeNetworkCountSummary>, key: string, record: BrowserProbeNetworkRecord): void {
+  const summary = target[key] ?? { requests: 0, responses: 0, failures: 0, transferSizeBytes: 0 }
+  summary.requests += 1
+  if (record.type === "response") {
+    summary.responses += 1
+  }
+  if (record.type === "requestfailed") {
+    summary.failures += 1
+  }
+  summary.transferSizeBytes += typeof record.transferSize === "number" && Number.isFinite(record.transferSize) ? record.transferSize : 0
+  target[key] = summary
+}
+
+function sortBrowserProbeNetworkCounts(value: Record<string, BrowserProbeNetworkCountSummary>): Record<string, BrowserProbeNetworkCountSummary> {
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function requestHost(url: string): string | undefined {
+  try {
+    return new URL(url).host
+  } catch {
+    return undefined
+  }
+}
+
+function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<string>, input: {
+  checkpoints: boolean
+  console: boolean
+  errors: boolean
+  html?: string
+  lifecycle: boolean
+  memory: boolean
+  network: boolean
+  performance: boolean
+  screenshot?: string
+}): Record<string, BrowserProbeArtifactRef> {
+  return {
+    ...(input.console ? { console: { path: `${browserFilesDirectory}/console.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.checkpoints ? { checkpoints: { path: `${browserFilesDirectory}/checkpoints.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.errors ? { errors: { path: `${browserFilesDirectory}/errors.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(capture.has("html") ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, ...(input.html ? { sha256: input.html } : {}) } } : {}),
+    ...(input.lifecycle ? { lifecycle: { path: `${browserFilesDirectory}/lifecycle.json`, kind: "json" as const } } : {}),
+    ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
+    ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
+    review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
+    ...(capture.has("screenshot") ? { screenshot: { path: `${browserFilesDirectory}/screenshot.png`, kind: "png" as const, ...(input.screenshot ? { sha256: input.screenshot } : {}) } } : {}),
+    summary: { path: `${browserFilesDirectory}/summary.json`, kind: "json" as const },
+  }
+}
+
+function safeBrowserProbeUrl(value: string | undefined): string | null {
+  if (!value) {
+    return null
+  }
+  if (/^data:/i.test(value)) {
+    return "data:[redacted]"
+  }
+  return value
 }
 
 export async function runHtmlCaptureCommand(input: {

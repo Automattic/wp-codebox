@@ -145,6 +145,7 @@ export interface ArtifactReviewBrowserSummary {
     checkpoints?: string
     memory?: string
     performance?: string
+    review?: string
     screenshot?: string
     console?: string
     errorsFile?: string

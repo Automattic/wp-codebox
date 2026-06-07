@@ -846,9 +846,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
   const phaseTracker = new RecipePhaseTracker()
-  const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
+  const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
       .then(() => {
+        const promise = typeof promiseOrFactory === "function" ? promiseOrFactory() : promiseOrFactory
         const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
         return interruption ? interruption.interruptible(guarded) : guarded
       })
@@ -1062,7 +1063,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const workflowSteps = recipeWorkflowSteps(recipe)
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
-        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options)))
+        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options)))
         interruption?.throwIfInterrupted()
       }
     })

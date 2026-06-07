@@ -614,6 +614,7 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
             loadTime?: number
             size?: number
             element?: string | null
+            url?: string
           } | null
         }
       }).__wpCodeboxBrowserProbe
@@ -699,7 +700,7 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
         }
       }
 
-      function paintTimingSummary(entries: Array<{ name?: string; startTime?: number }>, lcp: { startTime?: number; renderTime?: number; loadTime?: number; size?: number; element?: string | null } | null) {
+      function paintTimingSummary(entries: Array<{ name?: string; startTime?: number }>, lcp: { startTime?: number; renderTime?: number; loadTime?: number; size?: number; element?: string | null; url?: string } | null) {
         const paintEntries = [...performance.getEntriesByType("paint"), ...entries]
         return {
           firstPaintMs: firstEntryStartTime(paintEntries, "first-paint"),
@@ -707,6 +708,7 @@ async function browserProbeMetricsSnapshot(page: Page): Promise<BrowserProbeMetr
           largestContentfulPaintMs: lcpTiming(lcp),
           largestContentfulPaintSize: finiteNumberOrNull(lcp?.size),
           largestContentfulPaintElement: typeof lcp?.element === "string" ? lcp.element : null,
+          largestContentfulPaintUrl: typeof lcp?.url === "string" && lcp.url.length > 0 ? lcp.url : null,
         }
       }
 
@@ -859,5 +861,6 @@ function emptyPaintTimingSummary() {
     largestContentfulPaintMs: null,
     largestContentfulPaintSize: null,
     largestContentfulPaintElement: null,
+    largestContentfulPaintUrl: null,
   }
 }
