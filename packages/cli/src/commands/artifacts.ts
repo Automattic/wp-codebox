@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type PartialArtifactDiscoveryResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildArtifactDiagnostics, buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics, type PartialArtifactDiscoveryResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 
@@ -23,6 +23,11 @@ interface ArtifactDiscoverPartialOptions {
   sessionId?: string
   startedAt?: string
   finishedAt?: string
+  json: boolean
+}
+
+interface ArtifactDiagnosticsOptions extends ArtifactDiagnosticNormalizerOptions {
+  inputFile: string
   json: boolean
 }
 
@@ -135,6 +140,18 @@ export async function runArtifactsDiscoverPartialCommand(args: string[]): Promis
   return 0
 }
 
+export async function runArtifactsDiagnosticsCommand(args: string[]): Promise<number> {
+  const options = parseArtifactDiagnosticsOptions(args)
+  const output = await normalizeDiagnostics(options)
+  if (!options.json) {
+    printArtifactDiagnosticsHumanOutput(output)
+    return 0
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
+
 async function verifyArtifacts(options: ArtifactVerifyOptions): Promise<ArtifactBundleVerificationResult> {
   return verifyArtifactBundle(resolve(options.bundleDirectory))
 }
@@ -181,6 +198,67 @@ async function discoverPartialArtifacts(options: ArtifactDiscoverPartialOptions)
     startedAt: options.startedAt,
     finishedAt: options.finishedAt,
   })
+}
+
+async function normalizeDiagnostics(options: ArtifactDiagnosticsOptions): Promise<ArtifactDiagnostics> {
+  const input = JSON.parse(await readFile(resolve(options.inputFile), "utf8")) as unknown
+  return buildArtifactDiagnostics(input, {
+    source: options.source,
+    stage: options.stage,
+    observationType: options.observationType,
+    refs: options.refs,
+  })
+}
+
+function parseArtifactDiagnosticsOptions(args: string[]): ArtifactDiagnosticsOptions {
+  const options: Partial<ArtifactDiagnosticsOptions> = { json: false, refs: [] }
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--input":
+      case "--observations":
+      case "--diagnostics":
+      case "--import-report":
+        options.inputFile = value
+        break
+      case "--source":
+        options.source = value
+        break
+      case "--stage":
+        options.stage = value
+        break
+      case "--observation-type":
+        options.observationType = value
+        break
+      case "--ref":
+        options.refs?.push(parseDiagnosticRef(value))
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
+  }
+
+  if (!options.inputFile) {
+    throw new Error("Missing required option: --input")
+  }
+
+  return options as ArtifactDiagnosticsOptions
+}
+
+function parseDiagnosticRef(value: string): NonNullable<ArtifactDiagnosticNormalizerOptions["refs"]>[number] {
+  const [path, kind] = value.split(":", 2)
+  return { path, ...(kind ? { kind } : {}) }
 }
 
 function parseArtifactDiscoverPartialOptions(args: string[]): ArtifactDiscoverPartialOptions {
@@ -345,6 +423,15 @@ function printArtifactTransferProbesHumanOutput(output: TransferProbeDiagnostics
   console.log(`Diagnostics: ${output.summary.total} (${output.summary.errors} error(s), ${output.summary.warnings} warning(s))`)
   for (const diagnostic of output.diagnostics) {
     console.log(`- ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`)
+  }
+}
+
+function printArtifactDiagnosticsHumanOutput(output: ArtifactDiagnostics): void {
+  console.log("WP Codebox artifact diagnostics")
+  console.log(`Status: ${output.status}`)
+  console.log(`Diagnostics: ${output.summary.total} (${output.summary.error} error(s), ${output.summary.warning} warning(s), ${output.summary.notice} notice(s), ${output.summary.info} info)`)
+  for (const diagnostic of output.diagnostics) {
+    console.log(`- ${diagnostic.severity} ${diagnostic.code ?? diagnostic.type}: ${diagnostic.message}`)
   }
 }
 
