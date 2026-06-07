@@ -104,7 +104,7 @@ export const MAX_EXTRACTED_FILES_ENV = "WP_CODEBOX_MAX_EXTRACTED_FILES"
 const DEFAULT_ALLOWED_DOWNLOAD_HOSTS = ["downloads.wordpress.org"]
 const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 const DEFAULT_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
-const DEFAULT_MAX_EXTRACTED_FILES = 2000
+const DEFAULT_MAX_EXTRACTED_FILES = 5000
 const execFileAsync = promisify(execFile)
 const PHP_SCOPER_VERSION = "0.18.17"
 const PHP_SCOPER_URL = `https://github.com/humbug/php-scoper/releases/download/${PHP_SCOPER_VERSION}/php-scoper.phar`
@@ -671,7 +671,7 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
   const zipPath = join(directory, "source.zip")
   const extractDirectory = join(directory, "extracted")
   await mkdir(extractDirectory, { recursive: true })
-  const digest = await downloadRecipeSourceZip(source.resolvedUrl, zipPath, source.expectedSha256)
+  const digest = await downloadRecipeSourceZip(source, zipPath)
   await assertSafeZipEntries(zipPath)
   await execFileAsync("unzip", ["-q", zipPath, "-d", extractDirectory])
   await assertExtractedSourceBounds(extractDirectory)
@@ -694,37 +694,31 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
   }
 }
 
-async function downloadRecipeSourceZip(url: string, targetPath: string, expectedSha256?: string): Promise<string> {
-  const response = await fetch(url)
+async function downloadRecipeSourceZip(source: ParsedRecipeSource, targetPath: string): Promise<string> {
+  const response = await fetch(source.resolvedUrl)
   if (!response.ok || !response.body) {
-    throw new Error(`Failed to download recipe source ${url}: HTTP ${response.status}`)
+    throw new Error(`Failed to download recipe source ${source.resolvedUrl}: HTTP ${response.status}`)
   }
 
-  const finalUrl = response.url || url
-  let finalSource: ParsedRecipeSource
-  try {
-    finalSource = recipeSource(finalUrl, expectedSha256)
-  } catch (error) {
-    throw new Error(`Recipe source redirected to an invalid URL: ${error instanceof Error ? error.message : String(error)}`)
-  }
+  const finalSource = recipeRedirectSource(source, response.url || source.resolvedUrl, response.headers)
 
   if (finalSource.type === "local" || !allowedDownloadHosts().includes(finalSource.host)) {
-    throw new Error(`Recipe source redirected to a host that is not allowed: ${finalSource.host || finalUrl}`)
+    throw new Error(`Recipe source redirected to a host that is not allowed: ${finalSource.host || finalSource.resolvedUrl}`)
   }
 
   const contentLength = Number(response.headers.get("content-length") ?? "0")
   if (contentLength > maxDownloadBytes()) {
-    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${url}`)
+    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${source.resolvedUrl}`)
   }
 
   const buffer = Buffer.from(await response.arrayBuffer())
   if (buffer.byteLength > maxDownloadBytes()) {
-    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${url}`)
+    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${source.resolvedUrl}`)
   }
 
   const digest = createHash("sha256").update(buffer).digest("hex")
-  if (expectedSha256 && digest !== expectedSha256.toLowerCase()) {
-    throw new Error(`Recipe source sha256 mismatch for ${url}: expected ${expectedSha256.toLowerCase()}, got ${digest}`)
+  if (source.expectedSha256 && digest !== source.expectedSha256.toLowerCase()) {
+    throw new Error(`Recipe source sha256 mismatch for ${source.resolvedUrl}: expected ${source.expectedSha256.toLowerCase()}, got ${digest}`)
   }
 
   await writeFile(targetPath, buffer)
@@ -911,6 +905,36 @@ export function recipeSource(sourceRef: string, expectedSha256?: string): Parsed
   }
 
   return { type: "https_zip", resolvedUrl: url.toString(), host: url.hostname, ...(expectedSha256 ? { expectedSha256: expectedSha256.toLowerCase() } : {}) }
+}
+
+export function recipeRedirectSource(source: ParsedRecipeSource, finalSourceRef: string, headers?: Headers): ParsedRecipeSource {
+  if (finalSourceRef === source.resolvedUrl) {
+    return source
+  }
+
+  let url: URL
+  try {
+    url = new URL(finalSourceRef)
+  } catch (error) {
+    throw new Error(`Recipe source redirected to an invalid URL: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`Recipe source redirected to a non-HTTPS URL: ${finalSourceRef}`)
+  }
+
+  const disposition = [headers?.get("content-disposition") ?? "", url.searchParams.get("response-content-disposition") ?? "", url.searchParams.get("rscd") ?? ""].join("\n")
+  const finalPathIsZip = url.pathname.toLowerCase().endsWith(".zip")
+  const finalNameIsZip = /filename\*?\s*=.*\.zip(?:[\s"']|$)/i.test(decodeURIComponent(disposition))
+  if (!finalPathIsZip && !finalNameIsZip) {
+    throw new Error(`Recipe source redirected to a URL that does not identify a zip archive: ${finalSourceRef}`)
+  }
+
+  return {
+    ...source,
+    resolvedUrl: url.toString(),
+    host: url.hostname,
+  }
 }
 
 export function recipeSourceProvenance(source: ParsedRecipeSource, recipeDirectory: string): RecipeSourceProvenance {
