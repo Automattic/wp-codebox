@@ -2330,6 +2330,7 @@ $inherit_result = $runner->run(
 );
 $inherit_recipe    = json_decode( $captured_recipe, true );
 $inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
+$inherit_result_encoded = ! is_wp_error( $inherit_result ) ? json_encode( $inherit_result, JSON_UNESCAPED_SLASHES ) : '';
 $assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
 $assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
 $assert( 'runner mounts inherited provider plugin path', ! is_wp_error( $inherit_result ) && str_contains( $captured_recipe, 'ai-provider-inherited' ) && in_array( 'provider-plugin-slugs=ai-provider-test,ai-provider-inherited', $inherit_step_args, true ) );
@@ -2338,6 +2339,8 @@ $assert( 'runner passes inherited secret env value to command runner', ! is_wp_e
 $assert( 'runner records connector credential provenance without value', ! is_wp_error( $inherit_result ) && 'wp-codebox/connector-credentials/v1' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) );
 $assert( 'runner records sanitized inheritance status', ! is_wp_error( $inherit_result ) && 'primary-ai' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['name'] ?? '' ) && 'resolved' === ( $inherit_recipe['inputs']['inheritance']['settings'][0]['status'] ?? '' ) );
 $assert( 'runner drops inherited secret values from recipe', ! str_contains( $captured_recipe, 'sk-test-secret-value' ) && ! str_contains( $captured_recipe, 'token' ) );
+$assert( 'runner keeps process secret env out of recipe artifacts', ! str_contains( $captured_recipe, 'process_secret_env' ) );
+$assert( 'runner keeps process secret env out of response', ! str_contains( $inherit_result_encoded, 'process_secret_env' ) && ! str_contains( $inherit_result_encoded, 'sk-test-secret-value' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
 	$resolution['connectors'] = array(

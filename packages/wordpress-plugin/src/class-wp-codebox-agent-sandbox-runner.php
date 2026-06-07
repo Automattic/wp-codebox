@@ -54,7 +54,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $prepared;
 		}
 
-		$result = $this->run_command( (string) $prepared['command'], $prepared['secret_env'], (int) $prepared['timeout_seconds'] );
+		$result = $this->run_command( (string) $prepared['command'], $prepared['process_secret_env'], (int) $prepared['timeout_seconds'] );
 
 		return $this->complete_agent_task_run( $prepared, $result );
 	}
@@ -231,7 +231,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$inheritance_payload = $this->inheritance_resolution_payload( $input );
-		$recipe_payload      = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version, $inheritance_payload['inheritance'] );
+		$recipe_payload      = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version, $inheritance_payload['inheritance_audit'] );
 		if ( is_wp_error( $recipe_payload ) ) {
 			return $recipe_payload;
 		}
@@ -246,18 +246,18 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$command .= $preview_args;
 
 		return array(
-			'input'           => $input,
-			'task_input'      => $task_input,
-			'task'            => $task,
-			'session_id'      => $session_id,
-			'paths'           => $paths,
-			'artifacts'       => $artifacts,
-			'wp_version'      => $wp_version,
-			'command'         => $command,
-			'secret_env'      => $inheritance_payload['secret_env'],
-			'timeout_seconds' => $this->task_timeout_seconds( $input ),
-			'recipe_file'     => $recipe_file,
-			'cleanup_paths'   => $recipe_payload['cleanup_paths'],
+			'input'              => $input,
+			'task_input'         => $task_input,
+			'task'               => $task,
+			'session_id'         => $session_id,
+			'paths'              => $paths,
+			'artifacts'          => $artifacts,
+			'wp_version'         => $wp_version,
+			'command'            => $command,
+			'process_secret_env' => $inheritance_payload['process_secret_env'],
+			'timeout_seconds'    => $this->task_timeout_seconds( $input ),
+			'recipe_file'        => $recipe_file,
+			'cleanup_paths'      => $recipe_payload['cleanup_paths'],
 		);
 	}
 
@@ -619,7 +619,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			2 => array( 'pipe', 'w' ),
 		);
 		$current_env = getenv();
-		$secret_env  = is_array( $prepared['secret_env'] ?? null ) ? $prepared['secret_env'] : array();
+		$secret_env  = is_array( $prepared['process_secret_env'] ?? null ) ? $prepared['process_secret_env'] : array();
 		$process     = proc_open( (string) $prepared['command'], $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
 		if ( ! is_resource( $process ) ) {
 			return new WP_Error( 'wp_codebox_fanout_worker_start_failed', 'Could not start fanout worker process.', array( 'status' => 500, 'worker_id' => (string) $item['id'] ) );
@@ -1054,10 +1054,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} */
 	private function inheritance_resolution( array $input ): array {
-		return $this->inheritance_resolution_payload( $input )['inheritance'];
+		return $this->inheritance_resolution_payload( $input )['inheritance_audit'];
 	}
 
-	/** @param array<string,mixed> $input Ability input. @return array{inheritance:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},secret_env:array<string,string>} */
+	/** @param array<string,mixed> $input Ability input. @return array{inheritance_audit:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},process_secret_env:array<string,string>} */
 	private function inheritance_resolution_payload( array $input ): array {
 		$request    = $this->inheritance_request( $input );
 		$resolution = array(
@@ -1085,40 +1085,48 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return array(
-			'inheritance' => array(
+			'inheritance_audit'  => array(
 				'connectors' => $this->sanitize_inheritance_connectors( $resolution['connectors'] ?? array() ),
 				'settings'   => $this->sanitize_inheritance_settings( $resolution['settings'] ?? array() ),
 			),
-			'secret_env'  => $this->inheritance_secret_env_values( $resolution['connectors'] ?? array() ),
+			'process_secret_env' => $this->inheritance_process_secret_env_values( $resolution['connectors'] ?? array() ),
 		);
 	}
 
 	/** @param array<int,mixed> $connectors Raw inheritance connector rows. @return array<string,string> */
-	private function inheritance_secret_env_values( array $connectors ): array {
+	private function inheritance_process_secret_env_values( array $connectors ): array {
 		$values = array();
 		foreach ( $connectors as $connector ) {
 			if ( ! is_array( $connector ) ) {
 				continue;
 			}
 
-			foreach ( array( 'secret_env_values', 'secretEnvValues' ) as $field ) {
-				if ( is_array( $connector[ $field ] ?? null ) ) {
-					$values = array_merge( $values, $this->sanitize_secret_env_values( $connector[ $field ] ) );
-				}
+			$values = array_merge( $values, $this->process_secret_env_values_from_connector( $connector ) );
+		}
+
+		return $values;
+	}
+
+	/** @param array<string,mixed> $connector Raw inheritance connector row. @return array<string,string> */
+	private function process_secret_env_values_from_connector( array $connector ): array {
+		$values = array();
+		foreach ( array( 'secret_env_values', 'secretEnvValues' ) as $field ) {
+			if ( is_array( $connector[ $field ] ?? null ) ) {
+				$values = array_merge( $values, $this->sanitize_process_secret_env_values( $connector[ $field ] ) );
+			}
+		}
+
+		$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
+		foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
+			if ( ! is_array( $secret ) || ! isset( $secret['value'] ) ) {
+				continue;
 			}
 
-			$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
-			foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
-				if ( ! is_array( $secret ) || ! isset( $secret['value'] ) ) {
-					continue;
-				}
-
-				$name = trim( (string) ( $secret['name'] ?? '' ) );
-				if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
-					$value = (string) $secret['value'];
-					if ( '' !== $value ) {
-						$values[ $name ] = $value;
-					}
+			$name = trim( (string) ( $secret['name'] ?? '' ) );
+			if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+				$value = (string) $secret['value'];
+				if ( '' !== $value ) {
+					$values[ $name ] = $value;
 				}
 			}
 		}
@@ -1127,7 +1135,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<mixed> $raw_values Raw secret env map. @return array<string,string> */
-	private function sanitize_secret_env_values( array $raw_values ): array {
+	private function sanitize_process_secret_env_values( array $raw_values ): array {
 		$values = array();
 		foreach ( $raw_values as $name => $value ) {
 			$name = trim( (string) $name );
