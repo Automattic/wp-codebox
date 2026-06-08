@@ -28,7 +28,7 @@ await writeFile(recipePath, `${JSON.stringify({
     extra_plugins: [
       {
         source: "./html-capture-fixture",
-        pluginFile: "html-capture-fixture/html-capture-fixture.php",
+        plugin_file: "html-capture-fixture/html-capture-fixture.php",
         activate: true,
       },
     ],
@@ -56,7 +56,7 @@ const output = await runCli([
 
 assert.equal(output.success, true, output.error?.message ?? "recipe-run failed")
 assert.ok(output.artifacts?.directory, "recipe-run should return an artifact directory")
-assert.equal(output.executions?.[0]?.command, "wordpress.capture-html")
+assert.ok(output.executions?.some((execution: { command?: string }) => execution.command === "wordpress.capture-html"), "workflow executions should include wordpress.capture-html")
 
 const artifactDirectory = output.artifacts.directory
 const htmlPath = join(artifactDirectory, "files", "browser", "snapshot.html")

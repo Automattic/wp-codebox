@@ -1,6 +1,6 @@
 {
   "name": "wp-codebox-workspace",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -36,6 +36,8 @@
     "prepare": "npm run build",
     "postinstall": "node scripts/normalize-playground-sqlite-package.mjs",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
+    "package-distribution-smoke": "tsx scripts/package-distribution-smoke.ts",
+    "package-installed-binary-smoke": "tsx scripts/package-installed-binary-smoke.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
     "artifact-export-links-smoke": "tsx scripts/artifact-export-links-smoke.ts",
     "browser-visual-compare-dimension-drift-smoke": "tsx scripts/browser-visual-compare-dimension-drift-smoke.ts",

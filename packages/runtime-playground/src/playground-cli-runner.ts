@@ -72,8 +72,6 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       source: "pre-resolved" as const,
       invalidArchives: [],
     }
-    const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
-    const port = spec.preview?.port ? 0 : await availablePlaygroundPortRange()
     const blueprintSummary = summarizeBlueprint(spec.environment.blueprint)
     if (blueprintSummary.steps > 0) {
       emitProgress("preview:applying-blueprint", "running", "Applying site setup", blueprintSummary)
@@ -85,7 +83,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       emitProgress("preview:activating-dependencies", "running", "Activating site features", blueprintSummary)
     }
 
-    const server = await runPlaygroundCliWithoutProcessExit(async () => {
+    const server = await startPlaygroundCliWithDynamicPortRetry(async (port) => {
+      const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
       try {
         return await runCLI({
           command: "server",
@@ -109,7 +108,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       } finally {
         await localAssetServer?.close()
       }
-    })
+    }, Boolean(spec.preview?.port))
 
     emitProgress("preview:connecting-client", "running", "Connecting preview", {
       localUrl: server.serverUrl,
@@ -141,6 +140,24 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     throw error
   }
+}
+
+async function startPlaygroundCliWithDynamicPortRetry(callback: (port: number) => Promise<PlaygroundCliServer>, fixedPreviewPort: boolean): Promise<PlaygroundCliServer> {
+  const attempts = fixedPreviewPort ? 1 : 6
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const port = fixedPreviewPort ? 0 : await availablePlaygroundPortRange()
+    try {
+      return await runPlaygroundCliWithoutProcessExit(() => callback(port))
+    } catch (error) {
+      if (!fixedPreviewPort && attempt < attempts && errorHasCode(error, "EADDRINUSE")) {
+        continue
+      }
+
+      throw error
+    }
+  }
+
+  throw new Error("WordPress Playground CLI could not find an available dynamic port")
 }
 
 function previewDetail(spec: RuntimeCreateSpec): Record<string, unknown> {

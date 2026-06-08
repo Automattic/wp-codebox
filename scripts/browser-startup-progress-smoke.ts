@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRuntime, type BrowserStartupProgressEvent, type LifecycleEvent } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
+import { startPlaygroundCliServer, type PlaygroundCliModule } from "../packages/runtime-playground/src/playground-cli-runner.ts"
 
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-browser-startup-progress-"))
 
@@ -120,9 +121,55 @@ try {
   assertProgressEvent(errorProgress, "preview:error", "failed")
   assert.equal(errorProgress.at(-1)?.detail?.error && typeof errorProgress.at(-1)?.detail?.error, "object")
 
+  const dynamicPorts: number[] = []
+  const dynamicServer = await startPlaygroundCliServer(runtimeSpec(), [], {
+    cliModule: retryOnceCliModule(dynamicPorts),
+  })
+  await dynamicServer[Symbol.asyncDispose]()
+  assert.equal(dynamicPorts.length, 2, "dynamic Playground startup should retry EADDRINUSE with a fresh port")
+  assert.notEqual(dynamicPorts[0], dynamicPorts[1], "dynamic Playground startup should select a new port after EADDRINUSE")
+
   console.log("Browser startup progress smoke passed")
 } finally {
   await rm(artifactsDirectory, { recursive: true, force: true })
+}
+
+function runtimeSpec() {
+  return {
+    backend: "wordpress-playground" as const,
+    environment: { kind: "wordpress" as const, name: "browser-startup-retry-smoke", version: "7.0", blueprint: { steps: [] } },
+    policy: runtimePolicy(),
+    artifactsDirectory,
+    metadata: {
+      runtime: { version: "0.0.0" },
+      task: { kind: "browser-startup-retry-smoke" },
+    },
+  }
+}
+
+function retryOnceCliModule(ports: number[]): PlaygroundCliModule {
+  let calls = 0
+  return {
+    async runCLI(options) {
+      calls += 1
+      ports.push(options.port)
+      if (calls === 1) {
+        const error = new Error("listen EADDRINUSE: address already in use 127.0.0.1") as Error & { code: string }
+        error.code = "EADDRINUSE"
+        throw error
+      }
+
+      return {
+        playground: {
+          async run() {
+            return { text: "" }
+          },
+        },
+        serverUrl: `http://127.0.0.1:${options.port}`,
+        async [Symbol.asyncDispose]() {},
+      }
+    },
+  }
 }
 
 function runtimePolicy() {

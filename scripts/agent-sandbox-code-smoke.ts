@@ -48,10 +48,10 @@ async function main() {
       schema: "wp-codebox/sandbox-tool-policy/v1",
       version: 1,
       tools: [
-        { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
-        { id: "datamachine/workspace-write", runtime_tool_id: "workspace_write", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
-        { id: "datamachine/workspace-edit", runtime_tool_id: "workspace_edit", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
-        { id: "datamachine/workspace-git-status", runtime_tool_id: "workspace_git_status", execution_location: "parent", transport_visibility: "parent", allowed: false },
+        { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true, runtime: { environment: "runtime_local", capability_scope: "runtime_local" } },
+        { id: "datamachine/workspace-write", runtime_tool_id: "workspace_write", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true, runtime: { environment: "runtime_local", capability_scope: "runtime_local" } },
+        { id: "datamachine/workspace-edit", runtime_tool_id: "workspace_edit", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true, runtime: { environment: "runtime_local", capability_scope: "runtime_local" } },
+        { id: "datamachine/workspace-git-status", runtime_tool_id: "workspace_git_status", execution_location: "parent", transport_visibility: "parent", allowed: false, runtime: { environment: "control_plane", capability_scope: "control_plane" } },
       ],
       metadata: { source: "smoke" },
     },
@@ -130,7 +130,7 @@ async function main() {
           schema: "wp-codebox/sandbox-tool-policy/v1",
           version: 1,
           tools: [
-            { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
+            { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true, runtime: { environment: "runtime_local", capability_scope: "runtime_local" } },
           ],
           metadata: { source: "smoke" },
         }),

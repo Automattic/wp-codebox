@@ -4,5 +4,6 @@
   "description": "WP Codebox parent-site abilities — secure coding environments inside WordPress via disposable Playground sandboxes.",
   "scripts": {
     "zip": "tsx ../../scripts/build-wordpress-plugin-zip.ts"
-  }
+  },
+  "version": "0.8.0"
 }
