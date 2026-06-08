@@ -42,11 +42,20 @@ interface VisualCompareDomElementSnapshot {
   styles: Record<string, string>
 }
 
+interface VisualCompareSelectorSnapshot {
+  selector: string
+  matched: number
+  captured: number
+  paths: string[]
+  error?: string
+}
+
 interface VisualCompareDomSnapshot {
   url: string
   title: string
   elementCount: number
   capturedElements: VisualCompareDomElementSnapshot[]
+  selectors?: VisualCompareSelectorSnapshot[]
   truncated: boolean
 }
 
@@ -80,6 +89,8 @@ interface VisualCompareExplanation {
   candidate: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
   viewport: BrowserProbeViewport | null
   mismatchRegions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+  selectors?: Array<{ selector: string; source: VisualCompareSelectorSnapshot; candidate: VisualCompareSelectorSnapshot }>
+  missingSelectors?: Array<{ selector: string; sourceMatched: boolean; candidateMatched: boolean; sourceError?: string; candidateError?: string }>
   limits: { maxElements: number; maxCandidates: number }
   truncation: { changed: boolean; added: boolean; removed: boolean }
   summary: { changedElements: number; addedElements: number; removedElements: number; sourceCapturedElements: number; candidateCapturedElements: number }
@@ -2570,6 +2581,7 @@ export async function runVisualCompareCommand({
   const maxRegions = positiveIntegerArg(args, "max-regions", 8)
   const maxExplanationElements = positiveIntegerArg(args, "max-explanation-elements", 25)
   const maxExplanationCandidates = positiveIntegerArg(args, "max-explanation-candidates", 160)
+  const explainSelectors = visualCompareExplainSelectors(args)
 
   if (threshold < 0 || threshold > 1) {
     throw new Error("threshold must be between 0 and 1")
@@ -2608,10 +2620,10 @@ export async function runVisualCompareCommand({
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
-      const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates)
+      const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
       finalSourceUrl = sourceCapture.finalUrl
       sourceDomSnapshot = sourceCapture.domSnapshot
-      const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates)
+      const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
       finalCandidateUrl = candidateCapture.finalUrl
       candidateDomSnapshot = candidateCapture.domSnapshot
     } finally {
@@ -2640,6 +2652,7 @@ export async function runVisualCompareCommand({
     viewport,
     comparison,
     limits: { maxElements: maxExplanationElements, maxCandidates: maxExplanationCandidates },
+    explainSelectors,
   })
   const finishedAt = now()
   const files = {
@@ -2666,7 +2679,7 @@ export async function runVisualCompareCommand({
       ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
       ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
     },
-    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates },
+    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
       : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
@@ -2771,7 +2784,30 @@ function normalizeVisualCompareDomSnapshotArtifact(input: unknown, requestedPath
   return record as VisualCompareDomSnapshotArtifact
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
+function visualCompareExplainSelectors(args: string[]): string[] {
+  const selectors = new Set<string>()
+  for (const arg of args) {
+    if (arg.startsWith("explain-selector=")) {
+      const selector = arg.slice("explain-selector=".length).trim()
+      if (selector) {
+        selectors.add(selector)
+      }
+    }
+  }
+  for (const item of jsonArrayArg(args, "explain-selectors")) {
+    if (typeof item !== "string") {
+      throw new Error("explain-selectors must be a JSON array of strings")
+    }
+    const selector = item.trim()
+    if (selector) {
+      selectors.add(selector)
+    }
+  }
+
+  return [...selectors]
+}
+
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[]): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
     if (durationMs > 0) {
@@ -2791,25 +2827,41 @@ async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
-  const domSnapshot = await captureVisualCompareDomSnapshot(page, maxExplanationCandidates)
+  const domSnapshot = await captureVisualCompareDomSnapshot(page, maxExplanationCandidates, explainSelectors)
   await page.screenshot({ path: outputPath, fullPage })
   return { finalUrl: page.url(), domSnapshot }
 }
 
-async function captureVisualCompareDomSnapshot(page: Page, maxElements: number): Promise<VisualCompareDomSnapshot> {
-  return page.evaluate(({ maxElements: maxElementsInput, styleProperties, attributeNames }) => {
+async function captureVisualCompareDomSnapshot(page: Page, maxElements: number, explainSelectors: string[] = []): Promise<VisualCompareDomSnapshot> {
+  return page.evaluate(({ maxElements: maxElementsInput, styleProperties, attributeNames, selectors }) => {
     const maxElements = Math.max(1, Number(maxElementsInput) || 1)
     const elements = Array.from(document.body?.querySelectorAll("*") ?? [])
     const visibleElements = elements
       .map((element) => elementSnapshot(element, styleProperties, attributeNames))
       .filter((element): element is VisualCompareDomElementSnapshot => Boolean(element))
+    const capturedByPath = new Map(visibleElements.slice(0, maxElements).map((element) => [element.path, element]))
+    const selectorSnapshots = selectors.map((selector) => selectorSnapshot(selector, capturedByPath, styleProperties, attributeNames))
 
     return {
       url: window.location.href,
       title: document.title || "",
       elementCount: visibleElements.length,
-      capturedElements: visibleElements.slice(0, maxElements),
+      capturedElements: [...capturedByPath.values()],
+      ...(selectorSnapshots.length > 0 ? { selectors: selectorSnapshots } : {}),
       truncated: visibleElements.length > maxElements,
+    }
+
+    function selectorSnapshot(selector: string, captured: Map<string, VisualCompareDomElementSnapshot>, styles: string[], attributes: string[]): VisualCompareSelectorSnapshot {
+      try {
+        const matches = Array.from(document.querySelectorAll(selector))
+        const snapshots = matches.map((element) => elementSnapshot(element, styles, attributes)).filter((element): element is VisualCompareDomElementSnapshot => Boolean(element))
+        for (const snapshot of snapshots) {
+          captured.set(snapshot.path, snapshot)
+        }
+        return { selector, matched: matches.length, captured: snapshots.length, paths: snapshots.map((snapshot) => snapshot.path) }
+      } catch (error) {
+        return { selector, matched: 0, captured: 0, paths: [], error: error instanceof Error ? error.message : String(error) }
+      }
     }
 
     function elementSnapshot(element: Element, styles: string[], attributes: string[]): VisualCompareDomElementSnapshot | null {
@@ -2879,7 +2931,7 @@ async function captureVisualCompareDomSnapshot(page: Page, maxElements: number):
       }
       return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&")
     }
-  }, { maxElements, styleProperties: [...VISUAL_EXPLANATION_STYLE_PROPERTIES], attributeNames: [...VISUAL_EXPLANATION_ATTRIBUTE_NAMES] })
+  }, { maxElements, styleProperties: [...VISUAL_EXPLANATION_STYLE_PROPERTIES], attributeNames: [...VISUAL_EXPLANATION_ATTRIBUTE_NAMES], selectors: explainSelectors })
 }
 
 function createVisualCompareExplanation({
@@ -2890,6 +2942,7 @@ function createVisualCompareExplanation({
   viewport,
   comparison,
   limits,
+  explainSelectors,
 }: {
   source?: VisualCompareDomSnapshot
   candidate?: VisualCompareDomSnapshot
@@ -2898,6 +2951,7 @@ function createVisualCompareExplanation({
   viewport: BrowserProbeViewport | null
   comparison: Awaited<ReturnType<typeof comparePngFiles>>
   limits: { maxElements: number; maxCandidates: number }
+  explainSelectors: string[]
 }): VisualCompareExplanation | undefined {
   if (!source || !candidate) {
     return undefined
@@ -2928,6 +2982,7 @@ function createVisualCompareExplanation({
   }
 
   const maxElements = limits.maxElements
+  const selectorSummary = visualCompareSelectorSummary(source.selectors, candidate.selectors, explainSelectors)
   const limitations = [
     "visual explanations are heuristic evidence generated from DOM snapshots and computed styles; pixel screenshots remain the source of visual truth",
     "elements are matched by deterministic CSS-like paths, so large structural moves can appear as added and removed elements",
@@ -2942,6 +2997,8 @@ function createVisualCompareExplanation({
     candidate: { label: candidateLabel, url: candidate.url, title: candidate.title, elementCount: candidate.elementCount, capturedElements: candidate.capturedElements.length, truncated: candidate.truncated },
     viewport,
     mismatchRegions: comparison.regions,
+    ...(selectorSummary.selectors.length > 0 ? { selectors: selectorSummary.selectors } : {}),
+    ...(selectorSummary.missingSelectors.length > 0 ? { missingSelectors: selectorSummary.missingSelectors } : {}),
     limits,
     truncation: {
       changed: changed.length > maxElements,
@@ -2960,6 +3017,31 @@ function createVisualCompareExplanation({
     removed: removed.slice(0, maxElements),
     limitations,
   }
+}
+
+function visualCompareSelectorSummary(sourceSelectors: VisualCompareSelectorSnapshot[] | undefined, candidateSelectors: VisualCompareSelectorSnapshot[] | undefined, requestedSelectors: string[] = []): {
+  selectors: Array<{ selector: string; source: VisualCompareSelectorSnapshot; candidate: VisualCompareSelectorSnapshot }>
+  missingSelectors: Array<{ selector: string; sourceMatched: boolean; candidateMatched: boolean; sourceError?: string; candidateError?: string }>
+} {
+  const selectorNames = [...new Set([...requestedSelectors, ...(sourceSelectors ?? []).map((item) => item.selector), ...(candidateSelectors ?? []).map((item) => item.selector)])]
+  const sourceBySelector = new Map((sourceSelectors ?? []).map((item) => [item.selector, item]))
+  const candidateBySelector = new Map((candidateSelectors ?? []).map((item) => [item.selector, item]))
+  const selectors = selectorNames.map((selector) => {
+    const source = sourceBySelector.get(selector) ?? { selector, matched: 0, captured: 0, paths: [] }
+    const candidate = candidateBySelector.get(selector) ?? { selector, matched: 0, captured: 0, paths: [] }
+    return { selector, source, candidate }
+  })
+  const missingSelectors = selectors
+    .filter((item) => item.source.matched === 0 || item.candidate.matched === 0 || Boolean(item.source.error) || Boolean(item.candidate.error))
+    .map((item) => ({
+      selector: item.selector,
+      sourceMatched: item.source.matched > 0,
+      candidateMatched: item.candidate.matched > 0,
+      ...(item.source.error ? { sourceError: item.source.error } : {}),
+      ...(item.candidate.error ? { candidateError: item.candidate.error } : {}),
+    }))
+
+  return { selectors, missingSelectors }
 }
 
 function visualCompareElementDelta(source: VisualCompareDomElementSnapshot, candidate: VisualCompareDomElementSnapshot): VisualCompareElementDelta | undefined {

@@ -25,7 +25,7 @@ add_action( 'template_redirect', function () {
     $variant = isset( $_GET['variant'] ) ? sanitize_key( $_GET['variant'] ) : 'source';
     $color   = 'candidate' === $variant ? '#2563eb' : '#dc2626';
     nocache_headers();
-    echo '<!doctype html><html><head><style>body{margin:0}.card{width:220px;height:120px;background:' . esc_attr( $color ) . ';color:white;font:24px sans-serif;display:grid;place-items:center}</style></head><body><main class="card">' . esc_html( $variant ) . '</main></body></html>';
+    echo '<!doctype html><html><head><style>body{margin:0}.marker{height:1px}.card{width:220px;height:120px;background:' . esc_attr( $color ) . ';color:white;font:24px sans-serif;display:grid;place-items:center}</style></head><body><div class="marker">one</div><div class="marker">two</div><div class="marker">three</div><main class="card">' . esc_html( $variant ) . '</main></body></html>';
     exit;
 } );
 `)
@@ -54,6 +54,9 @@ await writeFile(recipePath, `${JSON.stringify({
           "full-page=false",
           "wait-for=load",
           "threshold=0.1",
+          "max-explanation-candidates=2",
+          "explain-selector=main.card",
+          "explain-selector=.missing-selector",
         ],
       },
     ],
@@ -115,6 +118,8 @@ const explanation = JSON.parse(await readFile(explanationPath, "utf8")) as {
   candidate: { label: string; capturedElements: number }
   summary: { changedElements: number }
   changes: Array<{ path: string; changes: { text?: unknown; styles?: Record<string, unknown> } }>
+  selectors?: Array<{ selector: string; source: { matched: number; captured: number; paths: string[] }; candidate: { matched: number; captured: number; paths: string[] } }>
+  missingSelectors?: Array<{ selector: string; sourceMatched: boolean; candidateMatched: boolean }>
   mismatchRegions: unknown[]
   limitations: string[]
 }
@@ -126,6 +131,13 @@ assert.ok(explanation.candidate.capturedElements > 0, "explanation should includ
 assert.ok(explanation.summary.changedElements > 0, "explanation should report changed elements")
 assert.ok(explanation.changes.some((change) => change.path.includes("main") && change.changes.text), "explanation should report text changes")
 assert.ok(explanation.changes.some((change) => change.changes.styles?.["background-color"]), "explanation should report computed style changes")
+const focusedSelector = explanation.selectors?.find((selector) => selector.selector === "main.card")
+assert.ok(focusedSelector, "explanation should include selector match diagnostics")
+assert.equal(focusedSelector.source.matched, 1, "source selector should match the focused element")
+assert.equal(focusedSelector.candidate.matched, 1, "candidate selector should match the focused element")
+assert.ok(focusedSelector.source.paths.some((path) => path.includes("main")), "focused source selector should force the target path into the snapshot")
+assert.ok(focusedSelector.candidate.paths.some((path) => path.includes("main")), "focused candidate selector should force the target path into the snapshot")
+assert.ok(explanation.missingSelectors?.some((selector) => selector.selector === ".missing-selector" && selector.sourceMatched === false && selector.candidateMatched === false), "missing selectors should be machine-readable")
 assert.ok(explanation.mismatchRegions.length > 0, "explanation should include mismatch regions")
 assert.ok(explanation.limitations.length > 0, "explanation should include limitations")
 
