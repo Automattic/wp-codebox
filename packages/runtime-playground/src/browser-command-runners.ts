@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -31,6 +31,41 @@ interface BrowserProbeProfileDefinition {
   id: string
   browser: "chromium" | "webkit"
   args: string[]
+}
+
+interface BrowserProbeRunPlan {
+  url: string
+  capture: Set<string>
+  waitFor: string
+  durationMs: number
+  requestedViewport?: { width: number; height: number }
+  throttleProfile?: BrowserProbeThrottleProfileDefinition
+  requestedContext: BrowserProbeContextDetails["requested"]
+  prePageScript?: string
+  script?: string
+  authRequest?: { userId: number }
+  failFast: boolean
+  stallTimeoutMs: number
+  lifecycleSelectors: string[]
+  assertions: ReturnType<typeof browserProbeAssertionsFromArgs>
+}
+
+interface BrowserActionsRunPlan {
+  initialUrl?: string
+  steps: BrowserInteractionStep[]
+  capture: Set<string>
+  stepTimeoutMs: number
+  totalTimeoutMs: number
+  requestedViewport?: { width: number; height: number }
+  authRequest?: { userId: number }
+  maxDomSnapshotElements: number
+}
+
+interface BrowserRunPlan {
+  profile: string
+  capture: string[]
+  probe?: BrowserProbeRunPlan
+  actions?: BrowserActionsRunPlan
 }
 
 interface VisualCompareDomElementSnapshot {
@@ -213,6 +248,7 @@ export function isBrowserCommandArtifactError(error: unknown): error is BrowserC
 export async function runBrowserProbeCommand({
   artifactRoot,
   command = "wordpress.browser-probe",
+  plan,
   runtimeSpec,
   runPlaygroundCommand,
   server,
@@ -220,11 +256,16 @@ export async function runBrowserProbeCommand({
 }: {
   artifactRoot: string
   command?: string
+  plan?: BrowserProbeRunPlan
   runtimeSpec?: RuntimeCreateSpec
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
+  if (plan) {
+    return runSingleBrowserProbeCommand({ artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
+  }
+
   const profileIds = browserProbeProfileIds(spec.args ?? [])
   if (profileIds.length === 0) {
     const profileId = argValue(spec.args ?? [], "profile")?.trim()
@@ -293,6 +334,7 @@ export async function runBrowserProbeCommand({
 async function runSingleBrowserProbeCommand({
   artifactRoot,
   command,
+  plan,
   runtimeSpec,
   runPlaygroundCommand,
   server,
@@ -302,6 +344,7 @@ async function runSingleBrowserProbeCommand({
 }: {
   artifactRoot: string
   command: string
+  plan?: BrowserProbeRunPlan
   runtimeSpec?: RuntimeCreateSpec
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
@@ -310,19 +353,12 @@ async function runSingleBrowserProbeCommand({
   profileId?: string
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
-  const urlArg = argValue(args, "url")?.trim()
-  if (!urlArg) {
+  const runPlan = plan ?? browserProbeRunPlanFromArgs(args, profileId)
+  if (!runPlan.url) {
     throw new Error("wordpress.browser-probe requires url=<path-or-url>")
   }
 
-  const capture = new Set(commaListArg(args, "capture"))
-  if (capture.size === 0) {
-    capture.add("console")
-    capture.add("errors")
-    capture.add("html")
-    capture.add("network")
-    capture.add("screenshot")
-  }
+  const capture = runPlan.capture
 
   for (const item of capture) {
     if (!(BROWSER_PROBE_CAPTURE_VALUES as readonly string[]).includes(item)) {
@@ -330,19 +366,19 @@ async function runSingleBrowserProbeCommand({
     }
   }
 
-  const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
-  const durationMs = durationArg(args, "duration", 0)
-  const requestedViewport = viewportArg(args, "viewport")
-  const throttleProfile = browserProbeThrottleProfile(args)
-  const requestedContext = browserProbeContextRequest(args, requestedViewport, profileId, throttleProfile?.id)
-  const prePageScript = argValue(args, "pre-page-script")
-  const script = argValue(args, "script")
-  const authRequest = browserAuthRequest(args)
-  const failFast = strictBooleanArg(args, "fail-fast", false)
-  const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
-  const lifecycleSelectors = commaListArg(args, "observe")
+  const waitFor = runPlan.waitFor
+  const durationMs = runPlan.durationMs
+  const requestedViewport = runPlan.requestedViewport
+  const throttleProfile = runPlan.throttleProfile
+  const requestedContext = runPlan.requestedContext
+  const prePageScript = runPlan.prePageScript
+  const script = runPlan.script
+  const authRequest = runPlan.authRequest
+  const failFast = runPlan.failFast
+  const stallTimeoutMs = runPlan.stallTimeoutMs
+  const lifecycleSelectors = runPlan.lifecycleSelectors
   const routedHosts = commaListArg(args, "route-host")
-  const assertions = browserProbeAssertionsFromArgs(args)
+  const assertions = runPlan.assertions
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesNetworkForAssertions = browserProbeAssertionsNeedNetwork(assertions)
@@ -351,7 +387,7 @@ async function runSingleBrowserProbeCommand({
   const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
   const networkPolicy = browserProbeNetworkPolicy(args, routedHosts, preview)
   const previewOrigins = browserProbePreviewOrigins(preview)
-  const targetUrl = resolveBrowserProbeUrl(urlArg, preview.effectiveOrigin)
+  const targetUrl = resolveBrowserProbeUrl(runPlan.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, browserFilesDirectory)
   await mkdir(browserDirectory, { recursive: true })
 
@@ -753,6 +789,35 @@ function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
     throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_PROFILES).join(", ")}`)
   }
   return profile
+}
+
+function browserProbeRunPlanFromArgs(args: string[], profileId?: string): BrowserProbeRunPlan {
+  const capture = new Set(commaListArg(args, "capture"))
+  if (capture.size === 0) {
+    capture.add("console")
+    capture.add("errors")
+    capture.add("html")
+    capture.add("network")
+    capture.add("screenshot")
+  }
+  const requestedViewport = viewportArg(args, "viewport")
+  const throttleProfile = browserProbeThrottleProfile(args)
+  return {
+    url: argValue(args, "url")?.trim() ?? "",
+    capture,
+    waitFor: argValue(args, "wait-for")?.trim() || "domcontentloaded",
+    durationMs: durationArg(args, "duration", 0),
+    requestedViewport,
+    throttleProfile,
+    requestedContext: browserProbeContextRequest(args, requestedViewport, profileId, throttleProfile?.id),
+    prePageScript: argValue(args, "pre-page-script"),
+    script: argValue(args, "script"),
+    authRequest: browserAuthRequest(args),
+    failFast: strictBooleanArg(args, "fail-fast", false),
+    stallTimeoutMs: durationArg(args, "stall-timeout", 0),
+    lifecycleSelectors: commaListArg(args, "observe"),
+    assertions: browserProbeAssertionsFromArgs(args),
+  }
 }
 
 function browserProbeProfileArgs(args: string[], profile: BrowserProbeProfileDefinition): string[] {
@@ -1569,20 +1634,23 @@ function editorCanvasTimeoutMs(args: string[]): number {
 
 export async function runBrowserActionsCommand({
   artifactRoot,
+  plan,
   runtimeSpec,
   runPlaygroundCommand,
   server,
   spec,
 }: {
   artifactRoot: string
+  plan?: BrowserActionsRunPlan
   runtimeSpec: RuntimeCreateSpec
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const steps = await browserInteractionStepsFromArgs(args)
-  const initialUrl = argValue(args, "url")?.trim()
+  const runPlan = plan ?? await browserActionsRunPlanFromArgs(args)
+  const steps = [...runPlan.steps]
+  const initialUrl = runPlan.initialUrl
   if (steps.length === 0 && !initialUrl) {
     throw new Error("wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>")
   }
@@ -1598,21 +1666,7 @@ export async function runBrowserActionsCommand({
     assertRuntimeCommandAllowed("wordpress.browser-actions.evaluate", runtimeSpec.policy)
   }
 
-  const capture = new Set(commaListArg(args, "capture"))
-  if (capture.size === 0) {
-    capture.add("steps")
-    capture.add("console")
-    capture.add("errors")
-    capture.add("network")
-    capture.add("html")
-    capture.add("screenshot")
-    capture.add("dom-snapshot")
-  }
-  // Back-compat: "actions" remains an alias for the per-step timeline capture.
-  if (capture.has("actions")) {
-    capture.delete("actions")
-    capture.add("steps")
-  }
+  const capture = runPlan.capture
 
   for (const item of capture) {
     if (!["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"].includes(item)) {
@@ -1620,11 +1674,11 @@ export async function runBrowserActionsCommand({
     }
   }
 
-  const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const requestedViewport = viewportArg(args, "viewport")
-  const authRequest = browserAuthRequest(args)
-  const maxDomSnapshotElements = positiveIntegerArg(args, "max-dom-snapshot-elements", 160)
+  const stepTimeoutMs = runPlan.stepTimeoutMs
+  const totalTimeoutMs = runPlan.totalTimeoutMs
+  const requestedViewport = runPlan.requestedViewport
+  const authRequest = runPlan.authRequest
+  const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1860,6 +1914,29 @@ export async function runBrowserActionsCommand({
   }
 }
 
+async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserActionsRunPlan> {
+  const capture = new Set(commaListArg(args, "capture"))
+  if (capture.size === 0) {
+    capture.add("steps")
+    capture.add("console")
+    capture.add("errors")
+    capture.add("network")
+    capture.add("html")
+    capture.add("screenshot")
+    capture.add("dom-snapshot")
+  }
+  return {
+    initialUrl: argValue(args, "url")?.trim(),
+    steps: await browserInteractionStepsFromArgs(args),
+    capture,
+    stepTimeoutMs: durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS),
+    totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
+    requestedViewport: viewportArg(args, "viewport"),
+    authRequest: browserAuthRequest(args),
+    maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
+  }
+}
+
 async function captureBrowserActionDomSnapshot({
   browserDirectory,
   finalUrl,
@@ -1916,9 +1993,7 @@ interface BrowserScenarioInput {
   url?: string
   profile?: string
   captures?: string[]
-  capture?: string[]
   prePageScript?: string
-  pre_page_script?: string
   observers?: Array<Record<string, unknown>>
   steps?: Array<Record<string, unknown>>
   assertions?: Array<Record<string, unknown>>
@@ -1927,12 +2002,9 @@ interface BrowserScenarioInput {
   locale?: string
   auth?: string
   authUserId?: string | number
-  auth_user_id?: string | number
   waitFor?: string
-  wait_for?: string
   duration?: string
   stepTimeout?: string
-  step_timeout?: string
   timeout?: string
 }
 
@@ -1956,16 +2028,7 @@ export async function runBrowserScenarioCommand({
     throw new Error("wordpress.browser-scenario requires url=<path-or-url> or scenario-json.url")
   }
 
-  const captures = browserScenarioCaptures(scenario, args)
-  const steps = browserScenarioSteps(scenario, args)
-  const assertions = browserScenarioAssertions(scenario)
-  const actionSteps = [...steps, ...assertions]
-  const requestedViewport = browserScenarioViewport(scenario, args)
-  const device = scenario.device ?? (scenario.profile && scenario.profile !== "desktop-chrome" ? scenario.profile : undefined) ?? argValue(args, "device")
-  const locale = scenario.locale ?? argValue(args, "locale")
-  const prePageScript = scenario.prePageScript ?? scenario.pre_page_script ?? browserScenarioObserverScript(scenario.observers) ?? argValue(args, "pre-page-script")
-  const auth = scenario.auth ?? argValue(args, "auth")
-  const authUserId = scenario.authUserId ?? scenario.auth_user_id ?? argValue(args, "auth-user-id")
+  const runPlan = browserScenarioRunPlan(scenario, args, url)
   const startedAt = now()
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1974,24 +2037,9 @@ export async function runBrowserScenarioCommand({
   let actionsResult: Awaited<ReturnType<typeof runBrowserActionsCommand>> | undefined
   let pendingError: Error | undefined
 
-  const shouldRunProbe = actionSteps.length === 0 || Boolean(prePageScript) || captures.some((capture) => capture === "performance" || capture === "memory")
-  if (shouldRunProbe) {
-    const probeArgs = [
-      `url=${url}`,
-      `capture=${browserScenarioProbeCaptures(captures, actionSteps.length > 0).join(",")}`,
-      `wait-for=${scenario.waitFor ?? scenario.wait_for ?? argValue(args, "wait-for") ?? "domcontentloaded"}`,
-    ]
-    const duration = scenario.duration ?? argValue(args, "duration")
-    if (duration) probeArgs.push(`duration=${duration}`)
-    if (requestedViewport) probeArgs.push(`viewport=${requestedViewport}`)
-    if (device) probeArgs.push(`device=${device}`)
-    if (locale) probeArgs.push(`locale=${locale}`)
-    if (prePageScript) probeArgs.push(`pre-page-script=${prePageScript}`)
-    if (auth) probeArgs.push(`auth=${auth}`)
-    if (authUserId) probeArgs.push(`auth-user-id=${authUserId}`)
-
+  if (runPlan.probe) {
     try {
-      probeResult = await runBrowserProbeCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args: probeArgs } })
+      probeResult = await runBrowserProbeCommand({ artifactRoot, plan: runPlan.probe, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args: [] } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "probe") {
         probeResult = { artifact: error.artifact, output: "" }
@@ -2000,22 +2048,9 @@ export async function runBrowserScenarioCommand({
     }
   }
 
-  if (!pendingError && actionSteps.length > 0) {
-    const actionsArgs = [
-      `url=${url}`,
-      `steps-json=${JSON.stringify(actionSteps)}`,
-      `capture=${browserScenarioActionCaptures(captures).join(",")}`,
-    ]
-    const stepTimeout = scenario.stepTimeout ?? scenario.step_timeout ?? argValue(args, "step-timeout")
-    const timeout = scenario.timeout ?? argValue(args, "timeout")
-    if (requestedViewport) actionsArgs.push(`viewport=${requestedViewport}`)
-    if (stepTimeout) actionsArgs.push(`step-timeout=${stepTimeout}`)
-    if (timeout) actionsArgs.push(`timeout=${timeout}`)
-    if (auth) actionsArgs.push(`auth=${auth}`)
-    if (authUserId) actionsArgs.push(`auth-user-id=${authUserId}`)
-
+  if (!pendingError && runPlan.actions) {
     try {
-      actionsResult = await runBrowserActionsCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args: actionsArgs } })
+      actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: runPlan.actions, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args: [] } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
         actionsResult = { artifact: error.artifact, output: "" }
@@ -2039,8 +2074,8 @@ export async function runBrowserScenarioCommand({
     requestedPreviewOrigin: primaryArtifact.requestedPreviewOrigin,
     effectivePreviewOrigin: primaryArtifact.effectivePreviewOrigin,
     finalUrl,
-    profile: scenario.profile ?? "desktop-chrome",
-    capture: captures,
+    profile: runPlan.profile,
+    capture: runPlan.capture,
     startedAt,
     finishedAt: now(),
     context: primaryArtifact.summary.context,
@@ -2109,9 +2144,67 @@ async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioI
 }
 
 function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[]): string[] {
-  const raw = scenario.captures ?? scenario.capture ?? commaListArg(args, "capture")
+  const raw = scenario.captures ?? commaListArg(args, "capture")
   const captures = Array.isArray(raw) ? raw.map(String).filter(Boolean) : []
   return captures.length > 0 ? captures : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
+}
+
+function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], url: string): BrowserRunPlan {
+  const captures = browserScenarioCaptures(scenario, args)
+  const steps = browserScenarioSteps(scenario, args)
+  const assertions = browserScenarioAssertions(scenario)
+  const actionSteps = [...steps, ...assertions]
+  const requestedViewport = browserScenarioViewport(scenario, args)
+  const device = scenario.device ?? (scenario.profile && scenario.profile !== "desktop-chrome" ? scenario.profile : undefined) ?? argValue(args, "device")
+  const locale = scenario.locale ?? argValue(args, "locale")
+  const prePageScript = scenario.prePageScript ?? browserScenarioObserverScript(scenario.observers) ?? argValue(args, "pre-page-script")
+  const authRequest = browserScenarioAuthRequest(scenario.auth ?? argValue(args, "auth"), scenario.authUserId ?? argValue(args, "auth-user-id"))
+  const shouldRunProbe = actionSteps.length === 0 || Boolean(prePageScript) || captures.some((capture) => capture === "performance" || capture === "memory")
+
+  const plan: BrowserRunPlan = {
+    profile: scenario.profile ?? "desktop-chrome",
+    capture: captures,
+  }
+
+  if (shouldRunProbe) {
+    plan.probe = {
+      url,
+      capture: new Set(browserScenarioProbeCaptures(captures, actionSteps.length > 0)),
+      waitFor: scenario.waitFor ?? argValue(args, "wait-for") ?? "domcontentloaded",
+      durationMs: durationStringMs(scenario.duration ?? argValue(args, "duration")),
+      requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
+      requestedContext: {
+        ...(device ? { device } : {}),
+        ...(locale ? { locale } : {}),
+        ...(requestedViewport ? { viewport: parseBrowserViewport(requestedViewport, "viewport") } : {}),
+      },
+      prePageScript,
+      authRequest,
+      failFast: false,
+      stallTimeoutMs: 0,
+      lifecycleSelectors: [],
+      assertions: [],
+    }
+  }
+
+  if (actionSteps.length > 0) {
+    const validation = validateBrowserInteractionScript(actionSteps)
+    if (!validation.valid) {
+      throw new Error(`wordpress.browser-scenario steps/assertions are invalid: ${validation.issues.map((issue) => `[${issue.index}] ${issue.message}`).join("; ")}`)
+    }
+    plan.actions = {
+      initialUrl: url,
+      steps: validation.steps,
+      capture: new Set(browserScenarioActionCaptures(captures)),
+      stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS,
+      totalTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
+      requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
+      authRequest,
+      maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
+    }
+  }
+
+  return plan
 }
 
 function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolean): string[] {
@@ -2121,7 +2214,7 @@ function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolea
 }
 
 function browserScenarioActionCaptures(captures: string[]): string[] {
-  const supported = new Set(["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"])
+  const supported = new Set(["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"])
   const selected = captures.filter((capture) => supported.has(capture))
   return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
@@ -2180,6 +2273,30 @@ function parseInlineJsonArrayArg(args: string[], name: string): Array<Record<str
 function browserScenarioViewport(scenario: BrowserScenarioInput, args: string[]): string | undefined {
   if (scenario.viewport) return scenario.viewport
   return argValue(args, "viewport")
+}
+
+function parseBrowserViewport(raw: string, name: string): { width: number; height: number } {
+  const match = raw.trim().match(/^(\d+)x(\d+)$/i)
+  if (!match) {
+    throw new Error(`${name} must use <width>x<height>, for example 390x844: ${raw}`)
+  }
+  const width = Number.parseInt(match[1] ?? "", 10)
+  const height = Number.parseInt(match[2] ?? "", 10)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`${name} width and height must be positive integers: ${raw}`)
+  }
+  return { width, height }
+}
+
+function browserScenarioAuthRequest(auth: string | undefined, authUserId: string | number | undefined): { userId: number } | undefined {
+  if (!auth) {
+    return undefined
+  }
+  if (auth !== "wordpress-admin") {
+    throw new Error(`Browser auth supports wordpress-admin: ${auth}`)
+  }
+  const parsedUserId = typeof authUserId === "number" ? authUserId : Number.parseInt(authUserId ?? "1", 10)
+  return { userId: Number.isFinite(parsedUserId) && parsedUserId > 0 ? parsedUserId : 1 }
 }
 
 function browserScenarioObserverScript(observers: Array<Record<string, unknown>> | undefined): string | undefined {
