@@ -1028,7 +1028,7 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 function wp_codebox_browser_runtime_tool_name( string $tool_id ): string {
 $tool_id = trim( $tool_id );
 if ( \'filesystem-write\' === $tool_id || \'filesystem_write\' === $tool_id || \'client/filesystem-write\' === $tool_id ) {
-	return \'client/filesystem-write\';
+	return \'filesystem_write\';
 }
 
 return \'\';
@@ -1038,15 +1038,15 @@ function wp_codebox_browser_runtime_tool_declarations( array $tool_names ): arra
 global $wp_codebox_browser_artifact_environment;
 
 $declarations = array();
-if ( ! in_array( \'client/filesystem-write\', $tool_names, true ) ) {
+if ( ! in_array( \'filesystem_write\', $tool_names, true ) ) {
 	return $declarations;
 }
 
 $environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
 $root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
 $base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
-$declarations[\'client/filesystem-write\'] = array(
-	\'name\'        => \'client/filesystem-write\',
+$declarations[\'filesystem_write\'] = array(
+	\'name\'        => \'filesystem_write\',
 	\'source\'      => \'client\',
 	\'description\' => sprintf( \'Write one generated artifact file inside %s/%s. Call this once per file required by the caller artifact contract.\', $base_path, $root ),
 	\'executor\'    => \'client\',
@@ -1072,7 +1072,8 @@ return $declarations;
 function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
 unset( $payload );
 
-if ( \'client/filesystem-write\' !== (string) ( $request[\'tool_name\'] ?? \'\' ) ) {
+$tool_name = (string) ( $request[\'tool_name\'] ?? \'\' );
+if ( \'filesystem_write\' !== $tool_name && \'client/filesystem-write\' !== $tool_name ) {
 	return null;
 }
 
