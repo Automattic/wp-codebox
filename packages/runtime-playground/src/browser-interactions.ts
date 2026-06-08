@@ -7,6 +7,7 @@ import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadines
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
   readiness?: BrowserPaintedReadinessSummary
+  target?: BrowserStepRecord["target"]
   screenshot?: string
   screenshotIsDefault?: boolean
   error?: BrowserProbeErrorRecord
@@ -126,10 +127,16 @@ export async function executeBrowserInteractionStep(
       const path = typeof step.name === "string" && step.name.length > 0
         ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
         : defaultScreenshotPath
-      await page.screenshot({ path, fullPage: true })
+      const frameTarget = await screenshotFrameTarget(page, step, timeout)
+      if (frameTarget) {
+        await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+      } else {
+        await page.screenshot({ path, fullPage: true })
+      }
       const isDefault = path === defaultScreenshotPath
       return {
         ...(readiness ? { readiness } : {}),
+        ...(frameTarget ? { target: { mode: frameTarget.mode as "frame-selector" | "frame-url", ...(frameTarget.selector ? { selector: frameTarget.selector } : {}), ...(frameTarget.urlFragment ? { urlFragment: frameTarget.urlFragment } : {}), ...(frameTarget.frame.url() ? { frameUrl: frameTarget.frame.url() } : {}) } } : {}),
         screenshot: isDefault ? "files/browser/screenshot.png" : `files/browser/${basename(path)}`,
         screenshotIsDefault: isDefault,
       }
@@ -139,6 +146,35 @@ export async function executeBrowserInteractionStep(
   }
 
   throw new Error(`wordpress.browser-actions step kind is not supported: ${step.kind}`)
+}
+
+async function screenshotFrameTarget(page: Page, step: BrowserInteractionStep, timeout: number): Promise<BrowserPaintedReadinessTarget | null> {
+  if (typeof step.frameSelector === "string" && step.frameSelector.trim().length > 0) {
+    const selector = step.frameSelector.trim()
+    const locator = page.locator(selector).first()
+    await locator.waitFor({ state: "attached", timeout })
+    const handle = await locator.elementHandle({ timeout })
+    const frame = await handle?.contentFrame()
+    if (!frame) {
+      throw new Error(`wordpress.browser-actions screenshot could not resolve iframe: ${selector}`)
+    }
+    return { mode: "frame-selector", frame, selector }
+  }
+
+  if (typeof step.frameUrl === "string" && step.frameUrl.trim().length > 0) {
+    const urlFragment = step.frameUrl.trim()
+    const deadline = Date.now() + timeout
+    while (Date.now() <= deadline) {
+      const frame = page.frames().find((candidate) => candidate !== page.mainFrame() && candidate.url().includes(urlFragment))
+      if (frame) {
+        return { mode: "frame-url", frame, urlFragment }
+      }
+      await page.waitForTimeout(100)
+    }
+    throw new Error(`wordpress.browser-actions screenshot could not resolve iframe URL fragment: ${urlFragment}`)
+  }
+
+  return null
 }
 
 function browserStepLocator(page: Page, step: BrowserInteractionStep) {
@@ -324,6 +360,7 @@ export function browserStepRecord(
     ...(typeof step.duration === "string" ? { duration: step.duration } : {}),
     ...(outcome.assertion ? { assertion: outcome.assertion } : {}),
     ...(outcome.readiness ? { readiness: outcome.readiness } : {}),
+    ...(outcome.target ? { target: outcome.target } : {}),
     ...(outcome.screenshot ? { screenshot: outcome.screenshot } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),

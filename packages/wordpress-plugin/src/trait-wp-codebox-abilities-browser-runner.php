@@ -705,6 +705,26 @@ return array_filter( array(
 ) );
 }
 
+function wp_codebox_browser_required_artifact_error( array $payload, array $artifact_bundle, array $diagnostics ) {
+$contract = wp_codebox_browser_artifact_contract( $payload );
+$schema = trim( (string) ( $contract[\'schema\'] ?? \'\' ) );
+if ( \'\' === $schema || ! empty( $artifact_bundle ) ) {
+	return null;
+}
+
+$artifact_capture = is_array( $diagnostics[\'artifact_capture\'] ?? null ) ? $diagnostics[\'artifact_capture\'] : wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle );
+return new WP_Error(
+	\'wp_codebox_browser_artifact_bundle_missing\',
+	\'The browser runner completed without capturing the required artifact bundle. Ensure the agent writes the contracted entrypoint before completion.\',
+	array(
+		\'status\' => 424,
+		\'contract_schema\' => $schema,
+		\'artifact_capture\' => $artifact_capture,
+		\'response\' => is_array( $diagnostics[\'response\'] ?? null ) ? $diagnostics[\'response\'] : array(),
+	)
+);
+}
+
 function wp_codebox_browser_response_diagnostics( $response ) {
 if ( ! is_array( $response ) ) {
 	return array( \'type\' => is_object( $response ) ? get_class( $response ) : gettype( $response ) );
@@ -1027,8 +1047,8 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 
 function wp_codebox_browser_runtime_tool_name( string $tool_id ): string {
 $tool_id = trim( $tool_id );
-if ( \'filesystem-write\' === $tool_id || \'client/filesystem-write\' === $tool_id ) {
-	return \'client/filesystem-write\';
+if ( in_array( $tool_id, array( \'filesystem-write\', \'filesystem_write\', \'client/filesystem-write\' ), true ) ) {
+	return \'filesystem_write\';
 }
 
 return \'\';
@@ -1038,15 +1058,15 @@ function wp_codebox_browser_runtime_tool_declarations( array $tool_names ): arra
 global $wp_codebox_browser_artifact_environment;
 
 $declarations = array();
-if ( ! in_array( \'client/filesystem-write\', $tool_names, true ) ) {
+if ( ! in_array( \'filesystem_write\', $tool_names, true ) ) {
 	return $declarations;
 }
 
 $environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
 $root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );
 $base_path = rtrim( (string) ( $environment[\'base_path\'] ?? \'/wordpress/wp-content/uploads/wp-codebox/artifacts\' ), \'/\' );
-$declarations[\'client/filesystem-write\'] = array(
-	\'name\'        => \'client/filesystem-write\',
+$declarations[\'filesystem_write\'] = array(
+	\'name\'        => \'filesystem_write\',
 	\'source\'      => \'client\',
 	\'description\' => sprintf( \'Write one generated artifact file inside %s/%s. Call this once per file required by the caller artifact contract.\', $base_path, $root ),
 	\'executor\'    => \'client\',
@@ -1072,7 +1092,7 @@ return $declarations;
 function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
 unset( $payload );
 
-if ( \'client/filesystem-write\' !== (string) ( $request[\'tool_name\'] ?? \'\' ) ) {
+if ( ! in_array( (string) ( $request[\'tool_name\'] ?? \'\' ), array( \'filesystem_write\', \'client/filesystem-write\' ), true ) ) {
 	return null;
 }
 
@@ -1319,6 +1339,12 @@ $diagnostics = array(
 \'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),
 \'response\' => wp_codebox_browser_response_diagnostics( $response ?? null ),
 );
+if ( ! is_wp_error( $response ?? null ) && ! ( ( $response ?? null ) instanceof Throwable ) ) {
+	$artifact_error = wp_codebox_browser_required_artifact_error( $payload, $artifact_bundle, $diagnostics );
+	if ( is_wp_error( $artifact_error ) ) {
+		$response = $artifact_error;
+	}
+}
 $execution_metrics = wp_codebox_browser_execution_metrics( $payload, $invocation_metadata, $captures, $artifact_bundle, $diagnostics, $response ?? null, $started_monotonic );
 $provenance = array(
 \'generated_by\' => \'wp-codebox/browser-runner\',

@@ -23,7 +23,7 @@ add_action('template_redirect', function () {
     }
 
     nocache_headers();
-    $frame_html = '<!doctype html><html><body style="margin:0;background:#0f766e;color:white;font:24px sans-serif;display:grid;place-items:center;height:100vh"><main id="rendered">Rendered iframe content</main></body></html>';
+    $frame_html = '<!doctype html><html><body style="margin:0;background:#0f766e;color:white;font:24px sans-serif;display:grid;place-items:center;height:900px"><main id="rendered">Rendered iframe content</main></body></html>';
     echo '<!doctype html><html><head><style>body{font-family:sans-serif;margin:0;padding:24px}iframe{width:360px;height:160px;border:4px solid #111827}</style></head><body><button id="render-frame" type="button">Render frame</button><iframe id="preview-frame" title="Preview frame"></iframe><script>const frameHtml = ' . wp_json_encode( $frame_html ) . '; document.getElementById("render-frame").addEventListener("click", function () { setTimeout(function () { document.getElementById("preview-frame").srcdoc = frameHtml; }, 250); });</script></body></html>';
     exit;
 } );
@@ -50,6 +50,7 @@ await writeFile(recipePath, `${JSON.stringify({
             { kind: "waitFor", selector: "#render-frame" },
             { kind: "click", selector: "#render-frame" },
             { kind: "screenshot", name: "frame-painted", waitFor: "frame-painted:#preview-frame" },
+            { kind: "screenshot", name: "frame-document", frameSelector: "#preview-frame" },
           ])}`,
           "viewport=480x320",
           "step-timeout=8s",
@@ -77,11 +78,13 @@ assert.ok(output.artifacts?.directory, "recipe-run should return an artifact dir
 const artifactDirectory = output.artifacts.directory
 const stepsPath = join(artifactDirectory, "files", "browser", "steps.jsonl")
 const screenshotPath = join(artifactDirectory, "files", "browser", "screenshot-frame-painted.png")
+const frameDocumentScreenshotPath = join(artifactDirectory, "files", "browser", "screenshot-frame-document.png")
 const domSnapshotPath = join(artifactDirectory, "files", "browser", "dom-snapshot-frame-painted.json")
 const summaryPath = join(artifactDirectory, "files", "browser", "action-summary.json")
 
 assert.equal(existsSync(stepsPath), true, "steps.jsonl should be captured")
 assert.equal(existsSync(screenshotPath), true, "painted iframe screenshot should be captured")
+assert.equal(existsSync(frameDocumentScreenshotPath), true, "frame document screenshot should be captured")
 assert.equal(existsSync(domSnapshotPath), true, "painted iframe screenshot should have a DOM sidecar")
 assert.equal(existsSync(summaryPath), true, "action summary should be captured")
 
@@ -98,6 +101,13 @@ assert.equal(screenshotStep?.readiness?.ready, true)
 assert.ok((screenshotStep?.readiness?.visibleElementCount ?? 0) > 0, "readiness should observe visible rendered iframe elements")
 assert.ok((screenshotStep?.readiness?.textLength ?? 0) > 0, "readiness should observe rendered iframe text")
 assert.match(screenshotStep?.readiness?.frameUrl ?? "", /about:srcdoc|wp_codebox_painted_readiness_fixture/)
+
+const frameDocumentStep = steps.find((step) => step.kind === "screenshot" && step.screenshot === "files/browser/screenshot-frame-document.png")
+assert.equal(frameDocumentStep?.target?.mode, "frame-selector")
+assert.equal(frameDocumentStep?.target?.selector, "#preview-frame")
+const frameDocumentDimensions = pngDimensions(await readFile(frameDocumentScreenshotPath))
+assert.equal(frameDocumentDimensions.width, 360, "frame document screenshot should use iframe document width")
+assert.ok(frameDocumentDimensions.height >= 900, "frame document screenshot should capture iframe document height")
 
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { steps: Array<{ kind: string; readiness?: unknown }>; files: { domSnapshots?: string[] } }
 assert.ok(summary.steps.some((step) => step.kind === "screenshot" && step.readiness), "summary should preserve screenshot readiness evidence")
@@ -116,4 +126,9 @@ async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: 
     throw new Error(`CLI exited with ${code}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }
   return JSON.parse(stdout)
+}
+
+function pngDimensions(buffer: Buffer): { width: number; height: number } {
+  assert.equal(buffer.toString("ascii", 1, 4), "PNG", "screenshot should be a PNG")
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
 }

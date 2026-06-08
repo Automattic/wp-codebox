@@ -66,6 +66,10 @@ export interface BrowserInteractionStep {
   state?: BrowserInteractionExpectState
   /** Optional screenshot name for `screenshot`; screenshot steps may also use waitFor for painted-readiness waits before capture. */
   name?: string
+  /** Optional iframe selector for `screenshot`; captures the iframe document instead of the top page. */
+  frameSelector?: string
+  /** Optional iframe URL fragment for `screenshot`; captures the matching iframe document instead of the top page. */
+  frameUrl?: string
   /** Optional wait duration (e.g. 500ms, 2s) for `waitFor`/`navigate`. */
   duration?: string
   /** Per-step timeout override (e.g. 5s). */
