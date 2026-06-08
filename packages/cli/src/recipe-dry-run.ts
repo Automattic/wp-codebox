@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path"
-import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { serializeError } from "./output.js"
 import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
@@ -13,6 +13,9 @@ export interface RecipeDryRunContext {
   defaultWordPressVersion: string
   resolveExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<{ command: string; args: string[] }>
 }
+
+export type RecipePlanOptions = RecipeDryRunOptions
+export type RecipePlanContext = RecipeDryRunContext
 
 export interface RecipeDryRunOutput {
   success: boolean
@@ -31,7 +34,7 @@ export interface RecipeDryRunOutput {
   }
 }
 
-export interface RecipeDryRunPlan {
+export interface RecipePlan {
   runtime: {
     backend: string
     backendPackage?: {
@@ -43,6 +46,8 @@ export interface RecipeDryRunPlan {
     }
     name: string
     wp: string
+    phpVersion?: string
+    wordpressInstallMode?: RuntimeWordPressInstallMode
     blueprint: unknown
   }
   distribution?: RecipeDryRunDistribution
@@ -69,6 +74,8 @@ export interface RecipeDryRunPlan {
     after?: RecipeDryRunStep[]
   }
 }
+
+export type RecipeDryRunPlan = RecipePlan
 
 interface RecipeDryRunDistribution {
   name: string
@@ -261,7 +268,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
       dryRun: true,
       valid: true,
       validation: { issues },
-      plan: await recipeDryRunPlan(recipe, recipeDirectory, options, context),
+      plan: await planWorkspaceRecipe(recipe, recipeDirectory, options, context),
     }
   } catch (error) {
     return {
@@ -284,7 +291,7 @@ export async function dryRunRecipe(options: RecipeDryRunOptions, context: Recipe
   }
 }
 
-async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string, options: RecipeDryRunOptions, context: RecipeDryRunContext): Promise<RecipeDryRunPlan> {
+export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirectory: string, options: RecipePlanOptions, context: RecipePlanContext): Promise<RecipePlan> {
   const policy = recipePolicy(recipe)
   const policyValidation = validateRuntimePolicy(policy)
   const workspaces = recipeDryRunWorkspaces(recipe, recipeDirectory)
@@ -379,6 +386,8 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       ...(recipe.runtime?.backendPackage ? { backendPackage: recipe.runtime.backendPackage } : {}),
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
+      ...(recipe.runtime?.phpVersion ? { phpVersion: recipe.runtime.phpVersion } : {}),
+      ...(recipe.runtime?.wordpressInstallMode ? { wordpressInstallMode: recipe.runtime.wordpressInstallMode } : {}),
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
     },
     ...(distribution ? { distribution } : {}),

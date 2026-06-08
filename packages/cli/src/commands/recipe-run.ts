@@ -10,7 +10,7 @@ import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
-import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
+import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, type AgentSandboxResultSummary, type AgentTaskSingleResult, type SandboxCompletionOutcome } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
@@ -829,7 +829,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
   }
 
-  const policy = recipePolicy(recipe)
+  const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
+  const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
   const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
@@ -874,22 +875,22 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
     const runtimeEnvironment = {
       kind: "wordpress" as const,
-      name: recipe.runtime?.name ?? "wp-codebox-recipe",
-      version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
-      phpVersion: recipe.runtime?.phpVersion,
-      wordpressInstallMode: recipe.runtime?.wordpressInstallMode,
-      blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
+      name: plan.runtime.name,
+      version: plan.runtime.wp,
+      phpVersion: plan.runtime.phpVersion,
+      wordpressInstallMode: plan.runtime.wordpressInstallMode,
+      blueprint: plan.runtime.blueprint,
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
     }
     const effectivePreview = effectiveRecipePreview(recipe.runtime?.preview, options)
     const runtimeCreateSpec = {
-      backend: recipe.runtime?.backend ?? "wordpress-playground",
+      backend: plan.runtime.backend,
       environment: runtimeEnvironment,
       policy: effectivePolicy,
       secretEnv,
       artifactsDirectory: configuredArtifactsDirectory,
       metadata: {
-        ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
+        ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
         ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, backendPackage, effectivePreview),
       },
