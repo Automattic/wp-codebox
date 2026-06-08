@@ -15,7 +15,6 @@ export interface AgentTaskRunOptions {
 
 export interface AgentTaskRunInput {
   goal?: string
-  task?: string
   agent?: string
   mode?: string
   provider?: string

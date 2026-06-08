@@ -2184,6 +2184,7 @@ $caller_adapter_result = $runner->run(
 				'owner' => 'caller-adapter',
 			),
 		),
+		'component_contracts' => $component_contracts,
 		'parent_request' => array(
 			'schema'               => 'wp-codebox/task-input/v1',
 			'version'              => 1,
@@ -2272,7 +2273,7 @@ $assert( 'runner passes generic runtime task execution request to sandbox step',
 $assert( 'runner maps canonical parent timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $caller_adapter_step_args, true ) && in_array( 'max-turns=8', $caller_adapter_step_args, true ) );
 $assert( 'runner maps canonical parent runtime stack mounts and overlays', '/runtime/agents-api' === ( $caller_adapter_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'caller-runtime-overlay' === ( $caller_adapter_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
 $assert( 'runner maps canonical parent workspaces without downstream recipe generation', 1 === count( $caller_adapter_recipe['inputs']['workspaces'] ?? array() ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) );
-$assert( 'runner maps canonical parent component contracts', str_contains( $captured_recipe, 'caller-runtime' ) && str_contains( $captured_recipe, 'caller-runtime-tools' ) && str_contains( $captured_recipe, 'agents-api' ) );
+$assert( 'runner maps canonical parent component contracts', str_contains( $captured_recipe, 'agents-api' ) && str_contains( $captured_recipe, 'data-machine' ) && str_contains( $captured_recipe, 'data-machine-code' ) );
 $assert( 'runner passes canonical parent task context to sandbox agent', str_contains( $captured_recipe, 'caller-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
 
 $GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';
