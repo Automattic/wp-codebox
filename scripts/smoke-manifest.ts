@@ -82,6 +82,7 @@ export const smokeGroups = {
       tsxSmoke("mounted-workspace-diff-smoke"),
       tsxSmoke("artifact-contract-smoke"),
       tsxSmoke("durable-artifact-preview-smoke"),
+      tsxSmoke("replayable-wordpress-site-bundle-smoke"),
       tsxSmoke("external-adapter-contract-smoke"),
     ],
   },
