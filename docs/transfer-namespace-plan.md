@@ -1,5 +1,10 @@
 # Transfer Namespace Plan
 
+Historical note: this is a transfer planning record, not the current onboarding
+path or recipe contract reference. Start with [`README.md`](./README.md),
+[`architecture.md`](./architecture.md), and
+[`recipe-contract.md`](./recipe-contract.md) for current docs.
+
 WP Codebox is moving from personal ownership assumptions toward Automattic
 ownership. This plan inventories the current personal namespace assumptions and
 defines the mechanical update path once the target package namespace and

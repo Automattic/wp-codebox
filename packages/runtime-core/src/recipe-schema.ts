@@ -412,6 +412,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           slug: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
           pluginFile: { type: "string" },
           activate: { type: "boolean" },
+          loadAs: { enum: ["plugin", "mu-plugin"] },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
         },
       },

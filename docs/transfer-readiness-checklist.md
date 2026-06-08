@@ -1,5 +1,10 @@
 # Transfer Readiness Architecture Checklist
 
+Historical note: this is a transfer planning record, not the current onboarding
+path or recipe contract reference. Start with [`README.md`](./README.md),
+[`architecture.md`](./architecture.md), and
+[`recipe-contract.md`](./recipe-contract.md) for current docs.
+
 WP Codebox is preparing to move from a personal prototype substrate toward
 Automattic-owned infrastructure. This checklist defines the architecture review
 surface that should be clean before transfer: package boundaries, artifact

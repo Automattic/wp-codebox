@@ -441,10 +441,9 @@ refs, and adapter hooks.
   preview URLs, statuses, and errors. Parent orchestrators own parallelism,
   track their own jobs, pass correlation metadata into each sandbox run, and
   store the returned artifact ids as evidence.
-- **Transfer-readiness checklist:** package boundaries, artifact lifecycle,
-  extension seams, browser runtime dependencies, ability contracts, security
-  gates, and external integration review points are tracked in
-  [`transfer-readiness-checklist.md`](./transfer-readiness-checklist.md).
+- **Recipe contract:** current recipe field names, extra plugin loading, workflow
+  step shape, and browser assertion syntax are documented in
+  [`recipe-contract.md`](./recipe-contract.md).
 
 ## Ownership Boundaries
 
@@ -479,3 +478,8 @@ or agent framework.
 
 For dependency-role classification and browser runtime packaging boundaries, see
 [`browser-runtime-dependency-audit.md`](./browser-runtime-dependency-audit.md).
+
+Historical transfer planning records remain in
+[`transfer-readiness-checklist.md`](./transfer-readiness-checklist.md) and
+[`transfer-namespace-plan.md`](./transfer-namespace-plan.md), but they are not
+the current onboarding path or recipe contract authority.

@@ -1898,7 +1898,7 @@ export async function runBrowserActionsCommand({
 }
 
 async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserActionsRunPlan> {
-  const capture = new Set(commaListArg(args, "capture"))
+  const capture = new Set(commaListArg(args, "capture").map((item) => item === "actions" ? "steps" : item))
   if (capture.size === 0) {
     capture.add("steps")
     capture.add("console")

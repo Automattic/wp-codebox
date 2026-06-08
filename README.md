@@ -6,13 +6,10 @@ WordPress has historically lacked a clean scratch space for code execution. Mode
 
 WP Codebox is the runtime boundary for agent-built or workflow-built outputs. It is not the agent framework, the review UI, the deploy system, or the production site mutator. The WordPress plugin in this repo is one optional host adapter (useful when the host *is* a WordPress site); the core CLI/runtime works anywhere `node` can run.
 
-For the durable architecture boundary, see [`docs/architecture.md`](./docs/architecture.md).
-For the Automattic transfer review surface, see
-[`docs/transfer-readiness-checklist.md`](./docs/transfer-readiness-checklist.md).
-For browser runtime dependency classification and packaging provenance, see
-[`docs/browser-runtime-dependency-audit.md`](./docs/browser-runtime-dependency-audit.md).
-For the generic multi-agent fanout contract, see
-[`docs/agent-fanout-contract.md`](./docs/agent-fanout-contract.md).
+For the docs map, see [`docs/README.md`](./docs/README.md). For the durable
+architecture boundary, see [`docs/architecture.md`](./docs/architecture.md). For
+recipe authoring, supported input names, and assertion syntax, see
+[`docs/recipe-contract.md`](./docs/recipe-contract.md).
 
 ```text
 Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
@@ -819,7 +816,7 @@ npm run wp-codebox -- recipe-run \
   --json
 ```
 
-Recipes are JSON declarations for a sandbox setup plus workflow steps. They can mount existing directories, create disposable plugin/theme workspaces, activate extra plugins, allow-list selected secret environment variable names, and capture the output as artifacts.
+Recipes are JSON declarations for a sandbox setup plus workflow steps. They can mount existing directories, create disposable plugin/theme workspaces, activate extra plugins, allow-list selected secret environment variable names, and capture the output as artifacts. See [`docs/recipe-contract.md`](./docs/recipe-contract.md) for the current recipe field names and assertion syntax.
 
 Pass `--dry-run --json` to validate the same recipe and emit the resolved plan without booting Playground, creating temp workspaces, mounting files, executing commands, or writing artifacts:
 
