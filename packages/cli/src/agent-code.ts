@@ -581,7 +581,7 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
         sort($files);
         foreach ($files as $file) {
             $header = @file_get_contents($file, false, null, 0, 8192);
-            if (false !== $header && preg_match('/Plugin Name:\s*\S/', $header)) {
+            if (false !== $header && preg_match('/Plugin Name:[ \\t]*[^ \\t\\r\\n]/', $header)) {
                 $candidate = $slug . '/' . basename($file);
                 if (wp_codebox_plugin_entry_path($candidate)) {
                     return $candidate;
@@ -743,7 +743,7 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
         sort($files);
         foreach ($files as $file) {
             $header = @file_get_contents($file, false, null, 0, 8192);
-            if (false !== $header && preg_match('/Plugin Name:\s*\S/', $header)) {
+            if (false !== $header && preg_match('/Plugin Name:[ \\t]*[^ \\t\\r\\n]/', $header)) {
                 $candidate = $slug . '/' . basename($file);
                 if (wp_codebox_plugin_entry_path($candidate)) {
                     return $candidate;
