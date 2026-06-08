@@ -5,17 +5,19 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, vali
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
-import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
+import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
+import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import type { Page, Route } from "playwright"
+import type { Page } from "playwright"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -384,10 +386,10 @@ async function runSingleBrowserProbeCommand({
   const capturesNetworkForAssertions = browserProbeAssertionsNeedNetwork(assertions)
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory") || browserProbeAssertionsNeedMetrics(assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
-  const networkPolicy = browserProbeNetworkPolicy(args, routedHosts, preview)
-  const previewOrigins = browserProbePreviewOrigins(preview)
-  const targetUrl = resolveBrowserProbeUrl(runPlan.url, preview.effectiveOrigin)
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
+  const targetUrl = resolveBrowserPreviewUrl(runPlan.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, browserFilesDirectory)
   await mkdir(browserDirectory, { recursive: true })
 
@@ -410,7 +412,7 @@ async function runSingleBrowserProbeCommand({
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
-  const { chromium, devices } = await import("playwright")
+  const { devices } = await import("playwright")
   if (requestedContext.browser && requestedContext.browser !== "chromium") {
     throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; use browser=chromium or a Chromium profile.`)
   }
@@ -418,16 +420,8 @@ async function runSingleBrowserProbeCommand({
   if (requestedContext.device && !deviceProfile) {
     throw new Error(`wordpress.browser-probe unknown Playwright device profile: ${requestedContext.device}`)
   }
-  const browser = await chromium.launch(
-    process.env.WP_CODEBOX_BROWSER_CHANNEL
-      ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL }
-      : undefined,
-  )
-  const browserMetadata = {
-    name: "chromium",
-    channel: process.env.WP_CODEBOX_BROWSER_CHANNEL || "bundled",
-    version: browser.version(),
-  }
+  const browser = await launchChromiumBrowser()
+  const browserMetadata = chromiumBrowserMetadata(browser)
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
   let htmlSha256: string | undefined
@@ -447,7 +441,7 @@ async function runSingleBrowserProbeCommand({
   let artifact: BrowserProbeArtifact | undefined
 
   try {
-    context = browserProbeNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
+    context = browserPreviewNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
@@ -458,8 +452,8 @@ async function runSingleBrowserProbeCommand({
     if (context && requestedContext.permissions && requestedContext.permissions.length > 0) {
       await context.grantPermissions(requestedContext.permissions)
     }
-    if (context && browserProbeNeedsContextRouting(networkPolicy)) {
-      await routeBrowserProbeContextNetwork(context, networkPolicy, preview.localOrigin)
+    if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (authRequest) {
@@ -471,8 +465,8 @@ async function runSingleBrowserProbeCommand({
     if (throttleProfile) {
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
-    if (!context && browserProbeNeedsContextRouting(networkPolicy)) {
-      await routeBrowserProbePageNetwork(page, networkPolicy, preview.localOrigin)
+    if (!context && browserPreviewNeedsContextRouting(networkPolicy)) {
+      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.localOrigin)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -487,33 +481,21 @@ async function runSingleBrowserProbeCommand({
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
     capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
-    if (capture.has("console") || capturesConsoleForAssertions) {
-      page.on("console", (message) => {
-        progress.mark("console")
-        consoleMessages.push(serializeBrowserConsoleMessage(message))
-      })
-    }
-    if (capture.has("errors") || capturesErrorsForAssertions) {
-      page.on("pageerror", (error) => {
-        progress.mark("pageerror")
-        errors.push(serializeBrowserError("pageerror", error))
-      })
-    }
-    if (capture.has("network") || capturesNetworkForAssertions) {
-      page.on("requestfinished", (request) => {
-        const task = serializeBrowserFinishedRequest(request).then((record) => {
-          progress.mark("network")
-          network.push(record)
-        }).catch(() => undefined)
-        networkTasks.push(task)
-      })
-      page.on("requestfailed", (request) => {
-        progress.mark("network")
-        network.push(serializeBrowserRequestFailure(request))
-      })
-    }
+    attachBrowserCaptureListeners({
+      captureConsole: capture.has("console") || capturesConsoleForAssertions,
+      captureErrors: capture.has("errors") || capturesErrorsForAssertions,
+      captureNetwork: capture.has("network") || capturesNetworkForAssertions,
+      consoleMessages,
+      errors,
+      network,
+      networkTasks,
+      onConsole: () => progress.mark("console"),
+      onNetwork: () => progress.mark("network"),
+      onPageError: () => progress.mark("pageerror"),
+      page,
+    })
 
-    const previewReadinessError = browserProbePreviewReadinessError(preview)
+    const previewReadinessError = browserPreviewReadinessError(preview)
     if (previewReadinessError) {
       throw previewReadinessError
     }
@@ -523,7 +505,7 @@ async function runSingleBrowserProbeCommand({
     const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
     windowLocationOrigin = browserLocation?.origin
     preview.secureContext = browserLocation?.secureContext
-    const secureContextError = browserProbeSecureContextError(preview)
+    const secureContextError = browserPreviewSecureContextError(preview)
     if (secureContextError) {
       throw secureContextError
     }
@@ -681,7 +663,7 @@ async function runSingleBrowserProbeCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
-      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
@@ -704,7 +686,7 @@ async function runSingleBrowserProbeCommand({
         finalUrl,
         ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
         htmlSnapshot: capture.has("html"),
-        ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
@@ -725,7 +707,7 @@ async function runSingleBrowserProbeCommand({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
       preview,
-      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       finalUrl,
       ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
@@ -766,7 +748,7 @@ async function runSingleBrowserProbeCommand({
       command,
       requestedUrl: targetUrl,
       preview,
-      ...(browserProbeNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserProbeNetworkPolicySummary(networkPolicy) } : {}),
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...previewOrigins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
@@ -1219,9 +1201,9 @@ export async function runEditorCanvasProbeCommand({
   const blockSelector = argValue(args, "block-selector")?.trim() || argValue(args, "blockSelector")?.trim() || EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR
   const timeoutMs = editorCanvasTimeoutMs(args)
   const selectorGroups = editorCanvasSelectorGroups(args, layoutSelector, blockSelector)
-  const preview = browserProbePreviewRouting(args, runtimeSpec, server.serverUrl)
-  const previewOrigins = browserProbePreviewOrigins(preview)
-  const targetUrl = resolveBrowserProbeUrl(urlArg, preview.effectiveOrigin)
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const previewOrigins = browserPreviewOrigins(preview)
+  const targetUrl = resolveBrowserPreviewUrl(urlArg, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -1229,8 +1211,7 @@ export async function runEditorCanvasProbeCommand({
   const screenshotPath = join(browserDirectory, "editor-canvas-screenshot.png")
   const startedAt = now()
   const startedAtMs = Date.now()
-  const { chromium } = await import("playwright")
-  const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
+  const browser = await launchChromiumBrowser()
   const errors: BrowserProbeErrorRecord[] = []
   let artifact: BrowserArtifact | undefined
   let finalUrl = targetUrl
@@ -1240,20 +1221,28 @@ export async function runEditorCanvasProbeCommand({
   let pendingError: Error | undefined
 
   try {
-    const previewReadinessError = browserProbePreviewReadinessError(preview)
+    const previewReadinessError = browserPreviewReadinessError(preview)
     if (previewReadinessError) {
       throw previewReadinessError
     }
 
     const page = await browser.newPage()
     viewport = await browserProbeViewport(page)
-    page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
+    attachBrowserCaptureListeners({
+      captureConsole: false,
+      captureErrors: true,
+      captureNetwork: false,
+      consoleMessages: [],
+      errors,
+      network: [],
+      page,
+    })
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
     finalUrl = page.url()
     const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
     windowLocationOrigin = browserLocation?.origin
     preview.secureContext = browserLocation?.secureContext
-    const secureContextError = browserProbeSecureContextError(preview)
+    const secureContextError = browserPreviewSecureContextError(preview)
     if (secureContextError) {
       throw secureContextError
     }
@@ -1698,10 +1687,9 @@ export async function runBrowserActionsCommand({
   const summaryPath = join(browserDirectory, "action-summary.json")
   const startedAt = now()
   const startedAtMs = Date.now()
-  const { chromium } = await import("playwright")
-  const browser = await chromium.launch()
-  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
-  let requestedUrl = initialUrl ? resolveBrowserProbeUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
+  const browser = await launchChromiumBrowser()
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  let requestedUrl = initialUrl ? resolveBrowserPreviewUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
@@ -1720,21 +1708,16 @@ export async function runBrowserActionsCommand({
       await page.setViewportSize(requestedViewport)
     }
     viewport = await browserProbeViewport(page)
-    if (capture.has("console")) {
-      page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
-    }
-    if (capture.has("errors")) {
-      page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
-    }
-    if (capture.has("network")) {
-      page.on("requestfinished", (request) => {
-        const task = serializeBrowserFinishedRequest(request).then((record) => {
-          network.push(record)
-        }).catch(() => undefined)
-        networkTasks.push(task)
-      })
-      page.on("requestfailed", (request) => network.push(serializeBrowserRequestFailure(request)))
-    }
+    attachBrowserCaptureListeners({
+      captureConsole: capture.has("console"),
+      captureErrors: capture.has("errors"),
+      captureNetwork: capture.has("network"),
+      consoleMessages,
+      errors,
+      network,
+      networkTasks,
+      page,
+    })
 
     for (const [index, step] of steps.entries()) {
       const recordStartedAt = now()
@@ -1749,10 +1732,10 @@ export async function runBrowserActionsCommand({
         break
       }
       try {
-        const outcome = await executeBrowserInteractionStep(page, step, server.serverUrl, stepTimeoutMs, screenshotPath, browserDirectory)
+        const outcome = await executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory)
         finalUrl = page.url()
         if (step.kind === "navigate") {
-          requestedUrl = resolveBrowserProbeUrl((step.url ?? "").trim(), server.serverUrl)
+          requestedUrl = resolveBrowserPreviewUrl((step.url ?? "").trim(), preview.effectiveOrigin)
         }
         if (outcome.screenshot && capture.has("screenshot") && outcome.screenshotIsDefault) {
           screenshotSha256 = await fileSha256(screenshotPath)
@@ -2039,7 +2022,7 @@ export async function runBrowserScenarioCommand({
 
   if (runPlan.probe) {
     try {
-      probeResult = await runBrowserProbeCommand({ artifactRoot, plan: runPlan.probe, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args: [] } })
+      probeResult = await runBrowserProbeCommand({ artifactRoot, plan: runPlan.probe, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "probe") {
         probeResult = { artifact: error.artifact, output: "" }
@@ -2050,7 +2033,7 @@ export async function runBrowserScenarioCommand({
 
   if (!pendingError && runPlan.actions) {
     try {
-      actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: runPlan.actions, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args: [] } })
+      actionsResult = await runBrowserActionsCommand({ artifactRoot, plan: runPlan.actions, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args } })
     } catch (error) {
       if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
         actionsResult = { artifact: error.artifact, output: "" }
@@ -2337,8 +2320,8 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
-  const targetUrl = resolveBrowserProbeUrl(target.url, preview.effectiveOrigin)
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -2353,8 +2336,7 @@ export async function runEditorOpenCommand({
   const editorStatePath = join(browserDirectory, "editor-state.json")
   const summaryPath = join(browserDirectory, "editor-summary.json")
   const startedAt = now()
-  const { chromium } = await import("playwright")
-  const browser = await chromium.launch()
+  const browser = await launchChromiumBrowser()
   let finalUrl = targetUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
@@ -2367,12 +2349,15 @@ export async function runEditorOpenCommand({
     const page = await browser.newPage()
     await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
-    if (capture.has("console")) {
-      page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
-    }
-    if (capture.has("errors")) {
-      page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
-    }
+    attachBrowserCaptureListeners({
+      captureConsole: capture.has("console"),
+      captureErrors: capture.has("errors"),
+      captureNetwork: false,
+      consoleMessages,
+      errors,
+      network: [],
+      page,
+    })
 
     const navigateStartedAt = now()
     const navigateStartedAtMs = Date.now()
@@ -2529,8 +2514,8 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
-  const targetUrl = resolveBrowserProbeUrl(target.url, preview.effectiveOrigin)
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -2546,8 +2531,7 @@ export async function runEditorActionsCommand({
   const summaryPath = join(browserDirectory, "editor-action-summary.json")
   const startedAt = now()
   const startedAtMs = Date.now()
-  const { chromium } = await import("playwright")
-  const browser = await chromium.launch()
+  const browser = await launchChromiumBrowser()
   let finalUrl = targetUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
@@ -2560,12 +2544,15 @@ export async function runEditorActionsCommand({
     const page = await browser.newPage()
     await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
-    if (capture.has("console")) {
-      page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
-    }
-    if (capture.has("errors")) {
-      page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
-    }
+    attachBrowserCaptureListeners({
+      captureConsole: capture.has("console"),
+      captureErrors: capture.has("errors"),
+      captureNetwork: false,
+      consoleMessages,
+      errors,
+      network: [],
+      page,
+    })
 
     const navigateStartedAt = now()
     const navigateStartedAtMs = Date.now()
@@ -2791,9 +2778,9 @@ async function runVisualComparePairCommand({
   const visualExplanationPath = join(browserDirectory, "visual-explanation.json")
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
-  const preview = browserProbePreviewRouting([], runtimeSpec, server.serverUrl)
-  const sourceTargetUrl = sourceUrl ? resolveBrowserProbeUrl(sourceUrl, preview.effectiveOrigin) : undefined
-  const candidateTargetUrl = candidateUrl ? resolveBrowserProbeUrl(candidateUrl, preview.effectiveOrigin) : undefined
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const sourceTargetUrl = sourceUrl ? resolveBrowserPreviewUrl(sourceUrl, preview.effectiveOrigin) : undefined
+  const candidateTargetUrl = candidateUrl ? resolveBrowserPreviewUrl(candidateUrl, preview.effectiveOrigin) : undefined
   let finalSourceUrl = sourceTargetUrl
   let finalCandidateUrl = candidateTargetUrl
   let viewport: BrowserProbeViewport | null = null
@@ -2801,8 +2788,7 @@ async function runVisualComparePairCommand({
   let candidateDomSnapshot: VisualCompareDomSnapshot | undefined
 
   if (sourceTargetUrl && candidateTargetUrl) {
-    const { chromium } = await import("playwright")
-    const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
+    const browser = await launchChromiumBrowser()
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
@@ -3008,7 +2994,7 @@ async function runVisualCompareMatrixCommand({
     artifactType: "visual-compare",
     requestedUrl: matrix.entries.map((entry) => entry.name).join(","),
     url: firstArtifact?.url ?? "visual-compare-matrix",
-    preview: firstArtifact?.preview ?? browserProbePreviewRouting([], runtimeSpec, server.serverUrl),
+    preview: firstArtifact?.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
     files: {
       summary: matrixSummary.files.summary,
       visualDiff: visualDiffs,
@@ -4090,269 +4076,6 @@ function browserAuthRequest(args: string[]): { userId: number } | undefined {
 
 function now(): string {
   return new Date().toISOString()
-}
-
-interface BrowserProbeNetworkPolicy {
-  mode: "allow" | "block" | "record"
-  allowHosts: Set<string>
-  blockHosts: Set<string>
-  routeHosts: Set<string>
-  firstPartyHosts: Set<string>
-  recordExternal: boolean
-  stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
-}
-
-async function routeBrowserProbePageNetwork(page: Page, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
-  await routeBrowserProbeNetwork(page.route.bind(page), policy, localPreviewOrigin)
-}
-
-async function routeBrowserProbeContextNetwork(context: import("playwright").BrowserContext, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
-  await routeBrowserProbeNetwork(context.route.bind(context), policy, localPreviewOrigin)
-}
-
-async function routeBrowserProbeNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserProbeNetworkPolicy, localPreviewOrigin: string): Promise<void> {
-  if (!browserProbeNeedsContextRouting(policy)) {
-    return
-  }
-
-  const localOrigin = new URL(localPreviewOrigin)
-  await routePattern("**/*", async (route) => {
-    const request = route.request()
-    let requestUrl: URL
-    try {
-      requestUrl = new URL(request.url())
-    } catch {
-      await route.continue()
-      return
-    }
-
-    const host = normalizeBrowserProbeHost(requestUrl.hostname)
-    const stat = browserProbeNetworkPolicyHostStat(policy, host)
-    stat.requests += 1
-    stat.external = !policy.firstPartyHosts.has(host)
-
-    if (policy.blockHosts.has(host) || (policy.mode === "block" && stat.external && !policy.allowHosts.has(host))) {
-      stat.blocked += 1
-      await route.abort("blockedbyclient")
-      return
-    }
-
-    if (!policy.routeHosts.has(host)) {
-      await route.continue()
-      return
-    }
-
-    stat.routed += 1
-    const response = await fetchBrowserProbeRoutedHost(route, requestUrl, policy.routeHosts, localOrigin)
-    await route.fulfill({ response })
-  })
-}
-
-function browserProbeNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting): BrowserProbeNetworkPolicy {
-  const mode = browserProbeNetworkPolicyMode(args)
-  const allowHosts = new Set(commaListArg(args, "allow-host").map(normalizeBrowserProbeHost).filter(Boolean))
-  const blockHosts = new Set(commaListArg(args, "block-host").map(normalizeBrowserProbeHost).filter(Boolean))
-  const routedHosts = new Set(routeHosts.map(normalizeBrowserProbeHost).filter(Boolean))
-  const firstPartyHosts = new Set<string>()
-  for (const origin of [preview.localOrigin, preview.effectiveOrigin, preview.publicOrigin]) {
-    const host = origin ? browserProbeUrlHostname(origin) : undefined
-    if (host) {
-      firstPartyHosts.add(host)
-    }
-  }
-
-  return {
-    mode,
-    allowHosts,
-    blockHosts,
-    routeHosts: routedHosts,
-    firstPartyHosts,
-    recordExternal: strictBooleanArg(args, "record-external", false),
-    stats: new Map(),
-  }
-}
-
-function browserProbeNetworkPolicyMode(args: string[]): BrowserProbeNetworkPolicy["mode"] {
-  const raw = argValue(args, "network-policy")?.trim() || "record"
-  if (raw === "allow" || raw === "block" || raw === "record") {
-    return raw
-  }
-
-  throw new Error(`wordpress.browser-probe network-policy supports allow, block, record: ${raw}`)
-}
-
-function browserProbeNetworkPolicyIsActive(policy: BrowserProbeNetworkPolicy): boolean {
-  return policy.mode !== "record" || policy.allowHosts.size > 0 || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
-}
-
-function browserProbeNeedsContextRouting(policy: BrowserProbeNetworkPolicy): boolean {
-  return policy.mode === "block" || policy.blockHosts.size > 0 || policy.routeHosts.size > 0 || policy.recordExternal
-}
-
-function browserProbeNetworkPolicySummary(policy: BrowserProbeNetworkPolicy): BrowserProbeNetworkPolicySummary {
-  const hosts = Object.fromEntries([...policy.stats.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([host, stat]) => [host, { ...stat }]))
-  return {
-    mode: policy.mode,
-    allowHosts: [...policy.allowHosts].sort(),
-    blockHosts: [...policy.blockHosts].sort(),
-    routeHosts: [...policy.routeHosts].sort(),
-    recordExternal: policy.recordExternal,
-    externalRequests: Object.values(hosts).filter((stat) => stat.external).reduce((total, stat) => total + stat.requests, 0),
-    blockedRequests: Object.values(hosts).reduce((total, stat) => total + stat.blocked, 0),
-    hosts: policy.recordExternal ? hosts : Object.fromEntries(Object.entries(hosts).filter(([, stat]) => stat.blocked > 0 || stat.routed > 0)),
-  }
-}
-
-function browserProbeNetworkPolicyHostStat(policy: BrowserProbeNetworkPolicy, host: string): { requests: number; external: boolean; blocked: number; routed: number } {
-  let stat = policy.stats.get(host)
-  if (!stat) {
-    stat = { requests: 0, external: false, blocked: 0, routed: 0 }
-    policy.stats.set(host, stat)
-  }
-  return stat
-}
-
-function browserProbeUrlHostname(url: string): string | undefined {
-  try {
-    return normalizeBrowserProbeHost(new URL(url).hostname)
-  } catch {
-    return undefined
-  }
-}
-
-function normalizeBrowserProbeHost(host: string): string {
-  return host.trim().toLowerCase().replace(/:\d+$/, "")
-}
-
-async function fetchBrowserProbeRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>>> {
-  let currentUrl = requestUrl
-  for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
-    const routedUrl = new URL(currentUrl.toString())
-    routedUrl.protocol = localOrigin.protocol
-    routedUrl.hostname = localOrigin.hostname
-    routedUrl.port = localOrigin.port
-
-    const response = await route.fetch({
-      url: routedUrl.toString(),
-      headers: {
-        ...route.request().headers(),
-        host: currentUrl.host,
-        "x-forwarded-host": currentUrl.host,
-        "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
-        "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
-      },
-      maxRedirects: 0,
-    })
-
-    const location = response.headers().location
-    if (!location || response.status() < 300 || response.status() >= 400) {
-      return response
-    }
-
-    const redirectedUrl = new URL(location, currentUrl)
-    if (!routedHosts.has(redirectedUrl.hostname.toLowerCase())) {
-      return response
-    }
-
-    currentUrl = redirectedUrl
-  }
-
-  throw new Error(`wordpress.browser-probe route-host exceeded redirect limit for ${requestUrl.href}`)
-}
-
-function browserProbePreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
-  return {
-    localPreviewOrigin: preview.localOrigin,
-    requestedPreviewOrigin: preview.publicOrigin,
-    effectivePreviewOrigin: preview.effectiveOrigin,
-  }
-}
-
-function browserProbePreviewRouting(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserProbePreviewRouting {
-  const publicOrigin = runtimeSpec?.preview?.publicUrl
-  const requestedMode = browserProbePreviewMode(args, publicOrigin)
-  const effectiveMode: BrowserProbePreviewMode = requestedMode === "local" || !publicOrigin ? "local" : requestedMode
-  const effectiveOrigin = effectiveMode === "local" ? localPreviewOrigin : (publicOrigin ?? localPreviewOrigin)
-  const diagnostics: BrowserProbePreviewRouting["diagnostics"] = []
-
-  if ((requestedMode === "public" || requestedMode === "secure") && !publicOrigin) {
-    diagnostics.push({
-      code: "preview-public-origin-missing",
-      severity: "error",
-      message: `wordpress.browser-probe preview-mode=${requestedMode} requires runtime.preview.publicUrl or --preview-public-url`,
-      details: { requestedMode, localOrigin: localPreviewOrigin },
-    })
-  }
-
-  if (requestedMode === "secure" && publicOrigin) {
-    const protocol = urlProtocol(publicOrigin)
-    if (protocol !== "https:") {
-      diagnostics.push({
-        code: "preview-public-origin-not-https",
-        severity: "error",
-        message: "wordpress.browser-probe preview-mode=secure requires an HTTPS public preview origin",
-        details: { publicOrigin, protocol },
-      })
-    }
-  }
-
-  return {
-    requestedMode,
-    effectiveMode,
-    localOrigin: localPreviewOrigin,
-    effectiveOrigin,
-    ...(publicOrigin ? { publicOrigin } : {}),
-    diagnostics,
-  }
-}
-
-function browserProbePreviewMode(args: string[], publicOrigin: string | undefined): BrowserProbePreviewMode {
-  const raw = argValue(args, "preview-mode")?.trim() || (publicOrigin ? "public" : "local")
-  if (raw === "local" || raw === "public" || raw === "secure") {
-    return raw
-  }
-
-  throw new Error(`wordpress.browser-probe preview-mode supports local, public, secure: ${raw}`)
-}
-
-function browserProbePreviewReadinessError(preview: BrowserProbePreviewRouting): Error | undefined {
-  const diagnostic = preview.diagnostics.find((item) => item.severity === "error")
-  if (!diagnostic) {
-    return undefined
-  }
-
-  return new Error(diagnostic.message)
-}
-
-function browserProbeSecureContextError(preview: BrowserProbePreviewRouting): Error | undefined {
-  if (preview.requestedMode !== "secure" || preview.secureContext !== false) {
-    return undefined
-  }
-
-  const diagnostic = {
-    code: "preview-secure-context-unavailable",
-    severity: "error" as const,
-    message: "wordpress.browser-probe preview-mode=secure reached the preview, but the page did not report a secure browser context",
-    details: { effectiveOrigin: preview.effectiveOrigin, secureContext: preview.secureContext },
-  }
-  preview.diagnostics.push(diagnostic)
-  return new Error(diagnostic.message)
-}
-
-function urlProtocol(url: string): string | undefined {
-  try {
-    return new URL(url).protocol
-  } catch {
-    return undefined
-  }
-}
-
-function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {
-  try {
-    return new URL(pathOrUrl).toString()
-  } catch {
-    return new URL(pathOrUrl, baseUrl).toString()
-  }
 }
 
 async function fileSha256(path: string): Promise<string> {
