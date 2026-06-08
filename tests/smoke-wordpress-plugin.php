@@ -667,8 +667,8 @@ $browser_session_input = array(
 		'goal'                  => 'Prepare a browser Playground preview.',
 		'sandbox_session_id'    => 'browser-session-123',
 		'target'                => array( 'kind' => 'sandbox-runtime' ),
-		'allowed_tools'         => array( 'filesystem-write', 'filesystem-write', '' ),
-		'sandbox_tool_policy'   => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem-write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
+		'allowed_tools'         => array( 'filesystem_write', 'filesystem_write', '' ),
+		'sandbox_tool_policy'   => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem_write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
 		'expected_artifacts'    => array( 'repair-summary', 'changed-files' ),
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'inherit'               => array( 'connectors' => array( 'openai' ) ),
@@ -1342,7 +1342,7 @@ $assert( 'browser Playground session preserves mixed text and binary artifact tr
 $assert( 'browser Playground session returns binary artifact metadata', ! is_wp_error( $browser_session ) && 'base64' === ( $browser_session['artifacts']['files'][3]['encoding'] ?? '' ) && strlen( "\x89PNG\r\n\x1a\nfixture" ) === ( $browser_session['artifacts']['files'][3]['size'] ?? 0 ) && hash( 'sha256', "\x89PNG\r\n\x1a\nfixture" ) === ( $browser_session['artifacts']['files'][3]['sha256'] ?? '' ) && isset( $browser_session['artifacts']['files'][3]['content_base64'] ) );
 $assert( 'browser Playground session keeps existing text artifact content', ! is_wp_error( $browser_session ) && 'utf-8' === ( $browser_session['artifacts']['files'][0]['encoding'] ?? '' ) && '<main>Preview</main>' === ( $browser_session['artifacts']['files'][0]['content'] ?? '' ) && hash( 'sha256', '<main>Preview</main>' ) === ( $browser_session['artifacts']['files'][0]['sha256'] ?? '' ) );
 $assert( 'browser Playground session exposes preview URL', ! is_wp_error( $browser_session ) && '/wp-content/uploads/wp-codebox/artifacts/repair-output/index.html' === ( $browser_session['playground']['preview_url'] ?? '' ) && '/wp-content/uploads/wp-codebox/artifacts/repair-output/index.html' === ( $browser_session['artifacts']['preview_url'] ?? '' ) );
-$assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
+$assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem_write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
 $assert( 'browser Playground session returns canonical task input metadata', ! is_wp_error( $browser_session ) && 'wp-codebox/task-input/v1' === ( $browser_session['task_input']['schema'] ?? '' ) && 1 === ( $browser_session['task_input']['version'] ?? 0 ) );
 $assert( 'browser Playground session exposes canonical task string', ! is_wp_error( $browser_session ) && 'Prepare a browser Playground preview.' === ( $browser_session['task'] ?? '' ) );
 $assert( 'browser Playground agents/chat runner exposes sandbox tools through runtime declarations', str_contains( $runner_php, "wp_codebox_browser_runtime_tool_declarations" ) && str_contains( $runner_php, "client/filesystem-write" ) && str_contains( $runner_php, "WP_Codebox_Browser_Filesystem_Write_Tool" ) );
@@ -2573,8 +2573,8 @@ $assert( 'missing sandbox tool policy snapshot fails closed', is_wp_error( $miss
 $host_browser_equivalent_input = array(
 	'goal'               => 'Prepare a browser Playground preview.',
 	'target'             => array( 'kind' => 'sandbox-runtime' ),
-	'allowed_tools'      => array( 'filesystem-write', 'filesystem-write', '' ),
-	'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem-write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
+	'allowed_tools'      => array( 'filesystem_write', 'filesystem_write', '' ),
+	'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem_write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
 	'expected_artifacts' => array( 'repair-summary', 'changed-files' ),
 );
 $host_browser_equivalent_task = WP_Codebox_Agent_Task::normalize_input( $host_browser_equivalent_input );

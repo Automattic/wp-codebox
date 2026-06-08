@@ -1027,7 +1027,7 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 
 function wp_codebox_browser_runtime_tool_name( string $tool_id ): string {
 $tool_id = trim( $tool_id );
-if ( \'filesystem-write\' === $tool_id || \'client/filesystem-write\' === $tool_id ) {
+if ( \'filesystem-write\' === $tool_id || \'filesystem_write\' === $tool_id || \'client/filesystem-write\' === $tool_id ) {
 	return \'client/filesystem-write\';
 }
 
