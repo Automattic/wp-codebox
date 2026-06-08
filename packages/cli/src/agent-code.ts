@@ -550,14 +550,46 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
             continue;
         }
         $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
+        $matched = null;
         foreach ($candidates as $candidate) {
             if (wp_codebox_plugin_entry_path($candidate)) {
-                $entries[] = $candidate;
+                $matched = $candidate;
                 break;
             }
         }
+        if (null === $matched) {
+            $matched = wp_codebox_provider_plugin_entry_by_header($slug);
+        }
+        if (null !== $matched) {
+            $entries[] = $matched;
+        }
     }
     return $entries;
+}
+
+function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
+    // The conventional entries (<slug>/plugin.php, <slug>/<slug>.php) are absent.
+    // This happens when the plugin directory was renamed so its name no longer
+    // matches the entry file (e.g. a Lab workspace synced under a uniquified
+    // <slug>-<hash>-<uuid> directory). Fall back to the single top-level *.php
+    // file declaring a WordPress plugin header.
+    foreach (array(WP_PLUGIN_DIR . '/' . $slug, WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $slug) as $dir) {
+        if (!is_dir($dir)) {
+            continue;
+        }
+        $files = glob($dir . '/*.php') ?: array();
+        sort($files);
+        foreach ($files as $file) {
+            $header = @file_get_contents($file, false, null, 0, 8192);
+            if (false !== $header && preg_match('/Plugin Name:[ \\t]*[^ \\t\\r\\n]/', $header)) {
+                $candidate = $slug . '/' . basename($file);
+                if (wp_codebox_plugin_entry_path($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+    }
+    return null;
 }
 
 function wp_codebox_json_encode_sandbox_payload($value): string {
@@ -680,14 +712,46 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
             continue;
         }
         $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
+        $matched = null;
         foreach ($candidates as $candidate) {
             if (wp_codebox_plugin_entry_path($candidate)) {
-                $entries[] = $candidate;
+                $matched = $candidate;
                 break;
             }
         }
+        if (null === $matched) {
+            $matched = wp_codebox_provider_plugin_entry_by_header($slug);
+        }
+        if (null !== $matched) {
+            $entries[] = $matched;
+        }
     }
     return $entries;
+}
+
+function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
+    // The conventional entries (<slug>/plugin.php, <slug>/<slug>.php) are absent.
+    // This happens when the plugin directory was renamed so its name no longer
+    // matches the entry file (e.g. a Lab workspace synced under a uniquified
+    // <slug>-<hash>-<uuid> directory). Fall back to the single top-level *.php
+    // file declaring a WordPress plugin header.
+    foreach (array(WP_PLUGIN_DIR . '/' . $slug, WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $slug) as $dir) {
+        if (!is_dir($dir)) {
+            continue;
+        }
+        $files = glob($dir . '/*.php') ?: array();
+        sort($files);
+        foreach ($files as $file) {
+            $header = @file_get_contents($file, false, null, 0, 8192);
+            if (false !== $header && preg_match('/Plugin Name:[ \\t]*[^ \\t\\r\\n]/', $header)) {
+                $candidate = $slug . '/' . basename($file);
+                if (wp_codebox_plugin_entry_path($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+    }
+    return null;
 }
 
 $activation_results = array();
