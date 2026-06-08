@@ -85,6 +85,7 @@ const summaryPath = join(artifactDirectory, "files", "browser", "visual-compare"
 const explanationPath = join(artifactDirectory, "files", "browser", "visual-compare", "visual-explanation.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
 const reviewPath = join(artifactDirectory, "files", "review.json")
+const baselineRecipePath = join(workspace, "baseline-recipe.json")
 
 assert.equal(existsSync(sourcePath), true, "source screenshot should be captured")
 assert.equal(existsSync(candidatePath), true, "candidate screenshot should be captured")
@@ -152,6 +153,63 @@ const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { p
 assert.equal(review.browser?.probes?.[0]?.visualCompare?.status, "different", "review summary should expose visual compare status")
 assert.ok((review.browser?.probes?.[0]?.visualCompare?.mismatchPixels ?? 0) > 0, "review summary should expose visual compare mismatch count")
 assert.equal(review.browser?.probes?.[0]?.visualCompare?.explanation, "files/browser/visual-compare/visual-explanation.json", "review summary should expose visual explanation artifact")
+
+await writeFile(baselineRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.visual-compare",
+        args: [
+          `source-screenshot=${sourcePath}`,
+          `candidate-screenshot=${candidatePath}`,
+          `baseline-visual-diff=${summaryPath}`,
+          "source-label=source-fixture",
+          "candidate-label=candidate-fixture",
+          "threshold=0.1",
+        ],
+      },
+    ],
+  },
+  artifacts: {
+    directory: artifactsRoot,
+  },
+}, null, 2)}\n`)
+
+const baselineOutput = await runCli([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  baselineRecipePath,
+  "--json",
+])
+
+assert.equal(baselineOutput.success, true, baselineOutput.error?.message ?? "baseline recipe-run failed")
+assert.ok(baselineOutput.artifacts?.directory, "baseline recipe-run should return an artifact directory")
+
+const baselineSummaryPath = join(baselineOutput.artifacts.directory, "files", "browser", "visual-compare", "visual-diff.json")
+const baselineSummary = JSON.parse(await readFile(baselineSummaryPath, "utf8")) as {
+  baseline?: {
+    ref: string
+    selectedIndex: number
+    match: string
+    availableComparisons: number
+    delta: {
+      status?: { changed: boolean }
+      mismatchPixels?: { baseline: number; current: number; absoluteDelta: number }
+      mismatchRatio?: { baseline: number; current: number; absoluteDelta: number }
+      dimensionMismatch?: { changed: boolean }
+    }
+  }
+}
+assert.equal(baselineSummary.baseline?.ref, summaryPath, "summary should record the requested baseline ref")
+assert.equal(baselineSummary.baseline?.selectedIndex, 0, "summary should identify the selected baseline comparison")
+assert.equal(baselineSummary.baseline?.match, "labels", "summary should match previous evidence by labels")
+assert.equal(baselineSummary.baseline?.availableComparisons, 1, "summary should report available comparisons in the baseline artifact")
+assert.equal(baselineSummary.baseline?.delta.status?.changed, false, "same screenshots should not change status relative to baseline")
+assert.equal(baselineSummary.baseline?.delta.mismatchPixels?.absoluteDelta, 0, "same screenshots should not change mismatch pixels relative to baseline")
+assert.equal(baselineSummary.baseline?.delta.mismatchRatio?.absoluteDelta, 0, "same screenshots should not change mismatch ratio relative to baseline")
+assert.equal(baselineSummary.baseline?.delta.dimensionMismatch?.changed, false, "same screenshots should not change dimension mismatch status relative to baseline")
 
 console.log("Browser visual compare smoke passed")
 

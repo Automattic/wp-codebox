@@ -100,6 +100,34 @@ interface VisualCompareExplanation {
   limitations: string[]
 }
 
+interface VisualCompareComparisonMetrics {
+  status?: string
+  mismatchRatio?: number
+  mismatchPixels?: number
+  totalPixels?: number
+  dimensionMismatch?: boolean
+}
+
+interface VisualCompareComparisonSummary extends VisualCompareComparisonMetrics {
+  source?: { label?: string; url?: string; screenshot?: string }
+  candidate?: { label?: string; url?: string; screenshot?: string }
+}
+
+interface VisualCompareBaselineDelta {
+  ref: string
+  selectedIndex: number
+  match: "labels" | "only-comparison" | "first-comparison"
+  availableComparisons: number
+  baseline: VisualCompareComparisonSummary
+  delta: {
+    status?: { baseline?: string; current: string; changed: boolean }
+    mismatchRatio?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
+    mismatchPixels?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
+    totalPixels?: { baseline: number; current: number; absoluteDelta: number; percentDelta?: number }
+    dimensionMismatch?: { baseline: boolean; current: boolean; changed: boolean }
+  }
+}
+
 const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
   "desktop-chrome": {
     id: "desktop-chrome",
@@ -2570,6 +2598,7 @@ export async function runVisualCompareCommand({
   const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
   const sourceDomSnapshotRef = argValue(args, "source-dom-snapshot")?.trim()
   const candidateDomSnapshotRef = argValue(args, "candidate-dom-snapshot")?.trim()
+  const baselineRef = (argValue(args, "baseline") ?? argValue(args, "baseline-visual-diff") ?? argValue(args, "baseline-artifact"))?.trim()
   const sourceLabel = argValue(args, "source-label")?.trim() || "source"
   const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
@@ -2655,6 +2684,26 @@ export async function runVisualCompareCommand({
     explainSelectors,
   })
   const finishedAt = now()
+  const status = comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different"
+  const sourceSummary = {
+    label: sourceLabel,
+    ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
+    ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
+    ...(sourceDomSnapshotRef ? { domSnapshot: sourceDomSnapshotRef } : {}),
+  }
+  const candidateSummary = {
+    label: candidateLabel,
+    ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
+    ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
+    ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
+  }
+  const baseline = baselineRef
+    ? await createVisualCompareBaselineDelta({
+        baselineRef,
+        artifactRoot,
+        current: { status, comparison, source: sourceSummary, candidate: candidateSummary },
+      })
+    : undefined
   const files = {
     sourceScreenshot: "files/browser/visual-compare/source.png",
     candidateScreenshot: "files/browser/visual-compare/candidate.png",
@@ -2666,19 +2715,9 @@ export async function runVisualCompareCommand({
   const summary = {
     schema: "wp-codebox/visual-compare/v1",
     command: "wordpress.visual-compare",
-    status: comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different",
-    source: {
-      label: sourceLabel,
-      ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
-      ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
-      ...(sourceDomSnapshotRef ? { domSnapshot: sourceDomSnapshotRef } : {}),
-    },
-    candidate: {
-      label: candidateLabel,
-      ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
-      ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
-      ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
-    },
+    status,
+    source: sourceSummary,
+    candidate: candidateSummary,
     options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
@@ -2694,6 +2733,7 @@ export async function runVisualCompareCommand({
       diffScreenshot: { algorithm: "sha256", value: await fileSha256(diffPath) },
     },
     comparison,
+    ...(baseline ? { baseline } : {}),
   }
   const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
   await writeFile(visualDiffPath, summaryJson)
@@ -2737,6 +2777,153 @@ export async function runVisualCompareCommand({
 
 async function resolveVisualCompareScreenshotPath(requestedPath: string, artifactRoot: string): Promise<string> {
   return resolveVisualCompareArtifactPath(requestedPath, artifactRoot, "Visual compare screenshot")
+}
+
+async function createVisualCompareBaselineDelta({
+  baselineRef,
+  artifactRoot,
+  current,
+}: {
+  baselineRef: string
+  artifactRoot: string
+  current: {
+    status: string
+    comparison: VisualCompareComparisonMetrics
+    source: VisualCompareComparisonSummary["source"]
+    candidate: VisualCompareComparisonSummary["candidate"]
+  }
+}): Promise<VisualCompareBaselineDelta> {
+  const baselinePath = await resolveVisualCompareArtifactPath(baselineRef, artifactRoot, "Visual compare baseline")
+  const parsed = JSON.parse(await readFile(baselinePath, "utf8")) as unknown
+  const comparisons = collectVisualCompareBaselineComparisons(parsed)
+  if (comparisons.length === 0) {
+    throw new Error(`Visual compare baseline does not contain comparison evidence: ${baselineRef}`)
+  }
+
+  const labelMatchIndex = comparisons.findIndex((comparison) => {
+    return comparison.source?.label === current.source?.label && comparison.candidate?.label === current.candidate?.label
+  })
+  const selectedIndex = labelMatchIndex >= 0 ? labelMatchIndex : 0
+  const baseline = comparisons[selectedIndex]
+  const match: VisualCompareBaselineDelta["match"] = labelMatchIndex >= 0
+    ? "labels"
+    : comparisons.length === 1
+      ? "only-comparison"
+      : "first-comparison"
+
+  return {
+    ref: baselineRef,
+    selectedIndex,
+    match,
+    availableComparisons: comparisons.length,
+    baseline,
+    delta: visualCompareBaselineDelta(baseline, current),
+  }
+}
+
+function visualCompareBaselineDelta(baseline: VisualCompareComparisonSummary, current: { status: string; comparison: VisualCompareComparisonMetrics }): VisualCompareBaselineDelta["delta"] {
+  const delta: VisualCompareBaselineDelta["delta"] = {
+    status: { baseline: baseline.status, current: current.status, changed: baseline.status !== current.status },
+  }
+  const currentComparison = current.comparison
+  if (typeof baseline.mismatchRatio === "number" && typeof currentComparison.mismatchRatio === "number") {
+    delta.mismatchRatio = visualCompareNumericDelta(baseline.mismatchRatio, currentComparison.mismatchRatio)
+  }
+  if (typeof baseline.mismatchPixels === "number" && typeof currentComparison.mismatchPixels === "number") {
+    delta.mismatchPixels = visualCompareNumericDelta(baseline.mismatchPixels, currentComparison.mismatchPixels)
+  }
+  if (typeof baseline.totalPixels === "number" && typeof currentComparison.totalPixels === "number") {
+    delta.totalPixels = visualCompareNumericDelta(baseline.totalPixels, currentComparison.totalPixels)
+  }
+  if (typeof baseline.dimensionMismatch === "boolean" && typeof currentComparison.dimensionMismatch === "boolean") {
+    delta.dimensionMismatch = { baseline: baseline.dimensionMismatch, current: currentComparison.dimensionMismatch, changed: baseline.dimensionMismatch !== currentComparison.dimensionMismatch }
+  }
+  return delta
+}
+
+function visualCompareNumericDelta(baseline: number, current: number): { baseline: number; current: number; absoluteDelta: number; percentDelta?: number } {
+  return {
+    baseline,
+    current,
+    absoluteDelta: current - baseline,
+    ...(baseline !== 0 ? { percentDelta: ((current - baseline) / baseline) * 100 } : {}),
+  }
+}
+
+function collectVisualCompareBaselineComparisons(input: unknown, seen = new Set<unknown>()): VisualCompareComparisonSummary[] {
+  if (!input || typeof input !== "object" || seen.has(input)) {
+    return []
+  }
+  seen.add(input)
+
+  const record = input as Record<string, unknown>
+  const direct = normalizeVisualCompareBaselineComparison(record)
+  if (direct) {
+    return [direct]
+  }
+  const comparisons: VisualCompareComparisonSummary[] = []
+
+  for (const value of Object.values(record)) {
+    if (!value || typeof value !== "object") {
+      continue
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        comparisons.push(...collectVisualCompareBaselineComparisons(item, seen))
+      }
+      continue
+    }
+    comparisons.push(...collectVisualCompareBaselineComparisons(value, seen))
+  }
+
+  return comparisons
+}
+
+function normalizeVisualCompareBaselineComparison(record: Record<string, unknown>): VisualCompareComparisonSummary | undefined {
+  const comparison = visualCompareRecord(record.comparison)
+  if (comparison) {
+    return {
+      ...comparison,
+      ...(typeof record.status === "string" ? { status: record.status } : {}),
+      source: visualCompareEndpoint(record.source),
+      candidate: visualCompareEndpoint(record.candidate),
+    }
+  }
+
+  const visualCompare = visualCompareRecord(record.visualCompare)
+  if (visualCompare) {
+    return visualCompare
+  }
+
+  return visualCompareRecord(record)
+}
+
+function visualCompareRecord(input: unknown): VisualCompareComparisonSummary | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined
+  }
+  const record = input as Record<string, unknown>
+  const status = typeof record.status === "string" ? record.status : undefined
+  const mismatchRatio = typeof record.mismatchRatio === "number" ? record.mismatchRatio : undefined
+  const mismatchPixels = typeof record.mismatchPixels === "number" ? record.mismatchPixels : undefined
+  const totalPixels = typeof record.totalPixels === "number" ? record.totalPixels : undefined
+  const dimensionMismatch = typeof record.dimensionMismatch === "boolean" ? record.dimensionMismatch : undefined
+  if (!status && mismatchRatio === undefined && mismatchPixels === undefined && totalPixels === undefined && dimensionMismatch === undefined) {
+    return undefined
+  }
+  return { status, mismatchRatio, mismatchPixels, totalPixels, dimensionMismatch }
+}
+
+function visualCompareEndpoint(input: unknown): VisualCompareComparisonSummary["source"] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined
+  }
+  const record = input as Record<string, unknown>
+  return {
+    ...(typeof record.label === "string" ? { label: record.label } : {}),
+    ...(typeof record.url === "string" ? { url: record.url } : {}),
+    ...(typeof record.screenshot === "string" ? { screenshot: record.screenshot } : {}),
+  }
 }
 
 async function readVisualCompareDomSnapshotArtifact(requestedPath: string, artifactRoot: string): Promise<VisualCompareDomSnapshotArtifact> {
