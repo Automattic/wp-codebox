@@ -63,6 +63,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/extraPlugin" },
           },
+          dependency_overlays: {
+            type: "array",
+            description: "Typed local dependency overlays mounted into a consumer plugin before setup, activation, and workflow steps.",
+            items: { $ref: "#/$defs/dependencyOverlay" },
+          },
           secretEnv: {
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
@@ -414,6 +419,18 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           activate: { type: "boolean" },
           loadAs: { enum: ["plugin", "mu-plugin"] },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+        },
+      },
+      dependencyOverlay: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "package", "source", "consumer"],
+        properties: {
+          kind: { const: "composer-package" },
+          package: { type: "string", pattern: "^[a-z0-9_.-]+/[a-z0-9_.-]+$" },
+          source: { type: "string" },
+          consumer: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+          metadata: { $ref: "#/$defs/metadata" },
         },
       },
       pluginRuntime: {

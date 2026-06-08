@@ -243,6 +243,7 @@ function inheritedAgentTaskInput(source: Record<string, unknown>): Record<string
     "secret_env",
     "mounts",
     "workspaces",
+    "dependency_overlays",
     "runtime_stack_mounts",
     "runtime_overlays",
     "agent_bundles",

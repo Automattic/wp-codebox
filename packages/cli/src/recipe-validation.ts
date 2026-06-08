@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
-import { evaluateRecipeSourcePolicy, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { recipeCommandDefinitions, validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 
 export interface RecipeValidationIssue {
   code: string
@@ -93,6 +93,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
+  validateRecipeDependencyOverlays(recipe.inputs?.dependency_overlays, recipePath)
 
   if (recipe.inputs && "extraPlugins" in recipe.inputs) {
     throw new Error(`Recipe inputs.extraPlugins is unsupported; use inputs.extra_plugins: ${recipePath}`)
@@ -354,6 +355,30 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
   }
 }
 
+function validateRecipeDependencyOverlays(overlays: WorkspaceRecipeDependencyOverlay[] | undefined, recipePath: string): void {
+  if (overlays && !Array.isArray(overlays)) {
+    throw new Error(`Recipe dependency_overlays must be an array: ${recipePath}`)
+  }
+
+  for (const overlay of overlays ?? []) {
+    if (overlay.kind !== "composer-package") {
+      throw new Error(`Recipe dependency overlay kind is unsupported: ${recipePath}`)
+    }
+    if (!overlay.package || typeof overlay.package !== "string") {
+      throw new Error(`Recipe dependency overlays must include package: ${recipePath}`)
+    }
+    if (!overlay.source || typeof overlay.source !== "string") {
+      throw new Error(`Recipe dependency overlays must include source: ${recipePath}`)
+    }
+    if (!overlay.consumer || typeof overlay.consumer !== "string") {
+      throw new Error(`Recipe dependency overlays must include consumer: ${recipePath}`)
+    }
+    if (overlay.metadata !== undefined && (!overlay.metadata || typeof overlay.metadata !== "object" || Array.isArray(overlay.metadata))) {
+      throw new Error(`Recipe dependency overlay metadata must be an object when provided: ${recipePath}`)
+    }
+  }
+}
+
 export async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: string): Promise<RecipeValidationIssue[]> {
   return validateWorkspaceRecipeSemantics(recipe, recipePath)
 }
@@ -447,6 +472,23 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     if (pluginSource) {
       await validateExistingFile(join(pluginSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
     }
+  }
+
+  const extraPluginSlugs = new Set(recipeExtraPlugins(recipe).map((plugin) => recipeExtraPluginSlug(plugin)))
+  for (const [index, overlay] of (recipe.inputs?.dependency_overlays ?? []).entries()) {
+    const path = `$.inputs.dependency_overlays[${index}]`
+    await validateExistingDirectory(resolve(recipeDirectory, overlay.source), `${path}.source`, addIssue)
+    if (!extraPluginSlugs.has(overlay.consumer)) {
+      addIssue("unknown-dependency-overlay-consumer", `${path}.consumer`, `Dependency overlay consumer must match an inputs.extra_plugins slug: ${overlay.consumer}`)
+    }
+    if (!isComposerPackageName(overlay.package)) {
+      addIssue("invalid-composer-package", `${path}.package`, `Dependency overlay package must be a safe Composer package name: ${overlay.package}`)
+      continue
+    }
+
+    const consumerPlugin = recipeExtraPlugins(recipe).find((plugin) => recipeExtraPluginSlug(plugin) === overlay.consumer)
+    const loadAs = consumerPlugin?.loadAs ?? "plugin"
+    validateAbsoluteSandboxPath(`${pluginTarget(overlay.consumer, loadAs)}/vendor/${composerPackageVendorPath(overlay.package)}`, `${path}.target`, addIssue)
   }
 
   await validateRecipePluginRuntime(recipe.inputs?.pluginRuntime, addIssue)

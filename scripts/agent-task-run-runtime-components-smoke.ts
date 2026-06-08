@@ -16,6 +16,7 @@ const input = {
     { slug: "caller-runtime", path: "/components/caller-runtime", loadAs: "mu-plugin" },
     { slug: "caller-runtime-tools", path: "/components/caller-runtime-tools", loadAs: "mu-plugin" },
   ],
+  dependency_overlays: [{ kind: "composer-package", package: "acme/dependency", source: "/components/dependency", consumer: "caller-runtime" }],
   provider_plugin_paths: ["/components/ai-provider-for-openai"],
   artifacts_path: "/tmp/wp-codebox-artifacts",
 }
@@ -34,6 +35,8 @@ assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-ope
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime-tools")?.activate, false)
+assert.equal(recipe.inputs?.dependency_overlays?.[0]?.consumer, "caller-runtime")
+assert.equal(recipe.inputs?.dependency_overlays?.[0]?.package, "acme/dependency")
 
 const muPluginInstallCode = installMuPluginsCode(extraPlugins)
 assert.ok(muPluginInstallCode?.includes("define( 'DATAMACHINE_WORKSPACE_PATH', '/workspace' );"))

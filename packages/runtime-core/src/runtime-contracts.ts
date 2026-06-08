@@ -251,6 +251,14 @@ export interface WorkspaceRecipeExtraPlugin {
   loadAs?: "plugin" | "mu-plugin"
 }
 
+export interface WorkspaceRecipeDependencyOverlay {
+  kind: "composer-package"
+  package: string
+  source: string
+  consumer: string
+  metadata?: Record<string, unknown>
+}
+
 export type WorkspaceRecipeSiteSeedType = "fixture" | "parent_site"
 export type WorkspaceRecipeSiteSeedFormat = "json" | (string & {})
 
@@ -341,6 +349,7 @@ export interface WorkspaceRecipe {
     workspaces?: WorkspaceRecipeWorkspace[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
+    dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]

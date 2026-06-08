@@ -1,7 +1,7 @@
 import { basename, dirname, resolve } from "node:path"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { serializeError } from "./output.js"
-import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
+import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 
 export interface RecipeDryRunOptions {
@@ -330,6 +330,27 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
     },
     planned: "generated" as const,
   }))
+  const dependencyOverlays = (recipe.inputs?.dependency_overlays ?? []).map((overlay, index) => {
+    const consumer = extraPlugins.find((plugin) => plugin.slug === overlay.consumer)
+    const target = `${consumer?.target ?? pluginTarget(overlay.consumer, "plugin")}/vendor/${composerPackageVendorPath(overlay.package)}`
+    return {
+      type: "directory" as const,
+      source: resolve(recipeDirectory, overlay.source),
+      target,
+      mode: "readonly" as const,
+      metadata: {
+        kind: "dependency-overlay",
+        index,
+        overlayKind: overlay.kind,
+        package: overlay.package,
+        source: overlay.source,
+        consumer: overlay.consumer,
+        target,
+        ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
+      },
+      planned: "existing" as const,
+    }
+  })
   const mounts: RecipeDryRunMount[] = [
     ...runtimeOverlays,
     ...(distribution?.sourceMounts ?? []).map((mount) => ({
@@ -365,6 +386,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       },
       planned: "existing" as const,
     })),
+    ...dependencyOverlays,
     ...recipeMounts,
     ...stagedFiles.map((stagedFile) => ({
       type: stagedFile.type,

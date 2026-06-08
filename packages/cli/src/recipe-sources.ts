@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -84,6 +84,18 @@ export interface PreparedStagedFile {
 export interface PreparedRuntimeOverlay {
   source: string
   target: string
+  type: "directory"
+  mode: "readonly"
+  cleanupPaths: string[]
+  metadata: Record<string, unknown>
+}
+
+export interface PreparedDependencyOverlay {
+  source: string
+  sourceRef: string
+  target: string
+  package: string
+  consumer: string
   type: "directory"
   mode: "readonly"
   cleanupPaths: string[]
@@ -252,12 +264,13 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
   await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
 }
 
-export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = []): Promise<void> {
+export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = [], dependencyOverlays: PreparedDependencyOverlay[] = []): Promise<void> {
   await Promise.all([
     cleanupRecipeWorkspaces(workspaces),
     ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
     ...stagedFiles.flatMap((stagedFile) => stagedFile.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
     ...overlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
+    ...dependencyOverlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
   ])
 }
 
@@ -282,6 +295,56 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   }
 
   return plugins
+}
+
+export async function prepareRecipeDependencyOverlays(recipe: WorkspaceRecipe, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[]): Promise<PreparedDependencyOverlay[]> {
+  const overlays: PreparedDependencyOverlay[] = []
+  for (const [index, overlay] of (recipe.inputs?.dependency_overlays ?? []).entries()) {
+    overlays.push(await prepareRecipeDependencyOverlay(overlay, recipeDirectory, extraPlugins, index))
+  }
+
+  return overlays
+}
+
+async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependencyOverlay, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[], index: number): Promise<PreparedDependencyOverlay> {
+  if (overlay.kind !== "composer-package") {
+    throw new Error(`Unsupported dependency overlay kind: ${overlay.kind}`)
+  }
+  if (!isComposerPackageName(overlay.package)) {
+    throw new Error(`Dependency overlay package must be a safe Composer package name: ${overlay.package}`)
+  }
+
+  const consumer = extraPlugins.find((plugin) => plugin.slug === overlay.consumer)
+  if (!consumer) {
+    throw new Error(`Dependency overlay consumer plugin was not found in inputs.extra_plugins: ${overlay.consumer}`)
+  }
+
+  const source = resolve(recipeDirectory, overlay.source)
+  await validateExistingDirectoryForOverlay(source, overlay.source)
+  const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
+  const digest = await directoryContentDigest(source)
+
+  return {
+    source,
+    sourceRef: overlay.source,
+    target,
+    package: overlay.package,
+    consumer: overlay.consumer,
+    type: "directory",
+    mode: "readonly",
+    cleanupPaths: [],
+    metadata: {
+      kind: "dependency-overlay",
+      index,
+      overlayKind: overlay.kind,
+      package: overlay.package,
+      source: overlay.source,
+      consumer: overlay.consumer,
+      target,
+      digest: { sha256: digest },
+      ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
+    },
+  }
 }
 
 export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedStagedFile[]> {
@@ -1032,6 +1095,18 @@ export function pluginTarget(slug: string, loadAs: PreparedExtraPlugin["loadAs"]
   }
 
   return `/wordpress/wp-content/plugins/${slug}`
+}
+
+export function isComposerPackageName(value: string): boolean {
+  return /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(value)
+}
+
+export function composerPackageVendorPath(packageName: string): string {
+  if (!isComposerPackageName(packageName)) {
+    throw new Error(`Composer package name is not safe for a vendor path: ${packageName}`)
+  }
+
+  return packageName
 }
 
 export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): Promise<string> {

@@ -24,6 +24,7 @@ export interface AgentTaskRunInput {
   secret_env?: string[]
   mounts?: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
+  dependency_overlays?: NonNullable<WorkspaceRecipe["inputs"]>["dependency_overlays"]
   runtime_stack_mounts?: Array<Record<string, unknown>>
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
@@ -185,6 +186,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
     inputs: stripUndefined({
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
+      dependency_overlays: Array.isArray(input.dependency_overlays) ? input.dependency_overlays : undefined,
       extra_plugins: [
         ...componentPlugins(input.component_contracts, artifacts),
         ...providerPlugins,

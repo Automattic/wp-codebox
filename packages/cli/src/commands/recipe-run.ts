@@ -11,7 +11,7 @@ import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePrevi
 import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
-import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
@@ -122,6 +122,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
+  let dependencyOverlays: PreparedDependencyOverlay[] = []
   let stagedFiles: PreparedStagedFile[] = []
   let overlays: PreparedRuntimeOverlay[] = []
   let backendPackage: PreparedRuntimeBackendPackage | undefined
@@ -154,6 +155,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   try {
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
     extraPlugins = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+    dependencyOverlays = await prepareRecipeDependencyOverlays(recipe, recipeDirectory, extraPlugins)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
     overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
     backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory)
@@ -179,7 +181,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
-        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, backendPackage, effectivePreview),
+        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, backendPackage, effectivePreview),
       },
       preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl),
     }
@@ -208,6 +210,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         backend: runtimeCreateSpec.backend,
         environment: runtimeEnvironment,
         extraPlugins: extraPlugins.map(recipeRunExtraPlugin),
+        dependencyOverlays: dependencyOverlays.map(recipeRunDependencyOverlay),
         workspaces: workspaceMounts.map((workspace) => ({
           source: workspace.source,
           target: workspace.target,
@@ -291,6 +294,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption?.throwIfInterrupted()
       }
     })
+
+    for (const overlay of dependencyOverlays) {
+      await awaitRecipe(`dependency-overlay.mount:${overlay.package}`, runtime.mount({
+        type: overlay.type,
+        source: overlay.source,
+        target: overlay.target,
+        mode: overlay.mode,
+        metadata: overlay.metadata,
+      }))
+      interruption?.throwIfInterrupted()
+    }
 
     for (const mount of recipe.inputs?.mounts ?? []) {
       const source = resolve(recipeDirectory, mount.source)
@@ -401,7 +415,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const activeRuntime = runtime
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
       await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0))
-      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
     })
     runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
@@ -515,7 +529,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     }
 
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays))
+    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays))
     runRecord = await runRegistry.read(runRecord.runId)
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     runRecord = await runRegistry.update(runRecord.runId, {
@@ -1539,7 +1553,7 @@ function effectiveRecipePreview(recipePreview: RuntimePreviewSpec | undefined, o
   })
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, preview: RuntimePreviewSpec): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], dependencyOverlays: PreparedDependencyOverlay[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, preview: RuntimePreviewSpec): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -1564,6 +1578,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
@@ -1591,6 +1606,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
         siteSeeds: recipe.inputs?.siteSeeds ?? [],
@@ -1617,6 +1633,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       provenance: stagedFile.provenance,
       metadata: stagedFile.metadata,
     })),
+    preparedDependencyOverlays: dependencyOverlays.map(recipeRunDependencyOverlay),
     preparedRuntimeOverlays: overlays.map((overlay) => ({
       target: overlay.target,
       type: overlay.type,
@@ -1624,6 +1641,19 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       metadata: overlay.metadata,
     })),
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
+  }
+}
+
+function recipeRunDependencyOverlay(overlay: PreparedDependencyOverlay): Record<string, unknown> {
+  return {
+    source: overlay.source,
+    sourceRef: overlay.sourceRef,
+    target: overlay.target,
+    package: overlay.package,
+    consumer: overlay.consumer,
+    type: overlay.type,
+    mode: overlay.mode,
+    metadata: overlay.metadata,
   }
 }
 
