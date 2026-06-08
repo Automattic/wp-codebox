@@ -139,6 +139,7 @@ export const smokeGroups = {
       tsxSmoke("recipe-build-cli-smoke"),
       tsxSmoke("recipe-run-php-plugin-load-smoke"),
       tsxSmoke("recipe-source-redirect-smoke"),
+      tsxSmoke("extra-plugin-entry-file-smoke"),
       tsxSmoke("run-php-plugin-diagnostics-smoke"),
       tsxSmoke("recipe-browser-smoke"),
       tsxSmoke("recipe-dry-run-smoke"),
