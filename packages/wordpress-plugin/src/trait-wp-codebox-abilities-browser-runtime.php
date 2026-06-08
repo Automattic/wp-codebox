@@ -1159,11 +1159,12 @@ private static function browser_remote_plugin_package_url( string $url, int $ind
 
 	$scheme = strtolower( (string) $parts['scheme'] );
 	$host   = strtolower( (string) $parts['host'] );
-	if ( 'https' !== $scheme ) {
+	$allow_http = self::is_loopback_host( $host );
+	if ( 'https' !== $scheme && ! ( $allow_http && 'http' === $scheme ) ) {
 		return new WP_Error( 'wp_codebox_browser_plugin_url_insecure', 'Browser plugin URL must use https://.', array( 'status' => 400, 'index' => $index ) );
 	}
 
-	$default_hosts = array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
+	$default_hosts = self::is_loopback_host( $host ) ? array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com', $host ) : array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
 	$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_runtime_plugin_package_allowed_hosts', $default_hosts, $url, $index ) ) );
 	if ( ! in_array( $host, $allowed_hosts, true ) ) {
 		return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );

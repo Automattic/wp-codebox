@@ -642,6 +642,10 @@ $GLOBALS['wp_codebox_remote_responses']['https://github.com/example/generic-mu-r
 	'response' => array( 'code' => 200 ),
 	'body'     => "PK\x03\x04generic-mu-runtime",
 );
+$GLOBALS['wp_codebox_remote_responses']['http://127.0.0.1:63498/runtime/generic-mu-runtime.zip'] = array(
+	'response' => array( 'code' => 200 ),
+	'body'     => "PK\x03\x04generic-mu-runtime-loopback",
+);
 $GLOBALS['wp_codebox_remote_responses']['https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip'] = array(
 	'response' => array( 'code' => 200 ),
 	'body'     => "PK\x03\x04agents-api",
@@ -1693,6 +1697,27 @@ $packaged_mu_steps = ! is_wp_error( $browser_packaged_mu_session ) ? ( $browser_
 $packaged_mu_code  = (string) ( $packaged_mu_steps[1]['code'] ?? '' );
 $assert( 'browser Playground session packages runtime mu-plugin dependencies through safe delivery', ! is_wp_error( $browser_packaged_mu_session ) && 1 === ( $browser_packaged_mu_session['runtime']['summary']['mu_plugins'] ?? 0 ) && str_starts_with( (string) ( $browser_packaged_mu_session['runtime']['mu_plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && ! str_contains( (string) ( $browser_packaged_mu_session['runtime']['mu_plugins'][0]['local_package_fetch_url'] ?? '' ), 'github.com' ) && 'runtime-mu-plugin-remote-package' === ( $browser_packaged_mu_session['runtime']['mu_plugins'][0]['provenance']['source'] ?? '' ) );
 $assert( 'browser Playground session installs packaged runtime mu-plugin into visible Playground without source URL fetches', ! is_wp_error( $browser_packaged_mu_session ) && 'runPHP' === ( $packaged_mu_steps[1]['step'] ?? '' ) && ! in_array( 'installPlugin', array_map( static fn( array $step ): string => (string) ( $step['step'] ?? '' ), $packaged_mu_steps ), true ) && ! str_contains( $packaged_mu_code, 'github.com/example/generic-mu-runtime' ) && str_contains( $packaged_mu_code, 'data:application/zip;base64,' ) && str_contains( $packaged_mu_code, '/wordpress/wp-content/mu-plugins/generic-mu-runtime' ) && str_contains( $packaged_mu_code, '/wordpress/wp-content/mu-plugins/generic-mu-runtime-loader.php' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] = static fn(): int => 1;
+$browser_loopback_mu_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'    => 'Prepare a browser Playground with a loopback packaged runtime mu-plugin.',
+		'runtime' => array(
+			'mu_plugins' => array(
+				array(
+					'slug'             => 'generic-mu-runtime',
+					'file'             => 'generic-mu-runtime-loader.php',
+					'url'              => 'http://127.0.0.1:63498/runtime/generic-mu-runtime.zip',
+					'targetFolderName' => 'generic-mu-runtime',
+					'entry'            => 'generic-mu-runtime.php',
+				),
+			),
+		),
+	)
+);
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] );
+$assert( 'browser Playground session accepts loopback runtime mu-plugin package URLs through safe delivery', ! is_wp_error( $browser_loopback_mu_session ) && ! str_starts_with( (string) ( $browser_loopback_mu_session['runtime']['mu_plugins'][0]['url'] ?? '' ), 'http://127.0.0.1:63498/runtime/' ) && str_starts_with( (string) ( $browser_loopback_mu_session['runtime']['mu_plugins'][0]['local_package_fetch_url'] ?? '' ), 'https://parent.example.test/uploads/wp-codebox/browser-runtime-plugins/' ) && 'http://127.0.0.1:63498/runtime/generic-mu-runtime.zip' === ( $browser_loopback_mu_session['runtime']['mu_plugins'][0]['provenance']['url'] ?? '' ) && 'runtime-mu-plugin-remote-package' === ( $browser_loopback_mu_session['runtime']['mu_plugins'][0]['provenance']['source'] ?? '' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] = static fn(): int => 1;
 $browser_url_package_session = call_user_func(
