@@ -605,9 +605,17 @@ export interface BrowserStepRecord {
   /** Machine-readable assertion outcome for expect/evaluate steps. */
   assertion?: BrowserStepAssertion
   readiness?: BrowserStepReadiness
+  target?: BrowserStepScreenshotTarget
   screenshot?: string
   finalUrl?: string
   error?: BrowserProbeErrorRecord
+}
+
+export interface BrowserStepScreenshotTarget {
+  mode: "frame-selector" | "frame-url"
+  selector?: string
+  urlFragment?: string
+  frameUrl?: string
 }
 
 export interface BrowserStepReadiness {
