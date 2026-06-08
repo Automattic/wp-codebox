@@ -249,13 +249,10 @@ function inheritedAgentTaskInput(source: Record<string, unknown>): Record<string
     "runtime_task",
     "sandbox_tool_policy",
     "max_turns",
-    "task_timeout_seconds",
-    "wp",
-    "agents_api_path",
-    "data_machine_path",
-    "data_machine_code_path",
-    "runtime_component_paths",
-  ]
+		"task_timeout_seconds",
+		"wp",
+		"component_contracts",
+	]
   const result: Record<string, unknown> = {}
   for (const key of keys) {
     if (source[key] !== undefined) result[key] = source[key]

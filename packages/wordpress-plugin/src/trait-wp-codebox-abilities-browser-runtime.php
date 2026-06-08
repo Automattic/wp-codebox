@@ -349,7 +349,8 @@ private static function browser_runtime_dependencies( array $input, array $legac
 		return $bootstrap;
 	}
 
-	$component_plugins = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ), is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array() );
+	$declared_components = is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array();
+	$component_plugins   = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ), $declared_components );
 	if ( is_wp_error( $component_plugins ) ) {
 		return $component_plugins;
 	}
@@ -363,6 +364,7 @@ private static function browser_runtime_dependencies( array $input, array $legac
 	return array(
 		'schema'                 => 'wp-codebox/browser-runtime-dependencies/v1',
 		'plugins'                => $plugins,
+		'components'             => self::browser_runtime_component_slugs( $declared_components, self::browser_component_plugins_required( $input ) ),
 		'mu_plugins'             => $mu_plugins,
 		'themes'                 => $themes,
 		'bootstrap'              => $bootstrap,
@@ -546,7 +548,7 @@ private static function browser_component_plugins( array $input, array $declared
 		return array();
 	}
 
-	$paths = self::browser_component_paths( $input );
+	$contracts = self::browser_component_contracts( $input );
 	$registry = self::browser_runtime_component_registry();
 	$declared_slugs = array_values(
 		array_filter(
@@ -562,7 +564,8 @@ private static function browser_component_plugins( array $input, array $declared
 		}
 
 		$key  = self::browser_runtime_component_key( $slug );
-		$path = (string) ( $paths[ $key ] ?? '' );
+		$contract = is_array( $contracts[ $slug ] ?? null ) ? $contracts[ $slug ] : ( is_array( $contracts[ $key ] ?? null ) ? $contracts[ $key ] : array() );
+		$path = (string) ( $contract['path'] ?? '' );
 		if ( '' !== $path ) {
 			if ( ! is_dir( $path ) ) {
 				return new WP_Error( 'wp_codebox_browser_component_path_missing', 'Browser runtime component path does not exist.', array( 'status' => 400, 'slug' => $slug, 'path' => $path ) );
@@ -576,7 +579,7 @@ private static function browser_component_plugins( array $input, array $declared
 			$plugins[] = array(
 				'url'                     => $package['url'],
 				'slug'                    => $slug,
-				'activate'                => true,
+				'activate'                => (bool) ( $contract['activate'] ?? true ),
 				'local_package'           => true,
 				'local_package_fetch_url' => $package['fetch_url'],
 				'sha256'                  => $package['sha256'],
@@ -692,42 +695,59 @@ private static function browser_component_plugins_required( array $input ): bool
 	return ! empty( $input['browser_runner'] ) || ! empty( $provider_plugin_paths ) || ! empty( $connectors ) || ! empty( $secret_env );
 }
 
-/** @param array<string,mixed> $input Ability input. @return array{agents_api:string,data_machine:string,data_machine_code:string} */
-private static function browser_component_paths( array $input ): array {
-	$configured = self::browser_configured_component_paths();
+/** @param array<string,mixed> $input Ability input. @return array<string,array<string,mixed>> */
+private static function browser_component_contracts( array $input ): array {
+	$contracts = array();
+	foreach ( self::browser_configured_component_contracts() as $contract ) {
+		if ( is_array( $contract ) ) {
+			$contracts[] = $contract;
+		}
+	}
+	foreach ( is_array( $input['component_contracts'] ?? null ) ? $input['component_contracts'] : array() as $contract ) {
+		if ( is_array( $contract ) ) {
+			$contracts[] = $contract;
+		}
+	}
 
-	return array(
-		'agents_api'        => self::browser_clean_path( self::browser_component_path_value( $input, 'agents_api_path', $configured['agents_api'] ?? '' ) ),
-		'data_machine'      => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_path', $configured['data_machine'] ?? '' ) ),
-		'data_machine_code' => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_code_path', $configured['data_machine_code'] ?? '' ) ),
-	);
+	$normalized = array();
+	foreach ( $contracts as $contract ) {
+		$slug = self::safe_key( (string) ( $contract['slug'] ?? $contract['component'] ?? $contract['name'] ?? '' ) );
+		if ( '' === $slug ) {
+			continue;
+		}
+
+		$normalized[ $slug ] = array_merge(
+			$contract,
+			array(
+				'slug' => $slug,
+				'path' => self::browser_clean_path( (string) ( $contract['path'] ?? $contract['source'] ?? '' ) ),
+			)
+		);
+	}
+
+	return $normalized;
 }
 
-private static function browser_component_path_value( array $input, string $key, string $fallback ): string {
-	$value = trim( (string) ( $input[ $key ] ?? '' ) );
-	return '' !== $value ? $value : $fallback;
-}
-
-/** @return array<string,mixed> */
-private static function browser_configured_component_paths(): array {
-	$paths = array();
+/** @return array<int,array<string,mixed>> */
+private static function browser_configured_component_contracts(): array {
+	$contracts = array();
 	if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
-		$option = get_site_option( 'wp_codebox_component_paths', array() );
+		$option = get_site_option( 'wp_codebox_component_contracts', array() );
 	} elseif ( function_exists( 'get_option' ) ) {
-		$option = get_option( 'wp_codebox_component_paths', array() );
+		$option = get_option( 'wp_codebox_component_contracts', array() );
 	} else {
 		$option = array();
 	}
 
 	if ( is_array( $option ) ) {
-		$paths = $option;
+		$contracts = $option;
 	}
 
 	if ( function_exists( 'apply_filters' ) ) {
-		$paths = apply_filters( 'wp_codebox_component_paths', $paths );
+		$contracts = apply_filters( 'wp_codebox_component_contracts', $contracts );
 	}
 
-	return is_array( $paths ) ? $paths : array();
+	return is_array( $contracts ) ? $contracts : array();
 }
 
 private static function browser_clean_path( string $path ): string {

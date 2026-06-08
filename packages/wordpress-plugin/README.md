@@ -204,17 +204,18 @@ Data Machine Code or any other product-specific apply-back system.
 
 ## Configuration
 
-Component paths can be supplied by ability input, the
-`wp_codebox_component_paths` option, or the `wp_codebox_component_paths`
-filter. On multisite, WP Codebox reads `wp_codebox_component_paths` from network
-options because component paths are host-level configuration.
+Runtime components can be supplied by ability input, the
+`wp_codebox_component_contracts` option, or the `wp_codebox_component_contracts`
+filter. On multisite, WP Codebox reads `wp_codebox_component_contracts` from
+network options because component contracts are host-level configuration.
 
-Expected component keys:
+Each contract declares the component instead of relying on product-specific keys:
 
-- `agents_api`
-- `data_machine`
-- `data_machine_code`
-- `provider_plugins` (optional list)
+- `slug`: component plugin slug
+- `path` or `source`: host filesystem path to package for the sandbox
+- `activate`: whether the plugin should activate in the sandbox
+- `loadAs`: optional recipe loading mode, such as `mu-plugin`
+- `readiness_probe`: optional caller-declared readiness probe
 
 The CLI binary can be supplied by ability input, the `wp_codebox_bin` option,
 or the `wp_codebox_bin` filter. On multisite, WP Codebox reads `wp_codebox_bin`

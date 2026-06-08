@@ -881,13 +881,13 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 	$connectors   = array_values( array_filter( array_map( 'strval', is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array() ) ) );
 	$secret_env   = array_values( array_filter( array_map( 'strval', is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array() ) ) );
 	$requirements = array(
-		'agents_api'        => self::agents_api_ready() && self::browser_runtime_has_plugin( $runtime, 'agents-api' ),
-		'data_machine'      => self::browser_runtime_has_plugin( $runtime, 'data-machine' ),
-		'data_machine_code' => self::browser_runtime_has_plugin( $runtime, 'data-machine-code' ),
 		'provider_plugin'   => ! empty( $provider_plugin_paths ) && self::all_paths_ready( $provider_plugin_paths ),
 		'provider_secret'   => ! empty( $connectors ) || ! empty( $secret_env ),
 		'runtime_dependencies' => true,
 	);
+	foreach ( self::browser_ready_to_code_component_requirements( $input, $runtime ) as $name => $ready ) {
+		$requirements[ $name ] = $ready;
+	}
 
 	/**
 	 * Filters browser sandbox readiness requirements before the signal is emitted.
@@ -907,10 +907,61 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 		'message'      => $emitted ? 'Browser Playground sandbox is ready to code.' : 'Browser Playground sandbox is not ready to code.',
 		'requirements' => $requirements,
 		'requirement_metadata' => array(
-			'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
+		'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
+		'components'           => self::browser_runtime_component_readiness_metadata( $input, $runtime ),
 		),
 		'missing'      => $missing,
 	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $runtime Normalized runtime dependencies. @return array<string,bool> */
+private static function browser_ready_to_code_component_requirements( array $input, array $runtime ): array {
+	$requirements = array();
+	$contracts    = self::browser_component_contracts( $input );
+	foreach ( self::browser_runtime_component_slugs( is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array(), false ) as $slug ) {
+		$contract = is_array( $contracts[ $slug ] ?? null ) ? $contracts[ $slug ] : array();
+		$ready    = self::browser_runtime_has_plugin( $runtime, $slug );
+		$probe    = is_array( $contract['readiness_probe'] ?? null ) ? $contract['readiness_probe'] : array();
+		if ( $ready && ! empty( $probe ) ) {
+			$ready = self::browser_component_readiness_probe_ready( $probe );
+		}
+
+		$requirements[ 'component:' . $slug ] = $ready;
+	}
+
+	return $requirements;
+}
+
+/** @param array<string,mixed> $probe Component readiness probe. */
+private static function browser_component_readiness_probe_ready( array $probe ): bool {
+	$type = (string) ( $probe['type'] ?? '' );
+	if ( 'ability' === $type ) {
+		$name = (string) ( $probe['name'] ?? '' );
+		return '' !== $name && function_exists( 'wp_get_ability' ) && (bool) wp_get_ability( $name );
+	}
+
+	if ( 'filter' === $type ) {
+		$name = (string) ( $probe['name'] ?? '' );
+		return '' !== $name && function_exists( 'apply_filters' ) && (bool) apply_filters( $name, false, $probe );
+	}
+
+	return true;
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $runtime Normalized runtime dependencies. @return array<int,array<string,mixed>> */
+private static function browser_runtime_component_readiness_metadata( array $input, array $runtime ): array {
+	$contracts = self::browser_component_contracts( $input );
+	$metadata  = array();
+	foreach ( self::browser_runtime_component_slugs( is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array(), false ) as $slug ) {
+		$metadata[] = array(
+			'slug'       => $slug,
+			'installed'  => self::browser_runtime_has_plugin( $runtime, $slug ),
+			'probe'      => is_array( $contracts[ $slug ]['readiness_probe'] ?? null ) ? $contracts[ $slug ]['readiness_probe'] : null,
+			'readiness'  => self::browser_runtime_has_plugin( $runtime, $slug ) ? 'compiled' : 'missing',
+		);
+	}
+
+	return $metadata;
 }
 
 private static function agents_api_ready(): bool {
