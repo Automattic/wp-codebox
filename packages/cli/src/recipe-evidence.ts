@@ -805,6 +805,32 @@ export function recipeAgentResultFailure(agentResult: RecipeArtifactEvidenceResu
   }
 }
 
+/**
+ * Gate recipe success on post-agent verification steps.
+ *
+ * Steps in the recipe `workflow.after` phase (e.g. a `wordpress.phpunit` or
+ * `wordpress.run-php` smoke gate run after the agent finishes editing) execute
+ * but do not throw on a non-zero exit, so without this check a red test gate
+ * would still report the run as succeeded. Any failing after-phase step turns
+ * the whole run into a failure, so the orchestrator cannot accept an agent
+ * change until its verification gates are green.
+ */
+export function recipeVerifyStepFailure(
+  executions: ReadonlyArray<{ exitCode: number; recipePhase?: string; recipeCommand?: string; command?: string }>,
+): { name: string; code: string; message: string } | undefined {
+  const failed = executions.find((execution) => execution.recipePhase === "after" && execution.exitCode !== 0)
+  if (!failed) {
+    return undefined
+  }
+
+  const stepName = failed.recipeCommand || failed.command || "verify"
+  return {
+    name: "RecipeVerifyError",
+    code: "verify-step-failed",
+    message: `Verification step ${stepName} failed with exit code ${failed.exitCode}.`,
+  }
+}
+
 function workspaceToolDiagnostics(transcript: AgentSandboxTranscript): AgentSandboxResultSummary["workspaceTools"] | undefined {
   const diagnostics = new Set<string>()
   const text = transcript.executions.map((execution) => `${execution.stdout}\n${execution.stderr}`).join("\n").toLowerCase()

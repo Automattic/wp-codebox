@@ -143,6 +143,7 @@ export const smokeGroups = {
       tsxSmoke("recipe-browser-smoke"),
       tsxSmoke("recipe-dry-run-smoke"),
       tsxSmoke("recipe-workflow-phases-smoke"),
+      tsxSmoke("recipe-verify-gate-smoke"),
       tsxSmoke("recipe-site-seed-smoke"),
       tsxSmoke("recipe-fixture-probes-smoke"),
       tsxSmoke("recipe-staged-files-smoke"),

@@ -37,6 +37,7 @@ export interface AgentTaskRunInput {
   artifacts_path?: string
   wp?: string
   component_contracts?: Array<Record<string, unknown>>
+  verify_steps?: WorkspaceRecipe["workflow"]["after"]
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
 }
@@ -191,7 +192,14 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       secretEnv: stringList(input.secret_env),
       agent_bundles: Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0 ? input.agent_bundles : undefined,
     }),
-    workflow: { steps: [{ command: "wp-codebox.agent-sandbox-run", args: workflowArgs }] },
+    workflow: stripUndefined({
+      steps: [{ command: "wp-codebox.agent-sandbox-run", args: workflowArgs }],
+      // Post-agent verification gate: these run after the agent finishes editing
+      // (e.g. `wordpress.phpunit` / `wordpress.run-php` smoke gates). A non-zero
+      // exit in any after-phase step fails the whole run, so the orchestrator
+      // cannot report success until the supplied gates are green.
+      after: Array.isArray(input.verify_steps) && input.verify_steps.length > 0 ? input.verify_steps : undefined,
+    }),
   }) as WorkspaceRecipe
 }
 

@@ -76,6 +76,26 @@ assert.ok(
   "outer sandbox payloads should use a distinct encoder helper",
 )
 
+// Verify steps are emitted into workflow.after so a post-agent test gate runs
+// after the agent finishes editing.
+const verifyInput = {
+  goal: "Fix a bug and prove it with the smoke suite",
+  provider: "openai",
+  model: "gpt-5.5",
+  artifacts_path: "/tmp/wp-codebox-artifacts",
+  verify_steps: [
+    { command: "wordpress.phpunit", args: ["plugin-slug=data-machine"] },
+  ],
+}
+const verifyRecipe = buildAgentTaskRecipe(verifyInput, normalizeTaskInput(verifyInput), "trunk")
+assert.equal(verifyRecipe.workflow.steps[0]?.command, "wp-codebox.agent-sandbox-run", "agent run remains the primary workflow step")
+assert.equal(verifyRecipe.workflow.after?.length, 1, "verify_steps should be emitted as workflow.after")
+assert.equal(verifyRecipe.workflow.after?.[0]?.command, "wordpress.phpunit", "after step should be the supplied verify command")
+
+// Without verify_steps, no after phase is emitted (back-compat with current runs).
+const noVerifyRecipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
+assert.equal(noVerifyRecipe.workflow.after, undefined, "no verify_steps should leave workflow.after unset")
+
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
 const phpAiClientPath = join(profileRoot, "php-ai-client@custom-provider-auth")
