@@ -183,6 +183,11 @@ function get_users( array $args ): array { return array( new WP_User( 11, 'Priva
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-inheritance.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-request-normalizer.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-tool-policy-validator.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-run-result-normalizer.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-parent-site-seed-exporter.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-data-machine-pending-actions.php';

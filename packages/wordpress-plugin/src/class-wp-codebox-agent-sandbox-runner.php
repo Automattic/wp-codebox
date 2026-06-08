@@ -30,12 +30,22 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @var array<string, callable> */
 	private array $callbacks;
+	private WP_Codebox_Host_Request_Normalizer $request_normalizer;
+	private WP_Codebox_Host_Tool_Policy_Validator $tool_policy_validator;
+	private WP_Codebox_Host_Recipe_Builder $recipe_builder;
+	private WP_Codebox_Host_Run_Result_Normalizer $run_result_normalizer;
+	private WP_Codebox_Parent_Site_Seed_Exporter $site_seed_exporter;
 
 	/**
 	 * @param array<string, callable> $callbacks Test seams for pure-PHP smoke coverage.
 	 */
 	public function __construct( array $callbacks = array() ) {
-		$this->callbacks = $callbacks;
+		$this->callbacks             = $callbacks;
+		$this->request_normalizer    = new WP_Codebox_Host_Request_Normalizer();
+		$this->tool_policy_validator = new WP_Codebox_Host_Tool_Policy_Validator();
+		$this->recipe_builder        = new WP_Codebox_Host_Recipe_Builder();
+		$this->run_result_normalizer = new WP_Codebox_Host_Run_Result_Normalizer();
+		$this->site_seed_exporter    = new WP_Codebox_Parent_Site_Seed_Exporter();
 	}
 
 	/**
@@ -263,88 +273,21 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $prepared Prepared run. @param array<string,mixed> $result Command result. @return array<string,mixed>|WP_Error */
 	private function complete_agent_task_run( array $prepared, array $result ): array|WP_Error {
-		$input      = is_array( $prepared['input'] ?? null ) ? $prepared['input'] : array();
-		$task_input = is_array( $prepared['task_input'] ?? null ) ? $prepared['task_input'] : array();
-		$task       = (string) ( $prepared['task'] ?? '' );
-		$session_id = (string) ( $prepared['session_id'] ?? '' );
-		$paths      = is_array( $prepared['paths'] ?? null ) ? $prepared['paths'] : array();
-		$artifacts  = (string) ( $prepared['artifacts'] ?? '' );
-		$wp_version = (string) ( $prepared['wp_version'] ?? '' );
-
-		@unlink( (string) ( $prepared['recipe_file'] ?? '' ) );
-		foreach ( is_array( $prepared['cleanup_paths'] ?? null ) ? $prepared['cleanup_paths'] : array() as $cleanup_path ) {
-			@unlink( (string) $cleanup_path );
-		}
-		$exit_code = (int) ( $result['exit_code'] ?? 1 );
-		$output    = (string) ( $result['output'] ?? '' );
-		if ( true === ( $result['timed_out'] ?? false ) ) {
-			return new WP_Error(
-				'wp_codebox_run_timeout',
-				'WP Codebox agent sandbox run timed out.',
-				array(
-					'status'          => 500,
-					'exit_code'       => $exit_code,
-					'timeout_seconds' => (int) ( $result['timeout_seconds'] ?? 0 ),
-					'output'          => $this->bound_output( $output ),
-				)
-			);
-		}
-		$decoded   = $this->decode_json_output( $output );
-
-		if ( is_wp_error( $decoded ) ) {
-			return new WP_Error(
-				'wp_codebox_json_invalid',
-				'WP Codebox did not return valid JSON: ' . $decoded->get_error_message(),
-				array(
-					'status'    => 500,
-					'exit_code' => $exit_code,
-					'output'    => $this->bound_output( $output ),
-				)
-			);
-		}
-
-		$strict_remediation_outcome = $this->strict_remediation_outcome( $task_input );
-		$outcome                    = $strict_remediation_outcome ? $this->remediation_outcome( $decoded, $exit_code, $output ) : null;
-
-		if ( 0 !== $exit_code && ! $strict_remediation_outcome ) {
-			return new WP_Error(
-				'wp_codebox_run_failed',
-				'WP Codebox agent sandbox run failed.',
-				array(
-					'status'    => 500,
-					'exit_code' => $exit_code,
-					'output'    => $this->bound_output( $output ),
-					'run'       => $decoded,
-				)
-			);
-		}
-
-		$response = array(
-			'success'   => $strict_remediation_outcome ? (bool) ( $outcome['success'] ?? false ) : true,
-			'schema'    => self::SCHEMA,
-			'session'   => $this->sandbox_session( $session_id, 'completed', $input, $decoded, $artifacts ),
-			'task'      => $task,
-			'task_input' => $task_input,
-			'wp'        => $wp_version,
-			'paths'        => $paths,
-			'artifacts'    => $artifacts,
-			'exit_code'    => $exit_code,
-			'agent_result' => is_array( $decoded['agentResult'] ?? null ) ? $decoded['agentResult'] : array(),
-			'agent_task_result' => is_array( $decoded['agentTaskResult'] ?? null ) ? $decoded['agentTaskResult'] : array(),
-			'completion_outcome' => $this->completion_outcome( $decoded ),
-			'run'          => $decoded,
+		return $this->run_result_normalizer->normalize(
+			$prepared,
+			$result,
+			array(
+				'bound_output'               => fn( string $output ): string => $this->bound_output( $output ),
+				'decode_json_output'         => fn( string $output ): array|WP_Error => $this->decode_json_output( $output ),
+				'strict_remediation_outcome' => fn( array $task_input ): bool => $this->strict_remediation_outcome( $task_input ),
+				'remediation_outcome'        => fn( array $run, int $exit_code, string $output ): array => $this->remediation_outcome( $run, $exit_code, $output ),
+				'sandbox_session'            => fn( string $session_id, string $status, array $input, array $run, string $artifacts ): array => $this->sandbox_session( $session_id, $status, $input, $run, $artifacts ),
+				'completion_outcome'         => fn( array $run ): array => $this->completion_outcome( $run ),
+				'run_diagnostics'            => fn( array $run, int $exit_code, ?array $outcome ): array => $this->run_diagnostics( $run, $exit_code, $outcome ),
+				'evidence_refs'              => fn( array $session, array $run ): array => $this->evidence_refs( $session, $run ),
+				'run_metadata'               => fn( string $session_id, array $input, string $wp_version, array $run ): array => $this->run_metadata( $session_id, $input, $wp_version, $run ),
+			)
 		);
-
-		if ( null !== $outcome ) {
-			$response['outcome'] = $outcome;
-		}
-
-		$response['status']        = true === ( $response['success'] ?? false ) ? 'completed' : 'failed';
-		$response['diagnostics']   = $this->run_diagnostics( $decoded, $exit_code, $outcome );
-		$response['evidence_refs'] = $this->evidence_refs( $response['session'], $decoded );
-		$response['run_metadata']  = $this->run_metadata( $session_id, $input, $wp_version, $decoded );
-
-		return $response;
 	}
 
 	/**
@@ -874,60 +817,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function normalize_parent_task_request( array $input ): array|WP_Error {
-		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
-		$schema  = (string) ( $request['schema'] ?? '' );
-		if ( self::TASK_INPUT_SCHEMA !== $schema ) {
-			return $input;
-		}
-
-		$goal = trim( (string) ( $request['goal'] ?? '' ) );
-		if ( '' === $goal ) {
-			return new WP_Error( 'wp_codebox_parent_task_missing', 'parent_request.goal is required.', array( 'status' => 400 ) );
-		}
-
-		$context = is_array( $request['context'] ?? null ) ? $request['context'] : array();
-		foreach ( array( 'sandbox_session_id', 'group_key', 'audit_findings', 'orchestrator' ) as $context_key ) {
-			if ( array_key_exists( $context_key, $request ) ) {
-				$context[ $context_key ] = $request[ $context_key ];
-			}
-		}
-
-		$normalized = array_merge(
-			$input,
-			array_filter(
-				array(
-					'goal'                   => $goal,
-					'target'                 => is_array( $request['target'] ?? null ) ? $request['target'] : array(),
-					'allowed_tools'          => is_array( $request['allowed_tools'] ?? null ) ? $request['allowed_tools'] : array(),
-					'sandbox_tool_policy'    => is_array( $request['sandbox_tool_policy'] ?? null ) ? $request['sandbox_tool_policy'] : array(),
-					'expected_artifacts'     => is_array( $request['expected_artifacts'] ?? null ) ? $request['expected_artifacts'] : array(),
-					'policy'                 => is_array( $request['policy'] ?? null ) ? $request['policy'] : array(),
-					'context'                => $context,
-					'provider'               => (string) ( $input['provider'] ?? $request['provider'] ?? '' ),
-					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
-					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
-					'agent_bundles'          => $this->agent_bundles( $input, $request ),
-					'runtime_task'           => $this->runtime_task( $input, $request ),
-					'component_contracts'    => $this->merge_array_lists( $input['component_contracts'] ?? array(), $request['component_contracts'] ?? array() ),
-					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
-					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
-					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $request['workspaces'] ?? array() ),
-					'runtime_stack_mounts'   => $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array(), $request['runtime_stack_mounts'] ?? array() ),
-					'runtime_overlays'       => $this->merge_array_lists( $input['runtime_overlays'] ?? array(), $request['runtime_overlays'] ?? array() ),
-					'task_timeout_seconds'   => (int) ( $input['task_timeout_seconds'] ?? $request['task_timeout_seconds'] ?? 0 ),
-					'max_turns'              => (int) ( $input['max_turns'] ?? $request['max_turns'] ?? 0 ),
-					'sandbox_session_id'     => (string) ( $input['sandbox_session_id'] ?? $request['sandbox_session_id'] ?? '' ),
-					'orchestrator'           => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : ( is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array() ),
-					'artifacts_path'         => (string) ( $input['artifacts_path'] ?? $request['artifacts'] ?? '' ),
-					'wp_codebox_bin'         => (string) ( $input['wp_codebox_bin'] ?? $request['wp_codebox_bin'] ?? '' ),
-				),
-				static fn( mixed $value ): bool => '' !== $value && array() !== $value && 0 !== $value
-			)
-		);
-
-		unset( $normalized['parent_request'] );
-
-		return $normalized;
+		return $this->request_normalizer->normalize( $input );
 	}
 
 	private function agent_slug( array $input ): string {
@@ -1337,46 +1227,12 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param string[] $tools @param array<string,mixed>|null $task_input Normalized task input. */
 	public function validate_allowed_tools( array $tools, ?array $task_input = null ): WP_Error|null {
-		return $this->validate_task_tools( is_array( $task_input ) ? $task_input : array( 'allowed_tools' => $tools ) );
+		return $this->tool_policy_validator->validate_allowed_tools( $tools, $task_input );
 	}
 
 	/** @param array<string,mixed> $task_input Normalized task input. */
 	private function validate_task_tools( array $task_input ): WP_Error|null {
-		$tools  = $this->string_list( $task_input['allowed_tools'] ?? array() );
-		$policy = $this->resolved_sandbox_tool_policy( $task_input );
-		if ( is_wp_error( $policy ) ) {
-			return $policy;
-		}
-
-		$allowed = $this->allowed_sandbox_tools( $policy );
-		$denied  = array();
-
-		foreach ( $tools as $tool ) {
-			$policy_tool = $this->sandbox_policy_tool( $policy, $tool );
-			$reason      = null === $policy_tool ? 'not-in-policy' : $this->sandbox_policy_denial_reason( $policy_tool );
-			if ( null !== $reason ) {
-				$denied[] = array(
-					'tool'   => $tool,
-					'reason' => $reason,
-				);
-			}
-		}
-
-		if ( empty( $denied ) ) {
-			return null;
-		}
-
-		return new WP_Error(
-			'wp_codebox_tool_not_allowed',
-			'One or more requested tools are not allowed by the resolved sandbox tool policy.',
-			array(
-				'status'        => 403,
-				'schema'        => self::TOOL_DENIAL_SCHEMA,
-				'denied_tools'  => $denied,
-				'allowed_tools' => $allowed,
-				'policy_schema' => $policy['schema'] ?? '',
-			)
-		);
+		return $this->tool_policy_validator->validate_task_tools( $task_input );
 	}
 
 	/** @param array<string,mixed> $task_input Normalized task input. */
@@ -2100,119 +1956,33 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param string[] $task_prompts Encoded task prompts.
 	 */
 	private function write_agent_recipe( array $paths, array $input, array $task_prompts, string $wp_version, ?array $inheritance = null ): array|WP_Error {
-		$inheritance = $inheritance ?? $this->inheritance_resolution( $input );
-		$credential_error = $this->connector_credentials_error( $inheritance );
-		if ( null !== $credential_error ) {
-			return $credential_error;
-		}
-
-		$provider_plugins = array_map(
-			fn( string $path ): array => array(
-				'source'   => $path,
-				'slug'     => basename( $path ),
-				'activate' => false,
-			),
-			$this->provider_plugin_paths( $input, $inheritance )
-		);
-
-		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
-		$agent_bundles  = $this->agent_bundles( $input );
-		$runtime_task   = $this->runtime_task( $input );
-		$steps              = array();
-		foreach ( $task_prompts as $task_prompt ) {
-			$task_input = $this->task_input( array_merge( $input, array( 'goal' => $task_prompt ) ) );
-			if ( is_wp_error( $task_input ) ) {
-				return $task_input;
-			}
-
-			$args = array(
-				'task=' . $task_prompt,
-				'agent=' . $this->agent_slug( $input ),
-				'mode=' . $this->mode( $input ),
-				'provider=' . $this->provider( $input, $inheritance ),
-				'model=' . $this->model( $input, $inheritance ),
-				'provider-plugin-slugs=' . implode( ',', $provider_slugs ),
-				'sandbox-tool-policy-json=' . $this->json_encode( $task_input['sandbox_tool_policy'] ),
-			);
-			if ( ! empty( $agent_bundles ) ) {
-				$args[] = 'agent-bundles-json=' . $this->json_encode( $agent_bundles );
-			}
-			if ( ! empty( $runtime_task ) ) {
-				$args[] = 'runtime-task-json=' . $this->json_encode( $runtime_task );
-			}
-			if ( ! empty( $input['session_id'] ) ) {
-				$args[] = 'session-id=' . (string) $input['session_id'];
-			}
-			if ( ! empty( $input['max_turns'] ) ) {
-				$args[] = 'max-turns=' . (string) max( 1, (int) $input['max_turns'] );
-			}
-			if ( ! empty( $input['task_timeout_seconds'] ) ) {
-				$args[] = 'timeout-seconds=' . (string) $this->task_timeout_seconds( $input );
-			}
-
-			$steps[] = array(
-				'command' => 'wp-codebox.agent-sandbox-run',
-				'args'    => $args,
-			);
-		}
-
-		$mounts = $this->recipe_mounts( $input );
-		if ( is_wp_error( $mounts ) ) {
-			return $mounts;
-		}
-		$workspaces = $this->recipe_workspaces( $input );
-		if ( is_wp_error( $workspaces ) ) {
-			return $workspaces;
-		}
-		$runtime = $this->recipe_runtime( $input, $wp_version );
-		if ( is_wp_error( $runtime ) ) {
-			return $runtime;
-		}
-
-		$site_seed_payload = $this->parent_site_seed_recipe_entries( $input );
-		if ( is_wp_error( $site_seed_payload ) ) {
-			return $site_seed_payload;
-		}
-
-		$recipe_inputs = array(
-			'mounts'       => $mounts,
-			'workspaces'   => $workspaces,
-			'inherit'      => $this->inheritance_request( $input ),
-			'inheritance'  => $inheritance,
-			'extra_plugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
-			'secretEnv'    => $this->secret_env_names( $input, $inheritance ),
-		);
-		if ( ! empty( $agent_bundles ) ) {
-			$recipe_inputs['agent_bundles'] = $agent_bundles;
-		}
-		if ( ! empty( $site_seed_payload['siteSeeds'] ) ) {
-			$recipe_inputs['siteSeeds'] = $site_seed_payload['siteSeeds'];
-		}
-
-		$recipe = array(
-			'schema'   => 'wp-codebox/workspace-recipe/v1',
-			'runtime'  => $runtime,
-			'inputs'   => $recipe_inputs,
-			'workflow' => array( 'steps' => $steps ),
-		);
-
-		$file = tempnam( sys_get_temp_dir(), 'wp-codebox-recipe-' );
-		if ( false === $file ) {
-			return new WP_Error( 'wp_codebox_recipe_temp_failed', 'Could not create a temporary WP Codebox recipe.', array( 'status' => 500 ) );
-		}
-
-		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $recipe, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $recipe, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
-		if ( ! is_string( $encoded ) || false === file_put_contents( $file, $encoded ) ) {
-			@unlink( $file );
-			foreach ( $site_seed_payload['cleanup_paths'] as $cleanup_path ) {
-				@unlink( (string) $cleanup_path );
-			}
-			return new WP_Error( 'wp_codebox_recipe_write_failed', 'Could not write the temporary WP Codebox recipe.', array( 'status' => 500 ) );
-		}
-
-		return array(
-			'path'          => $file,
-			'cleanup_paths' => $site_seed_payload['cleanup_paths'],
+		return $this->recipe_builder->build(
+			$paths,
+			$input,
+			$task_prompts,
+			$wp_version,
+			$inheritance,
+			array(
+				'inheritance_resolution'     => fn( array $input ): array => $this->inheritance_resolution( $input ),
+				'connector_credentials_error' => fn( array $inheritance ): WP_Error|null => $this->connector_credentials_error( $inheritance ),
+				'provider_plugin_paths'       => fn( array $input, array $inheritance ): array => $this->provider_plugin_paths( $input, $inheritance ),
+				'agent_bundles'               => fn( array $input ): array => $this->agent_bundles( $input ),
+				'runtime_task'                => fn( array $input ): array => $this->runtime_task( $input ),
+				'task_input'                  => fn( array $input ): array|WP_Error => $this->task_input( $input ),
+				'agent_slug'                  => fn( array $input ): string => $this->agent_slug( $input ),
+				'mode'                        => fn( array $input ): string => $this->mode( $input ),
+				'provider'                    => fn( array $input, array $inheritance ): string => $this->provider( $input, $inheritance ),
+				'model'                       => fn( array $input, array $inheritance ): string => $this->model( $input, $inheritance ),
+				'json_encode'                 => fn( mixed $value ): string => $this->json_encode( $value ),
+				'task_timeout_seconds'        => fn( array $input ): int => $this->task_timeout_seconds( $input ),
+				'recipe_mounts'               => fn( array $input ): array|WP_Error => $this->recipe_mounts( $input ),
+				'recipe_workspaces'           => fn( array $input ): array|WP_Error => $this->recipe_workspaces( $input ),
+				'recipe_runtime'              => fn( array $input, string $wp_version ): array|WP_Error => $this->recipe_runtime( $input, $wp_version ),
+				'site_seed_recipe_entries'    => fn( array $input ): array|WP_Error => $this->parent_site_seed_recipe_entries( $input ),
+				'inheritance_request'         => fn( array $input ): array => $this->inheritance_request( $input ),
+				'component_plugins'           => fn( array $paths ): array => $this->component_plugins( $paths ),
+				'secret_env_names'            => fn( array $input, array $inheritance ): array => $this->secret_env_names( $input, $inheritance ),
+			)
 		);
 	}
 
@@ -2221,57 +1991,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array{siteSeeds:array<int,array<string,mixed>>,cleanup_paths:array<int,string>}|WP_Error
 	 */
 	private function parent_site_seed_recipe_entries( array $input ): array|WP_Error {
-		$declarations = is_array( $input['site_seeds'] ?? null ) ? $input['site_seeds'] : array();
-		if ( empty( $declarations ) ) {
-			return array( 'siteSeeds' => array(), 'cleanup_paths' => array() );
-		}
-
-		$site_seeds    = array();
-		$cleanup_paths = array();
-		foreach ( $declarations as $index => $declaration ) {
-			if ( ! is_array( $declaration ) ) {
-				return new WP_Error( 'wp_codebox_site_seed_invalid', 'Each site_seeds entry must be an object.', array( 'status' => 400, 'index' => $index ) );
-			}
-			if ( 'parent_site' !== (string) ( $declaration['type'] ?? '' ) ) {
-				return new WP_Error( 'wp_codebox_site_seed_type_invalid', 'Only parent_site site_seeds are accepted by the WordPress host exporter.', array( 'status' => 400, 'index' => $index ) );
-			}
-			$name = (string) ( $declaration['name'] ?? 'parent-site' );
-			if ( ! preg_match( '/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $name ) ) {
-				return new WP_Error( 'wp_codebox_site_seed_name_invalid', 'site_seeds entries require a stable name.', array( 'status' => 400, 'index' => $index ) );
-			}
-			$scopes = is_array( $declaration['scopes'] ?? null ) ? $declaration['scopes'] : array();
-			$validation = $this->validate_parent_site_seed_scopes( $scopes );
-			if ( is_wp_error( $validation ) ) {
-				return $validation;
-			}
-
-			$seed = $this->export_parent_site_seed( $name, $scopes );
-			if ( is_wp_error( $seed ) ) {
-				return $seed;
-			}
-
-			$file = tempnam( sys_get_temp_dir(), 'wp-codebox-site-seed-' );
-			if ( false === $file ) {
-				return new WP_Error( 'wp_codebox_site_seed_temp_failed', 'Could not create a temporary WP Codebox site seed fixture.', array( 'status' => 500 ) );
-			}
-
-			$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $seed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $seed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
-			if ( ! is_string( $encoded ) || false === file_put_contents( $file, $encoded ) ) {
-				@unlink( $file );
-				return new WP_Error( 'wp_codebox_site_seed_write_failed', 'Could not write a temporary WP Codebox site seed fixture.', array( 'status' => 500 ) );
-			}
-
-			$cleanup_paths[] = $file;
-			$site_seeds[] = array(
-				'type'   => 'fixture',
-				'name'   => $name,
-				'source' => $file,
-				'format' => 'json',
-				'scopes' => $scopes,
-			);
-		}
-
-		return array( 'siteSeeds' => $site_seeds, 'cleanup_paths' => $cleanup_paths );
+		return $this->site_seed_exporter->recipe_entries( $input );
 	}
 
 	/** @param array<string,mixed> $scopes Parent-site seed scopes. */
