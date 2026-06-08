@@ -37,10 +37,7 @@ export interface AgentTaskRunInput {
   sandbox_session_id?: string
   artifacts_path?: string
   wp?: string
-  agents_api_path?: string
-  data_machine_path?: string
-  data_machine_code_path?: string
-  runtime_component_paths?: Record<string, unknown>
+  component_contracts?: Array<Record<string, unknown>>
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
 }
@@ -189,9 +186,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
       extraPlugins: [
-        componentPlugin(runtimeComponentPath(input, "agents_api", input.agents_api_path), "agents-api", artifacts),
-        componentPlugin(runtimeComponentPath(input, "agent_runtime", input.data_machine_path), "data-machine", artifacts),
-        componentPlugin(runtimeComponentPath(input, "agent_runtime_tools", input.data_machine_code_path), "data-machine-code", artifacts),
+        ...componentPlugins(input.component_contracts, artifacts),
         ...providerPlugins,
       ].filter(Boolean),
       secretEnv: stringList(input.secret_env),
@@ -270,11 +265,6 @@ function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfil
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
-}
-
-function runtimeComponentPath(input: AgentTaskRunInput, key: string, fallback: unknown): unknown {
-  const paths = input.runtime_component_paths
-  return paths && typeof paths === "object" && !Array.isArray(paths) ? paths[key] || fallback : fallback
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
@@ -383,9 +373,19 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string): Array<Re
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
 }
 
-function componentPlugin(source: unknown, slug: string, artifactsRoot: string): { source: string; slug: string; activate: boolean; loadAs: "mu-plugin" } | undefined {
-  const path = stringValue(source)
-  return path ? { source: prepareComposerPluginSource(path, slug, artifactsRoot), slug, activate: false, loadAs: "mu-plugin" } : undefined
+function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; activate: boolean; loadAs: string }> {
+  if (!Array.isArray(contracts)) return []
+  return contracts.flatMap((contract) => {
+    const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
+    const source = stringValue(contract.path || contract.source)
+    if (!slug || !source) return []
+    return [{
+      source: prepareComposerPluginSource(source, slug, artifactsRoot),
+      slug,
+      activate: Boolean(contract.activate),
+      loadAs: stringValue(contract.loadAs) || "mu-plugin",
+    }]
+  })
 }
 
 function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {

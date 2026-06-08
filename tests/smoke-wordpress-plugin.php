@@ -577,12 +577,12 @@ $assert( 'persist-browser-artifact denies untrusted orchestrator caller', false 
 $assert( 'persist-browser-artifact denies trusted caller without artifact write scope', false === call_user_func( $persist_browser_artifact_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'browser-session:create' ) ) ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
-$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
-	'agents_api'        => $root . '/agents-api',
-	'data_machine'      => $root . '/data-machine',
-	'data_machine_code' => $root . '/data-machine-code',
-	'provider_plugins'  => array( $root . '/ai-provider-test' ),
+$component_contracts = array(
+	array( 'slug' => 'agents-api', 'path' => $root . '/agents-api', 'activate' => false, 'loadAs' => 'mu-plugin', 'readiness_probe' => array( 'type' => 'ability', 'name' => 'agents/chat' ) ),
+	array( 'slug' => 'data-machine', 'path' => $root . '/data-machine', 'activate' => false, 'loadAs' => 'mu-plugin' ),
+	array( 'slug' => 'data-machine-code', 'path' => $root . '/data-machine-code', 'activate' => false, 'loadAs' => 'mu-plugin' ),
 );
+$GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] = $component_contracts;
 // The generic runtime ships no built-in components. A consumer integration
 // registers the agent-stack components + their release sources via these
 // filters (mirrors how extrachill-roadie wires the Extra Chill platform in).
@@ -661,9 +661,6 @@ file_put_contents( $root . '/plugin-root/generic-caller-plugin/generic-caller-pl
 
 $browser_session_input = array(
 		'goal'                  => 'Prepare a browser Playground preview.',
-		'agents_api_path'       => '',
-		'data_machine_path'     => '',
-		'data_machine_code_path' => '',
 		'sandbox_session_id'    => 'browser-session-123',
 		'target'                => array( 'kind' => 'sandbox-runtime' ),
 		'allowed_tools'         => array( 'filesystem-write', 'filesystem-write', '' ),
@@ -1849,8 +1846,8 @@ $browser_untrusted_cors_proxy = call_user_func(
 );
 $assert( 'browser Playground session rejects untrusted CORS proxy origins', is_wp_error( $browser_untrusted_cors_proxy ) && 'wp_codebox_browser_origin_not_allowed' === $browser_untrusted_cors_proxy->get_error_code() && 'cors_proxy_url' === ( $browser_untrusted_cors_proxy->get_error_data()['field'] ?? '' ) );
 
-$component_paths_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] ?? null;
-unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
+$component_contracts_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] ?? null;
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] );
 $browser_canonical_component_session = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
@@ -1860,8 +1857,8 @@ $browser_canonical_component_session = call_user_func(
 		'browser_runner'        => array( 'invocation' => array( 'type' => 'task', 'hook' => 'canonical_runtime_task' ) ),
 	)
 );
-if ( null !== $component_paths_filter ) {
-	$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = $component_paths_filter;
+if ( null !== $component_contracts_filter ) {
+	$GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] = $component_contracts_filter;
 }
 $canonical_component_urls = ! is_wp_error( $browser_canonical_component_session ) ? array_values( array_map( static fn( array $plugin ): string => (string) ( $plugin['url'] ?? '' ), $browser_canonical_component_session['plugins'] ?? array() ) ) : array();
 $canonical_component_remote_get_urls = array_values( array_map( static fn( array $request ): string => (string) ( $request['url'] ?? '' ), $GLOBALS['wp_codebox_remote_gets'] ?? array() ) );
@@ -1891,8 +1888,8 @@ $browser_session_missing_agents_api = call_user_func(
 $assert( 'browser Playground session blocks when caller-declared Agents API prerequisite is missing', ! is_wp_error( $browser_session_missing_agents_api ) && false === ( $browser_session_missing_agents_api['success'] ?? true ) && in_array( 'component:agents-api', $browser_session_missing_agents_api['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_agents_api ) );
 $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 
-$component_paths = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'];
-$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array_merge( $component_paths, array( 'data_machine' => '' ) );
+$component_contracts_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'];
+$GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] = array_values( array_filter( $component_contracts_filter, static fn( array $contract ): bool => 'data-machine' !== ( $contract['slug'] ?? '' ) ) );
 $registry_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] ?? null;
 // Register only agents-api + data-machine-code (omit data-machine) so the
 // missing-Data-Machine prerequisite path is exercised. The generic default is
@@ -1923,7 +1920,7 @@ $browser_session_missing_data_machine = call_user_func(
 	)
 );
 $assert( 'browser Playground session blocks when caller-declared component prerequisite is missing', ! is_wp_error( $browser_session_missing_data_machine ) && false === ( $browser_session_missing_data_machine['success'] ?? true ) && in_array( 'component:data-machine', $browser_session_missing_data_machine['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_data_machine ) );
-$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = $component_paths;
+$GLOBALS['wp_codebox_filters']['wp_codebox_component_contracts'] = $component_contracts_filter;
 if ( null !== $registry_filter ) {
 	$GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] = $registry_filter;
 } else {
@@ -2120,6 +2117,8 @@ $result = $runner->run(
 			'job_id' => 'job-123',
 		),
 		'artifacts_path' => $root . '/artifacts',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'component_contracts' => $component_contracts,
 		'secret_env'     => array( 'GITHUB_TOKEN' ),
 		'preview_hold_seconds' => 30,
 		'preview_port'   => 45678,
@@ -2144,7 +2143,7 @@ $result = $runner->run(
 	)
 );
 
-$assert( 'runner succeeds with filter-provided component paths', ! is_wp_error( $result ) && true === ( $result['success'] ?? false ) );
+$assert( 'runner succeeds with filter-provided component contracts', ! is_wp_error( $result ) && true === ( $result['success'] ?? false ) );
 $assert( 'runner schema is stable', ! is_wp_error( $result ) && 'wp-codebox/agent-task-run/v1' === ( $result['schema'] ?? '' ) );
 $assert( 'runner returns caller-owned sandbox session envelope', ! is_wp_error( $result ) && 'wp-codebox/sandbox-session/v1' === ( $result['session']['schema'] ?? '' ) && 'parent-job-123' === ( $result['session']['id'] ?? '' ) && 'external-orchestrator' === ( $result['session']['persistence'] ?? '' ) );
 $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_error( $result ) && 'agent-chat-session-456' === ( $result['session']['agent_session_id'] ?? '' ) && str_contains( $captured_recipe, 'session-id=agent-chat-session-456' ) );
@@ -2173,7 +2172,44 @@ $assert( 'runner recipe passes secret env name only', str_contains( $captured_re
 $assert( 'runner passes timeout to command runner and recipe', 7200 === $captured_timeout && str_contains( $captured_recipe, 'timeout-seconds=7200' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
 
-$homeboy_result = $runner->run(
+$GLOBALS['wp_codebox_filters']['wp_codebox_normalize_parent_task_request'] = static function ( mixed $normalized, array $input ) use ( $root, $component_contracts ): array {
+	$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : array();
+	if ( 'caller/sandbox-task-request/v1' !== ( $request['schema'] ?? '' ) ) {
+		return is_array( $normalized ) ? $normalized : $input;
+	}
+
+	$task = is_array( $request['task'] ?? null ) ? $request['task'] : array();
+	return array_merge(
+		$input,
+		array(
+			'goal'                 => (string) ( $task['prompt'] ?? '' ),
+			'expected_artifacts'   => is_array( $task['expected_artifacts'] ?? null ) ? $task['expected_artifacts'] : array(),
+			'policy'               => is_array( $task['policy'] ?? null ) ? $task['policy'] : array(),
+			'context'              => array_merge( is_array( $task['context'] ?? null ) ? $task['context'] : array(), array( 'group_key' => $request['group_key'] ?? '', 'audit_findings' => $request['audit_findings'] ?? array(), 'orchestrator' => $request['orchestrator'] ?? array() ) ),
+			'provider'             => (string) ( $request['provider'] ?? '' ),
+			'model'                => (string) ( $request['model'] ?? '' ),
+			'provider_plugin_paths' => is_array( $request['provider_plugin_paths'] ?? null ) ? $request['provider_plugin_paths'] : array(),
+			'agent_bundles'        => is_array( $request['agent_bundles'] ?? null ) ? $request['agent_bundles'] : array(),
+			'secret_env'           => is_array( $request['secret_env'] ?? null ) ? $request['secret_env'] : array(),
+			'mounts'               => is_array( $request['mounts'] ?? null ) ? $request['mounts'] : array(),
+			'workspaces'           => array(
+				array( 'seed' => array( 'slug' => 'agents-api', 'path' => $root . '/agents-api' ) ),
+				array( 'seed' => array( 'slug' => 'editable-plugin', 'path' => $root . '/editable-plugin' ) ),
+				array( 'seed' => array( 'slug' => 'caller-extension', 'path' => $root . '/plugin-root/agents-api' ) ),
+			),
+			'runtime_stack_mounts' => is_array( $request['runtime_stack_mounts'] ?? null ) ? $request['runtime_stack_mounts'] : array(),
+			'runtime_overlays'     => is_array( $request['runtime_overlays'] ?? null ) ? $request['runtime_overlays'] : array(),
+			'task_timeout_seconds' => (int) ( $request['task_timeout_seconds'] ?? 0 ),
+			'max_turns'            => (int) ( $request['max_turns'] ?? 0 ),
+			'sandbox_session_id'   => (string) ( $request['sandbox_session_id'] ?? '' ),
+			'orchestrator'         => is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array(),
+			'artifacts_path'       => (string) ( $request['artifacts'] ?? '' ),
+			'component_contracts'  => $component_contracts,
+		)
+	);
+};
+
+$caller_adapter_result = $runner->run(
 	array(
 		'runtime_task' => array(
 			'ability' => 'runtime/run-agent-bundle',
@@ -2184,11 +2220,11 @@ $homeboy_result = $runner->run(
 				'dry_run'             => true,
 			),
 			'metadata' => array(
-				'owner' => 'homeboy',
+				'owner' => 'caller-adapter',
 			),
 		),
 		'parent_request' => array(
-			'schema'               => 'homeboy/wp-codebox-task-request/v1',
+			'schema'               => 'caller/sandbox-task-request/v1',
 			'provider'             => 'openai',
 			'model'                => 'gpt-5.5',
 			'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
@@ -2216,7 +2252,7 @@ $homeboy_result = $runner->run(
 					'source'   => $root . '/editable-plugin',
 					'target'   => '/workspace/editable-plugin',
 					'mode'     => 'readwrite',
-					'metadata' => array( 'kind' => 'homeboy-audit-fanout' ),
+					'metadata' => array( 'kind' => 'caller-audit-fanout' ),
 				),
 			),
 			'runtime_stack_mounts' => array(
@@ -2228,29 +2264,24 @@ $homeboy_result = $runner->run(
 			),
 			'runtime_overlays'     => array(
 				array(
-					'id'     => 'homeboy-runtime-overlay',
+					'id'     => 'caller-runtime-overlay',
 					'source' => $root . '/data-machine-code',
 				),
 			),
 			'task_timeout_seconds' => 3600,
 			'max_turns'            => 8,
-			'sandbox_session_id'   => 'homeboy-sandbox-session-123',
-			'group_key'            => 'homeboy-group-key',
+			'sandbox_session_id'   => 'caller-sandbox-session-123',
+			'group_key'            => 'caller-group-key',
 			'audit_findings'       => array( array( 'id' => 'finding-1', 'summary' => 'Finding one' ) ),
-			'artifacts'            => $root . '/artifacts/homeboy',
+			'artifacts'            => $root . '/artifacts/caller-adapter',
 			'orchestrator'         => array(
-				'type'          => 'homeboy',
-				'id'            => 'homeboy-agent-task',
-				'job_id'        => 'homeboy-job-123',
+				'type'          => 'caller-adapter',
+				'id'            => 'caller-agent-task',
+				'job_id'        => 'caller-job-123',
 				'agent_task_id' => 'agent-task-123',
 			),
-			'agents_api'           => $root . '/agents-api',
-			'data_machine'         => $root . '/data-machine',
-			'data_machine_code'    => $root . '/data-machine-code',
-			'homeboy'              => $root . '/editable-plugin',
-			'homeboy_extensions'   => $root . '/plugin-root/agents-api',
 			'task'                 => array(
-				'prompt'             => 'Run the Homeboy-shaped Codebox task.',
+				'prompt'             => 'Run the caller-shaped Codebox task.',
 				'expected_artifacts' => array( 'patch' ),
 				'policy'             => array( 'kind' => 'audit-remediation' ),
 				'context'            => array( 'group_key' => 'smoke' ),
@@ -2258,26 +2289,27 @@ $homeboy_result = $runner->run(
 		),
 	)
 );
-$homeboy_recipe = json_decode( $captured_recipe, true );
-$homeboy_step_args = $homeboy_recipe['workflow']['steps'][0]['args'] ?? array();
-$homeboy_runtime_task_arg = '';
-foreach ( $homeboy_step_args as $homeboy_step_arg ) {
-	if ( is_string( $homeboy_step_arg ) && str_starts_with( $homeboy_step_arg, 'runtime-task-json=' ) ) {
-		$homeboy_runtime_task_arg = substr( $homeboy_step_arg, strlen( 'runtime-task-json=' ) );
+$caller_adapter_recipe = json_decode( $captured_recipe, true );
+$caller_adapter_step_args = $caller_adapter_recipe['workflow']['steps'][0]['args'] ?? array();
+$caller_adapter_runtime_task_arg = '';
+foreach ( $caller_adapter_step_args as $caller_adapter_step_arg ) {
+	if ( is_string( $caller_adapter_step_arg ) && str_starts_with( $caller_adapter_step_arg, 'runtime-task-json=' ) ) {
+		$caller_adapter_runtime_task_arg = substr( $caller_adapter_step_arg, strlen( 'runtime-task-json=' ) );
 		break;
 	}
 }
-$homeboy_runtime_task = '' !== $homeboy_runtime_task_arg ? json_decode( $homeboy_runtime_task_arg, true ) : array();
-$assert( 'runner accepts Homeboy-shaped parent request', ! is_wp_error( $homeboy_result ) && true === ( $homeboy_result['success'] ?? false ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['session']['id'] ?? '' ) );
-$assert( 'runner maps Homeboy artifacts and orchestrator metadata', ! is_wp_error( $homeboy_result ) && $root . '/artifacts/homeboy' === ( $homeboy_result['artifacts'] ?? '' ) && 'homeboy-job-123' === ( $homeboy_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $homeboy_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
-$assert( 'runner returns stable Homeboy status diagnostics evidence and metadata refs', ! is_wp_error( $homeboy_result ) && in_array( (string) ( $homeboy_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $homeboy_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $homeboy_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $homeboy_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $homeboy_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $homeboy_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $homeboy_result['run_metadata']['schema'] ?? '' ) && 'homeboy-sandbox-session-123' === ( $homeboy_result['run_metadata']['sandbox_session_id'] ?? '' ) );
-$assert( 'runner maps Homeboy provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $homeboy_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
-$assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $homeboy_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $homeboy_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
-$assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $homeboy_runtime_task ) && 'runtime/run-agent-bundle' === ( $homeboy_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $homeboy_runtime_task['input']['flow'] ?? '' ) && true === ( $homeboy_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $homeboy_runtime_task['input']['dry_run'] ?? false ) );
-$assert( 'runner maps Homeboy timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $homeboy_step_args, true ) && in_array( 'max-turns=8', $homeboy_step_args, true ) );
-$assert( 'runner maps Homeboy runtime stack mounts and overlays', '/runtime/agents-api' === ( $homeboy_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'homeboy-runtime-overlay' === ( $homeboy_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
-$assert( 'runner maps Homeboy workspaces without downstream recipe generation', 3 === count( $homeboy_recipe['inputs']['workspaces'] ?? array() ) && str_contains( $captured_recipe, 'Use mounted workspace repos' ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, '`agents-api`' ) );
-$assert( 'runner passes Homeboy task context to sandbox agent', str_contains( $captured_recipe, 'homeboy-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
+$caller_adapter_runtime_task = '' !== $caller_adapter_runtime_task_arg ? json_decode( $caller_adapter_runtime_task_arg, true ) : array();
+$assert( 'runner accepts caller-normalized parent request', ! is_wp_error( $caller_adapter_result ) && true === ( $caller_adapter_result['success'] ?? false ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['session']['id'] ?? '' ) );
+$assert( 'runner maps caller adapter artifacts and orchestrator metadata', ! is_wp_error( $caller_adapter_result ) && $root . '/artifacts/caller-adapter' === ( $caller_adapter_result['artifacts'] ?? '' ) && 'caller-job-123' === ( $caller_adapter_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $caller_adapter_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
+$assert( 'runner returns stable caller adapter diagnostics evidence and metadata refs', ! is_wp_error( $caller_adapter_result ) && in_array( (string) ( $caller_adapter_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $caller_adapter_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $caller_adapter_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $caller_adapter_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $caller_adapter_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $caller_adapter_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $caller_adapter_result['run_metadata']['schema'] ?? '' ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['run_metadata']['sandbox_session_id'] ?? '' ) );
+$assert( 'runner maps caller adapter provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $caller_adapter_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $caller_adapter_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $caller_adapter_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
+$assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $caller_adapter_runtime_task ) && 'runtime/run-agent-bundle' === ( $caller_adapter_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $caller_adapter_runtime_task['input']['flow'] ?? '' ) && true === ( $caller_adapter_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $caller_adapter_runtime_task['input']['dry_run'] ?? false ) );
+$assert( 'runner maps caller adapter timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $caller_adapter_step_args, true ) && in_array( 'max-turns=8', $caller_adapter_step_args, true ) );
+$assert( 'runner maps caller adapter runtime stack mounts and overlays', '/runtime/agents-api' === ( $caller_adapter_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'caller-runtime-overlay' === ( $caller_adapter_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
+$assert( 'runner maps caller adapter workspaces without downstream recipe generation', 3 === count( $caller_adapter_recipe['inputs']['workspaces'] ?? array() ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, 'agents-api' ) );
+$assert( 'runner passes caller adapter task context to sandbox agent', str_contains( $captured_recipe, 'caller-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_normalize_parent_task_request'] );
 
 $GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';
 $GLOBALS['wp_codebox_options']['active_plugins'] = array( 'agents-api/agents-api.php' );
@@ -2308,21 +2340,6 @@ $assert( 'runner exports bounded parent-site seed as fixture', ! is_wp_error( $s
 $assert( 'runner cleans temporary parent-site seed fixture after run', ! is_wp_error( $seed_result ) && '' !== $seed_path && ! file_exists( $seed_path ) );
 $assert( 'runner preserves parent-site seed scope in recipe', ! is_wp_error( $seed_result ) && 1 === ( $seed_recipe['inputs']['siteSeeds'][0]['scopes']['posts']['maxRecords'] ?? 0 ) && true === ( $seed_recipe['inputs']['siteSeeds'][0]['scopes']['users']['anonymize'] ?? false ) );
 
-unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
-$plugin_native_result = $runner->run(
-	array(
-		'goal'           => 'Run with the host-installed Agents API plugin only.',
-		'artifacts_path' => $root . '/artifacts',
-	)
-);
-$plugin_native_recipe  = json_decode( $captured_recipe, true );
-$plugin_native_plugins = array_map(
-	static fn( array $plugin ): string => (string) ( $plugin['slug'] ?? '' ),
-	$plugin_native_recipe['inputs']['extraPlugins'] ?? array()
-);
-$assert( 'runner defaults Agents API path from WP_PLUGIN_DIR', ! is_wp_error( $plugin_native_result ) && in_array( 'agents-api', $plugin_native_plugins, true ) );
-$assert( 'runner does not require Data Machine component paths', ! is_wp_error( $plugin_native_result ) && ! in_array( 'data-machine', $plugin_native_plugins, true ) && ! in_array( 'data-machine-code', $plugin_native_plugins, true ) );
-
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] );
 $bundled_runtime_result = $runner->run(
 	array(
@@ -2334,13 +2351,6 @@ $assert( 'runner defaults to packaged CLI wrapper when present', ! is_wp_error( 
 $assert( 'runner preflights packaged Node runtime', ! is_wp_error( $bundled_runtime_result ) && ! str_contains( $captured_command, 'node: not found' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_bin'] = $root . '/wp-codebox.js';
-
-$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array(
-	'agents_api'        => $root . '/agents-api',
-	'data_machine'      => $root . '/data-machine',
-	'data_machine_code' => $root . '/data-machine-code',
-	'provider_plugins'  => array( $root . '/ai-provider-test' ),
-);
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = '';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = '';
@@ -2399,7 +2409,7 @@ $inherit_step_args = $inherit_recipe['workflow']['steps'][0]['args'] ?? array();
 $inherit_result_encoded = ! is_wp_error( $inherit_result ) ? json_encode( $inherit_result, JSON_UNESCAPED_SLASHES ) : '';
 $assert( 'runner resolves inherited connector provider', ! is_wp_error( $inherit_result ) && in_array( 'provider=openai', $inherit_step_args, true ) );
 $assert( 'runner resolves inherited connector model', ! is_wp_error( $inherit_result ) && in_array( 'model=gpt-5.5', $inherit_step_args, true ) );
-$assert( 'runner mounts inherited provider plugin path', ! is_wp_error( $inherit_result ) && str_contains( $captured_recipe, 'ai-provider-inherited' ) && in_array( 'provider-plugin-slugs=ai-provider-test,ai-provider-inherited', $inherit_step_args, true ) );
+$assert( 'runner mounts inherited provider plugin path', ! is_wp_error( $inherit_result ) && str_contains( $captured_recipe, 'ai-provider-inherited' ) && in_array( 'provider-plugin-slugs=ai-provider-inherited', $inherit_step_args, true ) );
 $assert( 'runner transports inherited secret env name only', ! is_wp_error( $inherit_result ) && in_array( 'OPENAI_API_KEY', $inherit_recipe['inputs']['secretEnv'] ?? array(), true ) && ! str_contains( $captured_recipe, 'OPENAI_API_KEY=' ) );
 $assert( 'runner passes inherited secret env value to command runner', ! is_wp_error( $inherit_result ) && 'sk-test-secret-value' === ( $captured_secret_env['OPENAI_API_KEY'] ?? '' ) );
 $assert( 'runner records connector credential provenance without value', ! is_wp_error( $inherit_result ) && 'wp-codebox/connector-credentials/v1' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $inherit_recipe['inputs']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) );
@@ -2761,13 +2771,14 @@ $batch_result = $runner->run_batch(
 		'tasks'          => array( 'Fix issue one.', 'Fix issue two.' ),
 		'sandbox_session_id' => 'parent-batch-789',
 		'artifacts_path' => $root . '/artifacts',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'preview_port'   => 45679,
 		'preview_bind'   => '127.0.0.1',
 		'preview_public_url' => 'https://preview.example.test/batch/',
 	)
 );
 
-$assert( 'batch runner succeeds with filter-provided component paths', ! is_wp_error( $batch_result ) && true === ( $batch_result['success'] ?? false ) );
+$assert( 'batch runner succeeds with filter-provided component contracts', ! is_wp_error( $batch_result ) && true === ( $batch_result['success'] ?? false ) );
 $assert( 'batch runner schema is stable', ! is_wp_error( $batch_result ) && 'wp-codebox/agent-task-batch/v1' === ( $batch_result['schema'] ?? '' ) );
 $assert( 'batch runner returns normalized task inputs', ! is_wp_error( $batch_result ) && 2 === count( $batch_result['task_inputs'] ?? array() ) && 'Fix issue one.' === ( $batch_result['task_inputs'][0]['goal'] ?? '' ) );
 $batch_recipes = array_slice( $captured_recipes, -2 );
@@ -2905,7 +2916,7 @@ $fanout_result = $fanout_runner->run_fanout(
 		'sandbox_session_id' => 'parent-fanout-123',
 		'artifacts_path'     => $root . '/artifacts/fanout-success',
 		'wp_codebox_bin'     => $fanout_bin,
-		'agents_api_path'    => $root . '/agents-api',
+		'component_contracts' => $component_contracts,
 		'orchestrator'       => array( 'type' => 'studio-web', 'id' => 'fanout-smoke' ),
 	)
 );
@@ -2930,7 +2941,7 @@ $fanout_failure = $fanout_runner->run_fanout(
 		'sandbox_session_id' => 'parent-fanout-fail',
 		'artifacts_path'     => $root . '/artifacts/fanout-failure',
 		'wp_codebox_bin'     => $fanout_bin,
-		'agents_api_path'    => $root . '/agents-api',
+		'component_contracts' => $component_contracts,
 	)
 );
 $assert( 'fanout runner rolls up worker failures', ! is_wp_error( $fanout_failure ) && false === ( $fanout_failure['success'] ?? true ) && 1 === ( $fanout_failure['completed'] ?? 0 ) && 1 === ( $fanout_failure['failed'] ?? 0 ) && 'fail-worker' === ( $fanout_failure['failures'][0]['worker_id'] ?? '' ) );
@@ -2947,7 +2958,7 @@ $fanout_timeout = $fanout_runner->run_fanout(
 		'sandbox_session_id' => 'parent-fanout-timeout',
 		'artifacts_path'     => $root . '/artifacts/fanout-timeout',
 		'wp_codebox_bin'     => $fanout_bin,
-		'agents_api_path'    => $root . '/agents-api',
+		'component_contracts' => $component_contracts,
 	)
 );
 $assert( 'fanout runner reports timeout failures', ! is_wp_error( $fanout_timeout ) && false === ( $fanout_timeout['success'] ?? true ) && 1 === ( $fanout_timeout['failed'] ?? 0 ) && 'wp_codebox_run_timeout' === ( $fanout_timeout['failures'][0]['error']['code'] ?? '' ) );
@@ -2959,7 +2970,7 @@ $duplicate_fanout = $fanout_runner->run_fanout(
 			array( 'id' => 'same', 'goal' => 'Two.' ),
 		),
 		'wp_codebox_bin'  => $fanout_bin,
-		'agents_api_path' => $root . '/agents-api',
+		'component_contracts' => $component_contracts,
 	)
 );
 $assert( 'fanout runner rejects artifact namespace collisions', is_wp_error( $duplicate_fanout ) && 'wp_codebox_fanout_worker_id_duplicate' === $duplicate_fanout->get_error_code() );
@@ -2969,7 +2980,7 @@ $invalid_concurrency = $fanout_runner->run_fanout(
 		'workers' => array( array( 'id' => 'alpha', 'goal' => 'Run alpha.' ) ),
 		'concurrency'     => 99,
 		'wp_codebox_bin'  => $fanout_bin,
-		'agents_api_path' => $root . '/agents-api',
+		'component_contracts' => $component_contracts,
 	)
 );
 $assert( 'fanout runner rejects unsafe concurrency bounds', is_wp_error( $invalid_concurrency ) && 'wp_codebox_fanout_concurrency_invalid' === $invalid_concurrency->get_error_code() );
@@ -2981,12 +2992,7 @@ $GLOBALS['wp_codebox_filters']      = array_filter(
 	static fn( mixed $filter ): bool => null !== $filter
 );
 $GLOBALS['wp_codebox_site_options'] = array(
-	'wp_codebox_component_paths' => array(
-		'agents_api'        => $root . '/agents-api',
-		'data_machine'      => $root . '/data-machine',
-		'data_machine_code' => $root . '/data-machine-code',
-		'provider_plugins'  => array( $root . '/ai-provider-test' ),
-	),
+	'wp_codebox_component_contracts' => $component_contracts,
 	'wp_codebox_bin'             => $root . '/wp-codebox.js',
 	'wp_codebox_artifacts_root'  => $root . '/artifact-network-root',
 );
@@ -2997,11 +3003,7 @@ $assert( 'multisite runner reads network-level options', ! is_wp_error( $network
 $GLOBALS['wp_codebox_is_multisite'] = false;
 $GLOBALS['wp_codebox_filters']      = array_filter(
 	array(
-		'wp_codebox_component_paths'            => array(
-			'agents_api'        => $root . '/agents-api',
-			'data_machine'      => $root . '/data-machine',
-			'data_machine_code' => $root . '/data-machine-code',
-		),
+		'wp_codebox_component_contracts'        => $component_contracts,
 		'wp_codebox_bin'                        => $root . '/wp-codebox.js',
 		'wp_codebox_default_agent'              => 'site-coder',
 		'wp_codebox_default_provider'           => 'openai',

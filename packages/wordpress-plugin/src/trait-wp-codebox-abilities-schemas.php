@@ -573,9 +573,6 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'wp'                     => self::string_property_schema( $detailed ? 'WordPress version passed to Playground. Defaults to trunk.' : '' ),
 		'artifacts_path'         => self::string_property_schema( $detailed ? 'Directory where WP Codebox should write artifact bundles.' : '' ),
 		'wp_codebox_bin'         => self::string_property_schema( $detailed ? 'WP Codebox CLI binary or path. JS dist files are run through node.' : '' ),
-		'agents_api_path'        => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
-		'data_machine_path'      => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
-		'data_machine_code_path' => self::string_property_schema( $detailed ? 'Legacy compatibility component path. Prefer component_contracts.' : '' ),
 	);
 
 	if ( ! empty( $options['task_fields'] ) ) {

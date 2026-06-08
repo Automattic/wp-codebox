@@ -780,25 +780,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $contracts;
 	}
 
-	/** @return array<string,string> */
-	private function default_component_paths(): array {
-		$paths = array();
-
-		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
-			return $paths;
-		}
-
-		$plugin_dir = $this->clean_path( (string) WP_PLUGIN_DIR );
-		foreach ( array( 'agents-api', 'data-machine', 'data-machine-code' ) as $slug ) {
-			$path = $plugin_dir . DIRECTORY_SEPARATOR . $slug;
-			if ( is_dir( $path ) ) {
-				$paths[ $slug ] = $path;
-			}
-		}
-
-		return $paths;
-	}
-
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
 	private function component_contracts( array $input ): array {
 		$contracts = array();
@@ -812,10 +793,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				$contracts[] = $contract;
 			}
 		}
-		foreach ( $this->legacy_component_contracts( $input ) as $contract ) {
-			$contracts[] = $contract;
-		}
-
 		$normalized = array();
 		foreach ( $contracts as $contract ) {
 			$slug = $this->component_slug( (string) ( $contract['slug'] ?? $contract['component'] ?? $contract['name'] ?? '' ) );
@@ -856,54 +833,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return is_array( $contracts ) ? $contracts : array();
 	}
 
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
-	private function legacy_component_contracts( array $input ): array {
-		if ( function_exists( 'apply_filters' ) && false === apply_filters( 'wp_codebox_enable_legacy_component_path_adapter', true, $input ) ) {
-			return array();
-		}
-
-		$configured = array_merge( $this->default_component_paths(), $this->configured_paths() );
-		$legacy     = array(
-			'agents-api'        => array( 'field' => 'agents_api_path', 'configured' => $configured['agents-api'] ?? $configured['agents_api'] ?? '', 'required' => true ),
-			'data-machine'      => array( 'field' => 'data_machine_path', 'configured' => $configured['data-machine'] ?? $configured['data_machine'] ?? '', 'required' => false ),
-			'data-machine-code' => array( 'field' => 'data_machine_code_path', 'configured' => $configured['data-machine-code'] ?? $configured['data_machine_code'] ?? '', 'required' => false ),
-		);
-		$contracts  = array();
-
-		foreach ( $legacy as $slug => $settings ) {
-			$path = $this->clean_path( (string) ( $input[ $settings['field'] ] ?? $settings['configured'] ?? '' ) );
-			$contracts[] = array(
-				'slug'       => $slug,
-				'path'       => $path,
-				'activate'   => false,
-				'loadAs'     => 'mu-plugin',
-				'required'   => (bool) $settings['required'],
-				'provenance' => array( 'source' => 'legacy-component-path-adapter' ),
-			);
-		}
-
-		return $contracts;
-	}
-
 	private function component_slug( string $slug ): string {
 		$slug = strtolower( trim( $slug ) );
 		$slug = str_replace( '_', '-', $slug );
 		return preg_replace( '/[^a-z0-9-]+/', '', $slug ) ?? '';
-	}
-
-	/** @return array<string,mixed> */
-	private function configured_paths(): array {
-		$paths  = array();
-		$option = $this->config_option( 'wp_codebox_component_paths', array() );
-		if ( is_array( $option ) ) {
-			$paths = $option;
-		}
-
-		if ( function_exists( 'apply_filters' ) ) {
-			$paths = apply_filters( 'wp_codebox_component_paths', $paths );
-		}
-
-		return is_array( $paths ) ? $paths : array();
 	}
 
 	private function shell_available(): bool {
@@ -948,102 +881,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			}
 		}
 
-		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
-		$schema  = (string) ( $request['schema'] ?? '' );
-		if ( 'homeboy/wp-codebox-task-request/v1' !== $schema || ( function_exists( 'apply_filters' ) && false === apply_filters( 'wp_codebox_enable_legacy_parent_task_adapter', true, $input, $request ) ) ) {
-			return $input;
-		}
-
-		$task = is_array( $request['task'] ?? null ) ? $request['task'] : array();
-		$goal = trim( (string) ( $task['goal'] ?? $task['prompt'] ?? $request['goal'] ?? $request['task_prompt'] ?? '' ) );
-		if ( '' === $goal ) {
-			return new WP_Error( 'wp_codebox_parent_task_missing', 'parent_request.task.prompt or parent_request.task.goal is required.', array( 'status' => 400 ) );
-		}
-
-		$workspace_paths = array_filter(
-			array(
-				(string) ( $input['agents_api_path'] ?? $request['agents_api'] ?? '' ),
-				(string) ( $request['homeboy'] ?? '' ),
-				(string) ( $request['homeboy_extensions'] ?? '' ),
-			),
-			static fn( string $path ): bool => '' !== trim( $path )
-		);
-		$workspaces      = $this->workspace_entries_for_paths( $workspace_paths );
-		$workspace_slugs = array_map( static fn( array $workspace ): string => (string) ( $workspace['seed']['slug'] ?? '' ), $workspaces );
-		$workspace_slugs = array_values( array_filter( $workspace_slugs, static fn( string $slug ): bool => '' !== $slug ) );
-
-		if ( ! empty( $workspace_slugs ) ) {
-			$goal .= "\n\nUse mounted workspace repos " . implode( ', ', array_map( static fn( string $slug ): string => '`' . $slug . '`', $workspace_slugs ) ) . ' for workspace_* tool calls.';
-		}
-
-		$context = is_array( $task['context'] ?? null ) ? $task['context'] : array();
-		foreach ( array( 'sandbox_session_id', 'group_key', 'audit_findings', 'orchestrator' ) as $context_key ) {
-			if ( array_key_exists( $context_key, $request ) ) {
-				$context[ $context_key ] = $request[ $context_key ];
-			}
-		}
-
-		$normalized = array_merge(
-			$input,
-			array_filter(
-				array(
-					'goal'                   => $goal,
-					'target'                 => is_array( $task['target'] ?? null ) ? $task['target'] : array(),
-					'allowed_tools'          => is_array( $task['allowed_tools'] ?? null ) ? $task['allowed_tools'] : array(),
-					'sandbox_tool_policy'    => is_array( $task['sandbox_tool_policy'] ?? $task['sandboxToolPolicy'] ?? null ) ? ( $task['sandbox_tool_policy'] ?? $task['sandboxToolPolicy'] ) : array(),
-					'expected_artifacts'     => is_array( $task['expected_artifacts'] ?? null ) ? $task['expected_artifacts'] : array(),
-					'policy'                 => is_array( $task['policy'] ?? null ) ? $task['policy'] : array(),
-					'context'                => $context,
-					'provider'               => (string) ( $input['provider'] ?? $request['provider'] ?? '' ),
-					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
-					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
-					'agent_bundles'          => $this->agent_bundles( $input, $request ),
-					'runtime_task'           => $this->runtime_task( $input, $request ),
-					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
-					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
-					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $workspaces ),
-					'runtime_stack_mounts'   => $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array(), $request['runtime_stack_mounts'] ?? array() ),
-					'runtime_overlays'       => $this->merge_array_lists( $input['runtime_overlays'] ?? array(), $request['runtime_overlays'] ?? array() ),
-					'task_timeout_seconds'   => (int) ( $input['task_timeout_seconds'] ?? $request['task_timeout_seconds'] ?? $request['taskTimeoutSeconds'] ?? 0 ),
-					'max_turns'              => (int) ( $input['max_turns'] ?? $request['max_turns'] ?? $request['maxTurns'] ?? 0 ),
-					'sandbox_session_id'     => (string) ( $input['sandbox_session_id'] ?? $request['sandbox_session_id'] ?? '' ),
-					'orchestrator'           => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : ( is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array() ),
-					'artifacts_path'         => (string) ( $input['artifacts_path'] ?? $request['artifacts'] ?? '' ),
-					'wp_codebox_bin'         => (string) ( $input['wp_codebox_bin'] ?? $request['wp_codebox_bin'] ?? '' ),
-					'agents_api_path'        => (string) ( $input['agents_api_path'] ?? $request['agents_api'] ?? '' ),
-					'data_machine_path'      => (string) ( $input['data_machine_path'] ?? $request['data_machine'] ?? '' ),
-					'data_machine_code_path' => (string) ( $input['data_machine_code_path'] ?? $request['data_machine_code'] ?? '' ),
-					'component_contracts'    => $this->merge_array_lists( $input['component_contracts'] ?? array(), $this->parent_request_component_contracts( $request ) ),
-				),
-				static fn( mixed $value ): bool => '' !== $value && array() !== $value && 0 !== $value
-			)
-		);
-
-		unset( $normalized['parent_request'] );
-
-		return $normalized;
-	}
-
-	/** @param array<string,mixed> $request Parent task request. @return array<int,array<string,mixed>> */
-	private function parent_request_component_contracts( array $request ): array {
-		$contracts = array();
-		foreach ( array( 'agents_api' => 'agents-api', 'data_machine' => 'data-machine', 'data_machine_code' => 'data-machine-code' ) as $field => $slug ) {
-			$path = $this->clean_path( (string) ( $request[ $field ] ?? '' ) );
-			if ( '' === $path ) {
-				continue;
-			}
-
-			$contracts[] = array(
-				'slug'       => $slug,
-				'path'       => $path,
-				'activate'   => false,
-				'loadAs'     => 'mu-plugin',
-				'required'   => 'agents_api' === $field,
-				'provenance' => array( 'source' => 'legacy-parent-task-adapter' ),
-			);
-		}
-
-		return $contracts;
+		return $input;
 	}
 
 	private function agent_slug( array $input ): string {
@@ -1103,8 +941,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
 	private function provider_plugin_paths( array $input, ?array $inheritance = null ): array {
-		$configured = $this->configured_paths();
-		$paths      = is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : ( $configured['provider_plugins'] ?? array() );
+		$paths      = is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : array();
 		$paths      = array_merge( is_array( $paths ) ? $paths : array(), $this->inheritance_provider_plugin_paths( $input, $inheritance ) );
 
 		if ( ! is_array( $paths ) ) {
@@ -1446,37 +1283,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private function json_encode( mixed $value ): string {
 		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
 		return is_string( $encoded ) ? $encoded : '[]';
-	}
-
-	/** @param string[] $paths @return array<int,array<string,mixed>> */
-	private function workspace_entries_for_paths( array $paths ): array {
-		$workspaces = array();
-		foreach ( $paths as $path ) {
-			$path = $this->clean_path( $path );
-			if ( '' === $path || ! is_dir( $path ) ) {
-				continue;
-			}
-
-			$slug = preg_replace( '/[^A-Za-z0-9_-]/', '-', explode( '@', basename( $path ) )[0] );
-			$slug = is_string( $slug ) ? trim( $slug, '-' ) : '';
-			if ( '' === $slug ) {
-				continue;
-			}
-
-			$workspaces[] = array(
-				'seed'       => array(
-					'type'         => 'directory',
-					'source'       => $path,
-					'slug'         => $slug,
-					'excludePaths' => array( '.git', '.homeboy', '.homeboy-bin', '.homeboy-build', '.datamachine', '.DS_Store', '._*', '.env*', 'node_modules', 'target', 'vendor' ),
-				),
-				'target'     => '/workspace/' . $slug,
-				'mode'       => 'readwrite',
-				'sourceMode' => 'repo-backed',
-			);
-		}
-
-		return $workspaces;
 	}
 
 	/** @param string[] $tools @param array<string,mixed>|null $task_input Normalized task input. */

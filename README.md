@@ -341,16 +341,16 @@ Install notes by environment:
 1. Self-hosted WordPress control planes should install the CLI on the same host
    that runs PHP from the GitHub Release workspace tarball, install
    `packages/wordpress-plugin/dist/wp-codebox.zip` as the parent-site plugin,
-   then set `wp_codebox_bin` to the resolved `wp-codebox` binary path. Component
-   paths can be supplied through `wp_codebox_component_paths` or the matching
-   filter.
+   then set `wp_codebox_bin` to the resolved `wp-codebox` binary path. Runtime
+   components can be supplied through `wp_codebox_component_contracts` or the
+   matching filter.
 2. Studio or local development environments can run from a checkout with
    `npm install`, `npm run build`, and `npm run wp-codebox -- ...`; install the
    plugin zip into the local parent site and point `wp_codebox_bin` at either
    the global binary or the checkout wrapper command used by that site.
 3. Hosted control planes should provide WP Codebox as managed infrastructure:
    deploy the vetted CLI package and plugin zip from the same release, configure
-   the binary and component paths centrally with options or filters, and expose
+   the binary and component contracts centrally with options or filters, and expose
    only the parent-site abilities to products.
 
 CLI binary discovery from the plugin is intentionally host-configurable. The
@@ -1246,20 +1246,15 @@ All three paths use the same `wp-codebox/task-input/v1` task input contract. Hos
 
 `target.kind` is caller-defined but should use `repo`, `site`, `plugin`, or `theme` when possible. `allowed_tools` and `expected_artifacts` are advisory contract fields for the product caller and sandboxed agent loop; the host runner still decides the private CLI invocation and returns the normalized `task_input` alongside the string `task` it passed into the current CLI bridge.
 
-Component paths can come from ability input, the `wp_codebox_component_paths` option, or the `wp_codebox_component_paths` filter.
+Runtime components are declared through `component_contracts` in ability input, the `wp_codebox_component_contracts` option, or the `wp_codebox_component_contracts` filter. WP Codebox does not infer product-specific component names or paths.
 
 Product callers can opt into public preview wiring through `preview_port`, `preview_bind`, and `preview_public_url`. Omit them to keep the default loopback-only random-port preview behavior; `preview_bind` requires `preview_port`, and `preview_public_url` must be an `http` or `https` URL.
 
-Expected component keys:
-
-- `agents_api`
-- `data_machine`
-- `data_machine_code`
-- `provider_plugins` (optional list)
+Each component contract declares `slug`, `path` or `source`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
 
 The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter.
 
-Data Machine Code is a mounted coding-tools component inside the sandbox. It provides workspace/file/GitHub tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
+Caller-owned runtime components can provide workspace, file, GitHub, or other tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
 
 Parent orchestrators that already own task state can call the same API instead of generating a low-level WP Codebox recipe. The stable CLI entry point is:
 
@@ -1267,7 +1262,7 @@ Parent orchestrators that already own task state can call the same API instead o
 wp-codebox agent-task-run --input-file=/path/to/request.json --json
 ```
 
-For Homeboy executor integration, `request.json` may use this shape:
+Generic caller-owned `request.json` payloads may use this shape:
 
 ```json
 {
@@ -1276,6 +1271,11 @@ For Homeboy executor integration, `request.json` may use this shape:
   "provider": "openai",
   "model": "gpt-5.5",
   "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
+  "component_contracts": [
+    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "loadAs": "mu-plugin" },
+    { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "loadAs": "mu-plugin" },
+    { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "loadAs": "mu-plugin" }
+  ],
   "secret_env": ["OPENAI_API_KEY"],
   "mounts": [
     {
@@ -1289,19 +1289,19 @@ For Homeboy executor integration, `request.json` may use this shape:
     { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
   ],
   "runtime_overlays": [
-    { "id": "data-machine-code", "source": "/srv/runtime/data-machine-code" }
+    { "id": "caller-runtime-overlay", "source": "/srv/runtime/caller-runtime-overlay" }
   ],
   "task_timeout_seconds": 3600,
   "max_turns": 8,
-  "sandbox_session_id": "homeboy-sandbox-session-123",
-  "artifacts_path": "/srv/artifacts/homeboy/agent-task-123",
+  "sandbox_session_id": "caller-sandbox-session-123",
+  "artifacts_path": "/srv/artifacts/caller/agent-task-123",
   "expected_artifacts": ["patch"],
   "policy": { "kind": "audit-remediation" },
   "context": { "issue": "https://github.com/org/repo/issues/123" },
   "orchestrator": {
-    "type": "homeboy",
-    "id": "homeboy-agent-task",
-    "job_id": "homeboy-job-123",
+    "type": "caller-control-plane",
+    "id": "caller-agent-task",
+    "job_id": "caller-job-123",
     "agent_task_id": "agent-task-123"
   }
 }
@@ -1309,7 +1309,7 @@ For Homeboy executor integration, `request.json` may use this shape:
 
 WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
-`runtime_overlay_profiles` is a convenience layer for reusable runtime stack examples. The raw primitives remain `provider_plugin_paths`, `runtime_stack_mounts`, `runtime_overlays`, `secret_env`, and `runtime_component_paths`; profiles only expand those fields before the private recipe is written.
+`runtime_overlay_profiles` is a convenience layer for reusable runtime stack examples. The raw primitives remain `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`; profiles only expand those fields before the private recipe is written.
 
 The built-in `codex-subscription` profile is an example of packaging a provider plugin plus a scoped bundled-library overlay for subscription-backed model access. It expands to:
 
@@ -1324,7 +1324,7 @@ export WP_CODEBOX_PHP_AI_CLIENT_PATH=/path/to/php-ai-client
 composer install --working-dir "$WP_CODEBOX_PHP_AI_CLIENT_PATH"
 ```
 
-Callers can skip the profile and pass the expanded fields directly when they own a different provider/library stack. Parent orchestrators such as Homeboy select the profile through the generic `runtime_overlay_profiles` field; WP Codebox still owns only recipe expansion, sandbox lifecycle, and artifact capture.
+Callers can skip the profile and pass the expanded fields directly when they own a different provider/library stack. Parent orchestrators select profiles through the generic `runtime_overlay_profiles` field; WP Codebox still owns only recipe expansion, sandbox lifecycle, and artifact capture.
 
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response and compatibility aliases from older orchestrator integrations, including `agentResult`, `agent_result`, `completionOutcome`, `completion_outcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 

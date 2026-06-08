@@ -8,14 +8,14 @@ import { agentSandboxRunCode } from "../packages/cli/src/agent-code.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 
 const input = {
-  goal: "Run a Data Machine bundle",
+  goal: "Run a caller runtime bundle",
   provider: "openai",
   model: "gpt-5.5",
-  runtime_component_paths: {
-    agents_api: "/components/agents-api",
-    agent_runtime: "/components/data-machine",
-    agent_runtime_tools: "/components/data-machine-code",
-  },
+  component_contracts: [
+    { slug: "agents-api", path: "/components/agents-api", loadAs: "mu-plugin" },
+    { slug: "caller-runtime", path: "/components/caller-runtime", loadAs: "mu-plugin" },
+    { slug: "caller-runtime-tools", path: "/components/caller-runtime-tools", loadAs: "mu-plugin" },
+  ],
   provider_plugin_paths: ["/components/ai-provider-for-openai"],
   artifacts_path: "/tmp/wp-codebox-artifacts",
 }
@@ -24,34 +24,20 @@ const recipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
 const extraPlugins = recipe.inputs?.extraPlugins ?? []
 
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.source, "/components/agents-api")
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/components/data-machine")
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/components/data-machine-code")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.source, "/components/caller-runtime")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime-tools")?.source, "/components/caller-runtime-tools")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")?.source, "/components/ai-provider-for-openai")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.loadAs, "mu-plugin")
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.loadAs, "mu-plugin")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.loadAs, "mu-plugin")
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime-tools")?.loadAs, "mu-plugin")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")?.loadAs, undefined)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.activate, false)
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine")?.activate, false)
-assert.equal(extraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.activate, false)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.activate, false)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime-tools")?.activate, false)
 
 const muPluginInstallCode = installMuPluginsCode(extraPlugins)
 assert.ok(muPluginInstallCode?.includes("define( 'DATAMACHINE_WORKSPACE_PATH', '/workspace' );"))
 assert.ok(!muPluginInstallCode?.includes('define( \'DATAMACHINE_WORKSPACE_PATH\', "/workspace" );'))
-
-const legacyInput = {
-  goal: "Run a Data Machine bundle",
-  agents_api_path: "/legacy/agents-api",
-  data_machine_path: "/legacy/data-machine",
-  data_machine_code_path: "/legacy/data-machine-code",
-}
-const legacyRecipe = buildAgentTaskRecipe(legacyInput, normalizeTaskInput(legacyInput), "trunk")
-const legacyExtraPlugins = legacyRecipe.inputs?.extraPlugins ?? []
-
-assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "agents-api")?.source, "/legacy/agents-api")
-assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.source, "/legacy/data-machine")
-assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine-code")?.source, "/legacy/data-machine-code")
-assert.equal(legacyExtraPlugins.find((plugin) => plugin?.slug === "data-machine")?.loadAs, "mu-plugin")
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
 const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts", import.meta.url), "utf8")

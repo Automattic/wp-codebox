@@ -708,9 +708,6 @@ private static function browser_component_contracts( array $input ): array {
 			$contracts[] = $contract;
 		}
 	}
-	foreach ( self::browser_legacy_component_contracts( $input ) as $contract ) {
-		$contracts[] = $contract;
-	}
 
 	$normalized = array();
 	foreach ( $contracts as $contract ) {
@@ -751,74 +748,6 @@ private static function browser_configured_component_contracts(): array {
 	}
 
 	return is_array( $contracts ) ? $contracts : array();
-}
-
-/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
-private static function browser_legacy_component_contracts( array $input ): array {
-	if ( function_exists( 'apply_filters' ) && false === apply_filters( 'wp_codebox_enable_legacy_component_path_adapter', true, $input ) ) {
-		return array();
-	}
-
-	$configured = self::browser_configured_component_paths();
-	$legacy     = array(
-		'agents-api'        => array( 'field' => 'agents_api_path', 'configured' => $configured['agents-api'] ?? $configured['agents_api'] ?? '', 'probe' => array( 'type' => 'ability', 'name' => 'agents/chat' ) ),
-		'data-machine'      => array( 'field' => 'data_machine_path', 'configured' => $configured['data-machine'] ?? $configured['data_machine'] ?? '' ),
-		'data-machine-code' => array( 'field' => 'data_machine_code_path', 'configured' => $configured['data-machine-code'] ?? $configured['data_machine_code'] ?? '' ),
-	);
-	$contracts  = array();
-
-	foreach ( $legacy as $slug => $settings ) {
-		$contracts[] = array_filter(
-			array(
-				'slug'            => $slug,
-				'path'            => self::browser_clean_path( self::browser_component_path_value( $input, (string) $settings['field'], (string) ( $settings['configured'] ?? '' ) ) ),
-				'activate'        => true,
-				'readiness_probe' => $settings['probe'] ?? null,
-				'provenance'      => array( 'source' => 'legacy-component-path-adapter' ),
-			),
-			static fn( mixed $value ): bool => null !== $value && '' !== $value
-		);
-	}
-
-	return $contracts;
-}
-
-/** @param array<string,mixed> $input Ability input. @return array<string,string> */
-private static function browser_component_paths( array $input ): array {
-	$configured = self::browser_configured_component_paths();
-
-	return array(
-		'agents_api'        => self::browser_clean_path( self::browser_component_path_value( $input, 'agents_api_path', $configured['agents_api'] ?? '' ) ),
-		'data_machine'      => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_path', $configured['data_machine'] ?? '' ) ),
-		'data_machine_code' => self::browser_clean_path( self::browser_component_path_value( $input, 'data_machine_code_path', $configured['data_machine_code'] ?? '' ) ),
-	);
-}
-
-private static function browser_component_path_value( array $input, string $key, string $fallback ): string {
-	$value = trim( (string) ( $input[ $key ] ?? '' ) );
-	return '' !== $value ? $value : $fallback;
-}
-
-/** @return array<string,mixed> */
-private static function browser_configured_component_paths(): array {
-	$paths = array();
-	if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
-		$option = get_site_option( 'wp_codebox_component_paths', array() );
-	} elseif ( function_exists( 'get_option' ) ) {
-		$option = get_option( 'wp_codebox_component_paths', array() );
-	} else {
-		$option = array();
-	}
-
-	if ( is_array( $option ) ) {
-		$paths = $option;
-	}
-
-	if ( function_exists( 'apply_filters' ) ) {
-		$paths = apply_filters( 'wp_codebox_component_paths', $paths );
-	}
-
-	return is_array( $paths ) ? $paths : array();
 }
 
 private static function browser_clean_path( string $path ): string {
