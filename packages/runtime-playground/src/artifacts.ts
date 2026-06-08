@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto"
+import { execFile } from "node:child_process"
 import { createRequire } from "node:module"
 import { readFileSync } from "node:fs"
-import { readdir, readFile } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
+import { promisify } from "node:util"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
 import { artifactFileDigest, stripUndefined } from "@automattic/wp-codebox-core"
 import type {
@@ -683,6 +686,68 @@ export async function directoryDiff(baselineDirectory: string, currentDirectory:
   return {
     patch: patches.join("\n"),
     files,
+  }
+}
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * Detect whether a directory is the top level of a git work tree.
+ *
+ * Only returns true when the directory itself is the work-tree root, so a
+ * mount that happens to live inside an unrelated parent repository is not
+ * mistaken for a tracked workspace.
+ */
+export async function isGitWorkTree(directory: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", directory, "rev-parse", "--show-toplevel"], {
+      maxBuffer: 1024 * 1024,
+    })
+    const toplevel = stdout.trim()
+    if (!toplevel) {
+      return false
+    }
+    const [resolvedToplevel, resolvedDirectory] = await Promise.all([realpath(toplevel), realpath(directory)])
+    return resolvedToplevel === resolvedDirectory
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Diff a git work tree's current state (tracked changes + untracked files)
+ * against its committed HEAD, returning the same shape as `directoryDiff`.
+ *
+ * HEAD is materialized into a temporary directory via `git archive`, then the
+ * existing directory comparison machinery is reused so patch formatting,
+ * redaction, and digests stay identical across both diff strategies. Untracked
+ * files appear as additions because they are absent from the HEAD archive.
+ */
+export async function gitWorkingTreeDiff(repoDirectory: string, targetPrefix: string): Promise<DirectoryDiffResult> {
+  const headDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-git-head-"))
+  try {
+    let hasHead = true
+    try {
+      await execFileAsync("git", ["-C", repoDirectory, "rev-parse", "--verify", "HEAD"], { maxBuffer: 1024 * 1024 })
+    } catch {
+      hasHead = false
+    }
+
+    if (hasHead) {
+      // Materialize the committed tree without checking it out (the live work
+      // tree stays untouched): write HEAD to a tar file, then extract it into a
+      // temp directory the existing directory-diff machinery can read.
+      const archivePath = join(headDirectory, ".wp-codebox-head.tar")
+      await execFileAsync("git", ["-C", repoDirectory, "archive", "--format=tar", "-o", archivePath, "HEAD"], {
+        maxBuffer: 1024 * 1024,
+      })
+      await execFileAsync("tar", ["-x", "-f", archivePath, "-C", headDirectory], { maxBuffer: 1024 * 1024 })
+      await rm(archivePath, { force: true })
+    }
+
+    return await directoryDiff(headDirectory, repoDirectory, targetPrefix)
+  } finally {
+    await rm(headDirectory, { recursive: true, force: true })
   }
 }
 

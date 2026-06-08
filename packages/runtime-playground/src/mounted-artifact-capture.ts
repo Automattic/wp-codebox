@@ -12,6 +12,8 @@ import {
   type MountDiff,
   type MountDiffsResult,
   directoryDiff,
+  gitWorkingTreeDiff,
+  isGitWorkTree,
   isReplayableText,
   mountTargetPath,
 } from "./artifacts.js"
@@ -61,7 +63,13 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
     }
 
     const artifactPath = `files/diffs/mount-${mountIndex}.patch`
-    if (!baselineSource) {
+
+    // Choose the diff baseline: an explicitly supplied filesystem snapshot
+    // (recipe `workspaces`) takes precedence; otherwise a mounted git work tree
+    // diffs against its committed HEAD. Mounts that are neither are skipped
+    // because there is no authoritative before-state to compare against.
+    const useGitWorkTree = !baselineSource && (await isGitWorkTree(mount.source))
+    if (!baselineSource && !useGitWorkTree) {
       await writeFile(join(artifactRoot, artifactPath), "")
       diffs.push({
         mountIndex,
@@ -77,7 +85,9 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
 
     let diff: Awaited<ReturnType<typeof directoryDiff>>
     try {
-      diff = await directoryDiff(baselineSource, mount.source, mount.target)
+      diff = useGitWorkTree
+        ? await gitWorkingTreeDiff(mount.source, mount.target)
+        : await directoryDiff(baselineSource, mount.source, mount.target)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await writeFile(join(artifactRoot, artifactPath), "")
@@ -85,7 +95,7 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
         mountIndex,
         source: mount.source,
         target: mount.target,
-        baselineSource,
+        ...(baselineSource ? { baselineSource } : {}),
         artifactPath,
         changed: false,
         status: "failed",
@@ -96,12 +106,12 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
         id: `mount-${mountIndex}-diff-extraction-failed`,
         type: "mount-diff-extraction-failed",
         severity: "error",
-        message: `Failed to compare mounted workspace ${mount.target} against its baseline: ${message}`,
+        message: `Failed to compare mounted workspace ${mount.target} against its ${useGitWorkTree ? "git HEAD" : "baseline"}: ${message}`,
         category: "artifact-capture",
         source: mount.source,
         path: mount.target,
         refs: [{ path: artifactPath, kind: "diff" }],
-        details: { mountIndex, baselineSource, target: mount.target },
+        details: { mountIndex, baselineSource: baselineSource || undefined, baselineStrategy: useGitWorkTree ? "git-head" : "filesystem", target: mount.target },
       })
       continue
     }
@@ -111,7 +121,7 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
       mountIndex,
       source: mount.source,
       target: mount.target,
-      baselineSource,
+      ...(baselineSource ? { baselineSource } : {}),
       artifactPath,
       changed: diff.patch.trim().length > 0,
       status: diff.patch.trim().length > 0 ? "changed" : "unchanged",

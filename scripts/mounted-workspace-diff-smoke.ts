@@ -1,10 +1,14 @@
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { promisify } from "node:util"
 import type { MountSpec } from "@automattic/wp-codebox-core"
 import { ArtifactRedactor, buildArtifactReview } from "../packages/runtime-playground/src/artifacts.js"
 import { captureMountDiffs } from "../packages/runtime-playground/src/mounted-artifact-capture.js"
+
+const execFileAsync = promisify(execFile)
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-mounted-diff-smoke-"))
 
@@ -104,6 +108,49 @@ try {
     ...numberedLines("after", 60).map((line) => `+${line}`),
     "",
   ].join("\n")
+  // A readwrite git work tree with no explicit baselineSource diffs against its
+  // committed HEAD, so homeboy-style repo mounts capture the agent's edits
+  // without the caller supplying a filesystem baseline snapshot.
+  const gitRepo = join(root, "git-repo")
+  await mkdir(gitRepo, { recursive: true })
+  await execFileAsync("git", ["-C", gitRepo, "init", "-q"])
+  await execFileAsync("git", ["-C", gitRepo, "config", "user.email", "smoke@wp-codebox.test"])
+  await execFileAsync("git", ["-C", gitRepo, "config", "user.name", "wp-codebox smoke"])
+  await writeFile(join(gitRepo, "committed.php"), "<?php\n// committed\n")
+  await writeFile(join(gitRepo, "remove-me.txt"), "delete this\n")
+  await execFileAsync("git", ["-C", gitRepo, "add", "."])
+  await execFileAsync("git", ["-C", gitRepo, "commit", "-q", "-m", "baseline"])
+
+  // Mutations the agent would make in the sandbox: edit a tracked file, delete a
+  // tracked file, and create an untracked file.
+  await writeFile(join(gitRepo, "committed.php"), "<?php\n// edited by agent\n")
+  await rm(join(gitRepo, "remove-me.txt"), { force: true })
+  await writeFile(join(gitRepo, "AGENT_WROTE_THIS.md"), "cooked by the agent\n")
+
+  const gitResult = await captureMountDiffs(artifactRoot, filesDirectory, [
+    {
+      type: "directory",
+      source: gitRepo,
+      target: "/workspace/wp-coding-agents",
+      mode: "readwrite",
+      metadata: { kind: "homeboy-dmc-workspace", workspace_slug: "wp-coding-agents" },
+    },
+  ], new ArtifactRedactor())
+  const gitChanged = new Map(gitResult.changedFiles.files.map((file) => [file.relativePath, file]))
+
+  assert.equal(gitResult.diagnostics.length, 0)
+  assert.equal(gitResult.mountDiffs.length, 1)
+  assert.equal(gitResult.mountDiffs[0].status, "changed")
+  assert.equal(gitResult.mountDiffs[0].changed, true)
+  assert.equal(gitResult.mountDiffs[0].reason, undefined)
+  assert.equal(gitChanged.get("AGENT_WROTE_THIS.md")?.status, "added")
+  assert.equal(gitChanged.get("committed.php")?.status, "modified")
+  assert.equal(gitChanged.get("remove-me.txt")?.status, "deleted")
+  assert.match(gitResult.patch, /diff --git a\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md b\/workspace\/wp-coding-agents\/AGENT_WROTE_THIS\.md/)
+  assert.match(gitResult.patch, /\+cooked by the agent/)
+  assert.match(gitResult.patch, /\+\/\/ edited by agent/)
+  assert.match(gitResult.patch, /deleted file mode 100644/)
+
   const review = buildArtifactReview({
     artifactId: "artifact-bundle-test",
     createdAt: "2026-06-01T00:00:00.000Z",
