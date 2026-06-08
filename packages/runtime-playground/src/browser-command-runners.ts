@@ -83,12 +83,31 @@ interface VisualCompareElementDelta {
   }
 }
 
+interface VisualCompareMismatchRegion {
+  x: number
+  y: number
+  width: number
+  height: number
+  pixels: number
+}
+
+interface VisualCompareDimensionDriftRegion extends VisualCompareMismatchRegion {
+  owner: "source" | "candidate"
+}
+
+interface VisualCompareDimensionDrift {
+  widthDelta: number
+  heightDelta: number
+  sourceOnly: VisualCompareDimensionDriftRegion[]
+  candidateOnly: VisualCompareDimensionDriftRegion[]
+}
+
 interface VisualCompareExplanation {
   schema: "wp-codebox/visual-explanation/v1"
   source: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
   candidate: { label: string; url: string; title: string; elementCount: number; capturedElements: number; truncated: boolean }
   viewport: BrowserProbeViewport | null
-  mismatchRegions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+  mismatchRegions: VisualCompareMismatchRegion[]
   selectors?: Array<{ selector: string; source: VisualCompareSelectorSnapshot; candidate: VisualCompareSelectorSnapshot }>
   missingSelectors?: Array<{ selector: string; sourceMatched: boolean; candidateMatched: boolean; sourceError?: string; candidateError?: string }>
   limits: { maxElements: number; maxCandidates: number }
@@ -3285,30 +3304,34 @@ async function comparePngFiles(sourcePath: string, candidatePath: string, diffPa
   candidate: { width: number; height: number }
   diff: { width: number; height: number }
   dimensionMismatch: boolean
+  dimensionDrift?: VisualCompareDimensionDrift
   mismatchPixels: number
   totalPixels: number
   mismatchRatio: number
-  regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }>
+  regions: VisualCompareMismatchRegion[]
 }> {
   const source = PNG.sync.read(await readFile(sourcePath))
   const candidate = PNG.sync.read(await readFile(candidatePath))
   const width = Math.max(source.width, candidate.width)
   const height = Math.max(source.height, candidate.height)
+  const overlap = { width: Math.min(source.width, candidate.width), height: Math.min(source.height, candidate.height) }
   const sourceCanvas = visualCompareCanvas(source, width, height)
   const candidateCanvas = visualCompareCanvas(candidate, width, height)
   const diff = new PNG({ width, height })
   const mismatchPixels = pixelmatch(sourceCanvas.data, candidateCanvas.data, diff.data, width, height, { threshold: options.threshold, includeAA: options.includeAA })
   await writeFile(diffPath, PNG.sync.write(diff))
+  const dimensionMismatch = source.width !== candidate.width || source.height !== candidate.height
 
   return {
     source: { width: source.width, height: source.height },
     candidate: { width: candidate.width, height: candidate.height },
     diff: { width, height },
-    dimensionMismatch: source.width !== candidate.width || source.height !== candidate.height,
+    dimensionMismatch,
+    ...(dimensionMismatch ? { dimensionDrift: visualCompareDimensionDrift(source, candidate) } : {}),
     mismatchPixels,
     totalPixels: width * height,
     mismatchRatio: width * height > 0 ? mismatchPixels / (width * height) : 0,
-    regions: visualCompareMismatchRegions(diff, options.maxRegions),
+    regions: visualCompareMismatchRegions(diff, options.maxRegions, overlap),
   }
 }
 
@@ -3325,22 +3348,49 @@ function visualCompareCanvas(image: PNG, width: number, height: number): PNG {
   return canvas
 }
 
-function visualCompareMismatchRegions(diff: PNG, maxRegions: number): Array<{ x: number; y: number; width: number; height: number; pixels: number }> {
+function visualCompareDimensionDrift(source: PNG, candidate: PNG): VisualCompareDimensionDrift {
+  const sourceOnly: VisualCompareDimensionDriftRegion[] = []
+  const candidateOnly: VisualCompareDimensionDriftRegion[] = []
+  const minWidth = Math.min(source.width, candidate.width)
+  const minHeight = Math.min(source.height, candidate.height)
+  collectDimensionDriftRegions(source, candidate, "source", sourceOnly, minWidth, minHeight)
+  collectDimensionDriftRegions(candidate, source, "candidate", candidateOnly, minWidth, minHeight)
+  return {
+    widthDelta: candidate.width - source.width,
+    heightDelta: candidate.height - source.height,
+    sourceOnly,
+    candidateOnly,
+  }
+}
+
+function collectDimensionDriftRegions(image: PNG, other: PNG, owner: "source" | "candidate", regions: VisualCompareDimensionDriftRegion[], minWidth: number, minHeight: number): void {
+  if (image.width > other.width) {
+    regions.push({ owner, x: minWidth, y: 0, width: image.width - minWidth, height: image.height, pixels: (image.width - minWidth) * image.height })
+  }
+  if (image.height > other.height) {
+    regions.push({ owner, x: 0, y: minHeight, width: minWidth, height: image.height - minHeight, pixels: minWidth * (image.height - minHeight) })
+  }
+}
+
+function visualCompareMismatchRegions(diff: PNG, maxRegions: number, bounds: { width: number; height: number } = { width: diff.width, height: diff.height }): VisualCompareMismatchRegion[] {
   const visited = new Uint8Array(diff.width * diff.height)
-  const regions: Array<{ x: number; y: number; width: number; height: number; pixels: number }> = []
-  for (let y = 0; y < diff.height; y += 1) {
-    for (let x = 0; x < diff.width; x += 1) {
+  const regions: VisualCompareMismatchRegion[] = []
+  const width = Math.min(diff.width, Math.max(0, bounds.width))
+  const height = Math.min(diff.height, Math.max(0, bounds.height))
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
       const index = y * diff.width + x
       if (visited[index] || !visualCompareDiffPixel(diff, x, y)) {
         continue
       }
-      regions.push(visualCompareFloodRegion(diff, x, y, visited))
+      const region = visualCompareFloodRegion(diff, x, y, visited, { width, height })
+      regions.push(...visualCompareSegmentLargeRegion(diff, region, maxRegions))
     }
   }
   return regions.sort((a, b) => b.pixels - a.pixels).slice(0, maxRegions)
 }
 
-function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, visited: Uint8Array): { x: number; y: number; width: number; height: number; pixels: number } {
+function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, visited: Uint8Array, bounds: { width: number; height: number }): VisualCompareMismatchRegion {
   const stack: Array<[number, number]> = [[startX, startY]]
   let minX = startX
   let maxX = startX
@@ -3349,7 +3399,7 @@ function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, vis
   let pixels = 0
   while (stack.length > 0) {
     const [x, y] = stack.pop() ?? [0, 0]
-    if (x < 0 || y < 0 || x >= diff.width || y >= diff.height) {
+    if (x < 0 || y < 0 || x >= bounds.width || y >= bounds.height) {
       continue
     }
     const index = y * diff.width + x
@@ -3365,6 +3415,44 @@ function visualCompareFloodRegion(diff: PNG, startX: number, startY: number, vis
     stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1])
   }
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, pixels }
+}
+
+function visualCompareSegmentLargeRegion(diff: PNG, region: VisualCompareMismatchRegion, maxRegions: number): VisualCompareMismatchRegion[] {
+  const coversMostCanvas = region.width >= diff.width * 0.8 && region.height >= diff.height * 0.8
+  if (!coversMostCanvas || maxRegions < 2 || region.height < 2) {
+    return [region]
+  }
+
+  const segmentHeight = Math.max(1, Math.ceil(region.height / maxRegions))
+  const segments: VisualCompareMismatchRegion[] = []
+  for (let y = region.y; y < region.y + region.height; y += segmentHeight) {
+    const segment = visualCompareRegionBounds(diff, region.x, y, region.width, Math.min(segmentHeight, region.y + region.height - y))
+    if (segment) {
+      segments.push(segment)
+    }
+  }
+  return segments.length > 0 ? segments : [region]
+}
+
+function visualCompareRegionBounds(diff: PNG, x: number, y: number, width: number, height: number): VisualCompareMismatchRegion | undefined {
+  let minX = x + width
+  let maxX = x
+  let minY = y + height
+  let maxY = y
+  let pixels = 0
+  for (let row = y; row < y + height; row += 1) {
+    for (let column = x; column < x + width; column += 1) {
+      if (!visualCompareDiffPixel(diff, column, row)) {
+        continue
+      }
+      pixels += 1
+      minX = Math.min(minX, column)
+      maxX = Math.max(maxX, column)
+      minY = Math.min(minY, row)
+      maxY = Math.max(maxY, row)
+    }
+  }
+  return pixels > 0 ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1, pixels } : undefined
 }
 
 function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
