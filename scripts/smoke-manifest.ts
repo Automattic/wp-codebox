@@ -122,6 +122,7 @@ export const smokeGroups = {
     commands: [
       tsxSmoke("agent-task-run-result-normalizer-smoke"),
       tsxSmoke("agent-runtime-workload-normalizer-smoke"),
+      tsxSmoke("agent-sandbox-workspace-root-smoke"),
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
