@@ -270,6 +270,7 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "source-url", description: "Source browser target path or absolute URL.", format: "path or URL" },
       { name: "candidate-url", description: "Candidate browser target path or absolute URL.", format: "path or URL" },
+      { name: "matrix-json", description: "Optional comparison matrix object with comparisons and optional viewports arrays; each comparison may provide source/candidate targets, labels, viewport, and wait settings.", format: "JSON object" },
       { name: "source-screenshot", description: "Existing source PNG screenshot path on the host.", format: "path" },
       { name: "candidate-screenshot", description: "Existing candidate PNG screenshot path on the host.", format: "path" },
       { name: "source-dom-snapshot", description: "Optional source DOM/style sidecar snapshot path for screenshot-backed visual explanations.", format: "path" },
@@ -287,7 +288,7 @@ export const commandRegistry = [
       { name: "include-aa", description: "Include anti-aliased pixels in mismatch count; defaults to false.", format: "boolean" },
       { name: "max-regions", description: "Maximum mismatch regions to report; defaults to 8.", format: "positive integer" },
     ],
-    outputShape: "wp-codebox/visual-compare/v1 JSON summary plus files/browser/visual-compare/source.png, candidate.png, diff.png, visual-diff.json, visual-explanation.json when DOM/style context is available, and optional baseline delta evidence when a previous visual comparison artifact is supplied.",
+    outputShape: "wp-codebox/visual-compare/v1 JSON summary plus files/browser/visual-compare/source.png, candidate.png, diff.png, visual-diff.json, visual-explanation.json when DOM/style context is available, and optional baseline delta evidence when a previous visual comparison artifact is supplied. Matrix runs emit wp-codebox/visual-compare-matrix/v1 in files/browser/visual-compare/matrix-summary.json plus per-comparison subdirectories.",
     policyRequirement: "Runtime policy commands must include wordpress.visual-compare.",
     recipe: true,
     handler: { kind: "playground", method: "runVisualCompare" },

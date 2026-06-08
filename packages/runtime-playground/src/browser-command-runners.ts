@@ -2611,6 +2611,27 @@ export async function runVisualCompareCommand({
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
+  const matrixJson = argValue(args, "matrix-json")?.trim()
+  if (matrixJson) {
+    return runVisualCompareMatrixCommand({ artifactRoot, runtimeSpec, server, args, matrixJson })
+  }
+
+  return runVisualComparePairCommand({ artifactRoot, runtimeSpec, server, args })
+}
+
+async function runVisualComparePairCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  args,
+  artifactPathPrefix = "files/browser/visual-compare",
+}: {
+  artifactRoot: string
+  runtimeSpec?: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  args: string[]
+  artifactPathPrefix?: string
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const sourceUrl = argValue(args, "source-url")?.trim()
   const candidateUrl = argValue(args, "candidate-url")?.trim()
   const sourceScreenshot = argValue(args, "source-screenshot")?.trim()
@@ -2644,7 +2665,7 @@ export async function runVisualCompareCommand({
     throw new Error("wordpress.visual-compare requires source-url/candidate-url or source-screenshot/candidate-screenshot")
   }
 
-  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
+  const browserDirectory = join(artifactRoot, artifactPathPrefix)
   await mkdir(browserDirectory, { recursive: true })
   const sourcePath = join(browserDirectory, "source.png")
   const candidatePath = join(browserDirectory, "candidate.png")
@@ -2724,12 +2745,12 @@ export async function runVisualCompareCommand({
       })
     : undefined
   const files = {
-    sourceScreenshot: "files/browser/visual-compare/source.png",
-    candidateScreenshot: "files/browser/visual-compare/candidate.png",
-    diffScreenshot: "files/browser/visual-compare/diff.png",
-    visualDiff: "files/browser/visual-compare/visual-diff.json",
-    ...(explanation ? { visualExplanation: "files/browser/visual-compare/visual-explanation.json" } : {}),
-    summary: "files/browser/visual-compare/summary.json",
+    sourceScreenshot: `${artifactPathPrefix}/source.png`,
+    candidateScreenshot: `${artifactPathPrefix}/candidate.png`,
+    diffScreenshot: `${artifactPathPrefix}/diff.png`,
+    visualDiff: `${artifactPathPrefix}/visual-diff.json`,
+    ...(explanation ? { visualExplanation: `${artifactPathPrefix}/visual-explanation.json` } : {}),
+    summary: `${artifactPathPrefix}/summary.json`,
   }
   const summary = {
     schema: "wp-codebox/visual-compare/v1",
@@ -2792,6 +2813,219 @@ export async function runVisualCompareCommand({
     artifact,
     output: `${JSON.stringify(summary, null, 2)}\n`,
   }
+}
+
+async function runVisualCompareMatrixCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  args,
+  matrixJson,
+}: {
+  artifactRoot: string
+  runtimeSpec?: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  args: string[]
+  matrixJson: string
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
+  const matrix = normalizeVisualCompareMatrixSpec(JSON.parse(matrixJson))
+  const baseArgs = args.filter((arg) => !arg.startsWith("matrix-json="))
+  const startedAt = now()
+  const entries: Array<{ name: string; artifact: BrowserArtifact; summary: VisualComparePairSummary }> = []
+
+  for (const entry of matrix.entries) {
+    const result = await runVisualComparePairCommand({
+      artifactRoot,
+      runtimeSpec,
+      server,
+      args: mergeVisualCompareMatrixArgs(baseArgs, entry.args),
+      artifactPathPrefix: `files/browser/visual-compare/${entry.name}`,
+    })
+    entries.push({ name: entry.name, artifact: result.artifact, summary: JSON.parse(result.output) as VisualComparePairSummary })
+  }
+
+  const finishedAt = now()
+  const comparisons = entries.map((entry) => ({
+    name: entry.name,
+    status: entry.summary.status,
+    source: entry.summary.source,
+    candidate: entry.summary.candidate,
+    options: entry.summary.options,
+    viewport: entry.summary.viewport,
+    files: entry.summary.files,
+    comparison: entry.summary.comparison,
+  }))
+  const mismatchRatios = comparisons.map((entry) => entry.comparison.mismatchRatio)
+  const mismatchPixels = comparisons.map((entry) => entry.comparison.mismatchPixels)
+  const matrixSummary = {
+    schema: "wp-codebox/visual-compare-matrix/v1",
+    command: "wordpress.visual-compare",
+    status: comparisons.every((entry) => entry.status === "identical") ? "identical" : "different",
+    startedAt,
+    finishedAt,
+    metrics: {
+      comparisons: comparisons.length,
+      identical: comparisons.filter((entry) => entry.status === "identical").length,
+      different: comparisons.filter((entry) => entry.status !== "identical").length,
+      maxMismatchRatio: Math.max(...mismatchRatios),
+      meanMismatchRatio: mismatchRatios.reduce((total, value) => total + value, 0) / mismatchRatios.length,
+      maxMismatchPixels: Math.max(...mismatchPixels),
+      meanMismatchPixels: mismatchPixels.reduce((total, value) => total + value, 0) / mismatchPixels.length,
+    },
+    comparisons,
+    files: {
+      summary: "files/browser/visual-compare/matrix-summary.json",
+    },
+  }
+  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
+  await mkdir(browserDirectory, { recursive: true })
+  await writeFile(join(browserDirectory, "matrix-summary.json"), `${JSON.stringify(matrixSummary, null, 2)}\n`)
+
+  const sourceScreenshots = entries.map((entry) => entry.artifact.files.sourceScreenshot).filter((file): file is string => typeof file === "string")
+  const candidateScreenshots = entries.map((entry) => entry.artifact.files.candidateScreenshot).filter((file): file is string => typeof file === "string")
+  const diffScreenshots = entries.map((entry) => entry.artifact.files.diffScreenshot).filter((file): file is string => typeof file === "string")
+  const visualDiffs = entries.map((entry) => entry.artifact.files.visualDiff).filter((file): file is string => typeof file === "string")
+  const visualExplanations = entries.map((entry) => entry.artifact.files.visualExplanation).filter((file): file is string => typeof file === "string")
+  const firstArtifact = entries[0]?.artifact
+  const artifact: BrowserArtifact = {
+    artifactType: "visual-compare",
+    requestedUrl: matrix.entries.map((entry) => entry.name).join(","),
+    url: firstArtifact?.url ?? "visual-compare-matrix",
+    preview: firstArtifact?.preview ?? browserProbePreviewRouting([], runtimeSpec, server.serverUrl),
+    files: {
+      summary: matrixSummary.files.summary,
+      visualDiff: visualDiffs,
+      sourceScreenshot: sourceScreenshots,
+      candidateScreenshot: candidateScreenshots,
+      diffScreenshot: diffScreenshots,
+      ...(visualExplanations.length > 0 ? { visualExplanation: visualExplanations } : {}),
+    },
+    summary: {
+      steps: 0,
+      consoleMessages: entries.reduce((total, entry) => total + entry.artifact.summary.consoleMessages, 0),
+      errors: entries.reduce((total, entry) => total + entry.artifact.summary.errors, 0),
+      finalUrl: firstArtifact?.summary.finalUrl ?? "",
+      htmlSnapshot: false,
+      networkEvents: entries.reduce((total, entry) => total + entry.artifact.summary.networkEvents, 0),
+      replayability: "artifact-backed",
+      screenshot: entries.length > 0,
+      visualCompare: {
+        status: matrixSummary.status,
+        mismatchRatio: matrixSummary.metrics.maxMismatchRatio,
+        mismatchPixels: matrixSummary.metrics.maxMismatchPixels,
+        totalPixels: comparisons.reduce((total, entry) => total + entry.comparison.totalPixels, 0),
+        dimensionMismatch: comparisons.some((entry) => entry.comparison.dimensionMismatch),
+        explanation: matrixSummary.files.summary,
+      },
+      viewport: firstArtifact?.summary.viewport ?? null,
+    },
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify(matrixSummary, null, 2)}\n`,
+  }
+}
+
+interface VisualComparePairSummary {
+  status: string
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  viewport: BrowserProbeViewport | null
+  files: Record<string, string>
+  comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean }
+}
+
+interface VisualCompareMatrixEntry {
+  name: string
+  args: string[]
+}
+
+function normalizeVisualCompareMatrixSpec(input: unknown): { entries: VisualCompareMatrixEntry[] } {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("matrix-json must be a JSON object")
+  }
+  const record = input as Record<string, unknown>
+  const comparisons = record.comparisons
+  if (!Array.isArray(comparisons) || comparisons.length === 0) {
+    throw new Error("matrix-json.comparisons must be a non-empty array")
+  }
+  const viewports = Array.isArray(record.viewports) && record.viewports.length > 0 ? record.viewports : [undefined]
+  const entries: VisualCompareMatrixEntry[] = []
+  for (const comparison of comparisons) {
+    const comparisonRecord = visualCompareMatrixRecord(comparison, "matrix-json.comparisons entries")
+    const comparisonName = visualCompareMatrixString(comparisonRecord, ["name", "id", "label"]) ?? `comparison-${entries.length + 1}`
+    for (const viewport of viewports) {
+      const viewportRecord = viewport === undefined || typeof viewport === "string" ? undefined : visualCompareMatrixRecord(viewport, "matrix-json.viewports entries")
+      const viewportValue = typeof viewport === "string" ? viewport : viewportRecord ? visualCompareMatrixString(viewportRecord, ["viewport", "size"]) : undefined
+      const viewportName = viewportRecord ? visualCompareMatrixString(viewportRecord, ["name", "id", "label"]) : viewportValue
+      const name = sanitizeVisualCompareMatrixName([comparisonName, viewportName].filter(Boolean).join("-"))
+      const args = visualCompareMatrixArgs(comparisonRecord)
+      if (viewportValue) {
+        args.push(`viewport=${viewportValue}`)
+      }
+      entries.push({ name, args })
+    }
+  }
+  return { entries }
+}
+
+function visualCompareMatrixRecord(input: unknown, label: string): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`${label} must be JSON objects`)
+  }
+  return input as Record<string, unknown>
+}
+
+function visualCompareMatrixArgs(record: Record<string, unknown>): string[] {
+  const fields: Array<[string, string[]]> = [
+    ["source-url", ["source-url", "sourceUrl"]],
+    ["candidate-url", ["candidate-url", "candidateUrl"]],
+    ["source-screenshot", ["source-screenshot", "sourceScreenshot"]],
+    ["candidate-screenshot", ["candidate-screenshot", "candidateScreenshot"]],
+    ["source-dom-snapshot", ["source-dom-snapshot", "sourceDomSnapshot"]],
+    ["candidate-dom-snapshot", ["candidate-dom-snapshot", "candidateDomSnapshot"]],
+    ["source-label", ["source-label", "sourceLabel"]],
+    ["candidate-label", ["candidate-label", "candidateLabel"]],
+    ["wait-for", ["wait-for", "waitFor"]],
+    ["duration", ["duration", "durationMs"]],
+    ["viewport", ["viewport"]],
+    ["full-page", ["full-page", "fullPage"]],
+    ["threshold", ["threshold"]],
+    ["include-aa", ["include-aa", "includeAA"]],
+    ["max-regions", ["max-regions", "maxRegions"]],
+    ["max-explanation-elements", ["max-explanation-elements", "maxExplanationElements"]],
+    ["max-explanation-candidates", ["max-explanation-candidates", "maxExplanationCandidates"]],
+  ]
+  return fields.flatMap(([argName, keys]) => {
+    const value = visualCompareMatrixValue(record, keys)
+    return value === undefined ? [] : [`${argName}=${String(value)}`]
+  })
+}
+
+function visualCompareMatrixString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  const value = visualCompareMatrixValue(record, keys)
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function visualCompareMatrixValue(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null && record[key] !== "") {
+      return record[key]
+    }
+  }
+  return undefined
+}
+
+function sanitizeVisualCompareMatrixName(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "comparison"
+}
+
+function mergeVisualCompareMatrixArgs(baseArgs: string[], entryArgs: string[]): string[] {
+  const merged = baseArgs.filter((arg) => !entryArgs.some((entryArg) => arg.slice(0, arg.indexOf("=") + 1) === entryArg.slice(0, entryArg.indexOf("=") + 1)))
+  merged.push(...entryArgs)
+  return merged
 }
 
 async function resolveVisualCompareScreenshotPath(requestedPath: string, artifactRoot: string): Promise<string> {

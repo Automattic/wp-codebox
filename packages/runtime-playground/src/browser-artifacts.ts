@@ -49,7 +49,7 @@ export interface BrowserScenarioArtifact extends BrowserArtifactBase {
 
 export interface BrowserVisualCompareArtifact extends BrowserArtifactBase {
   artifactType: "visual-compare"
-  files: BrowserArtifactFiles & { summary: string; sourceScreenshot: string; candidateScreenshot: string; diffScreenshot: string; visualDiff: string }
+  files: BrowserArtifactFiles & { summary: string; sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string | string[] }
   summary: BrowserArtifactSummary & { visualCompare: NonNullable<BrowserArtifactSummary["visualCompare"]> }
 }
 
@@ -68,11 +68,11 @@ export interface BrowserArtifactFiles {
   review?: string
   screenshot?: string
   domSnapshots?: string[]
-  sourceScreenshot?: string
-  candidateScreenshot?: string
-  diffScreenshot?: string
-  visualDiff?: string
-  visualExplanation?: string
+  sourceScreenshot?: string | string[]
+  candidateScreenshot?: string | string[]
+  diffScreenshot?: string | string[]
+  visualDiff?: string | string[]
+  visualExplanation?: string | string[]
   summary: string
 }
 
