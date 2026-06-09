@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
   recipeType: "phpunit" | "bench"
@@ -26,6 +26,7 @@ interface WordPressPhpunitBuilderOptions {
   bootstrapMode?: string
   projectBootstrap?: string
   multisite?: boolean
+  prepareSteps?: WorkspaceRecipeStep[]
 }
 
 interface WordPressBenchBuilderOptions {
@@ -81,6 +82,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         bootstrapMode: stringOrUndefined((options as WordPressPhpunitBuilderOptions).bootstrapMode),
         projectBootstrap: stringOrUndefined((options as WordPressPhpunitBuilderOptions).projectBootstrap),
         multisite: Boolean((options as WordPressPhpunitBuilderOptions).multisite),
+        prepareSteps: Array.isArray((options as WordPressPhpunitBuilderOptions).prepareSteps) ? (options as WordPressPhpunitBuilderOptions).prepareSteps : [],
       })
     case "bench":
       return buildWordPressBenchRecipe({

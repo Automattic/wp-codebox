@@ -20,6 +20,7 @@ export const defaultPolicy: RuntimePolicy = {
 }
 
 const supportedRecipeCommands = new Set(recipeCommandDefinitions().map((command) => command.id))
+const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
 
 export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
   return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -413,7 +414,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
 
   for (const { phase, index, step } of recipeWorkflowSteps(recipe)) {
     const path = `$.workflow.${phase}[${index}]`
-    if (!supportedRecipeCommands.has(step.command)) {
+    if (!supportedRecipeCommands.has(step.command) && !hostRecipeCommandPattern.test(step.command)) {
       addIssue("unsupported-command", `${path}.command`, `Unsupported recipe command: ${step.command}`)
       continue
     }

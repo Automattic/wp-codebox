@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { DEFAULT_WORDPRESS_VERSION, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
 import Ajv2020 from "ajv/dist/2020.js"
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const cli = resolve(root, "packages/cli/dist/index.js")
 
 const recipeCommandIds = recipeCommandDefinitions().filter((command) => command.recipe).map((command) => command.id)
 const ajv = new Ajv2020({ strict: false })
@@ -23,6 +31,10 @@ const phpunitRecipe = buildWordPressPhpunitRecipe({
   bootstrapMode: "project",
   projectBootstrap: "tests/bootstrap.php",
   multisite: true,
+  prepareSteps: [{
+    command: "host/prepare-php",
+    args: ['input-json={"args":["bin/generate-feature-config.php"],"cwd":"/repo/demo-plugin-source"}'],
+  }],
   mounts: [
     { source: "/repo/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
   ],
@@ -34,6 +46,10 @@ assert.equal(buildWordPressBenchRecipe({ pluginSlug: "demo-plugin" }).runtime?.w
 assert.equal(phpunitRecipe.inputs?.mounts?.[0]?.mode, "readwrite")
 assert.deepEqual(phpunitRecipe.inputs?.mounts?.[0], { source: "/repo/demo-plugin-source", target: "/wordpress/wp-content/plugins/demo-plugin", mode: "readwrite" })
 assert.deepEqual(phpunitRecipe.inputs?.mounts?.[1], { source: "/repo/vendor", target: "/wp-codebox-vendor", mode: "readonly" })
+assert.deepEqual(phpunitRecipe.workflow.before, [{
+  command: "host/prepare-php",
+  args: ['input-json={"args":["bin/generate-feature-config.php"],"cwd":"/repo/demo-plugin-source"}'],
+}])
 assert.deepEqual(phpunitRecipe.workflow.steps[0]?.args, [
   "plugin-slug=demo-plugin",
   "cwd=tests/phpunit",
@@ -51,6 +67,19 @@ assert.deepEqual(phpunitRecipe.workflow.steps[0]?.args, [
   "multisite=1",
 ])
 assert.ok(validate(phpunitRecipe), ajv.errorsText(validate.errors))
+
+const workspace = mkdtempSync(join(tmpdir(), "wp-codebox-phpunit-prepare-builder-"))
+const recipePath = join(workspace, "recipe.json")
+writeFileSync(recipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    before: phpunitRecipe.workflow.before,
+    steps: [{ command: "wordpress.run-php", args: ["code=echo 'ok';"] }],
+  },
+}, null, 2)}\n`)
+const validateRecipe = spawnSync(process.execPath, [cli, "recipe", "validate", "--recipe", recipePath, "--json"], { cwd: root, encoding: "utf8" })
+assert.equal(validateRecipe.status, 0, validateRecipe.stderr || validateRecipe.stdout)
+assert.equal(JSON.parse(validateRecipe.stdout).valid, true)
 
 const benchRecipe = buildWordPressBenchRecipe({
   wordpressVersion: "7.0",
