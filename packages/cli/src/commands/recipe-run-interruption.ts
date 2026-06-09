@@ -130,6 +130,9 @@ export function createRecipeInterruptionController(): RecipeInterruptionControll
       controller.dispose()
       process.kill(process.pid, metadata.signal)
     },
+    clear() {
+      metadata = undefined
+    },
   }
 
   return controller

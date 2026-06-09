@@ -17,9 +17,9 @@ import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipe
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
-import type { RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 
@@ -66,7 +66,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     const { result, logs } = await captureStdout(execute)
     const interruptedResult = interruptedRecipeOutput(result, interruption)
     const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    await writeRecipeJsonOutput(output)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
     exitAfterRecipeRunTimeout(output)
@@ -85,7 +85,7 @@ export async function runRecipeValidateCommand(args: string[]): Promise<number> 
     return output.success ? 0 : 1
   }
 
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  await writeRecipeJsonOutput(output)
   return output.success ? 0 : 1
 }
 
@@ -133,6 +133,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let fixtureDatabases: RecipeRunFixtureDatabase[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
+  let advisoryFailures: RecipeAdvisoryFailure[] = []
+  let browserEvidence: RecipeBrowserEvidence[] = []
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
@@ -370,8 +372,18 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const workflowSteps = recipeWorkflowSteps(recipe)
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
-        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options)))
-        interruption?.throwIfInterrupted()
+        const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
+        try {
+          const execution = await awaitRecipe(operation, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options))
+          executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
+          interruption?.throwIfInterrupted()
+        } catch (error) {
+          if (!recipeWorkflowStepIsAdvisory(workflowStep.step)) {
+            throw error
+          }
+          advisoryFailures.push(recipeAdvisoryFailure(workflowStep, error))
+          interruption?.clear()
+        }
       }
     })
 
@@ -388,7 +400,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
       artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
-      await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list() })
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
@@ -409,7 +422,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }))
-      await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list() })
+      browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+      await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
@@ -417,7 +431,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
     const activeRuntime = runtime
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
-      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0))
+      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe && options.previewHoldBlocking ? options.previewHoldSeconds : 0))
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
@@ -441,7 +455,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: recipeFailure, phaseEvidence: phaseTracker.list() }) },
         error: recipeFailure,
       })
-      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list() })
+      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list(), browserEvidence })
       return {
         success: false,
         schema: "wp-codebox/recipe-run/v1",
@@ -454,6 +468,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         probes,
         declaredArtifacts,
         phaseEvidence: phaseTracker.list(),
+        ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
+        ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
         ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
@@ -472,7 +488,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       artifactRefs: artifactBundleRunRef(artifacts),
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }) },
     })
-    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list() })
+    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
     return {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
@@ -485,6 +501,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       probes,
       declaredArtifacts,
       phaseEvidence: phaseTracker.list(),
+      ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
+      ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
@@ -508,7 +526,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption,
       }))
       if (artifacts) {
-        await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list() })
+        browserEvidence = await recipeBrowserEvidence(artifacts, executions)
+        await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
           if (declaredArtifacts.length === 0) {
             declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
@@ -546,7 +565,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
       error: serializedError,
     })
-    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list() })
+    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence })
 
     return {
       success: false,
@@ -559,6 +578,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       probes,
       declaredArtifacts,
       phaseEvidence: phaseTracker.list(),
+      ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
+      ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
       diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       ...(artifacts ? { artifacts } : {}),
       run: runRecord,
@@ -962,7 +983,7 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false, timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS }
+  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false, previewHoldBlocking: false, timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -974,6 +995,11 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
 
     if (arg === "--dry-run") {
       options.dryRun = true
+      continue
+    }
+
+    if (arg === "--preview-hold-blocking") {
+      options.previewHoldBlocking = true
       continue
     }
 
@@ -1080,6 +1106,129 @@ function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: Recip
     recipeStepIndex,
     recipeCommand,
   }
+}
+
+function recipeWorkflowStepIsAdvisory(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
+  return step.allowFailure === true || step.advisory === true
+}
+
+function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown): RecipeAdvisoryFailure {
+  return {
+    schema: "wp-codebox/recipe-advisory-failure/v1",
+    phase: workflowStep.phase,
+    index: workflowStep.index,
+    command: workflowStep.step.command,
+    status: "failed",
+    error: serializeRecipeRunError(error),
+  }
+}
+
+async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[]): Promise<RecipeBrowserEvidence[]> {
+  const manifestFiles = await artifactManifestFilesByPath(artifacts)
+  return executions.flatMap((execution) => recipeBrowserEvidenceForExecution(execution, manifestFiles))
+}
+
+function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence[] {
+  const command = execution.recipeCommand ?? execution.command
+  if (!recipeCommandProducesBrowserEvidence(command)) {
+    return []
+  }
+
+  const parsed = parseJsonObject(execution.stdout)
+  if (!parsed) {
+    return []
+  }
+
+  if (Array.isArray(parsed.profiles)) {
+    return parsed.profiles.flatMap((profile) => {
+      const profileEvidence = recipeBrowserEvidenceFromParsedExecution(execution, command, profile, manifestFiles)
+      return profileEvidence ? [profileEvidence] : []
+    })
+  }
+
+  const evidence = recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles)
+  return evidence ? [evidence] : []
+}
+
+function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResult, command: string, parsed: Record<string, unknown>, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence | undefined {
+  const files = recipeBrowserEvidenceFiles(parsed.files, manifestFiles)
+  const summaryFile = browserEvidenceFileRef(stringValue((parsed.files as Record<string, unknown> | undefined)?.summary), manifestFiles)
+  if (Object.keys(files).length === 0 && !summaryFile) {
+    return undefined
+  }
+
+  const summary = parsed.summary
+  const summaryObject = isRecord(summary) ? summary : undefined
+  return stripUndefined({
+    schema: "wp-codebox/recipe-browser-evidence/v1",
+    phase: execution.recipePhase,
+    index: execution.recipeStepIndex,
+    command,
+    status: execution.exitCode === 0 ? "completed" : "failed",
+    requestedUrl: stringValue(parsed.requestedUrl),
+    finalUrl: stringValue(parsed.finalUrl ?? summaryObject?.finalUrl),
+    summaryFile,
+    files,
+    summary,
+    scriptResult: summaryObject?.scriptResult,
+  }) as RecipeBrowserEvidence
+}
+
+function recipeBrowserEvidenceFiles(files: unknown, manifestFiles: Map<string, ArtifactManifestFile>): Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]> {
+  if (!isRecord(files)) {
+    return {}
+  }
+
+  const refs: Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]> = {}
+  for (const [name, value] of Object.entries(files)) {
+    const ref = Array.isArray(value)
+      ? value.map((entry) => browserEvidenceFileRef(stringValue(entry), manifestFiles)).filter((entry): entry is RecipeBrowserEvidenceFileRef => Boolean(entry))
+      : browserEvidenceFileRef(stringValue(value), manifestFiles)
+    if (Array.isArray(ref)) {
+      if (ref.length > 0) {
+        refs[name] = ref
+      }
+      continue
+    }
+    if (ref) {
+      refs[name] = ref
+    }
+  }
+  return refs
+}
+
+function browserEvidenceFileRef(path: string | undefined, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidenceFileRef | undefined {
+  if (!path) {
+    return undefined
+  }
+  const manifestFile = manifestFiles.get(path)
+  return stripUndefined({
+    path,
+    kind: manifestFile?.kind,
+    contentType: manifestFile?.contentType,
+    sha256: manifestFile?.sha256,
+  }) as RecipeBrowserEvidenceFileRef
+}
+
+function recipeCommandProducesBrowserEvidence(command: string): boolean {
+  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.html-capture"
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(raw)
+    return isRecord(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions): Promise<RecipeExecutionResult> {

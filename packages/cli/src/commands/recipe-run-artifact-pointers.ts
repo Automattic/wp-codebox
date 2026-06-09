@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { stripUndefined, type ArtifactBundle, type RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { RunOutput } from "../runtime-command-wrappers.js"
-import type { RecipeArtifactPointerCommandStatus, RecipeArtifactPointerState, RecipePhaseEvidence } from "./recipe-run-types.js"
+import type { RecipeArtifactPointerCommandStatus, RecipeArtifactPointerState, RecipeBrowserEvidence, RecipePhaseEvidence } from "./recipe-run-types.js"
 
 export class RecipeArtifactPointerTracker {
   private command: string | undefined
@@ -11,6 +11,7 @@ export class RecipeArtifactPointerTracker {
   private artifacts: ArtifactBundle | undefined
   private failure: RunOutput["error"] | undefined
   private phases: RecipePhaseEvidence[] = []
+  private browserEvidence: RecipeBrowserEvidence[] = []
 
   constructor(private readonly directory: string | undefined, private readonly runId: string, private readonly recipePath: string, private readonly startedAt: string) {}
 
@@ -23,8 +24,9 @@ export class RecipeArtifactPointerTracker {
     this.commandStatus = state.commandStatus ?? this.commandStatus
     this.runtime = state.runtime ?? this.runtime
     this.artifacts = state.artifacts ?? this.artifacts
-    this.failure = state.failure ?? this.failure
+    this.failure = state.failure ?? (state.commandStatus === "completed" || state.commandStatus === "running" ? undefined : this.failure)
     this.phases = state.phases ?? this.phases
+    this.browserEvidence = state.browserEvidence ?? this.browserEvidence
 
     const pointer = stripUndefined({
       schema: "wp-codebox/recipe-run-artifact-pointer/v1",
@@ -39,6 +41,7 @@ export class RecipeArtifactPointerTracker {
       commandStatus: this.commandStatus,
       failure: this.failure,
       failurePhase: recipeArtifactPointerFailurePhase(this.failure, this.phases),
+      browserEvidence: this.browserEvidence.length > 0 ? this.browserEvidence : undefined,
       paths: recipeArtifactPointerPaths(this.directory, this.runtime, this.artifacts),
     })
 

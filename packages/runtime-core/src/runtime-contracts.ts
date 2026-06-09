@@ -180,6 +180,8 @@ export interface WorkspaceRecipeStagedFile {
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
+  allowFailure?: boolean
+  advisory?: boolean
 }
 
 export interface WorkspaceRecipeFixtureDatabaseReset {

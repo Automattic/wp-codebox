@@ -64,6 +64,14 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     if (step.args && !Array.isArray(step.args)) {
       throw new Error(`Recipe workflow ${phase} args must be arrays: ${recipePath}`)
     }
+
+    if (step.allowFailure !== undefined && typeof step.allowFailure !== "boolean") {
+      throw new Error(`Recipe workflow ${phase} allowFailure must be boolean: ${recipePath}`)
+    }
+
+    if (step.advisory !== undefined && typeof step.advisory !== "boolean") {
+      throw new Error(`Recipe workflow ${phase} advisory must be boolean: ${recipePath}`)
+    }
   }
 
   if (recipe.distribution !== undefined) {

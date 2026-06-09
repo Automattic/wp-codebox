@@ -43,6 +43,7 @@ const recipe = spawn(process.execPath, [
   runArtifactsRoot,
   "--preview-hold",
   `${holdSeconds}s`,
+  "--preview-hold-blocking",
   "--json",
 ], {
   cwd: repoRoot,

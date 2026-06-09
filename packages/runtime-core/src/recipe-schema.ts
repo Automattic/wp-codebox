@@ -603,6 +603,8 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string" },
           },
+          allowFailure: { type: "boolean" },
+          advisory: { type: "boolean" },
         },
       },
       inheritanceRequest: {

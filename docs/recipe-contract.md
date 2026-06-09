@@ -138,6 +138,34 @@ come from the command catalog:
 npm run wp-codebox -- commands --json
 ```
 
+Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
+Failed advisory steps are reported in `advisoryFailures` and do not make an
+otherwise successful recipe return `success: false`.
+
+```json
+{
+  "command": "wordpress.browser-actions",
+  "args": ["url=/", "steps-json=[...]"],
+  "advisory": true
+}
+```
+
+## Recipe Output Evidence
+
+`recipe-run --json` returns `wp-codebox/recipe-run/v1`. Browser command sidecars
+are promoted into `browserEvidence` so callers can discover stable evidence
+without hardcoding artifact paths or parsing command stdout.
+
+Each `browserEvidence` entry includes the workflow phase/index, command,
+summary file, artifact file refs, summary payload, and `scriptResult` when the
+browser command produced one. The same browser evidence is mirrored into
+`latest-runtime.json` under the run artifact pointer.
+
+`--preview-hold <duration>` records held-preview lifecycle metadata in the
+artifact bundle and returns after recipe work finishes. Use
+`--preview-hold-blocking` only for operator workflows that need the CLI process
+to keep a live preview server open for the hold duration.
+
 ## Browser Assertions
 
 `wordpress.browser-probe` accepts repeated `assert=<assertion>` arguments.

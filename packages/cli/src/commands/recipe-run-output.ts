@@ -51,7 +51,7 @@ export class RecipeDeclaredArtifactFailureError extends Error {
 
 export function exitAfterPlaygroundCliBootFailure(output: RecipeRunCommandOutput): void {
   if (output.schema === "wp-codebox/recipe-run/v1" && hasSerializedErrorCode(output.error, "wp-codebox-playground-cli-exited")) {
-    process.exit(output.success ? 0 : 1)
+    process.exitCode = output.success ? 0 : 1
   }
 }
 
@@ -74,8 +74,24 @@ function hasSerializedErrorCode(error: RunOutput["error"] | undefined, code: str
 
 export function exitAfterRecipeRunTimeout(output: RecipeRunCommandOutput): void {
   if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "recipe-run-timeout") {
-    process.exit(output.success ? 0 : 1)
+    process.exitCode = output.success ? 0 : 1
   }
+}
+
+export async function writeRecipeJsonOutput(output: unknown): Promise<void> {
+  await writeStdout(`${JSON.stringify(output, null, 2)}\n`)
+}
+
+function writeStdout(contents: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(contents, (error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    })
+  })
 }
 
 export function printJsonFailureDiagnostic(output: { success: boolean; error?: { message?: string }; logs?: string[] }): void {

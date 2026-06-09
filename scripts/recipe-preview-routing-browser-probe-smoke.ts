@@ -3,7 +3,7 @@ import { execFile } from "node:child_process"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -28,6 +28,9 @@ try {
   assert.equal(recipeSummary.effectivePreviewOrigin, recipePublicUrl)
   assert.equal(recipeOutput.artifacts.preview.url, recipePublicUrl)
   assert.equal(recipeOutput.artifacts.preview.localUrl.startsWith("http://127.0.0.1:"), true)
+  assert.equal(recipeOutput.browserEvidence?.[0]?.command, "wordpress.browser-probe")
+  assert.equal(recipeOutput.browserEvidence?.[0]?.summaryFile?.path, "files/browser/summary.json")
+  assert.equal(recipeOutput.browserEvidence?.[0]?.files?.html?.path, "files/browser/snapshot.html")
 
   const recipeReview = await review(recipeOutput)
   assert.equal(recipeReview.browser?.probes?.[0]?.requestedUrl, `${recipePublicUrl}relative-probe`)
@@ -71,6 +74,9 @@ try {
   assert.equal(overrideSummary.requestedPreviewOrigin, overridePublicUrl)
   assert.equal(overrideSummary.effectivePreviewOrigin, overridePublicUrl)
   assert.equal(overrideOutput.artifacts.preview.url, overridePublicUrl)
+  const overridePointer = JSON.parse(await readFile(join(dirname(overrideOutput.artifacts.directory), "latest-runtime.json"), "utf8"))
+  assert.equal(overridePointer.browserEvidence?.[0]?.command, "wordpress.browser-probe")
+  assert.equal(overridePointer.browserEvidence?.[0]?.summaryFile?.path, "files/browser/summary.json")
 
   const overrideMetadata = JSON.parse(await readFile(overrideOutput.artifacts.metadataPath, "utf8")) as { provenance?: { task?: { preview?: { requested?: { publicUrl?: string }; effective?: { publicUrl?: string }; cliOverrides?: { publicUrl?: string } } } } }
   assert.equal(overrideMetadata.provenance?.task?.preview?.requested?.publicUrl, staleRecipePublicUrl)

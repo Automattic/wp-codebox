@@ -30,7 +30,7 @@ try {
       steps: [
         {
           command: "wordpress.run-php",
-          args: ["code=<?php sleep(120); echo 'unreachable';"],
+          args: [`code=<?php for ($i = 0; $i < 2000; $i++) { echo str_repeat('large-output-', 8) . $i . "\\n"; flush(); } sleep(120); echo 'unreachable';`],
         },
       ],
     },

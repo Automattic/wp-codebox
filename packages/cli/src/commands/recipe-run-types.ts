@@ -12,6 +12,7 @@ export interface RecipeRunOptions {
   previewPublicUrl?: string
   previewPort?: number
   previewBind?: string
+  previewHoldBlocking: boolean
   timeoutMs: number
   json: boolean
   dryRun: boolean
@@ -50,6 +51,8 @@ export interface RecipeRunOutput {
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
   phaseEvidence?: RecipePhaseEvidence[]
+  advisoryFailures?: RecipeAdvisoryFailure[]
+  browserEvidence?: RecipeBrowserEvidence[]
   diagnostics?: RecipeRuntimeDiagnostic[]
   validation?: {
     issues: RecipeValidationIssue[]
@@ -72,6 +75,37 @@ export type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
+  recipeAdvisory?: boolean
+}
+
+export interface RecipeAdvisoryFailure {
+  schema: "wp-codebox/recipe-advisory-failure/v1"
+  phase: RecipeWorkflowPhase
+  index: number
+  command: string
+  status: "failed"
+  error: RunOutput["error"]
+}
+
+export interface RecipeBrowserEvidenceFileRef {
+  path: string
+  kind?: string
+  contentType?: string
+  sha256?: { algorithm: "sha256"; value: string }
+}
+
+export interface RecipeBrowserEvidence {
+  schema: "wp-codebox/recipe-browser-evidence/v1"
+  phase?: RecipeWorkflowPhase
+  index?: number
+  command: string
+  status: "completed" | "failed"
+  requestedUrl?: string
+  finalUrl?: string
+  summaryFile?: RecipeBrowserEvidenceFileRef
+  files: Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]>
+  summary?: unknown
+  scriptResult?: unknown
 }
 
 export type RecipeArtifactPointerCommandStatus = "queued" | "running" | "completed" | "failed"
@@ -83,6 +117,7 @@ export interface RecipeArtifactPointerState {
   artifacts?: ArtifactBundle
   failure?: RunOutput["error"]
   phases?: RecipePhaseEvidence[]
+  browserEvidence?: RecipeBrowserEvidence[]
 }
 
 export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_workloads" | "run_probes" | "collect_artifacts"
@@ -212,4 +247,5 @@ export interface RecipeInterruptionController {
   interruptible<T>(promise: Promise<T>): Promise<T>
   throwIfInterrupted(): void
   propagateIfInterrupted(): void
+  clear(): void
 }
