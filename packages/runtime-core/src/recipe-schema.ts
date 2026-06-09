@@ -6,7 +6,7 @@ export interface WorkspaceRecipeJsonSchemaOptions {
 
 export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchema {
   const commandSchema = options.recipeCommandIds && options.recipeCommandIds.length > 0
-    ? { enum: [...options.recipeCommandIds] }
+    ? { anyOf: [{ enum: [...options.recipeCommandIds] }, { type: "string", pattern: "^host/[A-Za-z0-9._/-]+$" }] }
     : { type: "string" }
 
   return {

@@ -1,4 +1,4 @@
-import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount } from "./runtime-contracts.js"
+import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
 type JsonObject = Record<string, unknown>
@@ -26,6 +26,7 @@ export interface WordPressPhpunitRecipeOptions {
   bootstrapMode?: "managed" | "project" | (string & {})
   projectBootstrap?: string
   multisite?: boolean
+  prepareSteps?: WorkspaceRecipeStep[]
 }
 
 export interface WordPressBenchRecipeOptions {
@@ -89,6 +90,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       ]),
     },
     workflow: {
+      ...(options.prepareSteps && options.prepareSteps.length > 0 ? { before: normalizeRecipeSteps(options.prepareSteps, "prepareSteps") } : {}),
       steps: [{
         command: "wordpress.phpunit",
         args: [
@@ -110,6 +112,21 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       }],
     },
   }
+}
+
+function normalizeRecipeSteps(steps: readonly WorkspaceRecipeStep[], label: string): WorkspaceRecipeStep[] {
+  return steps.map((step, index) => {
+    if (!step.command || typeof step.command !== "string") {
+      throw new Error(`${label}[${index}] requires command`)
+    }
+
+    return {
+      command: step.command,
+      ...(step.args !== undefined ? { args: step.args } : {}),
+      ...(step.allowFailure !== undefined ? { allowFailure: step.allowFailure } : {}),
+      ...(step.advisory !== undefined ? { advisory: step.advisory } : {}),
+    }
+  })
 }
 
 export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions): WorkspaceRecipe {
