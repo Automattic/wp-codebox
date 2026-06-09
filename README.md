@@ -1073,12 +1073,12 @@ Current bundles include:
 - `files/mounts.json`: mounted input list.
 - `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
 - `files/changed-files.json`: canonical changed-files manifest for review and apply-back consumers.
-- `files/patch.diff`: canonical combined text patch for changed readwrite mounts that declare a baseline.
+- `files/patch.diff`: canonical combined text patch for changed readwrite mounts. A mount is diffed when it declares a `baselineSource`, or when the mounted directory is a git work tree (in which case the diff is taken against its committed `HEAD`, including untracked files as additions). Mounts that are neither are skipped.
 - `files/test-results.json`: normalized test-results artifact with schema, summary counts, suites, and raw log references. When WP Codebox has not run test-aware commands, the artifact is present with `status: "unknown"`, zero counts, an empty `suites` array, and pointers to raw command logs instead of inferred pass/fail data.
 - `files/review.json`: frontend-oriented review payload with summary, progress labels, changed file labels, evidence links, and approval actions.
 - `files/runtime-reference-manifest.json`: stable runtime ref index with artifact-bundle, file, trace/events, and snapshot refs plus SHA-256 digests.
-- `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
-- `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
+- `files/diffs.json`: diff index for readwrite mounts that declare a baseline or are git work trees.
+- `files/diffs/<mount>.patch`: unified text diff from the mount baseline (a seeded baseline directory, or the git `HEAD` of a git work-tree mount) to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
 `metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. It also includes `provenance` derived from data WP Codebox already has: task input/context where available, WP Codebox runtime version, WordPress version, mounted component/mount metadata, and agent/provider/model fields passed to the sandbox runner. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
@@ -1246,6 +1246,8 @@ All three paths use the same `wp-codebox/task-input/v1` task input contract. Hos
 Runtime components are declared through `component_contracts` in ability input, the `wp_codebox_component_contracts` option, or the `wp_codebox_component_contracts` filter. WP Codebox does not infer product-specific component names or paths.
 
 Product callers can opt into public preview wiring through `preview_port`, `preview_bind`, and `preview_public_url`. Omit them to keep the default loopback-only random-port preview behavior; `preview_bind` requires `preview_port`, and `preview_public_url` must be an `http` or `https` URL.
+
+Callers can gate success on post-agent verification through `verify_steps`: an array of recipe steps (for example `{ "command": "wordpress.phpunit", "args": ["plugin-slug=example"] }` or `{ "command": "wordpress.run-php", "args": ["code-file=..."] }`) that run as recipe `workflow.after` steps after the agent finishes editing, against the booted runtime. A non-zero exit from any verify step fails the whole run, so the agent cannot report success unless its checks pass. Runs without `verify_steps` are unaffected.
 
 Each component contract declares `slug`, `path` or `source`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
 
