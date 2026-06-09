@@ -1,0 +1,183 @@
+import { createHash } from "node:crypto"
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import type { MountSpec } from "@automattic/wp-codebox-core"
+import type { PlaygroundCliServer } from "./preview-server.js"
+import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
+
+interface HostMountSnapshot {
+  mountIndex: number
+  target: string
+  files: Record<string, string>
+}
+
+export interface VfsMountSnapshot {
+  mountIndex: number
+  target: string
+  files: Array<{
+    relativePath: string
+    sha256: string
+    contentsBase64?: string
+  }>
+}
+
+export interface MountMaterializationResult {
+  materialized: number
+  deleted: number
+  skipped: number
+}
+
+export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
+  const writableDirectoryMounts = mounts
+    .map((mount, mountIndex) => ({ mount, mountIndex }))
+    .filter(({ mount }) => mount.mode === "readwrite" && mount.type !== "file")
+  if (writableDirectoryMounts.length === 0) {
+    return { materialized: 0, deleted: 0, skipped: 0 }
+  }
+
+  const hostSnapshots: HostMountSnapshot[] = []
+  for (const { mount, mountIndex } of writableDirectoryMounts) {
+    hostSnapshots.push({
+      mountIndex,
+      target: mount.target,
+      files: await hostFileHashes(mount.source),
+    })
+  }
+
+  const response = await server.playground.run({ code: vfsMountSnapshotPhp(hostSnapshots) })
+  const parsed = JSON.parse(response.text || "{}") as { mounts?: VfsMountSnapshot[] }
+  return applyVfsMountSnapshots(mounts, parsed.mounts ?? [])
+}
+
+export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: VfsMountSnapshot[]): Promise<MountMaterializationResult> {
+  const result: MountMaterializationResult = { materialized: 0, deleted: 0, skipped: 0 }
+
+  for (const snapshot of snapshots) {
+    const mount = mounts[snapshot.mountIndex]
+    if (!mount || mount.mode !== "readwrite" || mount.type === "file") {
+      result.skipped++
+      continue
+    }
+
+    const present = new Set(snapshot.files.map((file) => file.relativePath))
+    const existing = await hostFileHashes(mount.source)
+
+    for (const file of snapshot.files) {
+      if (!file.contentsBase64) {
+        continue
+      }
+      const hostPath = join(mount.source, file.relativePath)
+      await mkdir(dirname(hostPath), { recursive: true })
+      await writeFile(hostPath, Buffer.from(file.contentsBase64, "base64"))
+      result.materialized++
+    }
+
+    for (const relativePath of Object.keys(existing)) {
+      if (present.has(relativePath)) {
+        continue
+      }
+      await rm(join(mount.source, relativePath), { force: true })
+      result.deleted++
+    }
+  }
+
+  return result
+}
+
+async function hostFileHashes(directory: string, relativeDirectory = ""): Promise<Record<string, string>> {
+  const files: Record<string, string> = {}
+  let entries
+  try {
+    entries = await readdir(join(directory, relativeDirectory), { withFileTypes: true })
+  } catch {
+    return files
+  }
+
+  for (const entry of entries) {
+    if (entry.isDirectory() && SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
+      continue
+    }
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+    const absolutePath = join(directory, relativePath)
+    if (entry.isDirectory()) {
+      Object.assign(files, await hostFileHashes(directory, relativePath))
+      continue
+    }
+    if (!entry.isFile()) {
+      continue
+    }
+    files[relativePath] = createHash("sha256").update(await readFile(absolutePath)).digest("hex")
+  }
+
+  return files
+}
+
+function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string {
+  const payload = JSON.stringify(JSON.stringify({ mounts: hostSnapshots }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$skip = array_fill_keys(array('.git', 'node_modules'), true);
+
+function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $skip): array {
+    $files = array();
+    $walk = function (string $directory, string $relative_directory) use (&$walk, &$files, $root, $host_hashes, $skip): void {
+        if (!is_dir($directory)) {
+            return;
+        }
+        $entries = scandir($directory);
+        if (false === $entries) {
+            return;
+        }
+        foreach ($entries as $entry) {
+            if ('.' === $entry || '..' === $entry) {
+                continue;
+            }
+            if (isset($skip[$entry]) && is_dir($directory . '/' . $entry)) {
+                continue;
+            }
+            $relative_path = '' === $relative_directory ? $entry : $relative_directory . '/' . $entry;
+            $path = $directory . '/' . $entry;
+            if (is_dir($path)) {
+                $walk($path, $relative_path);
+                continue;
+            }
+            if (!is_file($path)) {
+                continue;
+            }
+            $hash = hash_file('sha256', $path);
+            $file = array(
+                'relativePath' => $relative_path,
+                'sha256' => $hash,
+            );
+            if (($host_hashes[$relative_path] ?? '') !== $hash) {
+                $contents = file_get_contents($path);
+                $file['contentsBase64'] = false === $contents ? '' : base64_encode($contents);
+            }
+            $files[] = $file;
+        }
+    };
+    $walk(rtrim($root, '/'), '');
+    return $files;
+}
+
+$mounts = array();
+foreach (($payload['mounts'] ?? array()) as $mount) {
+    $target = (string) ($mount['target'] ?? '');
+    if ('' === $target || !is_dir($target)) {
+        $mounts[] = array(
+            'mountIndex' => (int) ($mount['mountIndex'] ?? -1),
+            'target' => $target,
+            'files' => array(),
+        );
+        continue;
+    }
+    $mounts[] = array(
+        'mountIndex' => (int) ($mount['mountIndex'] ?? -1),
+        'target' => $target,
+        'files' => wp_codebox_vfs_mount_files($target, is_array($mount['files'] ?? null) ? $mount['files'] : array(), $skip),
+    );
+}
+
+echo wp_json_encode(array('schema' => 'wp-codebox/vfs-mount-snapshot/v1', 'mounts' => $mounts), JSON_UNESCAPED_SLASHES);
+`
+}

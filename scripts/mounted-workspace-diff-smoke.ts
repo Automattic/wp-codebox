@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import type { MountSpec } from "@automattic/wp-codebox-core"
 import { ArtifactRedactor, buildArtifactReview } from "../packages/runtime-playground/src/artifacts.js"
+import { applyVfsMountSnapshots } from "../packages/runtime-playground/src/mount-materialization.js"
 import { captureMountDiffs } from "../packages/runtime-playground/src/mounted-artifact-capture.js"
 
 const execFileAsync = promisify(execFile)
@@ -150,6 +151,50 @@ try {
   assert.match(gitResult.patch, /\+cooked by the agent/)
   assert.match(gitResult.patch, /\+\/\/ edited by agent/)
   assert.match(gitResult.patch, /deleted file mode 100644/)
+
+  const vfsBackedRepo = join(root, "vfs-backed-repo")
+  await mkdir(vfsBackedRepo, { recursive: true })
+  await execFileAsync("git", ["-C", vfsBackedRepo, "init", "-q"])
+  await execFileAsync("git", ["-C", vfsBackedRepo, "config", "user.email", "smoke@wp-codebox.test"])
+  await execFileAsync("git", ["-C", vfsBackedRepo, "config", "user.name", "wp-codebox smoke"])
+  await writeFile(join(vfsBackedRepo, "committed.php"), "<?php\n// committed\n")
+  await writeFile(join(vfsBackedRepo, "remove-me.txt"), "delete this\n")
+  await execFileAsync("git", ["-C", vfsBackedRepo, "add", "."])
+  await execFileAsync("git", ["-C", vfsBackedRepo, "commit", "-q", "-m", "baseline"])
+
+  const vfsMounts: MountSpec[] = [{
+    type: "directory",
+    source: vfsBackedRepo,
+    target: "/workspace/vfs-backed-repo",
+    mode: "readwrite",
+    metadata: { kind: "homeboy-dmc-workspace", workspace_slug: "vfs-backed-repo" },
+  }]
+  const materialized = await applyVfsMountSnapshots(vfsMounts, [{
+    mountIndex: 0,
+    target: "/workspace/vfs-backed-repo",
+    files: [
+      {
+        relativePath: "committed.php",
+        sha256: "unused",
+        contentsBase64: Buffer.from("<?php\n// edited inside playground\n").toString("base64"),
+      },
+      {
+        relativePath: "AGENT_WROTE_THIS.md",
+        sha256: "unused",
+        contentsBase64: Buffer.from("created inside playground\n").toString("base64"),
+      },
+    ],
+  }])
+  assert.equal(materialized.materialized, 2)
+  assert.equal(materialized.deleted, 1)
+
+  const vfsResult = await captureMountDiffs(artifactRoot, filesDirectory, vfsMounts, new ArtifactRedactor())
+  const vfsChanged = new Map(vfsResult.changedFiles.files.map((file) => [file.relativePath, file]))
+  assert.equal(vfsChanged.get("AGENT_WROTE_THIS.md")?.status, "added")
+  assert.equal(vfsChanged.get("committed.php")?.status, "modified")
+  assert.equal(vfsChanged.get("remove-me.txt")?.status, "deleted")
+  assert.match(vfsResult.patch, /created inside playground/)
+  assert.match(vfsResult.patch, /edited inside playground/)
 
   const review = buildArtifactReview({
     artifactId: "artifact-bundle-test",
