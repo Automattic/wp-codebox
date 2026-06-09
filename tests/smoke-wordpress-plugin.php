@@ -2044,6 +2044,10 @@ $captured_recipes  = array();
 $captured_secret_env = array();
 $captured_timeout  = null;
 $command_count     = 0;
+
+putenv( 'GITHUB_TOKEN=ghp-parent-env-fixture' );
+$_ENV['GITHUB_TOKEN'] = 'ghp-parent-env-fixture';
+
 $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 	array(
 		'shell_available' => fn() => true,
@@ -2202,8 +2206,14 @@ $assert( 'runner recipe passes provider plugin path', str_contains( $captured_re
 $assert( 'runner recipe loads runtime components as mu-plugins', str_contains( $captured_recipe, '"slug":"agents-api","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine-code","activate":false,"loadAs":"mu-plugin"' ) );
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner passes declared secret env value to command runner', ! is_wp_error( $result ) && 'ghp-parent-env-fixture' === ( $captured_secret_env['GITHUB_TOKEN'] ?? '' ) );
+$assert( 'runner keeps declared secret value out of recipe', ! str_contains( $captured_recipe, 'ghp-parent-env-fixture' ) );
+$assert( 'runner keeps declared secret value out of response', ! str_contains( json_encode( $result, JSON_UNESCAPED_SLASHES ), 'ghp-parent-env-fixture' ) );
 $assert( 'runner passes timeout to command runner and recipe', 7200 === $captured_timeout && str_contains( $captured_recipe, 'timeout-seconds=7200' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
+
+putenv( 'GITHUB_TOKEN' );
+unset( $_ENV['GITHUB_TOKEN'] );
 
 $caller_adapter_result = $runner->run(
 	array(

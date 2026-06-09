@@ -935,11 +935,41 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	/** @param array<string,mixed> $input Ability input. @return array{inheritance_audit:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},process_secret_env:array<string,string>} */
 	private function inheritance_resolution_payload( array $input ): array {
 		$payload = WP_Codebox_Inheritance::resolution_payload( $input, fn( string $path ): string => $this->clean_path( $path ) );
+		$secret_env_names = $this->secret_env_names( $input, $payload['inheritance'] );
 
 		return array(
 			'inheritance_audit'  => $payload['inheritance'],
-			'process_secret_env' => $this->inheritance_process_secret_env_values( $payload['resolution']['connectors'] ?? array() ),
+			'process_secret_env' => array_merge(
+				$this->parent_process_secret_env_values( $secret_env_names ),
+				$this->inheritance_process_secret_env_values( $payload['resolution']['connectors'] ?? array() )
+			),
 		);
+	}
+
+	/** @param string[] $names Secret env names declared by the caller. @return array<string,string> */
+	private function parent_process_secret_env_values( array $names ): array {
+		$values = array();
+		foreach ( $names as $name ) {
+			$name = trim( (string) $name );
+			if ( 1 !== preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+				continue;
+			}
+
+			$value = getenv( $name );
+			if ( false === $value && isset( $_ENV[ $name ] ) ) {
+				$value = $_ENV[ $name ];
+			}
+			if ( false === $value && isset( $_SERVER[ $name ] ) ) {
+				$value = $_SERVER[ $name ];
+			}
+
+			$value = false === $value ? '' : (string) $value;
+			if ( '' !== $value ) {
+				$values[ $name ] = $value;
+			}
+		}
+
+		return $values;
 	}
 
 	/** @param array<int,mixed> $connectors Raw inheritance connector rows. @return array<string,string> */
