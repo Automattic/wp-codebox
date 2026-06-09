@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -6,7 +7,7 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import type { MountSpec } from "@automattic/wp-codebox-core"
 import { ArtifactRedactor, buildArtifactReview } from "../packages/runtime-playground/src/artifacts.js"
-import { applyVfsMountSnapshots } from "../packages/runtime-playground/src/mount-materialization.js"
+import { applyVfsMountSnapshots, vfsMountSnapshotPhp } from "../packages/runtime-playground/src/mount-materialization.js"
 import { captureMountDiffs } from "../packages/runtime-playground/src/mounted-artifact-capture.js"
 
 const execFileAsync = promisify(execFile)
@@ -169,6 +170,26 @@ try {
     mode: "readwrite",
     metadata: { kind: "homeboy-dmc-workspace", workspace_slug: "vfs-backed-repo" },
   }]
+
+  const rawPhpTarget = join(root, "raw-php-vfs-target")
+  const rawPhpFile = join(root, "vfs-mount-snapshot.php")
+  await mkdir(rawPhpTarget, { recursive: true })
+  await writeFile(join(rawPhpTarget, "changed.txt"), "changed inside raw php\n")
+  const rawPhp = vfsMountSnapshotPhp([{
+    mountIndex: 0,
+    target: rawPhpTarget,
+    files: {
+      "changed.txt": createHash("sha256").update("before raw php\n").digest("hex"),
+    },
+  }])
+  assert.doesNotMatch(rawPhp, /wp_json_encode/)
+  await writeFile(rawPhpFile, rawPhp)
+  const rawPhpResult = await execFileAsync("php", [rawPhpFile])
+  const rawPhpSnapshot = JSON.parse(rawPhpResult.stdout) as { schema?: string; mounts?: Array<{ files?: Array<{ relativePath?: string; contentsBase64?: string }> }> }
+  assert.equal(rawPhpSnapshot.schema, "wp-codebox/vfs-mount-snapshot/v1")
+  assert.equal(rawPhpSnapshot.mounts?.[0]?.files?.[0]?.relativePath, "changed.txt")
+  assert.equal(Buffer.from(rawPhpSnapshot.mounts?.[0]?.files?.[0]?.contentsBase64 ?? "", "base64").toString("utf8"), "changed inside raw php\n")
+
   const materialized = await applyVfsMountSnapshots(vfsMounts, [{
     mountIndex: 0,
     target: "/workspace/vfs-backed-repo",

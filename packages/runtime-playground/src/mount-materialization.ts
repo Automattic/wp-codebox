@@ -5,7 +5,7 @@ import type { MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 
-interface HostMountSnapshot {
+export interface HostMountSnapshot {
   mountIndex: number
   target: string
   files: Record<string, string>
@@ -112,7 +112,7 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
   return files
 }
 
-function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string {
+export function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string {
   const payload = JSON.stringify(JSON.stringify({ mounts: hostSnapshots }))
   return `<?php
 $payload = json_decode(${payload}, true);
@@ -178,6 +178,6 @@ foreach (($payload['mounts'] ?? array()) as $mount) {
     );
 }
 
-echo wp_json_encode(array('schema' => 'wp-codebox/vfs-mount-snapshot/v1', 'mounts' => $mounts), JSON_UNESCAPED_SLASHES);
+echo json_encode(array('schema' => 'wp-codebox/vfs-mount-snapshot/v1', 'mounts' => $mounts), JSON_UNESCAPED_SLASHES);
 `
 }
