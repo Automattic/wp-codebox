@@ -120,7 +120,7 @@ add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_
 $sandbox_workspace_adoptions = array();
 if (function_exists('wp_get_ability')) {
     $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions): void {
-        $sandbox_adopt_ability = wp_get_ability('datamachine/workspace-adopt');
+        $sandbox_adopt_ability = wp_get_ability('datamachine-code/workspace-adopt') ?: wp_get_ability('datamachine/workspace-adopt');
         if (!$sandbox_adopt_ability || !method_exists($sandbox_adopt_ability, 'execute')) {
             return;
         }

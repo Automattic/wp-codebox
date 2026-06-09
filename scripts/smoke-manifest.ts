@@ -151,6 +151,7 @@ export const smokeGroups = {
       tsxSmoke("recipe-staged-files-smoke"),
       tsxSmoke("recipe-dependency-overlay-smoke"),
       tsxSmoke("recipe-workspace-seed-excludes-smoke"),
+      tsxSmoke("recipe-workspace-vfs-materialization-smoke"),
       tsxSmoke("recipe-runtime-evidence-smoke"),
       tsxSmoke("recipe-run-timeout-smoke"),
       tsxSmoke("recipe-playground-boot-failure-smoke"),

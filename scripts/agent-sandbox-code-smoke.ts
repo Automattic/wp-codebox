@@ -84,6 +84,7 @@ async function main() {
   assert.doesNotMatch(code, /AgentsAPIAIWP_Agent_Execution_Principal/, "sandbox chat should not collapse namespaced runtime principal references")
   assert.match(code, /PermissionHelper::run_as_authenticated/, "sandbox chat should execute runtime abilities in an authenticated Data Machine context")
   assert.match(code, /DataMachine\\Abilities\\PermissionHelper::run_as_authenticated/, "sandbox chat should emit a valid namespaced PermissionHelper class reference")
+  assert.match(code, /datamachine-code\/workspace-adopt/, "sandbox setup should use the canonical Data Machine Code workspace adopt ability")
   assert.doesNotMatch(code, /PermissionHelper::run_as_authenticated\([^\)]*,\s*1\)/, "sandbox chat should not force a user-specific Data Machine capability check")
   assert.doesNotMatch(code, /DataMachineAbilitiesPermissionHelper/, "sandbox chat should not collapse namespaced PermissionHelper references")
   assert.doesNotMatch(code, /datamachine_agent_mode_sandbox/, "sandbox chat should not depend on Data Machine agent mode filters")
