@@ -11,7 +11,9 @@ export interface WordPressPhpunitRecipeOptions {
   wordpressVersion?: string
   blueprint?: unknown
   mounts?: WorkspaceRecipeMount[]
+  pluginSource?: string
   pluginSlug: string
+  cwd?: string
   selectedTestFile?: string
   changedTestFiles?: string[]
   env?: JsonObject
@@ -72,6 +74,7 @@ export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = 
 
 export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptions): WorkspaceRecipe {
   const pluginSlug = requiredPluginSlug(options.pluginSlug, "buildWordPressPhpunitRecipe")
+  const pluginTarget = `/wordpress/wp-content/plugins/${pluginSlug}`
 
   return {
     schema: "wp-codebox/workspace-recipe/v1",
@@ -80,13 +83,17 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
       blueprint: options.blueprint ?? { steps: [] },
     },
     inputs: {
-      mounts: normalizeRecipeMounts(options.mounts),
+      mounts: normalizeRecipeMounts([
+        ...(options.pluginSource ? [{ source: options.pluginSource, target: pluginTarget } satisfies WorkspaceRecipeMount] : []),
+        ...(options.mounts ?? []),
+      ]),
     },
     workflow: {
       steps: [{
         command: "wordpress.phpunit",
         args: [
           `plugin-slug=${pluginSlug}`,
+          `cwd=${options.cwd ?? pluginTarget}`,
           `test-file=${options.selectedTestFile ?? ""}`,
           `changed-tests-json=${JSON.stringify(options.changedTestFiles ?? [])}`,
           `env-json=${JSON.stringify(options.env ?? {})}`,

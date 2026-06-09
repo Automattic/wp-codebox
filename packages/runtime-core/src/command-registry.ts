@@ -105,6 +105,7 @@ export const commandRegistry = [
     description: "Run plugin PHPUnit tests with normalized diagnostics and test-result artifact capture.",
     acceptedArgs: [
       { name: "plugin-slug", description: "Plugin slug under wp-content/plugins.", format: "slug" },
+      { name: "cwd", description: "Sandbox working directory for the PHPUnit process. Relative values resolve inside the mounted plugin directory; defaults to wp-content/plugins/<plugin-slug>.", format: "sandbox path" },
       { name: "code", description: "Inline override PHP runner code.", format: "PHP string" },
       { name: "code-file", description: "Path to override PHP runner code.", format: "path" },
       { name: "autoload-file", description: "PHPUnit/vendor autoload path inside the sandbox.", format: "sandbox path" },

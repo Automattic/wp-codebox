@@ -392,6 +392,7 @@ export async function runPhpunitCommand({
   const resultFile = PLUGIN_PHPUNIT_RESULT_FILE
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit") : normalizePhpCode(phpunitRunCode({
     pluginSlug,
+    cwd: argValue(args, "cwd")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}`,
     autoloadFile: argValue(args, "autoload-file")?.trim() || "/wp-codebox-vendor/autoload.php",
     testsDir: argValue(args, "tests-dir")?.trim() || "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
     phpunitXml: argValue(args, "phpunit-xml")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,

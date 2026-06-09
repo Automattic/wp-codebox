@@ -11,7 +11,9 @@ interface WordPressPhpunitBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   mounts?: WorkspaceRecipeMount[]
+  pluginSource?: string
   pluginSlug: string
+  cwd?: string
   selectedTestFile?: string
   changedTestFiles?: string[]
   env?: Record<string, unknown>
@@ -64,7 +66,9 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: options.blueprint,
         wordpressVersion: stringOrUndefined(options.wordpressVersion),
         mounts: Array.isArray(options.mounts) ? options.mounts : [],
+        pluginSource: stringOrUndefined((options as WordPressPhpunitBuilderOptions).pluginSource),
         pluginSlug: requiredString(options.pluginSlug, "pluginSlug"),
+        cwd: stringOrUndefined((options as WordPressPhpunitBuilderOptions).cwd),
         selectedTestFile: stringOrUndefined((options as WordPressPhpunitBuilderOptions).selectedTestFile),
         changedTestFiles: Array.isArray((options as WordPressPhpunitBuilderOptions).changedTestFiles) ? (options as WordPressPhpunitBuilderOptions).changedTestFiles : [],
         env: plainObject(options.env),

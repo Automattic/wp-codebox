@@ -11,6 +11,8 @@ const validateBenchResults = ajv.compile(createBenchResultsJsonSchema())
 const phpunitRecipe = buildWordPressPhpunitRecipe({
   wordpressVersion: "6.9",
   pluginSlug: "demo-plugin",
+  pluginSource: "/repo/demo-plugin-source",
+  cwd: "tests/phpunit",
   selectedTestFile: "tests/unit/DemoTest.php",
   changedTestFiles: ["tests/unit/DemoTest.php"],
   env: { DEMO_ENV: "yes" },
@@ -22,7 +24,6 @@ const phpunitRecipe = buildWordPressPhpunitRecipe({
   projectBootstrap: "tests/bootstrap.php",
   multisite: true,
   mounts: [
-    { source: "/repo/demo-plugin", target: "/wordpress/wp-content/plugins/demo-plugin" },
     { source: "/repo/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
   ],
 })
@@ -31,8 +32,11 @@ assert.equal(buildWordPressPhpunitRecipe({ pluginSlug: "demo-plugin" }).runtime?
 assert.equal(buildWordPressBenchRecipe({ pluginSlug: "demo-plugin" }).runtime?.wp, DEFAULT_WORDPRESS_VERSION)
 
 assert.equal(phpunitRecipe.inputs?.mounts?.[0]?.mode, "readwrite")
+assert.deepEqual(phpunitRecipe.inputs?.mounts?.[0], { source: "/repo/demo-plugin-source", target: "/wordpress/wp-content/plugins/demo-plugin", mode: "readwrite" })
+assert.deepEqual(phpunitRecipe.inputs?.mounts?.[1], { source: "/repo/vendor", target: "/wp-codebox-vendor", mode: "readonly" })
 assert.deepEqual(phpunitRecipe.workflow.steps[0]?.args, [
   "plugin-slug=demo-plugin",
+  "cwd=tests/phpunit",
   "test-file=tests/unit/DemoTest.php",
   'changed-tests-json=["tests/unit/DemoTest.php"]',
   'env-json={"DEMO_ENV":"yes"}',

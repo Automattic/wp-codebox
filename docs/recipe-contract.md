@@ -138,6 +138,51 @@ come from the command catalog:
 npm run wp-codebox -- commands --json
 ```
 
+## WordPress PHPUnit Runtime
+
+`wordpress.phpunit` is the lightweight WP Codebox equivalent of plugin PHPUnit
+commands commonly run through `wp-env run ... vendor/bin/phpunit`. It boots a
+disposable WordPress Playground runtime, mounts the tested plugin at
+`/wordpress/wp-content/plugins/<plugin-slug>`, prepares the WordPress PHPUnit
+contract, and captures command output in the artifact bundle.
+
+The runtime provides:
+
+- `WP_TESTS_DIR` pointing at the configured WordPress tests library.
+- `WP_TESTS_CONFIG_FILE_PATH` and `WP_PHPUNIT__TESTS_CONFIG` pointing at the
+  generated `wp-tests-config.php`.
+- An isolated SQLite test database via `DB_NAME=':memory:'`.
+- A plugin working directory via `cwd=<sandbox path>`, matching the practical
+  role of `wp-env run --env-cwd`.
+- Structured diagnostics in the recipe artifact bundle, including the raw test
+  result log collected from `/tmp/wp-codebox-phpunit-result.txt`.
+
+Use `recipe build phpunit` when generating recipes for plugin CI or offloaded lab
+runners:
+
+```json
+{
+  "pluginSlug": "woocommerce",
+  "pluginSource": "../woocommerce/plugins/woocommerce",
+  "cwd": "/wordpress/wp-content/plugins/woocommerce",
+  "autoloadFile": "/wp-codebox-vendor/autoload.php",
+  "testsDir": "/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+  "bootstrapMode": "project",
+  "projectBootstrap": "tests/legacy/bootstrap.php",
+  "phpunitArgs": ["--filter", "WC_Checkout_Test::test_checkout"]
+}
+```
+
+```bash
+npm run wp-codebox -- recipe build phpunit --options ./phpunit-options.json --output ./phpunit.recipe.json
+npm run wp-codebox -- recipe-run --recipe ./phpunit.recipe.json --artifacts ./artifacts/phpunit --json
+```
+
+For monorepos such as WooCommerce, set `pluginSource` to the directory that
+should appear as `wp-content/plugins/<plugin-slug>` and set `cwd` to the same
+sandbox directory a `wp-env --env-cwd` command would use. Relative `cwd` values
+resolve inside the mounted plugin directory.
+
 ## Browser Assertions
 
 `wordpress.browser-probe` accepts repeated `assert=<assertion>` arguments.

@@ -1,5 +1,6 @@
 export interface PhpunitRunCodeOptions {
   pluginSlug: string
+  cwd: string
   autoloadFile: string
   testsDir: string
   phpunitXml: string
@@ -281,6 +282,7 @@ ini_set('display_startup_errors', '1');
 
 $plugin_slug = ${JSON.stringify(options.pluginSlug)};
 $plugin_path = '/wordpress/wp-content/plugins/' . $plugin_slug;
+$runtime_cwd = ${JSON.stringify(options.cwd || `/wordpress/wp-content/plugins/${options.pluginSlug}`)};
 $result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
 $current_stage = 'preboot';
 $pg_stage_output_buffering = false;
@@ -547,6 +549,25 @@ CONFIG;
     }
 }
 
+function pg_resolve_runtime_cwd(string $cwd, string $plugin_path): string {
+    $cwd = trim(str_replace('\\', '/', $cwd));
+    if ($cwd === '') {
+        return $plugin_path;
+    }
+    if ($cwd[0] !== '/') {
+        $cwd = rtrim($plugin_path, '/') . '/' . ltrim($cwd, '/');
+    }
+    $real = realpath($cwd);
+    $plugin_real = realpath($plugin_path);
+    if ($real === false || $plugin_real === false || !is_dir($real)) {
+        throw new RuntimeException('cwd is not a readable sandbox directory: ' . $cwd);
+    }
+    if ($real !== $plugin_real && strpos($real, rtrim($plugin_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+        throw new RuntimeException('cwd must resolve inside the mounted plugin directory: ' . $cwd);
+    }
+    return $real;
+}
+
 function pg_plugin_real_path(string $relative_path, string $kind): ?string {
     global $plugin_path;
     $relative_path = trim(str_replace('\\\\', '/', $relative_path));
@@ -778,6 +799,17 @@ ${phpunitChangedTestFilterPhp({
   })}
 
 pg_install_diagnostics_handlers();
+
+pg_stage_begin('cwd');
+try {
+    $runtime_cwd = pg_resolve_runtime_cwd($runtime_cwd, $plugin_path);
+    chdir($runtime_cwd);
+    pg_log('CWD:' . $runtime_cwd);
+    pg_stage_ok('cwd');
+} catch (Throwable $e) {
+    pg_stage_fail('cwd', $e);
+    exit(1);
+}
 
 if (is_array($bench_env)) {
     foreach ($bench_env as $name => $value) {
