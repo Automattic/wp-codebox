@@ -55,6 +55,10 @@ assert.ok(
   "successful normalized agent-bundle workloads should filter stale agent-task failure diagnostics",
 )
 assert.ok(
+  agentTaskRunSource.includes('runtime: { environment: "control_plane", capability_scope: "control_plane" }'),
+  "default deny-all sandbox policy should satisfy required runtime metadata",
+)
+assert.ok(
   recipeEvidenceSource.includes("reconcileAgentSandboxResult("),
   "successful agent task results should reconcile stale failed sandbox summaries",
 )

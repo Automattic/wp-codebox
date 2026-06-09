@@ -454,7 +454,7 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: ReturnType<typeo
   return {
     schema: "wp-codebox/sandbox-tool-policy/v1",
     version: 1,
-    tools: [{ id: "deny-all", runtime_tool_id: "deny-all", execution_location: "parent", transport_visibility: "hidden", allowed: false }],
+    tools: [{ id: "deny-all", runtime_tool_id: "deny-all", execution_location: "parent", transport_visibility: "hidden", allowed: false, runtime: { environment: "control_plane", capability_scope: "control_plane" } }],
     metadata: { source: "wp-codebox.agent-task-run.default-deny" },
   }
 }
