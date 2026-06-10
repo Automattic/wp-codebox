@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { normalizeTaskInput } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle } from "@automattic/wp-codebox-core"
 import { buildAgentTaskRecipe } from "../packages/cli/src/commands/agent-task-run.js"
-import { agentSandboxRunCode } from "../packages/cli/src/agent-code.js"
+import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
+import { buildAgentTaskSingleResult, finalizeAgentSandboxEvidence } from "../packages/cli/src/recipe-evidence.js"
 
 const input = {
   goal: "Run a caller runtime bundle",
@@ -102,6 +103,164 @@ assert.equal(verifyRecipe.workflow.after?.[0]?.command, "wordpress.phpunit", "af
 // Without verify_steps, no after phase is emitted (back-compat with current runs).
 const noVerifyRecipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
 assert.equal(noVerifyRecipe.workflow.after, undefined, "no verify_steps should leave workflow.after unset")
+
+const structuredInput = {
+  goal: "Transform a concept packet into a design packet",
+  provider: "openai",
+  model: "gpt-5.5",
+  artifacts_path: "/tmp/wp-codebox-artifacts",
+  structured_artifacts: [
+    {
+      name: "ConceptPacket",
+      type: "ssi.concept_packet",
+      payload_schema: "https://schemas.example.test/concept-packet.json",
+      payload: { site: "Evergreen Bakery" },
+    },
+  ],
+}
+const structuredTaskInput = normalizeTaskInput(structuredInput)
+assert.equal(structuredTaskInput.structured_artifacts.length, 1, "structured input artifacts should normalize onto the task contract")
+assert.equal(structuredTaskInput.structured_artifacts[0]?.provenance.direction, "input")
+const structuredRecipe = buildAgentTaskRecipe(structuredInput, structuredTaskInput, "trunk")
+const structuredArg = structuredRecipe.workflow.steps[0]?.args?.find((arg) => arg.startsWith("structured-artifacts-json="))
+assert.ok(structuredArg, "agent-task recipe should pass structured artifacts to the sandbox step")
+const structuredArgPayload = JSON.parse(structuredArg!.slice("structured-artifacts-json=".length))
+assert.equal(structuredArgPayload[0]?.name, "ConceptPacket")
+assert.equal(structuredArgPayload[0]?.payload?.site, "Evergreen Bakery")
+const structuredTaskCode = await resolveSandboxTaskCode({
+  task: structuredInput.goal,
+  agent: "wp-codebox-sandbox",
+  sandboxToolPolicy: {
+    schema: "wp-codebox/sandbox-tool-policy/v1",
+    version: 1,
+    tools: [],
+    metadata: { source: "structured-artifact-smoke" },
+  },
+  structuredArtifacts: structuredTaskInput.structured_artifacts,
+})
+assert.ok(structuredTaskCode.includes("structured_artifacts"), "sandbox agent input should include structured artifact context")
+assert.ok(structuredTaskCode.includes("ConceptPacket"), "sandbox agent input should preserve structured artifact names")
+
+const outputTaskResult = buildAgentTaskSingleResult({
+  schema: "wp-codebox/agent-transcript/v1",
+  executions: [
+    {
+      executionIndex: 0,
+      command: "wordpress.run-php",
+      exitCode: 0,
+      recipeCommand: "wp-codebox.agent-sandbox-run",
+      stdout: JSON.stringify({
+        agent_runtime: {
+          success: true,
+          result: {
+            outputs: {
+              structured_artifacts: [
+                {
+                  name: "DesignPacket",
+                  type: "ssi.design_packet",
+                  payload_schema: "https://schemas.example.test/design-packet.json",
+                  payload: { theme: "warm editorial" },
+                },
+              ],
+            },
+          },
+        },
+      }),
+      stderr: "",
+      parsed: {
+        agent_runtime: {
+          success: true,
+          result: {
+            outputs: {
+              structured_artifacts: [
+                {
+                  name: "DesignPacket",
+                  type: "ssi.design_packet",
+                  payload_schema: "https://schemas.example.test/design-packet.json",
+                  payload: { theme: "warm editorial" },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  ],
+})
+assert.equal(outputTaskResult?.outputs.structured_artifacts?.[0]?.name, "DesignPacket", "agent task result should preserve structured output candidates")
+
+const artifactRoot = mkdtempSync(join(tmpdir(), "wp-codebox-structured-artifact-smoke-"))
+const filesRoot = join(artifactRoot, "files")
+mkdirSync(filesRoot, { recursive: true })
+const fakeArtifacts: ArtifactBundle = {
+  id: "artifact-bundle-smoke",
+  directory: artifactRoot,
+  manifestPath: join(artifactRoot, "manifest.json"),
+  metadataPath: join(artifactRoot, "metadata.json"),
+  blueprintAfterPath: join(artifactRoot, "blueprint.after.json"),
+  blueprintAfterNotesPath: join(artifactRoot, "blueprint.after-notes.json"),
+  eventsPath: join(artifactRoot, "events.jsonl"),
+  commandsPath: join(artifactRoot, "commands.jsonl"),
+  observationsPath: join(artifactRoot, "observations.jsonl"),
+  runtimeLogPath: join(artifactRoot, "logs/runtime.log"),
+  commandsLogPath: join(artifactRoot, "logs/commands.log"),
+  mountsPath: join(filesRoot, "mounts.json"),
+  capturedMountsPath: join(filesRoot, "mounted-files.json"),
+  diffsPath: join(filesRoot, "diffs.json"),
+  workspacePatchPath: join(filesRoot, "workspace-patch.json"),
+  changedFilesPath: join(filesRoot, "changed-files.json"),
+  patchPath: join(filesRoot, "patch.diff"),
+  diagnosticsPath: join(filesRoot, "diagnostics.json"),
+  testResultsPath: join(filesRoot, "test-results.json"),
+  reviewPath: join(filesRoot, "review.json"),
+  contentDigest: "0".repeat(64),
+  createdAt: "2026-06-10T00:00:00.000Z",
+}
+writeFileSync(fakeArtifacts.metadataPath, JSON.stringify({ artifacts: {}, evidence: {} }, null, 2))
+writeFileSync(fakeArtifacts.reviewPath, JSON.stringify({ evidence: {} }, null, 2))
+writeFileSync(fakeArtifacts.changedFilesPath, JSON.stringify({ schema: "wp-codebox/changed-files/v1", files: [] }, null, 2))
+writeFileSync(fakeArtifacts.patchPath, "")
+writeFileSync(fakeArtifacts.manifestPath, JSON.stringify({
+  id: fakeArtifacts.id,
+  contentDigest: { algorithm: "sha256", inputs: [], value: fakeArtifacts.contentDigest },
+  createdAt: fakeArtifacts.createdAt,
+  runtime: { id: "runtime-smoke", backend: "wordpress-playground", status: "stopped" },
+  files: [
+    artifactManifestFile("manifest.json", "manifest", "application/json"),
+    artifactManifestFile("metadata.json", "metadata", "application/json"),
+    artifactManifestFile("files/review.json", "review", "application/json"),
+    artifactManifestFile("files/changed-files.json", "changed-files", "application/json"),
+    artifactManifestFile("files/patch.diff", "patch", "text/x-diff"),
+  ],
+}, null, 2))
+const finalized = await finalizeAgentSandboxEvidence(fakeArtifacts, [
+  {
+    command: "wordpress.run-php",
+    exitCode: 0,
+    stdout: JSON.stringify({
+      agent_runtime: {
+        success: true,
+        result: {
+          outputs: {
+            structured_artifacts: [
+              {
+                name: "DesignPacket",
+                type: "ssi.design_packet",
+                payload: { theme: "warm editorial" },
+              },
+            ],
+          },
+        },
+      },
+    }),
+    stderr: "",
+    recipeCommand: "wp-codebox.agent-sandbox-run",
+  },
+])
+assert.equal(finalized.agentTaskResult?.structured_artifacts[0]?.artifact?.path, "files/structured-artifacts/designpacket-1.json")
+const structuredIndex = JSON.parse(readFileSync(join(filesRoot, "structured-artifacts/index.json"), "utf8"))
+assert.equal(structuredIndex.schema, "wp-codebox/structured-artifacts-index/v1")
+assert.equal(structuredIndex.artifacts[0]?.payload?.theme, "warm editorial")
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")

@@ -1,5 +1,6 @@
 import { isPlainObject, stringList } from "./object-utils.js"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
+import { normalizeStructuredArtifacts, type StructuredArtifactPayload } from "./structured-artifacts.js"
 
 export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {})
 
@@ -36,6 +37,7 @@ export interface TaskInput {
   target: Partial<TaskTarget>
   allowed_tools: string[]
   expected_artifacts: string[]
+  structured_artifacts: StructuredArtifactPayload[]
   agent_bundles: TaskInputAgentBundle[]
   sandbox_tool_policy: SandboxToolPolicySnapshot | Record<string, never>
   policy: TaskInputPolicy
@@ -49,7 +51,7 @@ export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "g
 export const TASK_INPUT_JSON_SCHEMA = {
   $id: TASK_INPUT_SCHEMA,
   type: "object",
-  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
+  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
   properties: {
     schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
@@ -73,6 +75,23 @@ export const TASK_INPUT_JSON_SCHEMA = {
       type: "array",
       description: "Artifact kinds the caller wants back, such as patch, review, tests, preview, or package.",
       items: { type: "string" },
+    },
+    structured_artifacts: {
+      type: "array",
+      description: "Named JSON artifacts supplied by the caller as typed task inputs.",
+      items: {
+        type: "object",
+        required: ["schema", "name", "type", "payload", "metadata", "provenance"],
+        properties: {
+          schema: { const: "wp-codebox/structured-artifact/v1" },
+          name: { type: "string" },
+          type: { type: "string" },
+          payload_schema: { anyOf: [{ type: "string" }, { type: "object" }] },
+          payload: {},
+          metadata: { type: "object" },
+          provenance: { type: "object" },
+        },
+      },
     },
     agent_bundles: {
       type: "array",
@@ -116,6 +135,7 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     target: isPlainObject(input.target) ? input.target : {},
     allowed_tools: stringList(input.allowed_tools),
     expected_artifacts: stringList(input.expected_artifacts),
+    structured_artifacts: normalizeStructuredArtifacts(input.structured_artifacts, "input"),
     agent_bundles: normalizeAgentBundles(input.agent_bundles),
     sandbox_tool_policy: isPlainObject(input.sandbox_tool_policy) ? input.sandbox_tool_policy as unknown as SandboxToolPolicySnapshot : {},
     policy: isPlainObject(input.policy) ? input.policy : {},

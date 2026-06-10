@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { normalizeSandboxToolPolicySnapshot, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"
@@ -29,6 +29,7 @@ export interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
   runtimeTask?: Record<string, unknown>
+  structuredArtifacts?: StructuredArtifactPayload[]
   sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
@@ -117,6 +118,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       timeoutSeconds: argValue(args, "timeout-seconds"),
       agentBundles: parseAgentBundles(args),
       runtimeTask: parseRuntimeTask(args),
+      structuredArtifacts: parseStructuredArtifacts(args),
       sandboxWorkspace: parseSandboxWorkspace(args) ?? sandboxWorkspace,
       sandboxToolPolicy: parseSandboxToolPolicy(args),
     }))
@@ -235,7 +237,7 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 }
 
 export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--runtime-task-json", "--sandbox-tool-policy-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--runtime-task-json", "--structured-artifacts-json", "--sandbox-tool-policy-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -279,6 +281,9 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
       case "--runtime-task-json":
         options.runtimeTask = parseRuntimeTaskValue(value)
         break
+      case "--structured-artifacts-json":
+        options.structuredArtifacts = parseStructuredArtifactsValue(value)
+        break
       case "--sandbox-tool-policy-json":
         options.sandboxToolPolicy = normalizeSandboxToolPolicySnapshot(JSON.parse(value))
         break
@@ -306,6 +311,16 @@ function parseAgentBundles(args: string[]): AgentBundleSpec[] {
 function parseRuntimeTask(args: string[]): Record<string, unknown> | undefined {
   const value = argValue(args, "runtime-task-json")
   return value ? parseRuntimeTaskValue(value) : undefined
+}
+
+function parseStructuredArtifacts(args: string[]): StructuredArtifactPayload[] {
+  const value = argValue(args, "structured-artifacts-json")
+  return value ? parseStructuredArtifactsValue(value) : []
+}
+
+function parseStructuredArtifactsValue(value: string): StructuredArtifactPayload[] {
+  if (!value.trim()) return []
+  return normalizeStructuredArtifacts(JSON.parse(value), "input")
 }
 
 function parseRuntimeTaskValue(value: string): Record<string, unknown> | undefined {

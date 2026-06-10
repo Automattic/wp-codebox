@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { sandboxAllowedRuntimeToolIds, SANDBOX_WORKSPACE_ROOT, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract } from "@automattic/wp-codebox-core"
+import { sandboxAllowedRuntimeToolIds, SANDBOX_WORKSPACE_ROOT, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload } from "@automattic/wp-codebox-core"
 
 export interface AgentBundleSpec {
   source?: string
@@ -23,6 +23,7 @@ export interface AgentSandboxCodeOptions {
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
   runtimeTask?: Record<string, unknown>
+  structuredArtifacts?: StructuredArtifactPayload[]
   sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
@@ -71,7 +72,9 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       sandbox_workspace: sandboxWorkspace,
       default_workspace: defaultWorkspace,
       tool_contract: sandboxToolContract(sandboxToolPolicy),
+      structured_artifacts: options.structuredArtifacts ?? [],
     },
+    structured_artifacts: options.structuredArtifacts ?? [],
     principal: runtimePrincipal(options.agent, options.sessionId, mode),
   }
 
