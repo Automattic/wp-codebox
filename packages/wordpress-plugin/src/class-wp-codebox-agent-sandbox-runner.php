@@ -2354,6 +2354,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'schema'             => 'wp-codebox/agent-task-run-metadata/v1',
 				'sandbox_session_id' => $session_id,
 				'agent_session_id'   => (string) ( $input['session_id'] ?? '' ),
+				'provider'           => $this->provider( $input ),
+				'model'              => $this->model( $input ),
 				'orchestrator'       => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
 				'wp'                 => $wp_version,
 				'recipe_run_schema'  => (string) ( $run['schema'] ?? '' ),
