@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_WORDPRESS_VERSION, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -57,6 +57,7 @@ export interface AgentTaskSingleResult {
   success: boolean
   status: "completed" | "failed"
   outputs: Record<string, unknown>
+  structured_artifacts: StructuredArtifactRef[]
   diagnostics: Record<string, unknown>
   raw: {
     agent_runtime?: Record<string, unknown>
@@ -423,10 +424,11 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
     agentTaskResult,
   )
   const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
+  const structuredArtifactFiles = agentTaskResult ? await writeAgentTaskStructuredArtifacts(artifacts, agentTaskResult) : []
   const agentTaskResultFile = agentTaskResult ? await writeRecipeEvidenceJson(artifacts.directory, agentTaskResultPath, agentTaskResult, "agent-task-result") : undefined
   const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
   const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
-  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...(agentTaskResultFile ? [agentTaskResultFile] : []), completionOutcomeFile, transcriptFile])
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...structuredArtifactFiles, ...(agentTaskResultFile ? [agentTaskResultFile] : []), completionOutcomeFile, transcriptFile])
 
   return {
     agentResult: { ...agentResult, artifact: agentResultFile },
@@ -571,6 +573,7 @@ export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): 
     success,
     status: success ? "completed" : "failed",
     outputs: semanticOutputs(resultRecord),
+    structured_artifacts: [],
     diagnostics: stripUndefined({
       runtime: isRecord(resultRecord?.diagnostics) || Array.isArray(resultRecord?.diagnostics) ? resultRecord?.diagnostics : undefined,
       error: isRecord(runtime.error) ? runtime.error : undefined,
@@ -581,6 +584,66 @@ export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): 
       result: rawResult,
     }),
   }
+}
+
+async function writeAgentTaskStructuredArtifacts(artifacts: ArtifactBundle, agentTaskResult: AgentTaskSingleResult): Promise<RecipeArtifactEvidenceFile[]> {
+  const outputCandidates = structuredArtifactOutputCandidates(agentTaskResult)
+  if (outputCandidates.length === 0) {
+    return []
+  }
+
+  const structuredDirectory = join(dirname(artifacts.reviewPath), "structured-artifacts")
+  await mkdir(structuredDirectory, { recursive: true })
+  const refs: StructuredArtifactRef[] = []
+  const files: RecipeArtifactEvidenceFile[] = []
+
+  for (const [index, artifact] of outputCandidates.entries()) {
+    const path = join(structuredDirectory, `${safeStructuredArtifactName(artifact.name)}-${index + 1}.json`)
+    const file = await writeRecipeEvidenceJson(artifacts.directory, path, artifact, `structured-artifact:${artifact.name}`)
+    const ref: StructuredArtifactRef = {
+      ...artifact,
+      artifact: {
+        path: file.path,
+        kind: "structured-artifact",
+        contentType: "application/json",
+        sha256: file.sha256,
+      },
+    }
+    refs.push(ref)
+    files.push(file)
+  }
+
+  const index: StructuredArtifactIndex = {
+    schema: STRUCTURED_ARTIFACT_INDEX_SCHEMA,
+    direction: "output",
+    artifacts: refs,
+  }
+  files.push(await writeRecipeEvidenceJson(artifacts.directory, join(structuredDirectory, "index.json"), index, "structured-artifacts-index"))
+  agentTaskResult.structured_artifacts = refs
+  agentTaskResult.outputs = {
+    ...agentTaskResult.outputs,
+    structured_artifacts: refs,
+  }
+  return files
+}
+
+function structuredArtifactOutputCandidates(agentTaskResult: AgentTaskSingleResult): StructuredArtifactRef[] {
+  const outputs = agentTaskResult.outputs
+  const rawResult = isRecord(agentTaskResult.raw.result) ? agentTaskResult.raw.result : undefined
+  const value = Array.isArray(outputs.structured_artifacts)
+    ? outputs.structured_artifacts
+    : Array.isArray(outputs.structuredArtifacts)
+      ? outputs.structuredArtifacts
+      : Array.isArray(rawResult?.structured_artifacts)
+        ? rawResult.structured_artifacts
+        : Array.isArray(rawResult?.structuredArtifacts)
+          ? rawResult.structuredArtifacts
+          : []
+  return normalizeStructuredArtifacts(value, "output")
+}
+
+function safeStructuredArtifactName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
 }
 
 function latestAgentRuntime(transcript: AgentSandboxTranscript): Record<string, unknown> | undefined {

@@ -9,6 +9,23 @@
       },
       "allowed_tools": ["workspace.read", "workspace.write", "workspace.read", ""],
       "expected_artifacts": ["patch", "tests", "patch"],
+      "structured_artifacts": [
+        {
+          "name": "ConceptPacket",
+          "type": "ssi.concept_packet",
+          "payload_schema": "https://schemas.example.test/concept-packet.json",
+          "payload": {
+            "site": "Evergreen Bakery"
+          },
+          "metadata": {
+            "source": "homeboy"
+          }
+        },
+        {
+          "name": "MissingType",
+          "payload": {}
+        }
+      ],
       "agent_bundles": [
         {
           "source": "/tmp/site-generator-agent.json",
@@ -47,6 +64,23 @@
       },
       "allowed_tools": ["workspace.read", "workspace.write"],
       "expected_artifacts": ["patch", "tests"],
+      "structured_artifacts": [
+        {
+          "schema": "wp-codebox/structured-artifact/v1",
+          "name": "ConceptPacket",
+          "type": "ssi.concept_packet",
+          "payload_schema": "https://schemas.example.test/concept-packet.json",
+          "payload": {
+            "site": "Evergreen Bakery"
+          },
+          "metadata": {
+            "source": "homeboy"
+          },
+          "provenance": {
+            "direction": "input"
+          }
+        }
+      ],
       "agent_bundles": [
         {
           "source": "/tmp/site-generator-agent.json",

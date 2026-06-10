@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -31,6 +31,7 @@ export interface AgentTaskRunInput {
   runtime_task?: Record<string, unknown>
   agent_bundle?: Record<string, unknown>
   sandbox_tool_policy?: SandboxToolPolicySnapshot
+  structured_artifacts?: StructuredArtifactPayload[]
   max_turns?: number | string
   task_timeout_seconds?: number | string
   session_id?: string
@@ -55,6 +56,7 @@ interface AgentTaskRunOutput {
   agent_result: Record<string, unknown>
   agent_task_result: Record<string, unknown>
   completion_outcome: Record<string, unknown>
+  structured_artifacts: Array<Record<string, unknown>>
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
   evidence_refs: Array<Record<string, unknown>>
@@ -107,6 +109,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     })
     const hasAgentBundle = Object.keys(agentBundle).length > 0
     const success = Boolean(run.success) && (!hasAgentBundle || workload.success)
+    const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
     const output: AgentTaskRunOutput = {
       success,
       schema: "wp-codebox/agent-task-run/v1",
@@ -117,8 +120,9 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       wp: wpVersion,
       artifacts,
       agent_result: objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {},
-      agent_task_result: objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {},
+      agent_task_result: agentTaskResult,
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
+      structured_artifacts: structuredArtifactRefs(agentTaskResult),
       run,
       diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
       evidence_refs: evidenceRefs(run, artifacts),
@@ -172,6 +176,9 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
   }
   if (input.runtime_task && typeof input.runtime_task === "object" && !Array.isArray(input.runtime_task)) {
     workflowArgs.push(`runtime-task-json=${JSON.stringify(input.runtime_task)}`)
+  }
+  if (taskInput.structured_artifacts.length > 0) {
+    workflowArgs.push(`structured-artifacts-json=${JSON.stringify(taskInput.structured_artifacts)}`)
   }
 
   return stripUndefined({
@@ -380,6 +387,16 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string): Array<Re
     stringValue(artifactsRecord.patchPath) ? { kind: "codebox-patch", uri: stringValue(artifactsRecord.patchPath), label: "WP Codebox patch" } : null,
   ]
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array<Record<string, unknown>> {
+  const direct = Array.isArray(agentTaskResult.structured_artifacts) ? agentTaskResult.structured_artifacts : []
+  if (direct.length > 0) {
+    return direct.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
+  }
+  const outputs = objectValue(agentTaskResult.outputs) || {}
+  const fromOutputs = Array.isArray(outputs.structured_artifacts) ? outputs.structured_artifacts : []
+  return fromOutputs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
 }
 
 function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; activate: boolean; loadAs: string }> {
