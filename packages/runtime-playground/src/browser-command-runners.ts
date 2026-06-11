@@ -2830,9 +2830,43 @@ async function runVisualComparePairCommand({
       await browser.close()
     }
   } else if (sourceScreenshot && candidateScreenshot) {
-    await writeFile(sourcePath, await readFile(await resolveVisualCompareScreenshotPath(sourceScreenshot, artifactRoot)))
+    const sourceResolvedPath = await maybeResolveVisualCompareScreenshotPath(sourceScreenshot, artifactRoot)
+    const candidateResolvedPath = await maybeResolveVisualCompareScreenshotPath(candidateScreenshot, artifactRoot)
+    const missingInputs = visualCompareMissingScreenshotInputs({ sourceScreenshot, candidateScreenshot, sourceResolvedPath, candidateResolvedPath })
+    if (missingInputs.length > 0) {
+      const copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }> = {}
+      if (sourceResolvedPath) {
+        await writeFile(sourcePath, await readFile(sourceResolvedPath))
+        copiedFiles.sourceScreenshot = `${artifactPathPrefix}/source.png`
+      }
+      if (candidateResolvedPath) {
+        await writeFile(candidatePath, await readFile(candidateResolvedPath))
+        copiedFiles.candidateScreenshot = `${artifactPathPrefix}/candidate.png`
+      }
+      const result = await writeVisualCompareMissingInputSummary({
+        summaryPath,
+        visualDiffPath,
+        artifactPathPrefix,
+        startedAt,
+        source: sourceSummary(),
+        candidate: candidateSummary(),
+        options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+        preview,
+        viewport,
+        missingInputs,
+        copiedFiles,
+      })
+      throw new BrowserCommandArtifactError("wordpress.visual-compare missing expected screenshot input", visualCompareMissingInputArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
+    }
+
+    const resolvedSourceScreenshotPath = sourceResolvedPath
+    const resolvedCandidateScreenshotPath = candidateResolvedPath
+    if (!resolvedSourceScreenshotPath || !resolvedCandidateScreenshotPath) {
+      throw new Error("wordpress.visual-compare expected screenshot inputs to be resolved after missing-input guard")
+    }
+    await writeFile(sourcePath, await readFile(resolvedSourceScreenshotPath))
     await writePartialSummary("source-captured")
-    await writeFile(candidatePath, await readFile(await resolveVisualCompareScreenshotPath(candidateScreenshot, artifactRoot)))
+    await writeFile(candidatePath, await readFile(resolvedCandidateScreenshotPath))
     if (sourceDomSnapshotRef && candidateDomSnapshotRef) {
       const sourceArtifact = await readVisualCompareDomSnapshotArtifact(sourceDomSnapshotRef, artifactRoot)
       const candidateArtifact = await readVisualCompareDomSnapshotArtifact(candidateDomSnapshotRef, artifactRoot)
@@ -3067,6 +3101,109 @@ async function writeVisualComparePartialSummary(summaryPath: string, input: {
   await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`)
 }
 
+async function writeVisualCompareMissingInputSummary(input: {
+  summaryPath: string
+  visualDiffPath: string
+  artifactPathPrefix: string
+  startedAt: string
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  missingInputs: VisualCompareMissingInput[]
+  copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }>
+}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }; summary: VisualCompareMissingInputSummary }> {
+  const files = {
+    sourceScreenshot: input.copiedFiles.sourceScreenshot ?? [],
+    candidateScreenshot: input.copiedFiles.candidateScreenshot ?? [],
+    diffScreenshot: [],
+    visualDiff: `${input.artifactPathPrefix}/visual-diff.json`,
+    summary: `${input.artifactPathPrefix}/summary.json`,
+  }
+  const summary: VisualCompareMissingInputSummary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: "missing",
+    partial: true,
+    stage: "missing-input",
+    source: input.source,
+    candidate: input.candidate,
+    options: input.options,
+    limitations: ["visual compare could not run because one or more expected screenshot inputs were missing; recovered files show any screenshots that were available before comparison"],
+    preview: input.preview,
+    viewport: input.viewport,
+    startedAt: input.startedAt,
+    updatedAt: now(),
+    files,
+    diagnostic: {
+      type: "missing-input",
+      message: "Visual compare is missing expected screenshot input.",
+      missingInputs: input.missingInputs,
+    },
+  }
+  const json = `${JSON.stringify(summary, null, 2)}\n`
+  await writeFile(input.visualDiffPath, json)
+  await writeFile(input.summaryPath, json)
+  return { files, summary }
+}
+
+function visualCompareMissingInputArtifact(input: {
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  summary: VisualCompareMissingInputSummary
+}): BrowserArtifact {
+  return {
+    artifactType: "visual-compare",
+    requestedUrl: typeof input.source.url === "string" ? input.source.url : typeof input.source.screenshot === "string" ? input.source.screenshot : "source",
+    url: typeof input.candidate.url === "string" ? input.candidate.url : typeof input.candidate.screenshot === "string" ? input.candidate.screenshot : "candidate",
+    preview: input.preview,
+    files: input.files,
+    summary: {
+      steps: 0,
+      consoleMessages: 0,
+      errors: 0,
+      finalUrl: "",
+      htmlSnapshot: false,
+      networkEvents: 0,
+      replayability: "artifact-backed",
+      screenshot: Array.isArray(input.files.sourceScreenshot) ? input.files.sourceScreenshot.length > 0 : Boolean(input.files.sourceScreenshot),
+      visualCompare: {
+        status: input.summary.status,
+        explanation: input.files.visualDiff,
+      },
+      viewport: input.viewport,
+    },
+  }
+}
+
+function visualCompareMissingScreenshotInputs(input: {
+  sourceScreenshot: string
+  candidateScreenshot: string
+  sourceResolvedPath?: string
+  candidateResolvedPath?: string
+}): VisualCompareMissingInput[] {
+  const missingInputs: VisualCompareMissingInput[] = []
+  if (!input.sourceResolvedPath) {
+    missingInputs.push({ role: "sourceScreenshot", path: input.sourceScreenshot })
+  }
+  if (!input.candidateResolvedPath) {
+    missingInputs.push({ role: "candidateScreenshot", path: input.candidateScreenshot })
+  }
+  return missingInputs
+}
+
+async function maybeResolveVisualCompareScreenshotPath(requestedPath: string, artifactRoot: string): Promise<string | undefined> {
+  try {
+    return await resolveVisualCompareScreenshotPath(requestedPath, artifactRoot)
+  } catch {
+    return undefined
+  }
+}
+
 async function writeVisualCompareMatrixSummary(
   artifactRoot: string,
   args: string[],
@@ -3206,6 +3343,33 @@ interface VisualComparePairSummary {
   viewport: BrowserProbeViewport | null
   files: Record<string, string>
   comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean }
+}
+
+interface VisualCompareMissingInput {
+  role: "sourceScreenshot" | "candidateScreenshot"
+  path: string
+}
+
+interface VisualCompareMissingInputSummary {
+  schema: "wp-codebox/visual-compare/v1"
+  command: "wordpress.visual-compare"
+  status: "missing"
+  partial: true
+  stage: "missing-input"
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  limitations: string[]
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  startedAt: string
+  updatedAt: string
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  diagnostic: {
+    type: "missing-input"
+    message: string
+    missingInputs: VisualCompareMissingInput[]
+  }
 }
 
 interface VisualCompareMatrixSummary {
