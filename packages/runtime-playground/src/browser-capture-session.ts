@@ -58,7 +58,8 @@ export function attachBrowserCaptureListeners({
   }
   if (captureNetwork) {
     page.on("requestfinished", (request) => {
-      const task = serializeBrowserFinishedRequest(request).then((record) => {
+      const timestamp = new Date().toISOString()
+      const task = serializeBrowserFinishedRequest(request, timestamp).then((record) => {
         onNetwork?.()
         network.push(record)
       }).catch(() => undefined)
@@ -66,7 +67,7 @@ export function attachBrowserCaptureListeners({
     })
     page.on("requestfailed", (request) => {
       onNetwork?.()
-      network.push(serializeBrowserRequestFailure(request))
+      network.push(serializeBrowserRequestFailure(request, new Date().toISOString()))
     })
   }
 }

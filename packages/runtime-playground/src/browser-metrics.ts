@@ -11,6 +11,9 @@ import type {
   BrowserProbeMetricDigest,
   BrowserProbeNetworkRecord,
   BrowserProbeNetworkSizes,
+  BrowserProbePhaseFirstRequest,
+  BrowserProbePhaseMetric,
+  BrowserProbePhaseMetricsArtifact,
   BrowserProbePerformanceArtifact,
   BrowserProbePerformanceSummary,
 } from "./browser-artifacts.js"
@@ -172,7 +175,177 @@ export function browserProbeBenchMetrics(memoryArtifact?: BrowserProbeMemoryArti
     browser_cls: performance?.layoutShifts.cls ?? 0,
     browser_layout_shift_count: performance?.layoutShifts.count ?? 0,
     browser_layout_shift_max: performance?.layoutShifts.max ?? 0,
+    ...browserProbePhaseBenchMetrics(performanceArtifact?.phaseMetrics),
   }
+}
+
+export function browserProbePhaseMetrics(input: {
+  checkpoints: BrowserProbeCheckpointRecord[]
+  consoleMessages: Record<string, unknown>[]
+  errors: BrowserProbeErrorRecord[]
+  network: BrowserProbeNetworkRecord[]
+  startedAt: string
+}): BrowserProbePhaseMetricsArtifact | undefined {
+  const phases = browserProbePhaseBoundaries(input.checkpoints).map((checkpoint): BrowserProbePhaseMetric => {
+    const network = recordsBefore(input.network, checkpoint.timestamp)
+    const consoleErrors = recordsBefore(input.consoleMessages, checkpoint.timestamp).filter((message) => message.type === "error").length
+    const pageErrors = recordsBefore(input.errors, checkpoint.timestamp).filter((error) => error.type === "pageerror").length
+    const probeErrors = recordsBefore(input.errors, checkpoint.timestamp).filter((error) => error.type === "probe-error").length
+    const firstRequest = firstNetworkRequest(network, input.startedAt)
+    return {
+      name: phaseNameForCheckpoint(checkpoint.name),
+      checkpoint: checkpoint.name,
+      timestamp: checkpoint.timestamp,
+      elapsedMs: elapsedMs(input.startedAt, checkpoint.timestamp),
+      network: {
+        requests: network.length,
+        responses: network.filter((record) => record.type === "response").length,
+        failures: network.filter((record) => record.type === "requestfailed").length,
+        transferSizeBytes: sumNetworkField(network, "transferSize"),
+        responseBodySizeBytes: sumNetworkField(network, "responseBodySize"),
+        firstRequest,
+        firstRequestByHost: firstNetworkRequestByHost(network, input.startedAt),
+      },
+      errors: {
+        console: consoleErrors,
+        page: pageErrors,
+        probe: probeErrors,
+      },
+      performance: {
+        resources: checkpoint.metrics.performance.resources.count,
+        transferSizeBytes: checkpoint.metrics.performance.resources.transferSizeBytes,
+        domNodes: checkpoint.metrics.performance.dom.nodes,
+        firstContentfulPaintMs: checkpoint.metrics.performance.paint.firstContentfulPaintMs,
+        largestContentfulPaintMs: checkpoint.metrics.performance.paint.largestContentfulPaintMs,
+      },
+    }
+  })
+
+  if (phases.length === 0) {
+    return undefined
+  }
+
+  return {
+    schema: "wp-codebox/browser-phase-metrics/v1",
+    version: 1,
+    capturedAt: now(),
+    phases,
+  }
+}
+
+function browserProbePhaseBenchMetrics(phaseMetrics: BrowserProbePhaseMetricsArtifact | undefined): Record<string, number> {
+  if (!phaseMetrics) {
+    return {}
+  }
+
+  const metrics: Record<string, number> = {}
+  for (const phase of phaseMetrics.phases) {
+    const prefix = `browser_phase_${metricNameFragment(phase.name)}`
+    metrics[`${prefix}_elapsed_ms`] = phase.elapsedMs ?? 0
+    metrics[`${prefix}_request_count`] = phase.network.requests
+    metrics[`${prefix}_response_count`] = phase.network.responses
+    metrics[`${prefix}_failure_count`] = phase.network.failures
+    metrics[`${prefix}_transfer_size_bytes`] = phase.network.transferSizeBytes
+    metrics[`${prefix}_response_body_size_bytes`] = phase.network.responseBodySizeBytes
+    metrics[`${prefix}_console_error_count`] = phase.errors.console
+    metrics[`${prefix}_page_error_count`] = phase.errors.page
+    metrics[`${prefix}_probe_error_count`] = phase.errors.probe
+    metrics[`${prefix}_resource_count`] = phase.performance.resources
+    metrics[`${prefix}_resource_transfer_size_bytes`] = phase.performance.transferSizeBytes
+    metrics[`${prefix}_dom_node_count`] = phase.performance.domNodes
+    metrics[`${prefix}_fcp_ms`] = phase.performance.firstContentfulPaintMs ?? 0
+    metrics[`${prefix}_lcp_ms`] = phase.performance.largestContentfulPaintMs ?? 0
+  }
+  return metrics
+}
+
+function browserProbePhaseBoundaries(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbeCheckpointRecord[] {
+  const seen = new Set<string>()
+  const boundaries: BrowserProbeCheckpointRecord[] = []
+  for (const checkpoint of checkpoints) {
+    const name = phaseNameForCheckpoint(checkpoint.name)
+    if (!name || seen.has(name)) {
+      continue
+    }
+    seen.add(name)
+    boundaries.push(checkpoint)
+  }
+  return boundaries
+}
+
+function phaseNameForCheckpoint(name: string): string {
+  if (name.startsWith("after-")) {
+    return `before-${name.slice("after-".length)}-complete`
+  }
+  if (name === "final") {
+    return "before-final"
+  }
+  return `before-${name}`
+}
+
+function recordsBefore<T extends { timestamp?: unknown }>(records: T[], timestamp: string): T[] {
+  const boundary = Date.parse(timestamp)
+  if (!Number.isFinite(boundary)) {
+    return []
+  }
+  return records.filter((record) => {
+    const value = typeof record.timestamp === "string" ? Date.parse(record.timestamp) : Number.NaN
+    return Number.isFinite(value) && value <= boundary
+  })
+}
+
+function firstNetworkRequest(records: BrowserProbeNetworkRecord[], startedAt: string): BrowserProbePhaseFirstRequest | null {
+  const sorted = [...records].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+  const first = sorted[0]
+  return first ? networkRequestSummary(first, startedAt) : null
+}
+
+function firstNetworkRequestByHost(records: BrowserProbeNetworkRecord[], startedAt: string): Record<string, BrowserProbePhaseFirstRequest> {
+  const byHost: Record<string, BrowserProbePhaseFirstRequest> = {}
+  for (const record of [...records].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))) {
+    const host = requestHost(record.url) || "unknown"
+    if (!byHost[host]) {
+      byHost[host] = networkRequestSummary(record, startedAt, host)
+    }
+  }
+  return Object.fromEntries(Object.entries(byHost).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function networkRequestSummary(record: BrowserProbeNetworkRecord, startedAt: string, host = requestHost(record.url) || "unknown"): BrowserProbePhaseFirstRequest {
+  return {
+    url: record.url,
+    host,
+    method: record.method,
+    resourceType: record.resourceType,
+    timestamp: record.timestamp,
+    elapsedMs: elapsedMs(startedAt, record.timestamp),
+    ...(typeof record.status === "number" ? { status: record.status } : {}),
+  }
+}
+
+function sumNetworkField(records: BrowserProbeNetworkRecord[], field: "transferSize" | "responseBodySize"): number {
+  return records.reduce((total, record) => {
+    const value = record[field]
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0)
+  }, 0)
+}
+
+function requestHost(url: string): string | undefined {
+  try {
+    return new URL(url).host
+  } catch {
+    return undefined
+  }
+}
+
+function elapsedMs(startedAt: string, timestamp: string): number | null {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(timestamp)
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null
+}
+
+function metricNameFragment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase()
 }
 
 export function promoteBrowserMetricsToBenchResults(raw: string, probes: BrowserArtifact[]): string {
@@ -337,7 +510,12 @@ function combinedBrowserBenchMetrics(probes: BrowserArtifact[]): Record<string, 
     browser_cls: sumMetric(metricSets, "browser_cls"),
     browser_layout_shift_count: sumMetric(metricSets, "browser_layout_shift_count"),
     browser_layout_shift_max: maxMetric(metricSets, "browser_layout_shift_max"),
+    ...finalPhaseBenchMetrics(finalMetrics),
   }
+}
+
+function finalPhaseBenchMetrics(metrics: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(Object.entries(metrics).filter(([name]) => name.startsWith("browser_phase_")))
 }
 
 function sumMetric(metricSets: Array<Record<string, number>>, name: string): number {
@@ -348,7 +526,7 @@ function maxMetric(metricSets: Array<Record<string, number>>, name: string): num
   return Math.max(...metricSets.map((metrics) => metrics[name] ?? 0))
 }
 
-export async function serializeBrowserFinishedRequest(request: Request): Promise<BrowserProbeNetworkRecord> {
+export async function serializeBrowserFinishedRequest(request: Request, timestamp = now()): Promise<BrowserProbeNetworkRecord> {
   const response = await request.response()
   if (!response) {
     return {
@@ -356,15 +534,15 @@ export async function serializeBrowserFinishedRequest(request: Request): Promise
       url: request.url(),
       method: request.method(),
       resourceType: request.resourceType(),
-      timestamp: now(),
+      timestamp,
       timing: browserRequestTiming(request),
     }
   }
 
-  return serializeBrowserResponse(response)
+  return serializeBrowserResponse(response, timestamp)
 }
 
-export async function serializeBrowserResponse(response: Response): Promise<BrowserProbeNetworkRecord> {
+export async function serializeBrowserResponse(response: Response, timestamp = now()): Promise<BrowserProbeNetworkRecord> {
   const request = response.request()
   const sizes = await browserRequestSizes(request)
   const transferSize = sizes ? sizes.responseHeadersSize + sizes.responseBodySize : undefined
@@ -383,11 +561,11 @@ export async function serializeBrowserResponse(response: Response): Promise<Brow
     ...(sizes ? { bodySize: sizes.responseBodySize } : {}),
     ...(sizes ? { requestBodySize: sizes.requestBodySize } : {}),
     ...(sizes ? { responseBodySize: sizes.responseBodySize } : {}),
-    timestamp: now(),
+    timestamp,
   }
 }
 
-export function serializeBrowserRequestFailure(request: Request): BrowserProbeNetworkRecord {
+export function serializeBrowserRequestFailure(request: Request, timestamp = now()): BrowserProbeNetworkRecord {
   return {
     type: "requestfailed",
     url: request.url(),
@@ -395,7 +573,7 @@ export function serializeBrowserRequestFailure(request: Request): BrowserProbeNe
     resourceType: request.resourceType(),
     timing: browserRequestTiming(request),
     failure: request.failure(),
-    timestamp: now(),
+    timestamp,
   }
 }
 

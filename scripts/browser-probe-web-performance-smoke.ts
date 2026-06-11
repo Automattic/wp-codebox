@@ -55,6 +55,7 @@ const performance = JSON.parse(await readFile(performancePath, "utf8")) as {
     navigation: { durationMs: number | null; ttfbMs: number | null; responseStartMs: number | null }
     paint: { firstContentfulPaintMs: number | null; largestContentfulPaintMs: number | null; largestContentfulPaintElement: string | null }
   }
+  phaseMetrics?: { phases: Array<{ name: string; elapsedMs: number | null; performance: { resources: number } }> }
 }
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   context?: { requested?: { profile?: string; throttle?: string }; effective?: { profile?: string; throttle?: string } }
@@ -77,6 +78,9 @@ assert.equal(typeof summary.summary?.metrics?.browser_lcp_ms, "number", "summary
 assert.equal(typeof summary.summary?.metrics?.browser_fcp_ms, "number", "summary metrics should expose browser_fcp_ms")
 assert.equal(typeof summary.summary?.metrics?.browser_ttfb_ms, "number", "summary metrics should expose browser_ttfb_ms")
 assert.equal(typeof summary.summary?.metrics?.browser_nav_duration_ms, "number", "summary metrics should expose browser_nav_duration_ms")
+assert.ok(performance.phaseMetrics?.phases.some((phase) => phase.name === "before-navigation-complete"), "performance artifact should include phase metrics")
+assert.equal(typeof summary.summary?.metrics?.browser_phase_before_navigation_complete_elapsed_ms, "number", "summary metrics should expose phase elapsed time")
+assert.equal(typeof summary.summary?.metrics?.browser_phase_before_final_resource_count, "number", "summary metrics should expose final phase resource count")
 
 const failingRecipePath = await writeRecipe("failing", [
   "url=/",

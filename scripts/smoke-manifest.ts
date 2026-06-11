@@ -191,6 +191,7 @@ export const smokeGroups = {
       tsxSmoke("browser-probe-artifact-smoke"),
       tsxSmoke("browser-probe-assertions-smoke"),
       tsxSmoke("browser-probe-web-performance-smoke"),
+      tsxSmoke("browser-phase-metrics-smoke"),
       tsxSmoke("browser-probe-layout-shift-smoke"),
       tsxSmoke("browser-probe-context-smoke"),
       tsxSmoke("browser-probe-public-url-routing-smoke"),

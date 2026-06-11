@@ -563,7 +563,7 @@ async function runSingleBrowserProbeCommand({
           memoryArtifact = browserProbeMemoryArtifact(checkpoints)
         }
         if (capture.has("performance")) {
-          performanceArtifact = browserProbePerformanceArtifact(checkpoints)
+          performanceArtifact = browserProbePerformanceArtifact(checkpoints, { consoleMessages, errors, network, startedAt })
         }
       }
       const lifecycle = lifecycleSelectors.length > 0 ? await collectBrowserProbeLifecycle(page) : undefined
@@ -691,6 +691,7 @@ async function runSingleBrowserProbeCommand({
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
         networkEvents: network.length,
+        ...(performanceArtifact?.phaseMetrics ? { phaseMetrics: performanceArtifact.phaseMetrics } : {}),
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
         review,

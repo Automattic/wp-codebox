@@ -107,6 +107,7 @@ export interface BrowserArtifactSummary {
   memory?: BrowserProbeMemorySummary
   metrics?: Record<string, number>
   networkEvents: number
+  phaseMetrics?: BrowserProbePhaseMetricsArtifact
   performance?: BrowserProbePerformanceSummary
   progress?: BrowserProbeProgressSummary
   review?: BrowserProbeReviewSummary
@@ -575,7 +576,53 @@ export interface BrowserProbePerformanceArtifact {
   capturedAt: string
   final: BrowserProbeMetricsSnapshot["performance"]
   peak: BrowserProbePerformanceSummary
+  phaseMetrics?: BrowserProbePhaseMetricsArtifact
   checkpoints: BrowserProbeCheckpointRecord[]
+}
+
+export interface BrowserProbePhaseMetricsArtifact {
+  schema: "wp-codebox/browser-phase-metrics/v1"
+  version: 1
+  capturedAt: string
+  phases: BrowserProbePhaseMetric[]
+}
+
+export interface BrowserProbePhaseMetric {
+  name: string
+  checkpoint: string
+  timestamp: string
+  elapsedMs: number | null
+  network: {
+    requests: number
+    responses: number
+    failures: number
+    transferSizeBytes: number
+    responseBodySizeBytes: number
+    firstRequest: BrowserProbePhaseFirstRequest | null
+    firstRequestByHost: Record<string, BrowserProbePhaseFirstRequest>
+  }
+  errors: {
+    console: number
+    page: number
+    probe: number
+  }
+  performance: {
+    resources: number
+    transferSizeBytes: number
+    domNodes: number
+    firstContentfulPaintMs: number | null
+    largestContentfulPaintMs: number | null
+  }
+}
+
+export interface BrowserProbePhaseFirstRequest {
+  url: string
+  host: string
+  method: string
+  resourceType: string
+  timestamp: string
+  elapsedMs: number | null
+  status?: number
 }
 
 export interface BrowserProbeViewport {

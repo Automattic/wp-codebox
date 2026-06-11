@@ -1,6 +1,7 @@
 import type { Frame, Page } from "playwright"
 import type {
   BrowserProbeCheckpointRecord,
+  BrowserProbeErrorRecord,
   BrowserProbeMemoryArtifact,
   BrowserProbeMetricsSnapshot,
   BrowserProbeNetworkRecord,
@@ -9,7 +10,7 @@ import type {
   BrowserProbeViewport,
   BrowserStepAssertion,
 } from "./browser-artifacts.js"
-import { browserProbeMemorySummary, browserProbePerformanceSummary, cdpDomCounters, cdpHeapUsage, cdpPerformanceMetrics } from "./browser-metrics.js"
+import { browserProbeMemorySummary, browserProbePerformanceSummary, browserProbePhaseMetrics, cdpDomCounters, cdpHeapUsage, cdpPerformanceMetrics } from "./browser-metrics.js"
 
 export const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
 
@@ -903,7 +904,12 @@ export function browserProbeMemoryArtifact(checkpoints: BrowserProbeCheckpointRe
   }
 }
 
-export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbePerformanceArtifact {
+export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpointRecord[], phaseInput?: {
+  consoleMessages: Record<string, unknown>[]
+  errors: BrowserProbeErrorRecord[]
+  network: BrowserProbeNetworkRecord[]
+  startedAt: string
+}): BrowserProbePerformanceArtifact {
   const final = checkpoints.at(-1)?.metrics.performance ?? {
     cdpMetrics: {},
     navigation: emptyNavigationTimingSummary(),
@@ -914,12 +920,15 @@ export function browserProbePerformanceArtifact(checkpoints: BrowserProbeCheckpo
     layoutShifts: { cls: 0, count: 0, totalCount: 0, max: 0, entries: [] },
   }
 
+  const phaseMetrics = phaseInput ? browserProbePhaseMetrics({ checkpoints, ...phaseInput }) : undefined
+
   return {
     schema: "wp-codebox/browser-performance/v1",
     version: 1,
     capturedAt: now(),
     final,
     peak: browserProbePerformanceSummary(checkpoints),
+    ...(phaseMetrics ? { phaseMetrics } : {}),
     checkpoints,
   }
 }
