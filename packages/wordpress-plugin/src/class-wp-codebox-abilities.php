@@ -412,6 +412,34 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/capture-runner-workspace',
+				array(
+					'label'               => 'Capture Runner Workspace',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_capture_input_schema(),
+					'output_schema'       => self::runner_workspace_capture_output_schema(),
+					'execute_callback'    => array( self::class, 'capture_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-runner-workspace-command',
+				array(
+					'label'               => 'Run Runner Workspace Command',
+					'description'         => 'Run a bounded verification or drift-check command against a runner-owned workspace through the WP Codebox runner boundary.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_command_input_schema(),
+					'output_schema'       => self::runner_workspace_command_output_schema(),
+					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/create-browser-playground-session',
 				array(
 					'label'               => 'Create Browser Playground Session',

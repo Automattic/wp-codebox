@@ -480,6 +480,95 @@ $assert( 'runner workspace publication forwards PR options and paths', array( 'a
 $assert( 'runner workspace publication normalizes backend result', ! is_wp_error( $publication_result ) && true === ( $publication_result['success'] ?? false ) && 'published' === ( $publication_result['status'] ?? '' ) && 'github_api' === ( $publication_result['backend'] ?? '' ) && 873 === ( $publication_result['pull_request']['number'] ?? 0 ) && true === ( $publication_result['pull_request']['reused'] ?? false ) && false === ( $publication_result['pull_request']['opened'] ?? true ) && 'abc123def456' === ( $publication_result['commit']['sha'] ?? '' ) );
 unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/publish-runner-workspace'] );
 
+$capture_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/capture-runner-workspace'] ?? null;
+$assert( 'runner workspace capture ability registered', is_array( $capture_ability ) );
+$assert( 'runner workspace capture ability is REST visible', true === ( $capture_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace capture ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-capture-request/v1' === ( $capture_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-capture-result/v1' === ( $capture_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$capture_unavailable = call_user_func( $capture_ability['execute_callback'], array( 'workspace' => 'wp-codebox@runner-docs', 'repo' => 'Automattic/wp-codebox' ) );
+$assert( 'runner workspace capture returns typed unavailable without backend', ! is_wp_error( $capture_unavailable ) && false === ( $capture_unavailable['success'] ?? true ) && 'unavailable' === ( $capture_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $capture_unavailable['failure_type'] ?? '' ) );
+
+$dmc_status_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success' => true,
+		'backend' => 'github_api',
+		'name'    => 'wp-codebox@runner-docs',
+		'repo'    => 'Automattic/wp-codebox',
+		'branch'  => 'runner/docs',
+		'commit'  => 'abc123def456',
+		'dirty'   => 2,
+		'files'   => array( 'docs/architecture.md', 'docs/skill-contracts.md' ),
+	)
+);
+$dmc_diff_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success' => true,
+		'backend' => 'github_api',
+		'name'    => 'wp-codebox@runner-docs',
+		'diff'    => "diff --git a/docs/architecture.md b/docs/architecture.md\n",
+	)
+);
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'] = $dmc_status_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-diff'] = $dmc_diff_ability;
+$capture_result = call_user_func(
+	$capture_ability['execute_callback'],
+	array(
+		'workspace'         => 'wp-codebox@runner-docs',
+		'workspace_backend' => 'github_api',
+		'repo'              => 'Automattic/wp-codebox',
+		'from'              => 'main',
+	)
+);
+$assert( 'runner workspace capture delegates to DMC status and diff', 'wp-codebox@runner-docs' === ( $dmc_status_ability->calls[0]['name'] ?? '' ) && 'wp-codebox@runner-docs' === ( $dmc_diff_ability->calls[0]['name'] ?? '' ) && 'main' === ( $dmc_diff_ability->calls[0]['from'] ?? '' ) );
+$assert( 'runner workspace capture normalizes status and diff', ! is_wp_error( $capture_result ) && true === ( $capture_result['success'] ?? false ) && true === ( $capture_result['changed'] ?? false ) && 'github_api' === ( $capture_result['backend'] ?? '' ) && 2 === ( $capture_result['status']['dirty'] ?? 0 ) && array( 'docs/architecture.md', 'docs/skill-contracts.md' ) === ( $capture_result['status']['files'] ?? array() ) && str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), 'docs/architecture.md' ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-diff'] );
+
+$command_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-runner-workspace-command'] ?? null;
+$assert( 'runner workspace command ability registered', is_array( $command_ability ) );
+$assert( 'runner workspace command ability is REST visible', true === ( $command_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace command ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-command-request/v1' === ( $command_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-command-result/v1' === ( $command_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$command_unavailable = call_user_func( $command_ability['execute_callback'], array( 'workspace' => 'wp-codebox@runner-docs', 'command' => 'npm run verify', 'allow_local_fallback' => false ) );
+$assert( 'runner workspace command returns typed unavailable without backend', ! is_wp_error( $command_unavailable ) && false === ( $command_unavailable['success'] ?? true ) && 'unavailable' === ( $command_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $command_unavailable['failure_type'] ?? '' ) );
+
+$dmc_command_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success'    => true,
+		'backend'    => 'github_api',
+		'command'    => 'pnpm verify',
+		'exit_code'  => 0,
+		'stdout'     => 'verified',
+		'stderr'     => '',
+		'elapsed_ms' => 12.5,
+	)
+);
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/run-runner-workspace-command'] = $dmc_command_ability;
+$command_result = call_user_func(
+	$command_ability['execute_callback'],
+	array(
+		'workspace'         => 'wp-codebox@runner-docs',
+		'workspace_backend' => 'github_api',
+		'repo'              => 'Automattic/wp-codebox',
+		'command'           => 'pnpm verify',
+		'description'       => 'Run verification',
+		'timeout_seconds'   => 300,
+	)
+);
+$assert( 'runner workspace command delegates to backend command API', 'wp-codebox@runner-docs' === ( $dmc_command_ability->calls[0]['workspace'] ?? '' ) && 'pnpm verify' === ( $dmc_command_ability->calls[0]['command'] ?? '' ) && 300 === ( $dmc_command_ability->calls[0]['timeout_seconds'] ?? 0 ) );
+$assert( 'runner workspace command normalizes backend command result', ! is_wp_error( $command_result ) && true === ( $command_result['success'] ?? false ) && 'completed' === ( $command_result['status'] ?? '' ) && 'github_api' === ( $command_result['backend'] ?? '' ) && 0 === ( $command_result['exit_code'] ?? -1 ) && 'verified' === ( $command_result['stdout'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/run-runner-workspace-command'] );
+
+$local_command_workspace = $root . '/runner-command-workspace';
+mkdir( $local_command_workspace, 0777, true );
+$local_command_result = call_user_func(
+	$command_ability['execute_callback'],
+	array(
+		'workspace'      => 'wp-codebox@local-runner',
+		'workspace_path' => $local_command_workspace,
+		'command'        => 'printf local-ok > verification.txt',
+		'description'    => 'Write local verification marker',
+	)
+);
+$assert( 'runner workspace command can execute via local WP Codebox fallback', ! is_wp_error( $local_command_result ) && true === ( $local_command_result['success'] ?? false ) && 'local_path' === ( $local_command_result['backend'] ?? '' ) && is_file( $local_command_workspace . '/verification.txt' ) );
+
 $browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
 $assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
 $assert( 'browser Playground session ability is REST visible', true === ( $browser_session_ability['meta']['show_in_rest'] ?? false ) );

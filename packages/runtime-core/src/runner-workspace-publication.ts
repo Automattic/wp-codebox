@@ -72,3 +72,75 @@ export type RunnerWorkspacePublicationResult = {
   evidence?: Record<string, unknown>
   artifacts?: Record<string, unknown>
 }
+
+export type RunnerWorkspaceIdentity = {
+  workspace?: string
+  workspace_handle?: string
+  handle?: string
+  workspace_path?: string
+  workspace_backend?: string
+  runner_workspace?: Record<string, unknown>
+  repo?: string
+  target_repo?: string
+}
+
+export type RunnerWorkspaceCaptureRequest = RunnerWorkspaceIdentity & {
+  schema?: "wp-codebox/runner-workspace-capture-request/v1"
+  from?: string
+  to?: string
+  path?: string
+  include_diff?: boolean
+}
+
+export type RunnerWorkspaceCaptureResult = {
+  schema: "wp-codebox/runner-workspace-capture-result/v1"
+  success: boolean
+  backend: string
+  changed?: boolean
+  workspace?: Record<string, unknown>
+  status?: {
+    handle?: string
+    name?: string
+    repo?: string
+    path?: string
+    branch?: string
+    remote?: string
+    commit?: string
+    dirty?: number
+    files?: string[]
+    backend?: string
+  }
+  diff?: {
+    name?: string
+    diff?: string
+    backend?: string
+  }
+  failure_type?: string
+  error?: Record<string, unknown>
+}
+
+export type RunnerWorkspaceCommandRequest = RunnerWorkspaceIdentity & {
+  schema?: "wp-codebox/runner-workspace-command-request/v1"
+  command: string
+  description?: string
+  timeout_seconds?: number
+  env?: Record<string, string>
+  context?: Record<string, unknown>
+  allow_local_fallback?: boolean
+}
+
+export type RunnerWorkspaceCommandResult = {
+  schema: "wp-codebox/runner-workspace-command-result/v1"
+  success: boolean
+  status: "completed" | "failed" | "unavailable"
+  command?: string
+  description?: string
+  exit_code?: number
+  stdout?: string
+  stderr?: string
+  elapsed_ms?: number
+  backend: string
+  workspace?: Record<string, unknown>
+  failure_type?: string
+  error?: Record<string, unknown>
+}
