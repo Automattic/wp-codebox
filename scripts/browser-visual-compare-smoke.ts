@@ -211,6 +211,70 @@ assert.equal(baselineSummary.baseline?.delta.mismatchPixels?.absoluteDelta, 0, "
 assert.equal(baselineSummary.baseline?.delta.mismatchRatio?.absoluteDelta, 0, "same screenshots should not change mismatch ratio relative to baseline")
 assert.equal(baselineSummary.baseline?.delta.dimensionMismatch?.changed, false, "same screenshots should not change dimension mismatch status relative to baseline")
 
+const missingInputRecipePath = join(workspace, "missing-input-recipe.json")
+const missingInputArtifactsRoot = join(workspace, "missing-input-artifacts")
+const missingCandidatePath = join(workspace, "missing-candidate-after-interruption.png")
+await writeFile(missingInputRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.visual-compare",
+        args: [
+          `source-screenshot=${sourcePath}`,
+          `candidate-screenshot=${missingCandidatePath}`,
+          "source-label=source-after-browser-actions",
+          "candidate-label=candidate-after-browser-actions",
+          "threshold=0.1",
+        ],
+      },
+    ],
+  },
+  artifacts: {
+    directory: missingInputArtifactsRoot,
+  },
+}, null, 2)}\n`)
+
+const missingInputOutput = await runCliAllowFailure([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  missingInputRecipePath,
+  "--json",
+])
+
+assert.equal(missingInputOutput.success, false, "missing visual compare input should fail the recipe")
+assert.ok(missingInputOutput.artifacts?.directory, "missing visual compare input should still return artifacts")
+assert.ok(missingInputOutput.error?.message?.includes("wordpress.visual-compare missing expected screenshot input"), "missing input failure should be reported as a structured visual compare failure")
+assert.equal(missingInputOutput.error?.message?.includes("ENOENT"), false, "missing input failure should not surface bare filesystem ENOENT as the primary signal")
+
+const missingInputSummaryPath = join(missingInputOutput.artifacts.directory, "files", "browser", "visual-compare", "visual-diff.json")
+const missingInputReviewPath = join(missingInputOutput.artifacts.directory, "files", "review.json")
+const missingInputSourcePath = join(missingInputOutput.artifacts.directory, "files", "browser", "visual-compare", "source.png")
+assert.equal(existsSync(missingInputSummaryPath), true, "missing input visual summary should be captured")
+assert.equal(existsSync(missingInputSourcePath), true, "available source screenshot should be preserved")
+
+const missingInputSummary = JSON.parse(await readFile(missingInputSummaryPath, "utf8")) as {
+  schema: string
+  status: string
+  partial: boolean
+  stage: string
+  files: { sourceScreenshot?: string | string[]; candidateScreenshot?: string | string[]; visualDiff?: string }
+  diagnostic?: { type: string; message: string; missingInputs?: Array<{ role: string; path: string }> }
+}
+assert.equal(missingInputSummary.schema, "wp-codebox/visual-compare/v1")
+assert.equal(missingInputSummary.status, "missing")
+assert.equal(missingInputSummary.partial, true)
+assert.equal(missingInputSummary.stage, "missing-input")
+assert.equal(missingInputSummary.files.sourceScreenshot, "files/browser/visual-compare/source.png")
+assert.deepEqual(missingInputSummary.files.candidateScreenshot, [])
+assert.equal(missingInputSummary.diagnostic?.type, "missing-input")
+assert.deepEqual(missingInputSummary.diagnostic?.missingInputs?.map((input) => input.role), ["candidateScreenshot"])
+
+const missingInputReview = JSON.parse(await readFile(missingInputReviewPath, "utf8")) as { browser?: { probes?: Array<{ visualCompare?: { status?: string; explanation?: string } }> } }
+assert.equal(missingInputReview.browser?.probes?.[0]?.visualCompare?.status, "missing", "review summary should expose missing visual compare status")
+assert.equal(missingInputReview.browser?.probes?.[0]?.visualCompare?.explanation, "files/browser/visual-compare/visual-diff.json", "review summary should point to missing-input visual summary")
+
 console.log("Browser visual compare smoke passed")
 
 async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
@@ -222,6 +286,19 @@ async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: 
   const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
   if (code !== 0) {
     throw new Error(`CLI exited with ${code}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
+  }
+  return JSON.parse(stdout)
+}
+
+async function runCliAllowFailure(args: string[]): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
+  const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] })
+  let stdout = ""
+  let stderr = ""
+  child.stdout.on("data", (chunk) => { stdout += chunk })
+  child.stderr.on("data", (chunk) => { stderr += chunk })
+  const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
+  if (code === 0) {
+    throw new Error(`CLI unexpectedly exited with 0\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }
   return JSON.parse(stdout)
 }

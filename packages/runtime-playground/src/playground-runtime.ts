@@ -502,7 +502,15 @@ class PlaygroundRuntime implements Runtime {
 
   async runVisualCompare(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const result = await runVisualCompareCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+    let result: Awaited<ReturnType<typeof runVisualCompareCommand>>
+    try {
+      result = await runVisualCompareCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }
