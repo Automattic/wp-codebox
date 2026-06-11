@@ -12,6 +12,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-execution.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-permissions.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-inheritance.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-provider-adapter.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-runner-publication.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-artifacts.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
@@ -35,6 +36,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Permissions;
 	use WP_Codebox_Abilities_Inheritance;
 	use WP_Codebox_Abilities_Provider_Adapter;
+	use WP_Codebox_Abilities_Runner_Publication;
 	use WP_Codebox_Abilities_Browser_Artifacts;
 	use WP_Codebox_Abilities_Browser_Runtime;
 	use WP_Codebox_Abilities_Browser_Blueprint;
@@ -390,6 +392,20 @@ final class WP_Codebox_Abilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'request_host_delegation' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/publish-runner-workspace',
+				array(
+					'label'               => 'Publish Runner Workspace',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_publication_input_schema(),
+					'output_schema'       => self::runner_workspace_publication_output_schema(),
+					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
