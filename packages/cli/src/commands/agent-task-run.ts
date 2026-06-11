@@ -60,9 +60,30 @@ interface AgentTaskRunOutput {
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
   evidence_refs: Array<Record<string, unknown>>
+  failure_evidence?: Record<string, unknown>
   run_metadata: Record<string, unknown>
   metadata: Record<string, unknown>
 }
+
+interface CapturedOutput<T> {
+  result: T
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+interface FailureEvidenceInput {
+  input: AgentTaskRunInput
+  task: string
+  wpVersion: string
+  artifacts: string
+  recipePath: string
+  run: Record<string, unknown>
+  capture?: CapturedOutput<unknown>
+  error?: unknown
+}
+
+const FAILURE_SNIPPET_CHARS = 4000
 
 export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   const options = parseAgentTaskRunOptions(args)
@@ -85,10 +106,11 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
   const artifacts = stringValue(input.artifacts_path) || await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-artifacts-"))
   const recipeDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-recipe-"))
   const recipePath = join(recipeDirectory, "recipe.json")
-  const recipe = buildAgentTaskRecipe(input, taskInput, wpVersion)
+  let capture: CapturedOutput<number> | undefined
 
-  await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`)
   try {
+    const recipe = buildAgentTaskRecipe(input, taskInput, wpVersion)
+    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`)
     const recipeRunArgs = ["--recipe", recipePath, "--artifacts", artifacts, "--json"]
     if (options.previewHoldSeconds) {
       recipeRunArgs.push("--preview-hold-seconds", options.previewHoldSeconds)
@@ -96,7 +118,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     if (options.previewPublicUrl) {
       recipeRunArgs.push("--preview-public-url", options.previewPublicUrl)
     }
-    const capture = await captureStdout(() => runRecipeRunCommand(recipeRunArgs))
+    capture = await captureOutput(() => runRecipeRunCommand(recipeRunArgs))
     const run = parseRecipeRunOutput(capture.stdout)
     const runRecord = objectValue(run.run) || {}
     const artifactsRecord = objectValue(run.artifacts) || {}
@@ -110,6 +132,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const hasAgentBundle = Object.keys(agentBundle).length > 0
     const success = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
+    const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, run, capture })
     const output: AgentTaskRunOutput = {
       success,
       schema: "wp-codebox/agent-task-run/v1",
@@ -124,8 +147,9 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       structured_artifacts: structuredArtifactRefs(agentTaskResult),
       run,
-      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
-      evidence_refs: evidenceRefs(run, artifacts),
+      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
+      evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
+      failure_evidence: failureEvidence,
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
         run_status: stringValue(runRecord.status),
@@ -142,6 +166,41 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       },
     }
     return output
+  } catch (error) {
+    const run = { success: false, error: serializeUnknownError(error) }
+    const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, run, capture, error })
+    const failureDiagnostics = diagnostics(run, capture?.exitCode ?? 1, false, failureEvidence)
+    return {
+      success: false,
+      schema: "wp-codebox/agent-task-run/v1",
+      status: "failed",
+      session: sandboxSession(input, run, artifacts, "failed"),
+      task,
+      task_input: taskInput,
+      wp: wpVersion,
+      artifacts,
+      agent_result: {},
+      agent_task_result: {},
+      completion_outcome: {},
+      structured_artifacts: [],
+      run,
+      diagnostics: failureDiagnostics,
+      evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
+      failure_evidence: failureEvidence,
+      run_metadata: stripUndefined({
+        sandbox_session_id: stringValue(input.sandbox_session_id),
+        orchestrator: input.orchestrator,
+        parent_request_schema: stringValue(input.parent_request?.schema),
+      }),
+      metadata: {
+        agent_runtime: {
+          workload: {
+            success: false,
+            diagnostics: failureDiagnostics,
+          },
+        },
+      },
+    }
   } finally {
     await rm(recipeDirectory, { recursive: true, force: true })
   }
@@ -322,18 +381,25 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
   return { inputPath, json, previewHoldSeconds, previewPublicUrl }
 }
 
-async function captureStdout<T>(callback: () => Promise<T>): Promise<{ result: T; stdout: string; exitCode: number }> {
+async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
   const originalWrite = process.stdout.write.bind(process.stdout)
+  const originalErrorWrite = process.stderr.write.bind(process.stderr)
   let stdout = ""
+  let stderr = ""
   ;(process.stdout.write as typeof process.stdout.write) = ((chunk: unknown, ...args: unknown[]) => {
     stdout += String(chunk)
     return true
   }) as typeof process.stdout.write
+  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: unknown, ...args: unknown[]) => {
+    stderr += String(chunk)
+    return true
+  }) as typeof process.stderr.write
   try {
     const result = await callback()
-    return { result, stdout, exitCode: Number(result) || 0 }
+    return { result, stdout, stderr, exitCode: Number(result) || 0 }
   } finally {
     process.stdout.write = originalWrite
+    process.stderr.write = originalErrorWrite
   }
 }
 
@@ -363,7 +429,7 @@ function sandboxSession(input: AgentTaskRunInput, run: Record<string, unknown>, 
   })
 }
 
-function diagnostics(run: Record<string, unknown>, exitCode: number, normalizedSuccess = false): Array<Record<string, unknown>> {
+function diagnostics(run: Record<string, unknown>, exitCode: number, normalizedSuccess = false, failureEvidence?: Record<string, unknown>): Array<Record<string, unknown>> {
   const existing = Array.isArray(run.diagnostics) ? run.diagnostics.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
   if (normalizedSuccess) {
     return existing.filter((entry) => stringValue(entry.class) !== "wp-codebox.agent_task_run_failed")
@@ -375,18 +441,100 @@ function diagnostics(run: Record<string, unknown>, exitCode: number, normalizedS
     return []
   }
   const errorRecord = objectValue(run.error) || {}
-  return [{ class: "wp-codebox.agent_task_run_failed", message: stringValue(errorRecord.message) || "WP Codebox agent task run failed.", data: { exit_code: exitCode } }]
+  return [{
+    class: "wp-codebox.agent_task_run_failed",
+    message: stringValue(errorRecord.message) || "WP Codebox agent task run failed.",
+    data: stripUndefined({
+      exit_code: exitCode,
+      phase: stringValue(failureEvidence?.phase),
+      command: stringValue(failureEvidence?.command),
+      failure_evidence: failureEvidence,
+    }),
+  }]
 }
 
-function evidenceRefs(run: Record<string, unknown>, artifacts: string): Array<Record<string, unknown>> {
+function evidenceRefs(run: Record<string, unknown>, artifacts: string, failureEvidence?: Record<string, unknown>): Array<Record<string, unknown>> {
   const artifactsRecord = objectValue(run.artifacts) || {}
   const refs: Array<Record<string, unknown> | null> = [
     { kind: "codebox-artifacts", uri: artifacts, label: "WP Codebox artifacts" },
     stringValue(artifactsRecord.manifestPath) ? { kind: "codebox-manifest", uri: stringValue(artifactsRecord.manifestPath), label: "WP Codebox artifact manifest" } : null,
     stringValue(artifactsRecord.reviewPath) ? { kind: "codebox-review", uri: stringValue(artifactsRecord.reviewPath), label: "WP Codebox review payload" } : null,
     stringValue(artifactsRecord.patchPath) ? { kind: "codebox-patch", uri: stringValue(artifactsRecord.patchPath), label: "WP Codebox patch" } : null,
+    failureEvidence ? { kind: "codebox-agent-task-failure-evidence", uri: artifacts, label: "WP Codebox agent task failure evidence", metadata: failureEvidenceSummary(failureEvidence) } : null,
   ]
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function buildFailureEvidence(values: FailureEvidenceInput): Record<string, unknown> {
+  const runRecord = objectValue(values.run.run) || {}
+  const runtimeRecord = objectValue(values.run.runtime) || objectValue(runRecord.runtime) || {}
+  const artifactsRecord = objectValue(values.run.artifacts) || {}
+  const execution = failedExecution(values.run)
+  const phase = failedPhase(values.run)
+  const errorRecord = objectValue(values.run.error) || serializeUnknownError(values.error)
+  const stdout = stringValue(execution?.stdout) || values.capture?.stdout || ""
+  const stderr = stringValue(execution?.stderr) || values.capture?.stderr || ""
+  const recipeRunEvidence = stripUndefined({
+    schema: stringValue(values.run.schema) || undefined,
+    recipe_path: values.recipePath,
+    status: stringValue(runRecord.status) || stringValue(values.run.status) || undefined,
+    run_id: stringValue(runRecord.runId) || undefined,
+  })
+  const runtimeEvidence = nonEmptyObject(stripUndefined({
+    id: stringValue(runtimeRecord.id) || undefined,
+    status: stringValue(runtimeRecord.status) || undefined,
+  }))
+
+  return stripUndefined({
+    schema: "wp-codebox/agent-task-run-failure-evidence/v1",
+    phase: stringValue(execution?.recipePhase) || stringValue(phase?.name) || "agent-task-run",
+    command: stringValue(execution?.recipeCommand) || stringValue(execution?.command) || "wp-codebox recipe-run --json",
+    exit_code: numberValue(execution?.exitCode) ?? values.capture?.exitCode ?? 1,
+    message: stringValue(errorRecord.message) || "WP Codebox agent task run failed.",
+    task: values.task,
+    recipe_run: recipeRunEvidence,
+    runtime: runtimeEvidence,
+    sandbox: stripUndefined({
+      sandbox_session_id: stringValue(values.input.sandbox_session_id) || undefined,
+      orchestrator: values.input.orchestrator,
+      artifacts_directory: values.artifacts,
+      artifact_bundle_id: stringValue(artifactsRecord.id) || stringValue(artifactsRecord.bundle_id) || stringValue(artifactsRecord.bundleId) || undefined,
+    }),
+    stdout: outputSnippet(stdout),
+    stderr: outputSnippet(stderr),
+    diagnostics: Array.isArray(values.run.diagnostics) ? values.run.diagnostics.filter((entry) => Boolean(objectValue(entry))) : undefined,
+    phase_evidence: Array.isArray(values.run.phaseEvidence) ? values.run.phaseEvidence.filter((entry) => Boolean(objectValue(entry))) : undefined,
+    error: Object.keys(errorRecord).length > 0 ? errorRecord : undefined,
+    wp: values.wpVersion,
+  })
+}
+
+function failedExecution(run: Record<string, unknown>): Record<string, unknown> | undefined {
+  const executions = Array.isArray(run.executions) ? run.executions.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
+  return [...executions].reverse().find((execution) => numberValue(execution.exitCode) !== undefined && numberValue(execution.exitCode) !== 0)
+}
+
+function failedPhase(run: Record<string, unknown>): Record<string, unknown> | undefined {
+  const phases = Array.isArray(run.phaseEvidence) ? run.phaseEvidence.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
+  return [...phases].reverse().find((phase) => stringValue(phase.status) === "failed")
+}
+
+function outputSnippet(value: string): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  const truncated = value.length > FAILURE_SNIPPET_CHARS
+  const snippet = truncated ? value.slice(-FAILURE_SNIPPET_CHARS) : value
+  return { bytes: Buffer.byteLength(value), truncated, value: snippet }
+}
+
+function failureEvidenceSummary(failureEvidence: Record<string, unknown>): Record<string, unknown> {
+  return stripUndefined({
+    schema: stringValue(failureEvidence.schema) || undefined,
+    phase: stringValue(failureEvidence.phase) || undefined,
+    command: stringValue(failureEvidence.command) || undefined,
+    exit_code: numberValue(failureEvidence.exit_code),
+    runtime: nonEmptyObject(objectValue(failureEvidence.runtime)),
+    sandbox: nonEmptyObject(objectValue(failureEvidence.sandbox)),
+  })
 }
 
 function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -497,4 +645,19 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 
 function stringValue(value: unknown): string {
   return value === undefined || value === null ? "" : String(value).trim()
+}
+
+function nonEmptyObject(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return value && Object.keys(value).length > 0 ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function serializeUnknownError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return stripUndefined({ name: error.name, message: error.message, stack: error.stack })
+  }
+  return { message: stringValue(error) || "Unknown WP Codebox agent task run failure." }
 }

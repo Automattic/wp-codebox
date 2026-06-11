@@ -17,6 +17,19 @@ const failed = normalizeAgentTaskRunResult({ success: false, status: "completed"
 assertEqual(failed.status, "failed", "completed failure normalizes to failed")
 assertEqual(failed.failure_classification, "runtime", "failed result classifies as runtime")
 
+const failedWithEvidence = normalizeAgentTaskRunResult({
+  success: false,
+  status: "failed",
+  failure_evidence: {
+    schema: "wp-codebox/agent-task-run-failure-evidence/v1",
+    phase: "run_workloads",
+    command: "workflow.main[0]:wp-codebox.agent-sandbox-run",
+    exit_code: 1,
+  },
+})
+assertEqual((failedWithEvidence.metadata.failure_evidence as Record<string, unknown>).phase, "run_workloads", "failure evidence is retained in normalized metadata")
+assertEqual((failedWithEvidence.metadata.failure_evidence as Record<string, unknown>).command, "workflow.main[0]:wp-codebox.agent-sandbox-run", "failure command evidence is retained in normalized metadata")
+
 const timeout = normalizeAgentTaskRunResult({ success: false, timeout: true })
 assertEqual(timeout.status, "timeout", "timeout flag normalizes to timeout")
 assertEqual(timeout.failure_classification, "timeout", "timeout result classifies as timeout")

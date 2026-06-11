@@ -1308,6 +1308,8 @@ Generic caller-owned `request.json` payloads may use this shape:
 
 WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
+Failed `agent-task-run` responses also include `failure_evidence` with `schema: "wp-codebox/agent-task-run-failure-evidence/v1"`. This block is intentionally safe for parent orchestrators to persist alongside their own task failure record. It includes the best available `phase`, `command`, `exit_code`, message, stdout/stderr snippets, runtime and sandbox identifiers, artifact directory or bundle identifiers, recipe-run status/run ID, diagnostics, phase evidence, and the serialized error. If recipe-run fails before normal runtime artifacts exist or returns malformed output, `agent-task-run` still emits this fallback evidence block in the CLI JSON payload and references it from `evidence_refs` with kind `codebox-agent-task-failure-evidence`.
+
 `runtime_overlay_profiles` is a convenience layer for reusable runtime stack examples. The raw primitives remain `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`; profiles only expand those fields before the private recipe is written.
 
 The built-in `codex-subscription` profile is an example of packaging a provider plugin plus a scoped bundled-library overlay for subscription-backed model access. It expands to:

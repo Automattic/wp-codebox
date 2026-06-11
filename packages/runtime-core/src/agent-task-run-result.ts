@@ -95,6 +95,7 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       confidence: stringValue(completionOutcome.confidence),
       provider_error: objectValue(result.provider_error),
       timeout: result.timeout === true ? true : undefined,
+      failure_evidence: objectValue(result.failure_evidence),
     }),
     no_op: noOp,
     failure_classification: failureClassification || undefined,

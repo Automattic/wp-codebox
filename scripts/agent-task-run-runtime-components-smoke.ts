@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle } from "@automattic/wp-codebox-core"
-import { buildAgentTaskRecipe } from "../packages/cli/src/commands/agent-task-run.js"
+import { buildAgentTaskRecipe, runAgentTask } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 import { buildAgentTaskSingleResult, finalizeAgentSandboxEvidence } from "../packages/cli/src/recipe-evidence.js"
@@ -48,7 +48,7 @@ const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts"
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
 const sandboxCode = agentSandboxRunCode("Run a bundle", "echo json_encode(array('ok' => true));", [])
 assert.ok(
-  agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode, success)"),
+  agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence)"),
   "successful normalized agent-bundle workloads should not keep stale recipe-run failure diagnostics",
 )
 assert.ok(
@@ -103,6 +103,23 @@ assert.equal(verifyRecipe.workflow.after?.[0]?.command, "wordpress.phpunit", "af
 // Without verify_steps, no after phase is emitted (back-compat with current runs).
 const noVerifyRecipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
 assert.equal(noVerifyRecipe.workflow.after, undefined, "no verify_steps should leave workflow.after unset")
+
+const failingOutput = await runAgentTask({
+  goal: "Fail before runtime startup so callers still receive evidence",
+  runtime_overlay_profiles: ["unknown-profile"],
+  sandbox_session_id: "sandbox-failure-smoke",
+  orchestrator: { agent_task_id: "agent-task-failure-smoke" },
+  artifacts_path: mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-failure-smoke-")),
+}, { inputPath: "", json: true, previewHoldSeconds: "", previewPublicUrl: "" })
+const failureEvidence = failingOutput.failure_evidence as Record<string, unknown>
+assert.equal(failingOutput.success, false, "failing agent-task-run should return a failed JSON payload")
+assert.equal(failingOutput.status, "failed", "failing agent-task-run status should be failed")
+assert.equal(failureEvidence?.schema, "wp-codebox/agent-task-run-failure-evidence/v1", "failure evidence schema should be stable")
+assert.equal(failureEvidence?.phase, "agent-task-run", "pre-runtime failures should still include a phase")
+assert.equal(failureEvidence?.command, "wp-codebox recipe-run --json", "pre-runtime failures should still include a command")
+assert.equal((failureEvidence?.sandbox as Record<string, unknown>)?.sandbox_session_id, "sandbox-failure-smoke", "failure evidence should include sandbox identifiers")
+assert.equal(Array.isArray(failingOutput.diagnostics) && failingOutput.diagnostics.length > 0, true, "failure diagnostics should be emitted")
+assert.equal(failingOutput.evidence_refs.some((ref) => ref.kind === "codebox-agent-task-failure-evidence"), true, "failure evidence ref should be emitted")
 
 const structuredInput = {
   goal: "Transform a concept packet into a design packet",
