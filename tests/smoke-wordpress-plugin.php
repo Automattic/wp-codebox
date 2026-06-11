@@ -421,6 +421,40 @@ $host_delegation_unavailable = call_user_func(
 );
 $assert( 'host delegation returns structured unavailable result without provider', ! is_wp_error( $host_delegation_unavailable ) && false === ( $host_delegation_unavailable['success'] ?? true ) && 'unavailable' === ( $host_delegation_unavailable['status'] ?? '' ) && 'wp_codebox_host_delegation_unavailable' === ( $host_delegation_unavailable['error']['code'] ?? '' ) && array( 'host-delegation.requested', 'host-delegation.unavailable' ) === array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $host_delegation_unavailable['events'] ?? array() ) );
 
+$prepare_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/prepare-runner-workspace'] ?? null;
+$assert( 'runner workspace prepare ability registered', is_array( $prepare_ability ) );
+$assert( 'runner workspace prepare ability is REST visible', true === ( $prepare_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace prepare ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-prepare-request/v1' === ( $prepare_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-prepare-result/v1' === ( $prepare_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'runner workspace prepare accepts checkout path and runner config', isset( $prepare_ability['input_schema']['properties']['checkout_path'] ) && isset( $prepare_ability['input_schema']['properties']['runner_workspace_config'] ) );
+$prepare_unavailable = call_user_func( $prepare_ability['execute_callback'], array( 'repo' => 'Automattic/wp-codebox', 'branch' => 'runner/docs' ) );
+$assert( 'runner workspace prepare returns typed unavailable without backend', ! is_wp_error( $prepare_unavailable ) && false === ( $prepare_unavailable['success'] ?? true ) && 'unavailable' === ( $prepare_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $prepare_unavailable['failure_type'] ?? '' ) );
+
+$dmc_prepare_show_ability     = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'name' => 'wp-codebox' ) );
+$dmc_prepare_clone_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true ) );
+$dmc_prepare_adopt_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true ) );
+$dmc_prepare_worktree_ability = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'handle' => 'wp-codebox@runner-docs', 'branch' => 'runner/docs', 'path' => '/runner/workspace/wp-codebox@runner-docs' ) );
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show']         = $dmc_prepare_show_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone']        = $dmc_prepare_clone_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-adopt']        = $dmc_prepare_adopt_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-worktree-add'] = $dmc_prepare_worktree_ability;
+$prepare_result = call_user_func(
+	$prepare_ability['execute_callback'],
+	array(
+		'repo'                    => 'Automattic/wp-codebox',
+		'checkout_path'           => '/runner/workspace/wp-codebox',
+		'github_token_env'        => '',
+		'runner_workspace_config' => array(
+			'branch'      => 'runner/docs',
+			'from'        => 'origin/main',
+			'allow_stale' => true,
+		),
+	)
+);
+$assert( 'runner workspace prepare adopts mounted checkout behind WP Codebox', '/runner/workspace/wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['path'] ?? '' ) && 'wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['name'] ?? '' ) );
+$assert( 'runner workspace prepare delegates DMC worktree creation', 'wp-codebox' === ( $dmc_prepare_worktree_ability->calls[0]['repo'] ?? '' ) && 'runner/docs' === ( $dmc_prepare_worktree_ability->calls[0]['branch'] ?? '' ) && 'origin/main' === ( $dmc_prepare_worktree_ability->calls[0]['from'] ?? '' ) && true === ( $dmc_prepare_worktree_ability->calls[0]['allow_stale'] ?? false ) );
+$assert( 'runner workspace prepare normalizes result and capabilities', ! is_wp_error( $prepare_result ) && true === ( $prepare_result['success'] ?? false ) && 'prepared' === ( $prepare_result['status'] ?? '' ) && 'datamachine-code' === ( $prepare_result['backend'] ?? '' ) && 'wp-codebox@runner-docs' === ( $prepare_result['handle'] ?? '' ) && true === ( $prepare_result['capabilities']['publish'] ?? false ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-adopt'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-worktree-add'] );
+
 $publication_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/publish-runner-workspace'] ?? null;
 $assert( 'runner workspace publication ability registered', is_array( $publication_ability ) );
 $assert( 'runner workspace publication ability is REST visible', true === ( $publication_ability['meta']['show_in_rest'] ?? false ) );
