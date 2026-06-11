@@ -650,21 +650,43 @@ function wp_codebox_bench_scenario_selected(string $scenario_id, array $selected
     return empty($selected_ids) || isset($selected_ids[$scenario_id]);
 }
 
+function wp_codebox_bench_configured_scenario_id(array $workload, int $index): string {
+    return isset($workload['id']) && is_string($workload['id']) ? $workload['id'] : 'configured-' . $index;
+}
+
+function wp_codebox_bench_configured_scenario_source(array $workload): string {
+    return isset($workload['source']) && is_string($workload['source']) && trim($workload['source']) !== '' ? trim($workload['source']) : 'config';
+}
+
+function wp_codebox_bench_configured_overrides_discovered(array $workload): bool {
+    return isset($workload['overridesDiscovered']) && $workload['overridesDiscovered'] === true;
+}
+
 $bench_dir = $plugin_path . '/tests/bench';
 $workload_files = is_dir($bench_dir) ? glob($bench_dir . '/*.php') : array();
 sort($workload_files, SORT_STRING);
 
 $selected_scenario_ids = is_array($selected_scenario_ids) ? wp_codebox_bench_selected_scenario_ids($selected_scenario_ids) : array();
+$configured_workloads = is_array($configured_workloads) ? $configured_workloads : array();
+$configured_override_scenario_ids = array();
+foreach ($configured_workloads as $index => $workload) {
+    if (!is_array($workload)) {
+        continue;
+    }
+    if (wp_codebox_bench_configured_overrides_discovered($workload)) {
+        $configured_override_scenario_ids[wp_codebox_bench_configured_scenario_id($workload, $index)] = true;
+    }
+}
 if (!empty($selected_scenario_ids)) {
     $available_scenario_ids = array();
     foreach ($workload_files as $workload_file) {
         $available_scenario_ids[preg_replace('/\\.php$/', '', basename($workload_file))] = true;
     }
-    foreach (is_array($configured_workloads) ? $configured_workloads : array() as $index => $workload) {
+    foreach ($configured_workloads as $index => $workload) {
         if (!is_array($workload)) {
             continue;
         }
-        $available_scenario_ids[isset($workload['id']) && is_string($workload['id']) ? $workload['id'] : 'configured-' . $index] = true;
+        $available_scenario_ids[wp_codebox_bench_configured_scenario_id($workload, $index)] = true;
     }
     if (empty(array_intersect_key($selected_scenario_ids, $available_scenario_ids))) {
         throw new RuntimeException('wordpress.bench selected scenario ids did not match any known scenarios. diagnostic=' . wp_json_encode(array(
@@ -686,6 +708,9 @@ $scenarios = array();
 foreach ($workload_files as $workload_file) {
     $scenario_id = preg_replace('/\\.php$/', '', basename($workload_file));
     if (!wp_codebox_bench_scenario_selected($scenario_id, $selected_scenario_ids)) {
+        continue;
+    }
+    if (isset($configured_override_scenario_ids[$scenario_id])) {
         continue;
     }
 
@@ -753,11 +778,11 @@ foreach ($workload_files as $workload_file) {
     $scenarios[] = $scenario;
 }
 
-foreach (is_array($configured_workloads) ? $configured_workloads : array() as $index => $workload) {
+foreach ($configured_workloads as $index => $workload) {
     if (!is_array($workload)) {
         continue;
     }
-    $scenario_id = isset($workload['id']) && is_string($workload['id']) ? $workload['id'] : 'configured-' . $index;
+    $scenario_id = wp_codebox_bench_configured_scenario_id($workload, $index);
     if (!wp_codebox_bench_scenario_selected($scenario_id, $selected_scenario_ids)) {
         continue;
     }
@@ -786,7 +811,7 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     }
     $scenario = array(
         'id' => $scenario_id,
-        'source' => 'config',
+        'source' => wp_codebox_bench_configured_scenario_source($workload),
         'iterations' => $iterations,
         'metrics' => wp_codebox_bench_metrics($timings, $metric_samples),
         'memory' => array('peak_bytes' => memory_get_peak_usage(true)),
