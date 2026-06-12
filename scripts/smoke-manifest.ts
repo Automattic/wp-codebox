@@ -46,6 +46,7 @@ export const smokeGroups = {
       tsxSmoke("task-input-contract-smoke"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
+      tsxSmoke("cli-unsettled-command-smoke"),
       tsxSmoke("agent-sandbox-code-smoke"),
       tsxSmoke("agent-runtime-failure-smoke"),
     ],
