@@ -7,10 +7,12 @@ import { resolve } from "node:path"
 
 const repoRoot = resolve(import.meta.dirname, "..")
 const workspace = await mkdtemp(`${tmpdir()}/wp-codebox-preview-plugin-asset-`)
-const port = await reserveFreePort()
-const publicHost = "preview-public.example.test"
-const publicUrl = `https://${publicHost}`
+const port = process.env.WP_CODEBOX_PREVIEW_PORT ? Number.parseInt(process.env.WP_CODEBOX_PREVIEW_PORT, 10) : await reserveFreePort()
+const publicUrl = process.env.WP_CODEBOX_PREVIEW_PUBLIC_URL || "https://preview-public.example.test"
+const publicHost = new URL(publicUrl).host
 const previewReadyTimeoutMs = 75_000
+
+assert.ok(Number.isInteger(port) && port > 0, "WP_CODEBOX_PREVIEW_PORT must be a positive integer")
 
 await writeFile(`${workspace}/simple-plugin.php`, "<?php\n/** Plugin Name: Preview Asset Smoke */\n")
 await writeFile(`${workspace}/probe.js`, "window.__wpCodeboxPreviewAssetSmoke = true;\n")
@@ -47,8 +49,11 @@ try {
   child.stderr.on("data", (chunk) => { stderr += chunk })
 
   try {
-    await assertMountedPluginAsset({ origin: `http://127.0.0.1:${port}`, host: publicHost })
-    await assertMountedPluginAsset({ origin: `http://[::1]:${port}`, host: publicHost })
+  await assertMountedPluginAsset({ origin: `http://127.0.0.1:${port}`, host: publicHost })
+  await assertMountedPluginAsset({ origin: `http://[::1]:${port}`, host: publicHost })
+  if (process.env.WP_CODEBOX_PREVIEW_PUBLIC_URL) {
+    await assertMountedPluginAsset({ origin: publicUrl.replace(/\/$/, ""), host: publicHost })
+  }
   } catch (error) {
     pendingError = error
   } finally {
