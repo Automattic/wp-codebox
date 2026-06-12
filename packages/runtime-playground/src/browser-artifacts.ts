@@ -73,7 +73,17 @@ export interface BrowserArtifactFiles {
   diffScreenshot?: string | string[]
   visualDiff?: string | string[]
   visualExplanation?: string | string[]
+  wordpressDiagnostics?: string
   summary: string
+}
+
+export interface BrowserWordPressDiagnosticsSummary {
+  status: "captured" | "clean" | "unavailable"
+  artifact?: string
+  document5xxResponses: number
+  diagnostics: number
+  fatalErrors: number
+  classifications: string[]
 }
 
 export interface BrowserArtifactSummary {
@@ -111,6 +121,7 @@ export interface BrowserArtifactSummary {
   performance?: BrowserProbePerformanceSummary
   progress?: BrowserProbeProgressSummary
   review?: BrowserProbeReviewSummary
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   context?: BrowserProbeContextDetails
   auth?: BrowserProbeAuthSummary
   capabilities?: BrowserProbeCapabilityDiagnostics
@@ -231,6 +242,7 @@ export interface BrowserProbeReviewSummary {
     probe: BrowserProbeIssueSummary
   }
   network: BrowserProbeNetworkReviewSummary
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   milestones: BrowserProbeMilestoneSummary
   artifacts: Record<string, BrowserProbeArtifactRef>
 }
@@ -785,6 +797,7 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       ...(probe.summary.assertions ? { assertions: { total: probe.summary.assertions.total, passed: probe.summary.assertions.passed, failed: probe.summary.assertions.failed } } : {}),
       performance: probe.files.performance,
       visualCompare: probe.summary.visualCompare,
+      wordpressDiagnostics: probe.summary.wordpressDiagnostics,
       summaryFile: probe.files.summary,
     })),
   }
@@ -837,6 +850,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
   visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
   visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },
+  wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
 }
 

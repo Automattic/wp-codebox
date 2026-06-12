@@ -136,8 +136,18 @@ export interface ArtifactReviewBrowserSummary {
       passed: number
       failed: number
     }
+    wordpressDiagnostics?: ArtifactReviewBrowserWordPressDiagnosticsSummary
     summaryFile?: string
   }>
+}
+
+export interface ArtifactReviewBrowserWordPressDiagnosticsSummary {
+  status: "captured" | "clean" | "unavailable"
+  artifact?: string
+  document5xxResponses: number
+  diagnostics: number
+  fatalErrors: number
+  classifications: string[]
 }
 
 export interface ArtifactReviewBrowserCapabilities {

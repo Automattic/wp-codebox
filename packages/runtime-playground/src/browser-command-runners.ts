@@ -5,7 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, vali
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
@@ -409,6 +409,7 @@ async function runSingleBrowserProbeCommand({
   const reviewPath = join(browserDirectory, "review.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
+  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
@@ -439,6 +440,7 @@ async function runSingleBrowserProbeCommand({
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
+  let wordpressDiagnosticsReady = false
 
   try {
     context = browserPreviewNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
@@ -478,13 +480,14 @@ async function runSingleBrowserProbeCommand({
     if (prePageScript) {
       await page.addInitScript(prePageScript)
     }
+    wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
     capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console") || capturesConsoleForAssertions,
       captureErrors: capture.has("errors") || capturesErrorsForAssertions,
-      captureNetwork: capture.has("network") || capturesNetworkForAssertions,
+      captureNetwork: true,
       consoleMessages,
       errors,
       network,
@@ -616,6 +619,17 @@ async function runSingleBrowserProbeCommand({
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
 
+    const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
+      artifactPath: `${browserFilesDirectory}/wordpress-diagnostics.json`,
+      network,
+      ready: wordpressDiagnosticsReady,
+      server,
+    })
+    if (wordpressDiagnostics) {
+      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+    }
+    const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
+
     const assertionPassed = assertionResults.filter((assertion) => assertion.passed).length
     const assertionFailed = assertionResults.filter((assertion) => !assertion.passed).length
     const advisoryFailed = assertionResults.filter((assertion) => !assertion.passed && assertion.advisory).length
@@ -646,6 +660,7 @@ async function runSingleBrowserProbeCommand({
         network: capture.has("network") || capturesNetworkForAssertions,
         performance: Boolean(performanceArtifact),
         screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
+        wordpressDiagnostics: Boolean(wordpressDiagnostics),
       }),
       finishedAt,
       network,
@@ -655,6 +670,7 @@ async function runSingleBrowserProbeCommand({
       totalDurationMs: Date.now() - startedAtMs,
       viewport,
       waitFor,
+      wordpressDiagnostics: wordpressDiagnosticsSummary,
     })
     await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
@@ -677,6 +693,7 @@ async function runSingleBrowserProbeCommand({
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
         review: `${browserFilesDirectory}/review.json`,
         ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
+        ...(wordpressDiagnostics ? { wordpressDiagnostics: `${browserFilesDirectory}/wordpress-diagnostics.json` } : {}),
         summary: `${browserFilesDirectory}/summary.json`,
       },
       summary: {
@@ -695,6 +712,7 @@ async function runSingleBrowserProbeCommand({
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
         review,
+        ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         context: contextDetails,
         auth: authSummary,
         capabilities: capabilityDiagnostics,
@@ -731,6 +749,7 @@ async function runSingleBrowserProbeCommand({
       auth: authSummary,
       capabilities: capabilityDiagnostics,
       review,
+      ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -978,6 +997,7 @@ function browserProbeReviewSummary(input: {
   totalDurationMs: number
   viewport: BrowserProbeViewport | null
   waitFor: string
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
 }): BrowserProbeReviewSummary {
   const performance = input.performanceArtifact?.final
   const paint = performance?.paint
@@ -1040,6 +1060,7 @@ function browserProbeReviewSummary(input: {
       probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
     },
     network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    ...(input.wordpressDiagnostics ? { wordpressDiagnostics: input.wordpressDiagnostics } : {}),
     milestones: {
       status: input.checkpoints.length > 0 ? "captured" : "not-captured",
       count: input.checkpoints.length,
@@ -1125,6 +1146,7 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
   network: boolean
   performance: boolean
   screenshot?: string
+  wordpressDiagnostics: boolean
 }): Record<string, BrowserProbeArtifactRef> {
   return {
     ...(input.console ? { console: { path: `${browserFilesDirectory}/console.jsonl`, kind: "jsonl" as const } } : {}),
@@ -1137,6 +1159,7 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
     ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
     review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
     ...(capture.has("screenshot") ? { screenshot: { path: `${browserFilesDirectory}/screenshot.png`, kind: "png" as const, ...(input.screenshot ? { sha256: input.screenshot } : {}) } } : {}),
+    ...(input.wordpressDiagnostics ? { wordpressDiagnostics: { path: `${browserFilesDirectory}/wordpress-diagnostics.json`, kind: "json" as const } } : {}),
     summary: { path: `${browserFilesDirectory}/summary.json`, kind: "json" as const },
   }
 }
@@ -1149,6 +1172,200 @@ function safeBrowserProbeUrl(value: string | undefined): string | null {
     return "data:[redacted]"
   }
   return value
+}
+
+interface BrowserWordPressDiagnosticRecord {
+  schema: "wp-codebox/browser-wordpress-diagnostic-record/v1"
+  classification: "php-fatal"
+  severity: "error"
+  errorType: number
+  message: string
+  file: string
+  line: number
+  capturedAt: string
+}
+
+interface BrowserWordPressDiagnosticsArtifact {
+  schema: "wp-codebox/browser-wordpress-diagnostics/v1"
+  version: 1
+  capturedAt: string
+  status: BrowserWordPressDiagnosticsSummary["status"]
+  document5xxResponses: Array<{ url: string; status: number; statusText?: string }>
+  diagnostics: BrowserWordPressDiagnosticRecord[]
+  summary: BrowserWordPressDiagnosticsSummary
+}
+
+const BROWSER_WORDPRESS_DIAGNOSTICS_LOG = "/wordpress/wp-content/wp-codebox-browser-diagnostics.jsonl"
+const BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN = "/wordpress/wp-content/mu-plugins/000-wp-codebox-browser-diagnostics.php"
+const BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN = `<?php
+/**
+ * Plugin Name: WP Codebox Browser Diagnostics
+ */
+
+if ( ! defined( 'WPINC' ) ) {
+    return;
+}
+
+register_shutdown_function(
+    static function (): void {
+        $error = error_get_last();
+        if ( ! is_array( $error ) ) {
+            return;
+        }
+
+        $fatal_types = array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR );
+        if ( ! in_array( $error['type'] ?? null, $fatal_types, true ) ) {
+            return;
+        }
+
+        $record = array(
+            'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+            'classification' => 'php-fatal',
+            'severity'       => 'error',
+            'errorType'      => (int) ( $error['type'] ?? 0 ),
+            'message'        => (string) ( $error['message'] ?? '' ),
+            'file'           => (string) ( $error['file'] ?? '' ),
+            'line'           => (int) ( $error['line'] ?? 0 ),
+            'capturedAt'     => gmdate( 'c' ),
+        );
+
+        file_put_contents( WP_CONTENT_DIR . '/wp-codebox-browser-diagnostics.jsonl', wp_json_encode( $record ) . "\n", FILE_APPEND | LOCK_EX );
+    }
+);
+`
+
+async function installBrowserWordPressDiagnostics(
+  runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined,
+  server: PlaygroundCliServer,
+): Promise<boolean> {
+  if (runPlaygroundCommand) {
+    try {
+      const response = await runPlaygroundCommand("wordpress.browser-diagnostics-setup", server, {
+        code: `<?php
+$directory = '/wordpress/wp-content/mu-plugins';
+if (!is_dir($directory)) {
+    mkdir($directory, 0777, true);
+}
+file_put_contents(${JSON.stringify(BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN)}, base64_decode(${JSON.stringify(Buffer.from(BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN, "utf8").toString("base64"))}));
+file_put_contents(${JSON.stringify(BROWSER_WORDPRESS_DIAGNOSTICS_LOG)}, '');
+`,
+      })
+      assertPlaygroundResponseOk("wordpress.browser-diagnostics-setup", response)
+      return true
+    } catch {
+      // Browser diagnostics are best-effort; preserve the browser command outcome.
+    }
+  }
+
+  if (!server.playground.writeFile) {
+    return false
+  }
+
+  try {
+    await server.playground.writeFile(BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN, BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN)
+    await server.playground.writeFile(BROWSER_WORDPRESS_DIAGNOSTICS_LOG, "")
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function browserWordPressDiagnosticsArtifact({
+  artifactPath,
+  network,
+  ready,
+  server,
+}: {
+  artifactPath: string
+  network: BrowserProbeNetworkRecord[]
+  ready: boolean
+  server: PlaygroundCliServer
+}): Promise<BrowserWordPressDiagnosticsArtifact | undefined> {
+  const document5xxResponses = network
+    .filter((record) => record.type === "response" && record.resourceType === "document" && typeof record.status === "number" && record.status >= 500 && record.status < 600)
+    .map((record) => ({
+      url: safeBrowserProbeUrl(record.url) ?? record.url,
+      status: record.status as number,
+      ...(record.statusText ? { statusText: record.statusText } : {}),
+    }))
+
+  if (document5xxResponses.length === 0) {
+    return undefined
+  }
+
+  const diagnostics = ready ? await readBrowserWordPressDiagnostics(server) : []
+  const fatalErrors = diagnostics.filter((diagnostic) => diagnostic.classification === "php-fatal").length
+  const classifications = [...new Set(diagnostics.map((diagnostic) => diagnostic.classification))].sort()
+  const status: BrowserWordPressDiagnosticsSummary["status"] = !ready
+    ? "unavailable"
+    : diagnostics.length > 0 ? "captured" : "clean"
+  const summary: BrowserWordPressDiagnosticsSummary = {
+    status,
+    artifact: artifactPath,
+    document5xxResponses: document5xxResponses.length,
+    diagnostics: diagnostics.length,
+    fatalErrors,
+    classifications,
+  }
+
+  return {
+    schema: "wp-codebox/browser-wordpress-diagnostics/v1",
+    version: 1,
+    capturedAt: now(),
+    status,
+    document5xxResponses,
+    diagnostics,
+    summary,
+  }
+}
+
+async function readBrowserWordPressDiagnostics(server: PlaygroundCliServer): Promise<BrowserWordPressDiagnosticRecord[]> {
+  if (!server.playground.readFileAsText) {
+    return []
+  }
+
+  let contents = ""
+  try {
+    contents = await server.playground.readFileAsText(BROWSER_WORDPRESS_DIAGNOSTICS_LOG)
+  } catch {
+    return []
+  }
+
+  return contents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(parseBrowserWordPressDiagnosticRecord)
+    .filter((record): record is BrowserWordPressDiagnosticRecord => Boolean(record))
+}
+
+function parseBrowserWordPressDiagnosticRecord(line: string): BrowserWordPressDiagnosticRecord | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined
+  }
+
+  const record = parsed as Record<string, unknown>
+  if (record.schema !== "wp-codebox/browser-wordpress-diagnostic-record/v1" || record.classification !== "php-fatal") {
+    return undefined
+  }
+
+  return {
+    schema: "wp-codebox/browser-wordpress-diagnostic-record/v1",
+    classification: "php-fatal",
+    severity: "error",
+    errorType: typeof record.errorType === "number" && Number.isFinite(record.errorType) ? record.errorType : 0,
+    message: typeof record.message === "string" ? record.message : "",
+    file: typeof record.file === "string" ? record.file : "",
+    line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
+    capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : now(),
+  }
 }
 
 export async function runHtmlCaptureCommand(input: {
@@ -1687,6 +1904,7 @@ export async function runBrowserActionsCommand({
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const domSnapshotPath = join(browserDirectory, "dom-snapshot.json")
   const summaryPath = join(browserDirectory, "action-summary.json")
+  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
   const browser = await launchChromiumBrowser()
@@ -1702,6 +1920,7 @@ export async function runBrowserActionsCommand({
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
+  let wordpressDiagnosticsReady = false
 
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
@@ -1715,11 +1934,12 @@ export async function runBrowserActionsCommand({
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
+    wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
       captureErrors: capture.has("errors"),
-      captureNetwork: capture.has("network"),
+      captureNetwork: true,
       consoleMessages,
       errors,
       network,
@@ -1830,6 +2050,17 @@ export async function runBrowserActionsCommand({
       await writeFile(networkPath, jsonLines(network))
     }
 
+    const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
+      artifactPath: "files/browser/wordpress-diagnostics.json",
+      network,
+      ready: wordpressDiagnosticsReady,
+      server,
+    })
+    if (wordpressDiagnostics) {
+      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+    }
+    const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
+
     const assertions = browserAssertionsSummary(stepRecords)
     artifact = {
       artifactType: "actions",
@@ -1846,6 +2077,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
+        ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
       summary: {
@@ -1859,6 +2091,7 @@ export async function runBrowserActionsCommand({
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         networkEvents: network.length,
+        ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         auth: authSummary,
@@ -1885,6 +2118,7 @@ export async function runBrowserActionsCommand({
       limits: {
         maxDomSnapshotElements,
       },
+      ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)

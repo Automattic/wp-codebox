@@ -208,6 +208,7 @@ export const smokeGroups = {
       tsxSmoke("browser-visual-compare-smoke"),
       tsxSmoke("browser-action-visual-compare-smoke"),
       tsxSmoke("browser-html-capture-smoke"),
+      tsxSmoke("browser-wordpress-500-diagnostics-smoke"),
       tsxSmoke("editor-canvas-probe-smoke"),
       tsxSmoke("editor-open-artifact-smoke"),
       tsxSmoke("editor-actions-artifact-smoke"),
