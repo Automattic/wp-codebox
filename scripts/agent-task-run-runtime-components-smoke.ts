@@ -168,6 +168,15 @@ const structuredTaskCode = await resolveSandboxTaskCode({
 })
 assert.ok(structuredTaskCode.includes("structured_artifacts"), "sandbox agent input should include structured artifact context")
 assert.ok(structuredTaskCode.includes("ConceptPacket"), "sandbox agent input should preserve structured artifact names")
+const providerRegistryClassReference = String.raw`\WordPress\AiClient\Providers\ProviderRegistry::class`
+assert.ok(
+  structuredTaskCode.includes(providerRegistryClassReference),
+  "generated sandbox PHP should preserve ProviderRegistry namespace separators",
+)
+assert.ok(
+  !structuredTaskCode.includes("WordPressAiClientProvidersProviderRegistry"),
+  "generated sandbox PHP should not flatten ProviderRegistry into an invalid class name",
+)
 
 const outputTaskResult = buildAgentTaskSingleResult({
   schema: "wp-codebox/agent-transcript/v1",
