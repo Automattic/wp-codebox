@@ -254,7 +254,17 @@ async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadin
     return { visibleElementCount, textLength }
   }, undefined, { timeout })
   const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number }
-  await target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await target.frame.evaluate(() => new Promise<void>((resolve) => {
+    let resolved = false
+    const finish = () => {
+      if (!resolved) {
+        resolved = true
+        resolve()
+      }
+    }
+    setTimeout(finish, 250)
+    requestAnimationFrame(() => requestAnimationFrame(finish))
+  }))
   return {
     mode: target.mode,
     ...(target.selector ? { selector: target.selector } : {}),
