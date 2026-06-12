@@ -386,12 +386,14 @@ async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOut
   const originalErrorWrite = process.stderr.write.bind(process.stderr)
   let stdout = ""
   let stderr = ""
-  ;(process.stdout.write as typeof process.stdout.write) = ((chunk: unknown, ...args: unknown[]) => {
-    stdout += String(chunk)
+  ;(process.stdout.write as typeof process.stdout.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stdout += typeof chunk === "string" ? chunk : chunk.toString()
+    callWriteCallback(encodingOrCallback, callback)
     return true
   }) as typeof process.stdout.write
-  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: unknown, ...args: unknown[]) => {
-    stderr += String(chunk)
+  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stderr += typeof chunk === "string" ? chunk : chunk.toString()
+    callWriteCallback(encodingOrCallback, callback)
     return true
   }) as typeof process.stderr.write
   try {
@@ -400,6 +402,14 @@ async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOut
   } finally {
     process.stdout.write = originalWrite
     process.stderr.write = originalErrorWrite
+  }
+}
+
+function callWriteCallback(encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): void {
+  if (typeof encodingOrCallback === "function") {
+    encodingOrCallback()
+  } else if (callback) {
+    callback()
   }
 }
 

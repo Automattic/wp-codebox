@@ -121,6 +121,17 @@ assert.equal((failureEvidence?.sandbox as Record<string, unknown>)?.sandbox_sess
 assert.equal(Array.isArray(failingOutput.diagnostics) && failingOutput.diagnostics.length > 0, true, "failure diagnostics should be emitted")
 assert.equal(failingOutput.evidence_refs.some((ref) => ref.kind === "codebox-agent-task-failure-evidence"), true, "failure evidence ref should be emitted")
 
+const semanticFailureOutput = await promiseMustSettle(runAgentTask({
+  goal: "Fail recipe validation and still settle",
+  dependency_overlays: [{ kind: "composer-package", package: "acme/missing", source: "/components/missing", consumer: "missing-consumer" }],
+  sandbox_session_id: "sandbox-semantic-failure-smoke",
+  artifacts_path: mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-semantic-failure-smoke-")),
+}, { inputPath: "", json: true, previewHoldSeconds: "", previewPublicUrl: "" }), 2_000)
+assert.equal(semanticFailureOutput.success, false, "recipe validation failures should return a failed agent-task payload")
+assert.equal(semanticFailureOutput.status, "failed", "recipe validation failures should report failed status")
+assert.equal(semanticFailureOutput.failure_evidence?.schema, "wp-codebox/agent-task-run-failure-evidence/v1", "recipe validation failures should include failure evidence")
+assert.equal(semanticFailureOutput.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.agent_task_run_failed"), true, "recipe validation failures should include agent-task diagnostics")
+
 const structuredInput = {
   goal: "Transform a concept packet into a design packet",
   provider: "openai",
@@ -306,3 +317,19 @@ assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)
 assert.equal(codexOverlays[0]?.strategy, "wordpress-scoped-bundle")
+
+async function promiseMustSettle<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Promise did not settle within ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
