@@ -95,6 +95,7 @@ export const smokeGroups = {
       tsxSmoke("runtime-snapshot-restore-smoke"),
       tsxSmoke("runtime-action-adapter-smoke"),
       tsxSmoke("rest-request-runtime-smoke"),
+      tsxSmoke("playground-command-errors-smoke"),
       tsxSmoke("runtime-reference-index-smoke"),
       tsxSmoke("core-phpunit-command-smoke"),
       tsxSmoke("theme-check-normalization-smoke"),

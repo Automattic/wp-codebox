@@ -23,7 +23,7 @@ export class PlaygroundCommandCrashError extends Error {
   readonly code = "wp-codebox-playground-command-crashed"
 
   constructor(readonly command: string, readonly cause: unknown) {
-    super(`${command} crashed before producing a structured response\n\n${errorMessage(cause)}`)
+    super(playgroundCrashMessage(command, cause))
     this.name = "PlaygroundCommandCrashError"
   }
 }
@@ -99,6 +99,95 @@ function playgroundFailureMessage(command: string, response: PlaygroundRunRespon
   }
 
   return lines.join("\n")
+}
+
+function playgroundCrashMessage(command: string, cause: unknown): string {
+  const lines = [`${command} crashed before producing a structured response`, "", errorMessage(cause)]
+  const diagnostics = playgroundCrashDiagnostics(cause)
+
+  if (diagnostics.length > 0) {
+    lines.push("", "--- Playground crash diagnostics ---", ...diagnostics)
+  }
+
+  return lines.join("\n")
+}
+
+function playgroundCrashDiagnostics(cause: unknown): string[] {
+  const records = diagnosticRecords(cause)
+  const metadata: string[] = []
+  const sections: string[] = []
+  const seenSections = new Set<string>()
+
+  for (const record of records) {
+    for (const [key, label] of [
+      ["httpStatusCode", "httpStatusCode"],
+      ["statusCode", "statusCode"],
+      ["status", "status"],
+      ["exitCode", "exitCode"],
+    ] as const) {
+      const value = record[key]
+      if ((typeof value === "number" || typeof value === "string") && !metadata.includes(`${label}=${value}`)) {
+        metadata.push(`${label}=${value}`)
+      }
+    }
+
+    for (const [key, label] of [
+      ["stderr", "Playground stderr"],
+      ["stdout", "Playground stdout"],
+      ["errors", "Playground errors"],
+      ["body", "Playground response body"],
+      ["text", "Playground response text"],
+      ["output", "Playground output"],
+    ] as const) {
+      const value = diagnosticText(record[key])
+      const sectionKey = `${label}\n${value}`
+      if (value && !seenSections.has(sectionKey)) {
+        sections.push(`--- ${label} ---`, value)
+        seenSections.add(sectionKey)
+      }
+    }
+  }
+
+  return [...metadata, ...sections]
+}
+
+function diagnosticRecords(value: unknown, seen = new Set<unknown>()): Record<string, unknown>[] {
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return []
+  }
+  seen.add(value)
+
+  const record = value as Record<string, unknown>
+  return [
+    record,
+    ...["cause", "response", "result", "data", "output"].flatMap((key) => diagnosticRecords(record[key], seen)),
+  ]
+}
+
+function diagnosticText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return truncateDiagnostic(value.trim())
+  }
+  if (value instanceof Uint8Array) {
+    return truncateDiagnostic(new TextDecoder().decode(value).trim())
+  }
+  if (!value || typeof value !== "object" || typeof value === "function") {
+    return undefined
+  }
+
+  try {
+    return truncateDiagnostic(JSON.stringify(value, null, 2))
+  } catch {
+    return undefined
+  }
+}
+
+function truncateDiagnostic(value: string): string | undefined {
+  if (!value) {
+    return undefined
+  }
+  const maxLength = 20_000
+  return value.length > maxLength ? `${value.slice(0, maxLength)}\n[diagnostic truncated]` : value
 }
 
 function playgroundCliExitMessage(exitCode: number, output: PlaygroundCliBufferedOutput | undefined): string {
