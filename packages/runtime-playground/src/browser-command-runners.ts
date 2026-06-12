@@ -4871,6 +4871,10 @@ if ( ! $user ) {
 }
 wp_set_current_user( $user_id );
 $expiration = time() + HOUR_IN_SECONDS;
+$token = '';
+if ( class_exists( 'WP_Session_Tokens' ) ) {
+    $token = WP_Session_Tokens::get_instance( $user_id )->create( $expiration );
+}
 $browser_urls = ${JSON.stringify(browserUrls)};
 $cookies = array();
 foreach ( $browser_urls as $browser_url ) {
@@ -4879,20 +4883,21 @@ foreach ( $browser_urls as $browser_url ) {
         continue;
     }
     $secure = 'https' === wp_parse_url( $browser_url, PHP_URL_SCHEME );
-    $auth_scheme = $secure ? 'secure_auth' : 'auth';
-    $cookies[] = array(
-        'name'     => $secure ? SECURE_AUTH_COOKIE : AUTH_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, $auth_scheme ),
-        'domain'   => $browser_host,
-        'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
-        'expires'  => $expiration,
-        'httpOnly' => true,
-        'secure'   => $secure,
-        'sameSite' => 'Lax',
-    );
+    foreach ( array( array( AUTH_COOKIE, 'auth', false ), array( SECURE_AUTH_COOKIE, 'secure_auth', true ) ) as $admin_cookie ) {
+        $cookies[] = array(
+            'name'     => $admin_cookie[0],
+            'value'    => wp_generate_auth_cookie( $user_id, $expiration, $admin_cookie[1], $token ),
+            'domain'   => $browser_host,
+            'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
+            'expires'  => $expiration,
+            'httpOnly' => true,
+            'secure'   => $admin_cookie[2],
+            'sameSite' => 'Lax',
+        );
+    }
     $logged_in_cookie = array(
         'name'     => LOGGED_IN_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
+        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in', $token ),
         'domain'   => $browser_host,
         'path'     => defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/',
         'expires'  => $expiration,
