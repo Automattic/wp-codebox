@@ -768,6 +768,9 @@ export interface BrowserProbeNetworkRecord {
   bodySize?: number
   requestBodySize?: number
   responseBodySize?: number
+  responseTextPreview?: string
+  responseTextSha256?: string
+  responseTextTruncated?: boolean
   failure?: ReturnType<Request["failure"]>
 }
 

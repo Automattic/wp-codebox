@@ -1367,12 +1367,16 @@ function sanitizeBrowserRedirectMessage(message: string): string {
 
 interface BrowserWordPressDiagnosticRecord {
   schema: "wp-codebox/browser-wordpress-diagnostic-record/v1"
-  classification: "php-fatal"
+  classification: "php-fatal" | "http-5xx-status" | "http-response-code-5xx"
   severity: "error"
-  errorType: number
+  errorType?: number
   message: string
-  file: string
-  line: number
+  file?: string
+  line?: number
+  status?: number
+  statusHeader?: string
+  requestUri?: string
+  backtrace?: Array<{ file?: string; line?: number; function?: string; class?: string; type?: string }>
   capturedAt: string
 }
 
@@ -1381,7 +1385,7 @@ interface BrowserWordPressDiagnosticsArtifact {
   version: 1
   capturedAt: string
   status: BrowserWordPressDiagnosticsSummary["status"]
-  document5xxResponses: Array<{ url: string; status: number; statusText?: string }>
+  document5xxResponses: Array<{ url: string; status: number; statusText?: string; responseTextPreview?: string; responseTextSha256?: string; responseTextTruncated?: boolean }>
   diagnostics: BrowserWordPressDiagnosticRecord[]
   summary: BrowserWordPressDiagnosticsSummary
 }
@@ -1397,30 +1401,90 @@ if ( ! defined( 'WPINC' ) ) {
     return;
 }
 
+function wp_codebox_browser_diagnostics_write( array $record ): void {
+    file_put_contents( WP_CONTENT_DIR . '/wp-codebox-browser-diagnostics.jsonl', wp_json_encode( $record ) . "\n", FILE_APPEND | LOCK_EX );
+}
+
+function wp_codebox_browser_diagnostics_backtrace(): array {
+    $frames = debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 12 );
+    $frames = array_slice( $frames, 2 );
+
+    return array_map(
+        static function ( array $frame ): array {
+            return array_filter(
+                array(
+                    'file'     => isset( $frame['file'] ) ? (string) $frame['file'] : null,
+                    'line'     => isset( $frame['line'] ) ? (int) $frame['line'] : null,
+                    'function' => isset( $frame['function'] ) ? (string) $frame['function'] : null,
+                    'class'    => isset( $frame['class'] ) ? (string) $frame['class'] : null,
+                    'type'     => isset( $frame['type'] ) ? (string) $frame['type'] : null,
+                ),
+                static fn ( $value ) => null !== $value && '' !== $value
+            );
+        },
+        $frames
+    );
+}
+
+add_filter(
+    'status_header',
+    static function ( string $status_header, int $code ): string {
+        if ( $code >= 500 && $code < 600 ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'http-5xx-status',
+                    'severity'       => 'error',
+                    'status'         => $code,
+                    'statusHeader'   => $status_header,
+                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+                    'message'        => 'WordPress emitted a 5xx status header during browser navigation.',
+                    'backtrace'      => wp_codebox_browser_diagnostics_backtrace(),
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
+        }
+
+        return $status_header;
+    },
+    10,
+    2
+);
+
 register_shutdown_function(
     static function (): void {
         $error = error_get_last();
-        if ( ! is_array( $error ) ) {
-            return;
-        }
-
         $fatal_types = array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR );
-        if ( ! in_array( $error['type'] ?? null, $fatal_types, true ) ) {
+        if ( is_array( $error ) && in_array( $error['type'] ?? null, $fatal_types, true ) ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'php-fatal',
+                    'severity'       => 'error',
+                    'errorType'      => (int) ( $error['type'] ?? 0 ),
+                    'message'        => (string) ( $error['message'] ?? '' ),
+                    'file'           => (string) ( $error['file'] ?? '' ),
+                    'line'           => (int) ( $error['line'] ?? 0 ),
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
             return;
         }
 
-        $record = array(
-            'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
-            'classification' => 'php-fatal',
-            'severity'       => 'error',
-            'errorType'      => (int) ( $error['type'] ?? 0 ),
-            'message'        => (string) ( $error['message'] ?? '' ),
-            'file'           => (string) ( $error['file'] ?? '' ),
-            'line'           => (int) ( $error['line'] ?? 0 ),
-            'capturedAt'     => gmdate( 'c' ),
-        );
-
-        file_put_contents( WP_CONTENT_DIR . '/wp-codebox-browser-diagnostics.jsonl', wp_json_encode( $record ) . "\n", FILE_APPEND | LOCK_EX );
+        $status = http_response_code();
+        if ( is_int( $status ) && $status >= 500 && $status < 600 ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'http-response-code-5xx',
+                    'severity'       => 'error',
+                    'status'         => $status,
+                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+                    'message'        => 'Browser navigation finished with a 5xx HTTP response code and no PHP fatal.',
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
+        }
     }
 );
 `
@@ -1475,9 +1539,12 @@ async function browserWordPressDiagnosticsArtifact({
   const document5xxResponses = network
     .filter((record) => record.type === "response" && record.resourceType === "document" && typeof record.status === "number" && record.status >= 500 && record.status < 600)
     .map((record) => ({
-      url: safeBrowserProbeUrl(record.url) ?? record.url,
+      url: browserRedirectSafeUrl(safeBrowserProbeUrl(record.url) ?? record.url),
       status: record.status as number,
       ...(record.statusText ? { statusText: record.statusText } : {}),
+      ...(record.responseTextPreview ? { responseTextPreview: record.responseTextPreview } : {}),
+      ...(record.responseTextSha256 ? { responseTextSha256: record.responseTextSha256 } : {}),
+      ...(typeof record.responseTextTruncated === "boolean" ? { responseTextTruncated: record.responseTextTruncated } : {}),
     }))
 
   if (document5xxResponses.length === 0) {
@@ -1543,20 +1610,64 @@ function parseBrowserWordPressDiagnosticRecord(line: string): BrowserWordPressDi
   }
 
   const record = parsed as Record<string, unknown>
-  if (record.schema !== "wp-codebox/browser-wordpress-diagnostic-record/v1" || record.classification !== "php-fatal") {
+  if (record.schema !== "wp-codebox/browser-wordpress-diagnostic-record/v1" || !isBrowserWordPressDiagnosticClassification(record.classification)) {
     return undefined
   }
 
+  const classification = record.classification
+
   return {
     schema: "wp-codebox/browser-wordpress-diagnostic-record/v1",
-    classification: "php-fatal",
+    classification,
     severity: "error",
-    errorType: typeof record.errorType === "number" && Number.isFinite(record.errorType) ? record.errorType : 0,
-    message: typeof record.message === "string" ? record.message : "",
-    file: typeof record.file === "string" ? record.file : "",
-    line: typeof record.line === "number" && Number.isFinite(record.line) ? record.line : 0,
+    ...(typeof record.errorType === "number" && Number.isFinite(record.errorType) ? { errorType: record.errorType } : {}),
+    message: sanitizeBrowserWordPressDiagnosticString(typeof record.message === "string" ? record.message : ""),
+    ...(typeof record.file === "string" && record.file.length > 0 ? { file: sanitizeBrowserWordPressDiagnosticString(record.file) } : {}),
+    ...(typeof record.line === "number" && Number.isFinite(record.line) ? { line: record.line } : {}),
+    ...(typeof record.status === "number" && Number.isFinite(record.status) ? { status: record.status } : {}),
+    ...(typeof record.statusHeader === "string" && record.statusHeader.length > 0 ? { statusHeader: sanitizeBrowserWordPressDiagnosticString(record.statusHeader) } : {}),
+    ...(typeof record.requestUri === "string" && record.requestUri.length > 0 ? { requestUri: sanitizeBrowserWordPressDiagnosticRequestUri(record.requestUri) } : {}),
+    ...(Array.isArray(record.backtrace) ? { backtrace: sanitizeBrowserWordPressDiagnosticBacktrace(record.backtrace) } : {}),
     capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : now(),
   }
+}
+
+function isBrowserWordPressDiagnosticClassification(value: unknown): value is BrowserWordPressDiagnosticRecord["classification"] {
+  return value === "php-fatal" || value === "http-5xx-status" || value === "http-response-code-5xx"
+}
+
+function sanitizeBrowserWordPressDiagnosticString(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => browserRedirectSafeUrl(url))
+    .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, "$1=[redacted]")
+    .replace(/((?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)["'\s:=]+)[^\s"'<>]+/gi, "$1[redacted]")
+}
+
+function sanitizeBrowserWordPressDiagnosticRequestUri(value: string): string {
+  try {
+    const parsed = new URL(value, "http://wp-codebox.local")
+    const queryKeys = [...new Set([...parsed.searchParams.keys()])].sort()
+    const query = queryKeys.length > 0 ? `?${queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}` : ""
+    return `${parsed.pathname || "/"}${query}${parsed.hash ? "#[redacted]" : ""}`
+  } catch {
+    return sanitizeBrowserWordPressDiagnosticString(value)
+  }
+}
+
+function sanitizeBrowserWordPressDiagnosticBacktrace(value: unknown[]): BrowserWordPressDiagnosticRecord["backtrace"] {
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return []
+    }
+    const frame = entry as Record<string, unknown>
+    return [{
+      ...(typeof frame.file === "string" && frame.file.length > 0 ? { file: sanitizeBrowserWordPressDiagnosticString(frame.file) } : {}),
+      ...(typeof frame.line === "number" && Number.isFinite(frame.line) ? { line: frame.line } : {}),
+      ...(typeof frame.function === "string" && frame.function.length > 0 ? { function: sanitizeBrowserWordPressDiagnosticString(frame.function) } : {}),
+      ...(typeof frame.class === "string" && frame.class.length > 0 ? { class: sanitizeBrowserWordPressDiagnosticString(frame.class) } : {}),
+      ...(typeof frame.type === "string" && frame.type.length > 0 ? { type: sanitizeBrowserWordPressDiagnosticString(frame.type) } : {}),
+    }]
+  }).slice(0, 12)
 }
 
 export async function runHtmlCaptureCommand(input: {
