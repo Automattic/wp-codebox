@@ -656,10 +656,10 @@ export function serializeCapturedMountFiles(captured: CapturedMountFiles): Captu
   }
 }
 
-export async function directoryDiff(baselineDirectory: string, currentDirectory: string, targetPrefix: string): Promise<DirectoryDiffResult> {
+export async function directoryDiff(baselineDirectory: string, currentDirectory: string, targetPrefix: string, excludePaths: string[] = []): Promise<DirectoryDiffResult> {
   const [baselineFiles, currentFiles] = await Promise.all([
-    listTextFiles(baselineDirectory),
-    listTextFiles(currentDirectory),
+    listTextFiles(baselineDirectory, "", excludePaths),
+    listTextFiles(currentDirectory, "", excludePaths),
   ])
   const paths = [...new Set([...baselineFiles.keys(), ...currentFiles.keys()])].sort()
   const patches: string[] = []
@@ -723,7 +723,7 @@ export async function isGitWorkTree(directory: string): Promise<boolean> {
  * redaction, and digests stay identical across both diff strategies. Untracked
  * files appear as additions because they are absent from the HEAD archive.
  */
-export async function gitWorkingTreeDiff(repoDirectory: string, targetPrefix: string): Promise<DirectoryDiffResult> {
+export async function gitWorkingTreeDiff(repoDirectory: string, targetPrefix: string, excludePaths: string[] = []): Promise<DirectoryDiffResult> {
   const headDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-git-head-"))
   try {
     let hasHead = true
@@ -745,13 +745,13 @@ export async function gitWorkingTreeDiff(repoDirectory: string, targetPrefix: st
       await rm(archivePath, { force: true })
     }
 
-    return await directoryDiff(headDirectory, repoDirectory, targetPrefix)
+    return await directoryDiff(headDirectory, repoDirectory, targetPrefix, excludePaths)
   } finally {
     await rm(headDirectory, { recursive: true, force: true })
   }
 }
 
-async function listTextFiles(directory: string, prefix = ""): Promise<Map<string, string>> {
+async function listTextFiles(directory: string, prefix = "", excludePaths: string[] = []): Promise<Map<string, string>> {
   const files = new Map<string, string>()
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
@@ -759,9 +759,12 @@ async function listTextFiles(directory: string, prefix = ""): Promise<Map<string
     }
 
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (relativePathExcluded(relativePath, excludePaths)) {
+      continue
+    }
     const fullPath = join(directory, entry.name)
     if (entry.isDirectory()) {
-      for (const [path, contents] of await listTextFiles(fullPath, relativePath)) {
+      for (const [path, contents] of await listTextFiles(fullPath, relativePath, excludePaths)) {
         files.set(path, contents)
       }
       continue
@@ -779,6 +782,25 @@ async function listTextFiles(directory: string, prefix = ""): Promise<Map<string
   }
 
   return files
+}
+
+function relativePathExcluded(relativePath: string, excludePaths: string[]): boolean {
+  const normalized = relativePath.replace(/^\/+/, "")
+  return excludePaths.some((pattern) => excludePathMatches(normalized, pattern))
+}
+
+function excludePathMatches(relativePath: string, pattern: string): boolean {
+  const normalizedPattern = pattern.trim().replace(/^\/+/, "").replace(/\/+$/, "")
+  if (!normalizedPattern) {
+    return false
+  }
+
+  if (normalizedPattern.endsWith("/**")) {
+    const prefix = normalizedPattern.slice(0, -3).replace(/\/+$/, "")
+    return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
+  }
+
+  return relativePath === normalizedPattern || relativePath.startsWith(`${normalizedPattern}/`)
 }
 
 function provenanceContext(context: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
