@@ -812,7 +812,7 @@ function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Browse
     script: argValue(args, "script"),
     authRequest: browserAuthRequest(args),
     failFast: strictBooleanArg(args, "fail-fast", false),
-    stallTimeoutMs: durationArg(args, "stall-timeout", 60_000),
+    stallTimeoutMs: durationArg(args, "stall-timeout", 240_000),
     lifecycleSelectors: commaListArg(args, "observe"),
     assertions: browserProbeAssertionsFromArgs(args),
   }
