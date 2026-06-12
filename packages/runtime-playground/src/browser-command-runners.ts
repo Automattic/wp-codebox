@@ -812,7 +812,7 @@ function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Browse
     script: argValue(args, "script"),
     authRequest: browserAuthRequest(args),
     failFast: strictBooleanArg(args, "fail-fast", false),
-    stallTimeoutMs: durationArg(args, "stall-timeout", 0),
+    stallTimeoutMs: durationArg(args, "stall-timeout", 60_000),
     lifecycleSelectors: commaListArg(args, "observe"),
     assertions: browserProbeAssertionsFromArgs(args),
   }
@@ -4890,6 +4890,11 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
       new Promise<T>((_resolve, reject) => {
         interval = setInterval(() => {
           void (async () => {
+            if (stallTimeoutMs > 0 && progress.lastProgressElapsedMs() >= stallTimeoutMs) {
+              const summary = progress.summary()
+              reject(new BrowserProbeStallError(summary.idleMs, stallTimeoutMs, summary.lastProgressSource))
+              return
+            }
             try {
               const state = await page.evaluate(() => {
                 const probe = (globalThis as typeof globalThis & {
@@ -4918,10 +4923,6 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
                 progress.terminalFailure(state.terminalFailure)
                 reject(new BrowserProbeTerminalFailureError(state.terminalFailure))
                 return
-              }
-              if (stallTimeoutMs > 0 && progress.lastProgressElapsedMs() >= stallTimeoutMs) {
-                const summary = progress.summary()
-                reject(new BrowserProbeStallError(summary.idleMs, stallTimeoutMs, summary.lastProgressSource))
               }
             } catch {
               // The page may be navigating or already closed; the outer operation remains authoritative.
