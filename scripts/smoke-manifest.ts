@@ -204,6 +204,7 @@ export const smokeGroups = {
       tsxSmoke("browser-lifecycle-observer-smoke"),
       tsxSmoke("browser-probe-pre-page-script-smoke"),
       tsxSmoke("browser-actions-artifact-smoke"),
+      tsxSmoke("browser-actions-frame-screenshot-fallback-smoke"),
       tsxSmoke("browser-actions-painted-readiness-smoke"),
       tsxSmoke("browser-scenario-artifact-smoke"),
       tsxSmoke("browser-visual-compare-smoke"),

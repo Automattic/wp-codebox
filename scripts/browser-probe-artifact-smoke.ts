@@ -80,6 +80,7 @@ const screenshotPath = join(artifactDirectory, "files", "browser", "screenshot.p
 const summaryPath = join(artifactDirectory, "files", "browser", "summary.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
 const reviewPath = join(artifactDirectory, "files", "review.json")
+const runtimeEventsPath = join(artifactDirectory, "events.jsonl")
 
 assert.equal(existsSync(consolePath), true, "console.jsonl should be captured")
 assert.equal(existsSync(checkpointsPath), true, "checkpoints.jsonl should be captured")
@@ -97,6 +98,7 @@ const errorLog = await readFile(errorsPath, "utf8")
 const htmlSnapshot = await readFile(htmlPath, "utf8")
 const networkLog = await readFile(networkPath, "utf8")
 const checkpointsLog = await readFile(checkpointsPath, "utf8")
+const runtimeEventsLog = await readFile(runtimeEventsPath, "utf8")
 assert.match(consoleLog, /wp-codebox fixture console error/)
 assert.match(consoleLog, /wp-codebox fixture browser script/)
 assert.match(errorLog, /wp-codebox fixture browser error/)
@@ -104,6 +106,9 @@ assert.match(htmlSnapshot, /Browser Error Fixture|wp-codebox fixture console err
 assert.match(networkLog, /"type":"response"/)
 assert.match(checkpointsLog, /"schema":"wp-codebox\/browser-checkpoint\/v1"/)
 assert.match(checkpointsLog, /"name":"fixture-before-return"/)
+assert.match(runtimeEventsLog, /"type":"runtime\.browser-command-progress"/)
+assert.match(runtimeEventsLog, /"name":"fixture-before-return"/)
+assert.match(runtimeEventsLog, /"lastCheckpoint":\{"name":"fixture-before-return"/)
 
 const networkEvents = networkLog.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) as Array<{
   type: string

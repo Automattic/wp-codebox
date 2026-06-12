@@ -181,7 +181,7 @@ export interface BrowserEditorCanvasProbeSummary {
 }
 
 export interface BrowserEditorCanvasProbeDiagnostic {
-  code: "iframe-missing" | "layout-missing" | "no-blocks" | "loading-state" | "timeout" | "screenshot-failed"
+  code: "iframe-missing" | "layout-missing" | "no-blocks" | "loading-state" | "timeout" | "screenshot-failed" | "screenshot-fallback"
   severity: "error" | "warning" | "info"
   message: string
   details?: Record<string, unknown>
@@ -692,8 +692,14 @@ export interface BrowserStepRecord {
   readiness?: BrowserStepReadiness
   target?: BrowserStepScreenshotTarget
   screenshot?: string
+  screenshotFallback?: BrowserStepScreenshotFallback
   finalUrl?: string
   error?: BrowserProbeErrorRecord
+}
+
+export interface BrowserStepScreenshotFallback {
+  mode: "page-screenshot"
+  reason: string
 }
 
 export interface BrowserStepScreenshotTarget {

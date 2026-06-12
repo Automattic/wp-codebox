@@ -437,7 +437,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
     try {
-      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -474,7 +474,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserActionsCommand>>
     try {
-      result = await runBrowserActionsCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+      result = await runBrowserActionsCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)

@@ -73,6 +73,19 @@ interface BrowserRunPlan {
   actions?: BrowserActionsRunPlan
 }
 
+interface BrowserCommandProgressEvent {
+  command: string
+  phase: "checkpoint"
+  checkpoint: BrowserProbeScriptCheckpoint
+  progress: ReturnType<ReturnType<typeof createBrowserProbeProgressTracker>["summary"]>
+}
+
+interface BrowserProbeScriptCheckpoint {
+  name: string
+  metadata?: unknown
+  timestamp: string
+}
+
 interface VisualCompareDomElementSnapshot {
   path: string
   tag: string
@@ -258,6 +271,7 @@ export async function runBrowserProbeCommand({
   runPlaygroundCommand,
   server,
   spec,
+  onProgress,
 }: {
   artifactRoot: string
   command?: string
@@ -266,9 +280,10 @@ export async function runBrowserProbeCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   if (plan) {
-    return runSingleBrowserProbeCommand({ artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
+    return runSingleBrowserProbeCommand({ artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profileIds = browserProbeProfileIds(spec.args ?? [])
@@ -288,9 +303,10 @@ export async function runBrowserProbeCommand({
         spec: { ...spec, args: browserProbeProfileArgs(spec.args ?? [], profile) },
         browserFilesDirectory: "files/browser",
         profileId: profile.id,
+        onProgress,
       })
     }
-    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
+    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
@@ -315,6 +331,7 @@ export async function runBrowserProbeCommand({
       },
       browserFilesDirectory: `files/browser/${profile.id}`,
       profileId: profile.id,
+      onProgress,
     })
     artifacts.push(result.artifact)
     outputs.push(JSON.parse(result.output))
@@ -346,6 +363,7 @@ async function runSingleBrowserProbeCommand({
   spec,
   browserFilesDirectory,
   profileId,
+  onProgress,
 }: {
   artifactRoot: string
   command: string
@@ -356,6 +374,7 @@ async function runSingleBrowserProbeCommand({
   spec: ExecutionSpec
   browserFilesDirectory: string
   profileId?: string
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? browserProbeRunPlanFromArgs(args, profileId)
@@ -464,6 +483,16 @@ async function runSingleBrowserProbeCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
     }
     page = context ? await context.newPage() : await browser.newPage()
+    if (onProgress) {
+      await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
+        const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
+        if (!normalized) {
+          return
+        }
+        progress.mark("checkpoint", normalized.timestamp, normalized)
+        onProgress({ command, phase: "checkpoint", checkpoint: normalized, progress: progress.summary() })
+      })
+    }
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
@@ -1667,7 +1696,16 @@ export async function runEditorCanvasProbeCommand({
 
     if (probe.ready && capture.has("screenshot")) {
       try {
-        await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+        try {
+          await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+        } catch (error) {
+          probe.summary.diagnostics.push({
+            code: "screenshot-fallback",
+            severity: "warning",
+            message: `Frame screenshot was unstable; captured full page fallback instead: ${error instanceof Error ? error.message : String(error)}`,
+          })
+          await probe.frame.page().screenshot({ path: screenshotPath, fullPage: true })
+        }
         screenshotSha256 = await fileSha256(screenshotPath)
       } catch (error) {
         probe.summary.diagnostics.push({
@@ -2037,6 +2075,7 @@ export async function runBrowserActionsCommand({
   runPlaygroundCommand,
   server,
   spec,
+  onProgress,
 }: {
   artifactRoot: string
   plan?: BrowserActionsRunPlan
@@ -2044,6 +2083,7 @@ export async function runBrowserActionsCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? await browserActionsRunPlanFromArgs(args)
@@ -2100,6 +2140,7 @@ export async function runBrowserActionsCommand({
   const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
+  const progress = createBrowserProbeProgressTracker(startedAt, 0)
   const browser = await launchChromiumBrowser()
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
   const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
@@ -2121,6 +2162,17 @@ export async function runBrowserActionsCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
+    if (onProgress) {
+      await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
+        const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
+        if (!normalized) {
+          return
+        }
+        progress.mark("checkpoint", normalized.timestamp, normalized)
+        onProgress({ command: "wordpress.browser-actions", phase: "checkpoint", checkpoint: normalized, progress: progress.summary() })
+      })
+    }
+    await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
@@ -5188,14 +5240,14 @@ class BrowserProbeTerminalFailureError extends Error {
 class BrowserProbeStallError extends Error {
   readonly code = "browser-probe-stalled"
 
-  constructor(readonly idleMs: number, readonly stallTimeoutMs: number, readonly lastProgressSource: BrowserProbeProgressSource) {
-    super(`Browser probe stalled after ${idleMs}ms without progress; last progress source was ${lastProgressSource}`)
+  constructor(readonly idleMs: number, readonly stallTimeoutMs: number, readonly lastProgressSource: BrowserProbeProgressSource, readonly lastCheckpoint?: BrowserProbeScriptCheckpoint) {
+    super(`Browser probe stalled after ${idleMs}ms without progress; last progress source was ${lastProgressSource}${lastCheckpoint ? ` (${lastCheckpoint.name})` : ""}`)
     this.name = "BrowserProbeStallError"
   }
 }
 
 function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: number): {
-  mark(source: BrowserProbeProgressSource, timestamp?: string): void
+  mark(source: BrowserProbeProgressSource, timestamp?: string, checkpoint?: BrowserProbeScriptCheckpoint): void
   fail(source: BrowserProbeProgressSource, error: Error): void
   terminalFailure(failure: { message: string; reason?: string; details?: unknown; timestamp: string }): void
   lastProgressElapsedMs(): number
@@ -5206,18 +5258,23 @@ function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: nu
     lastProgressSource: BrowserProbeProgressSource
     idleMs: number
     stallTimeoutMs?: number
+    lastCheckpoint?: BrowserProbeScriptCheckpoint
     terminalFailure?: { message: string; reason?: string; details?: unknown; timestamp: string }
   }
 } {
   let status: "active" | "failed" | "stalled" = "active"
   let lastProgressAt = startedAt
   let lastProgressSource: BrowserProbeProgressSource = "navigation"
+  let lastCheckpoint: BrowserProbeScriptCheckpoint | undefined
   let terminalFailure: { message: string; reason?: string; details?: unknown; timestamp: string } | undefined
 
   return {
-    mark(source, timestamp = now()) {
+    mark(source, timestamp = now(), checkpoint) {
       lastProgressAt = timestamp
       lastProgressSource = source
+      if (checkpoint) {
+        lastCheckpoint = checkpoint
+      }
     },
     fail(source, error) {
       lastProgressAt = now()
@@ -5244,6 +5301,7 @@ function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: nu
         lastProgressSource,
         idleMs: this.lastProgressElapsedMs(),
         ...(stallTimeoutMs > 0 ? { stallTimeoutMs } : {}),
+        ...(lastCheckpoint ? { lastCheckpoint } : {}),
         ...(terminalFailure ? { terminalFailure } : {}),
       }
     },
@@ -5265,15 +5323,21 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
         const state = await page.evaluate(() => {
           const probe = (globalThis as typeof globalThis & {
             __wpCodeboxBrowserProbe?: {
-              checkpoints?: Array<{ timestamp?: unknown }>
+              checkpoints?: Array<{ name?: unknown; metadata?: unknown; timestamp?: unknown }>
               terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
             }
           }).__wpCodeboxBrowserProbe
           const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
           const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
+          const latestCheckpointTimestamp = typeof latestCheckpoint?.timestamp === "string" ? latestCheckpoint.timestamp : undefined
+          const checkpoint = latestCheckpoint && latestCheckpointTimestamp ? {
+            name: typeof latestCheckpoint.name === "string" ? latestCheckpoint.name : "checkpoint",
+            metadata: latestCheckpoint.metadata,
+            timestamp: latestCheckpointTimestamp,
+          } : undefined
           const failure = probe?.terminalFailure
           return {
-            checkpointTimestamp: latestCheckpoint?.timestamp,
+            checkpoint,
             terminalFailure: failure && typeof failure.message === "string" ? {
               message: failure.message,
               reason: typeof failure.reason === "string" ? failure.reason : undefined,
@@ -5282,8 +5346,8 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
             } : undefined,
           }
         })
-        if (typeof state.checkpointTimestamp === "string") {
-          progress.mark("checkpoint", state.checkpointTimestamp)
+        if (state.checkpoint) {
+          progress.mark("checkpoint", state.checkpoint.timestamp, state.checkpoint)
         }
         if (state.terminalFailure) {
           progress.terminalFailure(state.terminalFailure)
@@ -5299,7 +5363,7 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
   }).catch((error) => {
     if (error instanceof BrowserCommandLivenessError && error.code === "browser-command-idle-timeout") {
       const summary = progress.summary()
-      throw new BrowserProbeStallError(summary.idleMs, policy.idleTimeoutMs, summary.lastProgressSource)
+      throw new BrowserProbeStallError(summary.idleMs, policy.idleTimeoutMs, summary.lastProgressSource, summary.lastCheckpoint)
     }
     throw error
   })
@@ -5316,6 +5380,18 @@ function livenessRemainingWallTimeMs(startedAtMs: number, totalTimeoutMs: number
     return browserCommandLivenessPolicy().wallTimeoutMs
   }
   return Math.max(1, totalTimeoutMs - (Date.now() - startedAtMs))
+}
+
+function normalizeBrowserProbeScriptCheckpoint(checkpoint: unknown): BrowserProbeScriptCheckpoint | undefined {
+  if (!checkpoint || typeof checkpoint !== "object") {
+    return undefined
+  }
+  const record = checkpoint as { name?: unknown; metadata?: unknown; timestamp?: unknown }
+  return {
+    name: typeof record.name === "string" && record.name.length > 0 ? record.name : "checkpoint",
+    ...(typeof record.metadata !== "undefined" ? { metadata: record.metadata } : {}),
+    timestamp: typeof record.timestamp === "string" ? record.timestamp : now(),
+  }
 }
 
 async function browserProbeTerminalFailure(page: import("playwright").Page): Promise<{ message: string; reason?: string; details?: unknown; timestamp: string } | undefined> {

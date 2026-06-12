@@ -11,6 +11,7 @@ export interface BrowserStepOutcome {
   target?: BrowserStepRecord["target"]
   screenshot?: string
   screenshotIsDefault?: boolean
+  screenshotFallback?: { reason: string; mode: "page-screenshot" }
   error?: BrowserProbeErrorRecord
 }
 
@@ -129,8 +130,14 @@ export async function executeBrowserInteractionStep(
         ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
         : defaultScreenshotPath
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
+      let fallback: { reason: string; mode: "page-screenshot" } | undefined
       if (frameTarget) {
-        await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+        try {
+          await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+        } catch (error) {
+          fallback = { reason: error instanceof Error ? error.message : String(error), mode: "page-screenshot" }
+          await page.screenshot({ path, fullPage: true })
+        }
       } else {
         await page.screenshot({ path, fullPage: true })
       }
@@ -138,6 +145,7 @@ export async function executeBrowserInteractionStep(
       return {
         ...(readiness ? { readiness } : {}),
         ...(frameTarget ? { target: { mode: frameTarget.mode as "frame-selector" | "frame-url", ...(frameTarget.selector ? { selector: frameTarget.selector } : {}), ...(frameTarget.urlFragment ? { urlFragment: frameTarget.urlFragment } : {}), ...(frameTarget.frame.url() ? { frameUrl: frameTarget.frame.url() } : {}) } } : {}),
+        ...(fallback ? { screenshotFallback: fallback } : {}),
         screenshot: isDefault ? "files/browser/screenshot.png" : `files/browser/${basename(path)}`,
         screenshotIsDefault: isDefault,
       }
@@ -368,6 +376,7 @@ export function browserStepRecord(
     ...(outcome.readiness ? { readiness: outcome.readiness } : {}),
     ...(outcome.target ? { target: outcome.target } : {}),
     ...(outcome.screenshot ? { screenshot: outcome.screenshot } : {}),
+    ...(outcome.screenshotFallback ? { screenshotFallback: outcome.screenshotFallback } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),
   }

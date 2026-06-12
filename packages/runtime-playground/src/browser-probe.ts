@@ -20,11 +20,18 @@ export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
   state.checkpoints = state.checkpoints || [];
   state.longTasks = state.longTasks || [];
   globalThis.__wpCodeboxProbeCheckpoint = (name, metadata = {}) => {
-    state.checkpoints.push({
+    const checkpoint = {
       name: String(name || ''),
       metadata,
       timestamp: new Date().toISOString(),
-    });
+    };
+    state.checkpoints.push(checkpoint);
+    try {
+      const sink = globalThis.__wpCodeboxProbeCheckpointEvent;
+      if (typeof sink === 'function') {
+        void sink(checkpoint);
+      }
+    } catch {}
   };
   globalThis.__wpCodeboxProbeFail = (message, details = undefined) => {
     state.terminalFailure = {
