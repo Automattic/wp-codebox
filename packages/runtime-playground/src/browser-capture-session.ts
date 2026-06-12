@@ -2,6 +2,8 @@ import type { BrowserProbeErrorRecord, BrowserProbeNetworkRecord } from "./brows
 import { serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import type { Browser, Page } from "playwright"
 
+const BROWSER_NETWORK_TASK_SETTLE_TIMEOUT_MS = 1_000
+
 export async function launchChromiumBrowser(): Promise<Browser> {
   const { chromium } = await import("playwright")
   return chromium.launch(
@@ -69,5 +71,25 @@ export function attachBrowserCaptureListeners({
       onNetwork?.()
       network.push(serializeBrowserRequestFailure(request, new Date().toISOString()))
     })
+  }
+}
+
+export async function settleBrowserNetworkTasks(networkTasks: Array<Promise<void>>, timeoutMs = BROWSER_NETWORK_TASK_SETTLE_TIMEOUT_MS): Promise<void> {
+  if (networkTasks.length === 0) {
+    return
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled(networkTasks),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
   }
 }

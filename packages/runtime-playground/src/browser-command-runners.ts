@@ -6,7 +6,7 @@ import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
-import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser } from "./browser-capture-session.js"
+import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
@@ -538,9 +538,7 @@ async function runSingleBrowserProbeCommand({
       }
     }
     if (assertions.length > 0) {
-      if (networkTasks.length > 0) {
-        await Promise.all(networkTasks)
-      }
+      await settleBrowserNetworkTasks(networkTasks)
       const assertionMetrics = capturesBrowserMetrics ? browserProbeBenchMetrics(browserProbeMemoryArtifact(checkpoints), browserProbePerformanceArtifact(checkpoints)) : {}
       assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors, network, assertionMetrics)
       if (capturesBrowserMetrics) {
@@ -593,9 +591,7 @@ async function runSingleBrowserProbeCommand({
         }
       }
     }
-    if (networkTasks.length > 0) {
-      await Promise.all(networkTasks)
-    }
+    await settleBrowserNetworkTasks(networkTasks)
     await browser.close()
     if (capture.has("console") || capturesConsoleForAssertions) {
       await writeFile(consolePath, jsonLines(consoleMessages))
@@ -2033,9 +2029,7 @@ export async function runBrowserActionsCommand({
       }
     }
   } finally {
-    if (networkTasks.length > 0) {
-      await Promise.all(networkTasks)
-    }
+    await settleBrowserNetworkTasks(networkTasks)
     await browser.close()
     if (capture.has("steps")) {
       await writeFile(stepsPath, jsonLines(stepRecords))
