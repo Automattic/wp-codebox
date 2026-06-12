@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, realpath, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -430,6 +430,7 @@ class PlaygroundRuntime implements Runtime {
     }
 
     this.events.push(event)
+    void appendFile(join(this.artifactRoot, "events.jsonl"), `${JSON.stringify(event)}\n`).catch(() => undefined)
     return event
   }
 
