@@ -197,6 +197,7 @@ export const smokeGroups = {
       tsxSmoke("browser-probe-context-smoke"),
       tsxSmoke("browser-probe-public-url-routing-smoke"),
       tsxSmoke("browser-probe-route-host-smoke"),
+      tsxSmoke("browser-probe-routed-admin-auth-smoke"),
       tsxSmoke("browser-probe-network-policy-smoke"),
       tsxSmoke("browser-probe-profile-matrix-smoke"),
       tsxSmoke("browser-lifecycle-observer-smoke"),

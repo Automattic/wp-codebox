@@ -457,7 +457,7 @@ async function runSingleBrowserProbeCommand({
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command, page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -1669,6 +1669,7 @@ export async function runBrowserActionsCommand({
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
+  const routedHosts = commaListArg(args, "route-host")
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1690,6 +1691,8 @@ export async function runBrowserActionsCommand({
   const startedAtMs = Date.now()
   const browser = await launchChromiumBrowser()
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   let requestedUrl = initialUrl ? resolveBrowserPreviewUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
@@ -1701,9 +1704,13 @@ export async function runBrowserActionsCommand({
   let artifact: BrowserArtifact | undefined
 
   try {
-    const page = await browser.newPage()
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -1829,6 +1836,8 @@ export async function runBrowserActionsCommand({
       requestedUrl,
       url: requestedUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
@@ -1847,6 +1856,7 @@ export async function runBrowserActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         networkEvents: network.length,
         replayability: browserProbeReplayability(capture),
@@ -2321,7 +2331,10 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
+  const routedHosts = commaListArg(args, "route-host")
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -2343,12 +2356,17 @@ export async function runEditorOpenCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
 
   try {
-    const page = await browser.newPage()
-    await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -2419,6 +2437,8 @@ export async function runEditorOpenCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
@@ -2434,6 +2454,8 @@ export async function runEditorOpenCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        auth: authSummary,
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -2446,6 +2468,8 @@ export async function runEditorOpenCommand({
       target,
       requestedUrl: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -2515,7 +2539,10 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
+  const routedHosts = commaListArg(args, "route-host")
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -2538,12 +2565,17 @@ export async function runEditorActionsCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
 
   try {
-    const page = await browser.newPage()
-    await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -2637,6 +2669,8 @@ export async function runEditorActionsCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-action-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-action-console.jsonl" } : {}),
@@ -2653,6 +2687,8 @@ export async function runEditorActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        auth: authSummary,
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -2666,6 +2702,8 @@ export async function runEditorActionsCommand({
       actions: actionSteps,
       requestedUrl: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -4357,6 +4395,7 @@ function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs
 }
 
 async function installWordPressAdminAuthCookies({
+  cookieUrls,
   command,
   page,
   runPlaygroundCommand,
@@ -4364,6 +4403,7 @@ async function installWordPressAdminAuthCookies({
   server,
   userId,
 }: {
+  cookieUrls?: string[]
   command: string
   page: import("playwright").Page
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
@@ -4379,14 +4419,14 @@ async function installWordPressAdminAuthCookies({
   }
 
   const authCommand = `${command}.auth`
-  const response = await runPlaygroundCommand(authCommand, server, { code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode(server.serverUrl, userId), []) })
+  const urls = uniqueBrowserAuthCookieUrls(cookieUrls ?? [server.serverUrl])
+  const response = await runPlaygroundCommand(authCommand, server, { code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode(urls, userId), []) })
   assertPlaygroundResponseOk(authCommand, response)
-  const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
-  const cookieDomain = new URL(server.serverUrl).hostname
+  const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; domain?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
   await page.context().addCookies(cookies.map((cookie) => ({
     name: String(cookie.name ?? ""),
     value: String(cookie.value ?? ""),
-    domain: cookieDomain,
+    domain: String(cookie.domain ?? new URL(server.serverUrl).hostname),
     path: typeof cookie.path === "string" && cookie.path.length > 0 ? cookie.path : "/",
     expires: typeof cookie.expires === "number" ? cookie.expires : Math.floor(Date.now() / 1000) + 3600,
     httpOnly: cookie.httpOnly !== false,
@@ -4394,10 +4434,10 @@ async function installWordPressAdminAuthCookies({
     sameSite: cookie.sameSite ?? "Lax",
   })))
 
-  return { mode: "wordpress-admin", userId, cookieCount: cookies.length }
+  return { mode: "wordpress-admin", userId, cookieCount: cookies.length, cookieHosts: browserAuthCookieHostSummary(cookies) }
 }
 
-function wordpressAdminAuthCookiePhpCode(browserUrl: string, userId: number): string {
+function wordpressAdminAuthCookiePhpCode(browserUrls: string[], userId: number): string {
   return `
 $user_id = ${JSON.stringify(userId)};
 $user = get_user_by( 'id', $user_id );
@@ -4406,44 +4446,106 @@ if ( ! $user ) {
 }
 wp_set_current_user( $user_id );
 $expiration = time() + HOUR_IN_SECONDS;
-$browser_url = ${JSON.stringify(browserUrl)};
-$auth_scheme = is_ssl() ? 'secure_auth' : 'auth';
-$cookies = array(
-    array(
-        'name'     => AUTH_COOKIE,
+$browser_urls = ${JSON.stringify(browserUrls)};
+$cookies = array();
+foreach ( $browser_urls as $browser_url ) {
+    $browser_host = wp_parse_url( $browser_url, PHP_URL_HOST );
+    if ( ! $browser_host ) {
+        continue;
+    }
+    $secure = 'https' === wp_parse_url( $browser_url, PHP_URL_SCHEME );
+    $auth_scheme = $secure ? 'secure_auth' : 'auth';
+    $cookies[] = array(
+        'name'     => $secure ? SECURE_AUTH_COOKIE : AUTH_COOKIE,
         'value'    => wp_generate_auth_cookie( $user_id, $expiration, $auth_scheme ),
-        'url'      => $browser_url,
+        'domain'   => $browser_host,
         'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
         'expires'  => $expiration,
         'httpOnly' => true,
-        'secure'   => is_ssl(),
+        'secure'   => $secure,
         'sameSite' => 'Lax',
-    ),
-    array(
+    );
+    $logged_in_cookie = array(
         'name'     => LOGGED_IN_COOKIE,
         'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
-        'url'      => $browser_url,
+        'domain'   => $browser_host,
         'path'     => defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/',
         'expires'  => $expiration,
         'httpOnly' => true,
-        'secure'   => is_ssl(),
-        'sameSite' => 'Lax',
-    ),
-);
-if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEPATH ) {
-    $cookies[] = array(
-        'name'     => LOGGED_IN_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
-        'url'      => $browser_url,
-        'path'     => SITECOOKIEPATH,
-        'expires'  => $expiration,
-        'httpOnly' => true,
-        'secure'   => is_ssl(),
+        'secure'   => $secure,
         'sameSite' => 'Lax',
     );
+    $cookies[] = $logged_in_cookie;
+    if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEPATH ) {
+        $logged_in_cookie['path'] = SITECOOKIEPATH;
+        $cookies[] = $logged_in_cookie;
+    }
 }
 echo wp_json_encode( $cookies );
 `
+}
+
+function browserAuthCookieUrls(serverUrl: string, routedHosts: string[], targetUrls: string[]): string[] {
+  const urls = [serverUrl]
+  for (const host of routedHosts.map(normalizeBrowserCookieHost).filter(Boolean)) {
+    const matchingTarget = targetUrls.find((targetUrl) => normalizeBrowserCookieHost(browserUrlHostname(targetUrl) ?? "") === host)
+    const protocol = matchingTarget ? new URL(matchingTarget).protocol : browserAuthCookieProtocol(targetUrls)
+    urls.push(`${protocol}//${host}/`)
+  }
+  return uniqueBrowserAuthCookieUrls(urls)
+}
+
+function browserActionTargetUrls(steps: BrowserInteractionStep[], effectiveOrigin: string, fallbackUrl: string): string[] {
+  const urls = steps
+    .filter((step) => step.kind === "navigate" && typeof step.url === "string" && step.url.trim().length > 0)
+    .map((step) => resolveBrowserPreviewUrl(String(step.url), effectiveOrigin))
+  return urls.length > 0 ? urls : [fallbackUrl]
+}
+
+function uniqueBrowserAuthCookieUrls(urls: string[]): string[] {
+  const unique = new Map<string, string>()
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url)
+      unique.set(`${parsed.protocol}//${normalizeBrowserCookieHost(parsed.hostname)}`, `${parsed.protocol}//${parsed.hostname}/`)
+    } catch {
+      // Ignore invalid cookie URL inputs; callers still include the local server URL.
+    }
+  }
+  return [...unique.values()]
+}
+
+function browserAuthCookieProtocol(targetUrls: string[]): string {
+  for (const targetUrl of targetUrls) {
+    try {
+      return new URL(targetUrl).protocol
+    } catch {
+      // Keep looking for a usable target URL.
+    }
+  }
+  return "http:"
+}
+
+function browserUrlHostname(url: string): string | undefined {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeBrowserCookieHost(host: string): string {
+  return host.trim().toLowerCase().replace(/:\d+$/, "")
+}
+
+function browserAuthCookieHostSummary(cookies: Array<{ domain?: string }>): Array<{ host: string; cookieCount: number }> {
+  const counts = new Map<string, number>()
+  for (const cookie of cookies) {
+    const host = normalizeBrowserCookieHost(String(cookie.domain ?? ""))
+    if (!host) continue
+    counts.set(host, (counts.get(host) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([host, cookieCount]) => ({ host, cookieCount }))
 }
 
 function browserAuthRequest(args: string[]): { userId: number } | undefined {
