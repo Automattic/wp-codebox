@@ -194,6 +194,10 @@ try {
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === usersArtifactPath && file.kind === "wordpress-state-section"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-replay-index.json" && file.kind === "runtime-replay-index"))
+    const blueprintAfterManifestFile = manifest.files.find((file: { path: string; sha256: { value: string }; viewer?: any }) => file.path === "blueprint.after.json")
+    assert.equal(blueprintAfterManifestFile?.viewer?.kind, "wordpress-playground-blueprint")
+    assert.equal(blueprintAfterManifestFile?.viewer?.query?.parameter, "blueprint-url")
+    assert.equal(blueprintAfterManifestFile?.viewer?.replay?.status, "partial")
     const snapshotBundleEntry = manifest.files.find((file: { path: string; kind: string }) => file.path.startsWith("files/runtime-snapshots/") && file.kind === "runtime-snapshot-bundle")
     assert.ok(snapshotBundleEntry, "runtime snapshot bundle should be listed in manifest")
 
@@ -218,6 +222,13 @@ try {
     assert.equal(replayIndex.references.trace.path, "files/runtime-episode-trace.json")
     assert.equal(replayIndex.references.events.path, "files/runtime-episode.jsonl")
     assert.equal(replayIndex.references.runtimeReferenceManifest.path, "files/runtime-reference-manifest.json")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.kind, "wordpress-playground-blueprint")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.source, "public-artifact-url")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.path, "blueprint.after.json")
+    if (replayIndex.references.blueprintAfter.viewer.query.value.kind) {
+      assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.kind, "blueprint-after")
+      assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.sha256.value, blueprintAfterManifestFile?.sha256.value)
+    }
     assert.equal(replayIndex.references.observations.path, "observations.jsonl")
     assert.equal(replayIndex.actions.length, 3)
     assert.equal(replayIndex.observations.some((observation: { type: string }) => observation.type === "runtime-info"), true)
@@ -233,6 +244,7 @@ try {
     assert.equal(referenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
     assert.equal(referenceManifest.trace.path, "files/runtime-episode-trace.json")
     assert.equal(referenceManifest.events.path, "files/runtime-episode.jsonl")
+    assert.deepEqual(referenceManifest.files.find((file: { path: string }) => file.path === "blueprint.after.json")?.viewer, blueprintAfterManifestFile?.viewer)
     assert.equal(referenceManifest.snapshots.length, 1)
     assert.equal(referenceManifest.snapshots[0].id, snapshot.id)
     assert.equal(referenceManifest.snapshots[0].semantics, "runtime-state-artifact")

@@ -14,6 +14,7 @@ import {
   type ArtifactDurablePreviewRef,
   type ArtifactManifest,
   type ArtifactManifestFile,
+  type ArtifactViewerMetadata,
   type ArtifactPreview,
   type ArtifactPreviewEvidence,
   type ArtifactPreviewSessionEvidence,
@@ -267,11 +268,12 @@ export class ArtifactBundleBuilder {
       mounts: source.mounts,
       capturedMounts,
     })
+    const blueprintAfterViewer = blueprintAfterReplayViewerMetadata()
 
     const manifestFiles: ArtifactManifestFile[] = [
       artifactManifestFile(manifestPath, "manifest", "application/json"),
       artifactManifestFile(metadataPath, "metadata", "application/json"),
-      artifactManifestFile(blueprintAfterPath, "blueprint-after", "application/json"),
+      artifactManifestFile(blueprintAfterPath, "blueprint-after", "application/json", undefined, cloneArtifactViewerMetadata(blueprintAfterViewer)),
       artifactManifestFile(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
       artifactManifestFile(eventsPath, "events", "application/x-ndjson"),
       artifactManifestFile(commandsPath, "commands", "application/x-ndjson"),
@@ -373,7 +375,7 @@ export class ArtifactBundleBuilder {
       },
       files: manifest.files
         .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json", "files/runtime-replay-index.json"].includes(file.path))
-        .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
+        .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
       snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
@@ -393,7 +395,7 @@ export class ArtifactBundleBuilder {
       },
       files: manifest.files
         .filter((file) => !["manifest.json", "files/runtime-replay-index.json"].includes(file.path))
-        .map((file) => file.path === "files/runtime-reference-manifest.json" ? runtimeReferenceManifestRef : ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
+        .map((file) => file.path === "files/runtime-reference-manifest.json" ? runtimeReferenceManifestRef : ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
       runtimeReferenceManifest: runtimeReferenceManifestRef,
       snapshots: runtimeSnapshots,
     })
@@ -407,6 +409,7 @@ export class ArtifactBundleBuilder {
       manifestPath,
       metadataPath,
       blueprintAfterPath,
+      blueprintAfterViewer,
       blueprintAfterNotesPath,
       eventsPath,
       commandsPath,
@@ -434,6 +437,33 @@ export class ArtifactBundleBuilder {
       createdAt,
     }
   }
+}
+
+function blueprintAfterReplayViewerMetadata(): ArtifactViewerMetadata {
+  return {
+    kind: "wordpress-playground-blueprint",
+    base: "https://playground.wordpress.net/",
+    query: {
+      parameter: "blueprint-url",
+      value: {
+        source: "public-artifact-url",
+        path: "blueprint.after.json",
+      },
+      encoding: "url",
+    },
+    replay: {
+      status: "partial",
+      limitations: [
+        "WP Codebox does not host public artifact URLs; consumers must provide a browser-fetchable URL for blueprint.after.json.",
+        "Text files from readwrite mounts are embedded in blueprint.after.json as writeFile steps; binary files are copied into artifacts but not replayed yet.",
+        "Database exports, option diffs, uploaded media, active theme/plugin state, and screenshots are not captured yet.",
+      ],
+    },
+  }
+}
+
+function cloneArtifactViewerMetadata(viewer: ArtifactViewerMetadata): ArtifactViewerMetadata {
+  return JSON.parse(JSON.stringify(viewer)) as ArtifactViewerMetadata
 }
 
 function buildPreviewEvidence({

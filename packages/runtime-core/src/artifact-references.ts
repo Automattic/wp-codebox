@@ -1,5 +1,5 @@
 import type { ArtifactBundle, RuntimeEpisodeContentDigest, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
-import type { ArtifactFileDigest, ArtifactManifestFile } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef } from "./runtime-reference.js"
 
 export const RUNTIME_EPISODE_TRACE_ARTIFACT_PATH = "files/runtime-episode-trace.json" as const
@@ -25,6 +25,7 @@ export interface ArtifactReferenceFileInput {
   mimeType?: string
   sha256?: string | ArtifactReferenceDigestInput
   digest?: string | ArtifactReferenceDigestInput
+  viewer?: ArtifactViewerMetadata
 }
 
 export interface ArtifactReferenceTraceInput extends ArtifactReferenceFileInput {
@@ -106,6 +107,7 @@ export function normalizeRuntimeReferenceManifestFileRef(input: ArtifactReferenc
     kind: input.kind,
     contentType: normalizeArtifactContentType(input),
     sha256,
+    ...(input.viewer ? { viewer: input.viewer } : {}),
   }
 }
 
