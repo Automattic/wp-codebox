@@ -202,10 +202,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			define( 'DATAMACHINE_WORKSPACE_PATH', rtrim( dirname( $checkout_path ), '/' ) );
 		}
 
-		$required = array( 'datamachine-code/workspace-show', 'datamachine-code/workspace-clone', 'datamachine-code/workspace-worktree-add' );
-		if ( '' !== $checkout_path ) {
-			$required[] = 'datamachine-code/workspace-adopt';
-		}
+		$required = '' !== $checkout_path
+			? array( 'datamachine-code/workspace-adopt' )
+			: array( 'datamachine-code/workspace-show', 'datamachine-code/workspace-clone', 'datamachine-code/workspace-worktree-add' );
 
 		foreach ( $required as $ability_name ) {
 			$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
@@ -227,6 +226,23 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			if ( ! is_array( $adopt ) || empty( $adopt['success'] ) ) {
 				return self::runner_workspace_prepare_failure( 'backend_failed', array( 'code' => 'wp_codebox_runner_workspace_prepare_adopt_failed', 'message' => 'Runner workspace backend could not adopt the mounted checkout.', 'result' => $adopt ), 'failed', $normalized );
 			}
+
+			return array_filter(
+				array(
+					'success'      => true,
+					'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
+					'status'       => 'prepared',
+					'backend'      => 'datamachine-code',
+					'repo'         => $normalized['repo'],
+					'branch'       => $normalized['branch'],
+					'handle'       => (string) ( $adopt['handle'] ?? $adopt['name'] ?? $normalized['repo'] ),
+					'path'         => (string) ( $adopt['path'] ?? $checkout_path ),
+					'capabilities' => array( 'capture' => true, 'command' => true, 'publish' => true ),
+					'input'        => array( 'path' => $checkout_path, 'name' => $normalized['repo'] ),
+					'result'       => $adopt,
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
+			);
 		}
 
 		$show = wp_get_ability( 'datamachine-code/workspace-show' )->execute( array( 'name' => $normalized['repo'] ) );

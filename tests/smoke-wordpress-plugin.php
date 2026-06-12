@@ -431,7 +431,7 @@ $assert( 'runner workspace prepare returns typed unavailable without backend', !
 
 $dmc_prepare_show_ability     = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'name' => 'wp-codebox' ) );
 $dmc_prepare_clone_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true ) );
-$dmc_prepare_adopt_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true ) );
+$dmc_prepare_adopt_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'name' => 'wp-codebox', 'path' => '/runner/workspace/wp-codebox' ) );
 $dmc_prepare_worktree_ability = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'handle' => 'wp-codebox@runner-docs', 'branch' => 'runner/docs', 'path' => '/runner/workspace/wp-codebox@runner-docs' ) );
 $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show']         = $dmc_prepare_show_ability;
 $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone']        = $dmc_prepare_clone_ability;
@@ -451,8 +451,8 @@ $prepare_result = call_user_func(
 	)
 );
 $assert( 'runner workspace prepare adopts mounted checkout behind WP Codebox', '/runner/workspace/wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['path'] ?? '' ) && 'wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['name'] ?? '' ) );
-$assert( 'runner workspace prepare delegates DMC worktree creation', 'wp-codebox' === ( $dmc_prepare_worktree_ability->calls[0]['repo'] ?? '' ) && 'runner/docs' === ( $dmc_prepare_worktree_ability->calls[0]['branch'] ?? '' ) && 'origin/main' === ( $dmc_prepare_worktree_ability->calls[0]['from'] ?? '' ) && true === ( $dmc_prepare_worktree_ability->calls[0]['allow_stale'] ?? false ) );
-$assert( 'runner workspace prepare normalizes result and capabilities', ! is_wp_error( $prepare_result ) && true === ( $prepare_result['success'] ?? false ) && 'prepared' === ( $prepare_result['status'] ?? '' ) && 'datamachine-code' === ( $prepare_result['backend'] ?? '' ) && 'wp-codebox@runner-docs' === ( $prepare_result['handle'] ?? '' ) && true === ( $prepare_result['capabilities']['publish'] ?? false ) );
+$assert( 'runner workspace prepare uses mounted checkout without creating a sandbox worktree', array() === $dmc_prepare_worktree_ability->calls );
+$assert( 'runner workspace prepare normalizes mounted checkout result and capabilities', ! is_wp_error( $prepare_result ) && true === ( $prepare_result['success'] ?? false ) && 'prepared' === ( $prepare_result['status'] ?? '' ) && 'datamachine-code' === ( $prepare_result['backend'] ?? '' ) && 'wp-codebox' === ( $prepare_result['handle'] ?? '' ) && '/runner/workspace/wp-codebox' === ( $prepare_result['path'] ?? '' ) && true === ( $prepare_result['capabilities']['publish'] ?? false ) );
 unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-adopt'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-worktree-add'] );
 
 $publication_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/publish-runner-workspace'] ?? null;
