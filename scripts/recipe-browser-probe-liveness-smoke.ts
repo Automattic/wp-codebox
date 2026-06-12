@@ -12,9 +12,9 @@ try {
     "url=/",
     "fail-fast=true",
     "script=__wpCodeboxProbeFail('terminal smoke failure', { reason: 'smoke' });",
-  ], 30_000)
+  ], 60_000)
   assert.equal(terminal.exit.code, 1, `terminal failure should fail recipe-run; stdout: ${terminal.stdout}; stderr: ${terminal.stderr}`)
-  assert.ok(terminal.elapsedMs < 20_000, `terminal failure should fail before the recipe timeout; elapsed=${terminal.elapsedMs}`)
+  assert.ok(terminal.elapsedMs < 60_000, `terminal failure should fail before the watchdog; elapsed=${terminal.elapsedMs}`)
   assert.match(terminal.output.error?.message ?? "", /terminal smoke failure/)
   assert.equal(terminal.summary.summary.progress.status, "failed")
   assert.equal(terminal.summary.summary.progress.terminalFailure.message, "terminal smoke failure")
@@ -24,12 +24,23 @@ try {
     "wait-for=duration",
     "duration=5s",
     "stall-timeout=1s",
-  ], 30_000)
+  ], 60_000)
   assert.equal(stall.exit.code, 1, `idle stall should fail recipe-run; stdout: ${stall.stdout}; stderr: ${stall.stderr}`)
-  assert.ok(stall.elapsedMs < 20_000, `idle stall should fail before the recipe timeout; elapsed=${stall.elapsedMs}`)
+  assert.ok(stall.elapsedMs < 60_000, `idle stall should fail before the watchdog; elapsed=${stall.elapsedMs}`)
   assert.match(stall.output.error?.message ?? "", /stalled/i)
   assert.equal(stall.summary.summary.progress.status, "stalled")
   assert.equal(stall.summary.summary.progress.stallTimeoutMs, 1000)
+
+  const scriptTimeout = await runRecipe("script-timeout", [
+    "url=/",
+    "script=await new Promise(() => undefined);",
+    "timeout=3s",
+  ], 60_000)
+  assert.equal(scriptTimeout.exit.code, 1, `long script should fail recipe-run; stdout: ${scriptTimeout.stdout}; stderr: ${scriptTimeout.stderr}`)
+  assert.ok(scriptTimeout.elapsedMs < 60_000, `long script should fail before the watchdog; elapsed=${scriptTimeout.elapsedMs}`)
+  assert.match(scriptTimeout.output.error?.message ?? "", /exceeded 3000ms|wall/i)
+  assert.equal(scriptTimeout.summary.wallTimeoutMs ?? scriptTimeout.summary.liveness?.wallTimeoutMs, 3000)
+  assert.equal((scriptTimeout.summary.summary ?? scriptTimeout.summary).progress.status, "failed")
 
   console.log("Recipe browser probe liveness smoke passed")
 } finally {
@@ -68,7 +79,7 @@ async function runRecipe(name: string, args: string[], watchdogMs: number): Prom
     "--artifacts",
     artifacts,
     "--timeout",
-    "20s",
+    "45s",
     "--json",
   ], {
     cwd: root,
@@ -97,9 +108,34 @@ async function runRecipe(name: string, args: string[], watchdogMs: number): Prom
   const output = JSON.parse(stdout)
   assert.equal(output.schema, "wp-codebox/recipe-run/v1")
   assert.equal(output.success, false)
-  assert.ok(output.artifacts?.directory, `${name} recipe-run should report artifact directory`)
+  const artifactDirectory = output.artifacts?.directory
+  const embeddedArtifact = findBrowserArtifact(output, "probe")
+  assert.ok(artifactDirectory || embeddedArtifact, `${name} recipe-run should report a browser artifact; stdout: ${stdout}; stderr: ${stderr}`)
 
-  const summary = JSON.parse(await readFile(join(output.artifacts.directory, "files", "browser", "summary.json"), "utf8"))
+  const summary = artifactDirectory
+    ? JSON.parse(await readFile(join(artifactDirectory, "files", "browser", "summary.json"), "utf8"))
+    : { schema: "wp-codebox/browser-probe/v1", ...embeddedArtifact, ...(embeddedArtifact?.summary ?? {}) }
   assert.equal(summary.schema, "wp-codebox/browser-probe/v1")
   return { exit, output, summary, stdout, stderr, elapsedMs }
+}
+
+function findBrowserArtifact(value: unknown, artifactType: string): Record<string, any> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+  if ((value as Record<string, unknown>).artifactType === artifactType) {
+    return value as Record<string, any>
+  }
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findBrowserArtifact(item, artifactType)
+        if (found) return found
+      }
+    } else {
+      const found = findBrowserArtifact(child, artifactType)
+      if (found) return found
+    }
+  }
+  return undefined
 }

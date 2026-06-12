@@ -3,6 +3,7 @@ import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
+import { browserCommandLivenessPolicy, withBrowserCommandLiveness } from "./browser-liveness.js"
 
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
@@ -254,7 +255,12 @@ async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadin
     return { visibleElementCount, textLength }
   }, undefined, { timeout })
   const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number }
-  await target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await withBrowserCommandLiveness({
+    command: "wordpress.browser-actions",
+    phase: "painted-readiness-stabilization",
+    operation: target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))),
+    policy: { wallTimeoutMs: browserCommandLivenessPolicy().readinessStabilizationTimeoutMs, idleTimeoutMs: 0 },
+  })
   return {
     mode: target.mode,
     ...(target.selector ? { selector: target.selector } : {}),

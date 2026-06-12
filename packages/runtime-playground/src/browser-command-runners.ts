@@ -4,10 +4,11 @@ import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
-import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
+import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
+import { BrowserCommandLivenessError, browserCommandLivenessPolicy, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
@@ -48,6 +49,7 @@ interface BrowserProbeRunPlan {
   authRequest?: { userId: number }
   failFast: boolean
   stallTimeoutMs: number
+  wallTimeoutMs: number
   lifecycleSelectors: string[]
   assertions: ReturnType<typeof browserProbeAssertionsFromArgs>
 }
@@ -58,6 +60,7 @@ interface BrowserActionsRunPlan {
   capture: Set<string>
   stepTimeoutMs: number
   totalTimeoutMs: number
+  networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
   authRequest?: { userId: number }
   maxDomSnapshotElements: number
@@ -378,6 +381,8 @@ async function runSingleBrowserProbeCommand({
   const authRequest = runPlan.authRequest
   const failFast = runPlan.failFast
   const stallTimeoutMs = runPlan.stallTimeoutMs
+  const wallTimeoutMs = runPlan.wallTimeoutMs
+  const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs, idleTimeoutMs: stallTimeoutMs })
   const lifecycleSelectors = runPlan.lifecycleSelectors
   const routedHosts = commaListArg(args, "route-host")
   const assertions = runPlan.assertions
@@ -504,7 +509,7 @@ async function runSingleBrowserProbeCommand({
       throw previewReadinessError
     }
 
-    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs))
+    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs), livenessPolicy, "navigation")
     progress.mark("navigation")
     const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
     windowLocationOrigin = browserLocation?.origin
@@ -520,7 +525,7 @@ async function runSingleBrowserProbeCommand({
       scriptResult = await withBrowserProbeLiveness(page, progress, failFast, page.evaluate(async (source) => {
         const run = new Function(`return (async () => {\n${source}\n})()`)
         return run()
-      }, script))
+      }, script), livenessPolicy, "script")
       progress.mark("script")
       if (capturesBrowserMetrics) {
         const pendingCheckpoints = await browserProbePendingCheckpoints(page)
@@ -532,14 +537,14 @@ async function runSingleBrowserProbeCommand({
       }
     }
     if (durationMs > 0 && waitFor !== "duration") {
-      await withBrowserProbeLiveness(page, progress, failFast, page.waitForTimeout(durationMs))
+      await withBrowserProbeLiveness(page, progress, failFast, page.waitForTimeout(durationMs), livenessPolicy, "duration")
       progress.mark("duration")
       if (capturesBrowserMetrics) {
         checkpoints.push(await browserProbeCheckpoint(page, "after-duration"))
       }
     }
     if (assertions.length > 0) {
-      await settleBrowserNetworkTasks(networkTasks)
+      await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
       const assertionMetrics = capturesBrowserMetrics ? browserProbeBenchMetrics(browserProbeMemoryArtifact(checkpoints), browserProbePerformanceArtifact(checkpoints)) : {}
       assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors, network, assertionMetrics)
       if (capturesBrowserMetrics) {
@@ -553,6 +558,10 @@ async function runSingleBrowserProbeCommand({
     finalUrl = page.url()
   } catch (error) {
     pendingError = error instanceof Error ? error : new Error(String(error))
+    if (pendingError instanceof BrowserCommandLivenessError) {
+      await page?.close().catch(() => undefined)
+      page = null
+    }
     progress.fail("probe-error", pendingError)
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
@@ -592,7 +601,7 @@ async function runSingleBrowserProbeCommand({
         }
       }
     }
-    await settleBrowserNetworkTasks(networkTasks)
+    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("console") || capturesConsoleForAssertions) {
       await writeFile(consolePath, jsonLines(consoleMessages))
@@ -717,6 +726,7 @@ async function runSingleBrowserProbeCommand({
         htmlSnapshot: Boolean(htmlSha256),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
+        liveness: { wallTimeoutMs, stallTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
         networkEvents: network.length,
@@ -775,6 +785,9 @@ async function runSingleBrowserProbeCommand({
     }
     throw new BrowserCommandArtifactError(pendingError.message, artifact)
   }
+  if (!artifact) {
+    throw new Error("wordpress.browser-probe did not produce a browser artifact")
+  }
 
   return {
     artifact,
@@ -831,6 +844,7 @@ function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Browse
     authRequest: browserAuthRequest(args),
     failFast: strictBooleanArg(args, "fail-fast", false),
     stallTimeoutMs: durationArg(args, "stall-timeout", 0),
+    wallTimeoutMs: durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs),
     lifecycleSelectors: commaListArg(args, "observe"),
     assertions: browserProbeAssertionsFromArgs(args),
   }
@@ -2060,6 +2074,7 @@ export async function runBrowserActionsCommand({
 
   const stepTimeoutMs = runPlan.stepTimeoutMs
   const totalTimeoutMs = runPlan.totalTimeoutMs
+  const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: runPlan.networkSettleTimeoutMs })
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
@@ -2138,7 +2153,12 @@ export async function runBrowserActionsCommand({
         break
       }
       try {
-        const outcome = await executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory)
+        const outcome = await withBrowserCommandLiveness({
+          command: "wordpress.browser-actions",
+          phase: `step ${index} (${step.kind})`,
+          operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory),
+          policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
+        })
         finalUrl = page.url()
         if (step.kind === "navigate") {
           requestedUrl = resolveBrowserPreviewUrl((step.url ?? "").trim(), preview.effectiveOrigin)
@@ -2169,6 +2189,9 @@ export async function runBrowserActionsCommand({
         errors.push(serialized)
         stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
         pendingError = error instanceof Error ? error : new Error(String(error))
+        if (pendingError instanceof BrowserCommandLivenessError) {
+          await page.close().catch(() => undefined)
+        }
         break
       }
     }
@@ -2211,7 +2234,7 @@ export async function runBrowserActionsCommand({
       }
     }
   } finally {
-    await settleBrowserNetworkTasks(networkTasks)
+    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("steps")) {
       await writeFile(stepsPath, jsonLines(stepRecords))
@@ -2279,6 +2302,7 @@ export async function runBrowserActionsCommand({
         htmlSnapshot: Boolean(htmlSha256),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
+        liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
         ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
@@ -2296,6 +2320,7 @@ export async function runBrowserActionsCommand({
       capture: [...capture].sort(),
       stepTimeoutMs,
       totalTimeoutMs,
+      networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs,
       steps: stepRecords,
       ...(assertions.total > 0 ? { assertions } : {}),
       startedAt,
@@ -2316,7 +2341,13 @@ export async function runBrowserActionsCommand({
   }
 
   if (pendingError) {
+    if (!artifact) {
+      throw pendingError
+    }
     throw new BrowserCommandArtifactError(`wordpress.browser-actions failed after ${stepRecords.length} step(s): ${pendingError.message}`, artifact)
+  }
+  if (!artifact) {
+    throw new Error("wordpress.browser-actions did not produce a browser artifact")
   }
 
   return {
@@ -2350,6 +2381,7 @@ async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserAct
     capture,
     stepTimeoutMs: durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS),
     totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
+    networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
     authRequest: browserAuthRequest(args),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
@@ -2601,6 +2633,7 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       authRequest,
       failFast: false,
       stallTimeoutMs: 0,
+      wallTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || browserCommandLivenessPolicy().wallTimeoutMs,
       lifecycleSelectors: [],
       assertions: [],
     }
@@ -2617,6 +2650,7 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       capture: new Set(browserScenarioActionCaptures(captures)),
       stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS,
       totalTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
+      networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
       requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
       authRequest,
       maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
@@ -3211,6 +3245,7 @@ async function runVisualComparePairCommand({
   const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
+  const visualTimeoutMs = durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs)
   const requestedViewport = viewportArg(args, "viewport")
   const fullPage = strictBooleanArg(args, "full-page", true)
   const threshold = numberArg(args, "threshold", 0.1)
@@ -3270,7 +3305,7 @@ async function runVisualComparePairCommand({
       startedAt,
       source: sourceSummary(),
       candidate: candidateSummary(),
-      options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
       preview,
       viewport,
     })
@@ -3281,14 +3316,44 @@ async function runVisualComparePairCommand({
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
-      const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
-      finalSourceUrl = sourceCapture.finalUrl
-      sourceDomSnapshot = sourceCapture.domSnapshot
-      await writePartialSummary("source-captured")
-      const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
-      finalCandidateUrl = candidateCapture.finalUrl
-      candidateDomSnapshot = candidateCapture.domSnapshot
-      await writePartialSummary("candidate-captured")
+      try {
+        const sourceCapture = await withBrowserCommandLiveness({
+          command: "wordpress.visual-compare",
+          phase: "source-capture",
+          operation: captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        })
+        finalSourceUrl = sourceCapture.finalUrl
+        sourceDomSnapshot = sourceCapture.domSnapshot
+        await writePartialSummary("source-captured")
+        const candidateCapture = await withBrowserCommandLiveness({
+          command: "wordpress.visual-compare",
+          phase: "candidate-capture",
+          operation: captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        })
+        finalCandidateUrl = candidateCapture.finalUrl
+        candidateDomSnapshot = candidateCapture.domSnapshot
+        await writePartialSummary("candidate-captured")
+      } catch (error) {
+        const result = await writeVisualCompareFailureSummary({
+          summaryPath,
+          visualDiffPath,
+          artifactPathPrefix,
+          startedAt,
+          source: sourceSummary(),
+          candidate: candidateSummary(),
+          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+          preview,
+          viewport,
+          message: errorMessage(error),
+          copiedFiles: {
+            ...(await fileExists(sourcePath) ? { sourceScreenshot: `${artifactPathPrefix}/source.png` } : {}),
+            ...(await fileExists(candidatePath) ? { candidateScreenshot: `${artifactPathPrefix}/candidate.png` } : {}),
+          },
+        })
+        throw new BrowserCommandArtifactError(`wordpress.visual-compare failed during capture: ${errorMessage(error)}`, visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
+      }
     } finally {
       await browser.close()
     }
@@ -3313,7 +3378,7 @@ async function runVisualComparePairCommand({
         startedAt,
         source: sourceSummary(),
         candidate: candidateSummary(),
-        options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
         preview,
         viewport,
         missingInputs,
@@ -3376,7 +3441,7 @@ async function runVisualComparePairCommand({
     status,
     source: sourceSummary(),
     candidate: candidateSummary(),
-    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
       : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
@@ -3611,6 +3676,52 @@ async function writeVisualCompareMissingInputSummary(input: {
   return { files, summary }
 }
 
+async function writeVisualCompareFailureSummary(input: {
+  summaryPath: string
+  visualDiffPath: string
+  artifactPathPrefix: string
+  startedAt: string
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  message: string
+  copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }>
+}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }; summary: VisualCompareFailureSummary }> {
+  const files = {
+    sourceScreenshot: input.copiedFiles.sourceScreenshot ?? [],
+    candidateScreenshot: input.copiedFiles.candidateScreenshot ?? [],
+    diffScreenshot: [],
+    visualDiff: `${input.artifactPathPrefix}/visual-diff.json`,
+    summary: `${input.artifactPathPrefix}/summary.json`,
+  }
+  const summary: VisualCompareFailureSummary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: "failed",
+    partial: true,
+    stage: "capture-failed",
+    source: input.source,
+    candidate: input.candidate,
+    options: input.options,
+    limitations: ["visual compare capture failed before full diff metrics were available; recovered files show any screenshots captured before failure"],
+    preview: input.preview,
+    viewport: input.viewport,
+    startedAt: input.startedAt,
+    updatedAt: now(),
+    files,
+    diagnostic: {
+      type: "comparison-failed",
+      message: input.message,
+    },
+  }
+  const json = `${JSON.stringify(summary, null, 2)}\n`
+  await writeFile(input.visualDiffPath, json)
+  await writeFile(input.summaryPath, json)
+  return { files, summary }
+}
+
 function visualCompareMissingInputArtifact(input: {
   source: Record<string, unknown>
   candidate: Record<string, unknown>
@@ -3629,6 +3740,38 @@ function visualCompareMissingInputArtifact(input: {
       steps: 0,
       consoleMessages: 0,
       errors: 0,
+      finalUrl: "",
+      htmlSnapshot: false,
+      networkEvents: 0,
+      replayability: "artifact-backed",
+      screenshot: Array.isArray(input.files.sourceScreenshot) ? input.files.sourceScreenshot.length > 0 : Boolean(input.files.sourceScreenshot),
+      visualCompare: {
+        status: input.summary.status,
+        explanation: input.files.visualDiff,
+      },
+      viewport: input.viewport,
+    },
+  }
+}
+
+function visualCompareFailureArtifact(input: {
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  summary: VisualCompareFailureSummary
+}): BrowserArtifact {
+  return {
+    artifactType: "visual-compare",
+    requestedUrl: typeof input.source.url === "string" ? input.source.url : typeof input.source.screenshot === "string" ? input.source.screenshot : "source",
+    url: typeof input.candidate.url === "string" ? input.candidate.url : typeof input.candidate.screenshot === "string" ? input.candidate.screenshot : "candidate",
+    preview: input.preview,
+    files: input.files,
+    summary: {
+      steps: 0,
+      consoleMessages: 0,
+      errors: 1,
       finalUrl: "",
       htmlSnapshot: false,
       networkEvents: 0,
@@ -3664,6 +3807,15 @@ async function maybeResolveVisualCompareScreenshotPath(requestedPath: string, ar
     return await resolveVisualCompareScreenshotPath(requestedPath, artifactRoot)
   } catch {
     return undefined
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -3832,6 +3984,27 @@ interface VisualCompareMissingInputSummary {
     type: "missing-input"
     message: string
     missingInputs: VisualCompareMissingInput[]
+  }
+}
+
+interface VisualCompareFailureSummary {
+  schema: "wp-codebox/visual-compare/v1"
+  command: "wordpress.visual-compare"
+  status: "failed"
+  partial: true
+  stage: "capture-failed"
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  limitations: string[]
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  startedAt: string
+  updatedAt: string
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  diagnostic: {
+    type: "comparison-failed"
+    message: string
   }
 }
 
@@ -4196,28 +4369,28 @@ function visualCompareExplainSelectors(args: string[]): string[] {
   return [...selectors]
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[]): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor.startsWith("selector:")) {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
-    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible" })
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible", timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
-    await page.goto(targetUrl, { waitUntil: waitFor })
+    await page.goto(targetUrl, { waitUntil: waitFor, timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
-  const domSnapshot = await captureVisualCompareDomSnapshot(page, maxExplanationCandidates, explainSelectors)
-  await page.screenshot({ path: outputPath, fullPage })
+  const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureVisualCompareDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  await page.screenshot({ path: outputPath, fullPage, timeout: timeoutMs })
   return { finalUrl: page.url(), domSnapshot }
 }
 
@@ -5077,73 +5250,72 @@ function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: nu
   }
 }
 
-async function withBrowserProbeLiveness<T>(page: import("playwright").Page, progress: ReturnType<typeof createBrowserProbeProgressTracker>, failFast: boolean, operation: Promise<T>): Promise<T> {
-  const stallTimeoutMs = progress.summary().stallTimeoutMs ?? 0
-  if (!failFast && stallTimeoutMs <= 0) {
-    return operation
-  }
-
-  let interval: NodeJS.Timeout | undefined
-  operation.catch(() => undefined)
-
-  try {
-    const result = await Promise.race([
-      operation,
-      new Promise<T>((_resolve, reject) => {
-        interval = setInterval(() => {
-          void (async () => {
-            try {
-              const state = await page.evaluate(() => {
-                const probe = (globalThis as typeof globalThis & {
-                  __wpCodeboxBrowserProbe?: {
-                    checkpoints?: Array<{ timestamp?: unknown }>
-                    terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
-                  }
-                }).__wpCodeboxBrowserProbe
-                const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
-                const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
-                const failure = probe?.terminalFailure
-                return {
-                  checkpointTimestamp: latestCheckpoint?.timestamp,
-                  terminalFailure: failure && typeof failure.message === "string" ? {
-                    message: failure.message,
-                    reason: typeof failure.reason === "string" ? failure.reason : undefined,
-                    details: failure.details,
-                    timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
-                  } : undefined,
-                }
-              })
-              if (typeof state.checkpointTimestamp === "string") {
-                progress.mark("checkpoint", state.checkpointTimestamp)
-              }
-              if (state.terminalFailure) {
-                progress.terminalFailure(state.terminalFailure)
-                reject(new BrowserProbeTerminalFailureError(state.terminalFailure))
-                return
-              }
-              if (stallTimeoutMs > 0 && progress.lastProgressElapsedMs() >= stallTimeoutMs) {
-                const summary = progress.summary()
-                reject(new BrowserProbeStallError(summary.idleMs, stallTimeoutMs, summary.lastProgressSource))
-              }
-            } catch {
-              // The page may be navigating or already closed; the outer operation remains authoritative.
+async function withBrowserProbeLiveness<T>(page: import("playwright").Page, progress: ReturnType<typeof createBrowserProbeProgressTracker>, failFast: boolean, operation: Promise<T>, policy: Required<BrowserCommandLivenessPolicy>, phase: string): Promise<T> {
+  const result = await withBrowserCommandLiveness({
+    command: "wordpress.browser-probe",
+    phase,
+    operation,
+    policy,
+    idle: () => {
+      const summary = progress.summary()
+      return { idleMs: summary.idleMs, lastProgressSource: summary.lastProgressSource }
+    },
+    poll: async () => {
+      try {
+        const state = await page.evaluate(() => {
+          const probe = (globalThis as typeof globalThis & {
+            __wpCodeboxBrowserProbe?: {
+              checkpoints?: Array<{ timestamp?: unknown }>
+              terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
             }
-          })()
-        }, 250)
-        interval.unref()
-      }),
-    ])
-    const terminalFailure = failFast ? await browserProbeTerminalFailure(page) : undefined
-    if (terminalFailure) {
-      progress.terminalFailure(terminalFailure)
-      throw new BrowserProbeTerminalFailureError(terminalFailure)
+          }).__wpCodeboxBrowserProbe
+          const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
+          const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
+          const failure = probe?.terminalFailure
+          return {
+            checkpointTimestamp: latestCheckpoint?.timestamp,
+            terminalFailure: failure && typeof failure.message === "string" ? {
+              message: failure.message,
+              reason: typeof failure.reason === "string" ? failure.reason : undefined,
+              details: failure.details,
+              timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
+            } : undefined,
+          }
+        })
+        if (typeof state.checkpointTimestamp === "string") {
+          progress.mark("checkpoint", state.checkpointTimestamp)
+        }
+        if (state.terminalFailure) {
+          progress.terminalFailure(state.terminalFailure)
+          throw new BrowserProbeTerminalFailureError(state.terminalFailure)
+        }
+      } catch (error) {
+        if (error instanceof BrowserProbeTerminalFailureError) {
+          throw error
+        }
+        // The page may be navigating or already closed; the outer operation remains authoritative.
+      }
+    },
+  }).catch((error) => {
+    if (error instanceof BrowserCommandLivenessError && error.code === "browser-command-idle-timeout") {
+      const summary = progress.summary()
+      throw new BrowserProbeStallError(summary.idleMs, policy.idleTimeoutMs, summary.lastProgressSource)
     }
-    return result
-  } finally {
-    if (interval) {
-      clearInterval(interval)
-    }
+    throw error
+  })
+  const terminalFailure = failFast ? await browserProbeTerminalFailure(page) : undefined
+  if (terminalFailure) {
+    progress.terminalFailure(terminalFailure)
+    throw new BrowserProbeTerminalFailureError(terminalFailure)
   }
+  return result
+}
+
+function livenessRemainingWallTimeMs(startedAtMs: number, totalTimeoutMs: number): number {
+  if (totalTimeoutMs <= 0) {
+    return browserCommandLivenessPolicy().wallTimeoutMs
+  }
+  return Math.max(1, totalTimeoutMs - (Date.now() - startedAtMs))
 }
 
 async function browserProbeTerminalFailure(page: import("playwright").Page): Promise<{ message: string; reason?: string; details?: unknown; timestamp: string } | undefined> {

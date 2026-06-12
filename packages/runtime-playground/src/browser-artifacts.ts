@@ -132,6 +132,11 @@ export interface BrowserArtifactSummary {
   }>
   networkPolicy?: BrowserProbeNetworkPolicySummary
   lifecycle?: BrowserProbeLifecycleSummary
+  liveness?: {
+    wallTimeoutMs?: number
+    stallTimeoutMs?: number
+    networkSettleTimeoutMs?: number
+  }
   memory?: BrowserProbeMemorySummary
   metrics?: Record<string, number>
   networkEvents: number

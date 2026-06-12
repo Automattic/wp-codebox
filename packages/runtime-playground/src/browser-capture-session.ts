@@ -1,8 +1,7 @@
 import type { BrowserProbeErrorRecord, BrowserProbeNetworkRecord } from "./browser-artifacts.js"
+import { browserCommandLivenessPolicy } from "./browser-liveness.js"
 import { serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import type { Browser, Page } from "playwright"
-
-const BROWSER_NETWORK_TASK_SETTLE_TIMEOUT_MS = 1_000
 
 export async function launchChromiumBrowser(): Promise<Browser> {
   const { chromium } = await import("playwright")
@@ -74,7 +73,7 @@ export function attachBrowserCaptureListeners({
   }
 }
 
-export async function settleBrowserNetworkTasks(networkTasks: Array<Promise<void>>, timeoutMs = BROWSER_NETWORK_TASK_SETTLE_TIMEOUT_MS): Promise<void> {
+export async function settleBrowserNetworkTasks(networkTasks: Array<Promise<void>>, timeoutMs = browserCommandLivenessPolicy().networkSettleTimeoutMs): Promise<void> {
   if (networkTasks.length === 0) {
     return
   }
