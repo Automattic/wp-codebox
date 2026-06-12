@@ -450,7 +450,15 @@ class PlaygroundRuntime implements Runtime {
 
   async runHtmlCapture(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+    let result: Awaited<ReturnType<typeof runHtmlCaptureCommand>>
+    try {
+      result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }
