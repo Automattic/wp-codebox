@@ -132,6 +132,7 @@ export interface BrowserProbeAuthSummary {
   mode: "wordpress-admin"
   userId: number
   cookieCount: number
+  cookieHosts: Array<{ host: string; cookieCount: number }>
 }
 
 export interface BrowserEditorCanvasProbeSummary {
