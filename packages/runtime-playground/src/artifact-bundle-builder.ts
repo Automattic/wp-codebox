@@ -47,6 +47,8 @@ import {
   type MountDiffsResult,
 } from "./artifacts.js"
 import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
+import { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations } from "./replayable-wordpress-site-bundle.js"
+import { runtimeSnapshotPayload, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 
 export interface ArtifactBundleBuilderSource {
   artifactRoot: string
@@ -128,6 +130,10 @@ export class ArtifactBundleBuilder {
       probes: source.browserArtifacts(),
       redactor,
     })
+    const replaySnapshot = portableSiteReplaySnapshot(
+      await firstRuntimeStateSnapshotPayload(source.snapshots),
+      source.spec.environment.blueprint,
+    )
     const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])
@@ -257,24 +263,39 @@ export class ArtifactBundleBuilder {
       ...(source.themeCheckArtifactPaths().length > 0 ? { themeChecks: source.themeCheckArtifactPaths() } : {}),
     }
     metadata.artifacts = artifactFiles
-    const blueprintAfter = buildBlueprintAfter({
+    const partialBlueprintAfter = buildBlueprintAfter({
       environment: source.spec.environment,
       capturedMounts,
     })
-    const blueprintAfterNotes = buildBlueprintAfterNotes({
+    const partialBlueprintAfterNotes = buildBlueprintAfterNotes({
       createdAt,
       runtimeId: source.runtimeId,
       environment: source.spec.environment,
       mounts: source.mounts,
       capturedMounts,
     })
-    const blueprintAfterViewer = blueprintAfterReplayViewerMetadata()
+    const blueprintAfter = replaySnapshot
+      ? buildReplayableWordPressSiteBlueprint(replaySnapshot, { landingPage: partialBlueprintAfter.landingPage as string | undefined })
+      : partialBlueprintAfter
+    const blueprintAfterNotes = replaySnapshot
+      ? buildReplayableWordPressSiteLimitations(replaySnapshot, {
+        source: {
+          kind: "runtime-state-snapshot",
+          runtimeId: source.runtimeId,
+          snapshotId: replaySnapshot.id,
+          diagnosticBlueprint: "files/blueprint.after.partial.json",
+        },
+      })
+      : partialBlueprintAfterNotes
+    const blueprintAfterViewer = blueprintAfterReplayViewerMetadata(replaySnapshot ? "replayable-runtime-state" : "partial")
+    const partialBlueprintAfterPath = join(filesDirectory, "blueprint.after.partial.json")
 
     const manifestFiles: ArtifactManifestFile[] = [
       artifactManifestFile(manifestPath, "manifest", "application/json"),
       artifactManifestFile(metadataPath, "metadata", "application/json"),
       artifactManifestFile(blueprintAfterPath, "blueprint-after", "application/json", undefined, cloneArtifactViewerMetadata(blueprintAfterViewer)),
       artifactManifestFile(blueprintAfterNotesPath, "blueprint-after-notes", "application/json"),
+      ...(replaySnapshot ? [artifactManifestFile(partialBlueprintAfterPath, "blueprint-after-diagnostic", "application/json")] : []),
       artifactManifestFile(eventsPath, "events", "application/x-ndjson"),
       artifactManifestFile(commandsPath, "commands", "application/x-ndjson"),
       artifactManifestFile(observationsPath, "observations", "application/x-ndjson"),
@@ -314,6 +335,9 @@ export class ArtifactBundleBuilder {
 
     await writeRedactedArtifact(redactor, blueprintAfterPath, source.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
     await writeRedactedArtifact(redactor, blueprintAfterNotesPath, source.artifactRoot, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
+    if (replaySnapshot) {
+      await writeRedactedArtifact(redactor, partialBlueprintAfterPath, source.artifactRoot, `${JSON.stringify(partialBlueprintAfter, null, 2)}\n`)
+    }
     await writeJsonLines(eventsPath, source.events, redactor, source.artifactRoot)
     await writeJsonLines(commandsPath, source.commands, redactor, source.artifactRoot)
     await writeJsonLines(observationsPath, source.observations, redactor, source.artifactRoot)
@@ -439,7 +463,94 @@ export class ArtifactBundleBuilder {
   }
 }
 
-function blueprintAfterReplayViewerMetadata(): ArtifactViewerMetadata {
+async function firstRuntimeStateSnapshotPayload(snapshots: Snapshot[]): Promise<RuntimeSnapshotArtifact | undefined> {
+  for (const snapshot of snapshots) {
+    if (snapshot.semantics !== "runtime-state-artifact") {
+      continue
+    }
+
+    try {
+      return await runtimeSnapshotPayload(snapshot)
+    } catch {
+      continue
+    }
+  }
+}
+
+function portableSiteReplaySnapshot(snapshot: RuntimeSnapshotArtifact | undefined, sourceBlueprint: unknown): RuntimeSnapshotArtifact | undefined {
+  if (!snapshot) {
+    return undefined
+  }
+
+  const runtimeOnlyActivePlugins = activePluginsFromBlueprint(sourceBlueprint)
+  const portable = JSON.parse(JSON.stringify(snapshot)) as RuntimeSnapshotArtifact
+  const runtime = portable.metadata.runtime as RuntimeInfo & { environment?: RuntimeInfo["environment"] & { blueprint?: unknown } }
+  if (runtime.environment && Object.hasOwn(runtime.environment, "blueprint")) {
+    delete runtime.environment.blueprint
+  }
+
+  if (runtimeOnlyActivePlugins.length === 0) {
+    return portable
+  }
+
+  portable.metadata.activePlugins = portable.metadata.activePlugins.filter((plugin) => !runtimeOnlyActivePlugins.includes(plugin))
+  for (const table of portable.database.tables) {
+    for (const row of table.rows) {
+      if (row.option_name !== "active_plugins" || typeof row.option_value !== "string") {
+        continue
+      }
+
+      const filtered = filterSerializedPluginList(row.option_value, runtimeOnlyActivePlugins)
+      if (filtered) {
+        row.option_value = filtered
+      }
+    }
+  }
+
+  return portable
+}
+
+function activePluginsFromBlueprint(blueprint: unknown): string[] {
+  if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {
+    return []
+  }
+
+  const steps = Array.isArray((blueprint as { steps?: unknown }).steps) ? (blueprint as { steps: unknown[] }).steps : []
+  return [...new Set(steps.flatMap((step) => {
+    if (!step || typeof step !== "object" || Array.isArray(step) || (step as { step?: unknown }).step !== "setSiteOptions") {
+      return []
+    }
+
+    const options = (step as { options?: unknown }).options
+    const activePlugins = options && typeof options === "object" && !Array.isArray(options)
+      ? (options as { active_plugins?: unknown }).active_plugins
+      : undefined
+    return Array.isArray(activePlugins) ? activePlugins.filter((plugin): plugin is string => typeof plugin === "string" && plugin.length > 0) : []
+  }))]
+}
+
+function filterSerializedPluginList(serialized: string, excluded: string[]): string | undefined {
+  const plugins = [...serialized.matchAll(/s:\d+:"([^"]+)"/g)].map((match) => match[1])
+  if (plugins.length === 0) {
+    return undefined
+  }
+
+  const filtered = plugins.filter((plugin) => !excluded.includes(plugin))
+  return `a:${filtered.length}:{${filtered.map((plugin, index) => `i:${index};s:${Buffer.byteLength(plugin, "utf8")}:"${plugin}";`).join("")}}`
+}
+
+function blueprintAfterReplayViewerMetadata(status: "partial" | "replayable-runtime-state"): ArtifactViewerMetadata {
+  const limitations = status === "partial"
+    ? [
+      "WP Codebox does not host public artifact URLs; consumers must provide a browser-fetchable URL for blueprint.after.json.",
+      "Text files from readwrite mounts are embedded in blueprint.after.json as writeFile steps; binary files are copied into artifacts but not replayed yet.",
+      "Database exports, option diffs, uploaded media, active theme/plugin state, and screenshots are not captured yet.",
+    ]
+    : [
+      "WP Codebox does not host public artifact URLs; consumers must provide a browser-fetchable URL for blueprint.after.json.",
+      "The reviewer replay restores the generated WordPress site from a runtime-state snapshot instead of re-running generation runtime activation.",
+    ]
+
   return {
     kind: "wordpress-playground-blueprint",
     base: "https://playground.wordpress.net/",
@@ -452,12 +563,8 @@ function blueprintAfterReplayViewerMetadata(): ArtifactViewerMetadata {
       encoding: "url",
     },
     replay: {
-      status: "partial",
-      limitations: [
-        "WP Codebox does not host public artifact URLs; consumers must provide a browser-fetchable URL for blueprint.after.json.",
-        "Text files from readwrite mounts are embedded in blueprint.after.json as writeFile steps; binary files are copied into artifacts but not replayed yet.",
-        "Database exports, option diffs, uploaded media, active theme/plugin state, and screenshots are not captured yet.",
-      ],
+      status,
+      limitations,
     },
   }
 }
