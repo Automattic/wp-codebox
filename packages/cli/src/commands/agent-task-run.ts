@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
@@ -209,13 +209,10 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
-  const providerPlugins = uniqueProviderPlugins([
-    ...profile.providerPlugins,
-    ...stringList(input.provider_plugin_paths).map((source) => ({ source })),
-  ])
+  const providerPlugins = uniqueStrings(stringList(input.provider_plugin_paths))
     .map((plugin) => {
-      const slug = plugin.slug || slugFromPath(plugin.source)
-      return { source: prepareComposerPluginSource(plugin.source, slug, artifacts), slug, activate: true }
+      const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
+      return { source: prepareComposerPluginSource(plugin, slug, artifacts), slug, activate: true }
     })
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
@@ -278,68 +275,17 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
 }
 
 interface RuntimeOverlayProfileDefaults {
-  providerPlugins: Array<{ source: string; slug?: string }>
   runtimeOverlays: Array<Record<string, unknown>>
 }
 
-const CODEX_SUBSCRIPTION_PROFILE = "codex-subscription"
-const CODEX_PROVIDER_PLUGIN_ENV = "WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH"
-const CODEX_PHP_AI_CLIENT_ENV = "WP_CODEBOX_PHP_AI_CLIENT_PATH"
-
 function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
   const profiles = stringList(input.runtime_overlay_profiles)
-  if (profiles.length === 0) return { providerPlugins: [], runtimeOverlays: [] }
+  if (profiles.length === 0) return { runtimeOverlays: [] }
 
-  const defaults: RuntimeOverlayProfileDefaults = { providerPlugins: [], runtimeOverlays: [] }
   for (const profile of profiles) {
-    if (profile === CODEX_SUBSCRIPTION_PROFILE) {
-      defaults.providerPlugins.push({
-        source: requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
-          "~/Developer/ai-provider-for-openai@codex-oauth-provider",
-          "~/Developer/ai-provider-for-openai",
-        ], hasComposerPackage),
-        slug: "ai-provider-for-openai",
-      })
-      defaults.runtimeOverlays.push({
-        kind: "bundled-library",
-        library: "php-ai-client",
-        source: requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PHP_AI_CLIENT_ENV, [
-          "~/Developer/php-ai-client@custom-provider-auth",
-          "~/Developer/php-ai-client",
-        ], hasInstalledComposerPackage),
-        target: "/wordpress/wp-includes/php-ai-client",
-        strategy: "wordpress-scoped-bundle",
-        metadata: { profile, component: "php-ai-client", ref: "custom-provider-auth" },
-      })
-      continue
-    }
     throw new Error(`Unknown runtime overlay profile: ${profile}`)
   }
-  return defaults
-}
-
-function requiredProfilePath(profile: string, envName: string, candidates: string[], isUsablePath: (path: string) => boolean = existsSync): string {
-  const explicit = stringValue(process.env[envName])
-  const resolved = explicit || candidates.map(resolveProfilePathCandidate).find((candidate) => isUsablePath(candidate)) || ""
-  if (!resolved) {
-    throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")}`)
-  }
-  if (!isUsablePath(resolved)) {
-    throw new Error(`${profile} runtime overlay profile path from ${envName} is not prepared: ${resolved}`)
-  }
-  return resolved
-}
-
-function resolveProfilePathCandidate(candidate: string): string {
-  return candidate.startsWith("~/") ? join(process.env.HOME || "", candidate.slice(2)) : candidate
-}
-
-function hasComposerPackage(candidate: string): boolean {
-  return existsSync(join(candidate, "composer.json"))
-}
-
-function hasInstalledComposerPackage(candidate: string): boolean {
-  return hasComposerPackage(candidate) && existsSync(join(candidate, "vendor"))
+  return { runtimeOverlays: [] }
 }
 
 function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {
@@ -347,14 +293,8 @@ function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfil
   return overlays.length > 0 ? overlays : undefined
 }
 
-function uniqueProviderPlugins(plugins: Array<{ source: string; slug?: string }>): Array<{ source: string; slug?: string }> {
-  const seen = new Set<string>()
-  return plugins.filter((plugin) => {
-    const source = stringValue(plugin.source)
-    if (!source || seen.has(source)) return false
-    seen.add(source)
-    return true
-  })
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)))
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
@@ -652,6 +592,17 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: ReturnType<typeo
 function slugFromPath(source: string): string {
   const base = source.replace(/\/$/, "").split("/").pop() || "provider"
   return base.replace(/[^A-Za-z0-9_-]/g, "-")
+}
+
+function slugFromComposerPackage(source: string): string {
+  try {
+    const composer = JSON.parse(readFileSync(join(source, "composer.json"), "utf8")) as { name?: unknown }
+    const name = stringValue(composer.name)
+    if (!name) return ""
+    return slugFromPath(name.split("/").pop() || name)
+  } catch {
+    return ""
+  }
 }
 
 function stringList(value: unknown): string[] {
