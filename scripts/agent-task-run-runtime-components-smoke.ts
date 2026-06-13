@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -170,14 +171,70 @@ const structuredTaskCode = await resolveSandboxTaskCode({
 assert.ok(structuredTaskCode.includes("structured_artifacts"), "sandbox agent input should include structured artifact context")
 assert.ok(structuredTaskCode.includes("ConceptPacket"), "sandbox agent input should preserve structured artifact names")
 const providerRegistryClassReference = String.raw`\WordPress\AiClient\Providers\ProviderRegistry::class`
+const aiClientClassReference = String.raw`\WordPress\AiClient\AiClient::class`
 assert.ok(
   structuredTaskCode.includes(providerRegistryClassReference),
   "generated sandbox PHP should preserve ProviderRegistry namespace separators",
 )
 assert.ok(
+  structuredTaskCode.includes(aiClientClassReference),
+  "generated sandbox PHP should inspect the AI Client singleton registry",
+)
+assert.ok(
+  structuredTaskCode.indexOf("defaultRegistry") < structuredTaskCode.indexOf("new $provider_registry_class"),
+  "generated sandbox PHP should prefer AiClient::defaultRegistry() before falling back to a fresh registry",
+)
+assert.ok(
   !structuredTaskCode.includes("WordPressAiClientProvidersProviderRegistry"),
   "generated sandbox PHP should not flatten ProviderRegistry into an invalid class name",
 )
+
+const providerValidationStart = structuredTaskCode.indexOf("function wp_codebox_validate_requested_provider")
+const providerValidationEnd = structuredTaskCode.indexOf("$runtime_task_run", providerValidationStart)
+assert.ok(providerValidationStart >= 0 && providerValidationEnd > providerValidationStart, "generated sandbox PHP should include provider validation function")
+const providerValidationFunction = structuredTaskCode.slice(providerValidationStart, providerValidationEnd)
+const providerValidationSmokePath = join(mkdtempSync(join(tmpdir(), "wp-codebox-provider-registry-")), "provider-registry-smoke.php")
+writeFileSync(
+  providerValidationSmokePath,
+  `<?php
+namespace WordPress\\AiClient\\Providers {
+    class ProviderRegistry {
+        public function isProviderConfigured($provider) {
+            return false;
+        }
+    }
+}
+
+namespace WordPress\\AiClient {
+    class AiClient {
+        public static $registry;
+        public static function defaultRegistry() {
+            return self::$registry;
+        }
+    }
+}
+
+namespace {
+    \\WordPress\\AiClient\\AiClient::$registry = new class {
+        public function isProviderConfigured($provider) {
+            return 'example-provider' === $provider;
+        }
+    };
+
+${providerValidationFunction}
+
+    $error = wp_codebox_validate_requested_provider(
+        array('provider' => 'example-provider'),
+        array('signals' => array('provider_plugins' => array()), 'plugins' => array())
+    );
+    if (null !== $error) {
+        fwrite(STDERR, json_encode($error, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        exit(1);
+    }
+}
+`,
+)
+execFileSync("php", [providerValidationSmokePath], { stdio: "pipe" })
 
 const outputTaskResult = buildAgentTaskSingleResult({
   schema: "wp-codebox/agent-transcript/v1",

@@ -324,20 +324,33 @@ function wp_codebox_validate_requested_provider(array $agent_input, array $sandb
     if ('' === $provider) {
         return null;
     }
+
+    $registry = null;
+    $ai_client_class = \\WordPress\\AiClient\\AiClient::class;
+    if (class_exists($ai_client_class) && method_exists($ai_client_class, 'defaultRegistry')) {
+        $registry = $ai_client_class::defaultRegistry();
+    }
+
     $provider_registry_class = \\WordPress\\AiClient\\Providers\\ProviderRegistry::class;
-    if (!class_exists($provider_registry_class)) {
+    if (null === $registry && class_exists($provider_registry_class)) {
+        $registry = new $provider_registry_class();
+    }
+
+    if (!is_object($registry)) {
         return array(
             'code' => 'wp_codebox_provider_registry_unavailable',
             'message' => 'The requested provider could not be validated because the wp-ai-client provider registry is unavailable inside the sandbox.',
             'data' => array(
                 'provider' => $provider,
+                'ai_client_available' => class_exists($ai_client_class),
+                'ai_client_default_registry_available' => class_exists($ai_client_class) && method_exists($ai_client_class, 'defaultRegistry'),
+                'provider_registry_available' => class_exists($provider_registry_class),
                 'provider_plugins' => $sandbox_stack['signals']['provider_plugins'] ?? array(),
                 'plugin_activation' => $sandbox_stack['plugins'] ?? array(),
             ),
         );
     }
 
-    $registry = new $provider_registry_class();
     if (method_exists($registry, 'isProviderConfigured') && $registry->isProviderConfigured($provider)) {
         return null;
     }
