@@ -539,7 +539,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
 
       if (error instanceof RecipeRunTimeoutError) {
-        void activeRuntime.destroy().catch(() => undefined)
+        await bestEffortTimeout(activeRuntime.destroy(), 2_000)
       } else {
         await runRecipeCleanup(runRegistry, runRecord, async () => {
           try {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -88,12 +88,12 @@ try {
   assert.equal(latestRuntime.runtimeId, output.runtime.id)
   assert.equal(latestRuntime.commandStatus, "failed")
   assert.equal(latestRuntime.failure.code, "recipe-interrupted")
-  assert.equal(latestRuntime.paths.runtimeManifest, `${output.runtime.id}/manifest.json`)
-  assert.equal(latestRuntime.paths.commandLog, `${output.runtime.id}/logs/commands.log`)
-  assert.equal(latestRuntime.paths.runtimeLog, `${output.runtime.id}/logs/runtime.log`)
-  assert.equal(latestRuntime.paths.eventLog, `${output.runtime.id}/events.jsonl`)
-  assert.equal(latestRuntime.paths.runtimeMetadata, `${output.runtime.id}/metadata.json`)
-  assert.equal(latestRuntime.paths.browserArtifacts, `${output.runtime.id}/files/browser`)
+  await assertPointerArtifact(latestRuntime, artifacts, "runtimeManifest", `${output.runtime.id}/manifest.json`)
+  await assertPointerArtifact(latestRuntime, artifacts, "commandLog", `${output.runtime.id}/logs/commands.log`)
+  await assertPointerArtifact(latestRuntime, artifacts, "runtimeLog", `${output.runtime.id}/logs/runtime.log`)
+  await assertPointerArtifact(latestRuntime, artifacts, "eventLog", `${output.runtime.id}/events.jsonl`)
+  await assertPointerArtifact(latestRuntime, artifacts, "runtimeMetadata", `${output.runtime.id}/metadata.json`)
+  await assertPointerArtifact(latestRuntime, artifacts, "browserArtifacts", `${output.runtime.id}/files/browser`)
 
   const manifest = JSON.parse(await readFile(join(output.artifacts.directory, "manifest.json"), "utf8"))
   assertManifestFile(manifest, "files/runtime-evidence/run-attestation.json", "run-attestation")
@@ -246,7 +246,7 @@ try {
   assert.equal(disconnectLatestRuntime.schema, "wp-codebox/recipe-run-artifact-pointer/v1")
   assert.equal(disconnectLatestRuntime.commandStatus, "failed")
   assert.equal(disconnectLatestRuntime.failure.code, "recipe-interrupted")
-  assert.equal(disconnectLatestRuntime.paths.runtimeManifest, `${disconnectOutput.runtime.id}/manifest.json`)
+  await assertPointerArtifact(disconnectLatestRuntime, disconnectArtifacts, "runtimeManifest", `${disconnectOutput.runtime.id}/manifest.json`)
 
   console.log("Recipe interruption artifact smoke passed")
 } finally {
@@ -272,4 +272,16 @@ async function waitForPointerCommand(directory: string, command: string, timeout
 
 function assertManifestFile(manifest: { files: Array<{ path: string; kind: string }> }, path: string, kind: string): void {
   assert.ok(manifest.files.some((file) => file.path === path && file.kind === kind), `Expected manifest entry ${kind} at ${path}`)
+}
+
+async function assertPointerArtifact(pointer: { paths?: Record<string, string>; artifactMissing?: Record<string, { path: string; reason: string }> }, artifactRoot: string, key: string, expectedPath: string): Promise<void> {
+  const path = pointer.paths?.[key]
+  if (path) {
+    assert.equal(path, expectedPath)
+    await stat(join(artifactRoot, path))
+    return
+  }
+
+  assert.equal(pointer.artifactMissing?.[key]?.path, expectedPath, `Expected ${key} to have an artifact-missing path`)
+  assert.equal(pointer.artifactMissing?.[key]?.reason, "runtime-artifact-not-created")
 }

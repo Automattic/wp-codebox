@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, stat, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { stripUndefined, type ArtifactBundle, type RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { RunOutput } from "../runtime-command-wrappers.js"
@@ -42,7 +42,7 @@ export class RecipeArtifactPointerTracker {
       failure: this.failure,
       failurePhase: recipeArtifactPointerFailurePhase(this.failure, this.phases),
       browserEvidence: this.browserEvidence.length > 0 ? this.browserEvidence : undefined,
-      paths: recipeArtifactPointerPaths(this.directory, this.runtime, this.artifacts),
+      ...await recipeArtifactPointerArtifactState(this.directory, this.runtime, this.artifacts),
     })
 
     await mkdir(this.directory, { recursive: true })
@@ -65,28 +65,44 @@ function recipeArtifactPointerFailurePhase(error: RunOutput["error"] | undefined
   return undefined
 }
 
-function recipeArtifactPointerPaths(directory: string, runtime: RuntimeInfo | undefined, artifacts: ArtifactBundle | undefined): Record<string, string> {
+async function recipeArtifactPointerArtifactState(directory: string, runtime: RuntimeInfo | undefined, artifacts: ArtifactBundle | undefined): Promise<Record<string, unknown>> {
   const paths: Record<string, string | undefined> = {}
+  const artifactMissing: Record<string, { path: string; reason: "runtime-artifact-not-created" }> = {}
   if (runtime) {
     const runtimeDirectory = join(directory, runtime.id)
-    paths.runtimeDirectory = relative(directory, runtimeDirectory) || "."
-    paths.eventLog = relative(directory, join(runtimeDirectory, "events.jsonl"))
-    paths.commandLog = relative(directory, join(runtimeDirectory, "logs", "commands.log"))
-    paths.runtimeLog = relative(directory, join(runtimeDirectory, "logs", "runtime.log"))
-    paths.runtimeMetadata = relative(directory, join(runtimeDirectory, "metadata.json"))
-    paths.runtimeManifest = relative(directory, join(runtimeDirectory, "manifest.json"))
-    paths.browserArtifacts = relative(directory, join(runtimeDirectory, "files", "browser"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeDirectory", runtimeDirectory)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "eventLog", join(runtimeDirectory, "events.jsonl"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "commandLog", join(runtimeDirectory, "logs", "commands.log"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeLog", join(runtimeDirectory, "logs", "runtime.log"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeMetadata", join(runtimeDirectory, "metadata.json"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeManifest", join(runtimeDirectory, "manifest.json"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "browserArtifacts", join(runtimeDirectory, "files", "browser"))
   }
 
   if (artifacts) {
-    paths.runtimeDirectory = relative(directory, artifacts.directory) || "."
-    paths.eventLog = relative(directory, artifacts.eventsPath)
-    paths.commandLog = relative(directory, artifacts.commandsLogPath)
-    paths.runtimeLog = relative(directory, artifacts.runtimeLogPath)
-    paths.runtimeMetadata = relative(directory, artifacts.metadataPath)
-    paths.runtimeManifest = relative(directory, artifacts.manifestPath)
-    paths.browserArtifacts = relative(directory, join(artifacts.directory, "files", "browser"))
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeDirectory", artifacts.directory)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "eventLog", artifacts.eventsPath)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "commandLog", artifacts.commandsLogPath)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeLog", artifacts.runtimeLogPath)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeMetadata", artifacts.metadataPath)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "runtimeManifest", artifacts.manifestPath)
+    await appendExistingArtifactPath(directory, paths, artifactMissing, "browserArtifacts", join(artifacts.directory, "files", "browser"))
   }
 
-  return stripUndefined(paths) as Record<string, string>
+  return stripUndefined({
+    paths: stripUndefined(paths),
+    artifactMissing: Object.keys(artifactMissing).length > 0 ? artifactMissing : undefined,
+  })
+}
+
+async function appendExistingArtifactPath(directory: string, paths: Record<string, string | undefined>, artifactMissing: Record<string, { path: string; reason: "runtime-artifact-not-created" }>, key: string, absolutePath: string): Promise<void> {
+  const path = relative(directory, absolutePath) || "."
+  try {
+    await stat(absolutePath)
+    paths[key] = path
+    delete artifactMissing[key]
+  } catch {
+    delete paths[key]
+    artifactMissing[key] = { path, reason: "runtime-artifact-not-created" }
+  }
 }
