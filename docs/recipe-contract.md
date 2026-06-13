@@ -206,6 +206,37 @@ npm run wp-codebox -- recipe build phpunit --options ./phpunit-options.json --ou
 npm run wp-codebox -- recipe-run --recipe ./phpunit.recipe.json --artifacts ./artifacts/phpunit --json
 ```
 
+## Stable Recipe-Builder API
+
+Tools that need to generate WordPress bench or PHPUnit recipes without shelling
+out to the CLI may import the supported recipe-builder module:
+
+```js
+import {
+  buildWordPressBenchRecipe,
+  buildWordPressPhpunitRecipe,
+} from "@automattic/wp-codebox-core/recipe-builders"
+```
+
+The same subpath is exported by the root release package as
+`wp-codebox-workspace/recipe-builders`, so callers can use one documented module
+name for npm package installs and release-tarball installs without probing
+`packages/runtime-core/dist/index.js` or other internal build paths. Local
+checkout consumers should run `npm run build` first, then import the same
+workspace package subpath through normal Node package resolution.
+
+The CLI surface remains the stable process boundary for hosts that prefer JSON
+over an in-process import:
+
+```bash
+wp-codebox recipe build phpunit --options ./phpunit-options.json --output ./phpunit.recipe.json
+wp-codebox recipe build bench --options ./bench-options.json --output ./bench.recipe.json
+```
+
+Both builders return `wp-codebox/workspace-recipe/v1` recipes. The generated
+recipes should still be validated with `wp-codebox recipe validate` or
+`wp-codebox recipe-run --dry-run` before execution in CI.
+
 For monorepos such as WooCommerce, set `pluginSource` to the directory that
 should appear as `wp-content/plugins/<plugin-slug>` and set `cwd` to the same
 sandbox directory a `wp-env --env-cwd` command would use. Relative `cwd` values

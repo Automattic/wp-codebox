@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./recipe-builders": {
+      "types": "./dist/recipe-builders.d.ts",
+      "import": "./dist/recipe-builders.js"
     }
   },
   "files": [

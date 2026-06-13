@@ -8,6 +8,10 @@
       "types": "./packages/runtime-core/dist/index.d.ts",
       "import": "./packages/runtime-core/dist/index.js"
     },
+    "./recipe-builders": {
+      "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
+      "import": "./packages/runtime-core/dist/recipe-builders.js"
+    },
     "./playground": {
       "types": "./packages/runtime-playground/dist/index.d.ts",
       "import": "./packages/runtime-playground/dist/index.js"

@@ -43,6 +43,9 @@ interface WordPressBenchBuilderOptions {
   wpConfigDefines?: Record<string, unknown>
   bootstrapFiles?: string[]
   workloads?: unknown[]
+  scenarioIds?: string[]
+  lifecycle?: Record<string, unknown>
+  resetPolicy?: Record<string, unknown>
 }
 
 export async function runRecipeBuildCommand(args: string[]): Promise<number> {
@@ -99,6 +102,9 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         wpConfigDefines: plainObject(options.wpConfigDefines),
         bootstrapFiles: Array.isArray((options as WordPressBenchBuilderOptions).bootstrapFiles) ? (options as WordPressBenchBuilderOptions).bootstrapFiles : [],
         workloads: Array.isArray((options as WordPressBenchBuilderOptions).workloads) ? (options as WordPressBenchBuilderOptions).workloads : [],
+        scenarioIds: Array.isArray((options as WordPressBenchBuilderOptions).scenarioIds) ? (options as WordPressBenchBuilderOptions).scenarioIds : [],
+        lifecycle: plainObject((options as WordPressBenchBuilderOptions).lifecycle),
+        resetPolicy: plainObject((options as WordPressBenchBuilderOptions).resetPolicy),
       })
   }
 }

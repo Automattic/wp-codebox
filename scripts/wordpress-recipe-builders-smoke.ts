@@ -4,7 +4,8 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { DEFAULT_WORDPRESS_VERSION, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe } from "@automattic/wp-codebox-core/recipe-builders"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
