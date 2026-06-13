@@ -210,7 +210,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
   const providerPlugins = uniqueStrings([...profile.providerPluginPaths, ...stringList(input.provider_plugin_paths)])
-    .map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
+    .map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: true }))
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
     `task=${taskInput.goal}`,

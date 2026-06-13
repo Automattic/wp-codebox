@@ -36,6 +36,7 @@ assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-ope
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.activate, false)
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime-tools")?.activate, false)
+assert.equal(extraPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")?.activate, true)
 assert.equal(recipe.inputs?.dependency_overlays?.[0]?.consumer, "caller-runtime")
 assert.equal(recipe.inputs?.dependency_overlays?.[0]?.package, "acme/dependency")
 
@@ -322,6 +323,7 @@ const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
 
 const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")
 assert.equal(codexProviderPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/ai-provider-for-openai-codex-oauth-provider")
+assert.equal(codexProviderPlugin?.activate, true, "codex profile provider plugin must activate before provider preflight")
 assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)
