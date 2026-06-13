@@ -209,8 +209,14 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
-  const providerPlugins = uniqueStrings([...profile.providerPluginPaths, ...stringList(input.provider_plugin_paths)])
-    .map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: true }))
+  const providerPlugins = uniqueProviderPlugins([
+    ...profile.providerPlugins,
+    ...stringList(input.provider_plugin_paths).map((source) => ({ source })),
+  ])
+    .map((plugin) => {
+      const slug = plugin.slug || slugFromPath(plugin.source)
+      return { source: prepareComposerPluginSource(plugin.source, slug, artifacts), slug, activate: true }
+    })
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
     `task=${taskInput.goal}`,
@@ -272,7 +278,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
 }
 
 interface RuntimeOverlayProfileDefaults {
-  providerPluginPaths: string[]
+  providerPlugins: Array<{ source: string; slug?: string }>
   runtimeOverlays: Array<Record<string, unknown>>
 }
 
@@ -282,15 +288,18 @@ const CODEX_PHP_AI_CLIENT_ENV = "WP_CODEBOX_PHP_AI_CLIENT_PATH"
 
 function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
   const profiles = stringList(input.runtime_overlay_profiles)
-  if (profiles.length === 0) return { providerPluginPaths: [], runtimeOverlays: [] }
+  if (profiles.length === 0) return { providerPlugins: [], runtimeOverlays: [] }
 
-  const defaults: RuntimeOverlayProfileDefaults = { providerPluginPaths: [], runtimeOverlays: [] }
+  const defaults: RuntimeOverlayProfileDefaults = { providerPlugins: [], runtimeOverlays: [] }
   for (const profile of profiles) {
     if (profile === CODEX_SUBSCRIPTION_PROFILE) {
-      defaults.providerPluginPaths.push(requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
-        "~/Developer/ai-provider-for-openai@codex-oauth-provider",
-        "~/Developer/ai-provider-for-openai",
-      ], hasComposerPackage))
+      defaults.providerPlugins.push({
+        source: requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
+          "~/Developer/ai-provider-for-openai@codex-oauth-provider",
+          "~/Developer/ai-provider-for-openai",
+        ], hasComposerPackage),
+        slug: "ai-provider-for-openai",
+      })
       defaults.runtimeOverlays.push({
         kind: "bundled-library",
         library: "php-ai-client",
@@ -338,8 +347,14 @@ function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfil
   return overlays.length > 0 ? overlays : undefined
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.filter(Boolean)))
+function uniqueProviderPlugins(plugins: Array<{ source: string; slug?: string }>): Array<{ source: string; slug?: string }> {
+  const seen = new Set<string>()
+  return plugins.filter((plugin) => {
+    const source = stringValue(plugin.source)
+    if (!source || seen.has(source)) return false
+    seen.add(source)
+    return true
+  })
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {

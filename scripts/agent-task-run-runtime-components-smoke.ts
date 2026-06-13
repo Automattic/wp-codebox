@@ -320,10 +320,14 @@ const codexProfileInput = {
 const codexProfileRecipe = buildAgentTaskRecipe(codexProfileInput, normalizeTaskInput(codexProfileInput), "trunk")
 const codexPlugins = codexProfileRecipe.inputs?.extra_plugins ?? []
 const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
+const codexWorkflowArgs = codexProfileRecipe.workflow?.steps?.[0]?.args ?? []
 
-const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")
-assert.equal(codexProviderPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/ai-provider-for-openai-codex-oauth-provider")
+const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai")
+assert.equal(codexProviderPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/ai-provider-for-openai")
 assert.equal(codexProviderPlugin?.activate, true, "codex profile provider plugin must activate before provider preflight")
+assert.ok(!codexPlugins.some((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider"))
+assert.ok(codexWorkflowArgs.includes("provider-plugin-slugs=ai-provider-for-openai"))
+assert.ok(!codexWorkflowArgs.includes("provider-plugin-slugs=ai-provider-for-openai-codex-oauth-provider"))
 assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)
