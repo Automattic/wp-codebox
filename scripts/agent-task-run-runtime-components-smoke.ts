@@ -300,38 +300,48 @@ const structuredIndex = JSON.parse(readFileSync(join(filesRoot, "structured-arti
 assert.equal(structuredIndex.schema, "wp-codebox/structured-artifacts-index/v1")
 assert.equal(structuredIndex.artifacts[0]?.payload?.theme, "warm editorial")
 
-const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
-const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
-const phpAiClientPath = join(profileRoot, "php-ai-client@custom-provider-auth")
-mkdirSync(codexProviderPath, { recursive: true })
-mkdirSync(join(phpAiClientPath, "vendor"), { recursive: true })
-writeFileSync(join(codexProviderPath, "composer.json"), "{}\n")
-writeFileSync(join(phpAiClientPath, "composer.json"), "{}\n")
-process.env.WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH = codexProviderPath
-process.env.WP_CODEBOX_PHP_AI_CLIENT_PATH = phpAiClientPath
+const providerRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-provider-"))
+const customProviderPath = join(providerRoot, "custom-provider-branch-checkout")
+const bundledLibraryPath = join(providerRoot, "custom-library-checkout")
+mkdirSync(customProviderPath, { recursive: true })
+mkdirSync(bundledLibraryPath, { recursive: true })
+writeFileSync(join(customProviderPath, "composer.json"), JSON.stringify({ name: "example/canonical-provider-plugin" }))
 
-const codexProfileInput = {
-  goal: "Run a Codex subscription-backed agent",
-  provider: "codex",
-  model: "gpt-5.5",
-  runtime_overlay_profiles: ["codex-subscription"],
+const providerIdentityInput = {
+  goal: "Run a provider-backed agent",
+  provider: "example-provider",
+  model: "example-model",
+  provider_plugin_paths: [customProviderPath],
+  runtime_overlays: [{
+    kind: "bundled-library",
+    library: "example-library",
+    source: bundledLibraryPath,
+    target: "/wordpress/wp-includes/example-library",
+    strategy: "wordpress-scoped-bundle",
+  }],
   artifacts_path: "/tmp/wp-codebox-artifacts",
 }
-const codexProfileRecipe = buildAgentTaskRecipe(codexProfileInput, normalizeTaskInput(codexProfileInput), "trunk")
-const codexPlugins = codexProfileRecipe.inputs?.extra_plugins ?? []
-const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
+const providerIdentityRecipe = buildAgentTaskRecipe(providerIdentityInput, normalizeTaskInput(providerIdentityInput), "trunk")
+const providerIdentityPlugins = providerIdentityRecipe.inputs?.extra_plugins ?? []
+const providerIdentityOverlays = providerIdentityRecipe.runtime?.overlays ?? []
+const providerIdentityWorkflowArgs = providerIdentityRecipe.workflow?.steps?.[0]?.args ?? []
 
-const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")
-assert.equal(codexProviderPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/ai-provider-for-openai-codex-oauth-provider")
-assert.equal(codexProviderPlugin?.activate, true, "codex profile provider plugin must activate before provider preflight")
-assert.equal(codexOverlays[0]?.kind, "bundled-library")
-assert.equal(codexOverlays[0]?.library, "php-ai-client")
-assert.equal(codexOverlays[0]?.source, phpAiClientPath)
-assert.equal(codexOverlays[0]?.strategy, "wordpress-scoped-bundle")
+const providerIdentityPlugin = providerIdentityPlugins.find((plugin) => plugin?.slug === "canonical-provider-plugin")
+assert.equal(providerIdentityPlugin?.source, "/tmp/wp-codebox-artifacts/prepared-plugins/canonical-provider-plugin")
+assert.equal(providerIdentityPlugin?.activate, true, "provider plugin must activate before provider preflight")
+assert.ok(!providerIdentityPlugins.some((plugin) => plugin?.slug === "custom-provider-branch-checkout"))
+assert.ok(providerIdentityWorkflowArgs.includes("provider-plugin-slugs=canonical-provider-plugin"))
+assert.ok(!providerIdentityWorkflowArgs.includes("provider-plugin-slugs=custom-provider-branch-checkout"))
+assert.equal(providerIdentityOverlays[0]?.kind, "bundled-library")
+assert.equal(providerIdentityOverlays[0]?.library, "example-library")
+assert.equal(providerIdentityOverlays[0]?.source, bundledLibraryPath)
+assert.equal(providerIdentityOverlays[0]?.strategy, "wordpress-scoped-bundle")
 assert.ok(agentCodeSource.includes("wp_codebox_validate_requested_provider"))
 assert.ok(agentCodeSource.includes("WordPress\\\\AiClient\\\\Providers\\\\ProviderRegistry"))
 assert.ok(agentCodeSource.includes("wp_codebox_provider_not_registered"))
 assert.ok(!agentTaskRunSource.includes("CodexProvider"))
+assert.ok(!agentTaskRunSource.includes("codex-subscription"))
+assert.ok(!agentTaskRunSource.includes("WP_CODEBOX_CODEX"))
 
 async function promiseMustSettle<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: NodeJS.Timeout | undefined
