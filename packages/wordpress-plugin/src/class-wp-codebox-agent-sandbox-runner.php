@@ -1827,8 +1827,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 			$source = $this->clean_path( (string) ( $mount['source'] ?? '' ) );
 			$target = trim( (string) ( $mount['target'] ?? '' ) );
-			if ( '' === $source || ! is_dir( $source ) ) {
-				return new WP_Error( 'wp_codebox_mount_source_invalid', 'WP Codebox mount source must be an existing directory.', array( 'status' => 400, 'index' => $index ) );
+			if ( '' === $source || ( ! is_dir( $source ) && ! is_file( $source ) ) ) {
+				return new WP_Error( 'wp_codebox_mount_source_invalid', 'WP Codebox mount source must be an existing file or directory.', array( 'status' => 400, 'index' => $index ) );
 			}
 
 			if ( '' === $target || ! str_starts_with( $target, '/' ) ) {
@@ -1841,10 +1841,14 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			}
 
 			$entry = array(
+				'type'   => is_file( $source ) ? 'file' : 'directory',
 				'source' => $source,
 				'target' => $target,
 				'mode'   => $mode,
 			);
+			if ( isset( $mount['type'] ) && in_array( (string) $mount['type'], array( 'file', 'directory' ), true ) ) {
+				$entry['type'] = (string) $mount['type'];
+			}
 
 			if ( isset( $mount['metadata'] ) && ! is_array( $mount['metadata'] ) ) {
 				return new WP_Error( 'wp_codebox_mount_metadata_invalid', 'WP Codebox mount metadata must be an object.', array( 'status' => 400, 'index' => $index ) );
@@ -1882,7 +1886,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'blueprint' => array( 'steps' => array() ),
 		);
 
-		$stack_mounts = $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array() );
+		$stack_mounts = $this->runtime_stack_mounts( $input );
 		if ( ! empty( $stack_mounts ) ) {
 			$runtime['stack'] = array( 'mounts' => $stack_mounts );
 		}
@@ -1893,6 +1897,45 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $runtime;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private function runtime_stack_mounts( array $input ): array {
+		$mounts = $this->merge_array_lists(
+			$input['runtime_stack_mounts'] ?? array(),
+			$input['runtime_config_mounts'] ?? array(),
+			$input['runtimeConfigMounts'] ?? array(),
+			$input['runtime_state_mounts'] ?? array(),
+			$input['runtimeStateMounts'] ?? array()
+		);
+
+		return array_values(
+			array_map(
+				function ( array $mount ): array {
+					if ( ! isset( $mount['metadata'] ) || ! is_array( $mount['metadata'] ) ) {
+						$mount['metadata'] = array();
+					}
+					$mount['metadata'] = array_merge( array( 'kind' => 'runtime-state-mount' ), $mount['metadata'] );
+
+					return $mount;
+				},
+				$mounts
+			)
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,string> */
+	private function runtime_env( array $input ): array {
+		$raw = is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : ( is_array( $input['runtimeEnv'] ?? null ) ? $input['runtimeEnv'] : array() );
+		$env = array();
+		foreach ( $raw as $name => $value ) {
+			$name = trim( (string) $name );
+			if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) && is_scalar( $value ) ) {
+				$env[ $name ] = (string) $value;
+			}
+		}
+
+		return $env;
 	}
 
 	private function command_prefix( string $bin ): string|WP_Error {
@@ -2011,6 +2054,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'site_seed_recipe_entries'    => fn( array $input ): array|WP_Error => $this->parent_site_seed_recipe_entries( $input ),
 				'inheritance_request'         => fn( array $input ): array => $this->inheritance_request( $input ),
 				'component_plugins'           => fn( array $paths ): array => $this->component_plugins( $paths ),
+				'runtime_env'                 => fn( array $input ): array => $this->runtime_env( $input ),
 				'secret_env_names'            => fn( array $input, array $inheritance ): array => $this->secret_env_names( $input, $inheritance ),
 			)
 		);

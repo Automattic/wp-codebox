@@ -2252,6 +2252,11 @@ $command_count     = 0;
 
 putenv( 'GITHUB_TOKEN=ghp-parent-env-fixture' );
 $_ENV['GITHUB_TOKEN'] = 'ghp-parent-env-fixture';
+$runtime_config_path = $root . '/generic-provider-config.json';
+$runtime_state_path  = $root . '/generic-provider-state';
+mkdir( $runtime_state_path, 0777, true );
+file_put_contents( $runtime_config_path, '{"provider":"generic-provider"}' );
+file_put_contents( $runtime_state_path . '/state.json', '{"model":"generic-model"}' );
 
 $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 	array(
@@ -2363,6 +2368,25 @@ $result = $runner->run(
 		'artifacts_path' => $root . '/artifacts',
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'component_contracts' => $component_contracts,
+		'runtime_env'    => array(
+			'GENERIC_PROVIDER_CONFIG'     => '/home/wp/.config/generic-provider/config.json',
+			'GENERIC_PROVIDER_STATE_HOME' => '/home/wp/.local/state/generic-provider',
+		),
+		'runtime_config_mounts' => array(
+			array(
+				'type'   => 'file',
+				'source' => $runtime_config_path,
+				'target' => '/home/wp/.config/generic-provider/config.json',
+				'mode'   => 'readonly',
+			),
+		),
+		'runtime_state_mounts' => array(
+			array(
+				'source' => $runtime_state_path,
+				'target' => '/home/wp/.local/state/generic-provider',
+				'mode'   => 'readonly',
+			),
+		),
 		'secret_env'     => array( 'GITHUB_TOKEN' ),
 		'preview_hold_seconds' => 30,
 		'preview_port'   => 45678,
@@ -2411,6 +2435,10 @@ $assert( 'runner recipe passes default model', str_contains( $captured_recipe, '
 $assert( 'runner recipe passes provider plugin path', str_contains( $captured_recipe, 'ai-provider-test' ) );
 $assert( 'runner recipe loads runtime components as mu-plugins', str_contains( $captured_recipe, '"slug":"agents-api","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine-code","activate":false,"loadAs":"mu-plugin"' ) );
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
+$captured_recipe_array = json_decode( $captured_recipe, true );
+$assert( 'runner recipe passes generic runtime env values', '/home/wp/.config/generic-provider/config.json' === ( $captured_recipe_array['inputs']['runtimeEnv']['GENERIC_PROVIDER_CONFIG'] ?? '' ) && '/home/wp/.local/state/generic-provider' === ( $captured_recipe_array['inputs']['runtimeEnv']['GENERIC_PROVIDER_STATE_HOME'] ?? '' ) );
+$assert( 'runner recipe mounts generic runtime config before providers', 'file' === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['type'] ?? '' ) && $runtime_config_path === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['source'] ?? '' ) && '/home/wp/.config/generic-provider/config.json' === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['target'] ?? '' ) );
+$assert( 'runner recipe mounts generic runtime state before providers', $runtime_state_path === ( $captured_recipe_array['runtime']['stack']['mounts'][1]['source'] ?? '' ) && '/home/wp/.local/state/generic-provider' === ( $captured_recipe_array['runtime']['stack']['mounts'][1]['target'] ?? '' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner passes declared secret env value to command runner', ! is_wp_error( $result ) && 'ghp-parent-env-fixture' === ( $captured_secret_env['GITHUB_TOKEN'] ?? '' ) );
 $assert( 'runner keeps declared secret value out of recipe', ! str_contains( $captured_recipe, 'ghp-parent-env-fixture' ) );

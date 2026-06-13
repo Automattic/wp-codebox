@@ -52,6 +52,9 @@ final class WP_Codebox_Host_Request_Normalizer {
 					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
 					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $request['workspaces'] ?? array() ),
 					'runtime_stack_mounts'   => $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array(), $request['runtime_stack_mounts'] ?? array() ),
+					'runtime_state_mounts'   => $this->merge_array_lists( $input['runtime_state_mounts'] ?? array(), $request['runtime_state_mounts'] ?? array() ),
+					'runtime_config_mounts'  => $this->merge_array_lists( $input['runtime_config_mounts'] ?? array(), $request['runtime_config_mounts'] ?? array() ),
+					'runtime_env'            => $this->merge_string_maps( $input['runtime_env'] ?? array(), $request['runtime_env'] ?? array() ),
 					'runtime_overlays'       => $this->merge_array_lists( $input['runtime_overlays'] ?? array(), $request['runtime_overlays'] ?? array() ),
 					'task_timeout_seconds'   => (int) ( $input['task_timeout_seconds'] ?? $request['task_timeout_seconds'] ?? 0 ),
 					'max_turns'              => (int) ( $input['max_turns'] ?? $request['max_turns'] ?? 0 ),
@@ -96,6 +99,33 @@ final class WP_Codebox_Host_Request_Normalizer {
 		}
 
 		return array_values( array_unique( $merged ) );
+	}
+
+	/** @return array<string,string> */
+	private function string_map( mixed $values ): array {
+		if ( ! is_array( $values ) ) {
+			return array();
+		}
+
+		$mapped = array();
+		foreach ( $values as $name => $value ) {
+			$name = trim( (string) $name );
+			if ( '' !== $name && is_scalar( $value ) ) {
+				$mapped[ $name ] = (string) $value;
+			}
+		}
+
+		return $mapped;
+	}
+
+	/** @return array<string,string> */
+	private function merge_string_maps( mixed ...$maps ): array {
+		$merged = array();
+		foreach ( $maps as $map ) {
+			$merged = array_merge( $merged, $this->string_map( $map ) );
+		}
+
+		return $merged;
 	}
 
 	/** @return array<int,array<string,mixed>> */

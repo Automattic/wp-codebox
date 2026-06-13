@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -21,11 +21,17 @@ export interface AgentTaskRunInput {
   model?: string
   provider_plugin_paths?: string[]
   runtime_overlay_profiles?: string[]
+  runtime_env?: Record<string, unknown>
+  runtimeEnv?: Record<string, unknown>
+  runtime_state_mounts?: WorkspaceRecipeMount[]
+  runtimeStateMounts?: WorkspaceRecipeMount[]
+  runtime_config_mounts?: WorkspaceRecipeMount[]
+  runtimeConfigMounts?: WorkspaceRecipeMount[]
   secret_env?: string[]
   mounts?: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
   dependency_overlays?: NonNullable<WorkspaceRecipe["inputs"]>["dependency_overlays"]
-  runtime_stack_mounts?: Array<Record<string, unknown>>
+  runtime_stack_mounts?: WorkspaceRecipeMount[]
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
   runtime_task?: Record<string, unknown>
@@ -209,6 +215,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
+  const runtimeMounts = runtimeStateMounts(input)
   const providerPlugins = uniqueStrings(stringList(input.provider_plugin_paths))
     .map((plugin) => {
       const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
@@ -249,7 +256,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       backend: "wordpress-playground",
       wp: wpVersion,
       blueprint: { steps: [] },
-      stack: Array.isArray(input.runtime_stack_mounts) && input.runtime_stack_mounts.length > 0 ? { mounts: input.runtime_stack_mounts } : undefined,
+      stack: runtimeMounts.length > 0 ? { mounts: runtimeMounts } : undefined,
       overlays: runtimeOverlays(input, profile),
     }),
     inputs: stripUndefined({
@@ -260,6 +267,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
         ...componentPlugins(input.component_contracts, artifacts),
         ...providerPlugins,
       ].filter(Boolean),
+      runtimeEnv: runtimeEnv(input),
       secretEnv: stringList(input.secret_env),
       agent_bundles: Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0 ? input.agent_bundles : undefined,
     }),
@@ -291,6 +299,30 @@ function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlay
 function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {
   const overlays = [...profile.runtimeOverlays, ...(Array.isArray(input.runtime_overlays) ? input.runtime_overlays : [])]
   return overlays.length > 0 ? overlays : undefined
+}
+
+function runtimeEnv(input: AgentTaskRunInput): Record<string, string> | undefined {
+  const raw = objectValue(input.runtime_env) || objectValue(input.runtimeEnv)
+  if (!raw) return undefined
+  const entries = Object.entries(raw)
+    .map(([name, value]) => [name.trim(), stringValue(value)] as const)
+    .filter(([name]) => /^[A-Z_][A-Z0-9_]*$/.test(name))
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function runtimeStateMounts(input: AgentTaskRunInput): WorkspaceRecipeMount[] {
+  return [
+    ...(Array.isArray(input.runtime_stack_mounts) ? input.runtime_stack_mounts : []),
+    ...runtimeMountList(input.runtime_config_mounts),
+    ...runtimeMountList(input.runtimeConfigMounts),
+    ...runtimeMountList(input.runtime_state_mounts),
+    ...runtimeMountList(input.runtimeStateMounts),
+  ]
+}
+
+function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
 }
 
 function uniqueStrings(values: string[]): string[] {

@@ -37,6 +37,7 @@ export interface RuntimeCreateSpec {
   policy: RuntimePolicy
   hostTools?: HostToolRegistry | HostToolDefinition[]
   artifactsDirectory?: string
+  runtimeEnv?: Record<string, string>
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
   preview?: RuntimePreviewSpec
@@ -352,6 +353,7 @@ export interface WorkspaceRecipe {
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
+    runtimeEnv?: Record<string, string>
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]

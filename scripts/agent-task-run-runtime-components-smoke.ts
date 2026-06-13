@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { buildAgentTaskRecipe, runAgentTask } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
+import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 import { buildAgentTaskSingleResult, finalizeAgentSandboxEvidence } from "../packages/cli/src/recipe-evidence.js"
 
@@ -46,6 +47,7 @@ assert.ok(muPluginInstallCode?.includes("define( 'DATAMACHINE_WORKSPACE_PATH', '
 assert.ok(!muPluginInstallCode?.includes('define( \'DATAMACHINE_WORKSPACE_PATH\', "/workspace" );'))
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
+const recipeRunSource = readFileSync(new URL("../packages/cli/src/commands/recipe-run.ts", import.meta.url), "utf8")
 const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts", import.meta.url), "utf8")
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
 const sandboxCode = agentSandboxRunCode("Run a bundle", "echo json_encode(array('ok' => true));", [])
@@ -399,6 +401,67 @@ assert.ok(agentCodeSource.includes("wp_codebox_provider_not_registered"))
 assert.ok(!agentTaskRunSource.includes("CodexProvider"))
 assert.ok(!agentTaskRunSource.includes("codex-subscription"))
 assert.ok(!agentTaskRunSource.includes("WP_CODEBOX_CODEX"))
+
+const runtimeStateRoot = mkdtempSync(join(tmpdir(), "wp-codebox-runtime-state-"))
+const runtimeConfigPath = join(runtimeStateRoot, "provider-config.json")
+const runtimeStateDir = join(runtimeStateRoot, "provider-state")
+mkdirSync(runtimeStateDir, { recursive: true })
+writeFileSync(runtimeConfigPath, JSON.stringify({ provider: "generic-provider" }))
+writeFileSync(join(runtimeStateDir, "state.json"), JSON.stringify({ model: "generic-model" }))
+const genericRuntimeInput = {
+  goal: "Run a generic provider with caller runtime config",
+  provider: "generic-provider",
+  model: "generic-model",
+  provider_plugin_paths: [customProviderPath],
+  runtime_env: {
+    GENERIC_PROVIDER_CONFIG: "/home/wp/.config/generic-provider/config.json",
+    GENERIC_PROVIDER_STATE_HOME: "/home/wp/.local/state/generic-provider",
+  },
+  runtime_config_mounts: [{ type: "file", source: runtimeConfigPath, target: "/home/wp/.config/generic-provider/config.json", mode: "readonly" }],
+  runtime_state_mounts: [{ source: runtimeStateDir, target: "/home/wp/.local/state/generic-provider", mode: "readonly" }],
+  artifacts_path: "/tmp/wp-codebox-artifacts",
+}
+const genericRuntimeRecipe = buildAgentTaskRecipe(genericRuntimeInput, normalizeTaskInput(genericRuntimeInput), "trunk")
+assert.equal(genericRuntimeRecipe.inputs?.runtimeEnv?.GENERIC_PROVIDER_CONFIG, "/home/wp/.config/generic-provider/config.json")
+assert.equal(genericRuntimeRecipe.inputs?.runtimeEnv?.GENERIC_PROVIDER_STATE_HOME, "/home/wp/.local/state/generic-provider")
+assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[0]?.type, "file")
+assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[0]?.source, runtimeConfigPath)
+assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[0]?.target, "/home/wp/.config/generic-provider/config.json")
+assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[1]?.source, runtimeStateDir)
+assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[1]?.target, "/home/wp/.local/state/generic-provider")
+assert.ok(
+  agentTaskRunSource.includes("runtime_config_mounts") && agentTaskRunSource.includes("runtime_state_mounts"),
+  "agent-task-run should expose generic runtime config/state mount fields without provider special cases",
+)
+assert.ok(
+  agentTaskRunSource.includes("runtimeEnv: runtimeEnv(input)"),
+  "agent-task-run should emit non-secret runtime env separately from secretEnv",
+)
+
+const runtimeStackMountIndex = recipeRunSource.indexOf("runtime.stack.mount")
+const pluginMountIndex = recipeRunSource.indexOf("mount_plugins")
+assert.ok(runtimeStackMountIndex >= 0 && pluginMountIndex > runtimeStackMountIndex, "runtime stack mounts should happen before provider plugin mounting")
+
+const runtimeSpec: RuntimeCreateSpec = {
+  backend: "wordpress-playground",
+  environment: { kind: "wordpress", version: "trunk" },
+  policy: { network: "deny", filesystem: "readwrite-mounts", commands: [], secrets: "none", approvals: "never" },
+  runtimeEnv: genericRuntimeRecipe.inputs?.runtimeEnv,
+  metadata: {
+    recipe: {
+      inputs: {
+        extra_plugins: [{ slug: "generic-provider", pluginFile: "generic-provider/generic-provider.php", activate: true }],
+      },
+    },
+  },
+}
+const providerBootstrapCode = bootstrapPhpCode(runtimeSpec, "echo getenv('GENERIC_PROVIDER_CONFIG');", [])
+const runtimeEnvIndex = providerBootstrapCode.indexOf("GENERIC_PROVIDER_CONFIG=/home/wp/.config/generic-provider/config.json")
+const wpLoadIndex = providerBootstrapCode.indexOf("require_once '/wordpress/wp-load.php'")
+const activePluginIndex = providerBootstrapCode.indexOf("wp_codebox_run_php_include_active_plugin")
+assert.ok(runtimeEnvIndex >= 0, "runtime env should be emitted into sandbox PHP bootstrap")
+assert.ok(runtimeEnvIndex < wpLoadIndex, "runtime env should be available before WordPress loads provider plugins")
+assert.ok(runtimeEnvIndex < activePluginIndex, "runtime env should be available before recipe-active provider plugin inclusion")
 
 async function promiseMustSettle<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: NodeJS.Timeout | undefined
