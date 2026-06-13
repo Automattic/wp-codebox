@@ -1248,6 +1248,8 @@ try {
 			selected: prepared.selected || 'fallback',
 			cache_key: prepared.cache_key || '',
 			input_hash: prepared.input_hash || '',
+			source_digest: prepared.diagnostics?.source_digest || prepared.snapshot?.source_digest || null,
+			diagnostics: prepared.diagnostics || null,
 			invalidation: prepared.invalidation || null,
 		};
 	};

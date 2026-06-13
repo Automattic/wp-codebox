@@ -159,9 +159,27 @@ private static function browser_prepared_runtime_with_blueprints( array $prepare
 		return $prepared;
 	}
 
+	$started_at          = microtime( true );
 	$prepared_blueprint = is_array( $prepared['blueprint'] ?? null ) ? $prepared['blueprint'] : array();
+	$cache_lookup       = self::browser_prepared_runtime_cache_lookup( $prepared );
+	if ( empty( $prepared_blueprint ) && is_array( $cache_lookup['artifact'] ?? null ) ) {
+		$artifact           = $cache_lookup['artifact'];
+		$prepared_blueprint = is_array( $artifact['blueprint'] ?? null ) ? $artifact['blueprint'] : array();
+		if ( ! empty( $prepared_blueprint ) ) {
+			$prepared['status']          = 'hit';
+			$prepared['provided_hash']   = (string) ( $artifact['input_hash'] ?? $prepared['input_hash'] ?? '' );
+			$prepared['snapshot']        = $artifact;
+			$prepared['invalidation']    = array( 'reason' => 'cache-hit' );
+			$prepared['prepared_source'] = 'transient-cache';
+		}
+	}
+
 	if ( ! empty( $prepared_blueprint ) ) {
 		$prepared_blueprint = self::browser_playground_blueprint( $prepared_blueprint, $playground );
+	}
+	$prepared['diagnostics'] = self::browser_prepared_runtime_diagnostics( $prepared, $cache_lookup, $started_at );
+	if ( empty( $prepared_blueprint ) && 'miss' === ( $prepared['status'] ?? '' ) ) {
+		$prepared['diagnostics']['prepared_snapshot_stored'] = self::browser_prepared_runtime_cache_store( $prepared, $fallback_blueprint );
 	}
 
 	return array_filter(
@@ -172,6 +190,81 @@ private static function browser_prepared_runtime_with_blueprints( array $prepare
 				'fallback_blueprint' => self::browser_playground_blueprint( $fallback_blueprint, $playground ),
 				'selected'           => 'hit' === ( $prepared['status'] ?? '' ) && ! empty( $prepared_blueprint ) ? 'prepared' : 'fallback',
 			)
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return array{status:string,artifact?:array<string,mixed>,key?:string,invalidation?:array<string,string>} */
+private static function browser_prepared_runtime_cache_lookup( array $prepared ): array {
+	$transient_key = self::browser_prepared_runtime_transient_key( $prepared );
+	if ( '' === $transient_key ) {
+		return array( 'status' => 'disabled' );
+	}
+
+	$artifact = function_exists( 'get_transient' ) ? get_transient( $transient_key ) : false;
+	if ( ! is_array( $artifact ) ) {
+		return array( 'status' => 'miss', 'key' => $transient_key );
+	}
+
+	$input_hash = (string) ( $prepared['input_hash'] ?? '' );
+	if ( 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
+		return array( 'status' => 'miss', 'key' => $transient_key, 'invalidation' => array( 'reason' => 'source-digest-mismatch' ) );
+	}
+
+	return array( 'status' => 'hit', 'key' => $transient_key, 'artifact' => $artifact );
+}
+
+private static function browser_prepared_runtime_cache_store( array $prepared, array $fallback_blueprint ): bool {
+	$transient_key = self::browser_prepared_runtime_transient_key( $prepared );
+	if ( '' === $transient_key || empty( $fallback_blueprint ) || ! function_exists( 'set_transient' ) ) {
+		return false;
+	}
+
+	$input_hash = (string) ( $prepared['input_hash'] ?? '' );
+	$artifact   = array(
+		'schema'        => 'wp-codebox/browser-prepared-runtime-artifact/v1',
+		'cache_key'     => (string) ( $prepared['cache_key'] ?? '' ),
+		'input_hash'    => $input_hash,
+		'source_digest' => array( 'algorithm' => 'sha256', 'value' => $input_hash ),
+		'created_at'    => gmdate( 'c' ),
+		'strategy'      => (string) ( $prepared['strategy'] ?? 'prepared-blueprint' ),
+		'blueprint'     => $fallback_blueprint,
+	);
+	$ttl        = (int) apply_filters( 'wp_codebox_browser_prepared_runtime_cache_ttl', defined( 'WEEK_IN_SECONDS' ) ? WEEK_IN_SECONDS : 604800, $prepared, $artifact );
+	return set_transient( $transient_key, $artifact, max( 1, $ttl ) );
+}
+
+private static function browser_prepared_runtime_transient_key( array $prepared ): string {
+	if ( false === ( $prepared['cache'] ?? true ) ) {
+		return '';
+	}
+
+	$cache_key  = self::safe_key( (string) ( $prepared['cache_key'] ?? '' ) );
+	$input_hash = strtolower( (string) ( $prepared['input_hash'] ?? '' ) );
+	if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
+		return '';
+	}
+
+	return 'wp_codebox_browser_prepared_runtime_' . substr( hash( 'sha256', $cache_key . ':' . $input_hash ), 0, 24 );
+}
+
+/** @param array<string,mixed> $cache_lookup */
+private static function browser_prepared_runtime_diagnostics( array $prepared, array $cache_lookup, float $started_at ): array {
+	$cache_key  = (string) ( $prepared['cache_key'] ?? '' );
+	$input_hash = (string) ( $prepared['input_hash'] ?? '' );
+	return array_filter(
+		array(
+			'schema'                 => 'wp-codebox/browser-prepared-runtime-diagnostics/v1',
+			'contract_compile_ms'    => 0,
+			'blueprint_compile_ms'   => (int) round( ( microtime( true ) - $started_at ) * 1000 ),
+			'runtime_package_resolution_ms' => 0,
+			'prepared_snapshot_hit'  => 'hit' === ( $prepared['status'] ?? '' ),
+			'prepared_snapshot_miss' => 'hit' !== ( $prepared['status'] ?? '' ),
+			'prepared_snapshot_key'  => $cache_key,
+			'source_digest'          => '' !== $input_hash ? array( 'algorithm' => 'sha256', 'value' => $input_hash ) : array(),
+			'cache_status'           => (string) ( $cache_lookup['status'] ?? 'disabled' ),
+			'cache_transient_key'    => (string) ( $cache_lookup['key'] ?? '' ),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);

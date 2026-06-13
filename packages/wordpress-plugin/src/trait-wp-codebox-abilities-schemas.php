@@ -751,6 +751,18 @@ private static function browser_runtime_input_schema(): array {
 			'mu_plugins' => array( 'type' => 'array' ),
 			'themes'     => array( 'type' => 'array' ),
 			'bootstrap'  => array( 'type' => 'array' ),
+			'prepared'   => array(
+				'type'        => 'object',
+				'description' => 'Optional prepared browser runtime cache contract. When enabled, WP Codebox keys the compiled browser-ready blueprint by a source digest and reuses matching cached artifacts on repeated known-site opens.',
+				'properties'  => array(
+					'enabled'    => array( 'type' => 'boolean' ),
+					'cache'      => array( 'type' => 'boolean' ),
+					'cache_key'  => array( 'type' => 'string' ),
+					'input_hash' => array( 'type' => 'string' ),
+					'blueprint'  => array( 'type' => 'object' ),
+				),
+			),
+			'prepared_runtime' => array( 'type' => 'object' ),
 		),
 	);
 }
