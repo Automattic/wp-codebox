@@ -307,7 +307,7 @@ class PlaygroundRuntime implements Runtime {
 
   private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string): Promise<RuntimeSnapshotArtifact> {
     const response = await this.runPlaygroundCommand("runtime.snapshot", await this.bootPlayground(), {
-      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp(), []),
+      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp({ excludedWpContentPaths: this.snapshotExcludedWpContentPaths() }), []),
     })
     assertPlaygroundResponseOk("runtime.snapshot", response)
     const captured = JSON.parse(response.text || "{}") as Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
@@ -331,6 +331,17 @@ class PlaygroundRuntime implements Runtime {
         files: filesDigest,
       },
     }
+  }
+
+  private snapshotExcludedWpContentPaths(): string[] {
+    return this.mounts.flatMap((mount) => {
+      if (mount.mode !== "readonly") {
+        return []
+      }
+
+      const relativePath = wpContentRelativePath(mount.target)
+      return relativePath && relativePath.startsWith("plugins/") ? [relativePath] : []
+    })
   }
 
   private async restoreSnapshotPayload(payload: RuntimeSnapshotArtifact): Promise<void> {
@@ -864,6 +875,18 @@ function stringArg(args: string[], name: string): string | undefined {
   const prefix = `${name}=`
   const value = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length).trim()
   return value && value.length > 0 ? value : undefined
+}
+
+function wpContentRelativePath(path: string): string | undefined {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/g, "")
+  const marker = "/wp-content/"
+  const index = normalized.indexOf(marker)
+  if (index < 0) {
+    return undefined
+  }
+
+  const relative = normalized.slice(index + marker.length).replace(/^\/+|\/+$/g, "")
+  return relative.length > 0 && !relative.includes("..") ? relative : undefined
 }
 
 function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {

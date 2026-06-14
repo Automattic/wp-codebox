@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRuntime, verifyArtifactBundle } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-state-bundle-capture-"))
+const runtimePluginDirectory = join(artifactsDirectory, "runtime-substrate-plugin")
 const backend = createPlaygroundRuntimeBackend()
 
 try {
@@ -26,6 +27,15 @@ try {
   )
 
   try {
+    await mkdir(runtimePluginDirectory, { recursive: true })
+    await writeFile(join(runtimePluginDirectory, "runtime-substrate.php"), "<?php /* runtime substrate, not replay state */\n")
+    await runtime.mount({
+      type: "directory",
+      source: runtimePluginDirectory,
+      target: "/wordpress/wp-content/plugins/runtime-substrate",
+      mode: "readonly",
+    })
+
     await runtime.execute({ command: "wordpress.wp-cli", args: ["command=post create --post_type=page --post_status=publish --post_title='State Bundle Capture Smoke' --porcelain"] })
     await runtime.execute({ command: "wordpress.run-php", args: ["code=file_put_contents(WP_CONTENT_DIR . '/state-bundle-smoke.txt', 'captured state bundle file');"] })
 
@@ -42,10 +52,14 @@ try {
 
     const artifacts = await runtime.collectArtifacts({ includeRuntimeSnapshotBundles: true })
     const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
+    const snapshotPayload = JSON.parse(await readFile(join(artifacts.directory, captureOutput.snapshot.artifactRefs[0].path), "utf8"))
     const blueprintAfter = JSON.parse(await readFile(artifacts.blueprintAfterPath, "utf8"))
     const blueprintAfterNotes = JSON.parse(await readFile(artifacts.blueprintAfterNotesPath, "utf8"))
 
     assert.equal(manifest.files.some((file: { path?: string; kind?: string }) => file.path === captureOutput.snapshot.artifactRefs[0].path && file.kind === "runtime-snapshot"), true)
+    assert.deepEqual(snapshotPayload.metadata.skippedWpContentPaths, ["plugins/runtime-substrate"])
+    assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path?.startsWith("plugins/runtime-substrate/")), false)
+    assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path === "state-bundle-smoke.txt"), true)
     assert.equal(manifest.files.some((file: { path?: string; kind?: string }) => file.path === "files/blueprint.after.partial.json" && file.kind === "blueprint-after-diagnostic"), true)
     assert.equal(blueprintAfter.steps[0].step, "runPHP")
     assert.match(blueprintAfter.steps[0].code, /State Bundle Capture Smoke/)

@@ -19,6 +19,7 @@ export interface RuntimeSnapshotArtifact {
     activeTheme: string
     activePlugins: string[]
     wpContentPath: string
+    skippedWpContentPaths?: string[]
   }
   database: {
     tables: Array<{
@@ -107,9 +108,22 @@ export async function runtimeSnapshotPayload(snapshot: Snapshot): Promise<Runtim
   throw new PlaygroundSnapshotRestoreError("Snapshot does not include a readable runtime snapshot artifact payload.")
 }
 
-export function runtimeSnapshotExportPhp(): string {
-  return String.raw`
+export interface RuntimeSnapshotExportOptions {
+  excludedWpContentPaths?: string[]
+}
+
+export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions = {}): string {
+  const excludedWpContentPaths = JSON.stringify(normalizeWpContentPathList(options.excludedWpContentPaths ?? []))
+  return [String.raw`
 global $wpdb;
+
+$wp_codebox_snapshot_excluded_wp_content_paths = json_decode(<<<'WP_CODEBOX_EXCLUDED_WP_CONTENT_PATHS'
+`, excludedWpContentPaths, String.raw`
+WP_CODEBOX_EXCLUDED_WP_CONTENT_PATHS
+, true );
+if ( ! is_array( $wp_codebox_snapshot_excluded_wp_content_paths ) ) {
+    $wp_codebox_snapshot_excluded_wp_content_paths = array();
+}
 
 function wp_codebox_snapshot_hash_file_contents( string $contents ): string {
     return hash( 'sha256', $contents );
@@ -121,7 +135,21 @@ function wp_codebox_snapshot_relative_path( string $base, string $path ): string
     return ltrim( substr( $path, strlen( $base ) ), '/' );
 }
 
-function wp_codebox_snapshot_files( string $root ): array {
+function wp_codebox_snapshot_is_excluded_path( string $relative_path, array $excluded_paths ): bool {
+    $relative_path = trim( str_replace( '\\', '/', $relative_path ), '/' );
+    foreach ( $excluded_paths as $excluded_path ) {
+        if ( ! is_string( $excluded_path ) || '' === $excluded_path ) {
+            continue;
+        }
+        $excluded_path = trim( str_replace( '\\', '/', $excluded_path ), '/' );
+        if ( $relative_path === $excluded_path || str_starts_with( $relative_path, $excluded_path . '/' ) ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function wp_codebox_snapshot_files( string $root, array $excluded_paths ): array {
     if ( ! is_dir( $root ) ) {
         return array();
     }
@@ -138,6 +166,11 @@ function wp_codebox_snapshot_files( string $root ): array {
         }
 
         $path = $file->getPathname();
+        $relative = wp_codebox_snapshot_relative_path( $root, $path );
+        if ( wp_codebox_snapshot_is_excluded_path( $relative, $excluded_paths ) ) {
+            continue;
+        }
+
         $contents = file_get_contents( $path );
         if ( false === $contents ) {
             continue;
@@ -145,7 +178,7 @@ function wp_codebox_snapshot_files( string $root ): array {
 
         $files[] = array(
             'scope' => 'wp-content',
-            'path' => wp_codebox_snapshot_relative_path( $root, $path ),
+            'path' => $relative,
             'bytes' => strlen( $contents ),
             'sha256' => wp_codebox_snapshot_hash_file_contents( $contents ),
             'base64' => base64_encode( $contents ),
@@ -184,10 +217,11 @@ echo wp_json_encode( array(
         'activeTheme' => wp_get_theme()->get_stylesheet(),
         'activePlugins' => array_values( (array) get_option( 'active_plugins', array() ) ),
         'wpContentPath' => WP_CONTENT_DIR,
+        'skippedWpContentPaths' => array_values( $wp_codebox_snapshot_excluded_wp_content_paths ),
     ),
     'database' => array( 'tables' => $tables ),
-    'files' => wp_codebox_snapshot_files( WP_CONTENT_DIR ),
-), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
+    'files' => wp_codebox_snapshot_files( WP_CONTENT_DIR, $wp_codebox_snapshot_excluded_wp_content_paths ),
+), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`].join("")
 }
 
 export function runtimeSnapshotRestorePhp(payload: RuntimeSnapshotArtifact): string {
@@ -283,4 +317,11 @@ function isRuntimeSnapshotArtifact(value: unknown): value is RuntimeSnapshotArti
     && isRecord(value.database)
     && Array.isArray(value.database.tables)
     && Array.isArray(value.files)
+}
+
+function normalizeWpContentPathList(paths: string[]): string[] {
+  return [...new Set(paths
+    .map((path) => path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""))
+    .filter((path) => path.length > 0 && !path.includes("..")))]
+    .sort()
 }
