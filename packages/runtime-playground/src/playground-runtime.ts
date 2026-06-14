@@ -340,7 +340,7 @@ class PlaygroundRuntime implements Runtime {
       }
 
       const relativePath = wpContentRelativePath(mount.target)
-      return relativePath && relativePath.startsWith("plugins/") ? [relativePath] : []
+      return relativePath ? [relativePath] : []
     })
   }
 

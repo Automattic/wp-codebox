@@ -7,6 +7,7 @@ import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playgroun
 
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-state-bundle-capture-"))
 const runtimePluginDirectory = join(artifactsDirectory, "runtime-substrate-plugin")
+const runtimeThemeDirectory = join(artifactsDirectory, "runtime-substrate-theme")
 const backend = createPlaygroundRuntimeBackend()
 
 try {
@@ -36,6 +37,15 @@ try {
       mode: "readonly",
     })
 
+    await mkdir(runtimeThemeDirectory, { recursive: true })
+    await writeFile(join(runtimeThemeDirectory, "style.css"), "/* runtime substrate theme, not replay state */\n")
+    await runtime.mount({
+      type: "directory",
+      source: runtimeThemeDirectory,
+      target: "/wordpress/wp-content/themes/runtime-substrate-theme",
+      mode: "readonly",
+    })
+
     await runtime.execute({ command: "wordpress.wp-cli", args: ["command=post create --post_type=page --post_status=publish --post_title='State Bundle Capture Smoke' --porcelain"] })
     await runtime.execute({ command: "wordpress.run-php", args: ["code=file_put_contents(WP_CONTENT_DIR . '/state-bundle-smoke.txt', 'captured state bundle file');"] })
 
@@ -57,8 +67,9 @@ try {
     const blueprintAfterNotes = JSON.parse(await readFile(artifacts.blueprintAfterNotesPath, "utf8"))
 
     assert.equal(manifest.files.some((file: { path?: string; kind?: string }) => file.path === captureOutput.snapshot.artifactRefs[0].path && file.kind === "runtime-snapshot"), true)
-    assert.deepEqual(snapshotPayload.metadata.skippedWpContentPaths, ["plugins/runtime-substrate"])
+    assert.deepEqual(snapshotPayload.metadata.skippedWpContentPaths, ["plugins/runtime-substrate", "themes/runtime-substrate-theme"])
     assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path?.startsWith("plugins/runtime-substrate/")), false)
+    assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path?.startsWith("themes/runtime-substrate-theme/")), false)
     assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path === "state-bundle-smoke.txt"), true)
     assert.equal(manifest.files.some((file: { path?: string; kind?: string }) => file.path === "files/blueprint.after.partial.json" && file.kind === "blueprint-after-diagnostic"), true)
     assert.equal(blueprintAfter.steps[0].step, "runPHP")
