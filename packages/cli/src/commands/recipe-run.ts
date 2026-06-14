@@ -22,6 +22,7 @@ import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
+const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 
 interface BenchmarkArtifactOutput {
   schema: "wp-codebox/benchmark-artifacts/v1"
@@ -413,7 +414,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
-      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: 20_000 }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
@@ -435,7 +436,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const recipeFailure = strictFailure ?? agentFailure ?? verifyFailure
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
-      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: 20_000 }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
