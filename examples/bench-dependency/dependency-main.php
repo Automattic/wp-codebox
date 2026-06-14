@@ -34,6 +34,16 @@ add_action(
 	}
 );
 
+register_activation_hook(
+	__FILE__,
+	static function (): void {
+		if ( ! function_exists( 'wp_codebox_bench_plugin_value' ) ) {
+			wp_die( 'Bench dependency requires the component plugin to be loaded before activation.' );
+		}
+		update_option( 'wp_codebox_bench_dependency_activation_saw_component', 'yes' );
+	}
+);
+
 function wp_codebox_bench_dependency_value(): int {
 	return WP_Codebox_Bench_Dependency_Fixture::value();
 }

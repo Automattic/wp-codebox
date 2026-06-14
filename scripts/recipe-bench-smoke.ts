@@ -35,6 +35,7 @@ writeFileSync(recipePath, `${JSON.stringify({
         source: dependency,
         slug: "bench-dependency",
         pluginFile: "bench-dependency/dependency-main.php",
+        activate: false,
       },
     ],
   },
@@ -128,7 +129,8 @@ assert.equal(scenario.metrics.init_callback_count.samples.mean, 1)
 assert.equal(scenario.metrics.dependency_value.samples.mean, 11)
 assert.equal(scenario.metrics.dependency_class_visible.samples.mean, 1)
 assert.equal(scenario.metrics.dependency_active.samples.mean, 1)
-assert.equal(scenario.metrics.dependency_active_at_include.samples.mean, 1)
+assert.equal(scenario.metrics.dependency_active_at_include.samples.mean, 0)
+assert.equal(scenario.metrics.dependency_activation_saw_component.samples.mean, 1)
 assert.equal(scenario.metrics.dependency_plugins_loaded_callback_count.samples.mean, 1)
 assert.equal(scenario.metrics.dependency_init_callback_count.samples.mean, 1)
 assert.equal(scenario.metrics.duration.samples.values.length, 2)
