@@ -39,12 +39,30 @@ try {
   assert.equal(scriptTimeout.exit.code, 1, `long script should fail recipe-run; stdout: ${scriptTimeout.stdout}; stderr: ${scriptTimeout.stderr}`)
   assert.ok(scriptTimeout.elapsedMs < 60_000, `long script should fail before the watchdog; elapsed=${scriptTimeout.elapsedMs}`)
   assert.match(scriptTimeout.output.error?.message ?? "", /exceeded 3000ms|wall/i)
-  assert.equal(scriptTimeout.summary.wallTimeoutMs ?? scriptTimeout.summary.liveness?.wallTimeoutMs, 3000)
-  assert.equal((scriptTimeout.summary.summary ?? scriptTimeout.summary).progress.status, "failed")
+  const normalizedScriptTimeoutSummary = scriptTimeout.summary.summary ?? scriptTimeout.summary
+  assert.equal(scriptTimeout.summary.wallTimeoutMs ?? normalizedScriptTimeoutSummary.liveness?.wallTimeoutMs, 3000)
+  assert.equal(normalizedScriptTimeoutSummary.progress.status, "failed")
+  await assertReplayableBlueprintAfter(scriptTimeout.output.artifacts?.directory)
 
   console.log("Recipe browser probe liveness smoke passed")
 } finally {
   await rm(workspace, { recursive: true, force: true })
+}
+
+async function assertReplayableBlueprintAfter(artifactDirectory: string | undefined): Promise<void> {
+  assert.ok(artifactDirectory, "browser command timeout should produce artifact directory")
+  const manifest = JSON.parse(await readFile(join(artifactDirectory, "manifest.json"), "utf8"))
+  const blueprintAfterManifestFile = manifest.files.find((file: { path?: string }) => file.path === "blueprint.after.json")
+  assert.equal(blueprintAfterManifestFile?.viewer?.replay?.status, "replayable-runtime-state")
+  assert.ok(manifest.files.some((file: { path?: string; kind?: string }) => file.path === "files/blueprint.after.partial.json" && file.kind === "blueprint-after-diagnostic"))
+  const blueprintAfter = JSON.parse(await readFile(join(artifactDirectory, "blueprint.after.json"), "utf8"))
+  assert.equal(blueprintAfter.steps?.[0]?.step, "runPHP")
+  assert.match(blueprintAfter.steps?.[0]?.code ?? "", /wp-codebox\/wordpress-runtime-snapshot\/v1/)
+  const blueprintAfterNotes = JSON.parse(await readFile(join(artifactDirectory, "blueprint.after-notes.json"), "utf8"))
+  assert.equal(blueprintAfterNotes.replayStatus, "replayable-runtime-state")
+  assert.equal(blueprintAfterNotes.source?.diagnosticBlueprint, "files/blueprint.after.partial.json")
+  const partialBlueprintAfter = JSON.parse(await readFile(join(artifactDirectory, "files", "blueprint.after.partial.json"), "utf8"))
+  assert.ok(Array.isArray(partialBlueprintAfter.steps), "diagnostic partial blueprint should remain readable")
 }
 
 async function runRecipe(name: string, args: string[], watchdogMs: number): Promise<{

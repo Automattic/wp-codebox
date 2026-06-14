@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, isPlainObject as isRecord, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, sha256StableJson, stripUndefined, upsertArtifactManifestFiles, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -257,6 +257,11 @@ export interface RecipeArtifactsFinalizationController {
   readonly metadata: { artifactsFinalized: boolean } | undefined
 }
 
+interface RecipeRuntimeArtifactCollectionOptions {
+  timeoutMs?: number
+  snapshotTimeoutMs?: number
+}
+
 const execFileAsync = promisify(execFile)
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
@@ -276,7 +281,7 @@ export async function collectAndFinalizeFailedRecipeArtifacts(args: {
 
   if (!artifacts) {
     try {
-      artifacts = await args.runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+      artifacts = await collectRecipeRuntimeArtifacts(args.runtime, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: 20_000, timeoutMs: 30_000 })
     } catch {
       return undefined
     }
@@ -291,6 +296,67 @@ export async function collectAndFinalizeFailedRecipeArtifacts(args: {
   }
 
   return artifacts
+}
+
+export async function collectRecipeRuntimeArtifacts(runtime: Runtime, spec: ArtifactSpec, options: RecipeRuntimeArtifactCollectionOptions = {}): Promise<ArtifactBundle> {
+  let snapshotCaptured = false
+  try {
+    const snapshot = runtime.snapshot()
+    if (options.snapshotTimeoutMs && options.snapshotTimeoutMs > 0) {
+      snapshot.catch(() => undefined)
+      const settled = await timeoutOrUndefined(snapshot, options.snapshotTimeoutMs)
+      snapshotCaptured = settled !== undefined
+    } else {
+      await snapshot
+      snapshotCaptured = true
+    }
+  } catch {
+    // Preserve artifact collection on runtimes that are too broken to snapshot.
+  }
+
+  const collectSpec: ArtifactSpec = snapshotCaptured && spec.includeRuntimeSnapshotBundles !== false
+    ? { ...spec, includeRuntimeSnapshotBundles: true }
+    : spec
+  const artifacts = runtime.collectArtifacts(collectSpec)
+  if (options.timeoutMs && options.timeoutMs > 0) {
+    return timeoutOrReject(artifacts, options.timeoutMs, `Runtime artifact collection exceeded ${options.timeoutMs}ms`)
+  }
+  return artifacts
+}
+
+async function timeoutOrUndefined<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), timeoutMs)
+        timeout.unref()
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
+}
+
+async function timeoutOrReject<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined
+  promise.catch(() => undefined)
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timeout.unref()
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
 }
 
 export async function finalizeRecipeArtifactEvidence(

@@ -8,7 +8,7 @@ import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs
 import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
-import { BrowserCommandLivenessError, browserCommandLivenessPolicy, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
+import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
@@ -604,7 +604,7 @@ async function runSingleBrowserProbeCommand({
     finalUrl = page.url()
   } catch (error) {
     pendingError = error instanceof Error ? error : new Error(String(error))
-    if (pendingError instanceof BrowserCommandLivenessError) {
+    if (isBrowserCommandLivenessError(pendingError)) {
       await page?.close().catch(() => undefined)
       page = null
     }
@@ -764,7 +764,7 @@ async function runSingleBrowserProbeCommand({
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: `${browserFilesDirectory}/redirect-diagnostics.json` } : {}),
         review: `${browserFilesDirectory}/review.json`,
-        ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
+        ...(screenshotSha256 ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: `${browserFilesDirectory}/wordpress-diagnostics.json` } : {}),
         summary: `${browserFilesDirectory}/summary.json`,
       },
@@ -791,7 +791,7 @@ async function runSingleBrowserProbeCommand({
         auth: authSummary,
         capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
-        screenshot: capture.has("screenshot"),
+        screenshot: Boolean(screenshotSha256),
         ...(typeof scriptResult !== "undefined" ? { scriptResult } : {}),
         viewport,
       },
@@ -2384,7 +2384,7 @@ export async function runBrowserActionsCommand({
         errors.push(serialized)
         stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
         pendingError = error instanceof Error ? error : new Error(String(error))
-        if (pendingError instanceof BrowserCommandLivenessError) {
+        if (isBrowserCommandLivenessError(pendingError)) {
           await page.close().catch(() => undefined)
         }
         break
@@ -5503,8 +5503,11 @@ async function withBrowserProbeLiveness<T>(page: import("playwright").Page, prog
         // The page may be navigating or already closed; the outer operation remains authoritative.
       }
     },
+    onTimeout: async () => {
+      await page.close().catch(() => undefined)
+    },
   }).catch((error) => {
-    if (error instanceof BrowserCommandLivenessError && error.code === "browser-command-idle-timeout") {
+    if (isBrowserCommandLivenessError(error) && error.code === "browser-command-idle-timeout") {
       const summary = progress.summary()
       throw new BrowserProbeStallError(summary.idleMs, policy.idleTimeoutMs, summary.lastProgressSource, summary.lastCheckpoint)
     }

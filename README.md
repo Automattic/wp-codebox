@@ -1066,8 +1066,9 @@ Current bundles include:
 
 - `manifest.json`: artifact index with content types and the content digest used for the bundle id.
 - `metadata.json`: runtime, policy, mounts, and caller metadata.
-- `blueprint.after.json`: partial WordPress Playground replay blueprint for captured text files.
-- `blueprint.after-notes.json`: replay limitations and next capture targets.
+- `blueprint.after.json`: WordPress Playground replay blueprint. When a runtime-state snapshot is available, this restores the generated WordPress database, active theme/plugin state, and captured `wp-content` files. Otherwise it falls back to a partial write-file replay for captured text files.
+- `blueprint.after-notes.json`: replay status, captured state summary, limitations, and diagnostic pointers.
+- `files/blueprint.after.partial.json`: diagnostic partial write-file replay retained when `blueprint.after.json` is backed by a runtime-state snapshot.
 - `events.jsonl`, `commands.jsonl`, `observations.jsonl`: runtime evidence streams.
 - `logs/runtime.log`, `logs/commands.log`: human-readable logs.
 - `files/mounts.json`: mounted input list.

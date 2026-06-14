@@ -32,6 +32,15 @@ export class BrowserCommandLivenessError extends Error {
   }
 }
 
+export function isBrowserCommandLivenessError(error: unknown): error is BrowserCommandLivenessError {
+  return error instanceof BrowserCommandLivenessError || (
+    Boolean(error) &&
+    typeof error === "object" &&
+    (error as { name?: unknown }).name === "BrowserCommandLivenessError" &&
+    ((error as { code?: unknown }).code === "browser-command-wall-timeout" || (error as { code?: unknown }).code === "browser-command-idle-timeout")
+  )
+}
+
 export function browserCommandLivenessPolicy(overrides: BrowserCommandLivenessPolicy = {}): Required<BrowserCommandLivenessPolicy> {
   return {
     wallTimeoutMs: normalizeNonNegative(overrides.wallTimeoutMs, BROWSER_COMMAND_LIVENESS_DEFAULTS.wallTimeoutMs),
@@ -49,6 +58,7 @@ export async function withBrowserCommandLiveness<T>({
   policy: policyOverrides,
   poll,
   idle,
+  onTimeout,
 }: {
   command: string
   phase: string
@@ -56,6 +66,7 @@ export async function withBrowserCommandLiveness<T>({
   policy?: BrowserCommandLivenessPolicy
   poll?: () => Promise<void> | void
   idle?: () => { idleMs: number; lastProgressSource?: string }
+  onTimeout?: (error: BrowserCommandLivenessError) => Promise<void> | void
 }): Promise<T> {
   const policy = browserCommandLivenessPolicy(policyOverrides)
   if (policy.wallTimeoutMs <= 0 && (!idle || policy.idleTimeoutMs <= 0) && !poll) {
@@ -64,12 +75,35 @@ export async function withBrowserCommandLiveness<T>({
 
   const startedAtMs = Date.now()
   let interval: NodeJS.Timeout | undefined
+  let wallTimeout: NodeJS.Timeout | undefined
   operation.catch(() => undefined)
+
+  const rejectWithTimeout = async (reject: (error: BrowserCommandLivenessError) => void, error: BrowserCommandLivenessError): Promise<void> => {
+    reject(error)
+    try {
+      await onTimeout?.(error)
+    } catch {
+      // Preserve the liveness timeout as the actionable failure.
+    }
+  }
 
   try {
     return await Promise.race([
       operation,
       new Promise<T>((_resolve, reject) => {
+        if (policy.wallTimeoutMs > 0) {
+          wallTimeout = setTimeout(() => {
+            const elapsedMs = Date.now() - startedAtMs
+            void rejectWithTimeout(reject, new BrowserCommandLivenessError({
+              command,
+              phase,
+              type: "wall",
+              elapsedMs,
+              timeoutMs: policy.wallTimeoutMs,
+            }))
+          }, policy.wallTimeoutMs)
+          wallTimeout.unref()
+        }
         interval = setInterval(() => {
           void (async () => {
             try {
@@ -88,18 +122,6 @@ export async function withBrowserCommandLiveness<T>({
                   return
                 }
               }
-              if (policy.wallTimeoutMs > 0) {
-                const elapsedMs = Date.now() - startedAtMs
-                if (elapsedMs >= policy.wallTimeoutMs) {
-                  reject(new BrowserCommandLivenessError({
-                    command,
-                    phase,
-                    type: "wall",
-                    elapsedMs,
-                    timeoutMs: policy.wallTimeoutMs,
-                  }))
-                }
-              }
             } catch (error) {
               reject(error)
             }
@@ -111,6 +133,9 @@ export async function withBrowserCommandLiveness<T>({
   } finally {
     if (interval) {
       clearInterval(interval)
+    }
+    if (wallTimeout) {
+      clearTimeout(wallTimeout)
     }
   }
 }
