@@ -361,6 +361,16 @@ Important artifact files include:
   traces, events, and snapshots.
 - `files/runtime-replay-index.json`: replay-oriented index describing which
   actions, observations, snapshots, and artifact refs are available.
+- `files/runtime-evidence/replay-status.json`: recipe-level replay summary with
+  schema `wp-codebox/recipe-replay-status/v1`. Recipe runs also mirror this
+  object to the top-level JSON output and run metadata as `replayStatus` so
+  orchestrators can consume one stable surface. Status is `replayable` when an
+  executable `blueprint.after.json`, notes, replay index, and runtime snapshot
+  are present; `partial` when a blueprint exists but replay capture is
+  incomplete; and `not_available` when no executable blueprint was captured.
+  Bundle-relative artifact paths are distinct from public access: callers must
+  publish the executable blueprint URL when browser replay needs an external
+  URL.
 
 Apply-back is intentionally outside runtime execution. WP Codebox validates an
 artifact id, content digest, approved file list, and patch/reference integrity;

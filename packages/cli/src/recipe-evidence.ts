@@ -50,6 +50,32 @@ export interface RecipeArtifactEvidenceResult {
   transcript?: AgentSandboxTranscript & {
     artifact: RecipeArtifactEvidenceFile
   }
+  replayStatus?: RecipeReplayStatusSummary & {
+    artifact: RecipeArtifactEvidenceFile
+  }
+}
+
+export interface RecipeReplayStatusSummary {
+  schema: "wp-codebox/recipe-replay-status/v1"
+  status: "replayable" | "partial" | "not_available"
+  reasons: string[]
+  artifacts: {
+    executableBlueprint?: RecipeReplayArtifactRef
+    notes?: RecipeReplayArtifactRef
+    runtimeSnapshot?: RecipeReplayArtifactRef
+    runtimeReferenceManifest?: RecipeReplayArtifactRef
+    replayIndex?: RecipeReplayArtifactRef
+  }
+  publicAccess: {
+    status: "not_required" | "caller_must_publish"
+    reason?: string
+  }
+}
+
+export interface RecipeReplayArtifactRef {
+  path: string
+  kind: string
+  contentType?: string
 }
 
 export interface AgentTaskSingleResult {
@@ -432,8 +458,110 @@ export async function finalizeRecipeArtifactEvidence(
     artifact: attestationFile,
   }
 
+  const replayStatusPath = join(evidenceDirectory, "replay-status.json")
+  const replayStatus = await buildRecipeReplayStatusSummary(artifacts)
+  const replayStatusFile = await writeRecipeEvidenceJson(artifacts.directory, replayStatusPath, replayStatus, "replay-status")
+  evidenceFiles.push(replayStatusFile)
+  result.replayStatus = {
+    ...replayStatus,
+    artifact: replayStatusFile,
+  }
+
   await updateRecipeArtifactEvidenceReferences(artifacts, evidenceFiles)
   return result
+}
+
+export async function buildRecipeReplayStatusSummary(artifacts: ArtifactBundle): Promise<RecipeReplayStatusSummary> {
+  const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
+  const filesByKind = new Map(manifest.files.map((file) => [file.kind, file]))
+  const executableBlueprint = replayArtifactRef(filesByKind.get("blueprint-after"))
+  const notes = replayArtifactRef(filesByKind.get("blueprint-after-notes"))
+  const runtimeReferenceManifest = replayArtifactRef(filesByKind.get("runtime-reference-manifest"))
+  const replayIndex = replayArtifactRef(filesByKind.get("runtime-replay-index"))
+  const runtimeSnapshot = replayArtifactRef(manifest.files.find((file) => file.kind === "runtime-snapshot"))
+  const reasons: string[] = []
+
+  if (!executableBlueprint) {
+    reasons.push("missing_executable_blueprint")
+  }
+  if (!notes) {
+    reasons.push("missing_blueprint_notes")
+  }
+  if (!runtimeReferenceManifest) {
+    reasons.push("missing_runtime_reference_manifest")
+  }
+  if (!replayIndex) {
+    reasons.push("missing_runtime_replay_index")
+  }
+  if (!runtimeSnapshot) {
+    reasons.push("missing_runtime_snapshot")
+  }
+
+  const blueprintReplayStatus = executableBlueprint
+    ? await readBlueprintReplayStatus(artifacts.directory, executableBlueprint.path, notes?.path)
+    : undefined
+  if (blueprintReplayStatus === "replayable-runtime-state") {
+    reasons.push("blueprint_after_uses_runtime_state_snapshot")
+  } else if (blueprintReplayStatus === "partial") {
+    reasons.push("blueprint_after_is_partial")
+  } else if (executableBlueprint) {
+    reasons.push("blueprint_after_replay_status_unknown")
+  }
+
+  const status = !executableBlueprint
+    ? "not_available"
+    : runtimeSnapshot && replayIndex && blueprintReplayStatus === "replayable-runtime-state"
+      ? "replayable"
+      : "partial"
+
+  return {
+    schema: "wp-codebox/recipe-replay-status/v1",
+    status,
+    reasons,
+    artifacts: stripUndefined({
+      executableBlueprint,
+      notes,
+      runtimeSnapshot,
+      runtimeReferenceManifest,
+      replayIndex,
+    }) as RecipeReplayStatusSummary["artifacts"],
+    publicAccess: {
+      status: executableBlueprint ? "caller_must_publish" : "not_required",
+      ...(executableBlueprint ? { reason: "WP Codebox writes bundle-relative artifacts; callers must publish the executable blueprint URL when external replay needs browser access." } : {}),
+    },
+  }
+}
+
+function replayArtifactRef(file: ArtifactManifestFile | undefined): RecipeReplayArtifactRef | undefined {
+  if (!file) {
+    return undefined
+  }
+  return stripUndefined({ path: file.path, kind: file.kind, contentType: file.contentType }) as RecipeReplayArtifactRef
+}
+
+async function readBlueprintReplayStatus(artifactRoot: string, blueprintPath: string, notesPath: string | undefined): Promise<string | undefined> {
+  const notesStatus = notesPath ? await readJsonReplayStatus(artifactRoot, notesPath) : undefined
+  if (notesStatus) {
+    return notesStatus
+  }
+
+  return readJsonReplayStatus(artifactRoot, blueprintPath)
+}
+
+async function readJsonReplayStatus(artifactRoot: string, path: string): Promise<string | undefined> {
+  try {
+    const value = JSON.parse(await readFile(join(artifactRoot, path), "utf8")) as Record<string, unknown>
+    if (typeof value.replayStatus === "string") {
+      return value.replayStatus
+    }
+    if (typeof value["wp-codebox/replayStatus"] === "string") {
+      return value["wp-codebox/replayStatus"]
+    }
+    const metadata = isRecord(value.metadata) ? value.metadata : undefined
+    return typeof metadata?.replayStatus === "string" ? metadata.replayStatus : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export async function appendRecipeRuntimeEvidence(artifacts: ArtifactBundle, files: RecipeRuntimeEvidenceInput[]): Promise<RecipeArtifactEvidenceFile[]> {
@@ -1000,6 +1128,15 @@ export function recipeCompletionOutcomeOutput(completionOutcome: RecipeArtifactE
   }
 
   const { artifact: _artifact, ...result } = completionOutcome
+  return result
+}
+
+export function recipeReplayStatusOutput(replayStatus: RecipeArtifactEvidenceResult["replayStatus"]): RecipeReplayStatusSummary | undefined {
+  if (!replayStatus) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = replayStatus
   return result
 }
 
