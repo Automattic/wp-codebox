@@ -67,7 +67,7 @@ try {
     const blueprintAfterNotes = JSON.parse(await readFile(artifacts.blueprintAfterNotesPath, "utf8"))
 
     assert.equal(manifest.files.some((file: { path?: string; kind?: string }) => file.path === captureOutput.snapshot.artifactRefs[0].path && file.kind === "runtime-snapshot"), true)
-    assert.deepEqual(snapshotPayload.metadata.skippedWpContentPaths, ["plugins/runtime-substrate", "themes/runtime-substrate-theme"])
+    assert.deepEqual(snapshotPayload.metadata.skippedWpContentPaths, ["database", "plugins/runtime-substrate", "themes/runtime-substrate-theme"])
     assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path?.startsWith("plugins/runtime-substrate/")), false)
     assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path?.startsWith("themes/runtime-substrate-theme/")), false)
     assert.equal(snapshotPayload.files.some((file: { path?: string }) => file.path === "state-bundle-smoke.txt"), true)

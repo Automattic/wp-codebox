@@ -113,7 +113,7 @@ export interface RuntimeSnapshotExportOptions {
 }
 
 export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions = {}): string {
-  const excludedWpContentPaths = JSON.stringify(normalizeWpContentPathList(options.excludedWpContentPaths ?? []))
+  const excludedWpContentPaths = JSON.stringify(normalizeWpContentPathList(["database", ...(options.excludedWpContentPaths ?? [])]))
   return [String.raw`
 global $wpdb;
 
