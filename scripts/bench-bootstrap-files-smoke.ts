@@ -42,5 +42,13 @@ assert.ok(
   code.indexOf("require_once $bootstrap_path") < code.indexOf("wp_codebox_bench_run_deferred_wordpress_hook_callbacks($deferred_plugins_loaded_callbacks"),
   "bootstrap files should load before synthetic plugins_loaded/init hooks"
 )
+assert.ok(
+  code.indexOf("wp_codebox_bench_include_plugin_file($plugin_file") < code.indexOf("if ($plugin_to_activate === $plugin_file)"),
+  "the component plugin should be included before dependency activation"
+)
+assert.ok(
+  code.indexOf("$pre_plugins_loaded_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('plugins_loaded')") < code.indexOf("wp_codebox_bench_include_plugin_file($plugin_file"),
+  "hook snapshots should still capture callbacks registered by component loading"
+)
 
 console.log("Bench bootstrap files smoke passed")
