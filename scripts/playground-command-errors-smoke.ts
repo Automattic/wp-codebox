@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createRuntime } from "../packages/runtime-core/src/index.js"
-import { PlaygroundCommandCrashError } from "../packages/runtime-playground/src/playground-command-errors.js"
+import { PlaygroundCommandCrashError, PlaygroundCommandError } from "../packages/runtime-playground/src/playground-command-errors.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundCliModule } from "../packages/runtime-playground/src/index.js"
 
 const hiddenFatal = new Error("PHP.run() failed with exit code 255") as Error & {
@@ -44,6 +44,20 @@ const nestedResponseMessage = new PlaygroundCommandCrashError("wordpress.run-php
 assert.match(nestedResponseMessage, /status=500/)
 assert.match(nestedResponseMessage, /--- Playground response text ---/)
 assert.match(nestedResponseMessage, /wp_codebox_missing_fixture/)
+
+const htmlFatal = "<br />\n<b>Fatal error</b>:  Uncaught Error: Call to a member function is_sandbox() on null in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b>:283\nStack trace:\n#0 {main}\n  thrown in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b> on line <b>283</b><br />"
+const byteMap = Object.fromEntries(Array.from(Buffer.from(htmlFatal, "utf8")).map((byte, index) => [String(index), byte]))
+const byteMapMessage = new PlaygroundCommandError("wordpress.bench", {
+  exitCode: 255,
+  text: JSON.stringify({ bytes: byteMap }),
+}).message
+
+assert.match(byteMapMessage, /wordpress\.bench failed with exit code 255/)
+assert.match(byteMapMessage, /PHP fatal: Uncaught Error: Call to a member function is_sandbox\(\) on null/)
+assert.match(byteMapMessage, /Location: \/wordpress\/wp-content\/plugins\/woocommerce-square\/includes\/Gateway\/Cash_App_Pay_Gateway\.php:283/)
+assert.match(byteMapMessage, /Raw Playground output omitted/)
+assert.doesNotMatch(byteMapMessage, /"bytes"/)
+assert.doesNotMatch(byteMapMessage, /"0":\s*60/)
 
 let receivedRunPhpCode = ""
 const fakeCliModule: PlaygroundCliModule = {
