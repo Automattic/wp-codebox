@@ -204,7 +204,7 @@ foreach ( $wpdb->get_col( 'SHOW TABLES' ) as $table_name ) {
 
 usort( $tables, fn( $left, $right ) => strcmp( $left['name'], $right['name'] ) );
 
-echo wp_json_encode( array(
+$wp_codebox_snapshot_payload = array(
     'compatibility' => array(
         'backend' => 'wordpress-playground',
         'wordpressVersion' => get_bloginfo( 'version' ),
@@ -221,7 +221,14 @@ echo wp_json_encode( array(
     ),
     'database' => array( 'tables' => $tables ),
     'files' => wp_codebox_snapshot_files( WP_CONTENT_DIR, $wp_codebox_snapshot_excluded_wp_content_paths ),
-), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`].join("")
+);
+
+$wp_codebox_snapshot_json = json_encode( $wp_codebox_snapshot_payload, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE );
+if ( false === $wp_codebox_snapshot_json ) {
+    throw new RuntimeException( 'Failed to encode runtime snapshot JSON: ' . json_last_error_msg() );
+}
+
+echo $wp_codebox_snapshot_json;`].join("")
 }
 
 export function runtimeSnapshotRestorePhp(payload: RuntimeSnapshotArtifact): string {
