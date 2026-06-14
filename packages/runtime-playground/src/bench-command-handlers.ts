@@ -515,15 +515,12 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
 $pre_plugins_loaded_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_init_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('init');
 
-foreach (array($plugin_file) as $plugin_to_activate) {
-    if (is_plugin_active($plugin_to_activate)) {
-        continue;
-    }
-    $activation = activate_plugin($plugin_to_activate);
+if (!is_plugin_active($plugin_file)) {
+    $activation = activate_plugin($plugin_file);
     if (is_wp_error($activation)) {
-        throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_to_activate . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin', $activation->get_error_message()));
+        throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_file . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_file, $plugin_roles[$plugin_file] ?? 'plugin', $activation->get_error_message()));
     }
-    $activated_plugins[] = $plugin_to_activate;
+    $activated_plugins[] = $plugin_file;
 }
 wp_codebox_bench_include_plugin_file($plugin_file, $plugin_roles[$plugin_file] ?? 'component');
 
@@ -531,14 +528,16 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
     if ($plugin_to_activate === $plugin_file) {
         continue;
     }
-    if (!is_plugin_active($plugin_to_activate)) {
-        $activation = activate_plugin($plugin_to_activate);
-        if (is_wp_error($activation)) {
-            throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_to_activate . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin', $activation->get_error_message()));
-        }
-        $activated_plugins[] = $plugin_to_activate;
+    if (is_plugin_active($plugin_to_activate)) {
+        wp_codebox_bench_include_plugin_file($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin');
+        continue;
+    }
+    $activation = activate_plugin($plugin_to_activate);
+    if (is_wp_error($activation)) {
+        throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_to_activate . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin', $activation->get_error_message()));
     }
     wp_codebox_bench_include_plugin_file($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin');
+    $activated_plugins[] = $plugin_to_activate;
 }
 $loaded_bootstrap_file = '';
 foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_file) {
