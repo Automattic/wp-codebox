@@ -53,6 +53,17 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runWpCli" },
   },
   {
+    id: "wordpress.capture-state-bundle",
+    description: "Capture the current WordPress runtime state as a portable state bundle source for replayable Playground artifacts.",
+    acceptedArgs: [
+      { name: "label", description: "Optional human-readable capture label recorded in the command output.", format: "string" },
+    ],
+    outputShape: "wp-codebox/wordpress-state-bundle-capture/v1 JSON with runtime snapshot id, artifact refs, replay status, and capture summary.",
+    policyRequirement: "Runtime policy commands must include wordpress.capture-state-bundle.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCaptureStateBundle" },
+  },
+  {
     id: "wordpress.ability",
     description: "Execute a registered WordPress Ability in the sandbox.",
     acceptedArgs: [

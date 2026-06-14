@@ -605,6 +605,32 @@ class PlaygroundRuntime implements Runtime {
     return cleanWpCliOutput(response.text)
   }
 
+  async runCaptureStateBundle(spec: ExecutionSpec): Promise<string> {
+    const label = stringArg(spec.args ?? [], "label")
+    const snapshot = await this.snapshot()
+    const summary = snapshot.metadata.summary && typeof snapshot.metadata.summary === "object" && !Array.isArray(snapshot.metadata.summary)
+      ? snapshot.metadata.summary as Record<string, unknown>
+      : {}
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-state-bundle-capture/v1",
+      status: "captured",
+      replayStatus: "replayable-runtime-state",
+      ...(label ? { label } : {}),
+      snapshot: {
+        id: snapshot.id,
+        createdAt: snapshot.createdAt,
+        semantics: snapshot.semantics,
+        digest: snapshot.digest,
+        artifactRefs: snapshot.artifactRefs ?? [],
+      },
+      summary: {
+        databaseTables: summary.databaseTables ?? 0,
+        wpContentFiles: summary.wpContentFiles ?? 0,
+      },
+    }, null, 2)}\n`
+  }
+
   async runPluginCheck(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const result = await runPluginCheckCommand({
@@ -832,6 +858,12 @@ export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackend
 
 function sha256(contents: Buffer): string {
   return createHash("sha256").update(contents).digest("hex")
+}
+
+function stringArg(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  const value = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length).trim()
+  return value && value.length > 0 ? value : undefined
 }
 
 function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
