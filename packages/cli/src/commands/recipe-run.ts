@@ -836,16 +836,94 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
 }
 
 function parseBenchResults(raw: string, manifestFiles: Map<string, ArtifactManifestFile>): BenchResults {
-  const parsed = JSON.parse(raw) as unknown
+  const { parsed, prefix, suffix } = parseBenchResultsJson(raw)
   if (!validateBenchResultsSchema(parsed)) {
     throw new Error(`Bench command did not emit a wp-codebox/bench-results/v1 envelope: ${benchResultsAjv.errorsText(validateBenchResultsSchema.errors)}`)
   }
 
   const results = parsed as BenchResults
+  const diagnostics = [...results.diagnostics]
+  if (prefix.trim()) {
+    diagnostics.push(benchOutputDiagnostic("bench-output-prefix", "before", prefix))
+  }
+  if (suffix.trim()) {
+    diagnostics.push(benchOutputDiagnostic("bench-output-suffix", "after", suffix))
+  }
+
   return {
     ...results,
+    diagnostics,
     scenarios: results.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
   }
+}
+
+function parseBenchResultsJson(raw: string): { parsed: unknown; prefix: string; suffix: string } {
+  try {
+    return { parsed: JSON.parse(raw) as unknown, prefix: "", suffix: "" }
+  } catch (error) {
+    const extracted = extractFirstJsonObject(raw)
+    if (!extracted) {
+      throw error
+    }
+
+    try {
+      return { parsed: JSON.parse(extracted.json) as unknown, prefix: extracted.prefix, suffix: extracted.suffix }
+    } catch {
+      throw error
+    }
+  }
+}
+
+function extractFirstJsonObject(raw: string): { json: string; prefix: string; suffix: string } | undefined {
+  for (let start = raw.indexOf("{"); start !== -1; start = raw.indexOf("{", start + 1)) {
+    let depth = 0
+    let inString = false
+    let escaped = false
+
+    for (let index = start; index < raw.length; index++) {
+      const character = raw[index]
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (character === "\\") {
+          escaped = true
+        } else if (character === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (character === '"') {
+        inString = true
+      } else if (character === "{") {
+        depth++
+      } else if (character === "}") {
+        depth--
+        if (depth === 0) {
+          return { json: raw.slice(start, index + 1), prefix: raw.slice(0, start), suffix: raw.slice(index + 1) }
+        }
+      }
+    }
+  }
+
+  return undefined
+}
+
+function benchOutputDiagnostic(code: string, position: "before" | "after", output: string): BenchResults["diagnostics"][number] {
+  return {
+    severity: "warning",
+    code,
+    source: "wordpress.bench/stdout",
+    message: `wordpress.bench emitted non-JSON stdout ${position} the bench-results envelope.`,
+    details: {
+      output: boundDiagnosticText(output),
+    },
+  }
+}
+
+function boundDiagnosticText(output: string): string {
+  const normalized = output.trim()
+  return normalized.length > 4000 ? `${normalized.slice(0, 4000)}...` : normalized
 }
 
 function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][number], manifestFiles: Map<string, ArtifactManifestFile>): BenchScenarioWithArtifactRefs {

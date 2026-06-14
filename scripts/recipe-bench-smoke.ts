@@ -64,7 +64,7 @@ writeFileSync(recipePath, `${JSON.stringify({
                 { type: "rest-request", method: "GET", path: "/wp/v2/types", "metric-prefix": "rest_types" },
                 {
                   type: "php",
-                  code: "return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0, 'lifecycle_setup_visible' => get_option('wp_codebox_bench_lifecycle_setup') === 'yes' ? 1 : 0, 'lifecycle_prepare_visible' => get_option('wp_codebox_bench_lifecycle_prepare') === 'yes' ? 1 : 0, 'cache_was_empty' => wp_cache_get('wp_codebox_bench_cache_flag', 'wp-codebox-bench') === false ? (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 1 : 1) : (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 0 : 0)), 'metadata' => array('kind' => 'configured'));",
+                  code: "print '<br />\\n<b>Warning</b>: Fixture warning before bench JSON in <b>/tmp/wp-codebox-warning-fixture.php</b> on line <b>1</b><br />\\n'; return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0, 'lifecycle_setup_visible' => get_option('wp_codebox_bench_lifecycle_setup') === 'yes' ? 1 : 0, 'lifecycle_prepare_visible' => get_option('wp_codebox_bench_lifecycle_prepare') === 'yes' ? 1 : 0, 'cache_was_empty' => wp_cache_get('wp_codebox_bench_cache_flag', 'wp-codebox-bench') === false ? (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 1 : 1) : (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 0 : 0)), 'metadata' => array('kind' => 'configured'));",
                 },
               ],
               artifacts: { report: { path: "workloads/report.json", kind: "json" } },
@@ -106,9 +106,13 @@ assert.deepEqual(output.benchResults.lifecycle.diagnostics, [])
 assert.equal(output.benchResults.reset_policy.betweenIterations, "object-cache")
 assert.equal(output.benchResults.reset_policy.betweenScenarios, "none")
 assert.equal(output.benchResults.scenarios.length, 2)
-assert.equal(output.benchResults.diagnostics.length, 0)
+assert.equal(output.benchResults.diagnostics.length, 1)
 assert.equal(output.benchResults.provenance.command, "wordpress.bench")
 assert.equal(output.benchResults.provenance.definition.schema, "wp-codebox/benchmark-definition/v1")
+const benchOutputPrefixDiagnostic = output.benchResults.diagnostics.find((diagnostic: { code?: string }) => diagnostic.code === "bench-output-prefix")
+assert.ok(benchOutputPrefixDiagnostic, "warning-like stdout before bench JSON should be captured as a bench diagnostic")
+assert.match(benchOutputPrefixDiagnostic.details.output, /Fixture warning before bench JSON/)
+assert.match(output.executions.at(-1).stdout, /^<br \/>/)
 
 const scenario = output.benchResults.scenarios[0]
 assert.equal(scenario.id, "noop")
