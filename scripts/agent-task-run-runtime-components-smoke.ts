@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
@@ -9,6 +9,7 @@ import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 import { buildAgentTaskSingleResult, finalizeAgentSandboxEvidence } from "../packages/cli/src/recipe-evidence.js"
+import { validateWorkspaceRecipe } from "../packages/cli/src/recipe-validation.js"
 
 const input = {
   goal: "Run a caller runtime bundle",
@@ -103,6 +104,42 @@ const verifyRecipe = buildAgentTaskRecipe(verifyInput, normalizeTaskInput(verify
 assert.equal(verifyRecipe.workflow.steps[0]?.command, "wp-codebox.agent-sandbox-run", "agent run remains the primary workflow step")
 assert.equal(verifyRecipe.workflow.after?.length, 1, "verify_steps should be emitted as workflow.after")
 assert.equal(verifyRecipe.workflow.after?.[0]?.command, "wordpress.phpunit", "after step should be the supplied verify command")
+
+const preparedComponentRoot = mkdtempSync(join(tmpdir(), "wp-codebox-prepared-component-smoke-"))
+const preparedComponentArtifacts = join(preparedComponentRoot, "artifacts")
+const preparedComponentOriginals = join(preparedComponentRoot, "originals")
+const preparedComponentSlugs = ["agents-api", "data-machine", "data-machine-code"]
+const preparedComponentContracts = preparedComponentSlugs.map((slug) => {
+  const original = join(preparedComponentOriginals, slug)
+  mkdirSync(original, { recursive: true })
+  writeFileSync(join(original, `${slug}.php`), `<?php\n/**\n * Plugin Name: ${slug}\n */\n`)
+  writeFileSync(join(original, "composer.json"), `${JSON.stringify({ name: `acme/${slug}`, autoload: { files: [`${slug}.php`] } }, null, 2)}\n`)
+  return {
+    slug,
+    path: join(preparedComponentArtifacts, "prepared-plugins", slug),
+    original_source: original,
+    loadAs: "mu-plugin",
+  }
+})
+const preparedComponentInput = {
+  goal: "Run prepared runtime components",
+  provider: "opencode",
+  model: "opencode-go/kimi-k2.6",
+  artifacts_path: preparedComponentArtifacts,
+  component_contracts: preparedComponentContracts,
+}
+const preparedComponentRecipe = buildAgentTaskRecipe(preparedComponentInput, normalizeTaskInput(preparedComponentInput), "trunk")
+for (const slug of preparedComponentSlugs) {
+  const plugin = preparedComponentRecipe.inputs?.extra_plugins?.find((entry) => entry.slug === slug)
+  const preparedSource = join(preparedComponentArtifacts, "prepared-plugins", slug)
+  assert.equal(plugin?.source, preparedSource, `${slug} should reference the prepared plugin copy`)
+  assert.equal(existsSync(join(preparedSource, `${slug}.php`)), true, `${slug} plugin file should exist before recipe validation`)
+  assert.equal(existsSync(join(preparedSource, "composer.json")), true, `${slug} composer file should exist before recipe validation`)
+  assert.equal(existsSync(join(preparedSource, "vendor", "autoload.php")), true, `${slug} Composer autoload should exist before recipe validation`)
+}
+const preparedComponentRecipePath = join(mkdtempSync(join(tmpdir(), "wp-codebox-prepared-component-recipe-")), "recipe.json")
+writeFileSync(preparedComponentRecipePath, `${JSON.stringify(preparedComponentRecipe, null, 2)}\n`)
+assert.deepEqual(await validateWorkspaceRecipe(preparedComponentRecipe, preparedComponentRecipePath), [], "prepared runtime component recipe should validate after staging plugins")
 
 // Without verify_steps, no after phase is emitted (back-compat with current runs).
 const noVerifyRecipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")

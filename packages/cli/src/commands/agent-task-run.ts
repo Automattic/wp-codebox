@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -549,9 +549,10 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   return contracts.flatMap((contract) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
+    const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
     if (!slug || !source) return []
     return [{
-      source: prepareComposerPluginSource(source, slug, artifactsRoot),
+      source: prepareComponentPluginSource(source, originalSource, slug, artifactsRoot),
       slug,
       activate: Boolean(contract.activate),
       loadAs: stringValue(contract.loadAs) || "mu-plugin",
@@ -559,31 +560,84 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   })
 }
 
+function prepareComponentPluginSource(source: string, originalSource: string, slug: string, artifactsRoot: string): string {
+  if (!artifactsRoot) {
+    return prepareComposerPluginSource(originalSource || source, slug, artifactsRoot)
+  }
+
+  const preparedSource = preparedPluginSource(artifactsRoot, slug)
+  const copySource = localSourcePath(originalSource || source)
+  if (!pathExists(copySource)) {
+    return prepareComposerPluginSource(source, slug, artifactsRoot)
+  }
+
+  if (resolve(copySource) !== resolve(preparedSource)) {
+    rmSyncSafe(preparedSource)
+    mkdirSyncSafe(preparedPluginRoot(artifactsRoot))
+    cpSyncFiltered(copySource, preparedSource)
+  } else {
+    mkdirSyncSafe(preparedSource)
+  }
+
+  return installComposerDependenciesIfNeeded(preparedSource, slug)
+}
+
 function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {
-  if (!source || !pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
-    return source
+  if (!source) return source
+
+  const localSource = localSourcePath(source)
+  if (!pathExists(join(localSource, "composer.json"))) {
+    return pathExists(localSource) ? localSource : source
+  }
+  if (pathExists(join(localSource, "vendor", "autoload.php"))) {
+    return localSource
   }
   if (!artifactsRoot) {
     throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
   }
 
-  const preparedRoot = join(artifactsRoot, "prepared-plugins")
-  const preparedSource = join(preparedRoot, slug)
-  rmSyncSafe(preparedSource)
-  mkdirSyncSafe(preparedRoot)
-  cpSyncFiltered(source, preparedSource)
+  const preparedRoot = preparedPluginRoot(artifactsRoot)
+  const preparedSource = preparedPluginSource(artifactsRoot, slug)
+  if (resolve(localSource) !== resolve(preparedSource)) {
+    rmSyncSafe(preparedSource)
+    mkdirSyncSafe(preparedRoot)
+    cpSyncFiltered(localSource, preparedSource)
+  } else {
+    mkdirSyncSafe(preparedSource)
+  }
+
+  return installComposerDependenciesIfNeeded(preparedSource, slug)
+}
+
+function installComposerDependenciesIfNeeded(source: string, slug: string): string {
+  if (!pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
+    return source
+  }
+
   const result = spawnSync("composer", ["install", "--no-interaction", "--prefer-dist", "--no-progress"], {
-    cwd: preparedSource,
+    cwd: source,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   })
   if (result.status !== 0) {
     throw new Error(`Composer install failed for plugin ${slug}: ${result.stderr || result.stdout || `exit ${result.status}`}`)
   }
-  if (!pathExists(join(preparedSource, "vendor", "autoload.php"))) {
+  if (!pathExists(join(source, "vendor", "autoload.php"))) {
     throw new Error(`Composer install for plugin ${slug} did not create vendor/autoload.php.`)
   }
-  return preparedSource
+  return source
+}
+
+function preparedPluginRoot(artifactsRoot: string): string {
+  return resolve(artifactsRoot, "prepared-plugins")
+}
+
+function preparedPluginSource(artifactsRoot: string, slug: string): string {
+  return join(preparedPluginRoot(artifactsRoot), slug)
+}
+
+function localSourcePath(source: string): string {
+  return pathExists(source) ? resolve(source) : source
 }
 
 function pathExists(filePath: string): boolean {
