@@ -18,7 +18,7 @@ import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
@@ -62,6 +62,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
       interruption?.propagateIfInterrupted()
       exitAfterRecipeRunTimeout(output)
       exitAfterPlaygroundCliBootFailure(output)
+      exitAfterTerminalRecipePhaseFailure(output)
       return output.success ? 0 : 1
     }
 
@@ -73,6 +74,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     interruption?.propagateIfInterrupted()
     exitAfterRecipeRunTimeout(output)
     exitAfterPlaygroundCliBootFailure(output)
+    exitAfterTerminalRecipePhaseFailure(output)
     return output.success ? 0 : 1
   } finally {
     interruption?.dispose()

@@ -3,7 +3,7 @@ import type { RuntimeRunRecord } from "@automattic/wp-codebox-core"
 import { serializeError } from "../output.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
-import type { RecipeInterruptionController, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunProbe } from "./recipe-run-types.js"
+import type { RecipeInterruptionController, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunOutput, RecipeRunProbe } from "./recipe-run-types.js"
 
 export class RecipeRunTimeoutError extends Error {
   readonly code = "recipe-run-timeout"
@@ -76,6 +76,22 @@ export function exitAfterRecipeRunTimeout(output: RecipeRunCommandOutput): void 
   if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "recipe-run-timeout") {
     process.exitCode = output.success ? 0 : 1
   }
+}
+
+export function exitAfterTerminalRecipePhaseFailure(output: RecipeRunCommandOutput): void {
+  if (output.schema !== "wp-codebox/recipe-run/v1" || output.success || !hasTerminalRecipePhaseFailure(output)) {
+    return
+  }
+
+  process.exit(1)
+}
+
+function hasTerminalRecipePhaseFailure(output: RecipeRunOutput): boolean {
+  if (hasSerializedErrorCode(output.error, "recipe-phase-failed")) {
+    return true
+  }
+
+  return output.phaseEvidence?.some((phase) => phase.status === "failed" && hasSerializedErrorCode(phase.error, "recipe-phase-failed")) ?? false
 }
 
 export async function writeRecipeJsonOutput(output: unknown): Promise<void> {

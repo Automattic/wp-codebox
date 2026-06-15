@@ -39,6 +39,7 @@ export const smokeGroups = {
       tsxSmoke("doctor-command-smoke"),
       tsxSmoke("cli-unsettled-command-smoke"),
       tsxSmoke("agent-runtime-failure-smoke"),
+      tsxSmoke("recipe-run-terminal-phase-failure-smoke"),
     ],
   },
   policy: {
