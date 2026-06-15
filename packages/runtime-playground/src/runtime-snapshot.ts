@@ -373,11 +373,28 @@ echo wp_codebox_snapshot_json_encode( array(
 }
 
 export function runtimeSnapshotRestorePhp(payload: RuntimeSnapshotArtifact): string {
-  return `${String.raw`
+  return runtimeSnapshotRestorePhpForPayload(`${String.raw`
 $payload = json_decode(<<<'WP_CODEBOX_SNAPSHOT_JSON'
 `}${JSON.stringify(payload)}${String.raw`
 WP_CODEBOX_SNAPSHOT_JSON
 , true );
+`}`)
+}
+
+export function runtimeSnapshotRestorePhpFromFile(path: string): string {
+  const encodedPath = JSON.stringify(path)
+  return runtimeSnapshotRestorePhpForPayload(`${String.raw`
+$wp_codebox_snapshot_path = `}${encodedPath}${String.raw`;
+$wp_codebox_snapshot_json = file_get_contents( $wp_codebox_snapshot_path );
+if ( false === $wp_codebox_snapshot_json ) {
+    throw new RuntimeException( 'Failed to read WordPress runtime snapshot payload: ' . $wp_codebox_snapshot_path );
+}
+$payload = json_decode( $wp_codebox_snapshot_json, true );
+`}`)
+}
+
+function runtimeSnapshotRestorePhpForPayload(payloadLoaderPhp: string): string {
+  return `${payloadLoaderPhp}${String.raw`
 
 if ( ! is_array( $payload ) || ( $payload['schema'] ?? '' ) !== 'wp-codebox/wordpress-runtime-snapshot/v1' ) {
     throw new RuntimeException( 'Invalid WordPress runtime snapshot payload.' );

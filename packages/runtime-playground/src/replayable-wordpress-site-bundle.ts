@@ -7,7 +7,7 @@ import {
   type ArtifactManifest,
   type RuntimeInfo,
 } from "@automattic/wp-codebox-core"
-import { runtimeSnapshotRestorePhp, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
+import { runtimeSnapshotRestorePhp, runtimeSnapshotRestorePhpFromFile, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 
 export interface ReplayableWordPressSiteBundleOptions {
   directory: string
@@ -244,6 +244,7 @@ export function buildReplayExportBlueprint(
   snapshot: RuntimeSnapshotArtifact,
   options: Pick<ReplayableWordPressSiteBundleOptions, "landingPage"> = {},
 ): Record<string, unknown> {
+  const snapshotPath = "/tmp/wp-codebox-runtime-snapshot.json"
   return {
     $schema: "https://playground.wordpress.net/blueprint-schema.json",
     preferredVersions: {
@@ -251,15 +252,20 @@ export function buildReplayExportBlueprint(
       php: snapshot.compatibility.phpVersion,
     },
     landingPage: options.landingPage ?? "/",
-    steps: [],
-    "x-wp-codebox": {
-      schema: "wp-codebox/replay-export-blueprint/v1",
-      replayStatus: "external-runtime-snapshot",
-      snapshotPath: "files/runtime-snapshot.json",
-      restoreCommand: "wordpress.run-php",
-      restoreCode: "runtimeSnapshotRestorePhp(files/runtime-snapshot.json)",
-      note: "The runtime snapshot is stored beside this blueprint instead of embedded as one large runPHP string.",
-    },
+    steps: [
+      {
+        step: "writeFile",
+        path: snapshotPath,
+        data: {
+          resource: "bundled",
+          path: "files/runtime-snapshot.json",
+        },
+      },
+      {
+        step: "runPHP",
+        code: runtimeSnapshotRestorePhpFromFile(snapshotPath),
+      },
+    ],
   }
 }
 
@@ -277,6 +283,13 @@ export function buildReplayableWordPressSiteLimitations(
       activePlugins: snapshot.metadata.activePlugins,
     },
     source: options.source ?? { kind: "unspecified" },
+    restore: {
+      schema: "wp-codebox/replay-export-blueprint/v1",
+      replayStatus: "external-runtime-snapshot",
+      snapshotPath: "files/runtime-snapshot.json",
+      restoreSteps: ["writeFile", "runPHP"],
+      note: "The runtime snapshot is stored beside the blueprint instead of embedded as one large runPHP string.",
+    },
     limitations: [
       "The bundle replays captured database tables and wp-content files only.",
       "The exporter input must be policy-approved by the caller; this builder does not acquire or authorize private site sources.",

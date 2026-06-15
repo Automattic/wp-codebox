@@ -7,8 +7,9 @@ import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
+import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
 
 export interface PlaygroundCliModule {
@@ -103,7 +104,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
           "site-url": spec.preview?.siteUrl,
-          blueprint: playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl),
+          blueprint: playgroundCliBlueprint(spec),
         })
       } finally {
         await localAssetServer?.close()
@@ -133,6 +134,49 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     throw error
   }
+}
+
+function playgroundCliBlueprint(spec: RuntimeCreateSpec): unknown {
+  const blueprint = playgroundBlueprint(spec.environment.blueprint, spec.policy, spec.preview?.siteUrl)
+  if (blueprint !== spec.environment.blueprint) {
+    return blueprint
+  }
+
+  return localBlueprintPackageFilesystem(spec) ?? blueprint
+}
+
+function localBlueprintPackageFilesystem(spec: RuntimeCreateSpec): LocalBlueprintPackageFilesystem | undefined {
+  const task = spec.metadata?.task
+  if (!task || typeof task !== "object" || Array.isArray(task)) {
+    return undefined
+  }
+
+  const blueprintPath = (task as Record<string, unknown>).blueprintPath
+  if (typeof blueprintPath !== "string" || blueprintPath.length === 0) {
+    return undefined
+  }
+
+  return new LocalBlueprintPackageFilesystem(blueprintPath)
+}
+
+class LocalBlueprintPackageFilesystem {
+  private readonly filesystem: ReadableBlueprintFilesystem
+  private readonly blueprintFileName: string
+
+  constructor(blueprintPath: string) {
+    const NodeJsFilesystem = (PlaygroundStorage as unknown as { NodeJsFilesystem: new(root: string) => ReadableBlueprintFilesystem }).NodeJsFilesystem
+    this.filesystem = new NodeJsFilesystem(dirname(blueprintPath))
+    this.blueprintFileName = basename(blueprintPath)
+  }
+
+  read(path: string): ReturnType<ReadableBlueprintFilesystem["read"]> {
+    const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+/, "")
+    return this.filesystem.read(normalizedPath === "blueprint.json" ? this.blueprintFileName : normalizedPath)
+  }
+}
+
+interface ReadableBlueprintFilesystem {
+  read(path: string): Promise<unknown>
 }
 
 async function startPlaygroundCliWithDynamicPortRetry(callback: (port: number) => Promise<PlaygroundCliServer>, fixedPreviewPort: boolean): Promise<PlaygroundCliServer> {
