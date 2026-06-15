@@ -22,6 +22,8 @@ export interface ReplayableWordPressSiteBundleManifest extends ArtifactManifest 
   version: 1
   replayableWordPressSite: {
     blueprintPath: string
+    playgroundBundlePath?: string
+    publicViewerArtifactPath?: string
     snapshotPath: string
     limitationsPath: string
     replayStatus: "replayable-runtime-state"
@@ -64,6 +66,7 @@ export interface ReplayExportPackage {
   artifacts: {
     manifest: "manifest.json"
     blueprint: "blueprint.after.json"
+    playgroundBundle: "blueprint.zip"
     snapshot: "files/runtime-snapshot.json"
     notes: "blueprint.after-notes.json"
   }
@@ -78,6 +81,7 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
 
   const snapshotPath = join(filesDirectory, "runtime-snapshot.json")
   const blueprintPath = join(directory, "blueprint.after.json")
+  const playgroundBundlePath = join(directory, "blueprint.zip")
   const notesPath = join(directory, "blueprint.after-notes.json")
   const manifestPath = join(directory, "manifest.json")
   const blueprint = buildReplayExportBlueprint(snapshot, options)
@@ -93,8 +97,12 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
   await writeJson(blueprintPath, blueprint)
   await writeJson(snapshotPath, snapshot)
   await writeJson(notesPath, notes)
+  await writePlaygroundBlueprintBundle(playgroundBundlePath, [
+    { path: "blueprint.json", data: `${JSON.stringify(blueprint, null, 2)}\n` },
+    { path: "files/runtime-snapshot.json", data: `${JSON.stringify(snapshot, null, 2)}\n` },
+  ])
 
-  const contentInputs = ["blueprint.after.json", "files/runtime-snapshot.json", "blueprint.after-notes.json"]
+  const contentInputs = ["blueprint.after.json", "blueprint.zip", "files/runtime-snapshot.json", "blueprint.after-notes.json"]
   const contentDigest = await calculateArtifactContentDigest(directory, contentInputs)
   const id = options.id ?? `replay-export-package-sha256-${contentDigest}`
   const manifest: ReplayableWordPressSiteBundleManifest = {
@@ -111,11 +119,14 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
     files: [
       artifactManifestFile("manifest.json", "manifest", "application/json"),
       artifactManifestFile("blueprint.after.json", "blueprint-after", "application/json"),
+      artifactManifestFile("blueprint.zip", "playground-blueprint-bundle", "application/zip"),
       artifactManifestFile("files/runtime-snapshot.json", "runtime-snapshot", "application/json"),
       artifactManifestFile("blueprint.after-notes.json", "blueprint-after-notes", "application/json"),
     ],
     replayableWordPressSite: {
       blueprintPath: "blueprint.after.json",
+      playgroundBundlePath: "blueprint.zip",
+      publicViewerArtifactPath: "blueprint.zip",
       snapshotPath: "files/runtime-snapshot.json",
       limitationsPath: "blueprint.after-notes.json",
       replayStatus: "replayable-runtime-state",
@@ -150,6 +161,7 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
     artifacts: {
       manifest: "manifest.json",
       blueprint: "blueprint.after.json",
+      playgroundBundle: "blueprint.zip",
       snapshot: "files/runtime-snapshot.json",
       notes: "blueprint.after-notes.json",
     },
@@ -326,3 +338,80 @@ function playgroundBlueprintPhpVersion(version: string): string {
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
+
+async function writePlaygroundBlueprintBundle(path: string, entries: Array<{ path: string; data: string }>): Promise<void> {
+  const records: Buffer[] = []
+  const centralDirectoryRecords: Buffer[] = []
+  let offset = 0
+
+  for (const entry of entries) {
+    const fileName = Buffer.from(entry.path, "utf8")
+    const data = Buffer.from(entry.data, "utf8")
+    const crc = crc32(data)
+    const localHeader = Buffer.alloc(30)
+    localHeader.writeUInt32LE(0x04034b50, 0)
+    localHeader.writeUInt16LE(20, 4)
+    localHeader.writeUInt16LE(0, 6)
+    localHeader.writeUInt16LE(0, 8)
+    localHeader.writeUInt16LE(0, 10)
+    localHeader.writeUInt16LE(0, 12)
+    localHeader.writeUInt32LE(crc, 14)
+    localHeader.writeUInt32LE(data.length, 18)
+    localHeader.writeUInt32LE(data.length, 22)
+    localHeader.writeUInt16LE(fileName.length, 26)
+    localHeader.writeUInt16LE(0, 28)
+    records.push(localHeader, fileName, data)
+
+    const centralDirectoryRecord = Buffer.alloc(46)
+    centralDirectoryRecord.writeUInt32LE(0x02014b50, 0)
+    centralDirectoryRecord.writeUInt16LE(20, 4)
+    centralDirectoryRecord.writeUInt16LE(20, 6)
+    centralDirectoryRecord.writeUInt16LE(0, 8)
+    centralDirectoryRecord.writeUInt16LE(0, 10)
+    centralDirectoryRecord.writeUInt16LE(0, 12)
+    centralDirectoryRecord.writeUInt16LE(0, 14)
+    centralDirectoryRecord.writeUInt32LE(crc, 16)
+    centralDirectoryRecord.writeUInt32LE(data.length, 20)
+    centralDirectoryRecord.writeUInt32LE(data.length, 24)
+    centralDirectoryRecord.writeUInt16LE(fileName.length, 28)
+    centralDirectoryRecord.writeUInt16LE(0, 30)
+    centralDirectoryRecord.writeUInt16LE(0, 32)
+    centralDirectoryRecord.writeUInt16LE(0, 34)
+    centralDirectoryRecord.writeUInt16LE(0, 36)
+    centralDirectoryRecord.writeUInt32LE(0, 38)
+    centralDirectoryRecord.writeUInt32LE(offset, 42)
+    centralDirectoryRecords.push(centralDirectoryRecord, fileName)
+
+    offset += localHeader.length + fileName.length + data.length
+  }
+
+  const centralDirectoryOffset = offset
+  const centralDirectorySize = centralDirectoryRecords.reduce((size, record) => size + record.length, 0)
+  const endOfCentralDirectory = Buffer.alloc(22)
+  endOfCentralDirectory.writeUInt32LE(0x06054b50, 0)
+  endOfCentralDirectory.writeUInt16LE(0, 4)
+  endOfCentralDirectory.writeUInt16LE(0, 6)
+  endOfCentralDirectory.writeUInt16LE(entries.length, 8)
+  endOfCentralDirectory.writeUInt16LE(entries.length, 10)
+  endOfCentralDirectory.writeUInt32LE(centralDirectorySize, 12)
+  endOfCentralDirectory.writeUInt32LE(centralDirectoryOffset, 16)
+  endOfCentralDirectory.writeUInt16LE(0, 20)
+
+  await writeFile(path, Buffer.concat([...records, ...centralDirectoryRecords, endOfCentralDirectory]))
+}
+
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff
+  for (const byte of data) {
+    crc = (crc >>> 8) ^ crc32Table[(crc ^ byte) & 0xff]
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const crc32Table = Array.from({ length: 256 }, (_, index) => {
+  let value = index
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) === 1 ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1)
+  }
+  return value >>> 0
+})

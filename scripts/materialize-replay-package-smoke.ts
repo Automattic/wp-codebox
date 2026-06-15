@@ -25,10 +25,31 @@ try {
     throw new Error(`materialize-replay-package failed: ${materialize.stderr || materialize.stdout}`)
   }
 
-  for (const relativePath of ["blueprint.after.json", "files/runtime-snapshot.json", "blueprint.after-notes.json", "manifest.json"]) {
+  for (const relativePath of ["blueprint.after.json", "blueprint.zip", "files/runtime-snapshot.json", "blueprint.after-notes.json", "manifest.json"]) {
     if (!existsSync(join(outputDirectory, relativePath))) {
       throw new Error(`Missing materialized file: ${relativePath}`)
     }
+  }
+
+  const zipListing = spawnSync("unzip", ["-Z1", join(outputDirectory, "blueprint.zip")], { encoding: "utf8" })
+  if (zipListing.status !== 0) {
+    throw new Error(`Generated blueprint.zip is not listable: ${zipListing.stderr || zipListing.stdout}`)
+  }
+
+  const zipEntries = zipListing.stdout.trim().split(/\r?\n/).filter(Boolean).sort()
+  const expectedZipEntries = ["blueprint.json", "files/runtime-snapshot.json"]
+  if (JSON.stringify(zipEntries) !== JSON.stringify(expectedZipEntries)) {
+    throw new Error(`Generated blueprint.zip entries mismatch: expected ${expectedZipEntries.join(", ")}; got ${zipEntries.join(", ")}`)
+  }
+
+  const zippedBlueprint = spawnSync("unzip", ["-p", join(outputDirectory, "blueprint.zip"), "blueprint.json"], { encoding: "utf8" })
+  if (zippedBlueprint.status !== 0) {
+    throw new Error(`Generated blueprint.zip does not contain root blueprint.json: ${zippedBlueprint.stderr || zippedBlueprint.stdout}`)
+  }
+
+  const zippedBlueprintJson = JSON.parse(zippedBlueprint.stdout)
+  if (zippedBlueprintJson.steps?.[0]?.data?.path !== "files/runtime-snapshot.json") {
+    throw new Error("Root blueprint.json must reference files/runtime-snapshot.json as a bundled resource")
   }
 
   const validate = spawnSync(process.execPath, [
@@ -59,6 +80,10 @@ try {
   const manifest = JSON.parse(await readFile(join(outputDirectory, "manifest.json"), "utf8"))
   if (manifest.replayableWordPressSite?.source?.inputSnapshotPath !== snapshotPath) {
     throw new Error("Replay package manifest must record the input snapshot path")
+  }
+
+  if (manifest.replayableWordPressSite?.publicViewerArtifactPath !== "blueprint.zip") {
+    throw new Error("Replay package manifest must point public viewers at blueprint.zip")
   }
 
   console.log("materialize-replay-package-smoke passed")

@@ -1090,7 +1090,21 @@ Recipes that import a generated site into a clean runtime can export replay evid
 }
 ```
 
-The step writes `files/replay-package/manifest.json`, `blueprint.after.json`, `blueprint.after-notes.json`, and `files/runtime-snapshot.json` under the runtime artifact root. Its stdout is a `wp-codebox/wordpress-replay-export/v1` envelope with `importMs`, `materializeMs`, `snapshotMs`, `exportMs`, `databaseTables`, `wpContentFiles`, `snapshotBytes`, and `blueprintBytes`. The exported `blueprint.after.json` keeps the runtime snapshot as a referenced package file instead of embedding the full snapshot as one large `runPHP` string.
+The step writes `files/replay-package/manifest.json`, `blueprint.after.json`, `blueprint.zip`, `blueprint.after-notes.json`, and `files/runtime-snapshot.json` under the runtime artifact root. Its stdout is a `wp-codebox/wordpress-replay-export/v1` envelope with `importMs`, `materializeMs`, `snapshotMs`, `exportMs`, `databaseTables`, `wpContentFiles`, `snapshotBytes`, and `blueprintBytes`. The exported `blueprint.after.json` keeps the runtime snapshot as a referenced package file instead of embedding the full snapshot as one large `runPHP` string.
+
+Existing `wp-codebox/wordpress-runtime-snapshot/v1` files can be turned into the same replay package without a live Playground runtime or the original recipe-run context:
+
+```bash
+wp-codebox materialize-replay-package \
+  --snapshot ./files/runtime-snapshot.json \
+  --snapshot-ref artifact:r15/files/runtime-snapshot.json \
+  --output ./replay-package \
+  --json
+```
+
+The materializer writes `blueprint.after.json`, `blueprint.zip`, `files/runtime-snapshot.json`, `blueprint.after-notes.json`, and `manifest.json`. The generated notes and manifest record source metadata, including the resolved input snapshot path, optional `--snapshot-ref`, and the `wp-codebox materialize-replay-package` command.
+
+Replay packages use a bundled resource for `files/runtime-snapshot.json` so the blueprint and snapshot travel together as one local artifact directory. `blueprint.after.json` is the local/package validation artifact. Public WordPress Playground viewer links must use `blueprint.zip`, because Playground resolves bundled resources from a bundle archive with a root `blueprint.json` entry; a plain JSON URL cannot resolve `files/runtime-snapshot.json`. The manifest therefore records `replayableWordPressSite.publicViewerArtifactPath: "blueprint.zip"`. Use URL resources only when the snapshot is already hosted at a stable, browser-fetchable URL; this avoids shipping the snapshot beside the blueprint, but replay then depends on network access, CORS, URL lifetime, and the full snapshot download at restore time.
 
 `metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. It also includes `provenance` derived from data WP Codebox already has: task input/context where available, WP Codebox runtime version, WordPress version, mounted component/mount metadata, and agent/provider/model fields passed to the sandbox runner. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
 
