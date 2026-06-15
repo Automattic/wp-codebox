@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { isPlainObject as isRecord, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, runtimeEpisodeDigest, sha256StableJson, type MountSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@automattic/wp-codebox-core"
 import { playgroundRuntimeCommandIds } from "./command-router.js"
+import type { PlaygroundCliServer } from "./preview-server.js"
 
 export interface RuntimeSnapshotArtifact {
   schema: "wp-codebox/wordpress-runtime-snapshot/v1"
@@ -112,6 +113,67 @@ export interface RuntimeSnapshotExportOptions {
   excludedWpContentPaths?: string[]
 }
 
+interface RuntimeSnapshotExportManifest {
+  schema: "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1"
+  compatibility: RuntimeSnapshotArtifact["compatibility"]
+  metadata: Omit<RuntimeSnapshotArtifact["metadata"], "runtime" | "mounts" | "mountedInputs">
+  database: {
+    tables: Array<{
+      name: string
+      createSql: string
+      rowCount: number
+      chunks: string[]
+    }>
+  }
+  files: {
+    ndjsonPath: string
+  }
+}
+
+export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, responseText: string): Promise<Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">> {
+  const manifest = JSON.parse(responseText || "{}") as RuntimeSnapshotExportManifest
+  if (manifest.schema !== "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1") {
+    throw new PlaygroundSnapshotRestoreError("Runtime snapshot export did not return a supported manifest.")
+  }
+
+  if (!server.playground.readFileAsText) {
+    throw new PlaygroundSnapshotRestoreError("Runtime snapshot export requires Playground readFileAsText support.")
+  }
+
+  const tables = []
+  for (const table of manifest.database.tables) {
+    const rows = []
+    for (const chunkPath of table.chunks) {
+      const chunkRows = JSON.parse(await server.playground.readFileAsText(chunkPath))
+      if (Array.isArray(chunkRows)) {
+        rows.push(...chunkRows)
+      }
+    }
+    tables.push({ name: table.name, createSql: table.createSql, rows, rowCount: table.rowCount })
+  }
+
+  const files = []
+  const fileLines = (await server.playground.readFileAsText(manifest.files.ndjsonPath)).split("\n")
+  for (const line of fileLines) {
+    if (line.trim().length === 0) {
+      continue
+    }
+    files.push(JSON.parse(line))
+  }
+
+  return {
+    compatibility: manifest.compatibility,
+    metadata: {
+      ...manifest.metadata,
+      runtime: null as never,
+      mounts: [],
+      mountedInputs: [],
+    },
+    database: { tables },
+    files,
+  }
+}
+
 export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions = {}): string {
   const excludedWpContentPaths = JSON.stringify(normalizeWpContentPathList(["database", ...(options.excludedWpContentPaths ?? [])]))
   return [String.raw`
@@ -127,6 +189,14 @@ if ( ! is_array( $wp_codebox_snapshot_excluded_wp_content_paths ) ) {
 
 function wp_codebox_snapshot_hash_file_contents( string $contents ): string {
     return hash( 'sha256', $contents );
+}
+
+function wp_codebox_snapshot_json_encode( $value ): string {
+    $json = json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE );
+    if ( false === $json ) {
+        throw new RuntimeException( 'Failed to encode runtime snapshot JSON: ' . json_last_error_msg() );
+    }
+    return $json;
 }
 
 function wp_codebox_snapshot_relative_path( string $base, string $path ): string {
@@ -149,62 +219,94 @@ function wp_codebox_snapshot_is_excluded_path( string $relative_path, array $exc
     return false;
 }
 
-function wp_codebox_snapshot_files( string $root, array $excluded_paths ): array {
-    if ( ! is_dir( $root ) ) {
-        return array();
+function wp_codebox_snapshot_write_files( string $root, array $excluded_paths, string $target_path ): void {
+    $handle = fopen( $target_path, 'wb' );
+    if ( false === $handle ) {
+        throw new RuntimeException( 'Failed to create runtime snapshot file manifest.' );
     }
 
-    $files = array();
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ),
-        RecursiveIteratorIterator::LEAVES_ONLY
-    );
-
-    foreach ( $iterator as $file ) {
-        if ( ! $file->isFile() ) {
-            continue;
+    try {
+        if ( ! is_dir( $root ) ) {
+            return;
         }
 
-        $path = $file->getPathname();
-        $relative = wp_codebox_snapshot_relative_path( $root, $path );
-        if ( wp_codebox_snapshot_is_excluded_path( $relative, $excluded_paths ) ) {
-            continue;
-        }
-
-        $contents = file_get_contents( $path );
-        if ( false === $contents ) {
-            continue;
-        }
-
-        $files[] = array(
-            'scope' => 'wp-content',
-            'path' => $relative,
-            'bytes' => strlen( $contents ),
-            'sha256' => wp_codebox_snapshot_hash_file_contents( $contents ),
-            'base64' => base64_encode( $contents ),
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ),
+            RecursiveIteratorIterator::LEAVES_ONLY
         );
-    }
 
-    usort( $files, fn( $left, $right ) => strcmp( $left['path'], $right['path'] ) );
-    return $files;
+        foreach ( $iterator as $file ) {
+            if ( ! $file->isFile() ) {
+                continue;
+            }
+
+            $path = $file->getPathname();
+            $relative = wp_codebox_snapshot_relative_path( $root, $path );
+            if ( wp_codebox_snapshot_is_excluded_path( $relative, $excluded_paths ) ) {
+                continue;
+            }
+
+            $contents = file_get_contents( $path );
+            if ( false === $contents ) {
+                continue;
+            }
+
+            fwrite( $handle, wp_codebox_snapshot_json_encode( array(
+                'scope' => 'wp-content',
+                'path' => $relative,
+                'bytes' => strlen( $contents ),
+                'sha256' => wp_codebox_snapshot_hash_file_contents( $contents ),
+                'base64' => base64_encode( $contents ),
+            ) ) . "\n" );
+            unset( $contents );
+        }
+    } finally {
+        fclose( $handle );
+    }
 }
 
 $tables = array();
+$export_dir = sys_get_temp_dir() . '/wp-codebox-runtime-snapshot-' . bin2hex( random_bytes( 8 ) );
+if ( ! mkdir( $export_dir, 0700, true ) && ! is_dir( $export_dir ) ) {
+    throw new RuntimeException( 'Failed to create runtime snapshot export directory.' );
+}
+
+$table_index = 0;
 foreach ( $wpdb->get_col( 'SHOW TABLES' ) as $table_name ) {
     $quoted_table = chr( 96 ) . str_replace( chr( 96 ), chr( 96 ) . chr( 96 ), $table_name ) . chr( 96 );
     $create_row = $wpdb->get_row( 'SHOW CREATE TABLE ' . $quoted_table, ARRAY_N );
-    $rows = $wpdb->get_results( 'SELECT * FROM ' . $quoted_table, ARRAY_A );
+    $row_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $quoted_table );
+    $chunks = array();
+    $offset = 0;
+    $chunk_index = 0;
+    $chunk_size = 100;
+
+    while ( $offset < $row_count ) {
+        $rows = $wpdb->get_results( 'SELECT * FROM ' . $quoted_table . ' LIMIT ' . (int) $chunk_size . ' OFFSET ' . (int) $offset, ARRAY_A );
+        $chunk_path = $export_dir . '/table-' . $table_index . '-chunk-' . $chunk_index . '.json';
+        file_put_contents( $chunk_path, wp_codebox_snapshot_json_encode( $rows ?: array() ) );
+        $chunks[] = $chunk_path;
+        $offset += $chunk_size;
+        ++$chunk_index;
+        unset( $rows );
+    }
+
     $tables[] = array(
         'name' => $table_name,
         'createSql' => $create_row[1] ?? '',
-        'rows' => $rows ?: array(),
-        'rowCount' => count( $rows ?: array() ),
+        'rowCount' => $row_count,
+        'chunks' => $chunks,
     );
+    ++$table_index;
 }
 
 usort( $tables, fn( $left, $right ) => strcmp( $left['name'], $right['name'] ) );
 
-$wp_codebox_snapshot_payload = array(
+$files_path = $export_dir . '/files.ndjson';
+wp_codebox_snapshot_write_files( WP_CONTENT_DIR, $wp_codebox_snapshot_excluded_wp_content_paths, $files_path );
+
+echo wp_codebox_snapshot_json_encode( array(
+    'schema' => 'wp-codebox/wordpress-runtime-snapshot-export-manifest/v1',
     'compatibility' => array(
         'backend' => 'wordpress-playground',
         'wordpressVersion' => get_bloginfo( 'version' ),
@@ -220,15 +322,8 @@ $wp_codebox_snapshot_payload = array(
         'skippedWpContentPaths' => array_values( $wp_codebox_snapshot_excluded_wp_content_paths ),
     ),
     'database' => array( 'tables' => $tables ),
-    'files' => wp_codebox_snapshot_files( WP_CONTENT_DIR, $wp_codebox_snapshot_excluded_wp_content_paths ),
-);
-
-$wp_codebox_snapshot_json = json_encode( $wp_codebox_snapshot_payload, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE );
-if ( false === $wp_codebox_snapshot_json ) {
-    throw new RuntimeException( 'Failed to encode runtime snapshot JSON: ' . json_last_error_msg() );
-}
-
-echo $wp_codebox_snapshot_json;`].join("")
+    'files' => array( 'ndjsonPath' => $files_path ),
+) );`].join("")
 }
 
 export function runtimeSnapshotRestorePhp(payload: RuntimeSnapshotArtifact): string {
@@ -264,6 +359,50 @@ function wp_codebox_snapshot_delete_tree( string $path ): void {
     }
 }
 
+function wp_codebox_snapshot_relative_path_for_restore( string $base, string $path ): string {
+    $base = rtrim( str_replace( '\\', '/', realpath( $base ) ?: $base ), '/' ) . '/';
+    $path = str_replace( '\\', '/', $path );
+    return ltrim( substr( $path, strlen( $base ) ), '/' );
+}
+
+function wp_codebox_snapshot_restore_should_preserve_path( string $relative_path, array $preserved_paths ): bool {
+    $relative_path = trim( str_replace( '\\', '/', $relative_path ), '/' );
+    foreach ( $preserved_paths as $preserved_path ) {
+        if ( ! is_string( $preserved_path ) || '' === $preserved_path ) {
+            continue;
+        }
+        $preserved_path = trim( str_replace( '\\', '/', $preserved_path ), '/' );
+        if (
+            $relative_path === $preserved_path
+            || str_starts_with( $relative_path, $preserved_path . '/' )
+            || str_starts_with( $preserved_path, $relative_path . '/' )
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function wp_codebox_snapshot_clear_wp_content( string $root, array $preserved_paths ): void {
+    if ( ! file_exists( $root ) ) {
+        return;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator( $root, FilesystemIterator::SKIP_DOTS ),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ( $iterator as $item ) {
+        $path = $item->getPathname();
+        $relative = wp_codebox_snapshot_relative_path_for_restore( $root, $path );
+        if ( wp_codebox_snapshot_restore_should_preserve_path( $relative, $preserved_paths ) ) {
+            continue;
+        }
+        $item->isDir() ? rmdir( $path ) : unlink( $path );
+    }
+}
+
 foreach ( $wpdb->get_col( 'SHOW TABLES' ) as $table_name ) {
     $quoted_table = chr( 96 ) . str_replace( chr( 96 ), chr( 96 ) . chr( 96 ), $table_name ) . chr( 96 );
     $wpdb->query( 'DROP TABLE IF EXISTS ' . $quoted_table );
@@ -278,7 +417,11 @@ foreach ( $payload['database']['tables'] as $table ) {
     }
 }
 
-wp_codebox_snapshot_delete_tree( WP_CONTENT_DIR );
+$preserved_wp_content_paths = array_values( array_unique( array_merge(
+    array( 'database' ),
+    (array) ( $payload['metadata']['skippedWpContentPaths'] ?? array() )
+) ) );
+wp_codebox_snapshot_clear_wp_content( WP_CONTENT_DIR, $preserved_wp_content_paths );
 wp_mkdir_p( WP_CONTENT_DIR );
 
 foreach ( $payload['files'] as $file ) {

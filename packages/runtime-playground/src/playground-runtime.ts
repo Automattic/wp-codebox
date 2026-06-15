@@ -15,7 +15,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
-import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
+import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import type {
@@ -306,11 +306,12 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string): Promise<RuntimeSnapshotArtifact> {
-    const response = await this.runPlaygroundCommand("runtime.snapshot", await this.bootPlayground(), {
+    const server = await this.bootPlayground()
+    const response = await this.runPlaygroundCommand("runtime.snapshot", server, {
       code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp({ excludedWpContentPaths: this.snapshotExcludedWpContentPaths() }), []),
     })
     assertPlaygroundResponseOk("runtime.snapshot", response)
-    const captured = JSON.parse(response.text || "{}") as Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
+    const captured = await runtimeSnapshotExportPayload(server, response.text)
     const databaseDigest = contentDigest(captured.database)
     const filesDigest = contentDigest(captured.files.map((file) => ({ path: file.path, sha256: file.sha256, bytes: file.bytes })))
 
