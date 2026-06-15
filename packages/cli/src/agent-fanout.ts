@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { aggregateFanoutOutputs, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, stripUndefined, type FanoutAggregationOutput, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
+import { FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
+import { aggregateFanoutOutputs, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
 const MAX_FANOUT_CONCURRENCY = 8

@@ -4,7 +4,8 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
 export interface PreparedWorkspaceMount {
   source: string

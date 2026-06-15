@@ -8,7 +8,6 @@ import {
   artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
-  stripUndefined,
   type ArtifactEvidenceRef,
   type ArtifactBundle,
   type ArtifactDurablePreviewRef,
@@ -32,6 +31,7 @@ import {
   type RuntimeInfo,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,

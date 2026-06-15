@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { verifyArtifactBundle } from "@automattic/wp-codebox-core"
+import { verifyArtifactBundle } from "@automattic/wp-codebox-core/artifacts"
 import { writeReplayableWordPressSiteBundle, type RuntimeSnapshotArtifact } from "../packages/runtime-playground/src/index.js"
 
 const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-replayable-site-"))

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"

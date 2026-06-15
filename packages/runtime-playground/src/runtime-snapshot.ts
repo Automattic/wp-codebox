@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
-import { isPlainObject as isRecord, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, runtimeEpisodeDigest, sha256StableJson, type MountSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@automattic/wp-codebox-core"
+import { RUNTIME_EPISODE_SNAPSHOT_SCHEMA, runtimeEpisodeDigest, type MountSpec, type RuntimeCreateSpec, type RuntimeInfo, type Snapshot } from "@automattic/wp-codebox-core"
+import { isPlainObject as isRecord, sha256StableJson } from "@automattic/wp-codebox-core/internals"
 import { playgroundRuntimeCommandIds } from "./command-router.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 

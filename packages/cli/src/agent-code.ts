@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { sandboxAllowedRuntimeToolIds, SANDBOX_WORKSPACE_ROOT, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload } from "@automattic/wp-codebox-core"
+import { sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
 export interface AgentBundleSpec {
   source?: string

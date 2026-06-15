@@ -3,7 +3,8 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, createArtifactApplyRequest, loadArtifactBundleForApply, normalizeArtifactApplyPreflight } from "@automattic/wp-codebox-core"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "@automattic/wp-codebox-core"
+import { createArtifactApplyRequest, loadArtifactBundleForApply, normalizeArtifactApplyPreflight } from "@automattic/wp-codebox-core/artifacts"
 import type { ArtifactManifest } from "@automattic/wp-codebox-core"
 
 const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-artifact-apply-adapter-"))

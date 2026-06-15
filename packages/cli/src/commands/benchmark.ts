@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { compareBenchmarkResults, expandBenchmarkMatrix, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResults, type BenchmarkComparison, type BenchmarkMatrixCell, type BenchmarkMatrixCellResult, type BenchmarkMatrixDimension, type BenchmarkResultEnvelope, type BenchmarkRunRef, type BenchmarkScenarioResult } from "@automattic/wp-codebox-core"
+import { compareBenchmarkResults, expandBenchmarkMatrix, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResults, type BenchmarkComparison, type BenchmarkMatrixCell, type BenchmarkMatrixCellResult, type BenchmarkMatrixDimension, type BenchmarkResultEnvelope, type BenchmarkRunRef, type BenchmarkScenarioResult } from "@automattic/wp-codebox-core/internals"
 
 interface BenchmarkSummaryOptions {
   inputPath?: string

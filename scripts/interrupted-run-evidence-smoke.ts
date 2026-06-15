@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { discoverInterruptedRunEvidence } from "@automattic/wp-codebox-core"
+import { discoverInterruptedRunEvidence } from "@automattic/wp-codebox-core/artifacts"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-interrupted-run-evidence-"))
 const startedAt = "2026-06-06T12:00:00.000Z"

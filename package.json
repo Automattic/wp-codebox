@@ -8,6 +8,18 @@
       "types": "./packages/runtime-core/dist/index.d.ts",
       "import": "./packages/runtime-core/dist/index.js"
     },
+    "./core/contracts": {
+      "types": "./packages/runtime-core/dist/contracts.d.ts",
+      "import": "./packages/runtime-core/dist/contracts.js"
+    },
+    "./core/artifacts": {
+      "types": "./packages/runtime-core/dist/artifacts.d.ts",
+      "import": "./packages/runtime-core/dist/artifacts.js"
+    },
+    "./core/internals": {
+      "types": "./packages/runtime-core/dist/internals.d.ts",
+      "import": "./packages/runtime-core/dist/internals.js"
+    },
     "./recipe-builders": {
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"

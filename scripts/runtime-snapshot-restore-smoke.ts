@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createRuntime, restoreRuntime, verifyArtifactBundle } from "@automattic/wp-codebox-core"
+import { createRuntime, restoreRuntime } from "@automattic/wp-codebox-core"
+import { verifyArtifactBundle } from "@automattic/wp-codebox-core/artifacts"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-snapshot-"))

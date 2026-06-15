@@ -1122,10 +1122,10 @@ wp-codebox artifacts discover-partial --artifacts <dir> --session-id <id> --star
 ```
 
 The TypeScript API is `discoverPartialRunArtifacts({ artifactsRoot, sessionId,
-startedAt, finishedAt })` from `@automattic/wp-codebox-core`. Discovery scans
-artifact directories under `artifactsRoot`, filters by the run timestamp window,
-prefers directories whose path includes `sessionId`, and falls back to all
-timestamp-matching candidates when no session match exists.
+startedAt, finishedAt })` from `@automattic/wp-codebox-core/artifacts`.
+Discovery scans artifact directories under `artifactsRoot`, filters by the run
+timestamp window, prefers directories whose path includes `sessionId`, and falls
+back to all timestamp-matching candidates when no session match exists.
 
 Stable contract paths returned by discovery are `manifest.json`,
 `files/changed-files.json`, and `files/runtime-reference-manifest.json`. The

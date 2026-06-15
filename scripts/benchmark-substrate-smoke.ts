@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { compareBenchmarkResults, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResult, executeBenchmarkMatrix, expandBenchmarkMatrix } from "@automattic/wp-codebox-core"
+import { compareBenchmarkResults, createBenchmarkMatrixCellFailure, createBenchmarkMatrixCellResult, executeBenchmarkMatrix, expandBenchmarkMatrix } from "@automattic/wp-codebox-core/internals"
 
 const matrix = expandBenchmarkMatrix([
   {
