@@ -9,18 +9,22 @@
   "version_targets": [
     {
       "file": "package.json",
+      "artifact_path": "vendor/wp-codebox-cli/package.json",
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
       "file": "packages/runtime-core/package.json",
+      "artifact_path": "vendor/wp-codebox-cli/packages/runtime-core/package.json",
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
       "file": "packages/runtime-playground/package.json",
+      "artifact_path": "vendor/wp-codebox-cli/packages/runtime-playground/package.json",
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
       "file": "packages/cli/package.json",
+      "artifact_path": "vendor/wp-codebox-cli/packages/cli/package.json",
       "pattern": "\"version\":\\s*\"([0-9.]+)\""
     },
     {
