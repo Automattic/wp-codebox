@@ -342,16 +342,22 @@ function wp_codebox_validate_requested_provider(array $agent_input, array $sandb
             'message' => 'The requested provider could not be validated because the wp-ai-client provider registry is unavailable inside the sandbox.',
             'data' => array(
                 'provider' => $provider,
+                'registered_provider_ids' => array(),
                 'ai_client_available' => class_exists($ai_client_class),
                 'ai_client_default_registry_available' => class_exists($ai_client_class) && method_exists($ai_client_class, 'defaultRegistry'),
                 'provider_registry_available' => class_exists($provider_registry_class),
                 'provider_plugins' => $sandbox_stack['signals']['provider_plugins'] ?? array(),
+                'provider_plugin_files' => $sandbox_stack['signals']['provider_plugin_files'] ?? array(),
                 'plugin_activation' => $sandbox_stack['plugins'] ?? array(),
             ),
         );
     }
 
-    if (method_exists($registry, 'isProviderConfigured') && $registry->isProviderConfigured($provider)) {
+    $registered_provider_ids = wp_codebox_registered_provider_ids($registry);
+    if (method_exists($registry, 'hasProvider') && $registry->hasProvider($provider)) {
+        return null;
+    }
+    if (!method_exists($registry, 'hasProvider') && method_exists($registry, 'isProviderConfigured') && $registry->isProviderConfigured($provider)) {
         return null;
     }
 
@@ -360,10 +366,27 @@ function wp_codebox_validate_requested_provider(array $agent_input, array $sandb
         'message' => sprintf('Requested provider "%s" is not registered in wp-ai-client after sandbox provider plugins were loaded.', $provider),
         'data' => array(
             'provider' => $provider,
+            'registered_provider_ids' => $registered_provider_ids,
             'provider_plugins' => $sandbox_stack['signals']['provider_plugins'] ?? array(),
+            'provider_plugin_files' => $sandbox_stack['signals']['provider_plugin_files'] ?? array(),
             'plugin_activation' => $sandbox_stack['plugins'] ?? array(),
         ),
     );
+}
+
+function wp_codebox_registered_provider_ids(object $registry): array {
+    if (!method_exists($registry, 'getRegisteredProviderIds')) {
+        return array();
+    }
+
+    $provider_ids = $registry->getRegisteredProviderIds();
+    if (!is_array($provider_ids)) {
+        return array();
+    }
+
+    $provider_ids = array_values(array_filter(array_map('strval', $provider_ids), static fn(string $provider_id): bool => '' !== $provider_id));
+    sort($provider_ids);
+    return $provider_ids;
 }
 
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
@@ -644,6 +667,39 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     return $entries;
 }
 
+function wp_codebox_provider_plugin_file_diagnostics(array $provider_plugins): array {
+    $diagnostics = array();
+    foreach ($provider_plugins as $plugin) {
+        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
+        if ('' === $slug) {
+            continue;
+        }
+
+        $entry = null;
+        $entry_path = null;
+        $load_as = null;
+        foreach (wp_codebox_provider_plugin_entries(array($plugin)) as $candidate) {
+            $candidate_entry = wp_codebox_plugin_entry_path($candidate);
+            if ($candidate_entry) {
+                $entry = $candidate;
+                $entry_path = $candidate_entry['path'];
+                $load_as = $candidate_entry['load_as'];
+                break;
+            }
+        }
+
+        $diagnostics[] = array(
+            'slug' => $slug,
+            'source' => isset($plugin['source']) ? (string) $plugin['source'] : '',
+            'plugin_file' => $entry,
+            'mounted_path' => $entry_path,
+            'load_as' => $load_as,
+            'mounted' => null !== $entry_path,
+        );
+    }
+    return $diagnostics;
+}
+
 function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
     // The conventional entries (<slug>/plugin.php, <slug>/<slug>.php) are absent.
     // This happens when the plugin directory was renamed so its name no longer
@@ -725,6 +781,7 @@ $sandbox_stack = array(
         'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
         'data_machine_code_workspace' => class_exists('DataMachineCode\\Workspace\\Workspace'),
         'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+        'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
     ),
 );
 
@@ -806,6 +863,39 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
     return $entries;
 }
 
+function wp_codebox_provider_plugin_file_diagnostics(array $provider_plugins): array {
+    $diagnostics = array();
+    foreach ($provider_plugins as $plugin) {
+        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
+        if ('' === $slug) {
+            continue;
+        }
+
+        $entry = null;
+        $entry_path = null;
+        $load_as = null;
+        foreach (wp_codebox_provider_plugin_entries(array($plugin)) as $candidate) {
+            $candidate_entry = wp_codebox_plugin_entry_path($candidate);
+            if ($candidate_entry) {
+                $entry = $candidate;
+                $entry_path = $candidate_entry['path'];
+                $load_as = $candidate_entry['load_as'];
+                break;
+            }
+        }
+
+        $diagnostics[] = array(
+            'slug' => $slug,
+            'source' => isset($plugin['source']) ? (string) $plugin['source'] : '',
+            'plugin_file' => $entry,
+            'mounted_path' => $entry_path,
+            'load_as' => $load_as,
+            'mounted' => null !== $entry_path,
+        );
+    }
+    return $diagnostics;
+}
+
 function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
     // The conventional entries (<slug>/plugin.php, <slug>/<slug>.php) are absent.
     // This happens when the plugin directory was renamed so its name no longer
@@ -870,6 +960,7 @@ echo json_encode(
             'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
             'data_machine_code_workspace' => class_exists('DataMachineCode\\\\Workspace\\\\Workspace'),
             'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
         ),
     ),
     JSON_PRETTY_PRINT

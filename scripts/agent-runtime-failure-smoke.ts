@@ -1,6 +1,23 @@
 import assert from "node:assert/strict"
 import { agentSandboxRuntimeFailure, buildAgentTaskSingleResult, recipeAgentResultFailure, type RecipeArtifactEvidenceResult } from "../packages/cli/src/recipe-evidence.ts"
 
+const providerDiagnostic = {
+  provider: "codex",
+  registered_provider_ids: ["openai"],
+  provider_plugins: ["ai-provider-for-openai/plugin.php"],
+  provider_plugin_files: [{
+    slug: "ai-provider-for-openai",
+    source: "/runtime/ai-provider-for-openai",
+    plugin_file: "ai-provider-for-openai/plugin.php",
+    mounted_path: "/wordpress/wp-content/plugins/ai-provider-for-openai/plugin.php",
+    load_as: "plugin",
+    mounted: true,
+  }],
+  plugin_activation: {
+    "ai-provider-for-openai/plugin.php": { active: true, load_as: "plugin", error: null },
+  },
+}
+
 const nestedFailure = agentSandboxRuntimeFailure({
   executionIndex: 0,
   command: "wordpress.run-php",
@@ -14,6 +31,7 @@ const nestedFailure = agentSandboxRuntimeFailure({
         error: {
           code: "chubes_ai_request_failed",
           message: "Provider codex is not registered in wp-ai-client",
+          data: providerDiagnostic,
         },
       },
     }),
@@ -27,6 +45,7 @@ const nestedFailure = agentSandboxRuntimeFailure({
         error: {
           code: "chubes_ai_request_failed",
           message: "Provider codex is not registered in wp-ai-client",
+          data: providerDiagnostic,
         },
       },
     }),
@@ -36,6 +55,7 @@ const nestedFailure = agentSandboxRuntimeFailure({
 assert.deepEqual(nestedFailure, {
   code: "chubes_ai_request_failed",
   message: "Provider codex is not registered in wp-ai-client",
+  data: providerDiagnostic,
 })
 
 const agentFailure = recipeAgentResultFailure({
