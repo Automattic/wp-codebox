@@ -1,6 +1,7 @@
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 export { buildArtifactDiagnostics } from "./artifacts.js"
 export { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
+export { createClaudeCodeHostTool, type ClaudeCodeHostToolConfig } from "./claude-code-host-tool.js"
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"
 export { PlaygroundRuntimeBackend, createPlaygroundRuntimeBackend } from "./playground-runtime.js"
 export { preflightPhpWasmRuntimeAssets, PhpWasmRuntimeAssetIntegrityError, type PhpWasmRuntimeAssetPreflight, type PhpWasmRuntimeAssetPreflightOptions } from "./php-wasm-preflight.js"

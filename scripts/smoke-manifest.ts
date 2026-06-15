@@ -42,6 +42,7 @@ export const smokeGroups = {
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),
       tsxSmoke("host-command-tool-smoke"),
+      tsxSmoke("claude-code-host-tool-smoke"),
       tsxSmoke("sandbox-tool-policy-smoke"),
       tsxSmoke("task-input-contract-smoke"),
       tsxSmoke("discovery-command-smoke"),
