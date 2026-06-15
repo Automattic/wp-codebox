@@ -105,9 +105,6 @@ from product-specific consumers.
 
 ### Generated Artifact Metadata And Fixtures
 
-- `examples/datamachine-bundle/world-creator-lite/manifest.json` uses
-  `Automattic/wp-codebox/examples/datamachine-bundle/world-creator-lite` as
-  `source_ref`.
 - `tests/fixtures/task-input-normalization.json` preserves
   `github.com/Automattic/wp-codebox` issue URLs in normalized task context.
 - `tests/smoke-wordpress-plugin.php` uses `Automattic/wp-codebox` repo and PR URLs

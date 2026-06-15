@@ -4,7 +4,6 @@ export const PREVIEW_PORT_MAX = 65535
 
 export interface PreviewOptionsInput {
   preview_hold_seconds?: unknown
-  preview_hold?: unknown
   preview_port?: unknown
   preview_bind?: unknown
   preview_public_url?: unknown
@@ -58,7 +57,7 @@ export function normalizePreviewOptions(input: PreviewOptionsInput): PreviewOpti
   }
 
   return {
-    preview_hold_seconds: parsePreviewHoldSecondsValue(input.preview_hold_seconds ?? input.preview_hold ?? 0),
+    preview_hold_seconds: parsePreviewHoldSecondsValue(input.preview_hold_seconds ?? 0),
     preview_port: port,
     preview_bind: bind,
     preview_public_url: publicUrl,

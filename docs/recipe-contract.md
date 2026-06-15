@@ -161,7 +161,7 @@ summary file, artifact file refs, summary payload, and `scriptResult` when the
 browser command produced one. The same browser evidence is mirrored into
 `latest-runtime.json` under the run artifact pointer.
 
-`--preview-hold <duration>` records held-preview lifecycle metadata in the
+`--preview-hold-seconds <duration>` records held-preview lifecycle metadata in the
 artifact bundle and returns after recipe work finishes. Use
 `--preview-hold-blocking` only for operator workflows that need the CLI process
 to keep a live preview server open for the hold duration.

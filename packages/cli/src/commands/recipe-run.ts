@@ -1130,7 +1130,7 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--run-registry":
         options.runRegistryDirectory = value
         break
-      case "--preview-hold":
+      case "--preview-hold-seconds":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       case "--preview-public-url":

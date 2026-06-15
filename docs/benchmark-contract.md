@@ -204,8 +204,8 @@ Compare two saved `recipe-run` JSON outputs:
 
 ```bash
 npm run wp-codebox -- bench compare \
-  --baseline-input ./artifacts/baseline/recipe-run.json \
-  --candidate-input ./artifacts/candidate/recipe-run.json \
+  --baseline ./artifacts/baseline/recipe-run.json \
+  --candidate ./artifacts/candidate/recipe-run.json \
   --json
 ```
 

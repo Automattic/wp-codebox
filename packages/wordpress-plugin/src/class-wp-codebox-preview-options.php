@@ -69,7 +69,7 @@ final class WP_Codebox_Preview_Options {
 
 	/** @param array<string,mixed> $input Preview option input. */
 	public static function preview_hold_seconds( array $input ): int {
-		$raw = trim( (string) ( $input['preview_hold_seconds'] ?? $input['preview_hold'] ?? 0 ) );
+		$raw = trim( (string) ( $input['preview_hold_seconds'] ?? 0 ) );
 		if ( preg_match( '/^(\d+)(s|m)?$/', $raw, $matches ) ) {
 			$seconds = (int) $matches[1];
 			if ( 'm' === ( $matches[2] ?? '' ) ) {

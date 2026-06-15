@@ -1779,18 +1779,15 @@ export async function runEditorCanvasProbeCommand({
   }
 
   const capture = new Set(commaListArg(args, "capture"))
-  if (strictBooleanArg(args, "screenshot", false)) {
-    capture.add("screenshot")
-  }
   for (const item of capture) {
     if (item !== "screenshot") {
       throw new Error(`wordpress.editor-canvas-probe capture supports screenshot: ${item}`)
     }
   }
 
-  const iframeSelector = argValue(args, "iframe-selector")?.trim() || argValue(args, "iframeSelector")?.trim() || EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR
-  const layoutSelector = argValue(args, "layout-selector")?.trim() || argValue(args, "layoutSelector")?.trim() || EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR
-  const blockSelector = argValue(args, "block-selector")?.trim() || argValue(args, "blockSelector")?.trim() || EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR
+  const iframeSelector = argValue(args, "iframe-selector")?.trim() || EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR
+  const layoutSelector = argValue(args, "layout-selector")?.trim() || EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR
+  const blockSelector = argValue(args, "block-selector")?.trim() || EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR
   const timeoutMs = editorCanvasTimeoutMs(args)
   const selectorGroups = editorCanvasSelectorGroups(args, layoutSelector, blockSelector)
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
@@ -2571,7 +2568,7 @@ export async function runBrowserActionsCommand({
 }
 
 async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserActionsRunPlan> {
-  const capture = new Set(commaListArg(args, "capture").map((item) => item === "actions" ? "steps" : item))
+  const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("steps")
     capture.add("console")
@@ -3446,7 +3443,7 @@ async function runVisualComparePairCommand({
   const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
   const sourceDomSnapshotRef = argValue(args, "source-dom-snapshot")?.trim()
   const candidateDomSnapshotRef = argValue(args, "candidate-dom-snapshot")?.trim()
-  const baselineRef = (argValue(args, "baseline") ?? argValue(args, "baseline-visual-diff") ?? argValue(args, "baseline-artifact"))?.trim()
+  const baselineRef = argValue(args, "baseline")?.trim()
   const sourceLabel = argValue(args, "source-label")?.trim() || "source"
   const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"

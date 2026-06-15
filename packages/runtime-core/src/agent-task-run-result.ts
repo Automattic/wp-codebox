@@ -133,7 +133,6 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   }
 
   const bundleDirectory = stringValue(objectValue(agentResult.artifacts).directory)
-    || stringValue(objectValue(objectValue(result.agent_result).artifacts).directory)
     || stringValue(objectValue(completionOutcome.provenance).artifactDirectory)
     || stringValue(objectValue(objectValue(result.session).artifacts).path)
   const artifactBundleId = stringValue(objectValue(completionOutcome.provenance).artifactBundleId)
@@ -208,7 +207,6 @@ function agentResultRecord(result: Record<string, unknown>): Record<string, unkn
   return firstObject(
     objectValue(result.run).agentResult,
     result.agentResult,
-    result.agent_result,
     metadataRecipeRun.agentResult,
     objectValue(metadataRecipeRun.run).agentResult,
   )
@@ -216,7 +214,7 @@ function agentResultRecord(result: Record<string, unknown>): Record<string, unkn
 
 function completionOutcomeRecord(result: Record<string, unknown>): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(result.completionOutcome, result.completion_outcome, metadataRecipeRun.completionOutcome)
+  return firstObject(result.completionOutcome, metadataRecipeRun.completionOutcome)
 }
 
 function runRecord(result: Record<string, unknown>): Record<string, unknown> {

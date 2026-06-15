@@ -70,7 +70,6 @@ Packaging coverage is intentional:
 2. `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` proves the CLI package includes compiled `dist` files and omits TypeScript source.
 3. `npm run package:wordpress-plugin` builds the plugin zip from source files, checked-in plugin assets, and the staged CLI release bundle.
 4. `npm run smoke -- --group package` asserts the CLI pack shape and plugin zip shape, including the browser runtime asset and vendored CLI/Node runtime path.
-5. `npm run smoke -- --command browser-runtime-operation-smoke` executes the checked-in browser runtime asset in a VM and verifies the generic operation helpers.
 6. `npm run smoke -- --command wordpress-plugin-smoke` verifies the browser Playground session ability and runtime dependency metadata shape.
 
 ## Provenance And Transfer Review

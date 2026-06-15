@@ -113,7 +113,7 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
       case "--artifacts":
         options.artifactsDirectory = value
         break
-      case "--preview-hold":
+      case "--preview-hold-seconds":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       case "--preview-public-url":
@@ -178,7 +178,7 @@ async function parseBootOptions(args: string[]): Promise<BootOptions> {
       case "--artifacts":
         options.artifactsDirectory = value
         break
-      case "--hold":
+      case "--preview-hold-seconds":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       case "--preview-public-url":
@@ -230,7 +230,7 @@ async function parseBlueprintValidateOptions(args: string[]): Promise<BlueprintV
       case "--artifacts":
         options.artifactsDirectory = value
         break
-      case "--preview-hold":
+      case "--preview-hold-seconds":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       case "--preview-public-url":
