@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -20,7 +20,7 @@ import { createRecipeRunContext } from "./recipe-run-context.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -103,6 +103,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const failure = {
       name: "RecipeValidationError",
       message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
+      issues,
     }
     runRecord = await runRegistry.update(runRecord.runId, {
       status: "failed",
@@ -115,6 +116,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
       executions: [],
+      componentContracts: componentContractResults(recipe, [], [], [], failure),
       validation: { issues },
       run: runRecord,
       error: failure,
@@ -354,7 +356,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     const muPluginInstallCode = installMuPluginsCode(extraPlugins)
     if (muPluginInstallCode) {
-      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2))
+      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2, "extra-plugin.install-mu-loader"))
     }
 
     const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
@@ -480,6 +482,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         recipePath,
         runtime: runtimeInfo ?? await runtime.info(),
         executions,
+        componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions),
         stagedFiles: stagedFiles.map(recipeRunStagedFile),
         fixtureDatabases,
         siteSeeds,
@@ -514,6 +517,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       recipePath,
       runtime: runtimeInfo ?? await runtime.info(),
       executions,
+      componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions),
       stagedFiles: stagedFiles.map(recipeRunStagedFile),
       fixtureDatabases,
       siteSeeds,
@@ -593,6 +597,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       recipePath,
       ...(runtime ? { runtime: await runtime.info() } : {}),
       executions,
+      componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions, error),
       stagedFiles: stagedFiles.map(recipeRunStagedFile),
       fixtureDatabases,
       probes,
@@ -1830,7 +1835,9 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     activate: plugin.activate,
     loadAs: plugin.loadAs,
     provenance: plugin.provenance,
+    metadata: plugin.metadata,
   }))
+  const componentContracts = componentContractResults(recipe, extraPlugins, [], [])
   const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
   const stagedFileProvenance = stagedFiles.map(recipeRunStagedFile)
   const workflow = recipeWorkflowMetadata(recipe)
@@ -1846,6 +1853,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
@@ -1874,6 +1882,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
         fixtureDatabases: recipe.inputs?.fixtureDatabases ?? [],
@@ -1908,8 +1917,144 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       mode: overlay.mode,
       metadata: overlay.metadata,
     })),
+    preparedComponentContracts: componentContracts,
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
   }
+}
+
+function componentContractResults(recipe: WorkspaceRecipe, extraPlugins: PreparedExtraPlugin[], phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[], error?: unknown): RecipeRunComponentContract[] | undefined {
+  const preparedByIndex = new Map<number, PreparedExtraPlugin>()
+  for (const plugin of extraPlugins) {
+    const contract = recordValue(plugin.metadata?.componentContract)
+    const index = numberValue(contract?.index)
+    if (index !== undefined) preparedByIndex.set(index, plugin)
+  }
+
+  const contracts = componentContractRecipeEntries(recipe).map(({ contract, plugin }) => {
+    const index = numberValue(contract.index) ?? 0
+    const prepared = preparedByIndex.get(index)
+    return prepared
+      ? componentContractResult(prepared, phases, executions)
+      : componentContractPreparationFailure(contract, plugin, error)
+  })
+    .filter((contract): contract is RecipeRunComponentContract => Boolean(contract))
+
+  return contracts.length > 0 ? contracts : undefined
+}
+
+function componentContractResult(plugin: PreparedExtraPlugin, phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[]): RecipeRunComponentContract | undefined {
+  const contract = recordValue(plugin.metadata?.componentContract)
+  if (!contract) return undefined
+
+  const failures = componentContractFailures(plugin, phases, executions)
+  const mounted = phaseCompleted(phases, "mount_plugins")
+  const activated = plugin.loadAs === "plugin" && plugin.activate !== false && activePluginPhaseIncludes(phases, plugin.pluginFile)
+  const activationFailed = failures.some((failure) => failure.phase === "activate_plugins")
+  const activationStatus = plugin.loadAs === "mu-plugin"
+    ? "not_applicable"
+    : plugin.activate === false
+      ? "not_requested"
+      : activated
+        ? "activated"
+        : activationFailed
+          ? "failed"
+          : "pending"
+
+  return stripUndefined({
+    schema: "wp-codebox/component-contract-result/v1",
+    index: numberValue(contract.index) ?? 0,
+    slug: plugin.slug,
+    requestedPath: stringValue(contract.requestedPath) || stringValue(plugin.provenance.original) || plugin.source,
+    originalPath: stringValue(contract.originalPath) || undefined,
+    preparedPath: plugin.source,
+    target: plugin.target,
+    pluginFile: plugin.pluginFile,
+    loadAs: plugin.loadAs,
+    activate: plugin.activate,
+    status: failures.length > 0 ? "failed" : activated ? "activated" : mounted ? "mounted" : "prepared",
+    activationStatus,
+    failures,
+  }) as RecipeRunComponentContract
+}
+
+function componentContractPreparationFailure(contract: Record<string, unknown>, plugin: WorkspaceRecipeExtraPlugin, error: unknown): RecipeRunComponentContract {
+  const errorRecord = recordValue(error)
+  const message = error instanceof Error ? error.message : stringValue(errorRecord?.message) || String(error || "Component contract was not prepared.")
+  const loadAs = stringValue(plugin.loadAs) || stringValue(contract.loadAs) || "mu-plugin"
+  return stripUndefined({
+    schema: "wp-codebox/component-contract-result/v1",
+    index: numberValue(contract.index) ?? 0,
+    slug: stringValue(plugin.slug) || stringValue(contract.slug) || "",
+    requestedPath: stringValue(contract.requestedPath) || stringValue(plugin.source) || "",
+    originalPath: stringValue(contract.originalPath) || undefined,
+    preparedPath: stringValue(plugin.source) || stringValue(contract.preparedPath) || undefined,
+    target: stringValue(plugin.slug) ? pluginTargetForReport(stringValue(plugin.slug) || "", loadAs) : undefined,
+    pluginFile: stringValue(plugin.pluginFile) || undefined,
+    loadAs,
+    activate: plugin.activate !== false,
+    status: "failed",
+    activationStatus: "pending",
+    failures: [stripUndefined({ phase: "prepare_plugins", message, issues: Array.isArray(errorRecord?.issues) ? errorRecord.issues : undefined })],
+  }) as RecipeRunComponentContract
+}
+
+function componentContractRecipeEntries(recipe: WorkspaceRecipe): Array<{ contract: Record<string, unknown>; plugin: WorkspaceRecipeExtraPlugin }> {
+  return (recipe.inputs?.extra_plugins ?? []).flatMap((plugin) => {
+    const contract = recordValue(plugin.metadata?.componentContract)
+    return contract ? [{ contract, plugin }] : []
+  })
+}
+
+function componentContractFailures(plugin: PreparedExtraPlugin, phases: RecipePhaseEvidence[], executions: RecipeExecutionResult[]): Array<Record<string, unknown>> {
+  const failures: Array<Record<string, unknown>> = []
+  for (const phase of phases) {
+    if (phase.status !== "failed" || (phase.name !== "mount_plugins" && phase.name !== "activate_plugins")) continue
+    const phasePlugins = Array.isArray(phase.data?.plugins) ? phase.data.plugins.filter((entry): entry is Record<string, unknown> => Boolean(recordValue(entry))) : []
+    const phaseTargetsPlugin = phasePlugins.some((entry) => stringValue(entry.slug) === plugin.slug || stringValue(entry.pluginFile) === plugin.pluginFile)
+    if (!phaseTargetsPlugin) continue
+    failures.push(stripUndefined({
+      phase: phase.name,
+      message: phase.error?.message,
+      code: phase.error?.code,
+      pluginFile: plugin.pluginFile,
+    }))
+  }
+
+  for (const execution of executions) {
+    if (execution.exitCode === 0) continue
+    const activatesPlugin = execution.recipeCommand === `extra-plugin.activate:${plugin.pluginFile}`
+    const installsMuLoader = plugin.loadAs === "mu-plugin" && execution.recipeCommand === "extra-plugin.install-mu-loader"
+    if (!activatesPlugin && !installsMuLoader) continue
+    failures.push(stripUndefined({
+      phase: activatesPlugin ? "activate_plugins" : "mount_plugins",
+      command: execution.recipeCommand,
+      exitCode: execution.exitCode,
+      message: execution.stderr || execution.stdout || `Recipe command failed with exit code ${execution.exitCode}`,
+      pluginFile: plugin.pluginFile,
+    }))
+  }
+
+  return failures
+}
+
+function pluginTargetForReport(slug: string, loadAs: string): string {
+  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function phaseCompleted(phases: RecipePhaseEvidence[], name: RecipePhaseName): boolean {
+  return phases.some((phase) => phase.name === name && phase.status === "completed")
+}
+
+function activePluginPhaseIncludes(phases: RecipePhaseEvidence[], pluginFile: string): boolean {
+  return phases.some((phase) => phase.name === "activate_plugins" && Array.isArray(phase.data?.activePlugins) && phase.data.activePlugins.includes(pluginFile))
 }
 
 async function inputMountMetadataWithBaseline(source: string, mount: WorkspaceRecipeMount, cleanupPaths: string[]): Promise<Record<string, unknown> | undefined> {
@@ -2017,6 +2162,7 @@ function recipeRunExtraPlugin(plugin: PreparedExtraPlugin): Record<string, unkno
     activate: plugin.activate,
     loadAs: plugin.loadAs,
     provenance: plugin.provenance,
+    metadata: plugin.metadata,
   }
 }
 

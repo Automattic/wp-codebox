@@ -157,6 +157,10 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     if (plugin.loadAs && plugin.loadAs !== "plugin" && plugin.loadAs !== "mu-plugin") {
       throw new Error(`Recipe extra_plugins loadAs must be plugin or mu-plugin: ${recipePath}`)
     }
+
+    if (plugin.metadata !== undefined && (!plugin.metadata || typeof plugin.metadata !== "object" || Array.isArray(plugin.metadata))) {
+      throw new Error(`Recipe extra_plugins metadata must be an object when provided: ${recipePath}`)
+    }
   }
 
   const pluginRuntime = recipe.inputs?.pluginRuntime

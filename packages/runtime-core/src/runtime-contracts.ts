@@ -252,6 +252,7 @@ export interface WorkspaceRecipeExtraPlugin {
   activate?: boolean
   sha256?: string
   loadAs?: "plugin" | "mu-plugin"
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeDependencyOverlay {

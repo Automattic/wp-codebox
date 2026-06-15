@@ -45,6 +45,7 @@ export interface RecipeRunOutput {
   recipePath?: string
   runtime?: RuntimeInfo
   executions: RecipeExecutionResult[]
+  componentContracts?: RecipeRunComponentContract[]
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
@@ -71,6 +72,22 @@ export interface RecipeRunOutput {
 }
 
 export type RecipeRunCommandOutput = RecipeRunOutput | RecipeDryRunOutput
+
+export interface RecipeRunComponentContract {
+  schema: "wp-codebox/component-contract-result/v1"
+  index: number
+  slug: string
+  requestedPath: string
+  originalPath?: string
+  preparedPath?: string
+  target?: string
+  pluginFile?: string
+  loadAs: "plugin" | "mu-plugin" | string
+  activate: boolean
+  status: "prepared" | "mounted" | "activated" | "failed"
+  activationStatus: "not_requested" | "not_applicable" | "pending" | "activated" | "failed"
+  failures: Array<Record<string, unknown>>
+}
 
 export type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase

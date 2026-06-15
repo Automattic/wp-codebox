@@ -57,6 +57,7 @@ export interface PreparedExtraPlugin {
   loadAs: "plugin" | "mu-plugin"
   cleanupPaths: string[]
   provenance: RecipeSourceProvenance
+  metadata?: Record<string, unknown>
 }
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
@@ -288,6 +289,7 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
       loadAs,
       cleanupPaths: resolved.cleanupPaths,
       provenance: resolved.provenance,
+      metadata: plugin.metadata ?? {},
     })
   }
 

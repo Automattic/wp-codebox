@@ -2271,21 +2271,39 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/**
 	 * @param array<int,array<string,mixed>> $paths Component contracts.
-	 * @return array<int,array{source:string,slug:string,activate:bool}>
+	 * @return array<int,array<string,mixed>>
 	 */
 	private function component_plugins( array $paths ): array {
 		$plugins = array();
-		foreach ( $paths as $contract ) {
+		foreach ( $paths as $index => $contract ) {
 			$path = (string) ( $contract['path'] ?? '' );
 			if ( '' === $path ) {
 				continue;
 			}
 
+			$slug     = (string) ( $contract['slug'] ?? basename( $path ) );
+			$load_as  = (string) ( $contract['loadAs'] ?? 'mu-plugin' );
+			$activate = (bool) ( $contract['activate'] ?? false );
+
 			$plugins[] = array(
 				'source'   => $path,
-				'slug'     => (string) ( $contract['slug'] ?? basename( $path ) ),
-				'activate' => (bool) ( $contract['activate'] ?? false ),
-				'loadAs'   => (string) ( $contract['loadAs'] ?? 'mu-plugin' ),
+				'slug'     => $slug,
+				'activate' => $activate,
+				'loadAs'   => $load_as,
+				'metadata' => array(
+					'componentContract' => array_filter(
+						array(
+							'index'         => $index,
+							'slug'          => $slug,
+							'requestedPath' => $path,
+							'originalPath'  => isset( $contract['original_path'] ) ? (string) $contract['original_path'] : ( isset( $contract['originalPath'] ) ? (string) $contract['originalPath'] : '' ),
+							'preparedPath'  => $path,
+							'loadAs'        => $load_as,
+							'activate'      => $activate,
+						),
+						static fn( mixed $value ): bool => '' !== $value
+					),
+				),
 			);
 		}
 

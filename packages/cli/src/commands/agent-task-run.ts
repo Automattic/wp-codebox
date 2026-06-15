@@ -26,6 +26,7 @@ interface AgentTaskRunOutput {
   agent_result: Record<string, unknown>
   agent_task_result: Record<string, unknown>
   completion_outcome: Record<string, unknown>
+  component_contracts: Array<Record<string, unknown>>
   structured_artifacts: Array<Record<string, unknown>>
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
@@ -115,6 +116,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_result: objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {},
       agent_task_result: agentTaskResult,
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
+      component_contracts: componentContractReport(run),
       structured_artifacts: structuredArtifactRefs(agentTaskResult),
       run,
       diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
@@ -152,6 +154,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_result: {},
       agent_task_result: {},
       completion_outcome: {},
+      component_contracts: componentContractReport(run),
       structured_artifacts: [],
       run,
       diagnostics: failureDiagnostics,
@@ -307,6 +310,10 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string, failureEv
     failureEvidence ? { kind: "codebox-agent-task-failure-evidence", uri: artifacts, label: "WP Codebox agent task failure evidence", metadata: failureEvidenceSummary(failureEvidence) } : null,
   ]
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function componentContractReport(run: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(run.componentContracts) ? run.componentContracts.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
 }
 
 function buildFailureEvidence(values: FailureEvidenceInput): Record<string, unknown> {

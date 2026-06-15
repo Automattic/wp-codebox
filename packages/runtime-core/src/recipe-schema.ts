@@ -424,6 +424,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           activate: { type: "boolean" },
           loadAs: { enum: ["plugin", "mu-plugin"] },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+          metadata: { $ref: "#/$defs/metadata" },
         },
       },
       dependencyOverlay: {

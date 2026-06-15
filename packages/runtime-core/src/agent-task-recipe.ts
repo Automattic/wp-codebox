@@ -197,18 +197,30 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
   return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
 }
 
-function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; activate: boolean; loadAs: string }> {
+function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; activate: boolean; loadAs: string; metadata: Record<string, unknown> }> {
   if (!Array.isArray(contracts)) return []
-  return contracts.flatMap((contract) => {
+  return contracts.flatMap((contract, index) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
     const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
     if (!slug || !source) return []
+    const preparedSource = prepareComponentPluginSource(source, originalSource, slug, artifactsRoot)
     return [{
-      source: prepareComponentPluginSource(source, originalSource, slug, artifactsRoot),
+      source: preparedSource,
       slug,
       activate: Boolean(contract.activate),
       loadAs: stringValue(contract.loadAs) || "mu-plugin",
+      metadata: stripUndefined({
+        componentContract: {
+          index,
+          slug,
+          requestedPath: source,
+          originalPath: originalSource || undefined,
+          preparedPath: preparedSource,
+          loadAs: stringValue(contract.loadAs) || "mu-plugin",
+          activate: Boolean(contract.activate),
+        },
+      }),
     }]
   })
 }

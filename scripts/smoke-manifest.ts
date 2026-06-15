@@ -81,6 +81,7 @@ export const smokeGroups = {
       tsxSmoke("fanout-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("claude-code-agent-recipe-smoke"),
+      tsxSmoke("component-contracts-agent-task-smoke"),
       tsxSmoke("fanout-aggregation-contract-smoke"),
       tsxSmoke("agent-fanout-execution-smoke"),
     ],
