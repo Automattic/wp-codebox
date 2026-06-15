@@ -282,6 +282,7 @@ export function printHelp(): void {
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
+  wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
   wp-codebox recipe-run --recipe <path> [options]
   wp-codebox boot [--mount <host>:<vfs>] [options]
   wp-codebox run --mount <host>:<vfs> --command <id> [options]
@@ -289,7 +290,7 @@ export function printHelp(): void {
 Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --options <path>    Recipe builder options JSON file for recipe build.
-  --output <path>     Optional output JSON path for recipe build; defaults to stdout.
+  --output <path>     Recipe build output JSON path, or materialize-replay-package output directory.
   --input-file <path> Agent task input JSON for agent-task-run.
   --preview-hold-seconds <n>
                     Keep preview runtimes alive after agent-task-run/recipe-run.
@@ -334,7 +335,9 @@ Options:
   --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.core-phpunit, wordpress.plugin-check, wordpress.wp-cli, wordpress.ability, wordpress.bench, and wordpress.browser-probe.
   --wp <version>       WordPress version for Playground. Defaults to latest; accepts trunk, nightly, or numeric versions.
   --blueprint <json|file>
-                       WordPress Playground blueprint JSON or path for boot or validate-blueprint.
+                        WordPress Playground blueprint JSON or path for boot or validate-blueprint.
+  --snapshot <path>     Runtime snapshot JSON file for materialize-replay-package.
+  --snapshot-ref <ref>  Optional external reference for the input snapshot source metadata.
   --artifacts <dir>    Artifact root directory.
   --preview-hold-seconds <n>
                        Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.

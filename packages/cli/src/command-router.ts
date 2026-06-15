@@ -5,6 +5,7 @@ type CliCommandHandler = (args: string[]) => Promise<number>
 const cliCommandRoutes = {
   boot: "boot",
   "validate-blueprint": "validateBlueprint",
+  "materialize-replay-package": "materializeReplayPackage",
   "recipe-run": "recipeRun",
   "agent-task-run": "agentTaskRun",
   recipe: {
