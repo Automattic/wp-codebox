@@ -661,6 +661,7 @@ export interface ArtifactPreviewSessionEvidence {
     hasPublicUrl: boolean
     hasSiteUrl: boolean
     hasReviewerAuthBootstrap?: boolean
+    reviewerAccess: ArtifactPreviewReviewerAccess
     blockers?: ArtifactPreviewBlocker[]
   }
   refs: {
@@ -694,6 +695,20 @@ export interface ArtifactPreview {
   holdSeconds?: number
   blockers?: ArtifactPreviewBlocker[]
   reviewerAuthBootstrap?: ArtifactReviewerAuthBootstrap
+  reviewerAccess?: ArtifactPreviewReviewerAccess
+}
+
+export interface ArtifactPreviewReviewerAccess {
+  schema: "wp-codebox/preview-reviewer-access/v1"
+  status: "ready" | "blocked" | "unavailable"
+  mode: "direct-url" | "auth-bootstrap" | "none"
+  reviewerSafe: boolean
+  openUrl?: string
+  targetUrl?: string
+  expiresAt?: string
+  bootstrap?: ArtifactReviewerAuthBootstrap
+  blockers?: ArtifactPreviewBlocker[]
+  reason?: string
 }
 
 export interface ArtifactReviewerAuthBootstrap {
@@ -774,8 +789,7 @@ export interface ArtifactPreviewEvidence {
     localUrl?: ArtifactPreviewUrlRef
     siteUrl?: ArtifactPreviewUrlRef
     durablePreview?: ArtifactDurablePreviewRef
-    reviewerAuthBootstrap?: ArtifactReviewerAuthBootstrap
-    blockers?: ArtifactPreviewBlocker[]
+    reviewerAccess: ArtifactPreviewReviewerAccess
   }
   readiness: {
     ready: boolean

@@ -19,6 +19,7 @@ import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpComman
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
+import { previewReviewerAccess } from "./preview-reviewer-access.js"
 import type {
   ArtifactBundle,
   ArtifactPreview,
@@ -536,9 +537,13 @@ class PlaygroundRuntime implements Runtime {
     }
 
     const reviewerAuthBootstrap = expiresAt ? this.createReviewerAuthBootstrap(server, preview, expiresAt, commands) : undefined
-    return {
+    const previewWithBootstrap = {
       ...preview,
       ...(reviewerAuthBootstrap ? { reviewerAuthBootstrap } : {}),
+    }
+    return {
+      ...previewWithBootstrap,
+      reviewerAccess: previewReviewerAccess(previewWithBootstrap),
     }
   }
 

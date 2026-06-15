@@ -90,8 +90,12 @@ function printRunStatusHumanOutput(record: RuntimeRunRecord): void {
   console.log(`Cleanup: ${record.lifecycle.cleanup.status} (${record.lifecycle.cleanup.attempts} attempts)`)
   console.log(`Heartbeat: ${record.heartbeatAt}`)
   console.log(`Artifacts: ${record.artifactRefs.length}`)
-  if (record.preview?.url) {
-    console.log(`Preview: ${record.preview.url} (${record.preview.status})`)
+  if (record.preview?.reviewerAccess?.openUrl) {
+    console.log(`Preview: ${record.preview.reviewerAccess.openUrl} (${record.preview.reviewerAccess.status}, ${record.preview.reviewerAccess.mode})`)
+  } else if (record.preview?.reviewerAccess?.reason) {
+    console.log(`Preview: ${record.preview.reviewerAccess.status} (${record.preview.reviewerAccess.reason})`)
+  } else if (record.preview) {
+    console.log(`Preview: ${record.preview.status}`)
   }
   if (record.error?.message) {
     console.log(`Error: ${record.error.message}`)
