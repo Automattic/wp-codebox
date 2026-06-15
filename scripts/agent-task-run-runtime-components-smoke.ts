@@ -84,6 +84,14 @@ assert.ok(
   "sandbox runtime payload encoding failures should surface as structured diagnostics",
 )
 assert.ok(
+  sandboxCode.includes("wp_codebox_sandbox_runtime_bootstrap"),
+  "sandbox run code should expose a generic mounted-runtime bootstrap seam",
+)
+assert.ok(
+  runtimeProbeCode.includes("wp_codebox_sandbox_runtime_bootstrap"),
+  "runtime probe code should expose the same generic mounted-runtime bootstrap seam",
+)
+assert.ok(
   !sandboxCode.includes("data-machine/data-machine.php") && !sandboxCode.includes("data-machine-code/data-machine-code.php"),
   "sandbox run code should not hardcode Data Machine runtime plugins",
 )

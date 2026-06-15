@@ -529,7 +529,12 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
+export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>, sandboxWorkspace?: SandboxWorkspaceContract): string {
+  const sandboxRuntimeContext = {
+    workspace_root: SANDBOX_WORKSPACE_ROOT,
+    sandbox_workspace: sandboxWorkspace ?? null,
+  }
+
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
@@ -675,6 +680,13 @@ foreach ($plugins as $plugin) {
         'error' => is_wp_error($result) ? $result->get_error_message() : null,
     );
 }
+
+$wp_codebox_sandbox_runtime_context = json_decode(${JSON.stringify(JSON.stringify(sandboxRuntimeContext))}, true);
+if (!is_array($wp_codebox_sandbox_runtime_context)) {
+    $wp_codebox_sandbox_runtime_context = array('workspace_root' => ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)}, 'sandbox_workspace' => null);
+}
+$GLOBALS['wp_codebox_sandbox_runtime_context'] = $wp_codebox_sandbox_runtime_context;
+do_action('wp_codebox_sandbox_runtime_bootstrap', $wp_codebox_sandbox_runtime_context);
 
 do_action('plugins_loaded');
 do_action('init');
@@ -844,6 +856,10 @@ foreach ($plugins as $plugin) {
         'error' => is_wp_error($result) ? $result->get_error_message() : null,
     );
 }
+
+$wp_codebox_sandbox_runtime_context = array('workspace_root' => ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)}, 'sandbox_workspace' => null);
+$GLOBALS['wp_codebox_sandbox_runtime_context'] = $wp_codebox_sandbox_runtime_context;
+do_action('wp_codebox_sandbox_runtime_bootstrap', $wp_codebox_sandbox_runtime_context);
 
 do_action('plugins_loaded');
 do_action('init');

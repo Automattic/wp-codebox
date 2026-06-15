@@ -107,6 +107,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     if (code && codeFile) {
       throw new Error("Use either code=<php> or code-file=<path>, not both")
     }
+    const resolvedSandboxWorkspace = parseSandboxWorkspace(args) ?? sandboxWorkspace
     const body = codeFile ? await readFile(resolve(recipeDirectory, codeFile), "utf8") : (code ?? await resolveSandboxTaskCode({
       task,
       agent: argValue(args, "agent"),
@@ -119,14 +120,14 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       agentBundles: parseAgentBundles(args),
       runtimeTask: parseRuntimeTask(args),
       structuredArtifacts: parseStructuredArtifacts(args),
-      sandboxWorkspace: parseSandboxWorkspace(args) ?? sandboxWorkspace,
+      sandboxWorkspace: resolvedSandboxWorkspace,
       sandboxToolPolicy: parseSandboxToolPolicy(args),
     }))
 
     return {
       command: "wordpress.run-php",
       args: [
-        `code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })))}`,
+        `code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })), resolvedSandboxWorkspace)}`,
         "wp-cli-bridge=1",
       ],
     }

@@ -146,14 +146,19 @@ async function main() {
   assert.match(recipeCodeArg, /\/workspace\/wp-codebox/, "recipe-generated sandbox code should include mounted workspace path")
   assert.match(recipeCodeArg, /Automattic\/wp-codebox/, "recipe-generated sandbox code should include mounted workspace repo")
   assert.match(recipeCodeArg, /\\"mode\\":\\"readwrite\\"/, "recipe-generated sandbox code should include mounted workspace mode")
+  assert.match(recipeCodeArg, /wp_codebox_sandbox_runtime_bootstrap/, "recipe-generated sandbox code should expose a generic mounted-runtime bootstrap seam")
+  assert.match(recipeCodeArg, /wp_codebox_sandbox_runtime_context/, "recipe-generated sandbox code should publish generic runtime context")
 
   const runCode = agentSandboxRunCode(
     '{"prompt":"Do not interpolate $buckets, $meta, or $state_store."}',
     '<?php echo "ok";',
     [],
+    sandboxWorkspace,
   )
   assert.match(runCode, /<<<'WP_CODEBOX_LITERAL_/, "sandbox task JSON should use a single-quoted nowdoc")
   assert.doesNotMatch(runCode, /\$sandbox_task = "\{/, "sandbox task JSON should not use PHP double-quoted strings")
+  assert.match(runCode, /wp_codebox_sandbox_runtime_bootstrap/, "sandbox run code should fire the generic mounted-runtime bootstrap seam")
+  assert.match(runCode, /wp-codebox@fix-issue-533-mounted-workspace-perception/, "sandbox run code should pass mounted workspace context to runtime components")
 }
 
 main().catch((error) => {
