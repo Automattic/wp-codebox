@@ -16,6 +16,7 @@ import {
   type ArtifactManifestFile,
   type ArtifactViewerMetadata,
   type ArtifactPreview,
+  type ArtifactPreviewBlocker,
   type ArtifactPreviewEvidence,
   type ArtifactPreviewSessionEvidence,
   type ArtifactPackageProvenance,
@@ -121,7 +122,7 @@ export class ArtifactBundleBuilder {
     await source.redactPluginCheckArtifacts(redactor)
     await source.redactThemeCheckArtifacts(redactor)
 
-    const preview = await source.previewInfo(createdAt, spec.previewHoldSeconds)
+    const preview = heldPreviewWithExternalAccessBlockers(await source.previewInfo(createdAt, spec.previewHoldSeconds), source.commands)
     const browser = source.browserReviewSummary()
     const runtime = await source.info()
     const durablePreview = await buildDurableArtifactPreview({
@@ -634,6 +635,7 @@ function buildPreviewEvidence({
       createdAt: preview?.createdAt,
       expiresAt: preview?.expiresAt,
       holdSeconds: preview?.holdSeconds,
+      ...(preview?.blockers ? { blockers: preview.blockers } : {}),
       url: safePreviewUrlRef(preview?.url),
       ...(preview?.publicUrl ? { publicUrl: safePreviewUrlRef(preview.publicUrl) } : {}),
       ...(preview?.localUrl ? { localUrl: safePreviewUrlRef(preview.localUrl) } : {}),
@@ -769,6 +771,7 @@ function buildPreviewSessionEvidence({
       holdSeconds: preview.holdSeconds,
       hasPublicUrl: Boolean(preview.publicUrl),
       hasSiteUrl: Boolean(preview.siteUrl),
+      blockers: preview.blockers,
     }) : undefined,
     refs: stripUndefined({
       artifactBundle: {
@@ -787,6 +790,59 @@ function buildPreviewSessionEvidence({
     }),
     components: packages,
   })
+}
+
+export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview | undefined, commands: ExecutionResult[]): ArtifactPreview | undefined {
+  if (!preview || preview.lifecycle !== "held-after-run" || !preview.holdSeconds) {
+    return preview
+  }
+
+  const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
+  if (!authCommand) {
+    return preview
+  }
+
+  const blocker: ArtifactPreviewBlocker = {
+    schema: "wp-codebox/preview-blocker/v1",
+    kind: "unsupported-preview",
+    code: "external-wordpress-admin-auth-unavailable",
+    message: "This held preview used auth=wordpress-admin inside the controlled automation browser. WP Codebox cannot safely export that in-memory WordPress admin session to an external reviewer browser, so admin URLs may redirect to login outside the automation context.",
+    retryable: false,
+    reviewerSafe: false,
+    evidence: {
+      command: authCommand.command,
+      auth: "wordpress-admin",
+    },
+  }
+
+  return {
+    ...preview,
+    blockers: [...(preview.blockers ?? []), blocker],
+  }
+}
+
+function browserCommandRequestsWordPressAdminAuth(command: ExecutionResult): boolean {
+  if (!["wordpress.browser-actions", "wordpress.browser-probe", "wordpress.browser-scenario", "wordpress.visual-compare"].includes(command.command)) {
+    return false
+  }
+
+  return command.args.some((arg) => argRequestsWordPressAdminAuth(arg))
+}
+
+function argRequestsWordPressAdminAuth(arg: string): boolean {
+  const separator = arg.indexOf("=")
+  if (separator > 0) {
+    const key = arg.slice(0, separator).trim()
+    const value = arg.slice(separator + 1).trim()
+    if (key === "auth" && value === "wordpress-admin") {
+      return true
+    }
+    if ((key === "scenario" || key === "scenario-json") && /"auth"\s*:\s*"wordpress-admin"/.test(value)) {
+      return true
+    }
+  }
+
+  return /"auth"\s*:\s*"wordpress-admin"/.test(arg)
 }
 
 function evidenceRef(path: string, kind: string, contentType = "application/json"): ArtifactEvidenceRef {

@@ -660,6 +660,7 @@ export interface ArtifactPreviewSessionEvidence {
     holdSeconds?: number
     hasPublicUrl: boolean
     hasSiteUrl: boolean
+    blockers?: ArtifactPreviewBlocker[]
   }
   refs: {
     artifactBundle: {
@@ -690,6 +691,20 @@ export interface ArtifactPreview {
   createdAt: string
   expiresAt?: string
   holdSeconds?: number
+  blockers?: ArtifactPreviewBlocker[]
+}
+
+export interface ArtifactPreviewBlocker {
+  schema: "wp-codebox/preview-blocker/v1"
+  kind: "unsupported-preview"
+  code: "external-wordpress-admin-auth-unavailable" | (string & {})
+  message: string
+  retryable: false
+  reviewerSafe: false
+  evidence: {
+    command: string
+    auth: "wordpress-admin" | (string & {})
+  }
 }
 
 export interface ArtifactPreviewUrlRef {
@@ -743,6 +758,7 @@ export interface ArtifactPreviewEvidence {
     localUrl?: ArtifactPreviewUrlRef
     siteUrl?: ArtifactPreviewUrlRef
     durablePreview?: ArtifactDurablePreviewRef
+    blockers?: ArtifactPreviewBlocker[]
   }
   readiness: {
     ready: boolean
