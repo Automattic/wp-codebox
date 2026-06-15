@@ -1,0 +1,51 @@
+{
+  "schema": "wp-codebox/wordpress-runtime-snapshot/v1",
+  "version": 1,
+  "id": "snapshot-fixture-small",
+  "createdAt": "2026-06-15T00:00:00.000Z",
+  "compatibility": {
+    "backend": "wordpress-playground",
+    "wordpressVersion": "latest",
+    "phpVersion": "8.3.31"
+  },
+  "metadata": {
+    "runtime": {
+      "id": "runtime-fixture-small",
+      "backend": "wordpress-playground",
+      "status": "destroyed",
+      "createdAt": "2026-06-15T00:00:00.000Z",
+      "environment": {
+        "kind": "wordpress",
+        "name": "runtime-fixture-small",
+        "version": "latest"
+      }
+    },
+    "mounts": [],
+    "mountedInputs": [],
+    "activeTheme": "twentytwentyfour",
+    "activePlugins": [],
+    "wpContentPath": "/wordpress/wp-content"
+  },
+  "database": {
+    "tables": []
+  },
+  "files": [
+    {
+      "scope": "wp-content",
+      "path": "fixture.txt",
+      "bytes": 5,
+      "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "base64": "aGVsbG8="
+    }
+  ],
+  "hashes": {
+    "database": {
+      "algorithm": "sha256",
+      "value": "database-fixture"
+    },
+    "files": {
+      "algorithm": "sha256",
+      "value": "files-fixture"
+    }
+  }
+}
