@@ -11,17 +11,17 @@ const root = mkdtempSync(join(tmpdir(), "wp-codebox-agent-runtime-signal-smoke-"
 try {
   const agentRecipe = buildAgentTaskRecipe({
     goal: "report agent runtime signal",
-    runtime_env: { EXISTING_RUNTIME_ENV: "preserved", WP_CODEBOX_AGENT_RUNTIME: "caller-value" },
+    runtime_env: { EXISTING_RUNTIME_ENV: "preserved", WP_AGENT_RUNTIME: "caller-value" },
   }, normalizeTaskInput({ goal: "report agent runtime signal" }), "latest")
-  assert.equal(agentRecipe.inputs?.runtimeEnv?.WP_CODEBOX_AGENT_RUNTIME, "1")
+  assert.equal(agentRecipe.inputs?.runtimeEnv?.WP_AGENT_RUNTIME, "1")
   assert.equal(agentRecipe.inputs?.runtimeEnv?.EXISTING_RUNTIME_ENV, "preserved")
-  assert.ok(!agentRecipe.inputs?.secretEnv?.includes("WP_CODEBOX_AGENT_RUNTIME"))
+  assert.ok(!agentRecipe.inputs?.secretEnv?.includes("WP_AGENT_RUNTIME"))
 
   agentRecipe.workflow.steps = [{
     command: "wp-codebox.agent-sandbox-run",
     args: [
       "task=report agent runtime signal",
-      "code=echo getenv('WP_CODEBOX_AGENT_RUNTIME') ?: 'unset';",
+      "code=echo getenv('WP_AGENT_RUNTIME') ?: 'unset';",
     ],
   }]
   const agentRecipePath = join(root, "agent-runtime-recipe.json")
@@ -40,7 +40,7 @@ try {
     workflow: {
       steps: [{
         command: "wordpress.run-php",
-        args: ["code=echo getenv('WP_CODEBOX_AGENT_RUNTIME') ?: 'unset';"],
+        args: ["code=echo getenv('WP_AGENT_RUNTIME') ?: 'unset';"],
       }],
     },
   }, null, 2))

@@ -7,7 +7,7 @@ import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import type { WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 
-const AGENT_RUNTIME_ENV = { WP_CODEBOX_AGENT_RUNTIME: "1" }
+const AGENT_RUNTIME_ENV = { WP_AGENT_RUNTIME: "1" }
 
 /**
  * Consumer-facing agent-task request fields accepted by the reusable recipe builder.

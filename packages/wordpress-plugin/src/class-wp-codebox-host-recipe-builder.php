@@ -9,7 +9,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Host_Recipe_Builder {
 
-	private const AGENT_RUNTIME_ENV = array( 'WP_CODEBOX_AGENT_RUNTIME' => '1' );
+	private const AGENT_RUNTIME_ENV = array( 'WP_AGENT_RUNTIME' => '1' );
 
 	/**
 	 * @param array<int,array<string,mixed>> $paths Component contracts.
