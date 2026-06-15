@@ -203,6 +203,7 @@ require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-tool-
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-run-result-normalizer.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-parent-site-seed-exporter.php';
+require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-runner-template.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-sandbox-runner.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php';
 require __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-pending-artifact-apply.php';
@@ -1462,6 +1463,25 @@ add_filter(
 $runner_php = (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
 $assert( 'browser Playground generated runner has no Studio Web-specific artifact paths', ! str_contains( $runner_php, '/wordpress/wp-content/uploads/studio-web' ) && ! str_contains( $runner_php, 'studio-web/website' ) );
 $assert( 'browser Playground generated runner defaults to generic Codebox artifacts path', str_contains( $runner_php, '/wordpress/wp-content/uploads/wp-codebox/artifacts' ) && str_contains( $runner_php, 'wp-codebox-output/' ) );
+$bootstrap_fragment = WP_Codebox_Browser_Runner_Template::bootstrap_fragment(
+	'/tmp/wp-codebox-agent-task.json',
+	'/tmp/wp-codebox-agent-result.json',
+	array(
+		'agent'      => 'wp-codebox-sandbox',
+		'message'    => 'Prepare a browser Playground preview.',
+		'session_id' => 'session-template-smoke',
+	),
+	array(
+		'type' => 'task',
+		'hook' => 'caller_runtime_task',
+	),
+	array(
+		array(
+			'path' => '/wordpress/wp-content/uploads/wp-codebox/artifacts/materialization/report.json',
+		),
+	)
+);
+$assert( 'browser runner bootstrap template emits narrow generated PHP prelude', str_starts_with( $bootstrap_fragment, '<?php' ) && str_contains( $bootstrap_fragment, "\$task_path = '/tmp/wp-codebox-agent-task.json';" ) && str_contains( $bootstrap_fragment, "\$result_path = '/tmp/wp-codebox-agent-result.json';" ) && str_contains( $bootstrap_fragment, "\$event_path = \"/tmp/wp-codebox-agent-events.jsonl\";" ) && str_contains( $bootstrap_fragment, "'session_id' => 'session-template-smoke'" ) );
 $runner_contract = $browser_session['recipe']['browser']['runner_contract'] ?? array();
 $assert( 'browser Playground recipe exposes reusable runner PHP contract prelude', is_array( $runner_contract ) && 'wp-codebox/browser-runner-contract/v1' === ( $runner_contract['schema'] ?? '' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), 'function wp_codebox_browser_artifact_environment' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$wp_codebox_is_playground' ) && str_contains( (string) ( $runner_contract['php_prelude'] ?? '' ), '$capture_paths' ) );
 $assert( 'browser Playground recipe exposes reusable runner PHP contract footer', is_array( $runner_contract ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'wp_codebox_browser_artifact_capture_diagnostics' ) && str_contains( (string) ( $runner_contract['php_footer'] ?? '' ), 'file_put_contents( $result_path' ) );

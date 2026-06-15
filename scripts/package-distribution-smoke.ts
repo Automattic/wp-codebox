@@ -134,6 +134,7 @@ assert.ok(zipEntries.has("wp-codebox/wp-codebox.php"), "Plugin zip should includ
 assert.ok(zipEntries.has("wp-codebox/README.md"), "Plugin zip should include README.md")
 assert.ok(zipEntries.has("wp-codebox/assets/browser-runtime.js"), "Plugin zip should include the checked-in browser runtime asset")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-abilities.php"), "Plugin zip should include ability surface")
+assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-browser-runner-template.php"), "Plugin zip should include browser runner templates")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-agent-sandbox-runner.php"), "Plugin zip should include sandbox runner")
 assert.ok(zipEntries.has("wp-codebox/src/class-wp-codebox-artifacts.php"), "Plugin zip should include artifact helpers")
 assert.ok(zipEntries.has("wp-codebox/vendor/wp-codebox-cli/bin/wp-codebox"), "Plugin zip should include packaged CLI wrapper")

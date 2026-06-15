@@ -188,23 +188,7 @@ private static function browser_agent_runner_php( array $task_input, string $ses
 	$default_invocation = $invocation;
 	$default_captures   = $captures;
 
-	return '<?php
-$_GET[\'rest_route\'] = \'/wp-codebox/browser-runner\';
-require_once \'/wordpress/wp-load.php\';
-
-if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_current_user\' ) && get_current_user_id() <= 0 ) {
-	wp_set_current_user( 1 );
-}
-
-$task_path = ' . var_export( $task_path, true ) . ';
-$result_path = ' . var_export( $result_path, true ) . ';
-$event_path = "/tmp/wp-codebox-agent-events.jsonl";
-$payload = ' . var_export( $default_payload, true ) . ';
-$invocation = ' . var_export( $default_invocation, true ) . ';
-$capture_paths = ' . var_export( $default_captures, true ) . ';
-$started_at = gmdate( \'c\' );
-$started_monotonic = microtime( true );
-
+		return WP_Codebox_Browser_Runner_Template::bootstrap_fragment( $task_path, $result_path, $default_payload, $default_invocation, $default_captures ) . '
 function wp_codebox_browser_normalize_error( $error ) {
 if ( is_wp_error( $error ) ) {
 	return array(
