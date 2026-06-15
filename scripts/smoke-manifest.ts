@@ -69,7 +69,7 @@ export const smokeGroups = {
       tsxSmoke("run-registry-smoke"),
       tsxSmoke("wordpress-state-contract-smoke"),
       tsxSmoke("playground-command-errors-smoke"),
-      tsxSmoke("runtime-overlay-composer-hydration-smoke"),
+      tsxSmoke("composer-backed-source-hydration-smoke"),
     ],
   },
   agent: {

@@ -2,11 +2,13 @@ import assert from "node:assert/strict"
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { prepareRecipeRuntimeOverlays } from "../packages/cli/src/recipe-sources.js"
+import { prepareRecipeDependencyOverlays, prepareRecipeRuntimeOverlays } from "../packages/cli/src/recipe-sources.js"
+import type { PreparedExtraPlugin } from "../packages/cli/src/recipe-sources.js"
 import type { WorkspaceRecipe } from "../packages/runtime-core/src/runtime-contracts.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-runtime-overlay-hydration-"))
 const overlaySource = join(root, "php-ai-client")
+const dependencySource = join(root, "generic-composer-package")
 const binDir = join(root, "bin")
 const scoperPath = join(root, "php-scoper.phar")
 const originalPath = process.env.PATH
@@ -35,6 +37,18 @@ final class Client {
 await writeFile(join(overlaySource, "composer.json"), JSON.stringify({
   name: "wordpress/php-ai-client",
   autoload: { "psr-4": { "WordPress\\AiClient\\": "src/" } },
+  require: { "psr/log": "^3.0" },
+}, null, 2))
+
+await mkdir(join(dependencySource, "src"), { recursive: true })
+await writeFile(join(dependencySource, "src", "Package.php"), String.raw`<?php
+namespace Acme\Package;
+
+final class Package {}
+`)
+await writeFile(join(dependencySource, "composer.json"), JSON.stringify({
+  name: "acme/package",
+  autoload: { "psr-4": { "Acme\\Package\\": "src/" } },
   require: { "psr/log": "^3.0" },
 }, null, 2))
 
@@ -102,15 +116,38 @@ const recipe: WorkspaceRecipe = {
 }
 
 const overlays = await prepareRecipeRuntimeOverlays(recipe, root)
+const dependencyOverlays = await prepareRecipeDependencyOverlays({
+  inputs: {
+    dependency_overlays: [{
+      kind: "composer-package",
+      package: "acme/package",
+      source: dependencySource,
+      consumer: "consumer-plugin",
+    }],
+  },
+}, root, [{
+  source: join(root, "consumer-plugin"),
+  slug: "consumer-plugin",
+  target: "/wordpress/wp-content/plugins/consumer-plugin",
+  pluginFile: "consumer-plugin.php",
+  activate: true,
+  loadAs: "plugin",
+  cleanupPaths: [],
+  provenance: { kind: "local", original: join(root, "consumer-plugin") },
+}] satisfies PreparedExtraPlugin[])
 try {
   assert.equal(overlays.length, 1)
+  assert.equal(dependencyOverlays.length, 1)
   assert.equal(await exists(join(overlaySource, "vendor")), false, "overlay source checkout must not be mutated")
+  assert.equal(await exists(join(dependencySource, "vendor")), false, "dependency overlay source checkout must not be mutated")
   assert.equal(await exists(join(overlays[0].source, "autoload.php")), true)
   assert.equal(await exists(join(overlays[0].source, "src", "Client.php")), true)
   assert.equal(await exists(join(overlays[0].source, "third-party", "Psr", "Log", "LoggerInterface.php")), true)
+  assert.equal(await exists(join(dependencyOverlays[0].source, "vendor", "composer", "installed.json")), true)
+  assert.equal(dependencyOverlays[0].target, "/wordpress/wp-content/plugins/consumer-plugin/vendor/acme/package")
   assert.match(await readFile(join(overlays[0].source, "src", "Client.php"), "utf8"), /WordPress\\AiClientDependencies\\Psr\\Log\\LoggerInterface/)
 } finally {
-  await Promise.all(overlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
+  await Promise.all([...overlays, ...dependencyOverlays].flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
   process.env.PATH = originalPath
   if (originalScoper === undefined) {
     delete process.env.WP_CODEBOX_PHP_SCOPER_PHAR
@@ -120,4 +157,4 @@ try {
   await rm(root, { recursive: true, force: true })
 }
 
-console.log("runtime-overlay-composer-hydration-smoke: ok")
+console.log("composer-backed-source-hydration-smoke: ok")

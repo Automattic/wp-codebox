@@ -318,18 +318,20 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
 
   const source = resolve(recipeDirectory, overlay.source)
   await validateExistingDirectoryForOverlay(source, overlay.source)
+  const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-dependency-overlay-"))
+  const preparedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
   const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
-  const digest = await directoryContentDigest(source)
+  const digest = await directoryContentDigest(preparedSource)
 
   return {
-    source,
+    source: preparedSource,
     sourceRef: overlay.source,
     target,
     package: overlay.package,
     consumer: overlay.consumer,
     type: "directory",
     mode: "readonly",
-    cleanupPaths: [],
+    cleanupPaths: [stagingRoot],
     metadata: {
       kind: "dependency-overlay",
       index,
@@ -396,7 +398,7 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
   await mkdir(srcTarget, { recursive: true })
   await mkdir(thirdPartyTarget, { recursive: true })
 
-  const preparedSource = await preparePhpAiClientOverlaySource(source, stagingRoot)
+  const preparedSource = await prepareComposerBackedSource(source, stagingRoot, `runtime overlay ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
   const scopedRoot = await scopePhpAiClientSource(preparedSource, stagingRoot)
   const packages = await composerInstalledPackagesFromSource(preparedSource)
   const namespacePrefixes = dependencyNamespacePrefixes(packages)
@@ -430,21 +432,21 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
   }
 }
 
-async function preparePhpAiClientOverlaySource(source: string, stagingRoot: string): Promise<string> {
+async function prepareComposerBackedSource(source: string, stagingRoot: string, label: string): Promise<string> {
   if (await pathIsDirectory(join(source, "vendor"))) {
     return source
   }
 
   if (!await pathIsFile(join(source, "composer.json"))) {
-    throw new Error(`php-ai-client runtime overlay source has no vendor directory and no composer.json for dependency hydration: ${source}`)
+    throw new Error(`Composer-backed ${label} source has no vendor directory and no composer.json for dependency hydration: ${source}`)
   }
 
   const composer = await resolveComposerCommand()
   if (!composer) {
-    throw new Error(`php-ai-client runtime overlay source has no vendor directory, and Composer is not available to hydrate dependencies. Run composer install in ${source}, or install Composer on PATH before running WP Codebox.`)
+    throw new Error(`Composer-backed ${label} source has no vendor directory, and Composer is not available to hydrate dependencies. Run composer install in ${source}, or install Composer on PATH before running WP Codebox.`)
   }
 
-  const hydratedSource = join(stagingRoot, "source")
+  const hydratedSource = join(stagingRoot, "composer-source")
   await cp(source, hydratedSource, {
     recursive: true,
     filter: (entry) => !workspaceSeedExcludeMatches(relative(source, entry), "vendor"),
@@ -454,11 +456,11 @@ async function preparePhpAiClientOverlaySource(source: string, stagingRoot: stri
     await execFileAsync(composer, ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"])
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`php-ai-client runtime overlay dependency hydration failed for ${source}. Run composer install in that checkout or inspect Composer output. ${message}`)
+    throw new Error(`Composer-backed ${label} dependency hydration failed for ${source}. Run composer install in that checkout or inspect Composer output. ${message}`)
   }
 
   if (!await pathIsFile(join(hydratedSource, "vendor", "composer", "installed.json"))) {
-    throw new Error(`php-ai-client runtime overlay dependency hydration completed without vendor/composer/installed.json: ${source}`)
+    throw new Error(`Composer-backed ${label} dependency hydration completed without vendor/composer/installed.json: ${source}`)
   }
 
   return hydratedSource
