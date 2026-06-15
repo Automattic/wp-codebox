@@ -97,6 +97,13 @@ final class WP_Codebox_Abilities {
 		}
 
 		$register_category = static function (): void {
+			// Core's `wp_abilities_api_categories_init` action can fire more than
+			// once per request (e.g. on multisite), so guard against re-registering
+			// an already-registered category to avoid a `_doing_it_wrong` notice.
+			if ( function_exists( 'wp_has_ability_category' ) && wp_has_ability_category( 'wp-codebox' ) ) {
+				return;
+			}
+
 			wp_register_ability_category(
 				'wp-codebox',
 				array(
