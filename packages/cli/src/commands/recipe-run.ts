@@ -3,7 +3,6 @@ import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
@@ -14,6 +13,7 @@ import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, c
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
+import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
@@ -213,7 +213,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeEnvironment,
       }, async () => await awaitRecipe("runtime.create", () => createRuntime(
         runtimeCreateSpec,
-        createPlaygroundRuntimeBackend({ cliModule: backendPackage?.cliModule }),
+        resolveCliRuntimeBackend(runtimeCreateSpec.backend, { cliModule: backendPackage?.cliModule }),
       )))
       startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {
