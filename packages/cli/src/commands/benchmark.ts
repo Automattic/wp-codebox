@@ -522,19 +522,15 @@ function parseBenchmarkCompareOptions(args: string[], config: { requireBundles?:
 
     switch (name) {
       case "--baseline":
-      case "--baseline-input":
         options.baselineInputPath = value
         break
       case "--candidate":
-      case "--candidate-input":
         options.candidateInputPath = value
         break
       case "--baseline-bundle":
-      case "--baseline-artifacts":
         options.baselineBundleDirectory = value
         break
       case "--candidate-bundle":
-      case "--candidate-artifacts":
         options.candidateBundleDirectory = value
         break
       case "--baseline-index":
@@ -555,10 +551,10 @@ function parseBenchmarkCompareOptions(args: string[], config: { requireBundles?:
     throw new Error("Missing required options: --baseline-bundle and --candidate-bundle")
   }
   if (!config.requireBundles && !options.baselineInputPath && !options.baselineBundleDirectory) {
-    throw new Error("Missing required option: --baseline-input or --baseline-bundle")
+    throw new Error("Missing required option: --baseline or --baseline-bundle")
   }
   if (!config.requireBundles && !options.candidateInputPath && !options.candidateBundleDirectory) {
-    throw new Error("Missing required option: --candidate-input or --candidate-bundle")
+    throw new Error("Missing required option: --candidate or --candidate-bundle")
   }
 
   return options as BenchmarkCompareOptions

@@ -47,22 +47,14 @@
     "packages/runtime-playground/package.json",
     "packages/cli/dist",
     "packages/cli/package.json",
-    "scripts/normalize-playground-sqlite-package.mjs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli",
     "prepare": "npm run build",
-    "postinstall": "node scripts/normalize-playground-sqlite-package.mjs",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
-    "package-distribution-smoke": "tsx scripts/package-distribution-smoke.ts",
-    "package-installed-binary-smoke": "tsx scripts/package-installed-binary-smoke.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
-    "artifact-export-links-smoke": "tsx scripts/artifact-export-links-smoke.ts",
-    "browser-probe-navigation-timeout-smoke": "tsx scripts/browser-probe-navigation-timeout-smoke.ts",
-    "browser-visual-compare-dimension-drift-smoke": "tsx scripts/browser-visual-compare-dimension-drift-smoke.ts",
-    "browser-visual-compare-matrix-smoke": "tsx scripts/browser-visual-compare-matrix-smoke.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
     "smoke": "tsx scripts/run-smoke.ts",
     "check": "npm run smoke -- --group=check"

@@ -1761,7 +1761,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $options;
 		}
 
-		$args = $options['preview_hold_seconds'] > 0 ? ' --preview-hold ' . escapeshellarg( (string) $options['preview_hold_seconds'] ) : '';
+		$args = $options['preview_hold_seconds'] > 0 ? ' --preview-hold-seconds ' . escapeshellarg( (string) $options['preview_hold_seconds'] ) : '';
 		$port = $options['preview_port'];
 		$bind = $options['preview_bind'];
 		$public = $options['preview_public_url'];
@@ -1782,7 +1782,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private function preview_hold_arg( array $input ): string {
 		$seconds = $this->preview_hold_seconds( $input );
 
-		return $seconds > 0 ? ' --preview-hold ' . escapeshellarg( (string) $seconds ) : '';
+		return $seconds > 0 ? ' --preview-hold-seconds ' . escapeshellarg( (string) $seconds ) : '';
 	}
 
 	private function config_option( string $name, mixed $default ): mixed {

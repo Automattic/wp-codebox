@@ -52,19 +52,6 @@
       }
     },
     {
-      "name": "legacy preview_hold alias",
-      "input": {
-        "preview_hold": "5"
-      },
-      "valid": true,
-      "normalized": {
-        "preview_hold_seconds": 5,
-        "preview_port": null,
-        "preview_bind": null,
-        "preview_public_url": null
-      }
-    },
-    {
       "name": "minute preview hold syntax",
       "input": {
         "preview_hold_seconds": "2m"

@@ -7,7 +7,7 @@ against bbPress" or "drive my theme against seeded content."
 These are not internal correctness fixtures (the recipes in
 `examples/recipes/*.json` cover that). They are product fixtures: each one
 mounts a target plugin or theme, seeds a realistic host context via Playground
-blueprint steps, and is intended to be paired with `--preview-hold` for visual
+blueprint steps, and is intended to be paired with `--preview-hold-seconds` for visual
 smoke testing.
 
 ## Site seed planning boundary
@@ -102,13 +102,13 @@ the plugin you want to exercise in network mode. The default points at
 # Then:
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/cookbook/multisite-network.json \
-  --preview-hold 30m \
+  --preview-hold-seconds 30m \
   --json
 ```
 
 The seed step's JSON output includes `network_admin_url`, `main_site_url`, and a
 `sites` array with two child-site URLs and admin URLs. Pair with
-`--preview-hold` to click through network admin and child-site screens while the
+`--preview-hold-seconds` to click through network admin and child-site screens while the
 Playground preview stays alive.
 
 #### Why this exists
@@ -129,7 +129,7 @@ a richer network shape.
 Boots a Playground with a theme mounted at
 `/wordpress/wp-content/themes/theme-under-test`, activates that mounted theme,
 seeds a page with common block-editor surfaces, and auto-logs in as admin. Pair
-with `--preview-hold` and open the seed output's `frontend_url` or
+with `--preview-hold-seconds` and open the seed output's `frontend_url` or
 `block_editor_url` to review the theme in both rendered and editor contexts.
 
 **Replace** the `inputs.mounts[0].source` value in the recipe with the path to
@@ -143,7 +143,7 @@ the theme you want to exercise. The default points at the adjacent
 # Then:
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/cookbook/theme-block-editor.json \
-  --preview-hold 30m \
+  --preview-hold-seconds 30m \
   --json
 ```
 
@@ -170,7 +170,7 @@ seed step before emitting URLs.
 Boots a Playground with Twenty Twenty-Five active, mounts your plugin under
 test, and seeds a compact editorial fixture: published pages, a posts page,
 published and draft posts, categories, tags, an editor user, and an author
-user. Pair with `--preview-hold` and use the seed step's JSON output to open
+user. Pair with `--preview-hold-seconds` and use the seed step's JSON output to open
 the home page, blog index, first post, category archive, author archive, or
 admin list tables.
 
@@ -185,7 +185,7 @@ at `../simple-plugin` so the recipe runs out of the box.
 # Then:
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/cookbook/seeded-content.json \
-  --preview-hold 30m \
+  --preview-hold-seconds 30m \
   --json
 ```
 
@@ -204,7 +204,7 @@ out of this recipe; parent-site snapshots belong to a separate workflow.
 
 Boots a Playground with bbPress installed from `wordpress.org/plugins`, mounts
 your plugin under test, seeds one forum and one topic, and auto-logs in as
-admin. Pair with `--preview-hold` and navigate the preview URL from the seed
+admin. Pair with `--preview-hold-seconds` and navigate the preview URL from the seed
 output to land on the bbPress reply form.
 
 **Replace** the `inputs.mounts[0].source` value in the recipe with the path
@@ -219,7 +219,7 @@ mount target is whatever editor-or-reply-handling plugin you're debugging.
 # Then:
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/cookbook/bbpress-reply-editor.json \
-  --preview-hold 30m \
+  --preview-hold-seconds 30m \
   --json
 ```
 
@@ -252,7 +252,7 @@ before the JSON output line, or fork the recipe entirely.
 
 The reference example for the **`wordpress.browser-actions` interaction probe**
 (shipped in wp-codebox #311). Where the other cookbook recipes seed a host shape
-and pair with `--preview-hold` for *manual* clicking, this recipe *drives* a
+and pair with `--preview-hold-seconds` for *manual* clicking, this recipe *drives* a
 real React component with an ordered interaction script and asserts that it
 still **works** — not just that the page renders.
 
@@ -328,7 +328,7 @@ mount target is whatever WooCommerce integration you're debugging.
 # Then:
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/cookbook/woocommerce-store.json \
-  --preview-hold 30m \
+  --preview-hold-seconds 30m \
   --json
 ```
 

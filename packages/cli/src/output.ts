@@ -267,7 +267,7 @@ export function printHelp(): void {
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox bench matrix --matrix <path> [--recipe <path>] [--artifacts <dir>] [--json]
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
-  wp-codebox bench compare --baseline-input <recipe-run.json> --candidate-input <recipe-run.json> [--json]
+  wp-codebox bench compare --baseline <recipe-run.json> --candidate <recipe-run.json> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
@@ -309,10 +309,10 @@ Options:
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.
   --matrix <path>     Benchmark recipe matrix JSON file for bench matrix.
-  --baseline-input <path>
-                       Saved baseline recipe-run JSON for benchmark comparison.
-  --candidate-input <path>
-                       Saved candidate recipe-run JSON for benchmark comparison.
+  --baseline <path>
+                        Saved baseline recipe-run JSON for benchmark comparison.
+  --candidate <path>
+                        Saved candidate recipe-run JSON for benchmark comparison.
   --baseline-bundle <dir>
                        Baseline artifact bundle directory for benchmark comparison.
   --candidate-bundle <dir>
@@ -336,8 +336,8 @@ Options:
   --blueprint <json|file>
                        WordPress Playground blueprint JSON or path for boot or validate-blueprint.
   --artifacts <dir>    Artifact root directory.
-  --hold <n>           Keep a booted Playground preview available before teardown. Accepts the same values as --preview-hold.
-  --preview-hold <n>   Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
+  --preview-hold-seconds <n>
+                       Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
   --preview-port <n>   Start Playground on a fixed local port. Defaults to a random available port.
   --preview-bind <host>
                        Host/IP for the fixed-port WP Codebox preview proxy. Requires --preview-port.

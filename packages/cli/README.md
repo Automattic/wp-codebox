@@ -76,5 +76,5 @@ Parent-site-derived declarations must stay minimized: each scope needs explicit 
 
 ## Interactive Boot
 
-- `wp-codebox boot [--mount <host>:<vfs>] --hold <duration> [--json]` boots Playground, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold`, then tears down and collects artifacts without creating a workflow command.
+- `wp-codebox boot [--mount <host>:<vfs>] --preview-hold-seconds <duration> [--json]` boots Playground, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold-seconds`, then tears down and collects artifacts without creating a workflow command.
 - `boot` accepts the runtime setup options relevant to interactive previews: `--mount`, `--blueprint <json|file>`, `--wp`, `--artifacts`, `--policy <json|file>`, `--preview-port`, `--preview-bind`, and `--preview-public-url`.

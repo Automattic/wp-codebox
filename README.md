@@ -472,7 +472,7 @@ more than one hard link. The hard-link check uses the host platform's
 `lstat().nlink` value and fails closed if the link count cannot be determined,
 because a hard-linked file under an allowed root is not independent evidence.
 
-For interactive review, pass `--preview-hold <duration>` to keep the live Playground server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
+For interactive review, pass `--preview-hold-seconds <duration>` to keep the live Playground server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
 
 ```bash
 npm run wp-codebox -- run \
@@ -480,11 +480,11 @@ npm run wp-codebox -- run \
   --command wordpress.run-php \
   --arg code-file=./examples/simple-plugin/probe.php \
   --artifacts ./artifacts \
-  --preview-hold 15m \
+  --preview-hold-seconds 15m \
   --json
 ```
 
-The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
+The v1 preview is a held live Playground runtime. When `--preview-hold-seconds` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
 For tunnel-first review, reserve the local port in the tunnel command and pass that same port to WP Codebox. `--preview-port <n>` makes WP Codebox expose Playground through a fixed local proxy port instead of reporting Playground's default random port, and `--preview-public-url <url>` reports the tunnel URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`.
 
@@ -494,7 +494,7 @@ kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
   --command wordpress.run-php \
   --arg code-file=./examples/simple-plugin/probe.php \
   --artifacts ./artifacts \
-  --preview-hold 15m \
+  --preview-hold-seconds 15m \
   --preview-port 4173 \
   --preview-public-url "$TRAFORO_URL" \
   --json'
@@ -765,13 +765,13 @@ npm run wp-codebox -- boot \
   --mount <host-path>:<sandbox-path>[:readonly|readwrite] \
   --blueprint ./playground-blueprint.json \
   --artifacts ./artifacts \
-  --hold 15m \
+  --preview-hold-seconds 15m \
   --preview-port 4173 \
   --preview-public-url https://example-tunnel.test/ \
   --json
 ```
 
-`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. `--hold` uses the same duration syntax and 3600-second maximum as `run --preview-hold`.
+`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. `--preview-hold-seconds` uses the same duration syntax and 3600-second maximum as `run --preview-hold-seconds`.
 
 The JSON output uses `wp-codebox/boot/v1` and includes runtime information plus the collected artifact bundle. The artifact bundle includes preview metadata, mounted-file capture, diffs, review metadata, and lifecycle logs, but no `execution` object and no fake command entry.
 
@@ -810,7 +810,7 @@ Run a repeatable recipe.
 ```bash
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/simple-plugin.json \
-  --preview-hold 15m \
+  --preview-hold-seconds 15m \
   --preview-port 4173 \
   --preview-public-url https://example-tunnel.test/ \
   --json
@@ -932,7 +932,6 @@ Example recipes:
 - `examples/recipes/simple-plugin.json`: mount and probe the fixture plugin.
 - `examples/recipes/wp-cli.json`: prove WP-CLI commands mutate the same runtime observed by later steps.
 - `examples/recipes/seeded-plugin-workspace.json`: create a disposable plugin scaffold, mutate it, and capture diffs.
-- `examples/recipes/datamachine-agent-bundle.json`: mount Agents API and Data Machine, then import a bundle through `wordpress.ability`.
 - `examples/recipes/cookbook/headless-browser-agent-task.json`: generic headless browser-agent pattern with browser probes before/after a sandbox agent task, browser action assertions, screenshots, transcript, and artifact evidence.
 - `examples/recipes/cookbook/multisite-network.json`: convert Playground to multisite, mount a plugin under test, seed two child sites, and emit network/site/admin URLs.
 - `examples/recipes/cookbook/woocommerce-store.json`: realistic WooCommerce dependency shape with seeded store pages, products, customer, and order fixtures.
@@ -1315,7 +1314,7 @@ Provider stacks are assembled from generic primitives: `provider_plugin_paths`, 
 
 Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. The cookbook recipe at `examples/recipes/cookbook/codex-agent-smoke.json` shows one concrete provider setup using these primitives without adding provider-specific behavior to WP Codebox itself.
 
-Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response and compatibility aliases from older orchestrator integrations, including `agentResult`, `agent_result`, `completionOutcome`, `completion_outcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
+Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 
