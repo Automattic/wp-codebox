@@ -185,6 +185,7 @@ export const smokeGroups = {
       tsxSmoke("preview-response-body-smoke"),
       tsxSmoke("browser-startup-progress-smoke"),
       tsxSmoke("held-admin-preview-blocker-smoke"),
+      tsxSmoke("preview-reviewer-auth-bootstrap-smoke"),
       tsxSmoke("recipe-browser-probe-liveness-smoke"),
       tsxSmoke("boot-preview-smoke"),
       tsxSmoke("blueprint-validation-smoke"),

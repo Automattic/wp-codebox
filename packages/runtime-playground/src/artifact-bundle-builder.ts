@@ -635,6 +635,7 @@ function buildPreviewEvidence({
       createdAt: preview?.createdAt,
       expiresAt: preview?.expiresAt,
       holdSeconds: preview?.holdSeconds,
+      ...(preview?.reviewerAuth ? { reviewerAuth: preview.reviewerAuth } : {}),
       ...(preview?.blockers ? { blockers: preview.blockers } : {}),
       url: safePreviewUrlRef(preview?.url),
       ...(preview?.publicUrl ? { publicUrl: safePreviewUrlRef(preview.publicUrl) } : {}),
@@ -769,6 +770,17 @@ function buildPreviewSessionEvidence({
       createdAt: preview.createdAt,
       expiresAt: preview.expiresAt,
       holdSeconds: preview.holdSeconds,
+      reviewerAuth: preview.reviewerAuth ? {
+        schema: preview.reviewerAuth.schema,
+        kind: preview.reviewerAuth.kind,
+        auth: preview.reviewerAuth.auth,
+        reviewerSafe: preview.reviewerAuth.reviewerSafe,
+        targetPath: preview.reviewerAuth.targetPath,
+        expiresAt: preview.reviewerAuth.expiresAt,
+        holdSeconds: preview.reviewerAuth.holdSeconds,
+        userId: preview.reviewerAuth.userId,
+        scope: preview.reviewerAuth.scope,
+      } : undefined,
       hasPublicUrl: Boolean(preview.publicUrl),
       hasSiteUrl: Boolean(preview.siteUrl),
       blockers: preview.blockers,
@@ -799,6 +811,10 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
 
   const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
   if (!authCommand) {
+    return preview
+  }
+
+  if (preview.reviewerAuth?.reviewerSafe) {
     return preview
   }
 

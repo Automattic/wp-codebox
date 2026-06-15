@@ -433,6 +433,16 @@ class PlaygroundRuntime implements Runtime {
     const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined
     const publicUrl = this.spec.preview?.publicUrl
     const siteUrl = this.spec.preview?.siteUrl
+    const reviewerAuthRequest = this.reviewerAuthRequest(server.serverUrl)
+    const reviewerAuth = reviewerAuthRequest && server.createReviewerAuthBootstrap && expiresAt
+      ? await server.createReviewerAuthBootstrap({
+          runtimeId: this.runtimeId,
+          targetPath: reviewerAuthRequest.targetPath,
+          expiresAt,
+          holdSeconds: normalizedHoldSeconds,
+          userId: reviewerAuthRequest.userId,
+        })
+      : undefined
 
     return {
       url: publicUrl ?? server.serverUrl,
@@ -442,8 +452,19 @@ class PlaygroundRuntime implements Runtime {
       lifecycle: normalizedHoldSeconds > 0 ? "held-after-run" : "destroyed-on-completion",
       source: publicUrl ? "public-url-override" : "live-playground",
       createdAt,
+      ...(reviewerAuth ? { reviewerAuth } : {}),
       ...(expiresAt ? { expiresAt, holdSeconds: normalizedHoldSeconds } : {}),
     }
+  }
+
+  private reviewerAuthRequest(previewUrl: string): { targetPath: string; userId: number } | undefined {
+    const command = this.commands.find((candidate) => candidate.exitCode === 0 && browserCommandRequestsWordPressAdminAuth(candidate))
+    if (!command) {
+      return undefined
+    }
+
+    const targetPath = browserCommandTargetPath(command, previewUrl)
+    return targetPath ? { targetPath, userId: authUserId(command.args ?? []) } : undefined
   }
 
   private recordEvent(type: LifecycleEvent["type"], data?: Record<string, unknown>): LifecycleEvent {
@@ -876,6 +897,54 @@ function stringArg(args: string[], name: string): string | undefined {
   const prefix = `${name}=`
   const value = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length).trim()
   return value && value.length > 0 ? value : undefined
+}
+
+function browserCommandRequestsWordPressAdminAuth(command: ExecutionResult): boolean {
+  if (!["wordpress.browser-actions", "wordpress.browser-probe", "wordpress.browser-scenario", "wordpress.visual-compare"].includes(command.command)) {
+    return false
+  }
+
+  return command.args.some((arg) => argRequestsWordPressAdminAuth(arg))
+}
+
+function argRequestsWordPressAdminAuth(arg: string): boolean {
+  const separator = arg.indexOf("=")
+  if (separator > 0) {
+    const key = arg.slice(0, separator).trim()
+    const value = arg.slice(separator + 1).trim()
+    if (key === "auth" && value === "wordpress-admin") {
+      return true
+    }
+    if ((key === "scenario" || key === "scenario-json") && /"auth"\s*:\s*"wordpress-admin"/.test(value)) {
+      return true
+    }
+  }
+
+  return /"auth"\s*:\s*"wordpress-admin"/.test(arg)
+}
+
+function browserCommandTargetPath(command: ExecutionResult, previewUrl: string): string | undefined {
+  const rawUrl = stringArg(command.args ?? [], "url")
+  if (!rawUrl) {
+    return undefined
+  }
+
+  try {
+    const parsed = new URL(rawUrl, previewUrl)
+    const preview = new URL(previewUrl)
+    if (parsed.origin !== preview.origin) {
+      return undefined
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return undefined
+  }
+}
+
+function authUserId(args: string[]): number {
+  const raw = stringArg(args, "auth-user-id")
+  const parsed = raw ? Number.parseInt(raw, 10) : 1
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
 }
 
 function wpContentRelativePath(path: string): string | undefined {

@@ -658,6 +658,7 @@ export interface ArtifactPreviewSessionEvidence {
     createdAt: string
     expiresAt?: string
     holdSeconds?: number
+    reviewerAuth?: Omit<ArtifactPreviewReviewerAuth, "url">
     hasPublicUrl: boolean
     hasSiteUrl: boolean
     blockers?: ArtifactPreviewBlocker[]
@@ -691,7 +692,24 @@ export interface ArtifactPreview {
   createdAt: string
   expiresAt?: string
   holdSeconds?: number
+  reviewerAuth?: ArtifactPreviewReviewerAuth
   blockers?: ArtifactPreviewBlocker[]
+}
+
+export interface ArtifactPreviewReviewerAuth {
+  schema: "wp-codebox/preview-reviewer-auth/v1"
+  kind: "reviewer-auth-bootstrap"
+  auth: "wordpress-admin" | (string & {})
+  reviewerSafe: true
+  url: string
+  targetPath: string
+  expiresAt: string
+  holdSeconds: number
+  userId: number
+  scope: {
+    runtimeId: string
+    origin: string
+  }
 }
 
 export interface ArtifactPreviewBlocker {
@@ -753,6 +771,7 @@ export interface ArtifactPreviewEvidence {
     createdAt?: string
     expiresAt?: string
     holdSeconds?: number
+    reviewerAuth?: ArtifactPreviewReviewerAuth
     url: ArtifactPreviewUrlRef
     publicUrl?: ArtifactPreviewUrlRef
     localUrl?: ArtifactPreviewUrlRef

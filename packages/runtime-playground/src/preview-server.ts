@@ -1,5 +1,10 @@
+import { randomBytes } from "node:crypto"
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { assertPlaygroundResponseOk } from "./playground-command-errors.js"
+import { parseWordPressAdminAuthCookies, wordpressAdminAuthCookiePhpCode, type WordPressAdminAuthCookie } from "./wordpress-admin-auth.js"
+import type { ArtifactPreviewReviewerAuth, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -15,11 +20,21 @@ export interface PlaygroundCliServer {
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
+  createReviewerAuthBootstrap?(options: ReviewerAuthBootstrapOptions): Promise<ArtifactPreviewReviewerAuth>
   [Symbol.asyncDispose](): Promise<void>
+}
+
+export interface ReviewerAuthBootstrapOptions {
+  runtimeId: string
+  targetPath: string
+  expiresAt: string
+  holdSeconds: number
+  userId: number
 }
 
 interface PlaygroundPreviewProxy {
   serverUrl: string
+  createReviewerAuthBootstrap?: PlaygroundCliServer["createReviewerAuthBootstrap"]
   dispose(): Promise<void>
 }
 
@@ -34,10 +49,10 @@ export class PlaygroundPreviewPortUnavailableError extends Error {
   }
 }
 
-export async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1"): Promise<PlaygroundCliServer> {
+export async function withPreviewProxy(server: PlaygroundCliServer, port: number, bind = "127.0.0.1", runtimeSpec?: RuntimeCreateSpec): Promise<PlaygroundCliServer> {
   let proxy: PlaygroundPreviewProxy | undefined
   try {
-    proxy = await startPreviewProxy(server.serverUrl, port, bind)
+    proxy = await startPreviewProxy(server, port, bind, runtimeSpec)
   } catch (error) {
     await server[Symbol.asyncDispose]()
     throw error
@@ -46,6 +61,7 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   return {
     ...server,
     serverUrl: proxy.serverUrl,
+    ...(proxy.createReviewerAuthBootstrap ? { createReviewerAuthBootstrap: proxy.createReviewerAuthBootstrap } : {}),
     async [Symbol.asyncDispose]() {
       await proxy.dispose()
       await server[Symbol.asyncDispose]()
@@ -53,15 +69,16 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   }
 }
 
-async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
-  const target = new URL(targetUrl)
-  const proxy = previewProxyServer(target)
+async function startPreviewProxy(server: PlaygroundCliServer, port: number, bind: string, runtimeSpec: RuntimeCreateSpec | undefined): Promise<PlaygroundPreviewProxy> {
+  const target = new URL(server.serverUrl)
+  const reviewerAuth = runtimeSpec ? createReviewerAuthBootstrapStore(server, runtimeSpec) : undefined
+  const proxy = previewProxyServer(target, reviewerAuth)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target)
+    const ipv6Proxy = previewProxyServer(target, reviewerAuth)
     try {
       await listenPreviewProxy(ipv6Proxy, port, "::1")
       servers.push(ipv6Proxy)
@@ -79,18 +96,133 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
 
   return {
     serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
+    ...(reviewerAuth ? { createReviewerAuthBootstrap: (options) => reviewerAuth.createBootstrap(`http://${formatPreviewHost(reportedHost)}:${resolvedPort}`, options) } : {}),
     async dispose() {
       await closePreviewProxyServers(servers)
     },
   }
 }
 
-function previewProxyServer(target: URL): PreviewProxyServer {
+function previewProxyServer(target: URL, reviewerAuth?: ReviewerAuthBootstrapStore): PreviewProxyServer {
   const upstreamQueue = createPreviewProxyQueue()
 
   return createHttpServer((incoming, outgoing) => {
+    if (reviewerAuth?.canHandle(incoming)) {
+      reviewerAuth.handle(incoming, outgoing).catch((error: Error) => writeProxyError(outgoing, error))
+      return
+    }
+
     upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
   })
+}
+
+interface ReviewerAuthBootstrapEntry extends ReviewerAuthBootstrapOptions {
+  token: string
+  origin: string
+}
+
+interface ReviewerAuthBootstrapStore {
+  canHandle(incoming: IncomingMessage): boolean
+  createBootstrap(origin: string, options: ReviewerAuthBootstrapOptions): Promise<ArtifactPreviewReviewerAuth>
+  handle(incoming: IncomingMessage, outgoing: ServerResponse): Promise<void>
+}
+
+function createReviewerAuthBootstrapStore(server: PlaygroundCliServer, runtimeSpec: RuntimeCreateSpec): ReviewerAuthBootstrapStore {
+  const entries = new Map<string, ReviewerAuthBootstrapEntry>()
+  const bootstrapPath = "/_wp-codebox/reviewer-auth/bootstrap"
+
+  return {
+    canHandle(incoming) {
+      return requestPath(incoming) === bootstrapPath
+    },
+    async createBootstrap(origin, options) {
+      const token = randomBytes(24).toString("base64url")
+      entries.set(token, { ...options, token, origin })
+      const url = new URL(bootstrapPath, origin)
+      url.searchParams.set("token", token)
+      return {
+        schema: "wp-codebox/preview-reviewer-auth/v1",
+        kind: "reviewer-auth-bootstrap",
+        auth: "wordpress-admin",
+        reviewerSafe: true,
+        url: url.toString(),
+        targetPath: options.targetPath,
+        expiresAt: options.expiresAt,
+        holdSeconds: options.holdSeconds,
+        userId: options.userId,
+        scope: {
+          runtimeId: options.runtimeId,
+          origin,
+        },
+      }
+    },
+    async handle(incoming, outgoing) {
+      if (incoming.method && incoming.method !== "GET" && incoming.method !== "HEAD") {
+        writeText(outgoing, 405, "Reviewer auth bootstrap only supports GET.\n")
+        return
+      }
+      const token = requestUrl(incoming)?.searchParams.get("token") ?? ""
+      const entry = entries.get(token)
+      if (!entry || Date.now() >= Date.parse(entry.expiresAt)) {
+        writeText(outgoing, 410, "Reviewer auth bootstrap is expired or unavailable.\n")
+        return
+      }
+
+      const response = await server.playground.run({ code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode([entry.origin], entry.userId), []) })
+      assertPlaygroundResponseOk("preview.reviewer-auth-bootstrap", response)
+      const cookies = parseWordPressAdminAuthCookies(response.text)
+      outgoing.writeHead(302, {
+        "cache-control": "no-store",
+        "location": entry.targetPath,
+        "set-cookie": cookies.map(cookieToSetCookieHeader).filter((cookie): cookie is string => Boolean(cookie)),
+      })
+      outgoing.end()
+    },
+  }
+}
+
+function cookieToSetCookieHeader(cookie: WordPressAdminAuthCookie): string | undefined {
+  const name = String(cookie.name ?? "")
+  const value = String(cookie.value ?? "")
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || !value) {
+    return undefined
+  }
+
+  const parts = [`${name}=${value}`]
+  parts.push(`Path=${typeof cookie.path === "string" && cookie.path.length > 0 ? cookie.path : "/"}`)
+  if (typeof cookie.expires === "number") {
+    parts.push(`Expires=${new Date(cookie.expires * 1000).toUTCString()}`)
+  }
+  if (cookie.httpOnly !== false) {
+    parts.push("HttpOnly")
+  }
+  if (cookie.secure === true) {
+    parts.push("Secure")
+  }
+  parts.push(`SameSite=${cookie.sameSite ?? "Lax"}`)
+  return parts.join("; ")
+}
+
+function requestPath(incoming: IncomingMessage): string | undefined {
+  return requestUrl(incoming)?.pathname
+}
+
+function requestUrl(incoming: IncomingMessage): URL | undefined {
+  try {
+    return new URL(incoming.url ?? "/", "http://127.0.0.1")
+  } catch {
+    return undefined
+  }
+}
+
+function writeText(outgoing: ServerResponse, statusCode: number, body: string): void {
+  const buffer = Buffer.from(body, "utf8")
+  outgoing.writeHead(statusCode, {
+    "cache-control": "no-store",
+    "content-type": "text/plain; charset=utf-8",
+    "content-length": String(buffer.byteLength),
+  })
+  outgoing.end(buffer)
 }
 
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
