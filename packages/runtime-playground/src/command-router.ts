@@ -6,6 +6,7 @@ interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>
   runPhp(spec: ExecutionSpec): Promise<string>
   runWpCli(spec: ExecutionSpec): Promise<string>
+  runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runAbility(spec: ExecutionSpec): Promise<string>
   runBench(spec: ExecutionSpec): Promise<string>
@@ -27,6 +28,7 @@ const playgroundCommandHandlers = {
   "inspect-mounted-inputs": (runtime) => runtime.inspectMountedInputs(),
   "wordpress.run-php": (runtime, spec) => runtime.runPhp(spec),
   "wordpress.wp-cli": (runtime, spec) => runtime.runWpCli(spec),
+  "wordpress.capture-state-bundle": (runtime, spec) => runtime.runCaptureStateBundle(spec),
   "wordpress.rest-request": (runtime, spec) => runtime.runRestRequest(spec),
   "wordpress.ability": (runtime, spec) => runtime.runAbility(spec),
   "wordpress.bench": (runtime, spec) => runtime.runBench(spec),

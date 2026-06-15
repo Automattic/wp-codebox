@@ -73,7 +73,35 @@ export interface BrowserArtifactFiles {
   diffScreenshot?: string | string[]
   visualDiff?: string | string[]
   visualExplanation?: string | string[]
+  redirectDiagnostics?: string
+  wordpressDiagnostics?: string
   summary: string
+}
+
+export interface BrowserRedirectDiagnosticsSummary {
+  status: "captured" | "not-applicable"
+  artifact?: string
+  classification: "redirect-loop" | "redirect-chain"
+  reason: string
+  documentEvents: number
+  redirectResponses: number
+  repeatedUrls: Array<{ url: string; count: number }>
+  repeatedHosts: Array<{ host: string; count: number }>
+  repeatedPaths: Array<{ path: string; count: number }>
+  firstUrl?: string
+  lastUrl?: string
+  finalAttemptedUrl?: string
+  sanitizedQueryKeys: string[]
+  redactedQueryKeys: string[]
+}
+
+export interface BrowserWordPressDiagnosticsSummary {
+  status: "captured" | "clean" | "unavailable"
+  artifact?: string
+  document5xxResponses: number
+  diagnostics: number
+  fatalErrors: number
+  classifications: string[]
 }
 
 export interface BrowserArtifactSummary {
@@ -104,6 +132,11 @@ export interface BrowserArtifactSummary {
   }>
   networkPolicy?: BrowserProbeNetworkPolicySummary
   lifecycle?: BrowserProbeLifecycleSummary
+  liveness?: {
+    wallTimeoutMs?: number
+    stallTimeoutMs?: number
+    networkSettleTimeoutMs?: number
+  }
   memory?: BrowserProbeMemorySummary
   metrics?: Record<string, number>
   networkEvents: number
@@ -111,6 +144,8 @@ export interface BrowserArtifactSummary {
   performance?: BrowserProbePerformanceSummary
   progress?: BrowserProbeProgressSummary
   review?: BrowserProbeReviewSummary
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   context?: BrowserProbeContextDetails
   auth?: BrowserProbeAuthSummary
   capabilities?: BrowserProbeCapabilityDiagnostics
@@ -132,6 +167,7 @@ export interface BrowserProbeAuthSummary {
   mode: "wordpress-admin"
   userId: number
   cookieCount: number
+  cookieHosts: Array<{ host: string; cookieCount: number }>
 }
 
 export interface BrowserEditorCanvasProbeSummary {
@@ -145,7 +181,7 @@ export interface BrowserEditorCanvasProbeSummary {
 }
 
 export interface BrowserEditorCanvasProbeDiagnostic {
-  code: "iframe-missing" | "layout-missing" | "no-blocks" | "loading-state" | "timeout" | "screenshot-failed"
+  code: "iframe-missing" | "layout-missing" | "no-blocks" | "loading-state" | "timeout" | "screenshot-failed" | "screenshot-fallback"
   severity: "error" | "warning" | "info"
   message: string
   details?: Record<string, unknown>
@@ -230,6 +266,8 @@ export interface BrowserProbeReviewSummary {
     probe: BrowserProbeIssueSummary
   }
   network: BrowserProbeNetworkReviewSummary
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   milestones: BrowserProbeMilestoneSummary
   artifacts: Record<string, BrowserProbeArtifactRef>
 }
@@ -654,8 +692,14 @@ export interface BrowserStepRecord {
   readiness?: BrowserStepReadiness
   target?: BrowserStepScreenshotTarget
   screenshot?: string
+  screenshotFallback?: BrowserStepScreenshotFallback
   finalUrl?: string
   error?: BrowserProbeErrorRecord
+}
+
+export interface BrowserStepScreenshotFallback {
+  mode: "page-screenshot"
+  reason: string
 }
 
 export interface BrowserStepScreenshotTarget {
@@ -730,6 +774,9 @@ export interface BrowserProbeNetworkRecord {
   bodySize?: number
   requestBodySize?: number
   responseBodySize?: number
+  responseTextPreview?: string
+  responseTextSha256?: string
+  responseTextTruncated?: boolean
   failure?: ReturnType<Request["failure"]>
 }
 
@@ -784,6 +831,8 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       ...(probe.summary.assertions ? { assertions: { total: probe.summary.assertions.total, passed: probe.summary.assertions.passed, failed: probe.summary.assertions.failed } } : {}),
       performance: probe.files.performance,
       visualCompare: probe.summary.visualCompare,
+      redirectDiagnostics: probe.summary.redirectDiagnostics,
+      wordpressDiagnostics: probe.summary.wordpressDiagnostics,
       summaryFile: probe.files.summary,
     })),
   }
@@ -836,6 +885,8 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
   visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
   visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },
+  redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
+  wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
 }
 

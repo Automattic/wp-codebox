@@ -33,15 +33,16 @@ export async function captureMountedFiles(filesDirectory: string, mounts: MountS
     if (mount.mode !== "readwrite") {
       continue
     }
+    const artifactExcludePaths = mountArtifactExcludePaths(mount)
 
     const mountStats = await stat(mount.source)
     if (mountStats.isDirectory()) {
-      await captureMountedDirectory(filesDirectory, captured, mount, mountIndex, mount.source, "", redactor)
+      await captureMountedDirectory(filesDirectory, captured, mount, mountIndex, mount.source, "", redactor, artifactExcludePaths)
       continue
     }
 
     if (mountStats.isFile()) {
-      await captureMountedFile(filesDirectory, captured, mount, mountIndex, mount.source, basename(mount.source), redactor)
+      await captureMountedFile(filesDirectory, captured, mount, mountIndex, mount.source, basename(mount.source), redactor, artifactExcludePaths)
     }
   }
 
@@ -61,6 +62,7 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
     if (mount.mode !== "readwrite") {
       continue
     }
+    const artifactExcludePaths = mountArtifactExcludePaths(mount)
 
     const artifactPath = `files/diffs/mount-${mountIndex}.patch`
 
@@ -86,8 +88,8 @@ export async function captureMountDiffs(artifactRoot: string, filesDirectory: st
     let diff: Awaited<ReturnType<typeof directoryDiff>>
     try {
       diff = useGitWorkTree
-        ? await gitWorkingTreeDiff(mount.source, mount.target)
-        : await directoryDiff(baselineSource, mount.source, mount.target)
+        ? await gitWorkingTreeDiff(mount.source, mount.target, artifactExcludePaths)
+        : await directoryDiff(baselineSource, mount.source, mount.target, artifactExcludePaths)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await writeFile(join(artifactRoot, artifactPath), "")
@@ -156,12 +158,23 @@ async function captureMountedDirectory(
   directory: string,
   relativeDirectory: string,
   redactor: ArtifactRedactor,
+  artifactExcludePaths: string[] = [],
 ): Promise<void> {
   const entries = await readdir(directory, { withFileTypes: true })
 
   for (const entry of entries) {
     const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
     const sourcePath = join(directory, entry.name)
+    if (relativePathExcluded(relativePath, artifactExcludePaths)) {
+      captured.skipped.push({
+        mountIndex,
+        source: sourcePath,
+        target: mountTargetPath(mount, relativePath),
+        relativePath,
+        reason: "artifact-excluded",
+      })
+      continue
+    }
 
     if (entry.isDirectory()) {
       if (SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
@@ -175,12 +188,12 @@ async function captureMountedDirectory(
         continue
       }
 
-      await captureMountedDirectory(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor)
+      await captureMountedDirectory(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor, artifactExcludePaths)
       continue
     }
 
     if (entry.isFile()) {
-      await captureMountedFile(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor)
+      await captureMountedFile(filesDirectory, captured, mount, mountIndex, sourcePath, relativePath, redactor, artifactExcludePaths)
     }
   }
 }
@@ -193,8 +206,13 @@ async function captureMountedFile(
   sourcePath: string,
   relativePath: string,
   redactor: ArtifactRedactor,
+  artifactExcludePaths: string[] = [],
 ): Promise<void> {
   const target = mount.type === "file" ? mount.target : mountTargetPath(mount, relativePath)
+  if (relativePathExcluded(relativePath, artifactExcludePaths)) {
+    captured.skipped.push({ mountIndex, source: sourcePath, target, relativePath, reason: "artifact-excluded" })
+    return
+  }
 
   if (captured.files.length >= MAX_CAPTURED_MOUNT_FILES) {
     captured.skipped.push({ mountIndex, source: sourcePath, target, relativePath, reason: "max-files-exceeded" })
@@ -235,4 +253,32 @@ async function captureMountedFile(
     replayable,
     ...(replayable ? { replayContents: artifactContents as string } : {}),
   })
+}
+
+function mountArtifactExcludePaths(mount: MountSpec): string[] {
+  const value = mount.metadata?.artifactExcludePaths
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.map((item) => String(item).trim()).filter((item) => item.length > 0)
+}
+
+function relativePathExcluded(relativePath: string, excludePaths: string[]): boolean {
+  const normalized = relativePath.replace(/^\/+/, "")
+  return excludePaths.some((pattern) => excludePathMatches(normalized, pattern))
+}
+
+function excludePathMatches(relativePath: string, pattern: string): boolean {
+  const normalizedPattern = pattern.replace(/^\/+/, "").replace(/\/+$/, "")
+  if (!normalizedPattern) {
+    return false
+  }
+
+  if (normalizedPattern.endsWith("/**")) {
+    const prefix = normalizedPattern.slice(0, -3).replace(/\/+$/, "")
+    return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
+  }
+
+  return relativePath === normalizedPattern || relativePath.startsWith(`${normalizedPattern}/`)
 }

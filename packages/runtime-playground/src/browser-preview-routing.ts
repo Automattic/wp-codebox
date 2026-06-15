@@ -236,6 +236,9 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
 
 async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<void> {
   const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, routedHosts, localOrigin)
+  if (!response) {
+    return
+  }
   await route.fulfill({ response })
 }
 
@@ -273,7 +276,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>>> {
+async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
   let currentUrl = requestUrl
   for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
     const routedUrl = new URL(currentUrl.toString())
@@ -281,17 +284,27 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
     routedUrl.hostname = localOrigin.hostname
     routedUrl.port = localOrigin.port
 
-    const response = await route.fetch({
-      url: routedUrl.toString(),
-      headers: {
-        ...route.request().headers(),
-        host: currentUrl.host,
-        "x-forwarded-host": currentUrl.host,
-        "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
-        "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
-      },
-      maxRedirects: 0,
-    })
+    let response: Awaited<ReturnType<Route["fetch"]>>
+    try {
+      response = await route.fetch({
+        url: routedUrl.toString(),
+        headers: {
+          ...route.request().headers(),
+          host: currentUrl.host,
+          "x-forwarded-host": currentUrl.host,
+          "x-forwarded-port": currentUrl.port || (currentUrl.protocol === "https:" ? "443" : "80"),
+          "x-forwarded-proto": currentUrl.protocol.replace(":", ""),
+        },
+        maxRedirects: 0,
+      })
+    } catch (error) {
+      if (!isBrowserPreviewRouteFetchRequestContextDisposedError(error)) {
+        throw error
+      }
+
+      await route.abort("failed").catch(() => undefined)
+      return undefined
+    }
 
     const location = response.headers().location
     if (!location || response.status() < 300 || response.status() >= 400) {
@@ -307,6 +320,10 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
   }
 
   throw new Error(`wordpress.browser-probe route-host exceeded redirect limit for ${requestUrl.href}`)
+}
+
+export function isBrowserPreviewRouteFetchRequestContextDisposedError(error: unknown): boolean {
+  return error instanceof Error && /\broute\.fetch:\s*Request context disposed\.?/i.test(error.message)
 }
 
 function urlProtocol(url: string): string | undefined {

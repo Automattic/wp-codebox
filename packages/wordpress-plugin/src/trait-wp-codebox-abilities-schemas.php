@@ -552,6 +552,9 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'mounts'                 => $mount_schema,
 		'workspaces'             => self::object_array_property_schema( $detailed ? 'Recipe workspace entries to seed as policy-checked writable repositories.' : '' ),
 		'runtime_stack_mounts'   => self::object_array_property_schema( $detailed ? 'Runtime stack mounts to pass through to recipe.runtime.stack.mounts.' : '' ),
+		'runtime_state_mounts'   => self::object_array_property_schema( $detailed ? 'Generic provider/runtime config or state files/directories mounted before provider plugins and runtime code load.' : '' ),
+		'runtime_config_mounts'  => self::object_array_property_schema( $detailed ? 'Generic provider/runtime config files/directories mounted before provider plugins and runtime code load.' : '' ),
+		'runtime_env'            => self::object_property_schema( $detailed ? 'Non-secret runtime environment values exposed to sandbox PHP before WordPress and provider plugins load. Secret values must use secret_env.' : '' ),
 		'runtime_overlays'       => self::object_array_property_schema( $detailed ? 'Runtime overlays to pass through to recipe.runtime.overlays.' : '' ),
 		'inherit'                => $inherit_schema,
 		'sandbox_session_id'     => $session_input['sandbox_session_id'],
@@ -751,6 +754,18 @@ private static function browser_runtime_input_schema(): array {
 			'mu_plugins' => array( 'type' => 'array' ),
 			'themes'     => array( 'type' => 'array' ),
 			'bootstrap'  => array( 'type' => 'array' ),
+			'prepared'   => array(
+				'type'        => 'object',
+				'description' => 'Optional prepared browser runtime cache contract. When enabled, WP Codebox keys the compiled browser-ready blueprint by a source digest and reuses matching cached artifacts on repeated known-site opens.',
+				'properties'  => array(
+					'enabled'    => array( 'type' => 'boolean' ),
+					'cache'      => array( 'type' => 'boolean' ),
+					'cache_key'  => array( 'type' => 'string' ),
+					'input_hash' => array( 'type' => 'string' ),
+					'blueprint'  => array( 'type' => 'object' ),
+				),
+			),
+			'prepared_runtime' => array( 'type' => 'object' ),
 		),
 	);
 }

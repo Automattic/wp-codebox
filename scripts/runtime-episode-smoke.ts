@@ -26,7 +26,25 @@ try {
     {
       runtime: {
         backend: "wordpress-playground",
-        environment: { kind: "wordpress", name: "episode-smoke", version: "7.0", blueprint: { steps: [] } },
+        environment: {
+          kind: "wordpress",
+          name: "episode-smoke",
+          version: "7.0",
+          blueprint: {
+            steps: [
+              {
+                step: "setSiteOptions",
+                options: {
+                  active_plugins: [
+                    "agents-api/agents-api.php",
+                    "data-machine/data-machine.php",
+                    "wp-codebox/wp-codebox.php",
+                  ],
+                },
+              },
+            ],
+          },
+        },
         policy: {
           network: "deny",
           filesystem: "readwrite-mounts",
@@ -194,8 +212,22 @@ try {
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === usersArtifactPath && file.kind === "wordpress-state-section"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-reference-manifest.json" && file.kind === "runtime-reference-manifest"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-replay-index.json" && file.kind === "runtime-replay-index"))
+    const blueprintAfterManifestFile = manifest.files.find((file: { path: string; sha256: { value: string }; viewer?: any }) => file.path === "blueprint.after.json")
+    assert.equal(blueprintAfterManifestFile?.viewer?.kind, "wordpress-playground-blueprint")
+    assert.equal(blueprintAfterManifestFile?.viewer?.query?.parameter, "blueprint-url")
+    assert.equal(blueprintAfterManifestFile?.viewer?.replay?.status, "replayable-runtime-state")
     const snapshotBundleEntry = manifest.files.find((file: { path: string; kind: string }) => file.path.startsWith("files/runtime-snapshots/") && file.kind === "runtime-snapshot-bundle")
     assert.ok(snapshotBundleEntry, "runtime snapshot bundle should be listed in manifest")
+    const partialBlueprintEntry = manifest.files.find((file: { path: string; kind: string }) => file.path === "files/blueprint.after.partial.json" && file.kind === "blueprint-after-diagnostic")
+    assert.ok(partialBlueprintEntry, "partial runtime diagnostic blueprint should be retained separately")
+    const blueprintAfter = JSON.parse(await readFile(artifacts.blueprintAfterPath, "utf8"))
+    assert.equal(blueprintAfter.steps[0].step, "runPHP")
+    assert.match(blueprintAfter.steps[0].code, /wp-codebox\/wordpress-runtime-snapshot\/v1/)
+    assert.match(blueprintAfter.steps[0].code, /Episode Smoke/)
+    assert.equal(JSON.stringify(blueprintAfter).includes("setSiteOptions"), false)
+    assert.equal(JSON.stringify(blueprintAfter).includes("agents-api/agents-api.php"), false)
+    const partialBlueprintAfter = JSON.parse(await readFile(join(artifacts.directory, "files/blueprint.after.partial.json"), "utf8"))
+    assert.equal(partialBlueprintAfter.steps.some((step: { step?: string }) => step.step === "setSiteOptions"), true)
 
     const usersArtifact = JSON.parse(await readFile(join(artifacts.directory, usersArtifactPath), "utf8")) as { schema?: string; version?: number; section?: string; data?: Array<Record<string, unknown>> }
     assert.equal(usersArtifact.schema, "wp-codebox/wordpress-state-section/v1")
@@ -218,6 +250,14 @@ try {
     assert.equal(replayIndex.references.trace.path, "files/runtime-episode-trace.json")
     assert.equal(replayIndex.references.events.path, "files/runtime-episode.jsonl")
     assert.equal(replayIndex.references.runtimeReferenceManifest.path, "files/runtime-reference-manifest.json")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.kind, "wordpress-playground-blueprint")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.source, "public-artifact-url")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.path, "blueprint.after.json")
+    assert.equal(replayIndex.references.blueprintAfter.viewer.replay.status, "replayable-runtime-state")
+    if (replayIndex.references.blueprintAfter.viewer.query.value.kind) {
+      assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.kind, "blueprint-after")
+      assert.equal(replayIndex.references.blueprintAfter.viewer.query.value.sha256.value, blueprintAfterManifestFile?.sha256.value)
+    }
     assert.equal(replayIndex.references.observations.path, "observations.jsonl")
     assert.equal(replayIndex.actions.length, 3)
     assert.equal(replayIndex.observations.some((observation: { type: string }) => observation.type === "runtime-info"), true)
@@ -233,6 +273,7 @@ try {
     assert.equal(referenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
     assert.equal(referenceManifest.trace.path, "files/runtime-episode-trace.json")
     assert.equal(referenceManifest.events.path, "files/runtime-episode.jsonl")
+    assert.deepEqual(referenceManifest.files.find((file: { path: string }) => file.path === "blueprint.after.json")?.viewer, blueprintAfterManifestFile?.viewer)
     assert.equal(referenceManifest.snapshots.length, 1)
     assert.equal(referenceManifest.snapshots[0].id, snapshot.id)
     assert.equal(referenceManifest.snapshots[0].semantics, "runtime-state-artifact")

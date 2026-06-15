@@ -103,6 +103,16 @@ try {
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-replay-index.json" && file.kind === "runtime-replay-index"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/preview-evidence.json" && file.kind === "preview-evidence"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-evidence/run-attestation.json" && file.kind === "run-attestation"))
+  const blueprintAfterManifestFile = manifestFile(manifest, "blueprint.after.json")
+  assert.equal(blueprintAfterManifestFile.viewer.kind, "wordpress-playground-blueprint")
+  assert.equal(blueprintAfterManifestFile.viewer.base, "https://playground.wordpress.net/")
+  assert.equal(blueprintAfterManifestFile.viewer.query.parameter, "blueprint-url")
+  assert.equal(blueprintAfterManifestFile.viewer.query.value.source, "public-artifact-url")
+  assert.equal(blueprintAfterManifestFile.viewer.query.value.path, "blueprint.after.json")
+  assert.equal(blueprintAfterManifestFile.viewer.query.encoding, "url")
+  assert.equal(blueprintAfterManifestFile.viewer.replay.status, "partial")
+  assert.ok(blueprintAfterManifestFile.viewer.replay.limitations.some((limitation: string) => limitation.includes("does not host public artifact URLs")))
+  assert.deepEqual(artifacts.blueprintAfterViewer, blueprintAfterManifestFile.viewer)
   const runtimeEvidence = metadata.artifacts.runtimeEvidence
   assert.match(runtimeEvidence["run-attestation"].sha256, /^[a-f0-9]{64}$/)
   assert.deepEqual(metadata.artifacts, {
@@ -245,6 +255,14 @@ try {
   assert.equal(runtimeReplayReferenceIndex.digest.value, runtimeReplayReferenceIndexDigest(runtimeReplayReferenceIndex).value)
   assert.equal(runtimeReplayReferenceIndex.id, `runtime-replay-reference-index-sha256-${runtimeReplayReferenceIndex.digest.value}`)
   assert.equal(runtimeReplayReferenceIndex.references.runtimeReferenceManifest.path, "files/runtime-reference-manifest.json")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.kind, "wordpress-playground-blueprint")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.parameter, "blueprint-url")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.source, "public-artifact-url")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.path, "blueprint.after.json")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.kind, "blueprint-after")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.contentType, "application/json")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.sha256.value, blueprintAfterManifestFile.sha256.value)
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.replay.status, "partial")
   assert.equal(runtimeReplayReferenceIndex.references.changedFiles.path, "files/changed-files.json")
   assert.equal(runtimeReplayReferenceIndex.references.patch.path, "files/patch.diff")
   assert.equal(runtimeReplayReferenceIndex.replay.status, "partial")
@@ -256,6 +274,15 @@ try {
   assert.equal(runtimeReferenceManifest.artifactBundle.digest.value, artifacts.contentDigest)
   assert.equal(runtimeReferenceManifest.digest.value, runtimeReferenceManifestDigest(runtimeReferenceManifest).value)
   assert.equal(runtimeReferenceManifest.id, `runtime-reference-manifest-sha256-${runtimeReferenceManifest.digest.value}`)
+  const runtimeReferenceManifestBlueprintViewer = runtimeReferenceManifest.files.find((file: { path: string }) => file.path === "blueprint.after.json")?.viewer
+  assert.equal(runtimeReferenceManifestBlueprintViewer.kind, "wordpress-playground-blueprint")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.parameter, "blueprint-url")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.source, "public-artifact-url")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.path, "blueprint.after.json")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.kind, "blueprint-after")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.contentType, "application/json")
+  assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.sha256.value, blueprintAfterManifestFile.sha256.value)
+  assert.equal(runtimeReferenceManifestBlueprintViewer.replay.status, "partial")
   assert.equal(runtimeReferenceManifest.snapshots.length, 0)
   assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/runtime-reference-index.json"))
   assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/changed-files.json"))
@@ -516,7 +543,7 @@ try {
   await rm(artifactsDirectory, { recursive: true, force: true })
 }
 
-function manifestFile(manifest: { files: Array<{ path: string; sha256: { value: string } }> }, path: string): { sha256: { value: string } } {
+function manifestFile(manifest: { files: Array<{ path: string; sha256: { value: string }; viewer?: any }> }, path: string): { sha256: { value: string }; viewer?: any } {
   const file = manifest.files.find((entry) => entry.path === path)
   assert.ok(file, `Expected manifest file ${path}`)
   return file

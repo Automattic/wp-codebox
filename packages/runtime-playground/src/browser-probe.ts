@@ -20,11 +20,18 @@ export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
   state.checkpoints = state.checkpoints || [];
   state.longTasks = state.longTasks || [];
   globalThis.__wpCodeboxProbeCheckpoint = (name, metadata = {}) => {
-    state.checkpoints.push({
+    const checkpoint = {
       name: String(name || ''),
       metadata,
       timestamp: new Date().toISOString(),
-    });
+    };
+    state.checkpoints.push(checkpoint);
+    try {
+      const sink = globalThis.__wpCodeboxProbeCheckpointEvent;
+      if (typeof sink === 'function') {
+        void sink(checkpoint);
+      }
+    } catch {}
   };
   globalThis.__wpCodeboxProbeFail = (message, details = undefined) => {
     state.terminalFailure = {
@@ -205,24 +212,24 @@ function now(): string {
   return new Date().toISOString()
 }
 
-export async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number): Promise<void> {
+export async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number, navigationTimeoutMs = 30_000): Promise<void> {
   if (["domcontentloaded", "load", "networkidle"].includes(waitFor)) {
-    await page.goto(url, { waitUntil: waitFor as "domcontentloaded" | "load" | "networkidle", timeout: 30_000 })
+    await page.goto(url, { waitUntil: waitFor as "domcontentloaded" | "load" | "networkidle", timeout: navigationTimeoutMs })
     return
   }
 
   if (waitFor.startsWith("selector:")) {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs })
     const selector = waitFor.slice("selector:".length).trim()
     if (!selector) {
       throw new Error("wordpress.browser-probe wait-for=selector:<selector> requires a selector")
     }
-    await page.locator(selector).first().waitFor({ timeout: 30_000 })
+    await page.locator(selector).first().waitFor({ timeout: navigationTimeoutMs })
     return
   }
 
   if (waitFor === "duration") {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs })
     await page.waitForTimeout(durationMs > 0 ? durationMs : 1000)
     return
   }

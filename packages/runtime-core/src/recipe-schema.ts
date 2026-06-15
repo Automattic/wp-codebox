@@ -68,6 +68,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Typed local dependency overlays mounted into a consumer plugin before setup, activation, and workflow steps.",
             items: { $ref: "#/$defs/dependencyOverlay" },
           },
+          runtimeEnv: {
+            type: "object",
+            description: "Non-secret runtime environment values exposed to sandbox PHP before WordPress and provider plugins load. Secret values must use secretEnv.",
+            additionalProperties: { type: "string" },
+          },
           secretEnv: {
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },

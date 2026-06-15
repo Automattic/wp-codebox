@@ -79,6 +79,8 @@ class PlaygroundRuntime implements Runtime {
   private readonly artifactRoot: string
   private readonly hostTools?: HostToolRegistry
   private cliServerPromise?: Promise<PlaygroundCliServer>
+  private readonly activeExecutionAbortControllers = new Set<AbortController>()
+  private activeExecutionSignal?: AbortSignal
 
   private constructor(private readonly spec: RuntimeCreateSpec, private readonly backendOptions: PlaygroundRuntimeBackendOptions = {}) {
     this.artifactRoot = resolve(spec.artifactsDirectory ?? "artifacts", this.runtimeId)
@@ -168,6 +170,9 @@ class PlaygroundRuntime implements Runtime {
       cwd: spec.cwd ?? null,
       timeoutMs: spec.timeoutMs ?? null,
     })
+    const abortController = new AbortController()
+    this.activeExecutionAbortControllers.add(abortController)
+    this.activeExecutionSignal = abortController.signal
     try {
       const result: ExecutionResult = {
         id: commandId,
@@ -210,6 +215,11 @@ class PlaygroundRuntime implements Runtime {
         finishedAt: result.finishedAt,
       })
       throw error
+    } finally {
+      this.activeExecutionAbortControllers.delete(abortController)
+      if (this.activeExecutionSignal === abortController.signal) {
+        this.activeExecutionSignal = undefined
+      }
     }
   }
 
@@ -297,7 +307,7 @@ class PlaygroundRuntime implements Runtime {
 
   private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string): Promise<RuntimeSnapshotArtifact> {
     const response = await this.runPlaygroundCommand("runtime.snapshot", await this.bootPlayground(), {
-      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp(), []),
+      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp({ excludedWpContentPaths: this.snapshotExcludedWpContentPaths() }), []),
     })
     assertPlaygroundResponseOk("runtime.snapshot", response)
     const captured = JSON.parse(response.text || "{}") as Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
@@ -323,6 +333,17 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
+  private snapshotExcludedWpContentPaths(): string[] {
+    return this.mounts.flatMap((mount) => {
+      if (mount.mode !== "readonly") {
+        return []
+      }
+
+      const relativePath = wpContentRelativePath(mount.target)
+      return relativePath ? [relativePath] : []
+    })
+  }
+
   private async restoreSnapshotPayload(payload: RuntimeSnapshotArtifact): Promise<void> {
     const runtime = await this.info()
     if (runtime.backend !== payload.compatibility.backend) {
@@ -336,7 +357,7 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async collectArtifacts(spec: ArtifactSpec = {}): Promise<ArtifactBundle> {
-    if (this.cliServerPromise) {
+    if (this.status !== "destroyed" && this.cliServerPromise) {
       const materialization = await materializePlaygroundMountsFromVfs(await this.cliServerPromise, this.mounts)
       if (materialization.materialized > 0 || materialization.deleted > 0 || materialization.skipped > 0) {
         this.recordEvent("runtime.mounts.materialized", { ...materialization })
@@ -373,6 +394,9 @@ class PlaygroundRuntime implements Runtime {
     }
 
     this.status = "destroyed"
+    for (const controller of this.activeExecutionAbortControllers) {
+      controller.abort()
+    }
     try {
       const cliServer = await this.cliServerPromise
       await cliServer?.[Symbol.asyncDispose]()
@@ -437,7 +461,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
     try {
-      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+      result = await runBrowserProbeCommand({ abortSignal: this.activeExecutionSignal, artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -450,7 +474,15 @@ class PlaygroundRuntime implements Runtime {
 
   async runHtmlCapture(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+    let result: Awaited<ReturnType<typeof runHtmlCaptureCommand>>
+    try {
+      result = await runHtmlCaptureCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+    } catch (error) {
+      if (isBrowserCommandArtifactError(error)) {
+        this.browserProbes.push(error.artifact)
+      }
+      throw error
+    }
     this.browserProbes.push(result.artifact)
     return result.output
   }
@@ -474,7 +506,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserActionsCommand>>
     try {
-      result = await runBrowserActionsCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec })
+      result = await runBrowserActionsCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -584,6 +616,32 @@ class PlaygroundRuntime implements Runtime {
     return cleanWpCliOutput(response.text)
   }
 
+  async runCaptureStateBundle(spec: ExecutionSpec): Promise<string> {
+    const label = stringArg(spec.args ?? [], "label")
+    const snapshot = await this.snapshot()
+    const summary = snapshot.metadata.summary && typeof snapshot.metadata.summary === "object" && !Array.isArray(snapshot.metadata.summary)
+      ? snapshot.metadata.summary as Record<string, unknown>
+      : {}
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-state-bundle-capture/v1",
+      status: "captured",
+      replayStatus: "replayable-runtime-state",
+      ...(label ? { label } : {}),
+      snapshot: {
+        id: snapshot.id,
+        createdAt: snapshot.createdAt,
+        semantics: snapshot.semantics,
+        digest: snapshot.digest,
+        artifactRefs: snapshot.artifactRefs ?? [],
+      },
+      summary: {
+        databaseTables: summary.databaseTables ?? 0,
+        wpContentFiles: summary.wpContentFiles ?? 0,
+      },
+    }, null, 2)}\n`
+  }
+
   async runPluginCheck(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const result = await runPluginCheckCommand({
@@ -689,7 +747,7 @@ class PlaygroundRuntime implements Runtime {
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
     try {
-      return await server.playground.run(options)
+      return await abortable(server.playground.run(options), this.activeExecutionSignal)
     } catch (error) {
       throw new PlaygroundCommandCrashError(command, error)
     }
@@ -811,4 +869,39 @@ export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackend
 
 function sha256(contents: Buffer): string {
   return createHash("sha256").update(contents).digest("hex")
+}
+
+function stringArg(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  const value = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length).trim()
+  return value && value.length > 0 ? value : undefined
+}
+
+function wpContentRelativePath(path: string): string | undefined {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/g, "")
+  const marker = "/wp-content/"
+  const index = normalized.indexOf(marker)
+  if (index < 0) {
+    return undefined
+  }
+
+  const relative = normalized.slice(index + marker.length).replace(/^\/+|\/+$/g, "")
+  return relative.length > 0 && !relative.includes("..") ? relative : undefined
+}
+
+function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) {
+    return operation
+  }
+  operation.catch(() => undefined)
+  if (signal.aborted) {
+    return Promise.reject(new Error("Runtime execution was aborted during cleanup"))
+  }
+
+  return Promise.race([
+    operation,
+    new Promise<T>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Runtime execution was aborted during cleanup")), { once: true })
+    }),
+  ])
 }

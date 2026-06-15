@@ -11,6 +11,10 @@ const rootPackage = JSON.parse(await readFile(resolve(repoRoot, "package.json"),
   bin?: Record<string, string>
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
+  exports?: Record<string, { types?: string; import?: string }>
+}
+const corePackage = JSON.parse(await readFile(resolve(repoRoot, "packages", "runtime-core", "package.json"), "utf8")) as {
+  exports?: Record<string, { types?: string; import?: string }>
 }
 
 assert.ok(
@@ -30,6 +34,14 @@ const { stdout: packStdout } = await execFileAsync(
 const [pack] = JSON.parse(packStdout) as Array<{ files: Array<{ path: string }>; entryCount: number }>
 const packedFiles = new Set(pack.files.map((file) => file.path))
 
+const { stdout: corePackStdout } = await execFileAsync(
+  "npm",
+  ["pack", "--workspace", "@automattic/wp-codebox-core", "--dry-run", "--json"],
+  { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 },
+)
+const [corePack] = JSON.parse(corePackStdout) as Array<{ files: Array<{ path: string }> }>
+const corePackedFiles = new Set(corePack.files.map((file) => file.path))
+
 const { stdout: rootPackStdout } = await execFileAsync(
   "npm",
   ["pack", "--dry-run", "--json"],
@@ -44,9 +56,21 @@ assert.ok(packedFiles.has("dist/index.js"), "CLI package should include compiled
 assert.ok(packedFiles.has("dist/index.d.ts"), "CLI package should include generated types")
 assert.equal(packedFiles.has("src/index.ts"), false, "CLI package should not ship TypeScript source")
 assert.ok(pack.entryCount >= 4, "CLI package should contain expected publish files")
+assert.deepEqual(
+  corePackage.exports?.["./recipe-builders"],
+  { types: "./dist/recipe-builders.d.ts", import: "./dist/recipe-builders.js" },
+  "Core package should expose a stable recipe-builder subpath",
+)
+assert.ok(corePackedFiles.has("dist/recipe-builders.js"), "Core package should ship compiled recipe-builder entrypoint")
+assert.ok(corePackedFiles.has("dist/recipe-builders.d.ts"), "Core package should ship recipe-builder types")
 assert.ok(
   rootPackedFiles.has("scripts/normalize-playground-sqlite-package.mjs"),
   "Root package should ship the Playground SQLite package normalizer for clean installs",
+)
+assert.deepEqual(
+  rootPackage.exports?.["./recipe-builders"],
+  { types: "./packages/runtime-core/dist/recipe-builders.d.ts", import: "./packages/runtime-core/dist/recipe-builders.js" },
+  "Root release package should expose the stable recipe-builder subpath",
 )
 assert.equal(
   rootPackage.bin?.["wp-codebox"],
@@ -54,6 +78,8 @@ assert.equal(
   "Root release tarball should install the stable wp-codebox binary",
 )
 assert.ok(rootPackedFiles.has("packages/cli/dist/index.js"), "Root package should ship the compiled CLI binary target")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/recipe-builders.js"), "Root package should ship compiled recipe builders")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/recipe-builders.d.ts"), "Root package should ship recipe-builder types")
 
 await execFileAsync("npm", ["run", "package:wordpress-plugin"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 const pluginZip = resolve(repoRoot, "packages", "wordpress-plugin", "dist", "wp-codebox.zip")

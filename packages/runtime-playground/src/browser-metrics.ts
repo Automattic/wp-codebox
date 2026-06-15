@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { ArtifactManifest } from "@automattic/wp-codebox-core"
@@ -546,6 +547,7 @@ export async function serializeBrowserResponse(response: Response, timestamp = n
   const request = response.request()
   const sizes = await browserRequestSizes(request)
   const transferSize = sizes ? sizes.responseHeadersSize + sizes.responseBodySize : undefined
+  const responseTextPreview = await browserDocument5xxResponsePreview(response)
   return {
     type: "response",
     url: response.url(),
@@ -561,7 +563,54 @@ export async function serializeBrowserResponse(response: Response, timestamp = n
     ...(sizes ? { bodySize: sizes.responseBodySize } : {}),
     ...(sizes ? { requestBodySize: sizes.requestBodySize } : {}),
     ...(sizes ? { responseBodySize: sizes.responseBodySize } : {}),
+    ...responseTextPreview,
     timestamp,
+  }
+}
+
+async function browserDocument5xxResponsePreview(response: Response): Promise<Pick<BrowserProbeNetworkRecord, "responseTextPreview" | "responseTextSha256" | "responseTextTruncated">> {
+  if (response.request().resourceType() !== "document" || response.status() < 500 || response.status() >= 600) {
+    return {}
+  }
+
+  const contentType = response.headers()["content-type"] ?? ""
+  if (contentType && !/\b(?:html|json|javascript|text|xml)\b/i.test(contentType)) {
+    return {}
+  }
+
+  let body = ""
+  try {
+    body = await response.text()
+  } catch {
+    return {}
+  }
+
+  const maxPreviewLength = 4096
+  const sanitized = redactBrowserResponseText(body)
+  const preview = sanitized.length > maxPreviewLength ? sanitized.slice(0, maxPreviewLength) : sanitized
+
+  return {
+    responseTextPreview: preview,
+    responseTextSha256: createHash("sha256").update(sanitized).digest("hex"),
+    responseTextTruncated: preview !== sanitized,
+  }
+}
+
+function redactBrowserResponseText(body: string): string {
+  return body
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => redactBrowserUrlQueryValues(match))
+    .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, "$1=[redacted]")
+    .replace(/((?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)["'\s:=]+)[^\s"'<>]+/gi, "$1[redacted]")
+}
+
+function redactBrowserUrlQueryValues(value: string): string {
+  try {
+    const url = new URL(value)
+    const queryKeys = [...new Set([...url.searchParams.keys()])].sort()
+    const query = queryKeys.length > 0 ? `?${queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}` : ""
+    return `${url.origin}${url.pathname}${query}${url.hash ? "#[redacted]" : ""}`
+  } catch {
+    return value
   }
 }
 

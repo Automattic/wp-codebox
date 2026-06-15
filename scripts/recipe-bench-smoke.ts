@@ -51,13 +51,20 @@ writeFileSync(recipePath, `${JSON.stringify({
           `env-json=${JSON.stringify({ BENCH_FIXTURE_ENV: "13" })}`,
           `workloads-json=${JSON.stringify([
             {
+              id: "noop",
+              source: "external",
+              overridesDiscovered: true,
+              run: [{ type: "php", file: "tests/bench/noop.php" }],
+              metadata: { kind: "external" },
+            },
+            {
               id: "configured-env",
               run: [
                 { type: "wp-cli", command: "wp option update wp_codebox_bench_wp_cli yes", parse: "json" },
                 { type: "rest-request", method: "GET", path: "/wp/v2/types", "metric-prefix": "rest_types" },
                 {
                   type: "php",
-                  code: "return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0, 'lifecycle_setup_visible' => get_option('wp_codebox_bench_lifecycle_setup') === 'yes' ? 1 : 0, 'lifecycle_prepare_visible' => get_option('wp_codebox_bench_lifecycle_prepare') === 'yes' ? 1 : 0, 'cache_was_empty' => wp_cache_get('wp_codebox_bench_cache_flag', 'wp-codebox-bench') === false ? (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 1 : 1) : (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 0 : 0)), 'metadata' => array('kind' => 'configured'));",
+                  code: "print '<br />\\n<b>Warning</b>: Fixture warning before bench JSON in <b>/tmp/wp-codebox-warning-fixture.php</b> on line <b>1</b><br />\\n'; return array('metrics' => array('env_value' => (int) getenv('BENCH_FIXTURE_ENV'), 'define_visible' => defined('BENCH_FIXTURE_DEFINE') && BENCH_FIXTURE_DEFINE === 'defined-value' ? 1 : 0, 'wp_cli_option_visible' => get_option('wp_codebox_bench_wp_cli') === 'yes' ? 1 : 0, 'lifecycle_setup_visible' => get_option('wp_codebox_bench_lifecycle_setup') === 'yes' ? 1 : 0, 'lifecycle_prepare_visible' => get_option('wp_codebox_bench_lifecycle_prepare') === 'yes' ? 1 : 0, 'cache_was_empty' => wp_cache_get('wp_codebox_bench_cache_flag', 'wp-codebox-bench') === false ? (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 1 : 1) : (wp_cache_set('wp_codebox_bench_cache_flag', 'set', 'wp-codebox-bench') ? 0 : 0)), 'metadata' => array('kind' => 'configured'));",
                 },
               ],
               artifacts: { report: { path: "workloads/report.json", kind: "json" } },
@@ -99,18 +106,23 @@ assert.deepEqual(output.benchResults.lifecycle.diagnostics, [])
 assert.equal(output.benchResults.reset_policy.betweenIterations, "object-cache")
 assert.equal(output.benchResults.reset_policy.betweenScenarios, "none")
 assert.equal(output.benchResults.scenarios.length, 2)
-assert.equal(output.benchResults.diagnostics.length, 0)
+assert.equal(output.benchResults.diagnostics.length, 1)
 assert.equal(output.benchResults.provenance.command, "wordpress.bench")
 assert.equal(output.benchResults.provenance.definition.schema, "wp-codebox/benchmark-definition/v1")
+const benchOutputPrefixDiagnostic = output.benchResults.diagnostics.find((diagnostic: { code?: string }) => diagnostic.code === "bench-output-prefix")
+assert.ok(benchOutputPrefixDiagnostic, "warning-like stdout before bench JSON should be captured as a bench diagnostic")
+assert.match(benchOutputPrefixDiagnostic.details.output, /Fixture warning before bench JSON/)
+assert.match(output.executions.at(-1).stdout, /^<br \/>/)
 
 const scenario = output.benchResults.scenarios[0]
 assert.equal(scenario.id, "noop")
-assert.equal(scenario.file, "tests/bench/noop.php")
+assert.equal(scenario.source, "external")
+assert.equal(scenario.file, undefined)
 assert.equal(scenario.iterations, 2)
 assert.equal(scenario.metrics.duration.unit, "ms")
 assert.equal(scenario.metrics.duration.samples.count, 2)
 assert.equal(scenario.diagnostics.length, 0)
-assert.equal(scenario.provenance.workload_file, "tests/bench/noop.php")
+assert.equal(scenario.provenance.workload_index, 0)
 assert.equal(scenario.metrics.fixture_value.samples.mean, 7)
 assert.equal(scenario.metrics.rest_route_visible.samples.mean, 1)
 assert.equal(scenario.metrics.included_before_plugins_loaded.samples.mean, 1)
@@ -126,6 +138,7 @@ assert.equal(scenario.metrics.dependency_init_callback_count.samples.mean, 1)
 assert.equal(scenario.metrics.duration.samples.values.length, 2)
 assert.deepEqual(scenario.metrics.fixture_value.samples.values, [7, 7])
 assert.equal(scenario.metrics.fixture_value.samples.standard_deviation, 0)
+assert.equal(scenario.metadata.kind, "external")
 assert.equal(scenario.metadata.fixture, "bench-plugin")
 const configured = output.benchResults.scenarios[1]
 assert.equal(configured.id, "configured-env")

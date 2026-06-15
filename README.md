@@ -1066,8 +1066,9 @@ Current bundles include:
 
 - `manifest.json`: artifact index with content types and the content digest used for the bundle id.
 - `metadata.json`: runtime, policy, mounts, and caller metadata.
-- `blueprint.after.json`: partial WordPress Playground replay blueprint for captured text files.
-- `blueprint.after-notes.json`: replay limitations and next capture targets.
+- `blueprint.after.json`: WordPress Playground replay blueprint. When a runtime-state snapshot is available, this restores the generated WordPress database, active theme/plugin state, and captured `wp-content` files. Otherwise it falls back to a partial write-file replay for captured text files.
+- `blueprint.after-notes.json`: replay status, captured state summary, limitations, and diagnostic pointers.
+- `files/blueprint.after.partial.json`: diagnostic partial write-file replay retained when `blueprint.after.json` is backed by a runtime-state snapshot.
 - `events.jsonl`, `commands.jsonl`, `observations.jsonl`: runtime evidence streams.
 - `logs/runtime.log`, `logs/commands.log`: human-readable logs.
 - `files/mounts.json`: mounted input list.
@@ -1310,22 +1311,9 @@ WP Codebox normalizes the task input, writes the private temporary recipe, runs 
 
 Failed `agent-task-run` responses also include `failure_evidence` with `schema: "wp-codebox/agent-task-run-failure-evidence/v1"`. This block is intentionally safe for parent orchestrators to persist alongside their own task failure record. It includes the best available `phase`, `command`, `exit_code`, message, stdout/stderr snippets, runtime and sandbox identifiers, artifact directory or bundle identifiers, recipe-run status/run ID, diagnostics, phase evidence, and the serialized error. If recipe-run fails before normal runtime artifacts exist or returns malformed output, `agent-task-run` still emits this fallback evidence block in the CLI JSON payload and references it from `evidence_refs` with kind `codebox-agent-task-failure-evidence`.
 
-`runtime_overlay_profiles` is a convenience layer for reusable runtime stack examples. The raw primitives remain `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`; profiles only expand those fields before the private recipe is written.
+Provider stacks are assembled from generic primitives: `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`. A provider plugin path may point at any prepared checkout; when the checkout has a Composer package name, WP Codebox uses the package basename as the mounted plugin slug so branch/worktree directory names do not become WordPress plugin identities.
 
-The built-in `codex-subscription` profile is an example of packaging a provider plugin plus a scoped bundled-library overlay for subscription-backed model access. It expands to:
-
-- `provider_plugin_paths`: the OpenAI/Codex provider plugin checkout from `WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH`
-- `runtime_overlays`: a `php-ai-client` bundled-library overlay from `WP_CODEBOX_PHP_AI_CLIENT_PATH` using `strategy: "wordpress-scoped-bundle"`
-
-Prepare the profile checkouts before running it:
-
-```bash
-export WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH=/path/to/ai-provider-for-openai
-export WP_CODEBOX_PHP_AI_CLIENT_PATH=/path/to/php-ai-client
-composer install --working-dir "$WP_CODEBOX_PHP_AI_CLIENT_PATH"
-```
-
-Callers can skip the profile and pass the expanded fields directly when they own a different provider/library stack. Parent orchestrators select profiles through the generic `runtime_overlay_profiles` field; WP Codebox still owns only recipe expansion, sandbox lifecycle, and artifact capture.
+Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. The cookbook recipe at `examples/recipes/cookbook/codex-agent-smoke.json` shows one concrete provider setup using these primitives without adding provider-specific behavior to WP Codebox itself.
 
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response and compatibility aliases from older orchestrator integrations, including `agentResult`, `agent_result`, `completionOutcome`, `completion_outcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 

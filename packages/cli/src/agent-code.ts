@@ -319,9 +319,59 @@ function wp_codebox_json_encode_agent_runtime_payload($value): string {
     return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 }
 
+function wp_codebox_validate_requested_provider(array $agent_input, array $sandbox_stack) {
+    $provider = trim((string) ($agent_input['provider'] ?? ''));
+    if ('' === $provider) {
+        return null;
+    }
+
+    $registry = null;
+    $ai_client_class = \\WordPress\\AiClient\\AiClient::class;
+    if (class_exists($ai_client_class) && method_exists($ai_client_class, 'defaultRegistry')) {
+        $registry = $ai_client_class::defaultRegistry();
+    }
+
+    $provider_registry_class = \\WordPress\\AiClient\\Providers\\ProviderRegistry::class;
+    if (null === $registry && class_exists($provider_registry_class)) {
+        $registry = new $provider_registry_class();
+    }
+
+    if (!is_object($registry)) {
+        return array(
+            'code' => 'wp_codebox_provider_registry_unavailable',
+            'message' => 'The requested provider could not be validated because the wp-ai-client provider registry is unavailable inside the sandbox.',
+            'data' => array(
+                'provider' => $provider,
+                'ai_client_available' => class_exists($ai_client_class),
+                'ai_client_default_registry_available' => class_exists($ai_client_class) && method_exists($ai_client_class, 'defaultRegistry'),
+                'provider_registry_available' => class_exists($provider_registry_class),
+                'provider_plugins' => $sandbox_stack['signals']['provider_plugins'] ?? array(),
+                'plugin_activation' => $sandbox_stack['plugins'] ?? array(),
+            ),
+        );
+    }
+
+    if (method_exists($registry, 'isProviderConfigured') && $registry->isProviderConfigured($provider)) {
+        return null;
+    }
+
+    return array(
+        'code' => 'wp_codebox_provider_not_registered',
+        'message' => sprintf('Requested provider "%s" is not registered in wp-ai-client after sandbox provider plugins were loaded.', $provider),
+        'data' => array(
+            'provider' => $provider,
+            'provider_plugins' => $sandbox_stack['signals']['provider_plugins'] ?? array(),
+            'plugin_activation' => $sandbox_stack['plugins'] ?? array(),
+        ),
+    );
+}
+
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
 $ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
+$agent_input = ${JSON.stringify(JSON.stringify(input))};
+$decoded_agent_input = json_decode($agent_input, true);
+$provider_validation_error = wp_codebox_validate_requested_provider(is_array($decoded_agent_input) ? $decoded_agent_input : array(), $sandbox_stack);
 if (!empty($sandbox_agent_bundle_import_failures)) {
     $sandbox_agent_runtime = array(
         'agent_runtime' => array(
@@ -331,6 +381,14 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
                 'message' => 'One or more runtime agent bundles failed to import before sandbox invocation.',
                 'data' => array('agent_bundle_imports' => array_values($sandbox_agent_bundle_import_failures)),
             ),
+        ),
+    );
+} elseif (null !== $provider_validation_error) {
+    $sandbox_agent_runtime = array(
+        'agent_runtime' => array(
+            'success' => false,
+            'input' => is_array($decoded_agent_input) ? $decoded_agent_input : null,
+            'error' => $provider_validation_error,
         ),
     );
 } elseif (!$ability || !method_exists($ability, 'execute')) {
@@ -344,10 +402,9 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
         ),
     );
 } else {
-    $agent_input = ${JSON.stringify(JSON.stringify(input))};
     $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
-    $agent_execute_callback = static function () use ($ability, $runtime_task_run, $runtime_task_input, $agent_input) {
-        return $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
+    $agent_execute_callback = static function () use ($ability, $runtime_task_run, $runtime_task_input, $decoded_agent_input) {
+        return $ability->execute($runtime_task_run ? $runtime_task_input : $decoded_agent_input);
     };
     $agent_result = class_exists('DataMachine\\Abilities\\PermissionHelper')
         ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($agent_execute_callback)

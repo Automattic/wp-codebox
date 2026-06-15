@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 
-import type { ArtifactFileDigest } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import { normalizeObservationArtifactRefs, normalizeRuntimeReferenceManifestFileRef } from "./artifact-references.js"
 import { stableJson } from "./object-utils.js"
 import type {
@@ -22,6 +22,7 @@ export interface RuntimeReferenceManifestFileRef {
   kind: string
   contentType: string
   sha256: ArtifactFileDigest
+  viewer?: ArtifactViewerMetadata
 }
 
 export interface RuntimeReferenceManifestArtifactBundleRef {

@@ -1,6 +1,6 @@
 {
   "name": "@automattic/wp-codebox-cli",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "WP Codebox CLI — secure WordPress code execution from anywhere. Run disposable Playground sandboxes from any host: CLI, CI, mobile, Node service, or WP plugin.",
   "type": "module",
   "bin": {

@@ -38,6 +38,7 @@ assert.equal(recipe.workflow.steps[0].command, "wordpress.phpunit")
 assert.deepEqual(recipe.inputs.mounts, [{ source: "/repo/plugin", target: "/wordpress/wp-content/plugins/demo", mode: "readwrite" }])
 assert.deepEqual(recipe.workflow.steps[0].args, [
   "plugin-slug=demo",
+  "cwd=/wordpress/wp-content/plugins/demo",
   "test-file=tests/DemoTest.php",
   'changed-tests-json=["tests/DemoTest.php"]',
   'env-json={"HOMEBOY_FLAG":"yes"}',
@@ -66,6 +67,9 @@ await writeFile(benchOptionsPath, JSON.stringify({
   wpConfigDefines: { SAVEQUERIES: true },
   bootstrapFiles: ["bench/bootstrap.php"],
   workloads: [{ id: "homepage", path: "/" }],
+  scenarioIds: ["homepage", " ", "homepage"],
+  lifecycle: { setup: [{ type: "php", code: "update_option('bench_setup', 'yes');" }] },
+  resetPolicy: { betweenIterations: "object-cache" },
 }, null, 2))
 
 const benchExitCode = await runCli(["recipe", "build", "bench", "--options", benchOptionsPath, "--output", benchOutputPath])
@@ -92,8 +96,9 @@ assert.deepEqual(benchRecipe.workflow.steps[0].args, [
   'env-json={"BENCH_FLAG":"yes"}',
   'bootstrap-files-json=["bench/bootstrap.php"]',
   'workloads-json=[{"id":"homepage","path":"/"}]',
-  'lifecycle-json={}',
-  'reset-policy-json={}',
+  'scenario-ids-json=["homepage"]',
+  'lifecycle-json={"setup":[{"type":"php","code":"update_option(\'bench_setup\', \'yes\');"}]}',
+  'reset-policy-json={"betweenIterations":"object-cache"}',
 ])
 
 console.log("recipe build cli smoke passed")

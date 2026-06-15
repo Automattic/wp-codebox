@@ -1,4 +1,5 @@
 import type { BrowserProbeErrorRecord, BrowserProbeNetworkRecord } from "./browser-artifacts.js"
+import { browserCommandLivenessPolicy } from "./browser-liveness.js"
 import { serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import type { Browser, Page } from "playwright"
 
@@ -69,5 +70,25 @@ export function attachBrowserCaptureListeners({
       onNetwork?.()
       network.push(serializeBrowserRequestFailure(request, new Date().toISOString()))
     })
+  }
+}
+
+export async function settleBrowserNetworkTasks(networkTasks: Array<Promise<void>>, timeoutMs = browserCommandLivenessPolicy().networkSettleTimeoutMs): Promise<void> {
+  if (networkTasks.length === 0) {
+    return
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled(networkTasks),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
   }
 }

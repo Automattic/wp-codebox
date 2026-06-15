@@ -20,6 +20,17 @@ if ( ! class_exists( 'WP_Ability' ) ) {
 	class WP_Ability {}
 }
 
+class WP_Codebox_Smoke_Ability {
+	public array $calls = array();
+
+	public function __construct( private mixed $response ) {}
+
+	public function execute( array $input ): mixed {
+		$this->calls[] = $input;
+		return $this->response;
+	}
+}
+
 if ( ! class_exists( 'WP_Error' ) ) {
 	class WP_Error {
 		public function __construct( private string $code = '', private string $message = '', private array $data = array() ) {}
@@ -69,6 +80,7 @@ $GLOBALS['wp_codebox_filters']                      = array();
 $GLOBALS['wp_codebox_mock_abilities']              = array();
 $GLOBALS['wp_codebox_options']                      = array();
 $GLOBALS['wp_codebox_site_options']                 = array();
+$GLOBALS['wp_codebox_transients']                   = array();
 $GLOBALS['wp_codebox_cli_commands']                 = array();
 $GLOBALS['wp_codebox_cli_lines']                    = array();
 $GLOBALS['wp_codebox_cli_warnings']                 = array();
@@ -162,6 +174,9 @@ function wp_remote_retrieve_body( array $response ): string { return (string) ( 
 function is_multisite(): bool { return (bool) ( $GLOBALS['wp_codebox_is_multisite'] ?? false ); }
 function get_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_options'][ $name ] ?? $default; }
 function get_site_option( string $name, mixed $default = null ): mixed { return $GLOBALS['wp_codebox_site_options'][ $name ] ?? $default; }
+function get_transient( string $name ): mixed { return $GLOBALS['wp_codebox_transients'][ $name ]['value'] ?? false; }
+function set_transient( string $name, mixed $value, int $expiration = 0 ): bool { $GLOBALS['wp_codebox_transients'][ $name ] = array( 'value' => $value, 'expiration' => $expiration ); return true; }
+function delete_transient( string $name ): bool { unset( $GLOBALS['wp_codebox_transients'][ $name ] ); return true; }
 function home_url( string $path = '' ): string { return 'https://parent.example.test' . $path; }
 function wp_upload_dir(): array { return $GLOBALS['wp_codebox_upload_dir']; }
 function sanitize_key( string $key ): string { return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '', $key ) ?? '' ); }
@@ -409,6 +424,189 @@ $host_delegation_unavailable = call_user_func(
 	)
 );
 $assert( 'host delegation returns structured unavailable result without provider', ! is_wp_error( $host_delegation_unavailable ) && false === ( $host_delegation_unavailable['success'] ?? true ) && 'unavailable' === ( $host_delegation_unavailable['status'] ?? '' ) && 'wp_codebox_host_delegation_unavailable' === ( $host_delegation_unavailable['error']['code'] ?? '' ) && array( 'host-delegation.requested', 'host-delegation.unavailable' ) === array_map( static fn( array $event ): string => (string) ( $event['event'] ?? '' ), $host_delegation_unavailable['events'] ?? array() ) );
+
+$prepare_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/prepare-runner-workspace'] ?? null;
+$assert( 'runner workspace prepare ability registered', is_array( $prepare_ability ) );
+$assert( 'runner workspace prepare ability is REST visible', true === ( $prepare_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace prepare ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-prepare-request/v1' === ( $prepare_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-prepare-result/v1' === ( $prepare_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'runner workspace prepare accepts checkout path and runner config', isset( $prepare_ability['input_schema']['properties']['checkout_path'] ) && isset( $prepare_ability['input_schema']['properties']['runner_workspace_config'] ) );
+$prepare_unavailable = call_user_func( $prepare_ability['execute_callback'], array( 'repo' => 'Automattic/wp-codebox', 'branch' => 'runner/docs' ) );
+$assert( 'runner workspace prepare returns typed unavailable without backend', ! is_wp_error( $prepare_unavailable ) && false === ( $prepare_unavailable['success'] ?? true ) && 'unavailable' === ( $prepare_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $prepare_unavailable['failure_type'] ?? '' ) );
+
+$dmc_prepare_show_ability     = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'name' => 'wp-codebox' ) );
+$dmc_prepare_clone_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true ) );
+$dmc_prepare_adopt_ability    = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'name' => 'wp-codebox', 'path' => '/runner/workspace/wp-codebox' ) );
+$dmc_prepare_worktree_ability = new WP_Codebox_Smoke_Ability( array( 'success' => true, 'handle' => 'wp-codebox@runner-docs', 'branch' => 'runner/docs', 'path' => '/runner/workspace/wp-codebox@runner-docs' ) );
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show']         = $dmc_prepare_show_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone']        = $dmc_prepare_clone_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-adopt']        = $dmc_prepare_adopt_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-worktree-add'] = $dmc_prepare_worktree_ability;
+$prepare_result = call_user_func(
+	$prepare_ability['execute_callback'],
+	array(
+		'repo'                    => 'Automattic/wp-codebox',
+		'checkout_path'           => '/runner/workspace/wp-codebox',
+		'github_token_env'        => '',
+		'runner_workspace_config' => array(
+			'branch'      => 'runner/docs',
+			'from'        => 'origin/main',
+			'allow_stale' => true,
+		),
+	)
+);
+$assert( 'runner workspace prepare adopts mounted checkout behind WP Codebox', '/runner/workspace/wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['path'] ?? '' ) && 'wp-codebox' === ( $dmc_prepare_adopt_ability->calls[0]['name'] ?? '' ) );
+$assert( 'runner workspace prepare uses mounted checkout without creating a sandbox worktree', array() === $dmc_prepare_worktree_ability->calls );
+$assert( 'runner workspace prepare normalizes mounted checkout result and capabilities', ! is_wp_error( $prepare_result ) && true === ( $prepare_result['success'] ?? false ) && 'prepared' === ( $prepare_result['status'] ?? '' ) && 'datamachine-code' === ( $prepare_result['backend'] ?? '' ) && 'wp-codebox' === ( $prepare_result['handle'] ?? '' ) && '/runner/workspace/wp-codebox' === ( $prepare_result['path'] ?? '' ) && true === ( $prepare_result['capabilities']['publish'] ?? false ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-show'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-clone'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-adopt'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-worktree-add'] );
+
+$publication_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/publish-runner-workspace'] ?? null;
+$assert( 'runner workspace publication ability registered', is_array( $publication_ability ) );
+$assert( 'runner workspace publication ability is REST visible', true === ( $publication_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace publication ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-publication-request/v1' === ( $publication_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-publication-result/v1' === ( $publication_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'runner workspace publication ability accepts Homeboy aliases', isset( $publication_ability['input_schema']['properties']['workspace'] ) && isset( $publication_ability['input_schema']['properties']['repo'] ) && isset( $publication_ability['input_schema']['properties']['title'] ) && isset( $publication_ability['input_schema']['properties']['paths'] ) );
+
+$publication_unavailable = call_user_func(
+	$publication_ability['execute_callback'],
+	array(
+		'workspace'      => 'wp-codebox@runner-docs',
+		'repo'           => 'Automattic/wp-codebox',
+		'base'           => 'main',
+		'head'           => 'runner/docs',
+		'commit_message' => 'docs: add runner notes',
+		'title'          => 'Add runner notes',
+		'body'           => 'Generated by runner.',
+	)
+);
+$assert( 'runner workspace publication returns typed write_without_pr when backend is unavailable', ! is_wp_error( $publication_unavailable ) && false === ( $publication_unavailable['success'] ?? true ) && 'write_without_pr' === ( $publication_unavailable['status'] ?? '' ) && 'publication_unavailable' === ( $publication_unavailable['failure_type'] ?? '' ) && false === ( $publication_unavailable['opened'] ?? true ) );
+
+$dmc_publication_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success'      => true,
+		'backend'      => 'github_api',
+		'name'         => 'wp-codebox@runner-docs',
+		'branch'       => 'runner/docs',
+		'commit'       => array( 'sha' => 'abc123def456' ),
+		'pull_request' => array(
+			'number' => 873,
+			'url'    => 'https://github.com/Automattic/wp-codebox/pull/873',
+			'reused' => true,
+		),
+	)
+);
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/publish-runner-workspace'] = $dmc_publication_ability;
+$publication_result = call_user_func(
+	$publication_ability['execute_callback'],
+	array(
+		'workspace'             => 'wp-codebox@runner-docs',
+		'workspace_backend'     => 'github_api',
+		'repo'                  => 'Automattic/wp-codebox',
+		'base'                  => 'main',
+		'head'                  => 'runner/docs',
+		'commit_message'        => 'docs: add runner notes',
+		'title'                 => 'Add runner notes',
+		'body'                  => 'Generated by runner.',
+		'labels'                => array( 'agent', 'wp-codebox' ),
+		'draft'                 => true,
+		'maintainer_can_modify' => false,
+		'paths'                 => array( 'docs/runner.md' ),
+		'context'               => array( 'run_id' => 'run-873' ),
+		'artifact_context'      => array( 'bundle' => 'artifact-873' ),
+	)
+);
+$assert( 'runner workspace publication forwards through backend ability', 'wp-codebox@runner-docs' === ( $dmc_publication_ability->calls[0]['workspace_handle'] ?? '' ) && 'Automattic/wp-codebox' === ( $dmc_publication_ability->calls[0]['target_repo'] ?? '' ) );
+$assert( 'runner workspace publication forwards PR options and paths', array( 'agent', 'wp-codebox' ) === ( $dmc_publication_ability->calls[0]['labels'] ?? array() ) && true === ( $dmc_publication_ability->calls[0]['draft'] ?? false ) && false === ( $dmc_publication_ability->calls[0]['maintainer_can_modify'] ?? true ) && array( 'docs/runner.md' ) === ( $dmc_publication_ability->calls[0]['changed_paths'] ?? array() ) );
+$assert( 'runner workspace publication normalizes backend result', ! is_wp_error( $publication_result ) && true === ( $publication_result['success'] ?? false ) && 'published' === ( $publication_result['status'] ?? '' ) && 'github_api' === ( $publication_result['backend'] ?? '' ) && 873 === ( $publication_result['pull_request']['number'] ?? 0 ) && true === ( $publication_result['pull_request']['reused'] ?? false ) && false === ( $publication_result['pull_request']['opened'] ?? true ) && 'abc123def456' === ( $publication_result['commit']['sha'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/publish-runner-workspace'] );
+
+$capture_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/capture-runner-workspace'] ?? null;
+$assert( 'runner workspace capture ability registered', is_array( $capture_ability ) );
+$assert( 'runner workspace capture ability is REST visible', true === ( $capture_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace capture ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-capture-request/v1' === ( $capture_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-capture-result/v1' === ( $capture_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$capture_unavailable = call_user_func( $capture_ability['execute_callback'], array( 'workspace' => 'wp-codebox@runner-docs', 'repo' => 'Automattic/wp-codebox' ) );
+$assert( 'runner workspace capture returns typed unavailable without backend', ! is_wp_error( $capture_unavailable ) && false === ( $capture_unavailable['success'] ?? true ) && 'unavailable' === ( $capture_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $capture_unavailable['failure_type'] ?? '' ) );
+
+$dmc_status_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success' => true,
+		'backend' => 'github_api',
+		'name'    => 'wp-codebox@runner-docs',
+		'repo'    => 'Automattic/wp-codebox',
+		'branch'  => 'runner/docs',
+		'commit'  => 'abc123def456',
+		'dirty'   => 3,
+		'files'   => array( ' M docs/architecture.md', '?? .ci/wp-codebox/package.json', 'docs/skill-contracts.md' ),
+	)
+);
+$dmc_diff_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success' => true,
+		'backend' => 'github_api',
+		'name'    => 'wp-codebox@runner-docs',
+		'diff'    => "diff --git a/docs/architecture.md b/docs/architecture.md\n+docs\ndiff --git a/.ci/wp-codebox/package.json b/.ci/wp-codebox/package.json\n+runtime\n",
+	)
+);
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'] = $dmc_status_ability;
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-diff'] = $dmc_diff_ability;
+$capture_result = call_user_func(
+	$capture_ability['execute_callback'],
+	array(
+		'workspace'         => 'wp-codebox@runner-docs',
+		'workspace_backend' => 'github_api',
+		'repo'              => 'Automattic/wp-codebox',
+		'from'              => 'main',
+		'exclude_paths'     => array( '.ci/**' ),
+	)
+);
+$assert( 'runner workspace capture delegates to DMC status and diff', 'wp-codebox@runner-docs' === ( $dmc_status_ability->calls[0]['name'] ?? '' ) && 'wp-codebox@runner-docs' === ( $dmc_diff_ability->calls[0]['name'] ?? '' ) && 'main' === ( $dmc_diff_ability->calls[0]['from'] ?? '' ) );
+$assert( 'runner workspace capture normalizes status and diff', ! is_wp_error( $capture_result ) && true === ( $capture_result['success'] ?? false ) && true === ( $capture_result['changed'] ?? false ) && 'github_api' === ( $capture_result['backend'] ?? '' ) && 2 === ( $capture_result['status']['dirty'] ?? 0 ) && array( 'docs/architecture.md', 'docs/skill-contracts.md' ) === ( $capture_result['status']['files'] ?? array() ) && str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), 'docs/architecture.md' ) && ! str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), '.ci/wp-codebox' ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-diff'] );
+
+$command_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-runner-workspace-command'] ?? null;
+$assert( 'runner workspace command ability registered', is_array( $command_ability ) );
+$assert( 'runner workspace command ability is REST visible', true === ( $command_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'runner workspace command ability exposes Codebox request/result schemas', 'wp-codebox/runner-workspace-command-request/v1' === ( $command_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/runner-workspace-command-result/v1' === ( $command_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$command_unavailable = call_user_func( $command_ability['execute_callback'], array( 'workspace' => 'wp-codebox@runner-docs', 'command' => 'npm run verify', 'allow_local_fallback' => false ) );
+$assert( 'runner workspace command returns typed unavailable without backend', ! is_wp_error( $command_unavailable ) && false === ( $command_unavailable['success'] ?? true ) && 'unavailable' === ( $command_unavailable['status'] ?? '' ) && 'backend_unavailable' === ( $command_unavailable['failure_type'] ?? '' ) );
+
+$dmc_command_ability = new WP_Codebox_Smoke_Ability(
+	array(
+		'success'    => true,
+		'backend'    => 'github_api',
+		'command'    => 'pnpm verify',
+		'exit_code'  => 0,
+		'stdout'     => 'verified',
+		'stderr'     => '',
+		'elapsed_ms' => 12.5,
+	)
+);
+$GLOBALS['wp_codebox_mock_abilities']['datamachine-code/run-runner-workspace-command'] = $dmc_command_ability;
+$command_result = call_user_func(
+	$command_ability['execute_callback'],
+	array(
+		'workspace'         => 'wp-codebox@runner-docs',
+		'workspace_backend' => 'github_api',
+		'repo'              => 'Automattic/wp-codebox',
+		'command'           => 'pnpm verify',
+		'description'       => 'Run verification',
+		'timeout_seconds'   => 300,
+	)
+);
+$assert( 'runner workspace command delegates to backend command API', 'wp-codebox@runner-docs' === ( $dmc_command_ability->calls[0]['workspace'] ?? '' ) && 'pnpm verify' === ( $dmc_command_ability->calls[0]['command'] ?? '' ) && 300 === ( $dmc_command_ability->calls[0]['timeout_seconds'] ?? 0 ) );
+$assert( 'runner workspace command normalizes backend command result', ! is_wp_error( $command_result ) && true === ( $command_result['success'] ?? false ) && 'completed' === ( $command_result['status'] ?? '' ) && 'github_api' === ( $command_result['backend'] ?? '' ) && 0 === ( $command_result['exit_code'] ?? -1 ) && 'verified' === ( $command_result['stdout'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/run-runner-workspace-command'] );
+
+$local_command_workspace = $root . '/runner-command-workspace';
+mkdir( $local_command_workspace, 0777, true );
+$local_command_result = call_user_func(
+	$command_ability['execute_callback'],
+	array(
+		'workspace'      => 'wp-codebox@local-runner',
+		'workspace_path' => $local_command_workspace,
+		'command'        => 'printf local-ok > verification.txt',
+		'description'    => 'Write local verification marker',
+	)
+);
+$assert( 'runner workspace command can execute via local WP Codebox fallback', ! is_wp_error( $local_command_result ) && true === ( $local_command_result['success'] ?? false ) && 'local_path' === ( $local_command_result['backend'] ?? '' ) && is_file( $local_command_workspace . '/verification.txt' ) );
 
 $browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
 $assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
@@ -848,7 +1046,14 @@ $assert( 'browser Playground session compiles theme runtime dependency', ! is_wp
 $packaged_theme = array_values( array_filter( $browser_session['runtime']['themes'] ?? array(), static fn( array $theme ): bool => 'packaged-starter' === ( $theme['slug'] ?? '' ) ) )[0] ?? array();
 $assert( 'browser Playground session packages runtime theme paths', ! is_wp_error( $browser_session ) && true === ( $packaged_theme['local_package'] ?? false ) && str_starts_with( (string) ( $packaged_theme['url'] ?? '' ), 'data:application/zip;base64,' ) && 'runtime-theme-path' === ( $packaged_theme['provenance']['source'] ?? '' ) && 64 === strlen( (string) ( $packaged_theme['provenance']['sha256'] ?? '' ) ) );
 $assert( 'browser Playground session compiles packaged theme installer', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( 'Could not read browser theme package' )['code'] ?? '' ), '/wordpress/wp-content/themes' ) && str_contains( (string) ( $browser_step_with_code( 'Could not read browser theme package' )['code'] ?? '' ), 'Browser theme package hash mismatch' ) );
-$assert( 'browser Playground session exposes prepared runtime miss and fallback blueprint', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-prepared-runtime/v1' === ( $browser_session['runtime']['prepared_runtime']['schema'] ?? '' ) && 'miss' === ( $browser_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'fallback' === ( $browser_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'known-site-runtime' === ( $browser_session['runtime']['prepared_runtime']['cache_key'] ?? '' ) && 64 === strlen( (string) ( $browser_session['runtime']['prepared_runtime']['input_hash'] ?? '' ) ) && isset( $browser_session['playground']['prepared_runtime']['fallback_blueprint']['steps'] ) );
+$assert( 'browser Playground session exposes prepared runtime miss and fallback blueprint', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-prepared-runtime/v1' === ( $browser_session['runtime']['prepared_runtime']['schema'] ?? '' ) && 'miss' === ( $browser_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'fallback' === ( $browser_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'known-site-runtime' === ( $browser_session['runtime']['prepared_runtime']['cache_key'] ?? '' ) && 64 === strlen( (string) ( $browser_session['runtime']['prepared_runtime']['input_hash'] ?? '' ) ) && isset( $browser_session['playground']['prepared_runtime']['fallback_blueprint']['steps'] ) && true === ( $browser_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_stored'] ?? false ) );
+$assert( 'browser Playground session exposes prepared runtime diagnostics', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-prepared-runtime-diagnostics/v1' === ( $browser_session['runtime']['prepared_runtime']['diagnostics']['schema'] ?? '' ) && 'known-site-runtime' === ( $browser_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_key'] ?? '' ) && false === ( $browser_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_hit'] ?? true ) && true === ( $browser_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_miss'] ?? false ) && 64 === strlen( (string) ( $browser_session['runtime']['prepared_runtime']['diagnostics']['source_digest']['value'] ?? '' ) ) );
+$prepared_cached_session = call_user_func( $browser_session_ability['execute_callback'], $browser_session_input );
+$assert( 'browser Playground session selects cached prepared runtime on repeated source digest', ! is_wp_error( $prepared_cached_session ) && 'hit' === ( $prepared_cached_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'prepared' === ( $prepared_cached_session['runtime']['prepared_runtime']['selected'] ?? '' ) && 'transient-cache' === ( $prepared_cached_session['runtime']['prepared_runtime']['prepared_source'] ?? '' ) && 'cache-hit' === ( $prepared_cached_session['runtime']['prepared_runtime']['invalidation']['reason'] ?? '' ) && true === ( $prepared_cached_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_hit'] ?? false ) && 'hit' === ( $prepared_cached_session['runtime']['prepared_runtime']['diagnostics']['cache_status'] ?? '' ) && ( $browser_session['playground']['blueprint']['steps'] ?? array() ) === ( $prepared_cached_session['playground']['blueprint']['steps'] ?? array() ) );
+$prepared_changed_input = $browser_session_input;
+$prepared_changed_input['runtime']['bootstrap'][0]['args']['value'] = 'Changed Browser Preview';
+$prepared_changed_session = call_user_func( $browser_session_ability['execute_callback'], $prepared_changed_input );
+$assert( 'browser Playground session misses prepared cache when runtime source digest changes', ! is_wp_error( $prepared_changed_session ) && 'miss' === ( $prepared_changed_session['runtime']['prepared_runtime']['status'] ?? '' ) && 'fallback' === ( $prepared_changed_session['runtime']['prepared_runtime']['selected'] ?? '' ) && ( $browser_session['runtime']['prepared_runtime']['input_hash'] ?? '' ) !== ( $prepared_changed_session['runtime']['prepared_runtime']['input_hash'] ?? '' ) && true === ( $prepared_changed_session['runtime']['prepared_runtime']['diagnostics']['prepared_snapshot_miss'] ?? false ) );
 $assert( 'browser Playground session compiles named bootstrap runtime operation', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_step_with_code( "update_option( 'blogname', 'Browser Preview' )" )['code'] ?? '' ), "require_once '/wordpress/wp-load.php'" ) );
 $assert( 'browser Playground session records trusted origins', ! is_wp_error( $browser_session ) && 'https://playground.wordpress.net' === ( $browser_session['playground']['provenance']['client_module_url']['origin'] ?? '' ) );
 $assert( 'browser Playground session records browser plugin provenance', ! is_wp_error( $browser_session ) && 'example.test' === ( $browser_session['plugins'][0]['provenance']['host'] ?? '' ) && str_repeat( 'a', 64 ) === ( $browser_session['plugins'][0]['provenance']['sha256'] ?? '' ) );
@@ -890,9 +1095,9 @@ $browser_materializer_contract = call_user_func(
 );
 $assert( 'browser materializer contract returns recipe-only envelope', ! is_wp_error( $browser_materializer_contract ) && true === ( $browser_materializer_contract['success'] ?? false ) && 'wp-codebox/browser-materializer-contract/v1' === ( $browser_materializer_contract['schema'] ?? '' ) && ! isset( $browser_materializer_contract['session'] ) && 'browser-session-123' === ( $browser_materializer_contract['session_id'] ?? '' ) );
 $assert( 'browser materializer contract preserves trusted authorization shape', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['session']['authorization'] ?? array() ) === ( $browser_materializer_contract['authorization'] ?? array() ) );
-$assert( 'browser materializer contract returns same runnable recipe as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['recipe'] ?? array() ) === ( $browser_materializer_contract['recipe'] ?? array() ) );
-$assert( 'browser materializer contract returns same materialization descriptor as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['materialization'] ?? array() ) === ( $browser_materializer_contract['materialization'] ?? array() ) );
-$assert( 'browser materializer contract preserves runnable context for existing browser session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['task_payload'] ?? array() ) === ( $browser_materializer_contract['task_payload'] ?? array() ) && ( $browser_session['playground'] ?? array() ) === ( $browser_materializer_contract['playground'] ?? array() ) && ( $browser_session['artifacts'] ?? array() ) === ( $browser_materializer_contract['artifacts'] ?? array() ) );
+$assert( 'browser materializer contract returns same runnable recipe as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $prepared_cached_session['recipe'] ?? array() ) === ( $browser_materializer_contract['recipe'] ?? array() ) );
+$assert( 'browser materializer contract returns same materialization descriptor as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $prepared_cached_session['materialization'] ?? array() ) === ( $browser_materializer_contract['materialization'] ?? array() ) );
+$assert( 'browser materializer contract preserves runnable context for existing browser session', ! is_wp_error( $browser_materializer_contract ) && ( $prepared_cached_session['task_payload'] ?? array() ) === ( $browser_materializer_contract['task_payload'] ?? array() ) && ( $prepared_cached_session['playground'] ?? array() ) === ( $browser_materializer_contract['playground'] ?? array() ) && ( $prepared_cached_session['artifacts'] ?? array() ) === ( $browser_materializer_contract['artifacts'] ?? array() ) );
 $browser_materializer_compact_encoded = wp_json_encode( $browser_materializer_contract['compact'] ?? array() );
 $assert( 'browser materializer contract exposes compact product DTO with runnable recipe fields', ! is_wp_error( $browser_materializer_contract ) && 'wp-codebox/browser-materializer-product-dto/v1' === ( $browser_materializer_contract['compact']['schema'] ?? '' ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_materializer_contract['compact']['recipe']['schema'] ?? '' ) && isset( $browser_materializer_contract['compact']['recipe']['workflow'] ) && isset( $browser_materializer_contract['compact']['recipe']['browser']['task_path'] ) && isset( $browser_materializer_contract['compact']['task_payload']['schema'] ) );
 $assert( 'browser materializer compact DTO omits raw runtime payloads', is_string( $browser_materializer_compact_encoded ) && ! str_contains( $browser_materializer_compact_encoded, '"pluginData"' ) && ! str_contains( $browser_materializer_compact_encoded, '"content"' ) && ! str_contains( $browser_materializer_compact_encoded, '"content_base64"' ) && ! str_contains( $browser_materializer_compact_encoded, 'data:application/zip;base64' ) && ! str_contains( $browser_materializer_compact_encoded, 'sk-browser-provider-secret' ) );
@@ -2047,6 +2252,11 @@ $command_count     = 0;
 
 putenv( 'GITHUB_TOKEN=ghp-parent-env-fixture' );
 $_ENV['GITHUB_TOKEN'] = 'ghp-parent-env-fixture';
+$runtime_config_path = $root . '/generic-provider-config.json';
+$runtime_state_path  = $root . '/generic-provider-state';
+mkdir( $runtime_state_path, 0777, true );
+file_put_contents( $runtime_config_path, '{"provider":"generic-provider"}' );
+file_put_contents( $runtime_state_path . '/state.json', '{"model":"generic-model"}' );
 
 $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 	array(
@@ -2158,6 +2368,25 @@ $result = $runner->run(
 		'artifacts_path' => $root . '/artifacts',
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'component_contracts' => $component_contracts,
+		'runtime_env'    => array(
+			'GENERIC_PROVIDER_CONFIG'     => '/home/wp/.config/generic-provider/config.json',
+			'GENERIC_PROVIDER_STATE_HOME' => '/home/wp/.local/state/generic-provider',
+		),
+		'runtime_config_mounts' => array(
+			array(
+				'type'   => 'file',
+				'source' => $runtime_config_path,
+				'target' => '/home/wp/.config/generic-provider/config.json',
+				'mode'   => 'readonly',
+			),
+		),
+		'runtime_state_mounts' => array(
+			array(
+				'source' => $runtime_state_path,
+				'target' => '/home/wp/.local/state/generic-provider',
+				'mode'   => 'readonly',
+			),
+		),
 		'secret_env'     => array( 'GITHUB_TOKEN' ),
 		'preview_hold_seconds' => 30,
 		'preview_port'   => 45678,
@@ -2206,6 +2435,10 @@ $assert( 'runner recipe passes default model', str_contains( $captured_recipe, '
 $assert( 'runner recipe passes provider plugin path', str_contains( $captured_recipe, 'ai-provider-test' ) );
 $assert( 'runner recipe loads runtime components as mu-plugins', str_contains( $captured_recipe, '"slug":"agents-api","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine","activate":false,"loadAs":"mu-plugin"' ) && str_contains( $captured_recipe, '"slug":"data-machine-code","activate":false,"loadAs":"mu-plugin"' ) );
 $assert( 'runner recipe passes generic mount metadata', str_contains( $captured_recipe, 'example/editable-plugin' ) && str_contains( $captured_recipe, 'repo_root_relative_to_mount' ) );
+$captured_recipe_array = json_decode( $captured_recipe, true );
+$assert( 'runner recipe passes generic runtime env values', '/home/wp/.config/generic-provider/config.json' === ( $captured_recipe_array['inputs']['runtimeEnv']['GENERIC_PROVIDER_CONFIG'] ?? '' ) && '/home/wp/.local/state/generic-provider' === ( $captured_recipe_array['inputs']['runtimeEnv']['GENERIC_PROVIDER_STATE_HOME'] ?? '' ) );
+$assert( 'runner recipe mounts generic runtime config before providers', 'file' === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['type'] ?? '' ) && $runtime_config_path === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['source'] ?? '' ) && '/home/wp/.config/generic-provider/config.json' === ( $captured_recipe_array['runtime']['stack']['mounts'][0]['target'] ?? '' ) );
+$assert( 'runner recipe mounts generic runtime state before providers', $runtime_state_path === ( $captured_recipe_array['runtime']['stack']['mounts'][1]['source'] ?? '' ) && '/home/wp/.local/state/generic-provider' === ( $captured_recipe_array['runtime']['stack']['mounts'][1]['target'] ?? '' ) );
 $assert( 'runner recipe passes secret env name only', str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner passes declared secret env value to command runner', ! is_wp_error( $result ) && 'ghp-parent-env-fixture' === ( $captured_secret_env['GITHUB_TOKEN'] ?? '' ) );
 $assert( 'runner keeps declared secret value out of recipe', ! str_contains( $captured_recipe, 'ghp-parent-env-fixture' ) );

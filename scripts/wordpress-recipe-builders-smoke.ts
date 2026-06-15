@@ -4,7 +4,8 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { DEFAULT_WORDPRESS_VERSION, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createBenchmarkDefinitionJsonSchema, createBenchResultsJsonSchema, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe } from "@automattic/wp-codebox-core/recipe-builders"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
@@ -92,6 +93,7 @@ const benchRecipe = buildWordPressBenchRecipe({
   wpConfigDefines: { BENCH_DEFINE: "defined" },
   bootstrapFiles: ["tests/bench/bootstrap.php"],
   workloads: [{ id: "noop", file: "tests/bench/noop.php" }],
+  scenarioIds: ["noop", " ", "noop"],
   lifecycle: { setup: [{ type: "php", code: "update_option('bench_setup', 'yes');" }] },
   resetPolicy: { betweenIterations: "object-cache" },
   extra_plugins: [{ source: "/repo/demo-plugin", slug: "demo-plugin", pluginFile: "demo-plugin/demo.php", activate: false }],
@@ -111,10 +113,16 @@ assert.deepEqual(benchRecipe.workflow.steps[0]?.args, [
   'env-json={"BENCH_ENV":"yes"}',
   'bootstrap-files-json=["tests/bench/bootstrap.php"]',
   'workloads-json=[{"id":"noop","file":"tests/bench/noop.php"}]',
+  'scenario-ids-json=["noop"]',
   'lifecycle-json={"setup":[{"type":"php","code":"update_option(\'bench_setup\', \'yes\');"}]}',
   'reset-policy-json={"betweenIterations":"object-cache"}',
 ])
 assert.ok(validate(benchRecipe), ajv.errorsText(validate.errors))
+const benchRecipePath = join(workspace, "bench-recipe.json")
+writeFileSync(benchRecipePath, `${JSON.stringify(buildWordPressBenchRecipe({ pluginSlug: "demo-plugin", scenarioIds: ["noop"] }), null, 2)}\n`)
+const validateBenchRecipe = spawnSync(process.execPath, [cli, "recipe", "validate", "--recipe", benchRecipePath, "--json"], { cwd: root, encoding: "utf8" })
+assert.equal(validateBenchRecipe.status, 0, validateBenchRecipe.stderr || validateBenchRecipe.stdout)
+assert.equal(JSON.parse(validateBenchRecipe.stdout).valid, true)
 assert.ok(validateBenchmarkDefinition({
   schema: "wp-codebox/benchmark-definition/v1",
   component_id: "demo-component",
@@ -126,6 +134,19 @@ assert.ok(validateBenchmarkDefinition({
   bootstrap_files: ["tests/bench/bootstrap.php"],
   workloads: [{ id: "noop", file: "tests/bench/noop.php" }],
 }), ajv.errorsText(validateBenchmarkDefinition.errors))
+assert.deepEqual(buildWordPressBenchRecipe({ pluginSlug: "demo-plugin" }).workflow.steps[0]?.args, [
+  "component-id=demo-plugin",
+  "plugin-slug=demo-plugin",
+  "iterations=3",
+  "warmup=1",
+  "dependency-slugs=",
+  "env-json={}",
+  "bootstrap-files-json=[]",
+  "workloads-json=[]",
+  "scenario-ids-json=[]",
+  "lifecycle-json={}",
+  "reset-policy-json={}",
+])
 assert.ok(validateBenchResults({
   schema: "wp-codebox/bench-results/v1",
   component_id: "demo-component",

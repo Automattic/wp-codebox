@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -47,6 +48,9 @@ try {
   unsafeReview.preview = { url: "http://localhost:8888" }
   unsafeReview.credentials = { token: "sk-testthisshouldberejectedbecauseitislong" }
   await writeJson(join(unsafe, "files/review.json"), unsafeReview)
+  const unsafeMetadata = JSON.parse(await readText(join(unsafe, "metadata.json")))
+  unsafeMetadata.transferProofBundle.summary = "Unsafe private proof bundle URL: https://10.0.0.2/proof"
+  await writeJson(join(unsafe, "metadata.json"), unsafeMetadata)
   await rewriteManifestHashes(unsafe)
   const unsafeResult = await verifyTransferProofBundle(unsafe)
   assert.equal(unsafeResult.valid, false)
@@ -90,6 +94,12 @@ async function writeTransferBundle(directory: string): Promise<void> {
   const previewSessionEvidenceText = `${JSON.stringify(previewSessionEvidence, null, 2)}\n`
   await writeFile(join(directory, "files/preview-session-evidence.json"), previewSessionEvidenceText)
   await writeJson(join(directory, "files/diagnostics.json"), { schema: "wp-codebox/artifact-diagnostics/v1", status: "clean", summary: { total: 0, error: 0, warning: 0, notice: 0, info: 0 }, diagnostics: [] })
+  await writeJson(join(directory, "files/source-inventory.json"), { schema: "wp-codebox/source-inventory/v1", status: "captured", resources: [{ id: "post:1", type: "post", title: "Source" }] })
+  await writeJson(join(directory, "files/source-runtime.json"), { schema: "wp-codebox/runtime-evidence/v1", runtimeId: "runtime-source", status: "destroyed" })
+  await writeJson(join(directory, "files/target-before.json"), { schema: "wp-codebox/target-evidence/v1", phase: "before", resources: [] })
+  await writeJson(join(directory, "files/target-after.json"), { schema: "wp-codebox/target-evidence/v1", phase: "after", resources: [{ id: "post:1", type: "post" }] })
+  await writeJson(join(directory, "files/sandbox-rehearsal.json"), { schema: "wp-codebox/sandbox-rehearsal-evidence/v1", status: "passed", planDigest: contentDigest })
+  await writeJson(join(directory, "files/transfer-digest-ref.json"), { schema: "wp-codebox/transfer-digest-ref/v1", contentDigest: { algorithm: "sha256", value: contentDigest } })
   await writeFile(join(directory, "files/runtime.log"), "runtime completed\n")
   await writeFile(join(directory, "files/browser/network.jsonl"), `${JSON.stringify({ type: "response", url: "https://example.com/", resourceType: "document", status: 200 })}\n`)
   await writeFile(join(directory, "files/browser/console.jsonl"), "")
@@ -130,7 +140,7 @@ async function writeTransferBundle(directory: string): Promise<void> {
   }
   await writeJson(join(directory, "files/review.json"), review)
 
-  await writeJson(join(directory, "metadata.json"), {
+  const metadata = {
     id: artifactId,
     contentDigest: { algorithm: "sha256", inputs: ["files/changed-files.json", "files/patch.diff"], value: contentDigest },
     artifacts: {
@@ -147,7 +157,50 @@ async function writeTransferBundle(directory: string): Promise<void> {
       browser: "files/browser/summary.json",
     },
     previewSessionEvidence: { path: "files/preview-session-evidence.json", kind: "preview-session-evidence", contentType: "application/json", sha256: artifactFileDigest(previewSessionEvidenceText) },
-  })
+    transferProofBundle: {
+      schema: "wp-codebox/transfer-proof-bundle/v1",
+      createdAt,
+      summary: "Multi-role transfer proof fixture.",
+      roles: [
+        {
+          role: "source",
+          runtimeId: "runtime-source",
+          sessionId: "session-source",
+          evidence: {
+            sourceInventory: artifactRef(directory, "files/source-inventory.json", "source-inventory", "application/json"),
+            runtime: artifactRef(directory, "files/source-runtime.json", "runtime-evidence", "application/json"),
+            previewEvidence: artifactRef(directory, "files/preview-evidence.json", "preview-evidence", "application/json"),
+            previewSessionEvidence: artifactRef(directory, "files/preview-session-evidence.json", "preview-session-evidence", "application/json"),
+            probes: [artifactRef(directory, "files/browser/summary.json", "browser-summary", "application/json")],
+          },
+        },
+        {
+          role: "target",
+          runtimeId: "runtime-target",
+          sessionId: "session-target",
+          evidence: {
+            targetBefore: artifactRef(directory, "files/target-before.json", "target-before-evidence", "application/json"),
+            targetAfter: artifactRef(directory, "files/target-after.json", "target-after-evidence", "application/json"),
+            diagnostics: [artifactRef(directory, "files/diagnostics.json", "diagnostics", "application/json")],
+            digestRefs: [artifactRef(directory, "files/transfer-digest-ref.json", "transfer-digest-ref", "application/json")],
+          },
+        },
+        {
+          role: "sandbox",
+          runtimeId: runtime.id,
+          sessionId: "session-fixture",
+          evidence: {
+            sandboxRehearsal: artifactRef(directory, "files/sandbox-rehearsal.json", "sandbox-rehearsal-evidence", "application/json"),
+            runtime: artifactRef(directory, "files/runtime-reference-manifest.json", "runtime-reference-manifest", "application/json"),
+            probes: [artifactRef(directory, "files/browser/network.jsonl", "browser-network", "application/x-ndjson")],
+          },
+        },
+      ],
+      previewSessionEvidence: artifactRef(directory, "files/preview-session-evidence.json", "preview-session-evidence", "application/json"),
+      digestRefs: [artifactRef(directory, "files/runtime-replay-index.json", "runtime-replay-index", "application/json")],
+    },
+  }
+  await writeJson(join(directory, "metadata.json"), metadata)
 
   const manifest = manifestFixture(createdAt, runtime, artifactId, contentDigest)
   await attachManifestFileHashes(directory, manifest)
@@ -168,6 +221,12 @@ function manifestFixture(createdAt: string, runtime: RuntimeInfo, artifactId: st
       fileFixture("files/review.json", "review", "application/json"),
       fileFixture("files/test-results.json", "test-results", "application/json"),
       fileFixture("files/diagnostics.json", "diagnostics", "application/json"),
+      fileFixture("files/source-inventory.json", "source-inventory", "application/json"),
+      fileFixture("files/source-runtime.json", "runtime-evidence", "application/json"),
+      fileFixture("files/target-before.json", "target-before-evidence", "application/json"),
+      fileFixture("files/target-after.json", "target-after-evidence", "application/json"),
+      fileFixture("files/sandbox-rehearsal.json", "sandbox-rehearsal-evidence", "application/json"),
+      fileFixture("files/transfer-digest-ref.json", "transfer-digest-ref", "application/json"),
       fileFixture("files/runtime.log", "log", "text/plain"),
       fileFixture("files/runtime-episode-trace.json", "runtime-episode-trace", "application/json"),
       fileFixture("files/runtime-episode.jsonl", "runtime-episode-events", "application/x-ndjson"),
@@ -236,6 +295,11 @@ function fileFixture(path: string, kind: string, contentType: string): ArtifactM
 }
 
 function fileRef(path: string, kind: string, contentType: string, sha256: string): ArtifactManifestFile {
+  return { path, kind, contentType, sha256: { algorithm: "sha256", value: sha256 } }
+}
+
+function artifactRef(directory: string, path: string, kind: string, contentType: string) {
+  const sha256 = createHash("sha256").update(readFileSync(join(directory, path))).digest("hex")
   return { path, kind, contentType, sha256: { algorithm: "sha256", value: sha256 } }
 }
 

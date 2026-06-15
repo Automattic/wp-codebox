@@ -4,10 +4,11 @@ import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
-import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
-import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser } from "./browser-capture-session.js"
+import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
+import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
@@ -48,6 +49,7 @@ interface BrowserProbeRunPlan {
   authRequest?: { userId: number }
   failFast: boolean
   stallTimeoutMs: number
+  wallTimeoutMs: number
   lifecycleSelectors: string[]
   assertions: ReturnType<typeof browserProbeAssertionsFromArgs>
 }
@@ -58,6 +60,7 @@ interface BrowserActionsRunPlan {
   capture: Set<string>
   stepTimeoutMs: number
   totalTimeoutMs: number
+  networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
   authRequest?: { userId: number }
   maxDomSnapshotElements: number
@@ -68,6 +71,19 @@ interface BrowserRunPlan {
   capture: string[]
   probe?: BrowserProbeRunPlan
   actions?: BrowserActionsRunPlan
+}
+
+interface BrowserCommandProgressEvent {
+  command: string
+  phase: "checkpoint"
+  checkpoint: BrowserProbeScriptCheckpoint
+  progress: ReturnType<ReturnType<typeof createBrowserProbeProgressTracker>["summary"]>
+}
+
+interface BrowserProbeScriptCheckpoint {
+  name: string
+  metadata?: unknown
+  timestamp: string
 }
 
 interface VisualCompareDomElementSnapshot {
@@ -248,6 +264,7 @@ export function isBrowserCommandArtifactError(error: unknown): error is BrowserC
 }
 
 export async function runBrowserProbeCommand({
+  abortSignal,
   artifactRoot,
   command = "wordpress.browser-probe",
   plan,
@@ -255,7 +272,9 @@ export async function runBrowserProbeCommand({
   runPlaygroundCommand,
   server,
   spec,
+  onProgress,
 }: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   command?: string
   plan?: BrowserProbeRunPlan
@@ -263,9 +282,10 @@ export async function runBrowserProbeCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   if (plan) {
-    return runSingleBrowserProbeCommand({ artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profileIds = browserProbeProfileIds(spec.args ?? [])
@@ -277,6 +297,7 @@ export async function runBrowserProbeCommand({
         throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
       }
       return runSingleBrowserProbeCommand({
+        abortSignal,
         artifactRoot,
         command,
         runtimeSpec,
@@ -285,9 +306,10 @@ export async function runBrowserProbeCommand({
         spec: { ...spec, args: browserProbeProfileArgs(spec.args ?? [], profile) },
         browserFilesDirectory: "files/browser",
         profileId: profile.id,
+        onProgress,
       })
     }
-    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser" })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
@@ -301,6 +323,7 @@ export async function runBrowserProbeCommand({
   const outputs: unknown[] = []
   for (const profile of profiles) {
     const result = await runSingleBrowserProbeCommand({
+      abortSignal,
       artifactRoot,
       command,
       runtimeSpec,
@@ -312,6 +335,7 @@ export async function runBrowserProbeCommand({
       },
       browserFilesDirectory: `files/browser/${profile.id}`,
       profileId: profile.id,
+      onProgress,
     })
     artifacts.push(result.artifact)
     outputs.push(JSON.parse(result.output))
@@ -334,6 +358,7 @@ export async function runBrowserProbeCommand({
 }
 
 async function runSingleBrowserProbeCommand({
+  abortSignal,
   artifactRoot,
   command,
   plan,
@@ -343,7 +368,9 @@ async function runSingleBrowserProbeCommand({
   spec,
   browserFilesDirectory,
   profileId,
+  onProgress,
 }: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   command: string
   plan?: BrowserProbeRunPlan
@@ -353,6 +380,7 @@ async function runSingleBrowserProbeCommand({
   spec: ExecutionSpec
   browserFilesDirectory: string
   profileId?: string
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? browserProbeRunPlanFromArgs(args, profileId)
@@ -378,6 +406,8 @@ async function runSingleBrowserProbeCommand({
   const authRequest = runPlan.authRequest
   const failFast = runPlan.failFast
   const stallTimeoutMs = runPlan.stallTimeoutMs
+  const wallTimeoutMs = runPlan.wallTimeoutMs
+  const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs, idleTimeoutMs: stallTimeoutMs })
   const lifecycleSelectors = runPlan.lifecycleSelectors
   const routedHosts = commaListArg(args, "route-host")
   const assertions = runPlan.assertions
@@ -410,6 +440,8 @@ async function runSingleBrowserProbeCommand({
   const reviewPath = join(browserDirectory, "review.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
+  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
+  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
@@ -440,8 +472,20 @@ async function runSingleBrowserProbeCommand({
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
+  let wordpressDiagnosticsReady = false
+  const abortHandler = () => {
+    pendingError = pendingError ?? new Error("Browser command aborted during runtime cleanup")
+    void page?.close().catch(() => undefined)
+    void context?.close().catch(() => undefined)
+    void browser.close().catch(() => undefined)
+  }
+  abortSignal?.addEventListener("abort", abortHandler, { once: true })
 
   try {
+    if (abortSignal?.aborted) {
+      abortHandler()
+      throw pendingError
+    }
     context = browserPreviewNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
@@ -457,8 +501,18 @@ async function runSingleBrowserProbeCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin, routeTracker)
     }
     page = context ? await context.newPage() : await browser.newPage()
+    if (onProgress) {
+      await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
+        const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
+        if (!normalized) {
+          return
+        }
+        progress.mark("checkpoint", normalized.timestamp, normalized)
+        onProgress({ command, phase: "checkpoint", checkpoint: normalized, progress: progress.summary() })
+      })
+    }
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command, page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -479,13 +533,14 @@ async function runSingleBrowserProbeCommand({
     if (prePageScript) {
       await page.addInitScript(prePageScript)
     }
+    wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
     capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console") || capturesConsoleForAssertions,
       captureErrors: capture.has("errors") || capturesErrorsForAssertions,
-      captureNetwork: capture.has("network") || capturesNetworkForAssertions,
+      captureNetwork: true,
       consoleMessages,
       errors,
       network,
@@ -501,7 +556,7 @@ async function runSingleBrowserProbeCommand({
       throw previewReadinessError
     }
 
-    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs))
+    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs, wallTimeoutMs), livenessPolicy, "navigation")
     progress.mark("navigation")
     const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
     windowLocationOrigin = browserLocation?.origin
@@ -517,7 +572,7 @@ async function runSingleBrowserProbeCommand({
       scriptResult = await withBrowserProbeLiveness(page, progress, failFast, page.evaluate(async (source) => {
         const run = new Function(`return (async () => {\n${source}\n})()`)
         return run()
-      }, script))
+      }, script), livenessPolicy, "script")
       progress.mark("script")
       if (capturesBrowserMetrics) {
         const pendingCheckpoints = await browserProbePendingCheckpoints(page)
@@ -529,16 +584,14 @@ async function runSingleBrowserProbeCommand({
       }
     }
     if (durationMs > 0 && waitFor !== "duration") {
-      await withBrowserProbeLiveness(page, progress, failFast, page.waitForTimeout(durationMs))
+      await withBrowserProbeLiveness(page, progress, failFast, page.waitForTimeout(durationMs), livenessPolicy, "duration")
       progress.mark("duration")
       if (capturesBrowserMetrics) {
         checkpoints.push(await browserProbeCheckpoint(page, "after-duration"))
       }
     }
     if (assertions.length > 0) {
-      if (networkTasks.length > 0) {
-        await Promise.all(networkTasks)
-      }
+      await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
       const assertionMetrics = capturesBrowserMetrics ? browserProbeBenchMetrics(browserProbeMemoryArtifact(checkpoints), browserProbePerformanceArtifact(checkpoints)) : {}
       assertionResults = await executeBrowserProbeAssertions(page, assertions, consoleMessages, errors, network, assertionMetrics)
       if (capturesBrowserMetrics) {
@@ -552,9 +605,18 @@ async function runSingleBrowserProbeCommand({
     finalUrl = page.url()
   } catch (error) {
     pendingError = error instanceof Error ? error : new Error(String(error))
+    if (isBrowserCommandLivenessError(pendingError)) {
+      await page?.close().catch(() => undefined)
+      page = null
+    }
     progress.fail("probe-error", pendingError)
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
+    if (abortSignal?.aborted) {
+      await closeBrowserBestEffort(browser)
+      abortSignal.removeEventListener("abort", abortHandler)
+      throw pendingError ?? new Error("Browser command aborted during runtime cleanup")
+    }
     try {
       await drainBrowserPreviewRouteTracker(routeTracker)
     } catch (error) {
@@ -601,9 +663,7 @@ async function runSingleBrowserProbeCommand({
         }
       }
     }
-    if (networkTasks.length > 0) {
-      await Promise.all(networkTasks)
-    }
+    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("console") || capturesConsoleForAssertions) {
       await writeFile(consolePath, jsonLines(consoleMessages))
@@ -626,6 +686,29 @@ async function runSingleBrowserProbeCommand({
     if (performanceArtifact) {
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
+
+    const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
+      artifactPath: `${browserFilesDirectory}/redirect-diagnostics.json`,
+      error: pendingError,
+      finalAttemptedUrl: finalUrl,
+      network,
+      requestedUrl: targetUrl,
+    })
+    if (redirectDiagnostics) {
+      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+    }
+    const redirectDiagnosticsSummary = redirectDiagnostics?.summary
+
+    const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
+      artifactPath: `${browserFilesDirectory}/wordpress-diagnostics.json`,
+      network,
+      ready: wordpressDiagnosticsReady,
+      server,
+    })
+    if (wordpressDiagnostics) {
+      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+    }
+    const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
 
     const assertionPassed = assertionResults.filter((assertion) => assertion.passed).length
     const assertionFailed = assertionResults.filter((assertion) => !assertion.passed).length
@@ -656,7 +739,9 @@ async function runSingleBrowserProbeCommand({
         memory: Boolean(memoryArtifact),
         network: capture.has("network") || capturesNetworkForAssertions,
         performance: Boolean(performanceArtifact),
+        redirectDiagnostics: Boolean(redirectDiagnostics),
         screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
+        wordpressDiagnostics: Boolean(wordpressDiagnostics),
       }),
       finishedAt,
       network,
@@ -666,6 +751,8 @@ async function runSingleBrowserProbeCommand({
       totalDurationMs: Date.now() - startedAtMs,
       viewport,
       waitFor,
+      redirectDiagnostics: redirectDiagnosticsSummary,
+      wordpressDiagnostics: wordpressDiagnosticsSummary,
     })
     await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
@@ -681,13 +768,15 @@ async function runSingleBrowserProbeCommand({
         ...(capture.has("console") || capturesConsoleForAssertions ? { console: `${browserFilesDirectory}/console.jsonl` } : {}),
         ...(checkpoints.length > 0 ? { checkpoints: `${browserFilesDirectory}/checkpoints.jsonl` } : {}),
         ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: `${browserFilesDirectory}/errors.jsonl` } : {}),
-        ...(capture.has("html") ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
+        ...(htmlSha256 ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
         ...(lifecycleArtifact ? { lifecycle: `${browserFilesDirectory}/lifecycle.json` } : {}),
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
+        ...(redirectDiagnostics ? { redirectDiagnostics: `${browserFilesDirectory}/redirect-diagnostics.json` } : {}),
         review: `${browserFilesDirectory}/review.json`,
-        ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
+        ...(screenshotSha256 ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
+        ...(wordpressDiagnostics ? { wordpressDiagnostics: `${browserFilesDirectory}/wordpress-diagnostics.json` } : {}),
         summary: `${browserFilesDirectory}/summary.json`,
       },
       summary: {
@@ -696,9 +785,10 @@ async function runSingleBrowserProbeCommand({
         errors: errors.length,
         finalUrl,
         ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
-        htmlSnapshot: capture.has("html"),
+        htmlSnapshot: Boolean(htmlSha256),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
+        liveness: { wallTimeoutMs, stallTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
         ...(memoryArtifact || performanceArtifact ? { metrics: browserProbeBenchMetrics(memoryArtifact, performanceArtifact) } : {}),
         networkEvents: network.length,
@@ -706,11 +796,13 @@ async function runSingleBrowserProbeCommand({
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
         review,
+        ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
+        ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         context: contextDetails,
         auth: authSummary,
         capabilities: capabilityDiagnostics,
         replayability: browserProbeReplayability(capture),
-        screenshot: capture.has("screenshot"),
+        screenshot: Boolean(screenshotSha256),
         ...(typeof scriptResult !== "undefined" ? { scriptResult } : {}),
         viewport,
       },
@@ -742,18 +834,23 @@ async function runSingleBrowserProbeCommand({
       auth: authSummary,
       capabilities: capabilityDiagnostics,
       review,
+      ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
+      ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
   }
 
+  abortSignal?.removeEventListener("abort", abortHandler)
   if (pendingError) {
     if (!artifact) {
       throw pendingError
     }
     throw new BrowserCommandArtifactError(pendingError.message, artifact)
   }
-
+  if (!artifact) {
+    throw new Error("wordpress.browser-probe did not produce a browser artifact")
+  }
   return {
     artifact,
     output: `${JSON.stringify({
@@ -767,6 +864,16 @@ async function runSingleBrowserProbeCommand({
       summary: artifact.summary,
     }, null, 2)}\n`,
   }
+}
+
+async function closeBrowserBestEffort(browser: import("playwright").Browser): Promise<void> {
+  await Promise.race([
+    browser.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 1_000)
+      timeout.unref()
+    }),
+  ])
 }
 
 function browserProbeProfileIds(args: string[]): string[] {
@@ -809,6 +916,7 @@ function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Browse
     authRequest: browserAuthRequest(args),
     failFast: strictBooleanArg(args, "fail-fast", false),
     stallTimeoutMs: durationArg(args, "stall-timeout", 0),
+    wallTimeoutMs: durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs),
     lifecycleSelectors: commaListArg(args, "observe"),
     assertions: browserProbeAssertionsFromArgs(args),
   }
@@ -989,6 +1097,8 @@ function browserProbeReviewSummary(input: {
   totalDurationMs: number
   viewport: BrowserProbeViewport | null
   waitFor: string
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
+  wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
 }): BrowserProbeReviewSummary {
   const performance = input.performanceArtifact?.final
   const paint = performance?.paint
@@ -1051,6 +1161,8 @@ function browserProbeReviewSummary(input: {
       probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
     },
     network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    ...(input.redirectDiagnostics ? { redirectDiagnostics: input.redirectDiagnostics } : {}),
+    ...(input.wordpressDiagnostics ? { wordpressDiagnostics: input.wordpressDiagnostics } : {}),
     milestones: {
       status: input.checkpoints.length > 0 ? "captured" : "not-captured",
       count: input.checkpoints.length,
@@ -1135,19 +1247,23 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
   memory: boolean
   network: boolean
   performance: boolean
+  redirectDiagnostics: boolean
   screenshot?: string
+  wordpressDiagnostics: boolean
 }): Record<string, BrowserProbeArtifactRef> {
   return {
     ...(input.console ? { console: { path: `${browserFilesDirectory}/console.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.checkpoints ? { checkpoints: { path: `${browserFilesDirectory}/checkpoints.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.errors ? { errors: { path: `${browserFilesDirectory}/errors.jsonl`, kind: "jsonl" as const } } : {}),
-    ...(capture.has("html") ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, ...(input.html ? { sha256: input.html } : {}) } } : {}),
+    ...(input.html ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, sha256: input.html } } : {}),
     ...(input.lifecycle ? { lifecycle: { path: `${browserFilesDirectory}/lifecycle.json`, kind: "json" as const } } : {}),
     ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
     ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
+    ...(input.redirectDiagnostics ? { redirectDiagnostics: { path: `${browserFilesDirectory}/redirect-diagnostics.json`, kind: "json" as const } } : {}),
     review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
     ...(capture.has("screenshot") ? { screenshot: { path: `${browserFilesDirectory}/screenshot.png`, kind: "png" as const, ...(input.screenshot ? { sha256: input.screenshot } : {}) } } : {}),
+    ...(input.wordpressDiagnostics ? { wordpressDiagnostics: { path: `${browserFilesDirectory}/wordpress-diagnostics.json`, kind: "json" as const } } : {}),
     summary: { path: `${browserFilesDirectory}/summary.json`, kind: "json" as const },
   }
 }
@@ -1160,6 +1276,470 @@ function safeBrowserProbeUrl(value: string | undefined): string | null {
     return "data:[redacted]"
   }
   return value
+}
+
+interface BrowserRedirectDiagnosticsArtifact {
+  schema: "wp-codebox/browser-redirect-diagnostics/v1"
+  version: 1
+  capturedAt: string
+  status: BrowserRedirectDiagnosticsSummary["status"]
+  classification: BrowserRedirectDiagnosticsSummary["classification"]
+  reason: string
+  error?: { name: string; message: string }
+  chain: BrowserRedirectDiagnosticsChainEntry[]
+  summary: BrowserRedirectDiagnosticsSummary
+}
+
+interface BrowserRedirectDiagnosticsChainEntry {
+  url: string
+  method: string
+  status?: number
+  statusText?: string
+  timestamp: string
+  host?: string
+  path?: string
+  queryKeys: string[]
+  redactedQueryKeys: string[]
+}
+
+function browserRedirectDiagnosticsArtifact({
+  artifactPath,
+  error,
+  finalAttemptedUrl,
+  network,
+  requestedUrl,
+}: {
+  artifactPath: string
+  error?: Error
+  finalAttemptedUrl: string
+  network: BrowserProbeNetworkRecord[]
+  requestedUrl: string
+}): BrowserRedirectDiagnosticsArtifact | undefined {
+  const errorMessage = error?.message ?? ""
+  const tooManyRedirects = /ERR_TOO_MANY_REDIRECTS/i.test(errorMessage)
+  const documentEvents = network.filter((record) => record.resourceType === "document")
+  const redirectResponses = documentEvents.filter((record) => record.type === "response" && typeof record.status === "number" && record.status >= 300 && record.status < 400)
+  const chain = documentEvents.map(browserRedirectDiagnosticsChainEntry)
+  const repeatedUrls = repeatedBrowserRedirectValues(chain.map((entry) => entry.url), "url")
+  const repeatedHosts = repeatedBrowserRedirectValues(chain.map((entry) => entry.host).filter((host): host is string => Boolean(host)), "host")
+  const repeatedPaths = repeatedBrowserRedirectValues(chain.map((entry) => entry.path).filter((path): path is string => Boolean(path)), "path")
+  const hasRepeatedTarget = repeatedUrls.length > 0 || repeatedHosts.length > 0 || repeatedPaths.length > 0
+
+  if (!tooManyRedirects && redirectResponses.length === 0 && !hasRepeatedTarget) {
+    return undefined
+  }
+
+  const finalAttempted = browserRedirectSafeUrl(extractBrowserNavigationUrl(errorMessage) ?? finalAttemptedUrl)
+  const firstUrl = chain[0]?.url ?? browserRedirectSafeUrl(requestedUrl)
+  const lastUrl = chain.at(-1)?.url ?? finalAttempted
+  const sanitizedQueryKeys = [...new Set(chain.flatMap((entry) => entry.queryKeys))].sort()
+  const redactedQueryKeys = [...new Set(chain.flatMap((entry) => entry.redactedQueryKeys))].sort()
+  const classification: BrowserRedirectDiagnosticsSummary["classification"] = tooManyRedirects || hasRepeatedTarget ? "redirect-loop" : "redirect-chain"
+  const reason = tooManyRedirects
+    ? "playwright reported ERR_TOO_MANY_REDIRECTS"
+    : hasRepeatedTarget ? "document navigation repeated URL, host, or path values" : "document navigation included redirect responses"
+  const summary: BrowserRedirectDiagnosticsSummary = {
+    status: "captured",
+    artifact: artifactPath,
+    classification,
+    reason,
+    documentEvents: chain.length,
+    redirectResponses: redirectResponses.length,
+    repeatedUrls,
+    repeatedHosts,
+    repeatedPaths,
+    ...(firstUrl ? { firstUrl } : {}),
+    ...(lastUrl ? { lastUrl } : {}),
+    ...(finalAttempted ? { finalAttemptedUrl: finalAttempted } : {}),
+    sanitizedQueryKeys,
+    redactedQueryKeys,
+  }
+
+  return {
+    schema: "wp-codebox/browser-redirect-diagnostics/v1",
+    version: 1,
+    capturedAt: now(),
+    status: "captured",
+    classification,
+    reason,
+    ...(error ? { error: { name: error.name, message: sanitizeBrowserRedirectMessage(error.message) } } : {}),
+    chain,
+    summary,
+  }
+}
+
+function browserRedirectDiagnosticsChainEntry(record: BrowserProbeNetworkRecord): BrowserRedirectDiagnosticsChainEntry {
+  const parsed = parseBrowserRedirectUrl(record.url)
+  return {
+    url: browserRedirectSafeUrl(record.url),
+    method: record.method,
+    ...(typeof record.status === "number" ? { status: record.status } : {}),
+    ...(record.statusText ? { statusText: record.statusText } : {}),
+    timestamp: record.timestamp,
+    ...(parsed ? { host: parsed.host, path: parsed.pathname } : {}),
+    queryKeys: parsed?.queryKeys ?? [],
+    redactedQueryKeys: parsed?.redactedQueryKeys ?? [],
+  }
+}
+
+function browserRedirectSafeUrl(value: string): string {
+  if (/^data:/i.test(value)) {
+    return "data:[redacted]"
+  }
+  const parsed = parseBrowserRedirectUrl(value)
+  if (!parsed) {
+    return value
+  }
+  const search = parsed.queryKeys.length > 0
+    ? `?${parsed.queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}`
+    : ""
+  return `${parsed.origin}${parsed.pathname}${search}${parsed.hash ? "#[redacted]" : ""}`
+}
+
+function parseBrowserRedirectUrl(value: string): { origin: string; host: string; pathname: string; hash: string; queryKeys: string[]; redactedQueryKeys: string[] } | undefined {
+  try {
+    const url = new URL(value)
+    const queryKeys = [...new Set([...url.searchParams.keys()])].sort()
+    return {
+      origin: url.origin,
+      host: url.host,
+      pathname: url.pathname || "/",
+      hash: url.hash,
+      queryKeys,
+      redactedQueryKeys: queryKeys.filter(isSensitiveBrowserRedirectQueryKey),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function isSensitiveBrowserRedirectQueryKey(key: string): boolean {
+  const tokens = key.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  return tokens.some((token) => ["auth", "bearer", "code", "cookie", "credential", "key", "login", "nonce", "pass", "password", "secret", "session", "state", "token"].includes(token))
+}
+
+function repeatedBrowserRedirectValues<Key extends "url" | "host" | "path">(values: string[], key: Key): Array<Record<Key, string> & { count: number }> {
+  const counts = new Map<string, number>()
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort(([leftValue, leftCount], [rightValue, rightCount]) => rightCount - leftCount || leftValue.localeCompare(rightValue))
+    .map(([value, count]) => ({ [key]: value, count }) as Record<Key, string> & { count: number })
+}
+
+function extractBrowserNavigationUrl(message: string): string | undefined {
+  return message.match(/\bat\s+(https?:\/\/\S+)/i)?.[1]?.replace(/[),.]+$/, "")
+}
+
+function sanitizeBrowserRedirectMessage(message: string): string {
+  return message.replace(/https?:\/\/[^\s"')]+/gi, (url) => browserRedirectSafeUrl(url.replace(/[),.]+$/, "")))
+}
+
+interface BrowserWordPressDiagnosticRecord {
+  schema: "wp-codebox/browser-wordpress-diagnostic-record/v1"
+  classification: "php-fatal" | "http-5xx-status" | "http-response-code-5xx"
+  severity: "error"
+  errorType?: number
+  message: string
+  file?: string
+  line?: number
+  status?: number
+  statusHeader?: string
+  requestUri?: string
+  backtrace?: Array<{ file?: string; line?: number; function?: string; class?: string; type?: string }>
+  capturedAt: string
+}
+
+interface BrowserWordPressDiagnosticsArtifact {
+  schema: "wp-codebox/browser-wordpress-diagnostics/v1"
+  version: 1
+  capturedAt: string
+  status: BrowserWordPressDiagnosticsSummary["status"]
+  document5xxResponses: Array<{ url: string; status: number; statusText?: string; responseTextPreview?: string; responseTextSha256?: string; responseTextTruncated?: boolean }>
+  diagnostics: BrowserWordPressDiagnosticRecord[]
+  summary: BrowserWordPressDiagnosticsSummary
+}
+
+const BROWSER_WORDPRESS_DIAGNOSTICS_LOG = "/wordpress/wp-content/wp-codebox-browser-diagnostics.jsonl"
+const BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN = "/wordpress/wp-content/mu-plugins/000-wp-codebox-browser-diagnostics.php"
+const BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN = `<?php
+/**
+ * Plugin Name: WP Codebox Browser Diagnostics
+ */
+
+if ( ! defined( 'WPINC' ) ) {
+    return;
+}
+
+function wp_codebox_browser_diagnostics_write( array $record ): void {
+    file_put_contents( WP_CONTENT_DIR . '/wp-codebox-browser-diagnostics.jsonl', wp_json_encode( $record ) . "\n", FILE_APPEND | LOCK_EX );
+}
+
+function wp_codebox_browser_diagnostics_backtrace(): array {
+    $frames = debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 12 );
+    $frames = array_slice( $frames, 2 );
+
+    return array_map(
+        static function ( array $frame ): array {
+            return array_filter(
+                array(
+                    'file'     => isset( $frame['file'] ) ? (string) $frame['file'] : null,
+                    'line'     => isset( $frame['line'] ) ? (int) $frame['line'] : null,
+                    'function' => isset( $frame['function'] ) ? (string) $frame['function'] : null,
+                    'class'    => isset( $frame['class'] ) ? (string) $frame['class'] : null,
+                    'type'     => isset( $frame['type'] ) ? (string) $frame['type'] : null,
+                ),
+                static fn ( $value ) => null !== $value && '' !== $value
+            );
+        },
+        $frames
+    );
+}
+
+add_filter(
+    'status_header',
+    static function ( string $status_header, int $code ): string {
+        if ( $code >= 500 && $code < 600 ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'http-5xx-status',
+                    'severity'       => 'error',
+                    'status'         => $code,
+                    'statusHeader'   => $status_header,
+                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+                    'message'        => 'WordPress emitted a 5xx status header during browser navigation.',
+                    'backtrace'      => wp_codebox_browser_diagnostics_backtrace(),
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
+        }
+
+        return $status_header;
+    },
+    10,
+    2
+);
+
+register_shutdown_function(
+    static function (): void {
+        $error = error_get_last();
+        $fatal_types = array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR );
+        if ( is_array( $error ) && in_array( $error['type'] ?? null, $fatal_types, true ) ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'php-fatal',
+                    'severity'       => 'error',
+                    'errorType'      => (int) ( $error['type'] ?? 0 ),
+                    'message'        => (string) ( $error['message'] ?? '' ),
+                    'file'           => (string) ( $error['file'] ?? '' ),
+                    'line'           => (int) ( $error['line'] ?? 0 ),
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
+            return;
+        }
+
+        $status = http_response_code();
+        if ( is_int( $status ) && $status >= 500 && $status < 600 ) {
+            wp_codebox_browser_diagnostics_write(
+                array(
+                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
+                    'classification' => 'http-response-code-5xx',
+                    'severity'       => 'error',
+                    'status'         => $status,
+                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+                    'message'        => 'Browser navigation finished with a 5xx HTTP response code and no PHP fatal.',
+                    'capturedAt'     => gmdate( 'c' ),
+                )
+            );
+        }
+    }
+);
+`
+
+async function installBrowserWordPressDiagnostics(
+  runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined,
+  server: PlaygroundCliServer,
+): Promise<boolean> {
+  if (runPlaygroundCommand) {
+    try {
+      const response = await runPlaygroundCommand("wordpress.browser-diagnostics-setup", server, {
+        code: `<?php
+$directory = '/wordpress/wp-content/mu-plugins';
+if (!is_dir($directory)) {
+    mkdir($directory, 0777, true);
+}
+file_put_contents(${JSON.stringify(BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN)}, base64_decode(${JSON.stringify(Buffer.from(BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN, "utf8").toString("base64"))}));
+file_put_contents(${JSON.stringify(BROWSER_WORDPRESS_DIAGNOSTICS_LOG)}, '');
+`,
+      })
+      assertPlaygroundResponseOk("wordpress.browser-diagnostics-setup", response)
+      return true
+    } catch {
+      // Browser diagnostics are best-effort; preserve the browser command outcome.
+    }
+  }
+
+  if (!server.playground.writeFile) {
+    return false
+  }
+
+  try {
+    await server.playground.writeFile(BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN, BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN)
+    await server.playground.writeFile(BROWSER_WORDPRESS_DIAGNOSTICS_LOG, "")
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function browserWordPressDiagnosticsArtifact({
+  artifactPath,
+  network,
+  ready,
+  server,
+}: {
+  artifactPath: string
+  network: BrowserProbeNetworkRecord[]
+  ready: boolean
+  server: PlaygroundCliServer
+}): Promise<BrowserWordPressDiagnosticsArtifact | undefined> {
+  const document5xxResponses = network
+    .filter((record) => record.type === "response" && record.resourceType === "document" && typeof record.status === "number" && record.status >= 500 && record.status < 600)
+    .map((record) => ({
+      url: browserRedirectSafeUrl(safeBrowserProbeUrl(record.url) ?? record.url),
+      status: record.status as number,
+      ...(record.statusText ? { statusText: record.statusText } : {}),
+      ...(record.responseTextPreview ? { responseTextPreview: record.responseTextPreview } : {}),
+      ...(record.responseTextSha256 ? { responseTextSha256: record.responseTextSha256 } : {}),
+      ...(typeof record.responseTextTruncated === "boolean" ? { responseTextTruncated: record.responseTextTruncated } : {}),
+    }))
+
+  if (document5xxResponses.length === 0) {
+    return undefined
+  }
+
+  const diagnostics = ready ? await readBrowserWordPressDiagnostics(server) : []
+  const fatalErrors = diagnostics.filter((diagnostic) => diagnostic.classification === "php-fatal").length
+  const classifications = [...new Set(diagnostics.map((diagnostic) => diagnostic.classification))].sort()
+  const status: BrowserWordPressDiagnosticsSummary["status"] = !ready
+    ? "unavailable"
+    : diagnostics.length > 0 ? "captured" : "clean"
+  const summary: BrowserWordPressDiagnosticsSummary = {
+    status,
+    artifact: artifactPath,
+    document5xxResponses: document5xxResponses.length,
+    diagnostics: diagnostics.length,
+    fatalErrors,
+    classifications,
+  }
+
+  return {
+    schema: "wp-codebox/browser-wordpress-diagnostics/v1",
+    version: 1,
+    capturedAt: now(),
+    status,
+    document5xxResponses,
+    diagnostics,
+    summary,
+  }
+}
+
+async function readBrowserWordPressDiagnostics(server: PlaygroundCliServer): Promise<BrowserWordPressDiagnosticRecord[]> {
+  if (!server.playground.readFileAsText) {
+    return []
+  }
+
+  let contents = ""
+  try {
+    contents = await server.playground.readFileAsText(BROWSER_WORDPRESS_DIAGNOSTICS_LOG)
+  } catch {
+    return []
+  }
+
+  return contents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(parseBrowserWordPressDiagnosticRecord)
+    .filter((record): record is BrowserWordPressDiagnosticRecord => Boolean(record))
+}
+
+function parseBrowserWordPressDiagnosticRecord(line: string): BrowserWordPressDiagnosticRecord | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined
+  }
+
+  const record = parsed as Record<string, unknown>
+  if (record.schema !== "wp-codebox/browser-wordpress-diagnostic-record/v1" || !isBrowserWordPressDiagnosticClassification(record.classification)) {
+    return undefined
+  }
+
+  const classification = record.classification
+
+  return {
+    schema: "wp-codebox/browser-wordpress-diagnostic-record/v1",
+    classification,
+    severity: "error",
+    ...(typeof record.errorType === "number" && Number.isFinite(record.errorType) ? { errorType: record.errorType } : {}),
+    message: sanitizeBrowserWordPressDiagnosticString(typeof record.message === "string" ? record.message : ""),
+    ...(typeof record.file === "string" && record.file.length > 0 ? { file: sanitizeBrowserWordPressDiagnosticString(record.file) } : {}),
+    ...(typeof record.line === "number" && Number.isFinite(record.line) ? { line: record.line } : {}),
+    ...(typeof record.status === "number" && Number.isFinite(record.status) ? { status: record.status } : {}),
+    ...(typeof record.statusHeader === "string" && record.statusHeader.length > 0 ? { statusHeader: sanitizeBrowserWordPressDiagnosticString(record.statusHeader) } : {}),
+    ...(typeof record.requestUri === "string" && record.requestUri.length > 0 ? { requestUri: sanitizeBrowserWordPressDiagnosticRequestUri(record.requestUri) } : {}),
+    ...(Array.isArray(record.backtrace) ? { backtrace: sanitizeBrowserWordPressDiagnosticBacktrace(record.backtrace) } : {}),
+    capturedAt: typeof record.capturedAt === "string" ? record.capturedAt : now(),
+  }
+}
+
+function isBrowserWordPressDiagnosticClassification(value: unknown): value is BrowserWordPressDiagnosticRecord["classification"] {
+  return value === "php-fatal" || value === "http-5xx-status" || value === "http-response-code-5xx"
+}
+
+function sanitizeBrowserWordPressDiagnosticString(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => browserRedirectSafeUrl(url))
+    .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, "$1=[redacted]")
+    .replace(/((?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)["'\s:=]+)[^\s"'<>]+/gi, "$1[redacted]")
+}
+
+function sanitizeBrowserWordPressDiagnosticRequestUri(value: string): string {
+  try {
+    const parsed = new URL(value, "http://wp-codebox.local")
+    const queryKeys = [...new Set([...parsed.searchParams.keys()])].sort()
+    const query = queryKeys.length > 0 ? `?${queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}` : ""
+    return `${parsed.pathname || "/"}${query}${parsed.hash ? "#[redacted]" : ""}`
+  } catch {
+    return sanitizeBrowserWordPressDiagnosticString(value)
+  }
+}
+
+function sanitizeBrowserWordPressDiagnosticBacktrace(value: unknown[]): BrowserWordPressDiagnosticRecord["backtrace"] {
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return []
+    }
+    const frame = entry as Record<string, unknown>
+    return [{
+      ...(typeof frame.file === "string" && frame.file.length > 0 ? { file: sanitizeBrowserWordPressDiagnosticString(frame.file) } : {}),
+      ...(typeof frame.line === "number" && Number.isFinite(frame.line) ? { line: frame.line } : {}),
+      ...(typeof frame.function === "string" && frame.function.length > 0 ? { function: sanitizeBrowserWordPressDiagnosticString(frame.function) } : {}),
+      ...(typeof frame.class === "string" && frame.class.length > 0 ? { class: sanitizeBrowserWordPressDiagnosticString(frame.class) } : {}),
+      ...(typeof frame.type === "string" && frame.type.length > 0 ? { type: sanitizeBrowserWordPressDiagnosticString(frame.type) } : {}),
+    }]
+  }).slice(0, 12)
 }
 
 export async function runHtmlCaptureCommand(input: {
@@ -1270,7 +1850,16 @@ export async function runEditorCanvasProbeCommand({
 
     if (probe.ready && capture.has("screenshot")) {
       try {
-        await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+        try {
+          await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+        } catch (error) {
+          probe.summary.diagnostics.push({
+            code: "screenshot-fallback",
+            severity: "warning",
+            message: `Frame screenshot was unstable; captured full page fallback instead: ${error instanceof Error ? error.message : String(error)}`,
+          })
+          await probe.frame.page().screenshot({ path: screenshotPath, fullPage: true })
+        }
         screenshotSha256 = await fileSha256(screenshotPath)
       } catch (error) {
         probe.summary.diagnostics.push({
@@ -1640,6 +2229,7 @@ export async function runBrowserActionsCommand({
   runPlaygroundCommand,
   server,
   spec,
+  onProgress,
 }: {
   artifactRoot: string
   plan?: BrowserActionsRunPlan
@@ -1647,6 +2237,7 @@ export async function runBrowserActionsCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
+  onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? await browserActionsRunPlanFromArgs(args)
@@ -1677,9 +2268,11 @@ export async function runBrowserActionsCommand({
 
   const stepTimeoutMs = runPlan.stepTimeoutMs
   const totalTimeoutMs = runPlan.totalTimeoutMs
+  const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: runPlan.networkSettleTimeoutMs })
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
+  const routedHosts = commaListArg(args, "route-host")
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1697,10 +2290,15 @@ export async function runBrowserActionsCommand({
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const domSnapshotPath = join(browserDirectory, "dom-snapshot.json")
   const summaryPath = join(browserDirectory, "action-summary.json")
+  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
+  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
+  const progress = createBrowserProbeProgressTracker(startedAt, 0)
   const browser = await launchChromiumBrowser()
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   let requestedUrl = initialUrl ? resolveBrowserPreviewUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
@@ -1710,20 +2308,37 @@ export async function runBrowserActionsCommand({
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
+  let wordpressDiagnosticsReady = false
 
   try {
-    const page = await browser.newPage()
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    if (onProgress) {
+      await page.exposeFunction("__wpCodeboxProbeCheckpointEvent", (checkpoint: unknown) => {
+        const normalized = normalizeBrowserProbeScriptCheckpoint(checkpoint)
+        if (!normalized) {
+          return
+        }
+        progress.mark("checkpoint", normalized.timestamp, normalized)
+        onProgress({ command: "wordpress.browser-actions", phase: "checkpoint", checkpoint: normalized, progress: progress.summary() })
+      })
+    }
+    await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
+    wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
       captureErrors: capture.has("errors"),
-      captureNetwork: capture.has("network"),
+      captureNetwork: true,
       consoleMessages,
       errors,
       network,
@@ -1744,7 +2359,12 @@ export async function runBrowserActionsCommand({
         break
       }
       try {
-        const outcome = await executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory)
+        const outcome = await withBrowserCommandLiveness({
+          command: "wordpress.browser-actions",
+          phase: `step ${index} (${step.kind})`,
+          operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory),
+          policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
+        })
         finalUrl = page.url()
         if (step.kind === "navigate") {
           requestedUrl = resolveBrowserPreviewUrl((step.url ?? "").trim(), preview.effectiveOrigin)
@@ -1775,6 +2395,9 @@ export async function runBrowserActionsCommand({
         errors.push(serialized)
         stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, page.url(), { error: serialized }))
         pendingError = error instanceof Error ? error : new Error(String(error))
+        if (isBrowserCommandLivenessError(pendingError)) {
+          await page.close().catch(() => undefined)
+        }
         break
       }
     }
@@ -1817,9 +2440,7 @@ export async function runBrowserActionsCommand({
       }
     }
   } finally {
-    if (networkTasks.length > 0) {
-      await Promise.all(networkTasks)
-    }
+    await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("steps")) {
       await writeFile(stepsPath, jsonLines(stepRecords))
@@ -1834,20 +2455,47 @@ export async function runBrowserActionsCommand({
       await writeFile(networkPath, jsonLines(network))
     }
 
+    const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
+      artifactPath: "files/browser/redirect-diagnostics.json",
+      error: pendingError,
+      finalAttemptedUrl: finalUrl,
+      network,
+      requestedUrl,
+    })
+    if (redirectDiagnostics) {
+      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+    }
+    const redirectDiagnosticsSummary = redirectDiagnostics?.summary
+
+    const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
+      artifactPath: "files/browser/wordpress-diagnostics.json",
+      network,
+      ready: wordpressDiagnosticsReady,
+      server,
+    })
+    if (wordpressDiagnostics) {
+      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+    }
+    const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
+
     const assertions = browserAssertionsSummary(stepRecords)
     artifact = {
       artifactType: "actions",
       requestedUrl,
       url: requestedUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
         ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
-        ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
+        ...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
         ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+        ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
+        ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
         summary: "files/browser/action-summary.json",
       },
       summary: {
@@ -1857,9 +2505,13 @@ export async function runBrowserActionsCommand({
         consoleMessages: consoleMessages.length,
         errors: errors.length,
         finalUrl,
-        htmlSnapshot: capture.has("html"),
+        htmlSnapshot: Boolean(htmlSha256),
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
+        liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
         networkEvents: network.length,
+        ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
+        ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         auth: authSummary,
@@ -1874,6 +2526,7 @@ export async function runBrowserActionsCommand({
       capture: [...capture].sort(),
       stepTimeoutMs,
       totalTimeoutMs,
+      networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs,
       steps: stepRecords,
       ...(assertions.total > 0 ? { assertions } : {}),
       startedAt,
@@ -1886,13 +2539,21 @@ export async function runBrowserActionsCommand({
       limits: {
         maxDomSnapshotElements,
       },
+      ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
+      ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
   }
 
   if (pendingError) {
+    if (!artifact) {
+      throw pendingError
+    }
     throw new BrowserCommandArtifactError(`wordpress.browser-actions failed after ${stepRecords.length} step(s): ${pendingError.message}`, artifact)
+  }
+  if (!artifact) {
+    throw new Error("wordpress.browser-actions did not produce a browser artifact")
   }
 
   return {
@@ -1926,6 +2587,7 @@ async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserAct
     capture,
     stepTimeoutMs: durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS),
     totalTimeoutMs: durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS),
+    networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
     authRequest: browserAuthRequest(args),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
@@ -2177,6 +2839,7 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       authRequest,
       failFast: false,
       stallTimeoutMs: 0,
+      wallTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || browserCommandLivenessPolicy().wallTimeoutMs,
       lifecycleSelectors: [],
       assertions: [],
     }
@@ -2193,6 +2856,7 @@ function browserScenarioRunPlan(scenario: BrowserScenarioInput, args: string[], 
       capture: new Set(browserScenarioActionCaptures(captures)),
       stepTimeoutMs: durationStringMs(scenario.stepTimeout ?? argValue(args, "step-timeout")) || BROWSER_STEP_DEFAULT_TIMEOUT_MS,
       totalTimeoutMs: durationStringMs(scenario.timeout ?? argValue(args, "timeout")) || BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
+      networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
       requestedViewport: requestedViewport ? parseBrowserViewport(requestedViewport, "viewport") : undefined,
       authRequest,
       maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
@@ -2332,7 +2996,10 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
+  const routedHosts = commaListArg(args, "route-host")
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -2354,12 +3021,17 @@ export async function runEditorOpenCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
 
   try {
-    const page = await browser.newPage()
-    await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -2430,6 +3102,8 @@ export async function runEditorOpenCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
@@ -2445,6 +3119,8 @@ export async function runEditorOpenCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        auth: authSummary,
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -2457,6 +3133,8 @@ export async function runEditorOpenCommand({
       target,
       requestedUrl: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -2526,7 +3204,10 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
+  const routedHosts = commaListArg(args, "route-host")
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -2549,12 +3230,17 @@ export async function runEditorActionsCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
 
   try {
-    const page = await browser.newPage()
-    await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    if (context) {
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+    }
+    const page = context ? await context.newPage() : await browser.newPage()
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -2648,6 +3334,8 @@ export async function runEditorActionsCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-action-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-action-console.jsonl" } : {}),
@@ -2664,6 +3352,8 @@ export async function runEditorActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        auth: authSummary,
+        ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -2677,6 +3367,8 @@ export async function runEditorActionsCommand({
       actions: actionSteps,
       requestedUrl: targetUrl,
       preview,
+      ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
+      ...previewOrigins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -2759,6 +3451,7 @@ async function runVisualComparePairCommand({
   const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
+  const visualTimeoutMs = durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs)
   const requestedViewport = viewportArg(args, "viewport")
   const fullPage = strictBooleanArg(args, "full-page", true)
   const threshold = numberArg(args, "threshold", 0.1)
@@ -2818,7 +3511,7 @@ async function runVisualComparePairCommand({
       startedAt,
       source: sourceSummary(),
       candidate: candidateSummary(),
-      options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+      options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
       preview,
       viewport,
     })
@@ -2829,14 +3522,44 @@ async function runVisualComparePairCommand({
     try {
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
-      const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
-      finalSourceUrl = sourceCapture.finalUrl
-      sourceDomSnapshot = sourceCapture.domSnapshot
-      await writePartialSummary("source-captured")
-      const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
-      finalCandidateUrl = candidateCapture.finalUrl
-      candidateDomSnapshot = candidateCapture.domSnapshot
-      await writePartialSummary("candidate-captured")
+      try {
+        const sourceCapture = await withBrowserCommandLiveness({
+          command: "wordpress.visual-compare",
+          phase: "source-capture",
+          operation: captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        })
+        finalSourceUrl = sourceCapture.finalUrl
+        sourceDomSnapshot = sourceCapture.domSnapshot
+        await writePartialSummary("source-captured")
+        const candidateCapture = await withBrowserCommandLiveness({
+          command: "wordpress.visual-compare",
+          phase: "candidate-capture",
+          operation: captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        })
+        finalCandidateUrl = candidateCapture.finalUrl
+        candidateDomSnapshot = candidateCapture.domSnapshot
+        await writePartialSummary("candidate-captured")
+      } catch (error) {
+        const result = await writeVisualCompareFailureSummary({
+          summaryPath,
+          visualDiffPath,
+          artifactPathPrefix,
+          startedAt,
+          source: sourceSummary(),
+          candidate: candidateSummary(),
+          options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+          preview,
+          viewport,
+          message: errorMessage(error),
+          copiedFiles: {
+            ...(await fileExists(sourcePath) ? { sourceScreenshot: `${artifactPathPrefix}/source.png` } : {}),
+            ...(await fileExists(candidatePath) ? { candidateScreenshot: `${artifactPathPrefix}/candidate.png` } : {}),
+          },
+        })
+        throw new BrowserCommandArtifactError(`wordpress.visual-compare failed during capture: ${errorMessage(error)}`, visualCompareFailureArtifact({ source: sourceSummary(), candidate: candidateSummary(), preview, viewport, files: result.files, summary: result.summary }))
+      }
     } finally {
       await browser.close()
     }
@@ -2861,7 +3584,7 @@ async function runVisualComparePairCommand({
         startedAt,
         source: sourceSummary(),
         candidate: candidateSummary(),
-        options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+        options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
         preview,
         viewport,
         missingInputs,
@@ -2924,7 +3647,7 @@ async function runVisualComparePairCommand({
     status,
     source: sourceSummary(),
     candidate: candidateSummary(),
-    options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+    options: { waitFor, durationMs, timeoutMs: visualTimeoutMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
       : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
@@ -3159,6 +3882,52 @@ async function writeVisualCompareMissingInputSummary(input: {
   return { files, summary }
 }
 
+async function writeVisualCompareFailureSummary(input: {
+  summaryPath: string
+  visualDiffPath: string
+  artifactPathPrefix: string
+  startedAt: string
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  message: string
+  copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }>
+}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }; summary: VisualCompareFailureSummary }> {
+  const files = {
+    sourceScreenshot: input.copiedFiles.sourceScreenshot ?? [],
+    candidateScreenshot: input.copiedFiles.candidateScreenshot ?? [],
+    diffScreenshot: [],
+    visualDiff: `${input.artifactPathPrefix}/visual-diff.json`,
+    summary: `${input.artifactPathPrefix}/summary.json`,
+  }
+  const summary: VisualCompareFailureSummary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: "failed",
+    partial: true,
+    stage: "capture-failed",
+    source: input.source,
+    candidate: input.candidate,
+    options: input.options,
+    limitations: ["visual compare capture failed before full diff metrics were available; recovered files show any screenshots captured before failure"],
+    preview: input.preview,
+    viewport: input.viewport,
+    startedAt: input.startedAt,
+    updatedAt: now(),
+    files,
+    diagnostic: {
+      type: "comparison-failed",
+      message: input.message,
+    },
+  }
+  const json = `${JSON.stringify(summary, null, 2)}\n`
+  await writeFile(input.visualDiffPath, json)
+  await writeFile(input.summaryPath, json)
+  return { files, summary }
+}
+
 function visualCompareMissingInputArtifact(input: {
   source: Record<string, unknown>
   candidate: Record<string, unknown>
@@ -3177,6 +3946,38 @@ function visualCompareMissingInputArtifact(input: {
       steps: 0,
       consoleMessages: 0,
       errors: 0,
+      finalUrl: "",
+      htmlSnapshot: false,
+      networkEvents: 0,
+      replayability: "artifact-backed",
+      screenshot: Array.isArray(input.files.sourceScreenshot) ? input.files.sourceScreenshot.length > 0 : Boolean(input.files.sourceScreenshot),
+      visualCompare: {
+        status: input.summary.status,
+        explanation: input.files.visualDiff,
+      },
+      viewport: input.viewport,
+    },
+  }
+}
+
+function visualCompareFailureArtifact(input: {
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  summary: VisualCompareFailureSummary
+}): BrowserArtifact {
+  return {
+    artifactType: "visual-compare",
+    requestedUrl: typeof input.source.url === "string" ? input.source.url : typeof input.source.screenshot === "string" ? input.source.screenshot : "source",
+    url: typeof input.candidate.url === "string" ? input.candidate.url : typeof input.candidate.screenshot === "string" ? input.candidate.screenshot : "candidate",
+    preview: input.preview,
+    files: input.files,
+    summary: {
+      steps: 0,
+      consoleMessages: 0,
+      errors: 1,
       finalUrl: "",
       htmlSnapshot: false,
       networkEvents: 0,
@@ -3212,6 +4013,15 @@ async function maybeResolveVisualCompareScreenshotPath(requestedPath: string, ar
     return await resolveVisualCompareScreenshotPath(requestedPath, artifactRoot)
   } catch {
     return undefined
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -3380,6 +4190,27 @@ interface VisualCompareMissingInputSummary {
     type: "missing-input"
     message: string
     missingInputs: VisualCompareMissingInput[]
+  }
+}
+
+interface VisualCompareFailureSummary {
+  schema: "wp-codebox/visual-compare/v1"
+  command: "wordpress.visual-compare"
+  status: "failed"
+  partial: true
+  stage: "capture-failed"
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  limitations: string[]
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+  startedAt: string
+  updatedAt: string
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  diagnostic: {
+    type: "comparison-failed"
+    message: string
   }
 }
 
@@ -3744,28 +4575,28 @@ function visualCompareExplainSelectors(args: string[]): string[] {
   return [...selectors]
 }
 
-async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[]): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
+async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number, explainSelectors: string[], timeoutMs: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
   if (waitFor === "duration") {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor.startsWith("selector:")) {
-    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
-    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible" })
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs })
+    await page.waitForSelector(waitFor.slice("selector:".length), { state: "visible", timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else if (waitFor === "domcontentloaded" || waitFor === "load" || waitFor === "networkidle") {
-    await page.goto(targetUrl, { waitUntil: waitFor })
+    await page.goto(targetUrl, { waitUntil: waitFor, timeout: timeoutMs })
     if (durationMs > 0) {
-      await page.waitForTimeout(durationMs)
+      await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "duration", operation: page.waitForTimeout(durationMs), policy: { wallTimeoutMs: Math.min(durationMs + 1_000, timeoutMs), idleTimeoutMs: 0 } })
     }
   } else {
     throw new Error(`wait-for supports domcontentloaded, load, networkidle, selector:<selector>, or duration: ${waitFor}`)
   }
-  const domSnapshot = await captureVisualCompareDomSnapshot(page, maxExplanationCandidates, explainSelectors)
-  await page.screenshot({ path: outputPath, fullPage })
+  const domSnapshot = await withBrowserCommandLiveness({ command: "wordpress.visual-compare", phase: "dom-snapshot", operation: captureVisualCompareDomSnapshot(page, maxExplanationCandidates, explainSelectors), policy: { wallTimeoutMs: timeoutMs, idleTimeoutMs: 0 } })
+  await page.screenshot({ path: outputPath, fullPage, timeout: timeoutMs })
   return { finalUrl: page.url(), domSnapshot }
 }
 
@@ -4368,6 +5199,7 @@ function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs
 }
 
 async function installWordPressAdminAuthCookies({
+  cookieUrls,
   command,
   page,
   runPlaygroundCommand,
@@ -4375,6 +5207,7 @@ async function installWordPressAdminAuthCookies({
   server,
   userId,
 }: {
+  cookieUrls?: string[]
   command: string
   page: import("playwright").Page
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
@@ -4390,14 +5223,14 @@ async function installWordPressAdminAuthCookies({
   }
 
   const authCommand = `${command}.auth`
-  const response = await runPlaygroundCommand(authCommand, server, { code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode(server.serverUrl, userId), []) })
+  const urls = uniqueBrowserAuthCookieUrls(cookieUrls ?? [server.serverUrl])
+  const response = await runPlaygroundCommand(authCommand, server, { code: bootstrapPhpCode(runtimeSpec, wordpressAdminAuthCookiePhpCode(urls, userId), []) })
   assertPlaygroundResponseOk(authCommand, response)
-  const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
-  const cookieDomain = new URL(server.serverUrl).hostname
+  const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; domain?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
   await page.context().addCookies(cookies.map((cookie) => ({
     name: String(cookie.name ?? ""),
     value: String(cookie.value ?? ""),
-    domain: cookieDomain,
+    domain: String(cookie.domain ?? new URL(server.serverUrl).hostname),
     path: typeof cookie.path === "string" && cookie.path.length > 0 ? cookie.path : "/",
     expires: typeof cookie.expires === "number" ? cookie.expires : Math.floor(Date.now() / 1000) + 3600,
     httpOnly: cookie.httpOnly !== false,
@@ -4405,10 +5238,10 @@ async function installWordPressAdminAuthCookies({
     sameSite: cookie.sameSite ?? "Lax",
   })))
 
-  return { mode: "wordpress-admin", userId, cookieCount: cookies.length }
+  return { mode: "wordpress-admin", userId, cookieCount: cookies.length, cookieHosts: browserAuthCookieHostSummary(cookies) }
 }
 
-function wordpressAdminAuthCookiePhpCode(browserUrl: string, userId: number): string {
+function wordpressAdminAuthCookiePhpCode(browserUrls: string[], userId: number): string {
   return `
 $user_id = ${JSON.stringify(userId)};
 $user = get_user_by( 'id', $user_id );
@@ -4417,44 +5250,111 @@ if ( ! $user ) {
 }
 wp_set_current_user( $user_id );
 $expiration = time() + HOUR_IN_SECONDS;
-$browser_url = ${JSON.stringify(browserUrl)};
-$auth_scheme = is_ssl() ? 'secure_auth' : 'auth';
-$cookies = array(
-    array(
-        'name'     => AUTH_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, $auth_scheme ),
-        'url'      => $browser_url,
-        'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
-        'expires'  => $expiration,
-        'httpOnly' => true,
-        'secure'   => is_ssl(),
-        'sameSite' => 'Lax',
-    ),
-    array(
+$token = '';
+if ( class_exists( 'WP_Session_Tokens' ) ) {
+    $token = WP_Session_Tokens::get_instance( $user_id )->create( $expiration );
+}
+$browser_urls = ${JSON.stringify(browserUrls)};
+$cookies = array();
+foreach ( $browser_urls as $browser_url ) {
+    $browser_host = wp_parse_url( $browser_url, PHP_URL_HOST );
+    if ( ! $browser_host ) {
+        continue;
+    }
+    $secure = 'https' === wp_parse_url( $browser_url, PHP_URL_SCHEME );
+    foreach ( array( array( AUTH_COOKIE, 'auth', false ), array( SECURE_AUTH_COOKIE, 'secure_auth', true ) ) as $admin_cookie ) {
+        $cookies[] = array(
+            'name'     => $admin_cookie[0],
+            'value'    => wp_generate_auth_cookie( $user_id, $expiration, $admin_cookie[1], $token ),
+            'domain'   => $browser_host,
+            'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
+            'expires'  => $expiration,
+            'httpOnly' => true,
+            'secure'   => $admin_cookie[2],
+            'sameSite' => 'Lax',
+        );
+    }
+    $logged_in_cookie = array(
         'name'     => LOGGED_IN_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
-        'url'      => $browser_url,
+        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in', $token ),
+        'domain'   => $browser_host,
         'path'     => defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/',
         'expires'  => $expiration,
         'httpOnly' => true,
-        'secure'   => is_ssl(),
-        'sameSite' => 'Lax',
-    ),
-);
-if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEPATH ) {
-    $cookies[] = array(
-        'name'     => LOGGED_IN_COOKIE,
-        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
-        'url'      => $browser_url,
-        'path'     => SITECOOKIEPATH,
-        'expires'  => $expiration,
-        'httpOnly' => true,
-        'secure'   => is_ssl(),
+        'secure'   => $secure,
         'sameSite' => 'Lax',
     );
+    $cookies[] = $logged_in_cookie;
+    if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEPATH ) {
+        $logged_in_cookie['path'] = SITECOOKIEPATH;
+        $cookies[] = $logged_in_cookie;
+    }
 }
 echo wp_json_encode( $cookies );
 `
+}
+
+function browserAuthCookieUrls(serverUrl: string, routedHosts: string[], targetUrls: string[]): string[] {
+  const urls = [serverUrl]
+  for (const host of routedHosts.map(normalizeBrowserCookieHost).filter(Boolean)) {
+    const matchingTarget = targetUrls.find((targetUrl) => normalizeBrowserCookieHost(browserUrlHostname(targetUrl) ?? "") === host)
+    const protocol = matchingTarget ? new URL(matchingTarget).protocol : browserAuthCookieProtocol(targetUrls)
+    urls.push(`${protocol}//${host}/`)
+  }
+  return uniqueBrowserAuthCookieUrls(urls)
+}
+
+function browserActionTargetUrls(steps: BrowserInteractionStep[], effectiveOrigin: string, fallbackUrl: string): string[] {
+  const urls = steps
+    .filter((step) => step.kind === "navigate" && typeof step.url === "string" && step.url.trim().length > 0)
+    .map((step) => resolveBrowserPreviewUrl(String(step.url), effectiveOrigin))
+  return urls.length > 0 ? urls : [fallbackUrl]
+}
+
+function uniqueBrowserAuthCookieUrls(urls: string[]): string[] {
+  const unique = new Map<string, string>()
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url)
+      unique.set(`${parsed.protocol}//${normalizeBrowserCookieHost(parsed.hostname)}`, `${parsed.protocol}//${parsed.hostname}/`)
+    } catch {
+      // Ignore invalid cookie URL inputs; callers still include the local server URL.
+    }
+  }
+  return [...unique.values()]
+}
+
+function browserAuthCookieProtocol(targetUrls: string[]): string {
+  for (const targetUrl of targetUrls) {
+    try {
+      return new URL(targetUrl).protocol
+    } catch {
+      // Keep looking for a usable target URL.
+    }
+  }
+  return "http:"
+}
+
+function browserUrlHostname(url: string): string | undefined {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeBrowserCookieHost(host: string): string {
+  return host.trim().toLowerCase().replace(/:\d+$/, "")
+}
+
+function browserAuthCookieHostSummary(cookies: Array<{ domain?: string }>): Array<{ host: string; cookieCount: number }> {
+  const counts = new Map<string, number>()
+  for (const cookie of cookies) {
+    const host = normalizeBrowserCookieHost(String(cookie.domain ?? ""))
+    if (!host) continue
+    counts.set(host, (counts.get(host) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([host, cookieCount]) => ({ host, cookieCount }))
 }
 
 function browserAuthRequest(args: string[]): { userId: number } | undefined {
@@ -4494,14 +5394,14 @@ class BrowserProbeTerminalFailureError extends Error {
 class BrowserProbeStallError extends Error {
   readonly code = "browser-probe-stalled"
 
-  constructor(readonly idleMs: number, readonly stallTimeoutMs: number, readonly lastProgressSource: BrowserProbeProgressSource) {
-    super(`Browser probe stalled after ${idleMs}ms without progress; last progress source was ${lastProgressSource}`)
+  constructor(readonly idleMs: number, readonly stallTimeoutMs: number, readonly lastProgressSource: BrowserProbeProgressSource, readonly lastCheckpoint?: BrowserProbeScriptCheckpoint) {
+    super(`Browser probe stalled after ${idleMs}ms without progress; last progress source was ${lastProgressSource}${lastCheckpoint ? ` (${lastCheckpoint.name})` : ""}`)
     this.name = "BrowserProbeStallError"
   }
 }
 
 function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: number): {
-  mark(source: BrowserProbeProgressSource, timestamp?: string): void
+  mark(source: BrowserProbeProgressSource, timestamp?: string, checkpoint?: BrowserProbeScriptCheckpoint): void
   fail(source: BrowserProbeProgressSource, error: Error): void
   terminalFailure(failure: { message: string; reason?: string; details?: unknown; timestamp: string }): void
   lastProgressElapsedMs(): number
@@ -4512,18 +5412,23 @@ function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: nu
     lastProgressSource: BrowserProbeProgressSource
     idleMs: number
     stallTimeoutMs?: number
+    lastCheckpoint?: BrowserProbeScriptCheckpoint
     terminalFailure?: { message: string; reason?: string; details?: unknown; timestamp: string }
   }
 } {
   let status: "active" | "failed" | "stalled" = "active"
   let lastProgressAt = startedAt
   let lastProgressSource: BrowserProbeProgressSource = "navigation"
+  let lastCheckpoint: BrowserProbeScriptCheckpoint | undefined
   let terminalFailure: { message: string; reason?: string; details?: unknown; timestamp: string } | undefined
 
   return {
-    mark(source, timestamp = now()) {
+    mark(source, timestamp = now(), checkpoint) {
       lastProgressAt = timestamp
       lastProgressSource = source
+      if (checkpoint) {
+        lastCheckpoint = checkpoint
+      }
     },
     fail(source, error) {
       lastProgressAt = now()
@@ -4550,78 +5455,99 @@ function createBrowserProbeProgressTracker(startedAt: string, stallTimeoutMs: nu
         lastProgressSource,
         idleMs: this.lastProgressElapsedMs(),
         ...(stallTimeoutMs > 0 ? { stallTimeoutMs } : {}),
+        ...(lastCheckpoint ? { lastCheckpoint } : {}),
         ...(terminalFailure ? { terminalFailure } : {}),
       }
     },
   }
 }
 
-async function withBrowserProbeLiveness<T>(page: import("playwright").Page, progress: ReturnType<typeof createBrowserProbeProgressTracker>, failFast: boolean, operation: Promise<T>): Promise<T> {
-  const stallTimeoutMs = progress.summary().stallTimeoutMs ?? 0
-  if (!failFast && stallTimeoutMs <= 0) {
-    return operation
-  }
-
-  let interval: NodeJS.Timeout | undefined
-  operation.catch(() => undefined)
-
-  try {
-    const result = await Promise.race([
-      operation,
-      new Promise<T>((_resolve, reject) => {
-        interval = setInterval(() => {
-          void (async () => {
-            try {
-              const state = await page.evaluate(() => {
-                const probe = (globalThis as typeof globalThis & {
-                  __wpCodeboxBrowserProbe?: {
-                    checkpoints?: Array<{ timestamp?: unknown }>
-                    terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
-                  }
-                }).__wpCodeboxBrowserProbe
-                const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
-                const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
-                const failure = probe?.terminalFailure
-                return {
-                  checkpointTimestamp: latestCheckpoint?.timestamp,
-                  terminalFailure: failure && typeof failure.message === "string" ? {
-                    message: failure.message,
-                    reason: typeof failure.reason === "string" ? failure.reason : undefined,
-                    details: failure.details,
-                    timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
-                  } : undefined,
-                }
-              })
-              if (typeof state.checkpointTimestamp === "string") {
-                progress.mark("checkpoint", state.checkpointTimestamp)
-              }
-              if (state.terminalFailure) {
-                progress.terminalFailure(state.terminalFailure)
-                reject(new BrowserProbeTerminalFailureError(state.terminalFailure))
-                return
-              }
-              if (stallTimeoutMs > 0 && progress.lastProgressElapsedMs() >= stallTimeoutMs) {
-                const summary = progress.summary()
-                reject(new BrowserProbeStallError(summary.idleMs, stallTimeoutMs, summary.lastProgressSource))
-              }
-            } catch {
-              // The page may be navigating or already closed; the outer operation remains authoritative.
+async function withBrowserProbeLiveness<T>(page: import("playwright").Page, progress: ReturnType<typeof createBrowserProbeProgressTracker>, failFast: boolean, operation: Promise<T>, policy: Required<BrowserCommandLivenessPolicy>, phase: string): Promise<T> {
+  const result = await withBrowserCommandLiveness({
+    command: "wordpress.browser-probe",
+    phase,
+    operation,
+    policy,
+    idle: () => {
+      const summary = progress.summary()
+      return { idleMs: summary.idleMs, lastProgressSource: summary.lastProgressSource }
+    },
+    poll: async () => {
+      try {
+        const state = await page.evaluate(() => {
+          const probe = (globalThis as typeof globalThis & {
+            __wpCodeboxBrowserProbe?: {
+              checkpoints?: Array<{ name?: unknown; metadata?: unknown; timestamp?: unknown }>
+              terminalFailure?: { message?: unknown; reason?: unknown; details?: unknown; timestamp?: unknown }
             }
-          })()
-        }, 250)
-        interval.unref()
-      }),
-    ])
-    const terminalFailure = failFast ? await browserProbeTerminalFailure(page) : undefined
-    if (terminalFailure) {
-      progress.terminalFailure(terminalFailure)
-      throw new BrowserProbeTerminalFailureError(terminalFailure)
+          }).__wpCodeboxBrowserProbe
+          const checkpoints = Array.isArray(probe?.checkpoints) ? probe.checkpoints : []
+          const latestCheckpoint = [...checkpoints].reverse().find((checkpoint) => typeof checkpoint.timestamp === "string")
+          const latestCheckpointTimestamp = typeof latestCheckpoint?.timestamp === "string" ? latestCheckpoint.timestamp : undefined
+          const checkpoint = latestCheckpoint && latestCheckpointTimestamp ? {
+            name: typeof latestCheckpoint.name === "string" ? latestCheckpoint.name : "checkpoint",
+            metadata: latestCheckpoint.metadata,
+            timestamp: latestCheckpointTimestamp,
+          } : undefined
+          const failure = probe?.terminalFailure
+          return {
+            checkpoint,
+            terminalFailure: failure && typeof failure.message === "string" ? {
+              message: failure.message,
+              reason: typeof failure.reason === "string" ? failure.reason : undefined,
+              details: failure.details,
+              timestamp: typeof failure.timestamp === "string" ? failure.timestamp : new Date().toISOString(),
+            } : undefined,
+          }
+        })
+        if (state.checkpoint) {
+          progress.mark("checkpoint", state.checkpoint.timestamp, state.checkpoint)
+        }
+        if (state.terminalFailure) {
+          progress.terminalFailure(state.terminalFailure)
+          throw new BrowserProbeTerminalFailureError(state.terminalFailure)
+        }
+      } catch (error) {
+        if (error instanceof BrowserProbeTerminalFailureError) {
+          throw error
+        }
+        // The page may be navigating or already closed; the outer operation remains authoritative.
+      }
+    },
+    onTimeout: async () => {
+      await page.close().catch(() => undefined)
+    },
+  }).catch((error) => {
+    if (isBrowserCommandLivenessError(error) && error.code === "browser-command-idle-timeout") {
+      const summary = progress.summary()
+      throw new BrowserProbeStallError(summary.idleMs, policy.idleTimeoutMs, summary.lastProgressSource, summary.lastCheckpoint)
     }
-    return result
-  } finally {
-    if (interval) {
-      clearInterval(interval)
-    }
+    throw error
+  })
+  const terminalFailure = failFast ? await browserProbeTerminalFailure(page) : undefined
+  if (terminalFailure) {
+    progress.terminalFailure(terminalFailure)
+    throw new BrowserProbeTerminalFailureError(terminalFailure)
+  }
+  return result
+}
+
+function livenessRemainingWallTimeMs(startedAtMs: number, totalTimeoutMs: number): number {
+  if (totalTimeoutMs <= 0) {
+    return browserCommandLivenessPolicy().wallTimeoutMs
+  }
+  return Math.max(1, totalTimeoutMs - (Date.now() - startedAtMs))
+}
+
+function normalizeBrowserProbeScriptCheckpoint(checkpoint: unknown): BrowserProbeScriptCheckpoint | undefined {
+  if (!checkpoint || typeof checkpoint !== "object") {
+    return undefined
+  }
+  const record = checkpoint as { name?: unknown; metadata?: unknown; timestamp?: unknown }
+  return {
+    name: typeof record.name === "string" && record.name.length > 0 ? record.name : "checkpoint",
+    ...(typeof record.metadata !== "undefined" ? { metadata: record.metadata } : {}),
+    timestamp: typeof record.timestamp === "string" ? record.timestamp : now(),
   }
 }
 

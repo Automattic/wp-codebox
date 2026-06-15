@@ -1,9 +1,9 @@
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipeStagedFile } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -21,13 +21,20 @@ export interface AgentTaskRunInput {
   model?: string
   provider_plugin_paths?: string[]
   runtime_overlay_profiles?: string[]
+  runtime_env?: Record<string, unknown>
+  runtimeEnv?: Record<string, unknown>
+  runtime_state_mounts?: WorkspaceRecipeMount[]
+  runtimeStateMounts?: WorkspaceRecipeMount[]
+  runtime_config_mounts?: WorkspaceRecipeMount[]
+  runtimeConfigMounts?: WorkspaceRecipeMount[]
   secret_env?: string[]
   mounts?: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
   dependency_overlays?: NonNullable<WorkspaceRecipe["inputs"]>["dependency_overlays"]
-  runtime_stack_mounts?: Array<Record<string, unknown>>
+  runtime_stack_mounts?: WorkspaceRecipeMount[]
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
+  stagedFiles?: WorkspaceRecipeStagedFile[]
   runtime_task?: Record<string, unknown>
   agent_bundle?: Record<string, unknown>
   sandbox_tool_policy?: SandboxToolPolicySnapshot
@@ -209,8 +216,14 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: ReturnType<typeof normalizeTaskInput>, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
-  const providerPlugins = uniqueStrings([...profile.providerPluginPaths, ...stringList(input.provider_plugin_paths)])
-    .map((source) => ({ source: prepareComposerPluginSource(source, slugFromPath(source), artifacts), slug: slugFromPath(source), activate: false }))
+  const runtimeMounts = runtimeStateMounts(input)
+  const agentBundleStagedFiles = stagedAgentBundleSources(input.agent_bundles)
+  const stagedFiles = [...(Array.isArray(input.stagedFiles) ? input.stagedFiles : []), ...agentBundleStagedFiles]
+  const providerPlugins = uniqueStrings(stringList(input.provider_plugin_paths))
+    .map((plugin) => {
+      const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
+      return { source: prepareComposerPluginSource(plugin, slug, artifacts), slug, activate: true }
+    })
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const workflowArgs = [
     `task=${taskInput.goal}`,
@@ -246,7 +259,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       backend: "wordpress-playground",
       wp: wpVersion,
       blueprint: { steps: [] },
-      stack: Array.isArray(input.runtime_stack_mounts) && input.runtime_stack_mounts.length > 0 ? { mounts: input.runtime_stack_mounts } : undefined,
+      stack: runtimeMounts.length > 0 ? { mounts: runtimeMounts } : undefined,
       overlays: runtimeOverlays(input, profile),
     }),
     inputs: stripUndefined({
@@ -257,7 +270,9 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
         ...componentPlugins(input.component_contracts, artifacts),
         ...providerPlugins,
       ].filter(Boolean),
+      runtimeEnv: runtimeEnv(input),
       secretEnv: stringList(input.secret_env),
+      stagedFiles: stagedFiles.length > 0 ? stagedFiles : undefined,
       agent_bundles: Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0 ? input.agent_bundles : undefined,
     }),
     workflow: stripUndefined({
@@ -271,71 +286,80 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
   }) as WorkspaceRecipe
 }
 
+function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"]): WorkspaceRecipeStagedFile[] {
+  if (!Array.isArray(agentBundles)) return []
+
+  const stagedFiles: WorkspaceRecipeStagedFile[] = []
+  const seenTargets = new Set<string>()
+  for (const bundle of agentBundles) {
+    const source = stringValue(bundle.source)
+    if (!source || bundle.bundle || seenTargets.has(source)) continue
+    const localSource = localAgentBundleSource(source)
+    if (!localSource) continue
+    stagedFiles.push({
+      source: localSource,
+      target: source,
+    })
+    seenTargets.add(source)
+  }
+  return stagedFiles
+}
+
+function localAgentBundleSource(source: string): string {
+  const direct = resolve(source)
+  if (existsSync(direct)) return direct
+
+  const workspacePrefix = "/workspace/"
+  if (!source.startsWith(workspacePrefix)) return ""
+
+  const relativeToWorkspace = source.slice(workspacePrefix.length).split("/").filter(Boolean).slice(1).join("/")
+  if (!relativeToWorkspace) return ""
+
+  const fromCwd = resolve(process.cwd(), relativeToWorkspace)
+  return existsSync(fromCwd) ? fromCwd : ""
+}
+
 interface RuntimeOverlayProfileDefaults {
-  providerPluginPaths: string[]
   runtimeOverlays: Array<Record<string, unknown>>
 }
 
-const CODEX_SUBSCRIPTION_PROFILE = "codex-subscription"
-const CODEX_PROVIDER_PLUGIN_ENV = "WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH"
-const CODEX_PHP_AI_CLIENT_ENV = "WP_CODEBOX_PHP_AI_CLIENT_PATH"
-
 function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlayProfileDefaults {
   const profiles = stringList(input.runtime_overlay_profiles)
-  if (profiles.length === 0) return { providerPluginPaths: [], runtimeOverlays: [] }
+  if (profiles.length === 0) return { runtimeOverlays: [] }
 
-  const defaults: RuntimeOverlayProfileDefaults = { providerPluginPaths: [], runtimeOverlays: [] }
   for (const profile of profiles) {
-    if (profile === CODEX_SUBSCRIPTION_PROFILE) {
-      defaults.providerPluginPaths.push(requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
-        "~/Developer/ai-provider-for-openai@codex-oauth-provider",
-        "~/Developer/ai-provider-for-openai",
-      ], hasComposerPackage))
-      defaults.runtimeOverlays.push({
-        kind: "bundled-library",
-        library: "php-ai-client",
-        source: requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PHP_AI_CLIENT_ENV, [
-          "~/Developer/php-ai-client@custom-provider-auth",
-          "~/Developer/php-ai-client",
-        ], hasInstalledComposerPackage),
-        target: "/wordpress/wp-includes/php-ai-client",
-        strategy: "wordpress-scoped-bundle",
-        metadata: { profile, component: "php-ai-client", ref: "custom-provider-auth" },
-      })
-      continue
-    }
     throw new Error(`Unknown runtime overlay profile: ${profile}`)
   }
-  return defaults
-}
-
-function requiredProfilePath(profile: string, envName: string, candidates: string[], isUsablePath: (path: string) => boolean = existsSync): string {
-  const explicit = stringValue(process.env[envName])
-  const resolved = explicit || candidates.map(resolveProfilePathCandidate).find((candidate) => isUsablePath(candidate)) || ""
-  if (!resolved) {
-    throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")}`)
-  }
-  if (!isUsablePath(resolved)) {
-    throw new Error(`${profile} runtime overlay profile path from ${envName} is not prepared: ${resolved}`)
-  }
-  return resolved
-}
-
-function resolveProfilePathCandidate(candidate: string): string {
-  return candidate.startsWith("~/") ? join(process.env.HOME || "", candidate.slice(2)) : candidate
-}
-
-function hasComposerPackage(candidate: string): boolean {
-  return existsSync(join(candidate, "composer.json"))
-}
-
-function hasInstalledComposerPackage(candidate: string): boolean {
-  return hasComposerPackage(candidate) && existsSync(join(candidate, "vendor"))
+  return { runtimeOverlays: [] }
 }
 
 function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {
   const overlays = [...profile.runtimeOverlays, ...(Array.isArray(input.runtime_overlays) ? input.runtime_overlays : [])]
   return overlays.length > 0 ? overlays : undefined
+}
+
+function runtimeEnv(input: AgentTaskRunInput): Record<string, string> | undefined {
+  const raw = objectValue(input.runtime_env) || objectValue(input.runtimeEnv)
+  if (!raw) return undefined
+  const entries = Object.entries(raw)
+    .map(([name, value]) => [name.trim(), stringValue(value)] as const)
+    .filter(([name]) => /^[A-Z_][A-Z0-9_]*$/.test(name))
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function runtimeStateMounts(input: AgentTaskRunInput): WorkspaceRecipeMount[] {
+  return [
+    ...(Array.isArray(input.runtime_stack_mounts) ? input.runtime_stack_mounts : []),
+    ...runtimeMountList(input.runtime_config_mounts),
+    ...runtimeMountList(input.runtimeConfigMounts),
+    ...runtimeMountList(input.runtime_state_mounts),
+    ...runtimeMountList(input.runtimeStateMounts),
+  ]
+}
+
+function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -386,12 +410,14 @@ async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOut
   const originalErrorWrite = process.stderr.write.bind(process.stderr)
   let stdout = ""
   let stderr = ""
-  ;(process.stdout.write as typeof process.stdout.write) = ((chunk: unknown, ...args: unknown[]) => {
-    stdout += String(chunk)
+  ;(process.stdout.write as typeof process.stdout.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stdout += typeof chunk === "string" ? chunk : chunk.toString()
+    callWriteCallback(encodingOrCallback, callback)
     return true
   }) as typeof process.stdout.write
-  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: unknown, ...args: unknown[]) => {
-    stderr += String(chunk)
+  ;(process.stderr.write as typeof process.stderr.write) = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    stderr += typeof chunk === "string" ? chunk : chunk.toString()
+    callWriteCallback(encodingOrCallback, callback)
     return true
   }) as typeof process.stderr.write
   try {
@@ -400,6 +426,14 @@ async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOut
   } finally {
     process.stdout.write = originalWrite
     process.stderr.write = originalErrorWrite
+  }
+}
+
+function callWriteCallback(encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): void {
+  if (typeof encodingOrCallback === "function") {
+    encodingOrCallback()
+  } else if (callback) {
+    callback()
   }
 }
 
@@ -552,9 +586,10 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   return contracts.flatMap((contract) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
+    const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
     if (!slug || !source) return []
     return [{
-      source: prepareComposerPluginSource(source, slug, artifactsRoot),
+      source: prepareComponentPluginSource(source, originalSource, slug, artifactsRoot),
       slug,
       activate: Boolean(contract.activate),
       loadAs: stringValue(contract.loadAs) || "mu-plugin",
@@ -562,31 +597,84 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   })
 }
 
+function prepareComponentPluginSource(source: string, originalSource: string, slug: string, artifactsRoot: string): string {
+  if (!artifactsRoot) {
+    return prepareComposerPluginSource(originalSource || source, slug, artifactsRoot)
+  }
+
+  const preparedSource = preparedPluginSource(artifactsRoot, slug)
+  const copySource = localSourcePath(originalSource || source)
+  if (!pathExists(copySource)) {
+    return prepareComposerPluginSource(source, slug, artifactsRoot)
+  }
+
+  if (resolve(copySource) !== resolve(preparedSource)) {
+    rmSyncSafe(preparedSource)
+    mkdirSyncSafe(preparedPluginRoot(artifactsRoot))
+    cpSyncFiltered(copySource, preparedSource)
+  } else {
+    mkdirSyncSafe(preparedSource)
+  }
+
+  return installComposerDependenciesIfNeeded(preparedSource, slug)
+}
+
 function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {
-  if (!source || !pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
-    return source
+  if (!source) return source
+
+  const localSource = localSourcePath(source)
+  if (!pathExists(join(localSource, "composer.json"))) {
+    return pathExists(localSource) ? localSource : source
+  }
+  if (pathExists(join(localSource, "vendor", "autoload.php"))) {
+    return localSource
   }
   if (!artifactsRoot) {
     throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
   }
 
-  const preparedRoot = join(artifactsRoot, "prepared-plugins")
-  const preparedSource = join(preparedRoot, slug)
-  rmSyncSafe(preparedSource)
-  mkdirSyncSafe(preparedRoot)
-  cpSyncFiltered(source, preparedSource)
+  const preparedRoot = preparedPluginRoot(artifactsRoot)
+  const preparedSource = preparedPluginSource(artifactsRoot, slug)
+  if (resolve(localSource) !== resolve(preparedSource)) {
+    rmSyncSafe(preparedSource)
+    mkdirSyncSafe(preparedRoot)
+    cpSyncFiltered(localSource, preparedSource)
+  } else {
+    mkdirSyncSafe(preparedSource)
+  }
+
+  return installComposerDependenciesIfNeeded(preparedSource, slug)
+}
+
+function installComposerDependenciesIfNeeded(source: string, slug: string): string {
+  if (!pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
+    return source
+  }
+
   const result = spawnSync("composer", ["install", "--no-interaction", "--prefer-dist", "--no-progress"], {
-    cwd: preparedSource,
+    cwd: source,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   })
   if (result.status !== 0) {
     throw new Error(`Composer install failed for plugin ${slug}: ${result.stderr || result.stdout || `exit ${result.status}`}`)
   }
-  if (!pathExists(join(preparedSource, "vendor", "autoload.php"))) {
+  if (!pathExists(join(source, "vendor", "autoload.php"))) {
     throw new Error(`Composer install for plugin ${slug} did not create vendor/autoload.php.`)
   }
-  return preparedSource
+  return source
+}
+
+function preparedPluginRoot(artifactsRoot: string): string {
+  return resolve(artifactsRoot, "prepared-plugins")
+}
+
+function preparedPluginSource(artifactsRoot: string, slug: string): string {
+  return join(preparedPluginRoot(artifactsRoot), slug)
+}
+
+function localSourcePath(source: string): string {
+  return pathExists(source) ? resolve(source) : source
 }
 
 function pathExists(filePath: string): boolean {
@@ -627,6 +715,17 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: ReturnType<typeo
 function slugFromPath(source: string): string {
   const base = source.replace(/\/$/, "").split("/").pop() || "provider"
   return base.replace(/[^A-Za-z0-9_-]/g, "-")
+}
+
+function slugFromComposerPackage(source: string): string {
+  try {
+    const composer = JSON.parse(readFileSync(join(source, "composer.json"), "utf8")) as { name?: unknown }
+    const name = stringValue(composer.name)
+    if (!name) return ""
+    return slugFromPath(name.split("/").pop() || name)
+  } catch {
+    return ""
+  }
 }
 
 function stringList(value: unknown): string[] {

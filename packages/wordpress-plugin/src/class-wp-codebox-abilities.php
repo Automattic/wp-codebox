@@ -12,6 +12,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-execution.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-permissions.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-inheritance.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-provider-adapter.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-runner-publication.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-artifacts.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
@@ -35,6 +36,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Permissions;
 	use WP_Codebox_Abilities_Inheritance;
 	use WP_Codebox_Abilities_Provider_Adapter;
+	use WP_Codebox_Abilities_Runner_Publication;
 	use WP_Codebox_Abilities_Browser_Artifacts;
 	use WP_Codebox_Abilities_Browser_Runtime;
 	use WP_Codebox_Abilities_Browser_Blueprint;
@@ -390,6 +392,62 @@ final class WP_Codebox_Abilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'request_host_delegation' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/prepare-runner-workspace',
+				array(
+					'label'               => 'Prepare Runner Workspace',
+					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_prepare_input_schema(),
+					'output_schema'       => self::runner_workspace_prepare_output_schema(),
+					'execute_callback'    => array( self::class, 'prepare_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/publish-runner-workspace',
+				array(
+					'label'               => 'Publish Runner Workspace',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_publication_input_schema(),
+					'output_schema'       => self::runner_workspace_publication_output_schema(),
+					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/capture-runner-workspace',
+				array(
+					'label'               => 'Capture Runner Workspace',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_capture_input_schema(),
+					'output_schema'       => self::runner_workspace_capture_output_schema(),
+					'execute_callback'    => array( self::class, 'capture_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-runner-workspace-command',
+				array(
+					'label'               => 'Run Runner Workspace Command',
+					'description'         => 'Run a bounded verification or drift-check command against a runner-owned workspace through the WP Codebox runner boundary.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_command_input_schema(),
+					'output_schema'       => self::runner_workspace_command_output_schema(),
+					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)

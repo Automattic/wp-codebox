@@ -47,6 +47,22 @@ descriptions, accepted args, known output shape, and policy requirements.
 the canonical `createWorkspaceRecipeJsonSchema()` contract exported by
 `@automattic/wp-codebox-core`.
 
+## Recipe Builders
+
+Hosts that generate WordPress bench or PHPUnit recipes can use either stable
+surface:
+
+- Import `buildWordPressBenchRecipe` and `buildWordPressPhpunitRecipe` from
+  `@automattic/wp-codebox-core/recipe-builders` when the core package is
+  installed through npm or a local checkout.
+- Import the same builders from `wp-codebox-workspace/recipe-builders` when the
+  root release tarball is installed.
+- Shell out to `wp-codebox recipe build phpunit|bench --options <json>` when the
+  host wants a process boundary instead of a Node import.
+
+These are the supported recipe-builder entrypoints. Callers should not resolve
+`packages/runtime-core/dist/index.js` or other internal build paths.
+
 ## Recipe Planning
 
 - `wp-codebox validate-blueprint --blueprint <json|file> [--json]` boots a raw WordPress Playground blueprint through WP Codebox and captures the normal artifact bundle.

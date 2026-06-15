@@ -12,6 +12,7 @@ export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string): 
   return `<?php
 define( 'REST_REQUEST', true );
 $_SERVER['REQUEST_URI'] = '/wp-json/wp-codebox/ability';
+${runtimeEnvPhp(spec)}
 require_once '/wordpress/wp-load.php';
 ${secretEnvPhp(spec)}
 ${phpBody(code)}`
@@ -24,6 +25,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 
   return `<?php
 ${pluginRuntimeBootstrapPhp(spec)}
+${runtimeEnvPhp(spec)}
 require_once '/wordpress/wp-load.php';
 ${recipeActivePluginBootstrapPhp(spec)}
 ${secretEnvPhp(spec)}
@@ -167,6 +169,17 @@ function pluginRuntimeBootstrapPhp(spec: RuntimeCreateSpec): string {
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
   const entries = Object.entries(spec.secretEnv ?? {}).filter(([name]) => isSafeEnvName(name))
+  if (entries.length === 0) {
+    return ""
+  }
+
+  return `${entries
+    .map(([name, value]) => `putenv(${JSON.stringify(`${name}=${value}`)});`)
+    .join("\n")}\n`
+}
+
+function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
+  const entries = Object.entries(spec.runtimeEnv ?? {}).filter(([name]) => isSafeEnvName(name))
   if (entries.length === 0) {
     return ""
   }

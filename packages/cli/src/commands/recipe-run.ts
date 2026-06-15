@@ -10,7 +10,7 @@ import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -22,6 +22,7 @@ import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
+const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 
 interface BenchmarkArtifactOutput {
   schema: "wp-codebox/benchmark-artifacts/v1"
@@ -119,6 +120,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
   const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
+  const runtimeEnv = normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {})
   const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
@@ -138,7 +140,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
+  let runtimeDestroyed = false
   const phaseTracker = new RecipePhaseTracker(serializeRecipeRunError, isRecipeRunTimeoutError)
+  const destroyActiveRuntime = async (): Promise<void> => {
+    if (!runtime || runtimeDestroyed) {
+      return
+    }
+
+    runtimeDestroyed = true
+    await bestEffortTimeout(runtime.destroy(), 2_000)
+  }
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
       .then(() => {
@@ -151,6 +162,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         return result
       })
       .catch(async (error: unknown) => {
+        if (isRecipeRunTimeoutError(error) || interruption?.metadata) {
+          await destroyActiveRuntime()
+        }
         await artifactPointer.update({ command: operation, commandStatus: "failed", failure: serializeRecipeRunError(error), phases: phaseTracker.list() })
         throw error
       })
@@ -180,6 +194,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       backend: plan.runtime.backend,
       environment: runtimeEnvironment,
       policy: effectivePolicy,
+      runtimeEnv,
       secretEnv,
       artifactsDirectory: configuredArtifactsDirectory,
       metadata: {
@@ -399,7 +414,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await awaitRecipe("runtime.observe:runtime-info", runtime!.observe({ type: "runtime-info" }))
       await awaitRecipe("runtime.observe:mounts", runtime!.observe({ type: "mounts" }))
       runRecord = await runRegistry.update(runRecord.runId, { status: "collecting_artifacts", runtime: await runtime!.info() })
-      artifacts = await awaitRecipe("runtime.collect-artifacts", runtime!.collectArtifacts({ includeLogs: true, includeObservations: true }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
@@ -421,7 +436,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const recipeFailure = strictFailure ?? agentFailure ?? verifyFailure
     const successfulRecipe = !recipeFailure
     if (successfulRecipe && options.previewHoldSeconds) {
-      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }))
+      artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
@@ -452,7 +467,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeInfo ?? await runtime.info(),
         preview: artifacts.preview,
         artifactRefs: artifactBundleRunRef(artifacts),
-        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: recipeFailure, phaseEvidence: phaseTracker.list() }) },
+        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: recipeFailure, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
         error: recipeFailure,
       })
       await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list(), browserEvidence })
@@ -475,6 +490,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
         ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
         ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
+        ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
         artifacts,
         run: runRecord,
         error: recipeFailure,
@@ -486,7 +502,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime: runtimeInfo ?? await runtime.info(),
       preview: artifacts.preview,
       artifactRefs: artifactBundleRunRef(artifacts),
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
     })
     await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
     return {
@@ -508,6 +524,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
       ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
       ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
+      ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
       artifacts,
       run: runRecord,
     }
@@ -539,11 +556,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
 
       if (error instanceof RecipeRunTimeoutError) {
-        void activeRuntime.destroy().catch(() => undefined)
+        await destroyActiveRuntime()
       } else {
         await runRecipeCleanup(runRegistry, runRecord, async () => {
           try {
-            await bestEffortTimeout(activeRuntime.destroy(), 2_000)
+            await destroyActiveRuntime()
           } catch {
             // Preserve the original failure as the CLI result.
           }
@@ -819,16 +836,94 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
 }
 
 function parseBenchResults(raw: string, manifestFiles: Map<string, ArtifactManifestFile>): BenchResults {
-  const parsed = JSON.parse(raw) as unknown
+  const { parsed, prefix, suffix } = parseBenchResultsJson(raw)
   if (!validateBenchResultsSchema(parsed)) {
     throw new Error(`Bench command did not emit a wp-codebox/bench-results/v1 envelope: ${benchResultsAjv.errorsText(validateBenchResultsSchema.errors)}`)
   }
 
   const results = parsed as BenchResults
+  const diagnostics = [...results.diagnostics]
+  if (prefix.trim()) {
+    diagnostics.push(benchOutputDiagnostic("bench-output-prefix", "before", prefix))
+  }
+  if (suffix.trim()) {
+    diagnostics.push(benchOutputDiagnostic("bench-output-suffix", "after", suffix))
+  }
+
   return {
     ...results,
+    diagnostics,
     scenarios: results.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
   }
+}
+
+function parseBenchResultsJson(raw: string): { parsed: unknown; prefix: string; suffix: string } {
+  try {
+    return { parsed: JSON.parse(raw) as unknown, prefix: "", suffix: "" }
+  } catch (error) {
+    const extracted = extractFirstJsonObject(raw)
+    if (!extracted) {
+      throw error
+    }
+
+    try {
+      return { parsed: JSON.parse(extracted.json) as unknown, prefix: extracted.prefix, suffix: extracted.suffix }
+    } catch {
+      throw error
+    }
+  }
+}
+
+function extractFirstJsonObject(raw: string): { json: string; prefix: string; suffix: string } | undefined {
+  for (let start = raw.indexOf("{"); start !== -1; start = raw.indexOf("{", start + 1)) {
+    let depth = 0
+    let inString = false
+    let escaped = false
+
+    for (let index = start; index < raw.length; index++) {
+      const character = raw[index]
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (character === "\\") {
+          escaped = true
+        } else if (character === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (character === '"') {
+        inString = true
+      } else if (character === "{") {
+        depth++
+      } else if (character === "}") {
+        depth--
+        if (depth === 0) {
+          return { json: raw.slice(start, index + 1), prefix: raw.slice(0, start), suffix: raw.slice(index + 1) }
+        }
+      }
+    }
+  }
+
+  return undefined
+}
+
+function benchOutputDiagnostic(code: string, position: "before" | "after", output: string): BenchResults["diagnostics"][number] {
+  return {
+    severity: "warning",
+    code,
+    source: "wordpress.bench/stdout",
+    message: `wordpress.bench emitted non-JSON stdout ${position} the bench-results envelope.`,
+    details: {
+      output: boundDiagnosticText(output),
+    },
+  }
+}
+
+function boundDiagnosticText(output: string): string {
+  const normalized = output.trim()
+  return normalized.length > 4000 ? `${normalized.slice(0, 4000)}...` : normalized
 }
 
 function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][number], manifestFiles: Map<string, ArtifactManifestFile>): BenchScenarioWithArtifactRefs {
@@ -980,6 +1075,20 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
   }
 
   return secretEnv
+}
+
+function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, string> {
+  const runtimeEnv: Record<string, string> = {}
+  for (const [name, value] of Object.entries(values)) {
+    const normalized = name.trim()
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized) || typeof value !== "string") {
+      continue
+    }
+
+    runtimeEnv[normalized] = value
+  }
+
+  return runtimeEnv
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {

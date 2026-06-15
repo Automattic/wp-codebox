@@ -136,8 +136,36 @@ export interface ArtifactReviewBrowserSummary {
       passed: number
       failed: number
     }
+    redirectDiagnostics?: ArtifactReviewBrowserRedirectDiagnosticsSummary
+    wordpressDiagnostics?: ArtifactReviewBrowserWordPressDiagnosticsSummary
     summaryFile?: string
   }>
+}
+
+export interface ArtifactReviewBrowserRedirectDiagnosticsSummary {
+  status: "captured" | "not-applicable"
+  artifact?: string
+  classification: "redirect-loop" | "redirect-chain"
+  reason: string
+  documentEvents: number
+  redirectResponses: number
+  repeatedUrls: Array<{ url: string; count: number }>
+  repeatedHosts: Array<{ host: string; count: number }>
+  repeatedPaths: Array<{ path: string; count: number }>
+  firstUrl?: string
+  lastUrl?: string
+  finalAttemptedUrl?: string
+  sanitizedQueryKeys: string[]
+  redactedQueryKeys: string[]
+}
+
+export interface ArtifactReviewBrowserWordPressDiagnosticsSummary {
+  status: "captured" | "clean" | "unavailable"
+  artifact?: string
+  document5xxResponses: number
+  diagnostics: number
+  fatalErrors: number
+  classifications: string[]
 }
 
 export interface ArtifactReviewBrowserCapabilities {

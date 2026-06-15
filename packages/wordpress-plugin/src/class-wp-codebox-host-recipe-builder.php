@@ -97,6 +97,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 			'inherit'       => $adapters['inheritance_request']( $input ),
 			'inheritance'   => $inheritance,
 			'extra_plugins' => array_merge( $adapters['component_plugins']( $paths ), $provider_plugins ),
+			'runtimeEnv'    => $adapters['runtime_env']( $input ),
 			'secretEnv'     => $adapters['secret_env_names']( $input, $inheritance ),
 		);
 		if ( ! empty( $agent_bundles ) ) {

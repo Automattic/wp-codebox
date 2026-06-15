@@ -1,6 +1,6 @@
 import type { ArtifactBundle, BenchResults, ExecutionResult, RuntimeInfo, RuntimeRunRecord } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
-import type { AgentSandboxResultSummary, AgentTaskSingleResult, SandboxCompletionOutcome } from "../recipe-evidence.js"
+import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 
@@ -62,6 +62,7 @@ export interface RecipeRunOutput {
   agentResult?: AgentSandboxResultSummary
   agentTaskResult?: AgentTaskSingleResult
   completionOutcome?: SandboxCompletionOutcome
+  replayStatus?: RecipeReplayStatusSummary
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
   interruption?: RecipeInterruptionMetadata

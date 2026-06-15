@@ -527,6 +527,15 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     }
   }
 
+  for (const [name, value] of Object.entries(recipe.inputs?.runtimeEnv ?? {})) {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      addIssue("invalid-runtime-env", `$.inputs.runtimeEnv.${name}`, `Runtime environment variable names must match /^[A-Z_][A-Z0-9_]*$/: ${name}`)
+    }
+    if (typeof value !== "string") {
+      addIssue("invalid-runtime-env-value", `$.inputs.runtimeEnv.${name}`, `Runtime environment values must be strings: ${name}`)
+    }
+  }
+
   for (const [index, siteSeed] of (recipe.inputs?.siteSeeds ?? []).entries()) {
     await validateRecipeSiteSeed(siteSeed, recipeDirectory, `$.inputs.siteSeeds[${index}]`, addIssue)
   }
@@ -976,6 +985,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     }
 
     validateInlineJsonArg(step, "workloads-json", "array", path, addIssue)
+    validateInlineJsonArg(step, "scenario-ids-json", "array", path, addIssue)
     validateInlineJsonArg(step, "lifecycle-json", "object", path, addIssue)
     const resetPolicy = validateInlineJsonArg(step, "reset-policy-json", "object", path, addIssue)
     if (resetPolicy && typeof resetPolicy === "object" && !Array.isArray(resetPolicy)) {

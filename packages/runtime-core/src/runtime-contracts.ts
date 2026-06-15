@@ -1,7 +1,7 @@
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
-import type { ArtifactFileDigest, ArtifactSpec } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
@@ -37,6 +37,7 @@ export interface RuntimeCreateSpec {
   policy: RuntimePolicy
   hostTools?: HostToolRegistry | HostToolDefinition[]
   artifactsDirectory?: string
+  runtimeEnv?: Record<string, string>
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
   preview?: RuntimePreviewSpec
@@ -352,6 +353,7 @@ export interface WorkspaceRecipe {
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
+    runtimeEnv?: Record<string, string>
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
@@ -770,6 +772,7 @@ export interface ArtifactBundle {
   manifestPath: string
   metadataPath: string
   blueprintAfterPath: string
+  blueprintAfterViewer?: ArtifactViewerMetadata
   blueprintAfterNotesPath: string
   eventsPath: string
   commandsPath: string

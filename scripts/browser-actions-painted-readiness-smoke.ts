@@ -8,7 +8,9 @@ const repoRoot = resolve(import.meta.dirname, "..")
 const workspace = resolve(repoRoot, "artifacts", "browser-actions-painted-readiness-smoke")
 const pluginDir = join(workspace, "browser-painted-readiness-fixture")
 const recipePath = join(workspace, "recipe.json")
+const stalledRecipePath = join(workspace, "stalled-recipe.json")
 const artifactsRoot = join(workspace, "artifacts")
+const stalledArtifactsRoot = join(workspace, "stalled-artifacts")
 
 await rm(workspace, { recursive: true, force: true })
 await mkdir(pluginDir, { recursive: true })
@@ -113,17 +115,80 @@ const summary = JSON.parse(await readFile(summaryPath, "utf8")) as { steps: Arra
 assert.ok(summary.steps.some((step) => step.kind === "screenshot" && step.readiness), "summary should preserve screenshot readiness evidence")
 assert.ok(summary.files.domSnapshots?.includes("files/browser/dom-snapshot-frame-painted.json"), "summary should include the screenshot DOM sidecar")
 
+await writeFile(stalledRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    extra_plugins: [
+      {
+        source: "./browser-painted-readiness-fixture",
+        pluginFile: "browser-painted-readiness-fixture/browser-painted-readiness-fixture.php",
+        activate: true,
+      },
+    ],
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.browser-actions",
+        args: [
+          "url=/?wp_codebox_painted_readiness_fixture=1",
+          `steps-json=${JSON.stringify([
+            { kind: "waitFor", selector: "#render-frame" },
+            { kind: "evaluate", expression: "window.requestAnimationFrame = () => 0; return true" },
+            { kind: "screenshot", name: "painted-stall", waitFor: "painted", timeout: "5s" },
+          ])}`,
+          "viewport=480x320",
+          "timeout=8s",
+          "capture=steps,errors,screenshot,dom-snapshot",
+        ],
+      },
+    ],
+  },
+  artifacts: {
+    directory: stalledArtifactsRoot,
+  },
+}, null, 2)}\n`)
+
+const stalledOutput = await runCli([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  stalledRecipePath,
+  "--json",
+], { expectSuccess: false })
+
+assert.equal(stalledOutput.success, false, "stalled painted readiness recipe should fail")
+assert.match(stalledOutput.error?.message ?? "", /painted-readiness-stabilization|exceeded 1000ms|wall/i)
+const stalledArtifact = findBrowserArtifact(stalledOutput, "actions")
+assert.ok(stalledOutput.artifacts?.directory || stalledArtifact, "failed painted readiness recipe should report a browser artifact")
+
+const stalledSummaryPath = stalledOutput.artifacts?.directory ? join(stalledOutput.artifacts.directory, "files", "browser", "action-summary.json") : undefined
+if (stalledSummaryPath) {
+  assert.equal(existsSync(stalledSummaryPath), true, "stalled painted readiness should still write action summary")
+}
+const stalledSummary = stalledSummaryPath
+  ? JSON.parse(await readFile(stalledSummaryPath, "utf8")) as { steps: Array<{ status: string; error?: { message?: string } }>; summary: { errors: number } }
+  : { steps: [], summary: stalledArtifact?.summary ?? { errors: 0 } }
+if (stalledSummary.steps.length > 0) {
+  assert.equal(stalledSummary.steps.at(-1)?.status, "failed")
+  assert.match(stalledSummary.steps.at(-1)?.error?.message ?? "", /painted-readiness-stabilization|exceeded 1000ms|wall/i)
+}
+assert.ok(stalledSummary.summary.errors > 0, "stalled painted readiness should record an error")
+
 console.log(`Browser actions painted readiness smoke passed: ${artifactDirectory}`)
 
-async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
+async function runCli(args: string[], options: { expectSuccess?: boolean } = {}): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
   const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] })
   let stdout = ""
   let stderr = ""
   child.stdout.on("data", (chunk) => { stdout += chunk })
   child.stderr.on("data", (chunk) => { stderr += chunk })
   const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
-  if (code !== 0) {
+  if ((options.expectSuccess ?? true) && code !== 0) {
     throw new Error(`CLI exited with ${code}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
+  }
+  if (!(options.expectSuccess ?? true) && code === 0) {
+    throw new Error(`CLI unexpectedly exited with 0\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }
   return JSON.parse(stdout)
 }
@@ -131,4 +196,25 @@ async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: 
 function pngDimensions(buffer: Buffer): { width: number; height: number } {
   assert.equal(buffer.toString("ascii", 1, 4), "PNG", "screenshot should be a PNG")
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
+}
+
+function findBrowserArtifact(value: unknown, artifactType: string): Record<string, any> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+  if ((value as Record<string, unknown>).artifactType === artifactType) {
+    return value as Record<string, any>
+  }
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findBrowserArtifact(item, artifactType)
+        if (found) return found
+      }
+    } else {
+      const found = findBrowserArtifact(child, artifactType)
+      if (found) return found
+    }
+  }
+  return undefined
 }

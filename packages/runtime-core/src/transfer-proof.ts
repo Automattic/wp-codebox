@@ -12,6 +12,51 @@ export type TransferProofViolationCode =
   | "transfer-digest-mismatch"
   | "unsafe-reviewer-evidence"
 
+export type TransferProofRuntimeRole = "source" | "target" | "sandbox" | (string & {})
+
+export interface TransferProofArtifactRef {
+  path: string
+  kind: string
+  contentType?: string
+  sha256?: {
+    algorithm: "sha256"
+    value: string
+  }
+  digest?: {
+    algorithm: "sha256"
+    value: string
+  }
+}
+
+export interface TransferProofRuntimeRoleBundle {
+  role: TransferProofRuntimeRole
+  runtimeId?: string
+  sessionId?: string
+  label?: string
+  evidence: {
+    sourceInventory?: TransferProofArtifactRef
+    runtime?: TransferProofArtifactRef
+    targetBefore?: TransferProofArtifactRef
+    targetAfter?: TransferProofArtifactRef
+    sandboxRehearsal?: TransferProofArtifactRef
+    previewEvidence?: TransferProofArtifactRef
+    previewSessionEvidence?: TransferProofArtifactRef
+    probes?: TransferProofArtifactRef[]
+    diagnostics?: TransferProofArtifactRef[]
+    digestRefs?: TransferProofArtifactRef[]
+    [name: string]: TransferProofArtifactRef | TransferProofArtifactRef[] | undefined
+  }
+}
+
+export interface TransferProofBundle {
+  schema: "wp-codebox/transfer-proof-bundle/v1"
+  createdAt?: string
+  summary?: string
+  roles: TransferProofRuntimeRoleBundle[]
+  previewSessionEvidence?: TransferProofArtifactRef
+  digestRefs?: TransferProofArtifactRef[]
+}
+
 export interface TransferProofViolation {
   code: TransferProofViolationCode
   path: string
@@ -73,6 +118,7 @@ type JsonPath = Array<string | number>
 
 const REQUIRED_TRANSFER_KINDS = new Set(["preview-evidence", "preview-session-evidence", "runtime-reference-manifest", "runtime-replay-index", "diagnostics", "log", "review"])
 const REVIEWER_EVIDENCE_KINDS = new Set([
+  "transfer-proof-bundle",
   "review",
   "preview-evidence",
   "preview-session-evidence",
@@ -84,6 +130,12 @@ const REVIEWER_EVIDENCE_KINDS = new Set([
   "browser-network",
   "runtime-reference-manifest",
   "runtime-replay-index",
+  "source-inventory",
+  "target-before-evidence",
+  "target-after-evidence",
+  "sandbox-rehearsal-evidence",
+  "transfer-digest-ref",
+  "probe-results",
 ])
 
 export async function verifyTransferProofBundle(directory: string): Promise<TransferProofBundleVerificationResult> {
@@ -95,6 +147,7 @@ export async function verifyTransferProofBundle(directory: string): Promise<Tran
   if (artifactVerification.manifest) {
     verifyRequiredTransferArtifacts(artifactVerification.manifest, violations)
     await verifyPreviewSessionEvidenceRef(bundleDirectory, artifactVerification.manifest, violations)
+    await verifyTransferProofMetadata(bundleDirectory, artifactVerification.manifest, violations)
     await verifyReviewerEvidenceSafety(bundleDirectory, artifactVerification.manifest, violations)
   }
 
@@ -187,6 +240,104 @@ function verifyRequiredTransferArtifacts(manifest: ArtifactManifest, violations:
       violations.push({ code: "missing-transfer-artifact", path: "manifest.files", message: `Transfer proof bundle requires a ${kind} artifact.` })
     }
   }
+}
+
+async function verifyTransferProofMetadata(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[]): Promise<void> {
+  const metadata = await readJson(join(directory, "metadata.json"))
+  const transferProofBundle = isRecord(metadata) && isRecord(metadata.transferProofBundle) ? metadata.transferProofBundle : undefined
+  if (!transferProofBundle) {
+    return
+  }
+
+  for (const finding of unsafeReviewerEvidenceFindings(`${JSON.stringify(transferProofBundle, null, 2)}\n`, "metadata.json")) {
+    violations.push(finding)
+  }
+
+  if (transferProofBundle.schema !== "wp-codebox/transfer-proof-bundle/v1") {
+    violations.push({ code: "malformed-transfer-artifact", path: "metadata.transferProofBundle.schema", message: "Transfer proof bundle metadata must use schema wp-codebox/transfer-proof-bundle/v1." })
+  }
+  if (!Array.isArray(transferProofBundle.roles) || transferProofBundle.roles.length === 0) {
+    violations.push({ code: "missing-transfer-artifact", path: "metadata.transferProofBundle.roles", message: "Transfer proof bundle metadata requires at least one runtime role." })
+    return
+  }
+
+  const seenRoles = new Set<string>()
+  for (const [index, roleBundle] of transferProofBundle.roles.entries()) {
+    const basePath = `metadata.transferProofBundle.roles[${index}]`
+    if (!isRecord(roleBundle)) {
+      violations.push({ code: "malformed-transfer-artifact", path: basePath, message: "Transfer proof runtime role must be an object." })
+      continue
+    }
+    const role = typeof roleBundle.role === "string" ? roleBundle.role : ""
+    if (!role) {
+      violations.push({ code: "malformed-transfer-artifact", path: `${basePath}.role`, message: "Transfer proof runtime role requires a role name." })
+    } else if (seenRoles.has(role)) {
+      violations.push({ code: "malformed-transfer-artifact", path: `${basePath}.role`, message: `Transfer proof runtime role '${role}' is duplicated.` })
+    } else {
+      seenRoles.add(role)
+    }
+    if (!isRecord(roleBundle.evidence)) {
+      violations.push({ code: "missing-transfer-artifact", path: `${basePath}.evidence`, message: "Transfer proof runtime role requires evidence refs." })
+      continue
+    }
+    await verifyTransferProofEvidenceRefs(directory, manifest, roleBundle.evidence, `${basePath}.evidence`, violations)
+  }
+
+  await verifyTransferProofEvidenceRefs(directory, manifest, transferProofBundle, "metadata.transferProofBundle", violations)
+}
+
+async function verifyTransferProofEvidenceRefs(directory: string, manifest: ArtifactManifest, refs: Record<string, unknown>, basePath: string, violations: TransferProofViolation[]): Promise<void> {
+  for (const [name, value] of Object.entries(refs)) {
+    if (name === "schema" || name === "createdAt" || name === "summary" || name === "roles") {
+      continue
+    }
+    if (isArtifactRef(value)) {
+      await verifyTransferProofArtifactRef(directory, manifest, value, `${basePath}.${name}`, violations)
+      continue
+    }
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        if (isArtifactRef(item)) {
+          await verifyTransferProofArtifactRef(directory, manifest, item, `${basePath}.${name}[${index}]`, violations)
+        } else {
+          violations.push({ code: "malformed-transfer-artifact", path: `${basePath}.${name}[${index}]`, message: "Transfer proof evidence arrays may only contain artifact refs." })
+        }
+      }
+      continue
+    }
+    if (value !== undefined) {
+      violations.push({ code: "malformed-transfer-artifact", path: `${basePath}.${name}`, message: "Transfer proof evidence values must be artifact refs or arrays of artifact refs." })
+    }
+  }
+}
+
+async function verifyTransferProofArtifactRef(directory: string, manifest: ArtifactManifest, ref: Record<string, unknown>, path: string, violations: TransferProofViolation[]): Promise<void> {
+  const artifactPath = typeof ref.path === "string" ? ref.path : undefined
+  const kind = typeof ref.kind === "string" ? ref.kind : undefined
+  const manifestFile = artifactPath ? manifest.files.find((file) => file.path === artifactPath) : undefined
+  if (!artifactPath || !kind || !manifestFile || manifestFile.kind !== kind) {
+    violations.push({ code: "missing-transfer-artifact", path, ...(artifactPath ? { file: artifactPath } : {}), message: "Transfer proof evidence ref must point at a manifest file with the same kind." })
+    return
+  }
+
+  const refDigest = digestValue(ref.sha256) ?? digestValue(ref.digest)
+  if (!refDigest) {
+    violations.push({ code: "transfer-digest-mismatch", path: `${path}.sha256`, file: artifactPath, message: "Transfer proof evidence ref must include a SHA-256 digest." })
+    return
+  }
+
+  const actual = artifactFileDigest(await readFile(join(directory, artifactPath))).value
+  if (actual !== refDigest || actual !== manifestFile.sha256.value) {
+    violations.push({ code: "transfer-digest-mismatch", path: `${path}.sha256`, file: artifactPath, message: "Transfer proof evidence ref digest must match the referenced artifact and manifest file hash." })
+  }
+}
+
+function isArtifactRef(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && typeof value.path === "string" && typeof value.kind === "string"
+}
+
+function digestValue(value: unknown): string | undefined {
+  return isRecord(value) && value.algorithm === "sha256" && typeof value.value === "string" ? value.value : undefined
 }
 
 async function verifyPreviewSessionEvidenceRef(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[]): Promise<void> {

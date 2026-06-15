@@ -43,6 +43,7 @@ export interface WordPressBenchRecipeOptions {
   wpConfigDefines?: JsonObject
   bootstrapFiles?: string[]
   workloads?: unknown[]
+  scenarioIds?: string[]
   lifecycle?: JsonObject
   resetPolicy?: JsonObject
 }
@@ -155,6 +156,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
           `env-json=${JSON.stringify(options.env ?? {})}`,
           `bootstrap-files-json=${JSON.stringify(options.bootstrapFiles ?? [])}`,
           `workloads-json=${JSON.stringify(options.workloads ?? [])}`,
+          `scenario-ids-json=${JSON.stringify(normalizeScenarioIds(options.scenarioIds ?? []))}`,
           `lifecycle-json=${JSON.stringify(options.lifecycle ?? {})}`,
           `reset-policy-json=${JSON.stringify(options.resetPolicy ?? {})}`,
         ],
@@ -223,6 +225,10 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 
 function nonNegativeInteger(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : fallback
+}
+
+function normalizeScenarioIds(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
 }
 
 function isPlainObject(value: unknown): value is JsonObject {

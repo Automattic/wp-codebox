@@ -31,6 +31,27 @@ export interface ArtifactManifestFile {
     | (string & {})
   contentType: string
   sha256: ArtifactFileDigest
+  viewer?: ArtifactViewerMetadata
+}
+
+export interface ArtifactViewerMetadata {
+  kind: string
+  base: string
+  query: {
+    parameter: string
+    value: {
+      source: "public-artifact-url" | (string & {})
+      path: string
+      kind?: string
+      contentType?: string
+      sha256?: ArtifactFileDigest
+    }
+    encoding: "url" | (string & {})
+  }
+  replay: {
+    status: "full" | "partial" | "unavailable" | (string & {})
+    limitations: string[]
+  }
 }
 
 export interface ArtifactFileDigest {
@@ -58,8 +79,8 @@ export function artifactFileDigest(contents: string | Buffer): ArtifactFileDiges
   return { algorithm: "sha256", value: createHash("sha256").update(contents).digest("hex") }
 }
 
-export function artifactManifestFile(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: ArtifactFileDigest = placeholderArtifactFileDigest()): ArtifactManifestFile {
-  return { path, kind, contentType, sha256 }
+export function artifactManifestFile(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: ArtifactFileDigest = placeholderArtifactFileDigest(), viewer?: ArtifactViewerMetadata): ArtifactManifestFile {
+  return stripUndefined({ path, kind, contentType, sha256, viewer })
 }
 
 export function artifactManifestFileWithSha256(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: string): ArtifactManifestFile {
@@ -130,4 +151,8 @@ function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFil
       ? { ...file, sha256: placeholderArtifactFileDigest() }
       : file),
   }
+}
+
+function stripUndefined<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T
 }

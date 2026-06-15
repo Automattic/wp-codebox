@@ -3,6 +3,7 @@
  * Plugin Name: Bench Dependency
  * Description: Fixture dependency for WP Codebox bench command smoke tests.
  * Version: 0.1.0
+ * Requires Plugins: bench-plugin
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -30,6 +31,15 @@ add_action(
 	'init',
 	static function (): void {
 		$GLOBALS['wp_codebox_bench_dependency_boot']['init_callbacks']++;
+	}
+);
+
+register_activation_hook(
+	__FILE__,
+	static function (): void {
+		if ( ! function_exists( 'wp_codebox_bench_plugin_value' ) ) {
+			wp_die( 'Bench dependency requires the component plugin to be loaded before activation.' );
+		}
 	}
 );
 

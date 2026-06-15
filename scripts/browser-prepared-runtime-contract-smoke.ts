@@ -33,6 +33,12 @@ const hitSession = {
       input_hash: "a".repeat(64),
       blueprint: preparedBlueprint,
       fallback_blueprint: fallbackBlueprint,
+      diagnostics: {
+        schema: "wp-codebox/browser-prepared-runtime-diagnostics/v1",
+        prepared_snapshot_hit: true,
+        prepared_snapshot_key: "known-site",
+        source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+      },
     },
   },
 }
@@ -45,6 +51,13 @@ assert.equal(JSON.stringify(runtime.preparedBrowserRuntimeStatus(hitSession)), J
   selected: "prepared",
   cache_key: "known-site",
   input_hash: "a".repeat(64),
+  source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+  diagnostics: {
+    schema: "wp-codebox/browser-prepared-runtime-diagnostics/v1",
+    prepared_snapshot_hit: true,
+    prepared_snapshot_key: "known-site",
+    source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+  },
   invalidation: null,
 }))
 

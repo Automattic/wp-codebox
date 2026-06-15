@@ -3,6 +3,7 @@ import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
+import { browserCommandLivenessPolicy, withBrowserCommandLiveness } from "./browser-liveness.js"
 
 export interface BrowserStepOutcome {
   assertion?: BrowserStepAssertion
@@ -10,6 +11,7 @@ export interface BrowserStepOutcome {
   target?: BrowserStepRecord["target"]
   screenshot?: string
   screenshotIsDefault?: boolean
+  screenshotFallback?: { reason: string; mode: "page-screenshot" }
   error?: BrowserProbeErrorRecord
 }
 
@@ -128,8 +130,14 @@ export async function executeBrowserInteractionStep(
         ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
         : defaultScreenshotPath
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
+      let fallback: { reason: string; mode: "page-screenshot" } | undefined
       if (frameTarget) {
-        await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+        try {
+          await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+        } catch (error) {
+          fallback = { reason: error instanceof Error ? error.message : String(error), mode: "page-screenshot" }
+          await page.screenshot({ path, fullPage: true })
+        }
       } else {
         await page.screenshot({ path, fullPage: true })
       }
@@ -137,6 +145,7 @@ export async function executeBrowserInteractionStep(
       return {
         ...(readiness ? { readiness } : {}),
         ...(frameTarget ? { target: { mode: frameTarget.mode as "frame-selector" | "frame-url", ...(frameTarget.selector ? { selector: frameTarget.selector } : {}), ...(frameTarget.urlFragment ? { urlFragment: frameTarget.urlFragment } : {}), ...(frameTarget.frame.url() ? { frameUrl: frameTarget.frame.url() } : {}) } } : {}),
+        ...(fallback ? { screenshotFallback: fallback } : {}),
         screenshot: isDefault ? "files/browser/screenshot.png" : `files/browser/${basename(path)}`,
         screenshotIsDefault: isDefault,
       }
@@ -254,7 +263,12 @@ async function waitForPaintedReadiness(page: Page, waitFor: BrowserPaintedReadin
     return { visibleElementCount, textLength }
   }, undefined, { timeout })
   const summary = await result.jsonValue() as { visibleElementCount: number; textLength: number }
-  await target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await withBrowserCommandLiveness({
+    command: "wordpress.browser-actions",
+    phase: "painted-readiness-stabilization",
+    operation: target.frame.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))),
+    policy: { wallTimeoutMs: browserCommandLivenessPolicy().readinessStabilizationTimeoutMs, idleTimeoutMs: 0 },
+  })
   return {
     mode: target.mode,
     ...(target.selector ? { selector: target.selector } : {}),
@@ -362,6 +376,7 @@ export function browserStepRecord(
     ...(outcome.readiness ? { readiness: outcome.readiness } : {}),
     ...(outcome.target ? { target: outcome.target } : {}),
     ...(outcome.screenshot ? { screenshot: outcome.screenshot } : {}),
+    ...(outcome.screenshotFallback ? { screenshotFallback: outcome.screenshotFallback } : {}),
     finalUrl,
     ...(outcome.error ? { error: outcome.error } : {}),
   }
