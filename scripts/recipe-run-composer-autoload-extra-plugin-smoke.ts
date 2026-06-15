@@ -1,0 +1,108 @@
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const cli = resolve(root, "packages/cli/dist/index.js")
+const artifacts = resolve(root, "artifacts/recipe-run-composer-autoload-extra-plugin-smoke")
+const pluginSource = resolve(artifacts, "source-plugin")
+const recipePath = resolve(artifacts, "recipe.json")
+
+rmSync(artifacts, { recursive: true, force: true })
+mkdirSync(resolve(pluginSource, "src"), { recursive: true })
+
+writeFileSync(resolve(pluginSource, "composer.json"), `${JSON.stringify({
+  name: "wp-codebox/composer-autoload-smoke",
+  autoload: { classmap: ["src/"] },
+  config: { "allow-plugins": false },
+}, null, 2)}\n`)
+
+writeFileSync(resolve(pluginSource, "composer-autoload-smoke.php"), `<?php
+/**
+ * Plugin Name: WP Codebox Composer Autoload Smoke
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+$autoload = __DIR__ . '/vendor/autoload.php';
+if ( is_file( $autoload ) ) {
+	require_once $autoload;
+}
+
+register_activation_hook( __FILE__, static function (): void {
+	if ( ! class_exists( \\WpCodeboxComposerSmoke\\Fixture::class ) ) {
+		throw new RuntimeException( 'Composer classmap fixture was not autoloaded.' );
+	}
+
+	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() );
+} );
+`)
+
+writeFileSync(resolve(pluginSource, "src", "Fixture.php"), `<?php
+
+namespace WpCodeboxComposerSmoke;
+
+final class Fixture {
+	public static function value(): int {
+		return 992;
+	}
+}
+`)
+
+writeFileSync(recipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  runtime: {
+    backend: "wordpress-playground",
+    name: "recipe-run-composer-autoload-extra-plugin-smoke",
+    wp: "7.0",
+    blueprint: { steps: [] },
+  },
+  inputs: {
+    extra_plugins: [
+      {
+        source: pluginSource,
+        slug: "composer-autoload-smoke",
+        pluginFile: "composer-autoload-smoke/composer-autoload-smoke.php",
+      },
+    ],
+  },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: [
+          "code=if (!class_exists('WpCodeboxComposerSmoke\\\\Fixture')) { throw new RuntimeException('autoloaded class missing after plugin boot'); } echo wp_json_encode(array('value' => get_option('wp_codebox_composer_smoke_value'), 'active' => is_plugin_active('composer-autoload-smoke/composer-autoload-smoke.php')));",
+        ],
+      },
+    ],
+  },
+}, null, 2)}\n`)
+
+assert.equal(existsSync(resolve(pluginSource, "vendor", "autoload.php")), false, "fixture source should start without Composer vendor/autoload.php")
+
+const result = spawnSync(process.execPath, [
+  cli,
+  "recipe-run",
+  "--recipe",
+  recipePath,
+  "--artifacts",
+  artifacts,
+  "--json",
+], { cwd: root, encoding: "utf8" })
+
+assert.equal(result.status, 0, result.stderr || result.stdout)
+const output = JSON.parse(result.stdout)
+assert.equal(output.success, true)
+
+const workflowExecution = output.executions.find((execution: { command: string; recipePhase?: string }) => execution.command === "wordpress.run-php" && execution.recipePhase === "steps")
+assert.ok(workflowExecution)
+
+const workflowResult = JSON.parse(workflowExecution.stdout)
+assert.equal(workflowResult.value, "992")
+assert.equal(workflowResult.active, true)
+assert.equal(existsSync(resolve(pluginSource, "vendor", "autoload.php")), false, "recipe-run must not mutate the caller plugin checkout")
+assert.equal(existsSync(resolve(pluginSource, "composer.lock")), false, "recipe-run must not write Composer lockfiles into the caller plugin checkout")
+
+console.log("recipe run Composer autoload extra plugin smoke passed")

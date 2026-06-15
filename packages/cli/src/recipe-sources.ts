@@ -39,7 +39,7 @@ export interface RecipeSourceProvenance {
     maxExtractedFiles: number
     sha256Required: boolean
   }
-  localPathCategory?: "recipe-relative" | "temporary-download"
+  localPathCategory?: "recipe-relative" | "temporary-download" | "temporary-composer-autoload"
 }
 
 interface PreparedExternalSource {
@@ -279,21 +279,70 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
     const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug, plugin.sha256)
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    await assertPreparedPluginFileExists(resolved.source, pluginFile.slice(slug.length + 1), plugin.source)
+    const prepared = await prepareComposerAutoloadForPlugin(resolved, slug, plugin.source)
+    await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), plugin.source)
     plugins.push({
-      source: resolved.source,
+      source: prepared.source,
       slug,
       target: pluginTarget(slug, loadAs),
       pluginFile,
       activate: plugin.activate !== false,
       loadAs,
-      cleanupPaths: resolved.cleanupPaths,
-      provenance: resolved.provenance,
+      cleanupPaths: prepared.cleanupPaths,
+      provenance: prepared.provenance,
       metadata: plugin.metadata ?? {},
     })
   }
 
   return plugins
+}
+
+async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string): Promise<PreparedExternalSource> {
+  if (prepared.provenance.kind !== "local") {
+    return prepared
+  }
+
+  try {
+    const composerJson = await stat(join(prepared.source, "composer.json"))
+    if (!composerJson.isFile()) {
+      return prepared
+    }
+  } catch {
+    return prepared
+  }
+
+  try {
+    const autoload = await stat(join(prepared.source, "vendor", "autoload.php"))
+    if (autoload.isFile()) {
+      return prepared
+    }
+  } catch {
+    // Prepare a temporary copy below.
+  }
+
+  const stagingRoot = await mkdtemp(join(tmpdir(), `wp-codebox-plugin-${slug}-`))
+  const stagedSource = join(stagingRoot, slug)
+  await cp(prepared.source, stagedSource, { recursive: true })
+  try {
+    await execFileAsync("composer", ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"], {
+      cwd: stagedSource,
+      maxBuffer: 1024 * 1024 * 10,
+    })
+  } catch (error) {
+    await rm(stagingRoot, { recursive: true, force: true })
+    const detail = error instanceof Error && "stderr" in error && typeof error.stderr === "string" && error.stderr.trim() ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
+    throw new Error(`Recipe extra plugin source requires Composer autoload but could not be prepared: ${sourceRef}: ${detail}`)
+  }
+
+  return {
+    ...prepared,
+    source: stagedSource,
+    cleanupPaths: [...prepared.cleanupPaths, stagingRoot],
+    provenance: {
+      ...prepared.provenance,
+      localPathCategory: "temporary-composer-autoload",
+    },
+  }
 }
 
 export async function prepareRecipeDependencyOverlays(recipe: WorkspaceRecipe, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[]): Promise<PreparedDependencyOverlay[]> {
