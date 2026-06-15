@@ -1,6 +1,7 @@
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
-import { stripUndefined, type ArtifactBundle, type RuntimeInfo } from "@automattic/wp-codebox-core"
+import type { ArtifactBundle, RuntimeInfo } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 import type { RecipeArtifactPointerCommandStatus, RecipeArtifactPointerState, RecipeBrowserEvidence, RecipePhaseEvidence } from "./recipe-run-types.js"
 

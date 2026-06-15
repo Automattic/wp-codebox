@@ -61,8 +61,29 @@ assert.deepEqual(
   { types: "./dist/recipe-builders.d.ts", import: "./dist/recipe-builders.js" },
   "Core package should expose a stable recipe-builder subpath",
 )
+assert.deepEqual(
+  corePackage.exports?.["./contracts"],
+  { types: "./dist/contracts.d.ts", import: "./dist/contracts.js" },
+  "Core package should expose the intentional contracts subpath",
+)
+assert.deepEqual(
+  corePackage.exports?.["./artifacts"],
+  { types: "./dist/artifacts.d.ts", import: "./dist/artifacts.js" },
+  "Core package should expose the intentional artifact helper subpath",
+)
+assert.deepEqual(
+  corePackage.exports?.["./internals"],
+  { types: "./dist/internals.d.ts", import: "./dist/internals.js" },
+  "Core package should expose the explicit monorepo-internal helper subpath",
+)
 assert.ok(corePackedFiles.has("dist/recipe-builders.js"), "Core package should ship compiled recipe-builder entrypoint")
 assert.ok(corePackedFiles.has("dist/recipe-builders.d.ts"), "Core package should ship recipe-builder types")
+assert.ok(corePackedFiles.has("dist/contracts.js"), "Core package should ship compiled contracts entrypoint")
+assert.ok(corePackedFiles.has("dist/contracts.d.ts"), "Core package should ship contracts types")
+assert.ok(corePackedFiles.has("dist/artifacts.js"), "Core package should ship compiled artifacts entrypoint")
+assert.ok(corePackedFiles.has("dist/artifacts.d.ts"), "Core package should ship artifacts types")
+assert.ok(corePackedFiles.has("dist/internals.js"), "Core package should ship compiled internals entrypoint")
+assert.ok(corePackedFiles.has("dist/internals.d.ts"), "Core package should ship internals types")
 assert.ok(
   rootPackedFiles.has("scripts/normalize-playground-sqlite-package.mjs"),
   "Root package should ship the Playground SQLite package normalizer for clean installs",
@@ -72,6 +93,21 @@ assert.deepEqual(
   { types: "./packages/runtime-core/dist/recipe-builders.d.ts", import: "./packages/runtime-core/dist/recipe-builders.js" },
   "Root release package should expose the stable recipe-builder subpath",
 )
+assert.deepEqual(
+  rootPackage.exports?.["./core/contracts"],
+  { types: "./packages/runtime-core/dist/contracts.d.ts", import: "./packages/runtime-core/dist/contracts.js" },
+  "Root release package should expose the contracts subpath",
+)
+assert.deepEqual(
+  rootPackage.exports?.["./core/artifacts"],
+  { types: "./packages/runtime-core/dist/artifacts.d.ts", import: "./packages/runtime-core/dist/artifacts.js" },
+  "Root release package should expose the artifacts subpath",
+)
+assert.deepEqual(
+  rootPackage.exports?.["./core/internals"],
+  { types: "./packages/runtime-core/dist/internals.d.ts", import: "./packages/runtime-core/dist/internals.js" },
+  "Root release package should expose the explicit internals subpath",
+)
 assert.equal(
   rootPackage.bin?.["wp-codebox"],
   "packages/cli/dist/index.js",
@@ -80,6 +116,12 @@ assert.equal(
 assert.ok(rootPackedFiles.has("packages/cli/dist/index.js"), "Root package should ship the compiled CLI binary target")
 assert.ok(rootPackedFiles.has("packages/runtime-core/dist/recipe-builders.js"), "Root package should ship compiled recipe builders")
 assert.ok(rootPackedFiles.has("packages/runtime-core/dist/recipe-builders.d.ts"), "Root package should ship recipe-builder types")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/contracts.js"), "Root package should ship compiled contracts entrypoint")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/contracts.d.ts"), "Root package should ship contracts types")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/artifacts.js"), "Root package should ship compiled artifacts entrypoint")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/artifacts.d.ts"), "Root package should ship artifacts types")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/internals.js"), "Root package should ship compiled internals entrypoint")
+assert.ok(rootPackedFiles.has("packages/runtime-core/dist/internals.d.ts"), "Root package should ship internals types")
 
 await execFileAsync("npm", ["run", "package:wordpress-plugin"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 const pluginZip = resolve(repoRoot, "packages", "wordpress-plugin", "dist", "wp-codebox.zip")

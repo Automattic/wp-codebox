@@ -8,7 +8,6 @@ import {
   artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
-  stripUndefined,
   type ArtifactEvidenceRef,
   type ArtifactBundle,
   type ArtifactDurablePreviewRef,
@@ -32,6 +31,7 @@ import {
   type RuntimeInfo,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
@@ -50,6 +50,7 @@ import {
 import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
 import { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations } from "./replayable-wordpress-site-bundle.js"
 import { runtimeSnapshotPayload, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
+import { previewReviewerAccess } from "./preview-reviewer-access.js"
 
 export interface ArtifactBundleBuilderSource {
   artifactRoot: string
@@ -641,7 +642,7 @@ function buildPreviewEvidence({
       ...(preview?.localUrl ? { localUrl: safePreviewUrlRef(preview.localUrl) } : {}),
       ...(preview?.siteUrl ? { siteUrl: safePreviewUrlRef(preview.siteUrl) } : {}),
       ...(durablePreview ? { durablePreview } : {}),
-      ...(preview?.reviewerAuthBootstrap ? { reviewerAuthBootstrap: preview.reviewerAuthBootstrap } : {}),
+      reviewerAccess: previewReviewerAccess(preview),
     },
     readiness: {
       ready,
@@ -773,6 +774,7 @@ function buildPreviewSessionEvidence({
       hasPublicUrl: Boolean(preview.publicUrl),
       hasSiteUrl: Boolean(preview.siteUrl),
       hasReviewerAuthBootstrap: Boolean(preview.reviewerAuthBootstrap),
+      reviewerAccess: previewReviewerAccess(preview),
       blockers: preview.blockers,
     }) : undefined,
     refs: stripUndefined({
@@ -805,7 +807,10 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
   }
 
   if (preview.reviewerAuthBootstrap) {
-    return preview
+    return {
+      ...preview,
+      reviewerAccess: previewReviewerAccess(preview),
+    }
   }
 
   const blocker: ArtifactPreviewBlocker = {
@@ -824,6 +829,7 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
   return {
     ...preview,
     blockers: [...(preview.blockers ?? []), blocker],
+    reviewerAccess: previewReviewerAccess({ ...preview, blockers: [...(preview.blockers ?? []), blocker] }),
   }
 }
 

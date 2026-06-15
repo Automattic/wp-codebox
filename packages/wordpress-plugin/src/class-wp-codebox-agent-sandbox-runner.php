@@ -1292,10 +1292,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private function remediation_outcome( array $run, int $exit_code, string $output ): array {
 		$run_outcome = $this->agents_api_run_outcome( $run );
 		$has_run_outcome = ! empty( $run_outcome );
-		$datamachine = $has_run_outcome ? array() : $this->first_datamachine_metadata( $run );
 		$run_status = (string) ( $run_outcome['status'] ?? '' );
 		$stop_reason = (string) ( $run_outcome['stop_reason'] ?? '' );
-		$max_turns_reached = $has_run_outcome ? 'max_turns' === $stop_reason : ( $this->recursive_truthy_key( $run, 'max_turns_reached' ) || true === ( $datamachine['max_turns_reached'] ?? false ) );
+		$max_turns_reached = $has_run_outcome ? 'max_turns' === $stop_reason : $this->recursive_truthy_key( $run, 'max_turns_reached' );
 		$pending_runtime_tool = $has_run_outcome && ( 'runtime_tool_pending' === $run_status || 'runtime_tool_pending' === $stop_reason );
 		$provider_error = $has_run_outcome ? $this->agents_api_provider_error_details( $run_outcome ) : $this->provider_error_details( $run, $output );
 		$pr_url = $this->first_url_for_keys( $run, array( 'pr_url', 'pull_request_url', 'pullRequestUrl' ) );
@@ -1317,7 +1316,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'agents_api_stop_reason' => $has_run_outcome ? $stop_reason : null,
 					'agents_api_completed'   => $has_run_outcome && array_key_exists( 'completed', $run_outcome ) ? (bool) $run_outcome['completed'] : null,
 					'pending_runtime_tool'   => $has_run_outcome ? $pending_runtime_tool : null,
-					'datamachine_completed' => array_key_exists( 'completed', $datamachine ) ? (bool) $datamachine['completed'] : null,
 					'max_turns_reached'     => $max_turns_reached,
 				),
 				static fn( mixed $value ): bool => null !== $value
@@ -1326,8 +1324,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		if ( $has_run_outcome ) {
 			$outcome['metadata'] = array( 'agents_api' => array( 'run_outcome' => $run_outcome ) );
-		} elseif ( ! empty( $datamachine ) ) {
-			$outcome['metadata'] = array( 'datamachine' => $datamachine );
 		}
 
 		if ( $has_artifact_changes && $false_positive ) {
@@ -1489,20 +1485,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
-	}
-
-	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
-	private function first_datamachine_metadata( array $run ): array {
-		$payloads = array_merge( array( $run ), $this->agent_payloads( $run ) );
-		foreach ( $payloads as $payload ) {
-			$metadata = is_array( $payload['metadata'] ?? null ) ? $payload['metadata'] : array();
-			$datamachine = is_array( $metadata['datamachine'] ?? null ) ? $metadata['datamachine'] : array();
-			if ( ! empty( $datamachine ) ) {
-				return $datamachine;
-			}
-		}
-
-		return array();
 	}
 
 	/** @param array<string,mixed> $run Decoded CLI run output. @return array<int,array<string,mixed>> */

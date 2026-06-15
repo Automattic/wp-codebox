@@ -5,7 +5,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 
-import { artifactFileDigest, buildReviewerArtifactExportLinks, type ArtifactManifest } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, type ArtifactManifest } from "@automattic/wp-codebox-core"
+import { buildReviewerArtifactExportLinks } from "@automattic/wp-codebox-core/artifacts"
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, "..")

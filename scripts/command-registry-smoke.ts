@@ -1,4 +1,4 @@
-import { commandRegistry, runtimeCommandDefinitions } from "@automattic/wp-codebox-core"
+import { commandRegistry, runtimeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { playgroundRuntimeCommandIds } from "@automattic/wp-codebox-playground"
 
 function assert(condition: unknown, message: string): asserts condition {

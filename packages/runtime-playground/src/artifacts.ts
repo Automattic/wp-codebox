@@ -7,7 +7,8 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { promisify } from "node:util"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest, stripUndefined } from "@automattic/wp-codebox-core"
+import { artifactFileDigest } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type {
   ArtifactDiagnostic,
   ArtifactPackageIdentity,
@@ -25,7 +26,7 @@ import type {
   SandboxWorkspaceContract,
 } from "@automattic/wp-codebox-core"
 
-export { buildArtifactDiagnostics } from "@automattic/wp-codebox-core"
+export { buildArtifactDiagnostics } from "@automattic/wp-codebox-core/artifacts"
 
 export interface CapturedMountFile {
   mountIndex: number

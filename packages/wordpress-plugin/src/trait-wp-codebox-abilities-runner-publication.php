@@ -197,15 +197,23 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		if ( is_array( $normalized['error'] ?? null ) ) {
 			return self::runner_workspace_prepare_failure( 'invalid_request', $normalized['error'], 'failed', $normalized );
 		}
+		$backend       = self::runner_workspace_backend_config();
+		$backend_id    = (string) ( $backend['id'] ?? '' );
+		$abilities     = is_array( $backend['abilities'] ?? null ) ? $backend['abilities'] : array();
+		$adopt_ability = (string) ( $abilities['workspace_adopt'] ?? '' );
+		$show_ability  = (string) ( $abilities['workspace_show'] ?? '' );
+		$clone_ability = (string) ( $abilities['workspace_clone'] ?? '' );
+		$add_ability   = (string) ( $abilities['workspace_worktree_add'] ?? '' );
 
 		$checkout_path = (string) $normalized['checkout_path'];
-		if ( '' !== $checkout_path && ! defined( 'DATAMACHINE_WORKSPACE_PATH' ) ) {
-			define( 'DATAMACHINE_WORKSPACE_PATH', rtrim( dirname( $checkout_path ), '/' ) );
+		$workspace_path_constant = (string) ( $backend['workspace_path_constant'] ?? '' );
+		if ( '' !== $checkout_path && '' !== $workspace_path_constant && ! defined( $workspace_path_constant ) ) {
+			define( $workspace_path_constant, rtrim( dirname( $checkout_path ), '/' ) );
 		}
 
 		$required = '' !== $checkout_path
-			? array( 'datamachine-code/workspace-adopt' )
-			: array( 'datamachine-code/workspace-show', 'datamachine-code/workspace-clone', 'datamachine-code/workspace-worktree-add' );
+			? array( $adopt_ability )
+			: array( $show_ability, $clone_ability, $add_ability );
 
 		foreach ( $required as $ability_name ) {
 			$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
@@ -220,7 +228,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		}
 
 		if ( '' !== $checkout_path ) {
-			$adopt = wp_get_ability( 'datamachine-code/workspace-adopt' )->execute( array( 'path' => $checkout_path, 'name' => $normalized['repo'] ) );
+			$adopt = wp_get_ability( $adopt_ability )->execute( array( 'path' => $checkout_path, 'name' => $normalized['repo'] ) );
 			if ( is_wp_error( $adopt ) ) {
 				return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $adopt->get_error_code(), 'message' => $adopt->get_error_message(), 'data' => $adopt->get_error_data() ), 'failed', $normalized );
 			}
@@ -233,7 +241,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'success'      => true,
 					'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 					'status'       => 'prepared',
-					'backend'      => 'datamachine-code',
+					'backend'      => $backend_id,
 					'repo'         => $normalized['repo'],
 					'branch'       => $normalized['branch'],
 					'handle'       => (string) ( $adopt['handle'] ?? $adopt['name'] ?? $normalized['repo'] ),
@@ -246,7 +254,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			);
 		}
 
-		$show = wp_get_ability( 'datamachine-code/workspace-show' )->execute( array( 'name' => $normalized['repo'] ) );
+		$show = wp_get_ability( $show_ability )->execute( array( 'name' => $normalized['repo'] ) );
 		if ( is_wp_error( $show ) ) {
 			if ( '' === $normalized['clone_url'] ) {
 				return self::runner_workspace_prepare_failure( 'clone_url_required', array( 'code' => 'wp_codebox_runner_workspace_prepare_clone_url_required', 'message' => 'Runner workspace primary is missing and clone_url is empty.' ), 'failed', $normalized );
@@ -257,7 +265,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				$clone_input['auth_token_env'] = $normalized['github_token_env'];
 			}
 
-			$clone = wp_get_ability( 'datamachine-code/workspace-clone' )->execute( array_filter( $clone_input, static fn( mixed $value ): bool => '' !== $value ) );
+			$clone = wp_get_ability( $clone_ability )->execute( array_filter( $clone_input, static fn( mixed $value ): bool => '' !== $value ) );
 			if ( is_wp_error( $clone ) ) {
 				return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $clone->get_error_code(), 'message' => $clone->get_error_message(), 'data' => $clone->get_error_data() ), 'failed', $normalized );
 			}
@@ -277,7 +285,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			static fn( mixed $value ): bool => '' !== $value && null !== $value
 		);
 
-		$worktree = wp_get_ability( 'datamachine-code/workspace-worktree-add' )->execute( $worktree_input );
+		$worktree = wp_get_ability( $add_ability )->execute( $worktree_input );
 		if ( is_wp_error( $worktree ) ) {
 			return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $worktree->get_error_code(), 'message' => $worktree->get_error_message(), 'data' => $worktree->get_error_data() ), 'failed', $normalized );
 		}
@@ -290,7 +298,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => true,
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => 'prepared',
-				'backend'      => 'datamachine-code',
+				'backend'      => $backend_id,
 				'repo'         => $normalized['repo'],
 				'branch'       => (string) ( $worktree['branch'] ?? $normalized['branch'] ),
 				'handle'       => (string) ( $worktree['handle'] ?? '' ),
@@ -310,7 +318,10 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::runner_workspace_publication_failure( 'invalid_request', $normalized['error'], 'write_without_pr', $normalized );
 		}
 
-		$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( 'datamachine-code/publish-runner-workspace' ) : null;
+		$backend         = self::runner_workspace_backend_config();
+		$abilities       = is_array( $backend['abilities'] ?? null ) ? $backend['abilities'] : array();
+		$publish_ability = (string) ( $abilities['publish_runner_workspace'] ?? '' );
+		$ability         = '' !== $publish_ability && function_exists( 'wp_get_ability' ) ? wp_get_ability( $publish_ability ) : null;
 		if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
 			return self::runner_workspace_publication_failure(
 				'publication_unavailable',
@@ -364,7 +375,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::runner_workspace_operation_failure( 'capture', 'invalid_request', $normalized['error'], 'failed', $normalized );
 		}
 
-		$status = self::execute_runner_workspace_backend_ability( 'datamachine-code/workspace-git-status', array( 'name' => $normalized['workspace'] ) );
+		$backend_config = self::runner_workspace_backend_config();
+		$abilities      = is_array( $backend_config['abilities'] ?? null ) ? $backend_config['abilities'] : array();
+		$status = self::execute_runner_workspace_backend_ability( (string) ( $abilities['workspace_git_status'] ?? '' ), array( 'name' => $normalized['workspace'] ) );
 		if ( is_array( $status['error'] ?? null ) ) {
 			return self::runner_workspace_operation_failure( 'capture', (string) $status['failure_type'], $status['error'], 'unavailable', $normalized );
 		}
@@ -373,7 +386,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$exclude_paths = self::runner_publication_string_list( $input['exclude_paths'] ?? array() );
 		$files         = self::filter_runner_workspace_capture_files( self::runner_publication_string_list( $status_result['files'] ?? array() ), $exclude_paths );
 		$dirty         = count( $files );
-		$backend       = (string) ( $status_result['backend'] ?? $normalized['workspace_backend'] ?? 'datamachine-code' );
+		$backend       = (string) ( $status_result['backend'] ?? $normalized['workspace_backend'] ?? $backend_config['id'] ?? '' );
 		$diff_result   = array();
 		$include_diff  = false !== ( $input['include_diff'] ?? true );
 
@@ -387,7 +400,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			);
-			$diff = self::execute_runner_workspace_backend_ability( 'datamachine-code/workspace-git-diff', $diff_input );
+			$diff = self::execute_runner_workspace_backend_ability( (string) ( $abilities['workspace_git_diff'] ?? '' ), $diff_input );
 			if ( is_array( $diff['error'] ?? null ) ) {
 				return self::runner_workspace_operation_failure( 'capture', (string) $diff['failure_type'], $diff['error'], 'unavailable', $normalized, array( 'status' => $status_result ) );
 			}
@@ -467,10 +480,12 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
 		);
 
-		$backend = self::execute_runner_workspace_backend_ability( 'datamachine-code/run-runner-workspace-command', $backend_input );
+		$backend_config = self::runner_workspace_backend_config();
+		$abilities      = is_array( $backend_config['abilities'] ?? null ) ? $backend_config['abilities'] : array();
+		$backend = self::execute_runner_workspace_backend_ability( (string) ( $abilities['run_runner_workspace_command'] ?? '' ), $backend_input );
 		if ( ! is_array( $backend['error'] ?? null ) ) {
 			$result = is_array( $backend['result'] ?? null ) ? $backend['result'] : array();
-			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input, (string) ( $result['backend'] ?? 'datamachine-code' ) );
+			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input, (string) ( $result['backend'] ?? $backend_config['id'] ?? '' ) );
 		}
 
 		if ( false !== ( $input['allow_local_fallback'] ?? true ) && '' !== $normalized['workspace_path'] && is_dir( $normalized['workspace_path'] ) ) {
@@ -547,6 +562,12 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		return trim( $slug, '-' );
 	}
 
+	/** @return array<string,mixed> */
+	private static function runner_workspace_backend_config(): array {
+		$config = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
+		return is_array( $config ) ? $config : array();
+	}
+
 	/** @param array<string,mixed> $error Error shape. @param array<string,mixed> $input Normalized input. @return array<string,mixed> */
 	private static function runner_workspace_prepare_failure( string $failure_type, array $error, string $status, array $input ): array {
 		return array_filter(
@@ -556,7 +577,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'status'       => $status,
 				'failure_type' => $failure_type,
 				'error'        => $error,
-				'backend'      => 'datamachine-code',
+				'backend'      => (string) ( self::runner_workspace_backend_config()['id'] ?? '' ),
 				'repo'         => (string) ( $input['repo'] ?? '' ),
 				'branch'       => (string) ( $input['branch'] ?? '' ),
 				'capabilities' => array( 'capture' => false, 'command' => false, 'publish' => false ),

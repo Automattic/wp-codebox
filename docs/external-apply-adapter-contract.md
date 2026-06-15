@@ -61,9 +61,16 @@ and reviewer workflow records.
 
 ## Apply Preflight Adapter
 
-Codebox exports the canonical Node adapter from `@automattic/wp-codebox-core`:
+Codebox exports the canonical Node adapter from
+`@automattic/wp-codebox-core/artifacts`:
 
 ```ts
+import {
+  createArtifactApplyRequest,
+  loadArtifactBundleForApply,
+  normalizeArtifactApplyPreflight,
+} from "@automattic/wp-codebox-core/artifacts"
+
 loadArtifactBundleForApply(bundlePath, { approvedFiles })
 normalizeArtifactApplyPreflight(input)
 createArtifactApplyRequest(input)

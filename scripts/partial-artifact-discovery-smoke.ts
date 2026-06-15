@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 
-import { discoverPartialRunArtifacts } from "@automattic/wp-codebox-core"
+import { discoverPartialRunArtifacts } from "@automattic/wp-codebox-core/artifacts"
 
 const execFileAsync = promisify(execFile)
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-partial-artifacts-"))

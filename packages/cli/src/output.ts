@@ -1,4 +1,5 @@
-import type { ArtifactBundle, ArtifactBundleVerificationResult, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
+import type { ArtifactBundle, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
+import type { ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 
 interface CliError {
   name: string
@@ -120,9 +121,7 @@ export function printHumanOutput(output: RunOutputLike): void {
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Executed: ${output.execution?.command ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
-  if (output.artifacts?.preview?.url) {
-    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
-  }
+  printPreviewAccess(output.artifacts)
 }
 
 export function printBootHumanOutput(output: RunOutputLike): void {
@@ -134,9 +133,7 @@ export function printBootHumanOutput(output: RunOutputLike): void {
   console.log("WP Codebox boot")
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
-  if (output.artifacts?.preview?.url) {
-    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
-  }
+  printPreviewAccess(output.artifacts)
 }
 
 export function printBlueprintValidateHumanOutput(output: BlueprintValidateOutputLike): void {
@@ -149,9 +146,7 @@ export function printBlueprintValidateHumanOutput(output: BlueprintValidateOutpu
   console.log(`Blueprint: ${output.blueprintPath ?? "inline"}`)
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
-  if (output.artifacts?.preview?.url) {
-    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
-  }
+  printPreviewAccess(output.artifacts)
 }
 
 export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
@@ -178,9 +173,27 @@ export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Steps: ${output.executions?.length ?? 0}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
-  if (output.artifacts?.preview?.url) {
-    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
+  printPreviewAccess(output.artifacts)
+}
+
+function printPreviewAccess(artifacts: ArtifactBundle | undefined): void {
+  const preview = artifacts?.preview
+  if (!preview) {
+    return
   }
+
+  const access = preview.reviewerAccess
+  if (access?.openUrl) {
+    console.log(`Preview: ${access.openUrl} (${access.status}, ${access.mode})`)
+    return
+  }
+
+  if (access?.reason) {
+    console.log(`Preview: ${access.status} (${access.reason})`)
+    return
+  }
+
+  console.log(`Preview: ${preview.status}`)
 }
 
 export function printRecipeValidateHumanOutput(output: RecipeValidateOutputLike): void {

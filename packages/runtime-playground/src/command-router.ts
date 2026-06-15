@@ -1,4 +1,5 @@
-import { createHostToolTransportError, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
+import { createHostToolTransportError, executeHostTool, type HostToolRegistry, type JsonValue } from "@automattic/wp-codebox-core"
+import { getCommandDefinition, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core/contracts"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 import { argValue } from "./command-args.js"
 

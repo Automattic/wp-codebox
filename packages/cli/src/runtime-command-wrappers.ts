@@ -1,4 +1,5 @@
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { serializeError } from "./output.js"
 import { recipeMountType } from "./recipe-sources.js"

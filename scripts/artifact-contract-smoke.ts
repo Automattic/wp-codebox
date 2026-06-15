@@ -6,7 +6,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, createRuntime, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, verifyArtifactBundle } from "@automattic/wp-codebox-core"
+import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, createRuntime, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "@automattic/wp-codebox-core"
+import { verifyArtifactBundle } from "@automattic/wp-codebox-core/artifacts"
 import { buildArtifactDiagnostics, createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 
 const execFileAsync = promisify(execFile)

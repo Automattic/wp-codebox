@@ -94,8 +94,18 @@ backend or host adapter. The important modules are:
   `Runtime`, `RuntimeBackend`, `RuntimeCreateSpec`, `MountSpec`,
   `ExecutionSpec`, `ObservationSpec`, `Snapshot`, `ArtifactBundle`, runtime
   episode contracts, and `createRuntime()`.
-- [`src/index.ts`](../packages/runtime-core/src/index.ts): the public barrel for
-  focused core modules plus artifact verification helpers.
+- [`src/index.ts`](../packages/runtime-core/src/index.ts): the stable package
+  root for runtime, recipe, policy, artifact metadata, task, browser, host-tool,
+  fanout contract, and result-envelope types. Keep implementation helpers out of
+  this barrel.
+- `@automattic/wp-codebox-core/contracts`: command catalog metadata and other
+  intentional contract surfaces that are useful to CLI/orchestrator consumers but
+  not central enough for the package root.
+- `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
+  export-link, diagnostics, and partial-discovery helpers.
+- `@automattic/wp-codebox-core/internals`: implementation helpers used inside
+  this monorepo. External consumers should not rely on this path as a stable
+  compatibility surface.
 - [`src/runtime-policy.ts`](../packages/runtime-core/src/runtime-policy.ts):
   `RuntimePolicy`, policy validation, and command allow-list enforcement.
 - [`src/command-registry.ts`](../packages/runtime-core/src/command-registry.ts):

@@ -1,4 +1,5 @@
-import { commandRegistry, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, type CommandDefinition, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
+import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
+import { commandRegistry, recipeCommandDefinitions, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput } from "../output.js"
 
 interface CommandCatalogOutput {

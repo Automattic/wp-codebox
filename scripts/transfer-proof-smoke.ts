@@ -258,7 +258,13 @@ function previewEvidenceFixture(createdAt: string, runtime: RuntimeInfo, artifac
     createdAt,
     session: { kind: "browser-playground-session", id: "session-fixture", runtimeId: runtime.id, backend: runtime.backend, environment: { kind: "wordpress", name: "WordPress", version: "latest" } },
     run: { ...artifactBundleRef, path: "manifest.json" },
-    preview: { status: "available", lifecycle: "held-after-run", source: "public-url-override", url: { kind: "preview-url", availability: "reviewer-safe", reviewerSafe: true, url: "https://example.com/" } },
+    preview: {
+      status: "available",
+      lifecycle: "held-after-run",
+      source: "public-url-override",
+      url: { kind: "preview-url", availability: "reviewer-safe", reviewerSafe: true, url: "https://example.com/" },
+      reviewerAccess: { schema: "wp-codebox/preview-reviewer-access/v1", status: "ready", mode: "direct-url", reviewerSafe: true, openUrl: "https://example.com/", targetUrl: "https://example.com/" },
+    },
     readiness: { ready: true, status: "ready", events: [] },
     components: { runtime: { backend: runtime.backend, wordpressVersion: "latest" } },
   }

@@ -380,7 +380,7 @@ private static function browser_contract_execution_metrics( array $primary, arra
 
 	return array_filter(
 		array(
-			'schema'           => 'agents-api/execution-metrics/v1',
+			'schema'           => 'wp-codebox/execution-metrics/v1',
 			'executor'         => 'wp-codebox/browser-playground',
 			'phase'            => 'contract',
 			'status'           => true === ( $primary['success'] ?? false ) ? 'pending' : (string) ( $primary['status'] ?? 'blocked' ),
@@ -1046,6 +1046,6 @@ public static function apply_approved_artifact( array $input ): array|WP_Error {
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function stage_artifact_apply( array $input ): array|WP_Error {
-	return WP_Codebox_Data_Machine_Pending_Actions::stage_apply_artifact( $input );
+	return WP_Codebox_Pending_Artifact_Apply::stage_apply_artifact( $input );
 }
 }

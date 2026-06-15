@@ -9,6 +9,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts.d.ts",
+      "import": "./dist/artifacts.js"
+    },
+    "./internals": {
+      "types": "./dist/internals.d.ts",
+      "import": "./dist/internals.js"
+    },
     "./recipe-builders": {
       "types": "./dist/recipe-builders.d.ts",
       "import": "./dist/recipe-builders.js"

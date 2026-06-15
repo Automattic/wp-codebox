@@ -332,8 +332,8 @@ foreach ( $payload as $key => $value ) {
 return $sanitized;
 }
 
-if ( interface_exists( "\\DataMachine\\Engine\\AI\\LoopEventSinkInterface" ) && ! class_exists( "WP_Codebox_Browser_Event_File_Sink" ) ) {
-class WP_Codebox_Browser_Event_File_Sink implements \\DataMachine\\Engine\\AI\\LoopEventSinkInterface {
+if ( ! class_exists( "WP_Codebox_Browser_Event_File_Sink" ) ) {
+class WP_Codebox_Browser_Event_File_Sink {
 	private string $path;
 
 	public function __construct( string $path ) {
@@ -353,6 +353,15 @@ class WP_Codebox_Browser_Event_File_Sink implements \\DataMachine\\Engine\\AI\\L
 		}
 	}
 }
+}
+
+function wp_codebox_browser_runtime_event_sink( string $event_path, array $input, array $payload ) {
+$sink = null;
+if ( function_exists( "apply_filters" ) ) {
+	$sink = apply_filters( "wp_codebox_browser_runtime_event_sink", $sink, $event_path, $input, $payload );
+}
+
+return is_object( $sink ) && method_exists( $sink, "emit" ) ? $sink : null;
 }
 
 function wp_codebox_browser_install_provider_proxy( array $payload ): array {
@@ -896,7 +905,7 @@ $artifact_metrics = wp_codebox_browser_artifact_metrics( $artifact_bundle );
 $elapsed_ms = max( 0, (int) round( ( microtime( true ) - $started_monotonic ) * 1000 ) );
 
 return array_filter( array(
-    "schema" => "agents-api/execution-metrics/v1",
+    "schema" => "wp-codebox/execution-metrics/v1",
     "executor" => "wp-codebox/browser-playground",
     "phase" => "execution",
     "status" => $failed ? "error" : "completed",
@@ -1236,9 +1245,11 @@ if ( ! empty( $sandbox_tool_ids ) ) {
 }
 $input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
 $event_sink_attached = false;
-if ( interface_exists( "\\DataMachine\\Engine\\AI\\LoopEventSinkInterface" ) && class_exists( "WP_Codebox_Browser_Event_File_Sink" ) ) {
+
+$event_sink = wp_codebox_browser_runtime_event_sink( $event_path, $input, $payload );
+if ( null !== $event_sink ) {
 	file_put_contents( $event_path, "" );
-	$input[\'event_sink\'] = new WP_Codebox_Browser_Event_File_Sink( $event_path );
+	$input[\'event_sink\'] = $event_sink;
 	$event_sink_attached = true;
 }
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );

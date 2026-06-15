@@ -1,0 +1,76 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "provider-agent-smoke",
+    "wp": "trunk",
+    "blueprint": {
+      "steps": []
+    },
+    "overlays": [
+      {
+        "kind": "bundled-library",
+        "library": "php-ai-client",
+        "source": "/path/to/php-ai-client-claude-code-compatible-branch",
+        "target": "/wordpress/wp-includes/php-ai-client",
+        "strategy": "wordpress-scoped-bundle",
+        "metadata": {
+          "component": "php-ai-client",
+          "purpose": "provider-supplied request authentication"
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "extra_plugins": [
+      {
+        "source": "/path/to/agents-api",
+        "slug": "agents-api",
+        "activate": true
+      },
+      {
+        "source": "/path/to/data-machine",
+        "slug": "data-machine",
+        "activate": true
+      },
+      {
+        "source": "/path/to/data-machine-code",
+        "slug": "data-machine-code",
+        "activate": true
+      },
+      {
+        "source": "/path/to/wp-coding-agents/carried-plugins/ai-provider-for-claude-code",
+        "slug": "ai-provider-for-claude-code",
+        "activate": false
+      }
+    ],
+    "secretEnv": [
+      "AI_PROVIDER_CLAUDE_CODE_REFRESH_TOKEN",
+      "AI_PROVIDER_CLAUDE_CODE_ACCESS_TOKEN",
+      "AI_PROVIDER_CLAUDE_CODE_EXPIRES_AT"
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wp-codebox.agent-sandbox-run",
+        "args": [
+          "task=Run a minimal headless WP Codebox smoke. Inspect the WordPress runtime, report the site title and active theme, and do not modify files.",
+          "agent=wp-codebox-sandbox",
+          "mode=default",
+          "provider=claude-code",
+          "model=claude-code",
+          "provider-plugin-slugs=ai-provider-for-claude-code",
+          "max-turns=1",
+          "timeout-seconds=300"
+        ]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts/claude-code-agent-smoke",
+    "verify": {
+      "enabled": true
+    }
+  }
+}

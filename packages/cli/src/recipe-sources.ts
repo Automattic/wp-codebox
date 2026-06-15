@@ -4,7 +4,8 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -59,10 +60,6 @@ export interface PreparedExtraPlugin {
 }
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
-
-function phpSingleQuotedLiteral(value: string): string {
-  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
-}
 
 export interface RecipeStagedFileProvenance {
   kind: "local"
@@ -1213,8 +1210,6 @@ export function installMuPluginsCode(extraPlugins: PreparedExtraPlugin[]): strin
     return null
   }
 
-  const workspaceRootLiteral = phpSingleQuotedLiteral(SANDBOX_WORKSPACE_ROOT)
-
   return `$plugins = ${JSON.stringify(muPlugins)};
 $runtime_dir = WPMU_PLUGIN_DIR . '/wp-codebox-runtime';
 if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
@@ -1232,11 +1227,6 @@ $lines = array(
     ' */',
     '',
     "defined( 'ABSPATH' ) || exit;",
-    '',
-    "if ( ! defined( 'DATAMACHINE_WORKSPACE_PATH' ) ) {",
-    "    define( 'DATAMACHINE_WORKSPACE_PATH', ${workspaceRootLiteral} );",
-    "}",
-    "add_filter( 'datamachine_should_load_full_runtime', '__return_true', 1 );",
     '',
 );
 foreach ($plugins as $plugin) {

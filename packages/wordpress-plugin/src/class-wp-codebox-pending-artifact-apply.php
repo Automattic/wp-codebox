@@ -1,21 +1,21 @@
 <?php
 /**
- * Optional Data Machine pending-action integration for artifact apply-back.
+ * Pending artifact apply integration seam for WP Codebox.
  *
  * @package WPCodebox
  */
 
 defined( 'ABSPATH' ) || exit;
 
-final class WP_Codebox_Data_Machine_Pending_Actions {
+final class WP_Codebox_Pending_Artifact_Apply {
 
 	public const KIND = 'wp_codebox_apply_back';
 
 	public function __construct() {
-		add_filter( 'datamachine_pending_action_handlers', array( self::class, 'register_handler' ) );
+		add_filter( 'wp_codebox_pending_apply_artifact_handlers', array( self::class, 'register_handler' ) );
 	}
 
-	/** @param array<string,mixed> $handlers Current Data Machine pending-action handlers. */
+	/** @param array<string,mixed> $handlers Current pending artifact apply handlers. */
 	public static function register_handler( array $handlers ): array {
 		$handlers[ self::KIND ] = array(
 			'apply'       => array( self::class, 'apply' ),
@@ -26,7 +26,7 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 	}
 
 	/**
-	 * Stage an artifact apply request through Data Machine pending actions.
+	 * Stage an artifact apply request through a consumer-owned pending action layer.
 	 *
 	 * @param array<string,mixed> $input Ability/helper input.
 	 * @return array<string,mixed>|WP_Error
@@ -70,19 +70,15 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 			return $filtered;
 		}
 
-		if ( ! class_exists( '\\DataMachine\\Engine\\AI\\Actions\\PendingActionHelper' ) ) {
-			return new WP_Error( 'wp_codebox_datamachine_pending_actions_missing', 'Data Machine pending actions are not available.', array( 'status' => 501 ) );
-		}
-
-		return \DataMachine\Engine\AI\Actions\PendingActionHelper::stage( $stage_args );
+		return new WP_Error( 'wp_codebox_pending_apply_unavailable', 'No pending artifact apply staging handler is registered.', array( 'status' => 501 ) );
 	}
 
-	/** @param array<string,mixed> $apply_input Stored Data Machine apply input. */
+	/** @param array<string,mixed> $apply_input Stored apply input. */
 	public static function apply( array $apply_input ): array|WP_Error {
 		return ( new WP_Codebox_Artifacts() )->apply_approved( $apply_input );
 	}
 
-	/** @param array<string,mixed> $payload Stored Data Machine pending-action payload. */
+	/** @param array<string,mixed> $payload Stored pending-action payload. */
 	public static function can_resolve( array $payload, string $decision, int $user_id ): bool|WP_Error {
 		$allowed = function_exists( 'current_user_can' ) ? current_user_can( 'manage_options' ) : true;
 
@@ -118,21 +114,21 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 		return $apply_input;
 	}
 
-	/** @param array<string,mixed> $input Ability/helper input. @return string[] */
+	/** @return array<int,string> */
 	private static function approved_files( array $input ): array {
 		$files = is_array( $input['approved_files'] ?? null ) ? $input['approved_files'] : array();
 
 		return array_values(
 			array_unique(
 				array_filter(
-					array_map( static fn( $path ): string => trim( (string) $path ), $files ),
-					static fn( string $path ): bool => '' !== $path
+					array_map( static fn( mixed $file ): string => trim( (string) $file ), $files ),
+					static fn( string $file ): bool => '' !== $file
 				)
 			)
 		);
 	}
 
-	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $apply_input Stored apply input. */
+	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $apply_input Apply input. @param array<string,mixed> $verification Verification result. @return array<string,mixed> */
 	private static function preview_data( array $bundle, array $apply_input, array $verification ): array {
 		return array(
 			'schema'         => 'wp-codebox/pending-apply-preview/v1',
@@ -140,7 +136,7 @@ final class WP_Codebox_Data_Machine_Pending_Actions {
 			'content_digest' => (string) ( $bundle['content_digest'] ?? '' ),
 			'created_at'     => (string) ( $bundle['created_at'] ?? '' ),
 			'verification'   => $verification,
-			'approved_files' => $apply_input['approved_files'] ?? array(),
+			'approved_files' => is_array( $apply_input['approved_files'] ?? null ) ? $apply_input['approved_files'] : array(),
 			'changed_files'  => is_array( $bundle['changed_files'] ?? null ) ? $bundle['changed_files'] : array(),
 			'test_results'   => is_array( $bundle['test_results'] ?? null ) ? $bundle['test_results'] : array(),
 			'review'         => is_array( $bundle['review'] ?? null ) ? $bundle['review'] : array(),

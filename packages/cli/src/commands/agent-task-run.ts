@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipeStagedFile } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipeStagedFile } from "@automattic/wp-codebox-core"
+import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {

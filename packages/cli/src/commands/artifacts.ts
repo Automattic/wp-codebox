@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildArtifactDiagnostics, buildReviewerArtifactExportLinks, buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics, type PartialArtifactDiscoveryResult, type ReviewerArtifactExportLinks, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildTransferProbeDiagnostics, verifyTransferProofBundle, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildArtifactDiagnostics, buildReviewerArtifactExportLinks, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics, type PartialArtifactDiscoveryResult, type ReviewerArtifactExportLinks } from "@automattic/wp-codebox-core/artifacts"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 

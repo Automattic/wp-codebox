@@ -29,7 +29,7 @@ require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
-require_once __DIR__ . '/src/class-wp-codebox-data-machine-pending-actions.php';
+require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
 require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
 require_once __DIR__ . '/src/class-wp-codebox-abilities.php';
 
@@ -44,7 +44,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 add_action( 'plugins_loaded', static function (): void {
-	new WP_Codebox_Data_Machine_Pending_Actions();
+	new WP_Codebox_Pending_Artifact_Apply();
 }, 20 );
 
 add_action(
