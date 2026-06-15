@@ -10,7 +10,7 @@ const snapshot: RuntimeSnapshotArtifact = {
   compatibility: {
     backend: "wordpress-playground",
     wordpressVersion: "latest",
-    phpVersion: "8.3",
+    phpVersion: "8.3.31",
   },
   metadata: {
     runtime: {
@@ -51,6 +51,11 @@ const validation = validateBlueprint(blueprint)
 
 if (!validation.valid) {
   throw new Error(`Replay export blueprint is not schema-valid: ${JSON.stringify(validation.errors, null, 2)}`)
+}
+
+const preferredVersions = blueprint.preferredVersions as Record<string, unknown> | undefined
+if (preferredVersions?.php !== "8.3") {
+  throw new Error(`Replay export blueprint must normalize patch-level PHP versions, got ${JSON.stringify(preferredVersions?.php)}`)
 }
 
 if ("x-wp-codebox" in blueprint) {

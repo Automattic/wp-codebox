@@ -228,7 +228,7 @@ export function buildReplayableWordPressSiteBlueprint(
     $schema: "https://playground.wordpress.net/blueprint-schema.json",
     preferredVersions: {
       wp: snapshot.compatibility.wordpressVersion,
-      php: snapshot.compatibility.phpVersion,
+      php: playgroundBlueprintPhpVersion(snapshot.compatibility.phpVersion),
     },
     landingPage: options.landingPage ?? "/",
     steps: [
@@ -249,7 +249,7 @@ export function buildReplayExportBlueprint(
     $schema: "https://playground.wordpress.net/blueprint-schema.json",
     preferredVersions: {
       wp: snapshot.compatibility.wordpressVersion,
-      php: snapshot.compatibility.phpVersion,
+      php: playgroundBlueprintPhpVersion(snapshot.compatibility.phpVersion),
     },
     landingPage: options.landingPage ?? "/",
     steps: [
@@ -317,6 +317,10 @@ function runtimeInfoForReplayableWordPressSite(
       blueprint,
     },
   }
+}
+
+function playgroundBlueprintPhpVersion(version: string): string {
+  return version.replace(/^(\d+\.\d+)\.\d+$/, "$1")
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
