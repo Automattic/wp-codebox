@@ -5241,7 +5241,7 @@ async function installWordPressAdminAuthCookies({
   return { mode: "wordpress-admin", userId, cookieCount: cookies.length, cookieHosts: browserAuthCookieHostSummary(cookies) }
 }
 
-function wordpressAdminAuthCookiePhpCode(browserUrls: string[], userId: number): string {
+export function wordpressAdminAuthCookiePhpCode(browserUrls: string[], userId: number): string {
   return `
 $user_id = ${JSON.stringify(userId)};
 $user = get_user_by( 'id', $user_id );

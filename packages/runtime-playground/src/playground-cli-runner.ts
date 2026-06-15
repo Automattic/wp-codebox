@@ -116,14 +116,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    if (!spec.preview?.port) {
-      emitProgress("preview:ready", "complete", "Preview ready", {
-        localUrl: server.serverUrl,
-      })
-      return server
-    }
-
-    const proxiedServer = await withPreviewProxy(server, spec.preview.port, spec.preview.bind)
+    const proxiedServer = await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,

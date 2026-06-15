@@ -39,6 +39,22 @@ assert.deepEqual(blockedPreview.blockers[0].evidence, { command: "wordpress.brow
 const publicPreview = heldPreviewWithExternalAccessBlockers(heldPreview, [{ ...command, args: ["url=/"] }])
 assert.equal(publicPreview?.blockers, undefined)
 
+const bootstrapPreview = heldPreviewWithExternalAccessBlockers({
+  ...heldPreview,
+  reviewerAuthBootstrap: {
+    schema: "wp-codebox/reviewer-auth-bootstrap/v1",
+    kind: "local-wordpress-admin-fixture",
+    reviewerSafe: true,
+    bootstrapUrl: "http://127.0.0.1:48631/__wp-codebox/reviewer-auth-bootstrap?token=short-lived",
+    redirectUrl: "http://127.0.0.1:48631/wp-admin/post.php?post=24117035&action=edit",
+    expiresAt: "2026-06-15T00:15:00.000Z",
+    evidence: { command: "wordpress.browser-actions", auth: "wordpress-admin", userId: 1 },
+  },
+}, [command])
+assert.equal(bootstrapPreview?.blockers, undefined)
+assert.equal(bootstrapPreview?.reviewerAuthBootstrap?.schema, "wp-codebox/reviewer-auth-bootstrap/v1")
+assert.equal(bootstrapPreview?.reviewerAuthBootstrap?.reviewerSafe, true)
+
 const expiredPreview = heldPreviewWithExternalAccessBlockers({ ...heldPreview, lifecycle: "destroyed-on-completion", status: "expired-on-completion", holdSeconds: undefined }, [command])
 assert.equal(expiredPreview?.blockers, undefined)
 

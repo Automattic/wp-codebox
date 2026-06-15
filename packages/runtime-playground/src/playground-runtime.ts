@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
+import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand } from "./browser-command-runners.js"
+import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -21,6 +22,7 @@ import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import type {
   ArtifactBundle,
   ArtifactPreview,
+  ArtifactReviewerAuthBootstrap,
   ArtifactSpec,
   ExecutionResult,
   ExecutionSpec,
@@ -43,6 +45,92 @@ function now(): string {
 
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+interface ReviewerAuthBootstrapRecord {
+  expiresAt: string
+  redirectUrl: string
+  serverUrl: string
+  userId: number
+}
+
+function browserCommandRequestsWordPressAdminAuth(command: ExecutionResult): boolean {
+  if (!["wordpress.browser-actions", "wordpress.browser-probe", "wordpress.browser-scenario", "wordpress.visual-compare"].includes(command.command)) {
+    return false
+  }
+
+  return command.args.some((arg) => argRequestsWordPressAdminAuth(arg))
+}
+
+function argRequestsWordPressAdminAuth(arg: string): boolean {
+  const separator = arg.indexOf("=")
+  if (separator > 0) {
+    const key = arg.slice(0, separator).trim()
+    const value = arg.slice(separator + 1).trim()
+    if (key === "auth" && value === "wordpress-admin") {
+      return true
+    }
+    if ((key === "scenario" || key === "scenario-json") && /"auth"\s*:\s*"wordpress-admin"/.test(value)) {
+      return true
+    }
+  }
+
+  return /"auth"\s*:\s*"wordpress-admin"/.test(arg)
+}
+
+function browserCommandWordPressAdminAuthUserId(command: ExecutionResult): number {
+  const raw = command.args.map((arg) => argKeyValue(arg)).find((entry) => entry?.key === "auth-user-id")?.value
+  const userId = raw ? Number.parseInt(raw, 10) : 1
+  return Number.isInteger(userId) && userId > 0 ? userId : 1
+}
+
+function reviewerAuthRedirectUrl(command: ExecutionResult, serverUrl: string): string | undefined {
+  const url = command.args.map((arg) => argKeyValue(arg)).find((entry) => entry?.key === "url")?.value
+  if (!url) {
+    return undefined
+  }
+
+  try {
+    return new URL(url, serverUrl).toString()
+  } catch {
+    return undefined
+  }
+}
+
+function argKeyValue(arg: string): { key: string; value: string } | undefined {
+  const separator = arg.indexOf("=")
+  if (separator <= 0) {
+    return undefined
+  }
+  return {
+    key: arg.slice(0, separator).trim(),
+    value: arg.slice(separator + 1).trim(),
+  }
+}
+
+function isLocalPreviewUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "")
+    return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "127.0.0.1" || hostname === "::1" || hostname.startsWith("127.")
+  } catch {
+    return false
+  }
+}
+
+function reviewerAuthSetCookieHeader(cookie: { name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }): string {
+  const parts = [
+    `${String(cookie.name ?? "")}=${String(cookie.value ?? "")}`,
+    `Path=${typeof cookie.path === "string" && cookie.path.length > 0 ? cookie.path : "/"}`,
+    `Expires=${new Date((typeof cookie.expires === "number" ? cookie.expires : Math.floor(Date.now() / 1000) + 3600) * 1000).toUTCString()}`,
+    "SameSite=Lax",
+  ]
+  if (cookie.httpOnly !== false) {
+    parts.push("HttpOnly")
+  }
+  if (cookie.secure === true) {
+    parts.push("Secure")
+  }
+  return parts.join("; ")
 }
 
 export class PlaygroundRuntimeBackend implements RuntimeBackend {
@@ -81,6 +169,8 @@ class PlaygroundRuntime implements Runtime {
   private cliServerPromise?: Promise<PlaygroundCliServer>
   private readonly activeExecutionAbortControllers = new Set<AbortController>()
   private activeExecutionSignal?: AbortSignal
+  private reviewerAuthBootstrapRouteRegistered = false
+  private readonly reviewerAuthBootstraps = new Map<string, ReviewerAuthBootstrapRecord>()
 
   private constructor(private readonly spec: RuntimeCreateSpec, private readonly backendOptions: PlaygroundRuntimeBackendOptions = {}) {
     this.artifactRoot = resolve(spec.artifactsDirectory ?? "artifacts", this.runtimeId)
@@ -376,7 +466,7 @@ class PlaygroundRuntime implements Runtime {
       snapshots: this.snapshots,
       events: this.events,
       info: () => this.info(),
-      previewInfo: (createdAt, previewHoldSeconds) => this.previewInfo(createdAt, previewHoldSeconds),
+      previewInfo: (createdAt, previewHoldSeconds, commands) => this.previewInfo(createdAt, previewHoldSeconds, commands),
       recordArtifactsCollected: (bundleId, createdAt, artifactSpec) => this.recordEvent("runtime.artifacts.collected", {
         id: bundleId,
         directory: this.artifactRoot,
@@ -423,7 +513,7 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
-  private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview | undefined> {
+  private async previewInfo(createdAt: string, holdSeconds = 0, commands: ExecutionResult[] = []): Promise<ArtifactPreview | undefined> {
     if (this.status === "destroyed") {
       return undefined
     }
@@ -434,7 +524,7 @@ class PlaygroundRuntime implements Runtime {
     const publicUrl = this.spec.preview?.publicUrl
     const siteUrl = this.spec.preview?.siteUrl
 
-    return {
+    const preview: ArtifactPreview = {
       url: publicUrl ?? server.serverUrl,
       ...(publicUrl ? { publicUrl, localUrl: server.serverUrl } : {}),
       ...(siteUrl ? { siteUrl } : {}),
@@ -444,6 +534,90 @@ class PlaygroundRuntime implements Runtime {
       createdAt,
       ...(expiresAt ? { expiresAt, holdSeconds: normalizedHoldSeconds } : {}),
     }
+
+    const reviewerAuthBootstrap = expiresAt ? this.createReviewerAuthBootstrap(server, preview, expiresAt, commands) : undefined
+    return {
+      ...preview,
+      ...(reviewerAuthBootstrap ? { reviewerAuthBootstrap } : {}),
+    }
+  }
+
+  private createReviewerAuthBootstrap(server: PlaygroundCliServer, preview: ArtifactPreview, expiresAt: string, commands: ExecutionResult[]): ArtifactReviewerAuthBootstrap | undefined {
+    const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
+    if (!authCommand || !server.previewRoutes || !isLocalPreviewUrl(preview.localUrl ?? preview.url)) {
+      return undefined
+    }
+
+    this.registerReviewerAuthBootstrapRoute(server)
+    const token = randomBytes(24).toString("base64url")
+    const userId = browserCommandWordPressAdminAuthUserId(authCommand)
+    const redirectUrl = reviewerAuthRedirectUrl(authCommand, server.serverUrl) ?? server.serverUrl
+    this.reviewerAuthBootstraps.set(token, {
+      expiresAt,
+      redirectUrl,
+      serverUrl: server.serverUrl,
+      userId,
+    })
+
+    const bootstrapUrl = new URL("/__wp-codebox/reviewer-auth-bootstrap", server.serverUrl)
+    bootstrapUrl.searchParams.set("token", token)
+    return {
+      schema: "wp-codebox/reviewer-auth-bootstrap/v1",
+      kind: "local-wordpress-admin-fixture",
+      reviewerSafe: true,
+      bootstrapUrl: bootstrapUrl.toString(),
+      redirectUrl,
+      expiresAt,
+      evidence: {
+        command: authCommand.command,
+        auth: "wordpress-admin",
+        userId,
+      },
+    }
+  }
+
+  private registerReviewerAuthBootstrapRoute(server: PlaygroundCliServer): void {
+    if (this.reviewerAuthBootstrapRouteRegistered || !server.previewRoutes) {
+      return
+    }
+
+    this.reviewerAuthBootstrapRouteRegistered = true
+    server.previewRoutes.add((incoming, outgoing) => this.handleReviewerAuthBootstrapRequest(server, incoming, outgoing))
+  }
+
+  private async handleReviewerAuthBootstrapRequest(server: PlaygroundCliServer, incoming: IncomingMessage, outgoing: ServerResponse): Promise<boolean> {
+    const requestUrl = new URL(incoming.url ?? "/", server.serverUrl)
+    if (requestUrl.pathname !== "/__wp-codebox/reviewer-auth-bootstrap") {
+      return false
+    }
+
+    const token = requestUrl.searchParams.get("token") ?? ""
+    const record = this.reviewerAuthBootstraps.get(token)
+    if (!record || Date.parse(record.expiresAt) <= Date.now()) {
+      this.writeReviewerAuthBootstrapResponse(outgoing, 410, "Reviewer auth bootstrap expired or unavailable.\n")
+      return true
+    }
+
+    const response = await this.runPlaygroundCommand("reviewer-auth-bootstrap.auth", server, { code: bootstrapPhpCode(this.spec, wordpressAdminAuthCookiePhpCode([record.serverUrl], record.userId), []) })
+    assertPlaygroundResponseOk("reviewer-auth-bootstrap.auth", response)
+    const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
+    outgoing.writeHead(302, {
+      "location": record.redirectUrl,
+      "cache-control": "no-store",
+      "set-cookie": cookies.map((cookie) => reviewerAuthSetCookieHeader(cookie)),
+    })
+    outgoing.end()
+    return true
+  }
+
+  private writeReviewerAuthBootstrapResponse(outgoing: ServerResponse, status: number, message: string): void {
+    const body = Buffer.from(message, "utf8")
+    outgoing.writeHead(status, {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": String(body.byteLength),
+      "cache-control": "no-store",
+    })
+    outgoing.end(body)
   }
 
   private recordEvent(type: LifecycleEvent["type"], data?: Record<string, unknown>): LifecycleEvent {

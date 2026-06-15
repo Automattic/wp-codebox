@@ -15,11 +15,19 @@ export interface PlaygroundCliServer {
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
+  previewRoutes?: PlaygroundPreviewRouteRegistry
   [Symbol.asyncDispose](): Promise<void>
 }
 
+export interface PlaygroundPreviewRouteRegistry {
+  add(handler: PlaygroundPreviewRouteHandler): () => void
+}
+
+export type PlaygroundPreviewRouteHandler = (incoming: IncomingMessage, outgoing: ServerResponse) => Promise<boolean> | boolean
+
 interface PlaygroundPreviewProxy {
   serverUrl: string
+  previewRoutes: PlaygroundPreviewRouteRegistry
   dispose(): Promise<void>
 }
 
@@ -46,6 +54,7 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
   return {
     ...server,
     serverUrl: proxy.serverUrl,
+    previewRoutes: proxy.previewRoutes,
     async [Symbol.asyncDispose]() {
       await proxy.dispose()
       await server[Symbol.asyncDispose]()
@@ -55,13 +64,14 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
 
 async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
-  const proxy = previewProxyServer(target)
+  const routes = createPreviewRouteRegistry()
+  const proxy = previewProxyServer(target, routes)
   const servers = [proxy]
 
   await listenPreviewProxy(proxy, port, bind)
 
   if (bind === "127.0.0.1") {
-    const ipv6Proxy = previewProxyServer(target)
+    const ipv6Proxy = previewProxyServer(target, routes)
     try {
       await listenPreviewProxy(ipv6Proxy, port, "::1")
       servers.push(ipv6Proxy)
@@ -79,18 +89,50 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
 
   return {
     serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
+    previewRoutes: routes,
     async dispose() {
       await closePreviewProxyServers(servers)
     },
   }
 }
 
-function previewProxyServer(target: URL): PreviewProxyServer {
+function previewProxyServer(target: URL, routes: InternalPreviewRouteRegistry): PreviewProxyServer {
   const upstreamQueue = createPreviewProxyQueue()
 
-  return createHttpServer((incoming, outgoing) => {
+  return createHttpServer(async (incoming, outgoing) => {
+    try {
+      if (await routes.handle(incoming, outgoing)) {
+        return
+      }
+    } catch (error) {
+      writeProxyError(outgoing, error instanceof Error ? error : new Error(String(error)))
+      return
+    }
+
     upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
   })
+}
+
+interface InternalPreviewRouteRegistry extends PlaygroundPreviewRouteRegistry {
+  handle(incoming: IncomingMessage, outgoing: ServerResponse): Promise<boolean>
+}
+
+function createPreviewRouteRegistry(): InternalPreviewRouteRegistry {
+  const handlers = new Set<PlaygroundPreviewRouteHandler>()
+  return {
+    add(handler) {
+      handlers.add(handler)
+      return () => handlers.delete(handler)
+    },
+    async handle(incoming, outgoing) {
+      for (const handler of handlers) {
+        if (await handler(incoming, outgoing)) {
+          return true
+        }
+      }
+      return false
+    },
+  }
 }
 
 function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {

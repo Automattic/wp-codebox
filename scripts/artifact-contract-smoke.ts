@@ -110,12 +110,16 @@ try {
   assert.equal(blueprintAfterManifestFile.viewer.query.value.source, "public-artifact-url")
   assert.equal(blueprintAfterManifestFile.viewer.query.value.path, "blueprint.after.json")
   assert.equal(blueprintAfterManifestFile.viewer.query.encoding, "url")
-  assert.equal(blueprintAfterManifestFile.viewer.replay.status, "partial")
-  assert.ok(blueprintAfterManifestFile.viewer.replay.limitations.some((limitation: string) => limitation.includes("does not host public artifact URLs")))
+  assert.equal(blueprintAfterManifestFile.viewer.replay.status, "replayable-runtime-state")
+  assert.ok(blueprintAfterManifestFile.viewer.replay.limitations.some((limitation: string) => limitation.includes("runtime-state snapshot")))
   assert.deepEqual(artifacts.blueprintAfterViewer, blueprintAfterManifestFile.viewer)
   const runtimeEvidence = metadata.artifacts.runtimeEvidence
   assert.match(runtimeEvidence["run-attestation"].sha256, /^[a-f0-9]{64}$/)
-  assert.deepEqual(metadata.artifacts, {
+  assert.ok(Array.isArray(metadata.artifacts.runtimeSnapshots))
+  assert.ok(metadata.artifacts.runtimeSnapshots.length > 0)
+  assert.ok(metadata.artifacts.runtimeSnapshots.every((path: string) => path.startsWith("files/runtime-snapshots/") && path.endsWith(".json")))
+  const { runtimeSnapshots: _runtimeSnapshots, ...metadataArtifactsWithoutRuntimeSnapshots } = metadata.artifacts
+  assert.deepEqual(metadataArtifactsWithoutRuntimeSnapshots, {
     workspacePatch: "files/workspace-patch.json",
     changedFiles: "files/changed-files.json",
     patch: "files/patch.diff",
@@ -262,11 +266,11 @@ try {
   assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.kind, "blueprint-after")
   assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.contentType, "application/json")
   assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.query.value.sha256.value, blueprintAfterManifestFile.sha256.value)
-  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.replay.status, "partial")
+  assert.equal(runtimeReplayReferenceIndex.references.blueprintAfter.viewer.replay.status, "replayable-runtime-state")
   assert.equal(runtimeReplayReferenceIndex.references.changedFiles.path, "files/changed-files.json")
   assert.equal(runtimeReplayReferenceIndex.references.patch.path, "files/patch.diff")
-  assert.equal(runtimeReplayReferenceIndex.replay.status, "partial")
-  assert.equal(runtimeReplayReferenceIndex.snapshots.length, 0)
+  assert.equal(runtimeReplayReferenceIndex.replay.status, "runtime-state-artifact")
+  assert.ok(runtimeReplayReferenceIndex.snapshots.length > 0)
   assert.equal(runtimeReferenceManifest.schema, RUNTIME_REFERENCE_MANIFEST_SCHEMA)
   const runtimeReferenceManifestFile = manifestFile(manifest, "files/runtime-reference-manifest.json")
   assert.equal(runtimeReferenceManifestFile.sha256.value, sha256(await readFile(join(artifacts.directory, "files/runtime-reference-manifest.json"))))
@@ -282,8 +286,8 @@ try {
   assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.kind, "blueprint-after")
   assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.contentType, "application/json")
   assert.equal(runtimeReferenceManifestBlueprintViewer.query.value.sha256.value, blueprintAfterManifestFile.sha256.value)
-  assert.equal(runtimeReferenceManifestBlueprintViewer.replay.status, "partial")
-  assert.equal(runtimeReferenceManifest.snapshots.length, 0)
+  assert.equal(runtimeReferenceManifestBlueprintViewer.replay.status, "replayable-runtime-state")
+  assert.ok(runtimeReferenceManifest.snapshots.length > 0)
   assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/runtime-reference-index.json"))
   assert.ok(runtimeReferenceManifest.files.some((file: { path: string }) => file.path === "files/changed-files.json"))
   assert.ok(review.changedFiles.some((file: { path: string; status: string }) =>

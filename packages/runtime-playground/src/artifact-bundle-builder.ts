@@ -62,7 +62,7 @@ export interface ArtifactBundleBuilderSource {
   snapshots: Snapshot[]
   events: LifecycleEvent[]
   info(): Promise<RuntimeInfo>
-  previewInfo(createdAt: string, previewHoldSeconds?: number): Promise<ArtifactPreview | undefined>
+  previewInfo(createdAt: string, previewHoldSeconds: number | undefined, commands: ExecutionResult[]): Promise<ArtifactPreview | undefined>
   browserReviewSummary(): ArtifactReviewBrowserSummary | undefined
   browserArtifacts(): BrowserArtifact[]
   captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles>
@@ -122,7 +122,7 @@ export class ArtifactBundleBuilder {
     await source.redactPluginCheckArtifacts(redactor)
     await source.redactThemeCheckArtifacts(redactor)
 
-    const preview = heldPreviewWithExternalAccessBlockers(await source.previewInfo(createdAt, spec.previewHoldSeconds), source.commands)
+    const preview = heldPreviewWithExternalAccessBlockers(await source.previewInfo(createdAt, spec.previewHoldSeconds, source.commands), source.commands)
     const browser = source.browserReviewSummary()
     const runtime = await source.info()
     const durablePreview = await buildDurableArtifactPreview({
@@ -641,6 +641,7 @@ function buildPreviewEvidence({
       ...(preview?.localUrl ? { localUrl: safePreviewUrlRef(preview.localUrl) } : {}),
       ...(preview?.siteUrl ? { siteUrl: safePreviewUrlRef(preview.siteUrl) } : {}),
       ...(durablePreview ? { durablePreview } : {}),
+      ...(preview?.reviewerAuthBootstrap ? { reviewerAuthBootstrap: preview.reviewerAuthBootstrap } : {}),
     },
     readiness: {
       ready,
@@ -771,6 +772,7 @@ function buildPreviewSessionEvidence({
       holdSeconds: preview.holdSeconds,
       hasPublicUrl: Boolean(preview.publicUrl),
       hasSiteUrl: Boolean(preview.siteUrl),
+      hasReviewerAuthBootstrap: Boolean(preview.reviewerAuthBootstrap),
       blockers: preview.blockers,
     }) : undefined,
     refs: stripUndefined({
@@ -799,6 +801,10 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
 
   const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
   if (!authCommand) {
+    return preview
+  }
+
+  if (preview.reviewerAuthBootstrap) {
     return preview
   }
 
