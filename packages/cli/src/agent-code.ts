@@ -97,8 +97,6 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
   const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
-  const sandboxWorkspaceJson = JSON.stringify(sandboxWorkspace ?? null)
-
   return `
 if (function_exists('wp_set_current_user')) {
     wp_set_current_user(1);
@@ -107,70 +105,6 @@ if (function_exists('wp_set_current_user')) {
 if (${timeoutLimit} > 0 && function_exists('set_time_limit')) {
     set_time_limit(${timeoutLimit});
 }
-
-if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
-    define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
-}
-if (!is_dir(DATAMACHINE_WORKSPACE_PATH)) {
-    if (function_exists('wp_mkdir_p')) {
-        wp_mkdir_p(DATAMACHINE_WORKSPACE_PATH);
-    } else {
-        mkdir(DATAMACHINE_WORKSPACE_PATH, 0775, true);
-    }
-}
-
-add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_false', 100);
-
-$sandbox_workspace_adoptions = array();
-if (function_exists('wp_get_ability')) {
-    $sandbox_workspace_contract = json_decode(${JSON.stringify(sandboxWorkspaceJson)}, true);
-    $sandbox_repo_backed_mounts = array();
-    if (is_array($sandbox_workspace_contract) && is_array($sandbox_workspace_contract['mounts'] ?? null)) {
-        foreach ($sandbox_workspace_contract['mounts'] as $sandbox_mount) {
-            if (!is_array($sandbox_mount)) {
-                continue;
-            }
-            $sandbox_mount_target = rtrim((string) ($sandbox_mount['target'] ?? ''), '/');
-            if ('' === $sandbox_mount_target) {
-                continue;
-            }
-            if ('repo-backed' === (string) ($sandbox_mount['sourceMode'] ?? '')) {
-                $sandbox_repo_backed_mounts[$sandbox_mount_target] = true;
-            }
-        }
-    }
-    $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions, $sandbox_repo_backed_mounts): void {
-        $sandbox_adopt_ability = wp_get_ability('datamachine-code/workspace-adopt') ?: wp_get_ability('datamachine/workspace-adopt');
-        if (!$sandbox_adopt_ability || !method_exists($sandbox_adopt_ability, 'execute')) {
-            return;
-        }
-        foreach (glob(rtrim(DATAMACHINE_WORKSPACE_PATH, '/') . '/*', GLOB_ONLYDIR) ?: array() as $sandbox_workspace_dir) {
-            $sandbox_workspace_name = basename($sandbox_workspace_dir);
-            if (is_file($sandbox_workspace_dir . '/.git') || isset($sandbox_repo_backed_mounts[rtrim($sandbox_workspace_dir, '/')])) {
-                $sandbox_workspace_adoptions[$sandbox_workspace_name] = array(
-                    'success' => true,
-                    'skipped' => true,
-                    'reason' => 'repo_backed_mount',
-                    'message' => 'Mounted repo-backed workspaces are treated as sandbox workspaces, not Data Machine primary checkouts.',
-                );
-                continue;
-            }
-            $sandbox_adopt_result = $sandbox_adopt_ability->execute(array(
-                'path' => $sandbox_workspace_dir,
-                'name' => $sandbox_workspace_name,
-            ));
-            $sandbox_workspace_adoptions[$sandbox_workspace_name] = is_wp_error($sandbox_adopt_result)
-                ? array('success' => false, 'error' => $sandbox_adopt_result->get_error_message())
-                : $sandbox_adopt_result;
-        }
-    };
-    if (class_exists('DataMachine\\Abilities\\PermissionHelper')) {
-        DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($sandbox_adopt_callback);
-    } else {
-        $sandbox_adopt_callback();
-    }
-}
-$sandbox_stack['workspace_adoptions'] = $sandbox_workspace_adoptions;
 
 $sandbox_agent_bundles = json_decode(${JSON.stringify(JSON.stringify(agentBundles))}, true);
 $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array($sandbox_agent_bundles) ? $sandbox_agent_bundles : array());
@@ -210,7 +144,7 @@ function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agen
         return array('success' => true, 'agent' => $agent_slug, 'existing' => true);
     }
 
-    if (!class_exists('DataMachine\\Engine\\Agents\\AgentRegistry')) {
+    if (!class_exists('WP_Agents_Registry')) {
         return array('success' => false, 'agent' => $agent_slug, 'reason' => 'agent_registry_unavailable');
     }
 
@@ -224,7 +158,12 @@ function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agen
         'default_model' => (string) ($agent_input['model'] ?? ''),
     ), static fn($value): bool => '' !== $value);
 
-    \\DataMachine\\Engine\\Agents\\AgentRegistry::register($agent_slug, array(
+    $registry = WP_Agents_Registry::get_instance();
+    if (!$registry || !method_exists($registry, 'register')) {
+        return array('success' => false, 'agent' => $agent_slug, 'reason' => 'agent_registry_unavailable');
+    }
+
+    $registered = $registry->register($agent_slug, array(
         'label' => 'WP Codebox Sandbox',
         'description' => 'Default sandbox agent for WP Codebox runtime tasks.',
         'owner_resolver' => static fn(): int => $owner_id,
@@ -236,16 +175,10 @@ function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agen
         ),
     ));
 
-    $summary = \\DataMachine\\Engine\\Agents\\AgentRegistry::reconcile();
-    $created = is_array($summary['created'] ?? null) ? $summary['created'] : array();
-    $existing = is_array($summary['existing'] ?? null) ? $summary['existing'] : array();
-
     return array(
-        'success' => in_array($agent_slug, $created, true) || in_array($agent_slug, $existing, true) || (function_exists('wp_get_agent') && (bool) wp_get_agent($agent_slug)),
+        'success' => null !== $registered || (function_exists('wp_get_agent') && (bool) wp_get_agent($agent_slug)),
         'agent' => $agent_slug,
-        'created' => in_array($agent_slug, $created, true),
-        'existing' => in_array($agent_slug, $existing, true),
-        'summary' => $summary,
+        'created' => null !== $registered,
     );
 }
 
@@ -426,12 +359,7 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
     );
 } else {
     $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
-    $agent_execute_callback = static function () use ($ability, $runtime_task_run, $runtime_task_input, $decoded_agent_input) {
-        return $ability->execute($runtime_task_run ? $runtime_task_input : $decoded_agent_input);
-    };
-    $agent_result = class_exists('DataMachine\\Abilities\\PermissionHelper')
-        ? DataMachine\\Abilities\\PermissionHelper::run_as_authenticated($agent_execute_callback)
-        : $agent_execute_callback();
+    $agent_result = $ability->execute($runtime_task_run ? $runtime_task_input : $decoded_agent_input);
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
             'agent_runtime' => array(
@@ -605,25 +533,8 @@ export function agentSandboxRunCode(task: string, code: string, providerPlugins:
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-if (!defined('DATAMACHINE_WORKSPACE_PATH')) {
-    define('DATAMACHINE_WORKSPACE_PATH', ${JSON.stringify(SANDBOX_WORKSPACE_ROOT)});
-}
-if (!is_dir(DATAMACHINE_WORKSPACE_PATH)) {
-    if (function_exists('wp_mkdir_p')) {
-        wp_mkdir_p(DATAMACHINE_WORKSPACE_PATH);
-    } else {
-        mkdir(DATAMACHINE_WORKSPACE_PATH, 0775, true);
-    }
-}
-
-add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_false', 100);
-
-add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
-
 $plugins = array_merge(array(
     'agents-api/agents-api.php',
-    'data-machine/data-machine.php',
-    'data-machine-code/data-machine-code.php',
 ), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
 
 function wp_codebox_plugin_entry_path(string $plugin): ?array {
@@ -773,16 +684,12 @@ do_action('wp_abilities_api_init');
 $sandbox_task = ${phpStringLiteral(task)};
 $sandbox_stack = array(
     'plugins' => $activation_results,
-    'signals' => array(
-        'agents_api_loaded' => defined('AGENTS_API_LOADED'),
-        'agents_registry_class' => class_exists('WP_Agents_Registry'),
-        'data_machine_version' => defined('DATAMACHINE_VERSION') ? DATAMACHINE_VERSION : null,
-        'data_machine_permission_helper' => class_exists('DataMachine\\Abilities\\PermissionHelper'),
-        'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
-        'data_machine_code_workspace' => class_exists('DataMachineCode\\Workspace\\Workspace'),
-        'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-        'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-    ),
+        'signals' => array(
+            'agents_api_loaded' => defined('AGENTS_API_LOADED'),
+            'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+        ),
 );
 
 ob_start();
@@ -814,12 +721,8 @@ export function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string }>):
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
-
 $plugins = array_merge(array(
     'agents-api/agents-api.php',
-    'data-machine/data-machine.php',
-    'data-machine-code/data-machine-code.php',
 ), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
 
 function wp_codebox_plugin_entry_path(string $plugin): ?array {
@@ -955,10 +858,6 @@ echo json_encode(
         'signals' => array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_registry_class' => class_exists('WP_Agents_Registry'),
-            'data_machine_version' => defined('DATAMACHINE_VERSION') ? DATAMACHINE_VERSION : null,
-            'data_machine_permission_helper' => class_exists('DataMachine\\\\Abilities\\\\PermissionHelper'),
-            'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
-            'data_machine_code_workspace' => class_exists('DataMachineCode\\\\Workspace\\\\Workspace'),
             'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
             'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
         ),

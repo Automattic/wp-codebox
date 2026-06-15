@@ -3,16 +3,17 @@ import { readFile } from "node:fs/promises"
 
 async function main() {
   const source = await readFile("packages/cli/src/agent-code.ts", "utf8")
-  const defineNeedle = "define('DATAMACHINE_WORKSPACE_PATH'"
-  const mkdirNeedle = "wp_mkdir_p(DATAMACHINE_WORKSPACE_PATH)"
-  const importNeedle = "wp_codebox_import_sandbox_agent_bundles"
+  const pluginsLoadedNeedle = "do_action('plugins_loaded')"
+  const initNeedle = "do_action('init')"
+  const abilitiesNeedle = "do_action('wp_abilities_api_init')"
 
-  assert.match(source, /define\('DATAMACHINE_WORKSPACE_PATH'/, "sandbox code should define the DMC workspace path")
-  assert.match(source, /wp_mkdir_p\(DATAMACHINE_WORKSPACE_PATH\)/, "sandbox code should create the DMC workspace path")
-  assert.ok(source.indexOf(defineNeedle) < source.indexOf(mkdirNeedle), "workspace root should be defined before creation")
-  assert.ok(source.indexOf(mkdirNeedle) < source.indexOf(importNeedle), "workspace root should exist before runtime bundle imports")
+  assert.doesNotMatch(source, /DATAMACHINE_WORKSPACE_PATH/, "sandbox boot should not define a Data Machine workspace path")
+  assert.doesNotMatch(source, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox boot should not set Data Machine workspace backend filters")
+  assert.doesNotMatch(source, /datamachine-code\/workspace-adopt/, "sandbox boot should not adopt Data Machine workspaces")
+  assert.ok(source.indexOf(pluginsLoadedNeedle) < source.indexOf(initNeedle), "mounted components should see plugins_loaded before init")
+  assert.ok(source.indexOf(initNeedle) < source.indexOf(abilitiesNeedle), "mounted components should self-configure before abilities initialize")
 
-  console.log("agent sandbox workspace root smoke ok")
+  console.log("agent sandbox generic boot seam smoke ok")
 }
 
 main().catch((error) => {
