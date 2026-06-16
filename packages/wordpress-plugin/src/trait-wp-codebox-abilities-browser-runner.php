@@ -1082,6 +1082,25 @@ $declarations[\'filesystem_write\'] = array(
 return $declarations;
 }
 
+function wp_codebox_browser_runtime_replay_ability_lifecycle(): array {
+if ( function_exists( \'wp_register_ability\' ) ) {
+if ( ! did_action( \'wp_abilities_api_categories_init\' ) ) {
+	do_action( \'wp_abilities_api_categories_init\' );
+}
+if ( ! did_action( \'wp_abilities_api_init\' ) ) {
+	do_action( \'wp_abilities_api_init\' );
+}
+}
+
+do_action( \'wp_codebox_runtime_abilities_ready\' );
+
+return array(
+	\'wp_abilities_api_categories_init\' => function_exists( \'did_action\' ) ? did_action( \'wp_abilities_api_categories_init\' ) : null,
+	\'wp_abilities_api_init\' => function_exists( \'did_action\' ) ? did_action( \'wp_abilities_api_init\' ) : null,
+	\'wp_codebox_runtime_abilities_ready\' => function_exists( \'did_action\' ) ? did_action( \'wp_codebox_runtime_abilities_ready\' ) : null,
+);
+}
+
 function wp_codebox_browser_runtime_tool_callback( array $request, array $payload ) {
 unset( $payload );
 
@@ -1123,14 +1142,7 @@ add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode,
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
 
-if ( function_exists( \'wp_register_ability\' ) ) {
-if ( ! did_action( \'wp_abilities_api_categories_init\' ) ) {
-	do_action( \'wp_abilities_api_categories_init\' );
-}
-if ( ! did_action( \'wp_abilities_api_init\' ) ) {
-	do_action( \'wp_abilities_api_init\' );
-}
-}
+$runtime_lifecycle = wp_codebox_browser_runtime_replay_ability_lifecycle();
 
 if ( is_readable( $task_path ) ) {
 $raw_payload = json_decode( (string) file_get_contents( $task_path ), true );
@@ -1330,6 +1342,7 @@ $diagnostics = array(
 ),
 \'provider_proxy\' => $provider_proxy_diagnostics,
 \'sandbox_tool_ids\' => $sandbox_tool_ids,
+\'runtime_lifecycle\' => $runtime_lifecycle,
 \'input_controls\' => wp_codebox_browser_input_control_diagnostics( is_array( $input ?? null ) ? $input : array() ),
 \'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),
 \'response\' => wp_codebox_browser_response_diagnostics( $response ?? null ),
