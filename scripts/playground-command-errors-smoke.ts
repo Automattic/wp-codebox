@@ -31,6 +31,37 @@ assert.match(hiddenFatalMessage, /Local wp-admin auth fixture user could not be 
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stdout ---\n\s*---/)
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stderr ---\n\s*---/)
 
+const emptyWpcomFatal = new Error("PHP.run() failed with exit code 255") as Error & {
+  httpStatusCode?: number
+  exitCode?: number
+  stdout?: string
+  stderr?: string
+  response?: { headers?: Record<string, string> }
+}
+
+emptyWpcomFatal.httpStatusCode = 500
+emptyWpcomFatal.exitCode = 255
+emptyWpcomFatal.stdout = ""
+emptyWpcomFatal.stderr = ""
+emptyWpcomFatal.response = {
+  headers: {
+    "content-type": "text/html; charset=UTF-8",
+    "x-powered-by": "PHP/8.4.21",
+    "set-cookie": "wordpress_test_cookie=secret",
+  },
+}
+
+const emptyWpcomFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", emptyWpcomFatal).message
+
+assert.match(emptyWpcomFatalMessage, /wordpress\.run-php crashed before producing a structured response/)
+assert.match(emptyWpcomFatalMessage, /PHP\.run\(\) failed with exit code 255/)
+assert.match(emptyWpcomFatalMessage, /httpStatusCode=500/)
+assert.match(emptyWpcomFatalMessage, /exitCode=255/)
+assert.match(emptyWpcomFatalMessage, /--- Playground response headers ---/)
+assert.match(emptyWpcomFatalMessage, /x-powered-by: PHP\/8\.4\.21/)
+assert.match(emptyWpcomFatalMessage, /No Playground stdout, stderr, or response body was captured\./)
+assert.doesNotMatch(emptyWpcomFatalMessage, /wordpress_test_cookie/)
+
 const nestedResponseError = new Error("Playground request failed") as Error & {
   response?: { status?: number; text?: string }
 }
@@ -69,7 +100,7 @@ const fakeCliModule: PlaygroundCliModule = {
         throw hiddenFatal
       },
     },
-    close: async () => undefined,
+    [Symbol.asyncDispose]: async () => undefined,
   }),
 }
 
@@ -102,5 +133,6 @@ await assert.rejects(
 )
 
 assert.match(receivedRunPhpCode, /RuntimeException/)
+await runtime.destroy()
 
 console.log("playground command errors smoke passed")

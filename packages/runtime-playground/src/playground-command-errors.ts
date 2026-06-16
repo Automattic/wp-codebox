@@ -117,6 +117,7 @@ function playgroundCrashDiagnostics(cause: unknown): string[] {
   const metadata: string[] = []
   const sections: string[] = []
   const seenSections = new Set<string>()
+  let capturedOutput = false
 
   for (const record of records) {
     for (const [key, label] of [
@@ -142,10 +143,24 @@ function playgroundCrashDiagnostics(cause: unknown): string[] {
       const value = diagnosticText(record[key])
       const sectionKey = `${label}\n${value}`
       if (value && !seenSections.has(sectionKey)) {
+        capturedOutput = true
         sections.push(`--- ${label} ---`, value)
         seenSections.add(sectionKey)
       }
     }
+
+    const headers = diagnosticHeaders(record.headers)
+    if (headers) {
+      const sectionKey = `Playground response headers\n${headers}`
+      if (!seenSections.has(sectionKey)) {
+        sections.push("--- Playground response headers ---", headers)
+        seenSections.add(sectionKey)
+      }
+    }
+  }
+
+  if (!capturedOutput && metadata.length > 0) {
+    sections.push("No Playground stdout, stderr, or response body was captured.")
   }
 
   return [...metadata, ...sections]
@@ -180,6 +195,40 @@ function diagnosticText(value: unknown): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function diagnosticHeaders(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  const lines: string[] = []
+  for (const [rawName, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const name = rawName.toLowerCase()
+    if (/cookie|authorization|token|secret|key/.test(name)) {
+      continue
+    }
+    if (!["content-type", "server", "x-powered-by"].includes(name) && !name.startsWith("x-wp-") && !name.startsWith("x-playground-")) {
+      continue
+    }
+    const valueText = headerValueText(rawValue)
+    if (valueText) {
+      lines.push(`${rawName}: ${valueText}`)
+    }
+  }
+
+  return lines.length > 0 ? truncateDiagnostic(lines.join("\n")) : undefined
+}
+
+function headerValueText(value: unknown): string | undefined {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value).slice(0, 500)
+  }
+  if (Array.isArray(value)) {
+    const values = value.filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+    return values.length > 0 ? values.map(String).join(", ").slice(0, 500) : undefined
+  }
+  return undefined
 }
 
 function playgroundOutputDiagnostic(raw: string): string {
