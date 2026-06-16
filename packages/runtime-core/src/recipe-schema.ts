@@ -134,6 +134,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Sandbox artifact paths declared by the recipe for structured post-run collection.",
             items: { $ref: "#/$defs/declaredArtifact" },
           },
+          typed: {
+            type: "array",
+            description: "Typed sandbox output artifacts materialized into the artifact bundle and indexed by name/type.",
+            items: { $ref: "#/$defs/typedArtifact" },
+          },
         },
       },
       probes: {
@@ -547,6 +552,26 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           path: { type: "string", pattern: "^/" },
           required: { type: "boolean" },
           parseJson: { type: "boolean" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      typedArtifact: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "type", "path"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$" },
+          path: { type: "string", pattern: "^/" },
+          required: { type: "boolean" },
+          contentType: { type: "string" },
+          parseJson: { type: "boolean" },
+          payloadSchema: {
+            oneOf: [
+              { type: "string" },
+              { type: "object" },
+            ],
+          },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

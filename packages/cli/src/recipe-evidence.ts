@@ -25,7 +25,7 @@ export interface RecipeRuntimeEvidenceFileInput {
   filename: string
   kind: string
   contentType: string
-  contents: string
+  contents: string | Buffer
 }
 
 export interface RecipeArtifactEvidenceResult {

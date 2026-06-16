@@ -215,6 +215,17 @@ export interface WorkspaceRecipeDeclaredArtifact {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeTypedArtifact {
+  name: string
+  type: string
+  path: string
+  required?: boolean
+  contentType?: string
+  parseJson?: boolean
+  payloadSchema?: string | Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipePluginRuntimePhp {
   memoryLimit?: string
   maxExecutionTime?: number
@@ -374,6 +385,7 @@ export interface WorkspaceRecipe {
     verify?: boolean | WorkspaceRecipeArtifactVerifier
     workspacePolicy?: boolean | WorkspaceRecipeWorkspacePolicyArtifact
     paths?: WorkspaceRecipeDeclaredArtifact[]
+    typed?: WorkspaceRecipeTypedArtifact[]
   }
   probes?: WorkspaceRecipeProbe[]
 }

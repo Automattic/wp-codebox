@@ -1,4 +1,4 @@
-import type { ArtifactBundle, BenchResults, ExecutionResult, RuntimeInfo, RuntimeRunRecord } from "@automattic/wp-codebox-core"
+import type { ArtifactBundle, BenchResults, ExecutionResult, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -252,6 +252,7 @@ export interface RecipeRunDeclaredArtifact {
   size?: number
   sha256?: string
   parsedJson?: unknown
+  materialized?: TypedArtifactRef
   metadata?: Record<string, unknown>
   error?: RunOutput["error"]
 }

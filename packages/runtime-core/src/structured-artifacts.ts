@@ -2,6 +2,7 @@ import { isPlainObject } from "./object-utils.js"
 
 export const STRUCTURED_ARTIFACT_SCHEMA = "wp-codebox/structured-artifact/v1" as const
 export const STRUCTURED_ARTIFACT_INDEX_SCHEMA = "wp-codebox/structured-artifacts-index/v1" as const
+export const TYPED_ARTIFACT_INDEX_SCHEMA = "wp-codebox/typed-artifacts-index/v1" as const
 
 export type StructuredArtifactDirection = "input" | "output"
 
@@ -31,6 +32,31 @@ export interface StructuredArtifactIndex {
   schema: typeof STRUCTURED_ARTIFACT_INDEX_SCHEMA
   direction: StructuredArtifactDirection
   artifacts: StructuredArtifactRef[]
+}
+
+export interface TypedArtifactRef {
+  schema: typeof STRUCTURED_ARTIFACT_SCHEMA
+  name: string
+  type: string
+  payload_schema?: string | Record<string, unknown>
+  payload?: unknown
+  metadata: Record<string, unknown>
+  provenance: {
+    direction: "output"
+    source: string
+  }
+  artifact: {
+    path: string
+    kind: "typed-artifact"
+    contentType: string
+    sha256: string
+  }
+}
+
+export interface TypedArtifactIndex {
+  schema: typeof TYPED_ARTIFACT_INDEX_SCHEMA
+  direction: "output"
+  artifacts: TypedArtifactRef[]
 }
 
 export function normalizeStructuredArtifacts(value: unknown, direction: StructuredArtifactDirection): StructuredArtifactPayload[] {
