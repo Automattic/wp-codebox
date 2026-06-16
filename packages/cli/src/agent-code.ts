@@ -656,6 +656,22 @@ function wp_codebox_json_encode_sandbox_payload($value): string {
     return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 }
 
+function wp_codebox_runtime_replay_component_lifecycle(): array {
+    do_action('plugins_loaded');
+    do_action('init');
+    do_action('wp_abilities_api_categories_init');
+    do_action('wp_abilities_api_init');
+    do_action('wp_codebox_runtime_abilities_ready');
+
+    return array(
+        'plugins_loaded' => function_exists('did_action') ? did_action('plugins_loaded') : null,
+        'init' => function_exists('did_action') ? did_action('init') : null,
+        'wp_abilities_api_categories_init' => function_exists('did_action') ? did_action('wp_abilities_api_categories_init') : null,
+        'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
+        'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
+    );
+}
+
 $activation_results = array();
 
 foreach ($plugins as $plugin) {
@@ -677,10 +693,7 @@ foreach ($plugins as $plugin) {
     );
 }
 
-do_action('plugins_loaded');
-do_action('init');
-do_action('wp_abilities_api_categories_init');
-do_action('wp_abilities_api_init');
+$runtime_lifecycle = wp_codebox_runtime_replay_component_lifecycle();
 
 $sandbox_task = ${phpStringLiteral(task)};
 $sandbox_stack = array(
@@ -688,6 +701,7 @@ $sandbox_stack = array(
         'signals' => array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'runtime_lifecycle' => $runtime_lifecycle,
             'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
             'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
         ),
@@ -825,6 +839,22 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
     return null;
 }
 
+function wp_codebox_runtime_replay_component_lifecycle(): array {
+    do_action('plugins_loaded');
+    do_action('init');
+    do_action('wp_abilities_api_categories_init');
+    do_action('wp_abilities_api_init');
+    do_action('wp_codebox_runtime_abilities_ready');
+
+    return array(
+        'plugins_loaded' => function_exists('did_action') ? did_action('plugins_loaded') : null,
+        'init' => function_exists('did_action') ? did_action('init') : null,
+        'wp_abilities_api_categories_init' => function_exists('did_action') ? did_action('wp_abilities_api_categories_init') : null,
+        'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
+        'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
+    );
+}
+
 $activation_results = array();
 
 foreach ($plugins as $plugin) {
@@ -846,10 +876,7 @@ foreach ($plugins as $plugin) {
     );
 }
 
-do_action('plugins_loaded');
-do_action('init');
-do_action('wp_abilities_api_categories_init');
-do_action('wp_abilities_api_init');
+$runtime_lifecycle = wp_codebox_runtime_replay_component_lifecycle();
 
 echo json_encode(
     array(
@@ -859,6 +886,7 @@ echo json_encode(
         'signals' => array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'runtime_lifecycle' => $runtime_lifecycle,
             'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
             'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
         ),

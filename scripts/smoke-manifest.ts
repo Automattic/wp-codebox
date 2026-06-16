@@ -74,6 +74,7 @@ export const smokeGroups = {
       tsxSmoke("replay-export-snapshot-scoping-smoke"),
       tsxSmoke("composer-backed-source-hydration-smoke"),
       tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),
+      tsxSmoke("runtime-component-lifecycle-replay-smoke"),
     ],
   },
   agent: {
@@ -81,6 +82,7 @@ export const smokeGroups = {
     commands: [
       tsxSmoke("agent-runtime-workload-normalizer-smoke"),
       tsxSmoke("agent-runtime-signal-smoke"),
+      tsxSmoke("agent-runtime-ability-lifecycle-smoke"),
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),

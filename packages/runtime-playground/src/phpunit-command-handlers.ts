@@ -477,6 +477,16 @@ function pg_fire_reopened_wordpress_action(string $hook_name, bool $reopened): v
     }
 }
 
+function pg_fire_runtime_abilities_ready(): void {
+    if (!function_exists('do_action')) {
+        return;
+    }
+    do_action('wp_codebox_runtime_abilities_ready');
+    if (function_exists('did_action')) {
+        pg_log('NOTICE:runtime ability lifecycle ready: wp_abilities_api_categories_init=' . did_action('wp_abilities_api_categories_init') . '; wp_abilities_api_init=' . did_action('wp_abilities_api_init') . '; wp_codebox_runtime_abilities_ready=' . did_action('wp_codebox_runtime_abilities_ready'));
+    }
+}
+
 function pg_preload_wp_cli_namespaced_functions(): void {
     global $autoload_file;
     $vendor_dir = dirname($autoload_file);
@@ -884,6 +894,7 @@ usort($deferred_install_init_callbacks, static function (array $left, array $rig
 pg_run_deferred_wordpress_hook_callbacks($deferred_install_init_callbacks, array(), 'init');
 pg_fire_reopened_wordpress_action('wp_abilities_api_categories_init', $reopened_ability_categories_init);
 pg_fire_reopened_wordpress_action('wp_abilities_api_init', $reopened_ability_init);
+pg_fire_runtime_abilities_ready();
 
 pg_stage_begin('load_fixtures');
 try {
