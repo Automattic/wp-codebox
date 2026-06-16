@@ -217,7 +217,10 @@ Each contract declares the component instead of relying on product-specific keys
 
 The CLI binary can be supplied by ability input, the `wp_codebox_bin` option,
 or the `wp_codebox_bin` filter. On multisite, WP Codebox reads `wp_codebox_bin`
-from network options because the binary path is host-level configuration.
+from network options because the binary path is host-level configuration. Source
+checkouts without generated `dist/` files should point at
+`bin/wp-codebox-source.mjs`; it builds WP Codebox when needed before delegating
+to the compiled CLI.
 
 The artifact root can be supplied per request with `artifacts_path`, by the
 `wp_codebox_artifacts_root` option, or by the `wp_codebox_artifacts_root`

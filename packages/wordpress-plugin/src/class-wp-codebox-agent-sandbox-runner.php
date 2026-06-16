@@ -1921,13 +1921,29 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function command_prefix( string $bin ): string|WP_Error {
-		if ( str_ends_with( $bin, '.js' ) && is_file( $bin ) ) {
+		$is_node_script = 1 === preg_match( '/\.m?js$/', $bin );
+		$is_path_like   = str_contains( $bin, '/' ) || str_contains( $bin, '\\' ) || str_starts_with( $bin, '.' );
+
+		if ( $is_node_script && is_file( $bin ) ) {
 			$node = $this->node_binary();
 			if ( is_wp_error( $node ) ) {
 				return $node;
 			}
 
 			return escapeshellarg( $node ) . ' ' . escapeshellarg( $bin );
+		}
+
+		if ( $is_node_script && $is_path_like ) {
+			return new WP_Error(
+				'wp_codebox_bin_missing',
+				'Configured wp_codebox_bin points at a missing JavaScript file. Build WP Codebox first, point wp_codebox_bin at bin/wp-codebox-source.mjs for source checkouts, or use an installed wp-codebox binary.',
+				array(
+					'status'          => 500,
+					'path'            => $bin,
+					'source_command'  => 'node bin/wp-codebox-source.mjs',
+					'build_command'   => 'npm ci && npm run build',
+				)
+			);
 		}
 
 		if ( $this->is_bundled_cli_wrapper( $bin ) ) {

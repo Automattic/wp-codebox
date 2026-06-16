@@ -56,6 +56,7 @@
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
     "wp-codebox": "node packages/cli/dist/index.js",
+    "wp-codebox:source": "node bin/wp-codebox-source.mjs",
     "smoke": "tsx scripts/run-smoke.ts",
     "check": "npm run smoke -- --group=check"
   },
