@@ -31,7 +31,7 @@ import {
   type RuntimeInfo,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
-import { stripUndefined } from "@automattic/wp-codebox-core/internals"
+import { normalizeJsonValue, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
@@ -337,37 +337,37 @@ export class ArtifactBundleBuilder {
     }
     metadata.previewSessionEvidence = previewSessionEvidenceRef
 
-    await writeRedactedArtifact(redactor, blueprintAfterPath, source.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, blueprintAfterNotesPath, source.artifactRoot, `${JSON.stringify(blueprintAfterNotes, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, blueprintAfterPath, source.artifactRoot, artifactJson(blueprintAfter))
+    await writeRedactedArtifact(redactor, blueprintAfterNotesPath, source.artifactRoot, artifactJson(blueprintAfterNotes))
     if (replaySnapshot) {
-      await writeRedactedArtifact(redactor, partialBlueprintAfterPath, source.artifactRoot, `${JSON.stringify(partialBlueprintAfter, null, 2)}\n`)
+      await writeRedactedArtifact(redactor, partialBlueprintAfterPath, source.artifactRoot, artifactJson(partialBlueprintAfter))
     }
     await writeJsonLines(eventsPath, source.events, redactor, source.artifactRoot)
     await writeJsonLines(commandsPath, source.commands, redactor, source.artifactRoot)
     await writeJsonLines(observationsPath, source.observations, redactor, source.artifactRoot)
     await writeRedactedArtifact(redactor, runtimeLogPath, source.artifactRoot, source.formatRuntimeLog())
     await writeRedactedArtifact(redactor, commandsLogPath, source.artifactRoot, source.formatCommandsLog())
-    await writeRedactedArtifact(redactor, mountsPath, source.artifactRoot, `${JSON.stringify(source.mounts, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, capturedMountsPath, source.artifactRoot, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
-    await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, `${JSON.stringify(mountDiffs, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, workspacePatchPath, source.artifactRoot, `${JSON.stringify(workspacePatch, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, mountsPath, source.artifactRoot, artifactJson(source.mounts))
+    await writeRedactedArtifact(redactor, capturedMountsPath, source.artifactRoot, artifactJson(serializeCapturedMountFiles(capturedMounts)))
+    await writeRedactedArtifact(redactor, diffsPath, source.artifactRoot, artifactJson(mountDiffs))
+    await writeRedactedArtifact(redactor, workspacePatchPath, source.artifactRoot, artifactJson(workspacePatch))
     await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, redactedPatch)
-    await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, `${JSON.stringify(diagnostics, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, `${JSON.stringify(testResults, null, 2)}\n`)
-    await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, `${JSON.stringify(previewEvidence, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, diagnosticsPath, source.artifactRoot, artifactJson(diagnostics))
+    await writeRedactedArtifact(redactor, testResultsPath, source.artifactRoot, artifactJson(testResults))
+    await writeRedactedArtifact(redactor, previewEvidencePath, source.artifactRoot, artifactJson(previewEvidence))
     await writeFile(previewSessionEvidencePath, previewSessionEvidenceJson)
     const redaction = redactor.summary()
     if (redaction.total > 0) {
       review.redaction = redaction
       review.riskFlags.push("secrets-redacted")
     }
-    await writeRedactedArtifact(redactor, reviewPath, source.artifactRoot, `${JSON.stringify(review, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, reviewPath, source.artifactRoot, artifactJson(review))
     await writeFile(runtimeReferenceManifestPath, "{}\n")
     await writeFile(runtimeReferenceIndexPath, "{}\n")
     await writeFile(runtimeReplayReferenceIndexPath, "{}\n")
     metadata.redaction = redactor.summary()
-    await writeRedactedArtifact(redactor, metadataPath, source.artifactRoot, `${JSON.stringify(metadata, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, metadataPath, source.artifactRoot, artifactJson(metadata))
 
     const manifest: ArtifactManifest = {
       id: bundleId,
@@ -391,7 +391,7 @@ export class ArtifactBundleBuilder {
       capturedMounts,
       browserProbes: source.browserArtifacts(),
     })
-    await writeFile(runtimeReferenceIndexPath, `${JSON.stringify(runtimeReferenceIndex, null, 2)}\n`)
+    await writeFile(runtimeReferenceIndexPath, artifactJson(runtimeReferenceIndex))
     await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
     const runtimeReferenceManifest = buildRuntimeReferenceManifest({
       createdAt,
@@ -406,7 +406,7 @@ export class ArtifactBundleBuilder {
         .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
       snapshots: runtimeSnapshots,
     })
-    await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
+    await writeFile(runtimeReferenceManifestPath, artifactJson(runtimeReferenceManifest))
     const runtimeReferenceManifestRef = artifactManifestFileWithSha256(
       "files/runtime-reference-manifest.json",
       "runtime-reference-manifest",
@@ -427,9 +427,9 @@ export class ArtifactBundleBuilder {
       runtimeReferenceManifest: runtimeReferenceManifestRef,
       snapshots: runtimeSnapshots,
     })
-    await writeFile(runtimeReplayReferenceIndexPath, `${JSON.stringify(runtimeReplayReferenceIndex, null, 2)}\n`)
+    await writeFile(runtimeReplayReferenceIndexPath, artifactJson(runtimeReplayReferenceIndex))
     await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
-    await writeRedactedArtifact(redactor, manifestPath, source.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeRedactedArtifact(redactor, manifestPath, source.artifactRoot, artifactJson(manifest))
 
     return {
       id: bundleId,
@@ -718,7 +718,15 @@ function isLocalPreviewHost(hostname: string): boolean {
 }
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
-  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
+  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => artifactJsonLine(record)).join("\n")}\n` : "")
+}
+
+function artifactJson(value: unknown): string {
+  return `${JSON.stringify(normalizeJsonValue(value), null, 2)}\n`
+}
+
+function artifactJsonLine(value: unknown): string {
+  return JSON.stringify(normalizeJsonValue(value))
 }
 
 function buildPreviewSessionEvidence({

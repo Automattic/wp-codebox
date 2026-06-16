@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { artifactManifestFile } from "@automattic/wp-codebox-core"
+import { normalizeJsonValue } from "@automattic/wp-codebox-core/internals"
 import type {
   ArtifactBundle,
   ArtifactManifestFile,
@@ -86,7 +87,7 @@ export async function collectPlaygroundArtifacts({
 }
 
 export function formatRuntimeLog(events: LifecycleEvent[]): string {
-  return events.map((event) => `[${event.timestamp}] ${event.type} ${JSON.stringify(event.data ?? {})}`).join("\n") + "\n"
+  return events.map((event) => `[${event.timestamp}] ${event.type} ${JSON.stringify(normalizeJsonValue(event.data ?? {}))}`).join("\n") + "\n"
 }
 
 export function formatCommandsLog(commands: ExecutionResult[]): string {
