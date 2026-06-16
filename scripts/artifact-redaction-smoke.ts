@@ -25,3 +25,20 @@ assert.equal(parsed.token, "[REDACTED:configured-secret-value]")
 const summary = redactor.summary()
 assert.equal(summary.status, "redacted")
 assert.equal(summary.byKind["configured-secret-value"], 1)
+
+const largeRedactor = new ArtifactRedactor({
+  HUGE_SECRET: "x".repeat(120000),
+})
+
+const largeArtifact = [
+  "a".repeat(250000),
+  `sk-${"A".repeat(5000)}`,
+  "x".repeat(120000),
+  `eyJ${"a".repeat(40)}.${"b".repeat(40)}.${"c".repeat(40)}`,
+].join(" ")
+const largeRedacted = largeRedactor.redact("large-artifact.json", largeArtifact)
+
+assert.match(largeRedacted, /\[REDACTED:openai-api-key\]/)
+assert.match(largeRedacted, /\[REDACTED:configured-secret-value\]/)
+assert.match(largeRedacted, /\[REDACTED:jwt\]/)
+assert.equal(largeRedactor.summary().total, 3)

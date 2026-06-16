@@ -167,7 +167,7 @@ const COMMON_SECRET_PATTERNS: Array<{ kind: string; pattern: RegExp }> = [
 ]
 
 export class ArtifactRedactor {
-  private readonly replacements: Array<{ kind: string; pattern: RegExp }> = []
+  private readonly replacements: Array<{ kind: string; pattern: RegExp } | { kind: string; literal: string }> = []
   private readonly artifactCounts = new Map<string, { count: number; kinds: Set<string> }>()
   private readonly byKind = new Map<string, number>()
   private total = 0
@@ -177,11 +177,11 @@ export class ArtifactRedactor {
 
     for (const [name, value] of Object.entries(secretEnv)) {
       if (name.length > 0) {
-        this.replacements.push({ kind: "configured-secret-name", pattern: new RegExp(escapeRegExp(name), "g") })
+        this.replacements.push({ kind: "configured-secret-name", literal: name })
       }
 
       if (shouldRedactConfiguredSecretValue(value)) {
-        this.replacements.push({ kind: "configured-secret-value", pattern: new RegExp(escapeRegExp(value), "g") })
+        this.replacements.push({ kind: "configured-secret-value", literal: value })
       }
     }
   }
@@ -213,11 +213,14 @@ export class ArtifactRedactor {
     const byKind = new Map<string, number>()
 
     for (const replacement of this.replacements) {
-      redacted = redacted.replace(replacement.pattern, () => {
-        count++
-        byKind.set(replacement.kind, (byKind.get(replacement.kind) ?? 0) + 1)
-        return `[REDACTED:${replacement.kind}]`
-      })
+      const result = "literal" in replacement
+        ? redactLiteral(redacted, replacement.literal, `[REDACTED:${replacement.kind}]`)
+        : redactPattern(redacted, replacement.pattern, `[REDACTED:${replacement.kind}]`)
+      if (result.count > 0) {
+        redacted = result.contents
+        count += result.count
+        byKind.set(replacement.kind, (byKind.get(replacement.kind) ?? 0) + result.count)
+      }
     }
 
     return { contents: redacted, count, byKind }
@@ -233,6 +236,90 @@ export class ArtifactRedactor {
     }
     this.artifactCounts.set(path, artifact)
   }
+}
+
+function redactLiteral(contents: string, literal: string, replacement: string): { contents: string; count: number } {
+  if (literal.length === 0) {
+    return { contents, count: 0 }
+  }
+
+  const chunks: string[] = []
+  let count = 0
+  let cursor = 0
+
+  for (let index = contents.indexOf(literal, cursor); index !== -1; index = contents.indexOf(literal, cursor)) {
+    chunks.push(contents.slice(cursor, index), replacement)
+    cursor = index + literal.length
+    count++
+  }
+
+  if (count === 0) {
+    return { contents, count }
+  }
+
+  chunks.push(contents.slice(cursor))
+  return { contents: chunks.join(""), count }
+}
+
+function redactPattern(contents: string, pattern: RegExp, replacement: string): { contents: string; count: number } {
+  const maxChunkLength = 64 * 1024
+  const overlapLength = 4096
+
+  if (contents.length > maxChunkLength) {
+    const chunks: string[] = []
+    let count = 0
+    let cursor = 0
+    let carry = ""
+
+    while (cursor < contents.length) {
+      const next = contents.slice(cursor, cursor + maxChunkLength)
+      const window = carry + next
+      const hasMore = cursor + maxChunkLength < contents.length
+      const emitLength = hasMore ? Math.max(0, window.length - overlapLength) : window.length
+      const result = redactPattern(window.slice(0, emitLength), pattern, replacement)
+      chunks.push(result.contents)
+      count += result.count
+      carry = window.slice(emitLength)
+      cursor += maxChunkLength
+    }
+
+    if (carry.length > 0) {
+      const result = redactPattern(carry, pattern, replacement)
+      chunks.push(result.contents)
+      count += result.count
+    }
+
+    if (count === 0) {
+      return { contents, count }
+    }
+
+    return { contents: chunks.join(""), count }
+  }
+
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`
+  const scanner = new RegExp(pattern.source, flags)
+  const chunks: string[] = []
+  let count = 0
+  let cursor = 0
+
+  for (let match = scanner.exec(contents); match; match = scanner.exec(contents)) {
+    const matched = match[0]
+    if (matched.length === 0) {
+      scanner.lastIndex++
+      continue
+    }
+
+    chunks.push(contents.slice(cursor, match.index), replacement)
+    cursor = match.index + matched.length
+    count++
+  }
+
+  if (count === 0) {
+    return { contents, count }
+  }
+
+  chunks.push(contents.slice(cursor))
+  return { contents: chunks.join(""), count }
 }
 
 function shouldRedactConfiguredSecretValue(value: string): boolean {
