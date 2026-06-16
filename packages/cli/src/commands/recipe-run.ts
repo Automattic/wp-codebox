@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -10,7 +10,7 @@ import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, appendRecipeRuntimeEvidenceFiles, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -422,6 +422,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       artifacts = await awaitRecipe("runtime.collect-artifacts", collectRecipeRuntimeArtifacts(runtime!, { includeLogs: true, includeObservations: true }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
+      await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
       await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
@@ -444,6 +445,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       artifacts = await awaitRecipe("runtime.collect-artifacts.preview-hold", collectRecipeRuntimeArtifacts(runtime, { includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds }, { snapshotTimeoutMs: SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS }))
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
+      declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
+      await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
+      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
@@ -575,6 +579,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           if (declaredArtifacts.length === 0) {
             declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
           }
+          await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
           const evidenceFiles = await appendRecipeRuntimeEvidence(artifacts, [
             ...recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts),
             failureDiagnostics,
@@ -1503,6 +1508,10 @@ async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: 
   for (const [index, artifact] of (recipe.artifacts?.paths ?? []).entries()) {
     results.push(await collectRecipeDeclaredArtifact(runtime, artifact, index))
   }
+  const offset = results.length
+  for (const [index, artifact] of (recipe.artifacts?.typed ?? []).entries()) {
+    results.push(await collectRecipeTypedArtifact(runtime, artifact, offset + index))
+  }
   return results
 }
 
@@ -1542,6 +1551,135 @@ async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: Workspa
       metadata: artifact.metadata,
     }) as RecipeRunDeclaredArtifact
   }
+}
+
+async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
+  const result = await collectRecipeDeclaredArtifact(runtime, {
+    name: artifact.name,
+    path: artifact.path,
+    required: artifact.required,
+    parseJson: artifact.parseJson,
+    metadata: artifact.metadata,
+  }, index)
+  if (result.status !== "collected") {
+    return result
+  }
+
+  try {
+    const execution = await runtime.execute({
+      command: "wordpress.run-php",
+      args: [`code=${declaredArtifactContentsCode(artifact.path)}`],
+    })
+    const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
+    return stripUndefined({
+      ...result,
+      typedArtifact: {
+        name: artifact.name,
+        type: artifact.type,
+        payloadSchema: artifact.payloadSchema,
+        contentType: artifact.contentType ?? typedArtifactContentType(artifact),
+      },
+      contentBase64: typeof collected.contentBase64 === "string" ? collected.contentBase64 : undefined,
+    }) as RecipeRunDeclaredArtifact
+  } catch (error) {
+    return stripUndefined({
+      ...result,
+      status: "failed" as const,
+      exists: false,
+      error: serializeRecipeRunError(error),
+    }) as RecipeRunDeclaredArtifact
+  }
+}
+
+async function materializeTypedRecipeDeclaredArtifacts(artifacts: ArtifactBundle, declaredArtifacts: RecipeRunDeclaredArtifact[]): Promise<void> {
+  const refs: TypedArtifactRef[] = []
+  const files = []
+  for (const artifact of declaredArtifacts) {
+    const typedArtifact = recipeRunTypedArtifactDeclaration(artifact)
+    const contentBase64 = recipeRunArtifactContentBase64(artifact)
+    if (!typedArtifact || artifact.status !== "collected" || !contentBase64) {
+      continue
+    }
+
+    const contents = Buffer.from(contentBase64, "base64")
+    const filename = `typed-artifacts/${safeTypedArtifactName(typedArtifact.name)}-${artifact.index + 1}${typedArtifactExtension(typedArtifact.contentType)}`
+    const sha256 = artifactFileDigest(contents).value
+    const ref: TypedArtifactRef = stripUndefined({
+      schema: STRUCTURED_ARTIFACT_SCHEMA,
+      name: typedArtifact.name,
+      type: typedArtifact.type,
+      payload_schema: typedArtifact.payloadSchema,
+      payload: artifact.parsedJson,
+      metadata: artifact.metadata ?? {},
+      provenance: {
+        direction: "output",
+        source: artifact.path,
+      },
+      artifact: {
+        path: `files/runtime-evidence/${filename}`,
+        kind: "typed-artifact",
+        contentType: typedArtifact.contentType,
+        sha256,
+      },
+    }) as TypedArtifactRef
+    refs.push(ref)
+    artifact.materialized = ref
+    delete (artifact as RecipeRunDeclaredArtifact & { contentBase64?: string }).contentBase64
+    delete (artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
+    files.push({ filename, kind: "typed-artifact", contentType: typedArtifact.contentType, contents })
+  }
+
+  if (refs.length === 0) {
+    return
+  }
+
+  const index: TypedArtifactIndex = {
+    schema: TYPED_ARTIFACT_INDEX_SCHEMA,
+    direction: "output",
+    artifacts: refs,
+  }
+  files.push({ filename: "typed-artifacts/index.json", kind: "typed-artifacts-index", contentType: "application/json", contents: `${JSON.stringify(index, null, 2)}\n` })
+  await appendRecipeRuntimeEvidenceFiles(artifacts, files)
+}
+
+function recipeRunTypedArtifactDeclaration(artifact: RecipeRunDeclaredArtifact): { name: string; type: string; contentType: string; payloadSchema?: string | Record<string, unknown> } | undefined {
+  const typedArtifact = (artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
+  if (!typedArtifact || typeof typedArtifact !== "object") {
+    return undefined
+  }
+  const record = typedArtifact as Record<string, unknown>
+  if (typeof record.name !== "string" || typeof record.type !== "string" || typeof record.contentType !== "string") {
+    return undefined
+  }
+  return stripUndefined({
+    name: record.name,
+    type: record.type,
+    contentType: record.contentType,
+    payloadSchema: typeof record.payloadSchema === "string" || isRecordValue(record.payloadSchema) ? record.payloadSchema : undefined,
+  })
+}
+
+function recipeRunArtifactContentBase64(artifact: RecipeRunDeclaredArtifact): string | undefined {
+  const contentBase64 = (artifact as RecipeRunDeclaredArtifact & { contentBase64?: unknown }).contentBase64
+  return typeof contentBase64 === "string" && contentBase64.length > 0 ? contentBase64 : undefined
+}
+
+function typedArtifactContentType(artifact: WorkspaceRecipeTypedArtifact): string {
+  return artifact.parseJson === true ? "application/json" : "application/octet-stream"
+}
+
+function typedArtifactExtension(contentType: string): string {
+  if (contentType === "application/json") return ".json"
+  if (contentType.startsWith("text/")) return ".txt"
+  return ".bin"
+}
+
+function safeTypedArtifactName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
 
 function recipeProbeFailure(probes: RecipeRunProbe[]): RecipeProbeFailureError | undefined {
@@ -1726,6 +1864,20 @@ if (is_file($path)) {
     $result['sha256'] = hash('sha256', wp_json_encode($entries));
 }
 echo wp_json_encode($result);`
+}
+
+function declaredArtifactContentsCode(path: string): string {
+  const encodedPath = JSON.stringify(path)
+  return `
+$path = ${encodedPath};
+if (!is_file($path)) {
+    throw new RuntimeException('Typed artifact path is not a file: ' . $path);
+}
+$contents = file_get_contents($path);
+if (false === $contents) {
+    throw new RuntimeException('Unable to read typed artifact path: ' . $path);
+}
+echo wp_json_encode(array('contentBase64' => base64_encode($contents)));`
 }
 
 function activateExtraPluginCode(pluginFile: string): string {

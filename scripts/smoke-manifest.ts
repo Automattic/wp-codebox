@@ -59,6 +59,7 @@ export const smokeGroups = {
       tsxSmoke("artifact-patch-git-apply-smoke"),
       tsxSmoke("artifact-reference-normalization-smoke"),
       tsxSmoke("artifact-diagnostics-normalizer-smoke"),
+      tsxSmoke("typed-artifacts-smoke"),
       tsxSmoke("partial-artifact-discovery-smoke"),
       tsxSmoke("mounted-workspace-diff-smoke"),
       tsxSmoke("replay-export-blueprint-smoke"),
@@ -76,6 +77,12 @@ export const smokeGroups = {
       tsxSmoke("composer-backed-source-hydration-smoke"),
       tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),
       tsxSmoke("runtime-component-lifecycle-replay-smoke"),
+    ],
+  },
+  package: {
+    description: "Package build contract smoke checks.",
+    commands: [
+      npmScript("build"),
     ],
   },
   agent: {
@@ -101,7 +108,7 @@ export const smokeGroups = {
 export const smokeManifest = {
   groups: smokeGroups,
   aggregateGroups: {
-    check: ["core", "policy", "artifact", "runtime", "agent"],
+    check: ["core", "policy", "artifact", "runtime", "package", "agent"],
   },
 } as const
 

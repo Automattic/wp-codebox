@@ -5,6 +5,7 @@ import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, Artif
 import { isPlainObject as isRecord } from "./object-utils.js"
 import { RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
+import { TYPED_ARTIFACT_INDEX_SCHEMA } from "./structured-artifacts.js"
 import type { RuntimeReferenceManifest, RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef, RuntimeReferenceManifestSnapshotRef, RuntimeReplayReferenceIndex, RuntimeReplayReferenceIndexActionRef, RuntimeReplayReferenceIndexObservationRef } from "./runtime-reference.js"
 import type { RuntimeEpisodeContentDigest, RuntimeEpisodeTraceRef } from "./index.js"
 
@@ -161,6 +162,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyRuntimeEpisodeTraceArtifacts(bundleDirectory, manifest, violations)
   await verifyRuntimeReferenceManifestArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyRuntimeReplayReferenceIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
+  await verifyTypedArtifactIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
 }
@@ -836,6 +838,46 @@ async function verifyChangedFileEvidence(directory: string, changedFilesPath: st
     }
   } catch (error) {
     violations.push({ code: "review-evidence-mismatch", path: "files/review.json:evidence.changedFiles", file: changedFilesPath, message: `Unable to read changed-file evidence: ${errorMessage(error)}` })
+  }
+}
+
+async function verifyTypedArtifactIndexArtifacts(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  for (const file of manifest.files.filter((entry) => entry.kind === "typed-artifacts-index")) {
+    let index: unknown
+    try {
+      index = JSON.parse(await readFile(join(directory, file.path), "utf8"))
+    } catch (error) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: `Unable to read typed artifact index: ${errorMessage(error)}` })
+      continue
+    }
+
+    if (!isRecord(index) || index.schema !== TYPED_ARTIFACT_INDEX_SCHEMA || !Array.isArray(index.artifacts)) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: "Typed artifact index must include schema wp-codebox/typed-artifacts-index/v1 and an artifacts array." })
+      continue
+    }
+
+    for (const [indexPosition, artifact] of index.artifacts.entries()) {
+      const fieldPath = `${file.path}:artifacts[${indexPosition}]`
+      if (!isRecord(artifact) || !isRecord(artifact.artifact) || typeof artifact.artifact.path !== "string") {
+        violations.push({ code: "malformed-reference", path: fieldPath, file: file.path, message: "Typed artifact entries must include artifact.path." })
+        continue
+      }
+      validateArtifactReference(artifact.artifact.path, `${fieldPath}.artifact.path`, manifestFiles, violations)
+      if (typeof artifact.artifact.sha256 === "string") {
+        await verifyTypedArtifactFileDigest(directory, artifact.artifact.path, artifact.artifact.sha256, `${fieldPath}.artifact.sha256`, violations)
+      }
+    }
+  }
+}
+
+async function verifyTypedArtifactFileDigest(directory: string, path: string, expectedSha256: string, fieldPath: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  try {
+    const actualSha256 = artifactFileDigest(await readFile(join(directory, path))).value
+    if (actualSha256 !== expectedSha256) {
+      violations.push({ code: "file-hash-mismatch", path: fieldPath, file: path, message: `Typed artifact digest mismatch for ${path}: expected ${expectedSha256}, got ${actualSha256}` })
+    }
+  } catch (error) {
+    violations.push({ code: "missing-file", path: fieldPath, file: path, message: `Unable to read typed artifact file: ${errorMessage(error)}` })
   }
 }
 
