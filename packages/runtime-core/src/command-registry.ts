@@ -89,6 +89,26 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runExportReplayPackage" },
   },
   {
+    id: "wordpress.browser-export-replay-package",
+    description: "Export a nested browser Playground WordPress site as a replay package after browser-side materialization.",
+    acceptedArgs: [
+      { name: "label", description: "Optional human-readable export label recorded in the command output and package source metadata.", format: "string" },
+      { name: "url", description: "Outer browser page URL to load before resolving the nested Playground client; defaults to /.", format: "path or URL" },
+      { name: "client-expression", description: "Browser JavaScript expression that resolves to the nested Playground client; defaults to window.studioWebPreviewClient.", format: "JavaScript expression" },
+      { name: "helper-expression", description: "Browser JavaScript expression that resolves to the WP Codebox browser helper; defaults to window.wpCodeboxBrowser.", format: "JavaScript expression" },
+      { name: "prepare-expression", description: "Optional async browser JavaScript expression that prepares the outer page before resolving the nested Playground client.", format: "JavaScript expression" },
+      { name: "reload-after-prepare", description: "Reload the outer browser page after prepare-expression completes.", format: "boolean" },
+      { name: "output-dir", description: "Optional package directory relative to the runtime artifact root; defaults to files/replay-package.", format: "relative path" },
+      { name: "landing-page", description: "Optional replay landing page recorded in blueprint.after.json.", format: "path" },
+      { name: "import-ms", description: "Optional importer duration supplied by the caller so replay export metrics can include the preceding import phase.", format: "non-negative integer" },
+      ...snapshotScopingAcceptedArgs,
+    ],
+    outputShape: "wp-codebox/wordpress-replay-export/v1 JSON with import/browser-export/snapshot/export metrics and manifest, blueprint.after.json, blueprint.after-notes.json, blueprint.zip, and files/runtime-snapshot.json artifact paths.",
+    policyRequirement: "Runtime policy commands must include wordpress.browser-export-replay-package.",
+    recipe: true,
+    handler: { kind: "playground", method: "runBrowserExportReplayPackage" },
+  },
+  {
     id: "wordpress.ability",
     description: "Execute a registered WordPress Ability in the sandbox.",
     acceptedArgs: [

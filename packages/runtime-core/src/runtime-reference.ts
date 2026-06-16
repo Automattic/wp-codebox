@@ -364,12 +364,16 @@ function runtimeEpisodeObservationDigestPayload(observation: ObservationResult):
 }
 
 function runtimeEpisodeSnapshotDigestPayload(snapshot: Snapshot): Record<string, unknown> {
+  const metadata = snapshot.metadata && typeof snapshot.metadata === "object" && !Array.isArray(snapshot.metadata)
+    ? Object.fromEntries(Object.entries(snapshot.metadata).filter(([key]) => key !== "payload" && key !== "artifact"))
+    : snapshot.metadata
+
   return {
     schema: "wp-codebox/runtime-episode-snapshot/v1",
     id: snapshot.id,
     createdAt: snapshot.createdAt,
     semantics: snapshot.semantics,
-    metadata: snapshot.metadata,
+    metadata,
     artifactRefs: snapshot.artifactRefs ?? [],
   }
 }

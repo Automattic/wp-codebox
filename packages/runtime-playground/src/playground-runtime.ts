@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
+import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserExportReplayPackageCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -890,6 +890,16 @@ class PlaygroundRuntime implements Runtime {
       },
       ...snapshotOptionsMetadata,
     }, null, 2)}\n`
+  }
+
+  async runBrowserExportReplayPackage(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runBrowserExportReplayPackageCommand({
+      artifactRoot: this.artifactRoot,
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
   }
 
   async runPluginCheck(spec: ExecutionSpec): Promise<string> {

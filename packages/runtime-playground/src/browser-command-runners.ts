@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec, type RuntimeInfo } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -18,6 +18,8 @@ import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionS
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
+import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
+import { contentDigest, runtimeSnapshotExportPhp, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import type { Page } from "playwright"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
@@ -2219,6 +2221,175 @@ function editorCanvasTimeoutMs(args: string[]): number {
   return durationArg(args, "timeout", EDITOR_CANVAS_DEFAULT_TIMEOUT_MS)
 }
 
+interface BrowserRuntimeSnapshotExportResult {
+  schema: "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1"
+  compatibility: RuntimeSnapshotArtifact["compatibility"]
+  metadata: Omit<RuntimeSnapshotArtifact["metadata"], "runtime" | "mounts" | "mountedInputs">
+  database: {
+    tables: Array<{
+      name: string
+      createSql: string
+      rowCount: number
+      chunks: string[]
+    }>
+  }
+  files: {
+    ndjsonPath: string
+  }
+}
+
+async function exportNestedBrowserRuntimeSnapshot(page: Page, options: { clientExpression: string; helperExpression: string; phpCode: string; runtimeInfo: RuntimeInfo }): Promise<RuntimeSnapshotArtifact> {
+  const createdAt = now()
+  const payload = await page.evaluate(async ({ clientExpression, helperExpression, phpCode }) => {
+    const resolveExpression = (source: string) => Function(`return (${source})`)()
+    const responseText = async (response: unknown): Promise<string> => {
+      if (typeof response === "string") return response
+      if (response && typeof response === "object") {
+        const record = response as Record<string, unknown>
+        if (typeof record.text === "string") return record.text
+        if (typeof record.text === "function") return await (record.text as () => Promise<string>)()
+        for (const key of ["stdout", "output", "body"] as const) {
+          if (typeof record[key] === "string") return record[key] as string
+        }
+        if (ArrayBuffer.isView(record.bytes) || Array.isArray(record.bytes)) return new TextDecoder().decode(new Uint8Array(record.bytes as ArrayLike<number>))
+      }
+      return ""
+    }
+    const readFileAsText = async (client: Record<string, unknown>, path: string): Promise<string> => {
+      const attempts = [
+        () => (client.readFileAsText as (path: string) => Promise<string>)(path),
+        () => (client.readFileAsText as (input: { path: string }) => Promise<string>)({ path }),
+        () => (client.readFile as (path: string) => Promise<unknown>)(path),
+        () => (client.readFile as (input: { path: string }) => Promise<unknown>)({ path }),
+      ]
+      let lastError: unknown
+      for (const attempt of attempts) {
+        try {
+          const value = await attempt()
+          if (typeof value === "string") return value
+          if (value instanceof Uint8Array) return new TextDecoder().decode(value)
+          if (Array.isArray(value)) return new TextDecoder().decode(new Uint8Array(value))
+          if (value && typeof value === "object") {
+            const record = value as Record<string, unknown>
+            if (typeof record.text === "string") return record.text
+            if (typeof record.content === "string") return record.content
+            if (ArrayBuffer.isView(record.bytes) || Array.isArray(record.bytes)) return new TextDecoder().decode(new Uint8Array(record.bytes as ArrayLike<number>))
+          }
+        } catch (error) {
+          lastError = error
+        }
+      }
+      throw new Error(`Nested Playground file read failed for ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+    }
+
+    const client = resolveExpression(clientExpression) as Record<string, unknown>
+    const helper = resolveExpression(helperExpression) as { runPhpRequest?: (client: unknown, options: Record<string, unknown>) => Promise<unknown> }
+    if (!client) throw new Error("Nested Playground client expression did not resolve to a client.")
+    if (typeof helper?.runPhpRequest !== "function") throw new Error("WP Codebox browser helper does not expose runPhpRequest().")
+    const manifestResponse = await helper.runPhpRequest(client, {
+      name: "wp-codebox-browser-replay-export",
+      expectJson: true,
+      code: phpCode,
+    })
+    const manifest = (manifestResponse && typeof manifestResponse === "object" && "schema" in manifestResponse)
+      ? manifestResponse as BrowserRuntimeSnapshotExportResult
+      : (manifestResponse as { data?: unknown })?.data as BrowserRuntimeSnapshotExportResult
+    if (!manifest || manifest.schema !== "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1") {
+      throw new Error("Nested Playground runtime snapshot export did not return a supported manifest.")
+    }
+    const tables = []
+    for (const table of manifest.database.tables) {
+      const rows = []
+      for (const chunkPath of table.chunks) {
+        const chunkRows = JSON.parse(await readFileAsText(client, chunkPath))
+        if (!Array.isArray(chunkRows)) throw new Error(`Nested Playground snapshot table chunk is not an array: ${chunkPath}`)
+        rows.push(...chunkRows)
+      }
+      tables.push({ name: table.name, createSql: table.createSql, rowCount: table.rowCount, rows })
+    }
+    const files = []
+    for (const line of (await readFileAsText(client, manifest.files.ndjsonPath)).split("\n")) {
+      if (line.trim()) files.push(JSON.parse(line))
+    }
+    return {
+      compatibility: manifest.compatibility,
+      metadata: manifest.metadata,
+      database: { tables },
+      files,
+    }
+  }, options)
+
+  const snapshot: RuntimeSnapshotArtifact = {
+    schema: "wp-codebox/wordpress-runtime-snapshot/v1",
+    version: 1,
+    id: `runtime-snapshot-${contentDigest({ createdAt, compatibility: payload.compatibility, metadata: payload.metadata, database: payload.database, files: payload.files }).value}`,
+    createdAt,
+    compatibility: payload.compatibility,
+    metadata: {
+      ...payload.metadata,
+      runtime: options.runtimeInfo,
+      mounts: [],
+      mountedInputs: [],
+    },
+    database: payload.database,
+    files: payload.files,
+    hashes: {
+      database: contentDigest(payload.database),
+      files: contentDigest(payload.files),
+    },
+  }
+  return snapshot
+}
+
+function browserRuntimeInfo(runtimeSpec: RuntimeCreateSpec): RuntimeInfo {
+  return {
+    id: `browser-runtime-export-${Date.now().toString(36)}`,
+    backend: "wordpress-playground",
+    status: "destroyed",
+    createdAt: now(),
+    environment: runtimeSpec.environment,
+  }
+}
+
+function browserReplayExportOutputDirectory(artifactRoot: string, requested: string | undefined): string {
+  const relativePath = requested?.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "files/replay-package"
+  if (relativePath.length === 0 || relativePath.includes("..")) {
+    throw new Error("wordpress.browser-export-replay-package output-dir must be a relative path inside the runtime artifact root")
+  }
+
+  return join(artifactRoot, relativePath)
+}
+
+function nonNegativeIntegerArg(args: string[], name: string): number | undefined {
+  const raw = argValue(args, name)
+  if (!raw) return undefined
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+function browserSnapshotOptionsFromArgs(args: string[]): RuntimeSnapshotExportOptions {
+  const options: RuntimeSnapshotExportOptions = {}
+  const includedWpContentPaths = commaListArg(args, "snapshot-include-wp-content")
+  const excludedWpContentPaths = commaListArg(args, "snapshot-exclude-wp-content")
+  const includedDatabaseTables = commaListArg(args, "snapshot-database-tables")
+  const excludedDatabaseTables = commaListArg(args, "snapshot-exclude-database-tables")
+  const includedOptionNames = commaListArg(args, "snapshot-option-names")
+  const includedPostTypes = commaListArg(args, "snapshot-post-types")
+
+  if (includedWpContentPaths) options.includedWpContentPaths = includedWpContentPaths
+  if (excludedWpContentPaths) options.excludedWpContentPaths = excludedWpContentPaths
+  if (includedDatabaseTables) options.includedDatabaseTables = includedDatabaseTables
+  if (excludedDatabaseTables) options.excludedDatabaseTables = excludedDatabaseTables
+  if (includedOptionNames) options.includedOptionNames = includedOptionNames
+  if (includedPostTypes) options.includedPostTypes = includedPostTypes
+
+  return options
+}
+
+function hasBrowserSnapshotOptions(options: RuntimeSnapshotExportOptions): boolean {
+  return Object.keys(options).length > 0
+}
+
 export async function runBrowserActionsCommand({
   artifactRoot,
   plan,
@@ -2564,6 +2735,101 @@ export async function runBrowserActionsCommand({
       summary: artifact.summary,
       steps: stepRecords,
     }, null, 2)}\n`,
+  }
+}
+
+export async function runBrowserExportReplayPackageCommand({
+  artifactRoot,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const args = spec.args ?? []
+  const label = argValue(args, "label")
+  const landingPage = argValue(args, "landing-page")
+  const outputDirectory = browserReplayExportOutputDirectory(artifactRoot, argValue(args, "output-dir"))
+  const importMs = nonNegativeIntegerArg(args, "import-ms") ?? 0
+  const clientExpression = argValue(args, "client-expression") || "window.studioWebPreviewClient"
+  const helperExpression = argValue(args, "helper-expression") || "window.wpCodeboxBrowser"
+  const prepareExpression = argValue(args, "prepare-expression")
+  const reloadAfterPrepare = strictBooleanArg(args, "reload-after-prepare", false)
+  const snapshotOptions = browserSnapshotOptionsFromArgs(args)
+  const snapshotOptionsMetadata = hasBrowserSnapshotOptions(snapshotOptions) ? { snapshotOptions } : {}
+  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserPreviewUrl(argValue(args, "url") || "/", preview.effectiveOrigin)
+  const browser = await launchChromiumBrowser()
+  const startedAtMs = Date.now()
+
+  try {
+    const page = await browser.newPage()
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" })
+    if (prepareExpression) {
+      await page.evaluate(async (source) => {
+        const run = new Function(`return (async () => {\n${source}\n})()`)
+        return run()
+      }, prepareExpression)
+      if (reloadAfterPrepare) {
+        await page.reload({ waitUntil: "domcontentloaded" })
+      }
+    }
+    await page.waitForFunction(({ clientExpression: clientSource, helperExpression: helperSource }) => {
+      const resolveExpression = (source: string) => Function(`return (${source})`)()
+      const client = resolveExpression(clientSource)
+      const helper = resolveExpression(helperSource)
+      return Boolean(client && helper && typeof helper.runPhpRequest === "function")
+    }, { clientExpression, helperExpression }, { timeout: 60_000 })
+
+    const snapshotStartedAtMs = Date.now()
+    const snapshot = await exportNestedBrowserRuntimeSnapshot(page, {
+      clientExpression,
+      helperExpression,
+      phpCode: `<?php require_once '/wordpress/wp-load.php'; ${runtimeSnapshotExportPhp(snapshotOptions)}`,
+      runtimeInfo: browserRuntimeInfo(runtimeSpec),
+    })
+    const snapshotMs = Date.now() - snapshotStartedAtMs
+    const exportStartedAtMs = Date.now()
+    const replayPackage = await writeReplayExportPackage(snapshot, {
+      directory: outputDirectory,
+      landingPage,
+      importMs,
+      materializeMs: 0,
+      snapshotMs,
+      source: {
+        ...(label ? { label } : {}),
+        command: "wordpress.browser-export-replay-package",
+        outerRuntimeServerUrl: server.serverUrl,
+        targetUrl,
+        clientExpression,
+        ...snapshotOptionsMetadata,
+      },
+    })
+    replayPackage.metrics.exportMs = Date.now() - exportStartedAtMs
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-replay-export/v1",
+      status: replayPackage.status,
+      ...(label ? { label } : {}),
+      replayStatus: "replayable-runtime-state",
+      directory: replayPackage.directory,
+      metrics: {
+        ...replayPackage.metrics,
+        browserMs: Date.now() - startedAtMs,
+      },
+      artifacts: replayPackage.artifacts,
+      manifest: {
+        id: replayPackage.manifest.id,
+        contentDigest: replayPackage.manifest.contentDigest,
+        createdAt: replayPackage.manifest.createdAt,
+      },
+      ...snapshotOptionsMetadata,
+    }, null, 2)}\n`
+  } finally {
+    await browser.close()
   }
 }
 

@@ -132,17 +132,19 @@ export class ArtifactBundleBuilder {
       probes: source.browserArtifacts(),
       redactor,
     })
-    const replaySnapshot = portableSiteReplaySnapshot(
-      await firstRuntimeStateSnapshotPayload(source.snapshots),
-      source.spec.environment.blueprint,
-    )
+    const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
+    const replaySnapshot = replayExportPackageFiles.length > 0
+      ? undefined
+      : portableSiteReplaySnapshot(
+        await firstRuntimeStateSnapshotPayload(source.snapshots),
+        source.spec.environment.blueprint,
+      )
     const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
     const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
       (snapshot.artifactRefs ?? [])
         .filter((ref): ref is typeof ref & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
         .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
     )
-    const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
@@ -1091,7 +1093,7 @@ function artifactPreviewContentType(path: string): string {
 
 function replayExportPackageManifestFiles(artifactRoot: string, commands: ExecutionResult[]): ArtifactManifestFile[] {
   return commands.flatMap((command) => {
-    if (command.command !== "wordpress.export-replay-package" || command.exitCode !== 0) {
+    if (!["wordpress.export-replay-package", "wordpress.browser-export-replay-package"].includes(command.command) || command.exitCode !== 0) {
       return []
     }
 
@@ -1112,6 +1114,7 @@ function replayExportPackageManifestFiles(artifactRoot: string, commands: Execut
     const refs: Array<{ key: string; kind: string; contentType: string }> = [
       { key: "manifest", kind: "replay-package-manifest", contentType: "application/json" },
       { key: "blueprint", kind: "blueprint-after", contentType: "application/json" },
+      { key: "playgroundBundle", kind: "playground-blueprint-bundle", contentType: "application/zip" },
       { key: "snapshot", kind: "runtime-snapshot", contentType: "application/json" },
       { key: "notes", kind: "blueprint-after-notes", contentType: "application/json" },
     ]

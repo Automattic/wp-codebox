@@ -9,6 +9,7 @@ interface PlaygroundCommandRuntime {
   runWpCli(spec: ExecutionSpec): Promise<string>
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>
+  runBrowserExportReplayPackage(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runAbility(spec: ExecutionSpec): Promise<string>
   runBench(spec: ExecutionSpec): Promise<string>
@@ -32,6 +33,7 @@ const playgroundCommandHandlers = {
   "wordpress.wp-cli": (runtime, spec) => runtime.runWpCli(spec),
   "wordpress.capture-state-bundle": (runtime, spec) => runtime.runCaptureStateBundle(spec),
   "wordpress.export-replay-package": (runtime, spec) => runtime.runExportReplayPackage(spec),
+  "wordpress.browser-export-replay-package": (runtime, spec) => runtime.runBrowserExportReplayPackage(spec),
   "wordpress.rest-request": (runtime, spec) => runtime.runRestRequest(spec),
   "wordpress.ability": (runtime, spec) => runtime.runAbility(spec),
   "wordpress.bench": (runtime, spec) => runtime.runBench(spec),
