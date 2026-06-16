@@ -148,12 +148,12 @@ export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetwork
   }
 }
 
-export async function routeBrowserPreviewPageNetwork(page: Page, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
-  await routeBrowserPreviewNetwork(page.route.bind(page), policy, localPreviewOrigin, tracker)
+export async function routeBrowserPreviewPageNetwork(page: Page, policy: BrowserPreviewNetworkPolicy, previewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
+  await routeBrowserPreviewNetwork(page.route.bind(page), policy, previewOrigin, tracker)
 }
 
-export async function routeBrowserPreviewContextNetwork(context: import("playwright").BrowserContext, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
-  await routeBrowserPreviewNetwork(context.route.bind(context), policy, localPreviewOrigin, tracker)
+export async function routeBrowserPreviewContextNetwork(context: import("playwright").BrowserContext, policy: BrowserPreviewNetworkPolicy, previewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
+  await routeBrowserPreviewNetwork(context.route.bind(context), policy, previewOrigin, tracker)
 }
 
 export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRouteTracker, timeoutMs = BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS): Promise<void> {
@@ -188,12 +188,12 @@ function browserPreviewMode(args: string[], publicOrigin: string | undefined): B
   throw new Error(`wordpress.browser-probe preview-mode supports local, public, secure: ${raw}`)
 }
 
-async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
+async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserPreviewNetworkPolicy, previewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
   if (!browserPreviewNeedsContextRouting(policy)) {
     return
   }
 
-  const localOrigin = new URL(localPreviewOrigin)
+  const origin = new URL(previewOrigin)
   await routePattern("**/*", async (route) => {
     const request = route.request()
     let requestUrl: URL
@@ -221,7 +221,7 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
     }
 
     stat.routed += 1
-    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy.routeHosts, localOrigin)
+    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy.routeHosts, origin)
     tracker?.pending.add(task)
     try {
       await task
@@ -276,13 +276,13 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
+async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, origin: URL): Promise<Awaited<ReturnType<Route["fetch"]>> | undefined> {
   let currentUrl = requestUrl
   for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
     const routedUrl = new URL(currentUrl.toString())
-    routedUrl.protocol = localOrigin.protocol
-    routedUrl.hostname = localOrigin.hostname
-    routedUrl.port = localOrigin.port
+    routedUrl.protocol = origin.protocol
+    routedUrl.hostname = origin.hostname
+    routedUrl.port = origin.port
 
     let response: Awaited<ReturnType<Route["fetch"]>>
     try {
@@ -317,6 +317,11 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
     }
 
     currentUrl = redirectedUrl
+  }
+
+  if (route.request().resourceType() !== "document") {
+    await route.abort("failed").catch(() => undefined)
+    return undefined
   }
 
   throw new Error(`wordpress.browser-probe route-host exceeded redirect limit for ${requestUrl.href}`)
