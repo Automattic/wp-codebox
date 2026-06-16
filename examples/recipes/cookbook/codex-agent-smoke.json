@@ -11,12 +11,12 @@
       {
         "kind": "bundled-library",
         "library": "php-ai-client",
-        "source": "/path/to/php-ai-client-pr-238-or-newer",
+        "source": "/absolute/path/to/php-ai-client-with-bearer-token-auth-and-vendor",
         "target": "/wordpress/wp-includes/php-ai-client",
         "strategy": "wordpress-scoped-bundle",
         "metadata": {
           "component": "php-ai-client",
-          "purpose": "provider-supplied request authentication"
+          "purpose": "provider-supplied bearer-token request authentication with Composer vendor installed"
         }
       }
     ]
@@ -39,7 +39,7 @@
         "activate": true
       },
       {
-        "source": "/path/to/ai-provider-for-openai-pr-28-or-newer",
+        "source": "/absolute/path/to/ai-provider-for-openai-that-registers-codex",
         "slug": "ai-provider-for-openai",
         "activate": false
       }

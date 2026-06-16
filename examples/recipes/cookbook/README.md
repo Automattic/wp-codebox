@@ -33,13 +33,33 @@ proving that WP Codebox can mount the agent runtime stack, overlay a
 `php-ai-client` branch with provider-supplied request auth, activate a Codex
 provider plugin branch, and execute `agents/chat` through `wp-codebox.agent-sandbox-run`.
 
-**Replace** these recipe paths before running:
+**Replace** these recipe paths before running. They must be materialized local
+filesystem paths on the host running WP Codebox, not remote refs, repo handles,
+or orchestration-layer aliases:
 
 - `/path/to/agents-api`
 - `/path/to/data-machine`
 - `/path/to/data-machine-code`
-- `/path/to/php-ai-client-pr-238-or-newer`
-- `/path/to/ai-provider-for-openai-pr-28-or-newer`
+- `/absolute/path/to/php-ai-client-with-bearer-token-auth-and-vendor`
+- `/absolute/path/to/ai-provider-for-openai-that-registers-codex`
+
+#### Codex runtime contract
+
+The Codex smoke requires a matched provider stack. WP Codebox stays generic and
+local-path based; it mounts what the caller provides and does not resolve
+Homeboy, Data Machine Code, GitHub, or other orchestrator references.
+
+- The provider plugin checkout must register the `codex` provider id with
+  `wp-ai-client`. If it does not, the sandbox fails with `Provider codex is not
+  registered in wp-ai-client`.
+- The `php-ai-client` overlay must include bearer-token request authentication
+  support. Older checkouts fail when Codex asks for bearer-token auth.
+- The `php-ai-client` checkout must have Composer dependencies installed before
+  WP Codebox runs. Confirm `vendor/composer/installed.json` exists, for example
+  by running `composer install` in that checkout.
+- Orchestrators such as Homeboy should persist or materialize their selected
+  checkouts first, then write those absolute local paths into the recipe passed
+  to WP Codebox.
 
 Export Codex OAuth credentials in the shell that runs WP Codebox. Keep token
 values out of recipe files and artifacts:
