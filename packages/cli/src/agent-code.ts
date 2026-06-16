@@ -326,6 +326,14 @@ function wp_codebox_registered_provider_ids(object $registry): array {
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
 $ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
+$registered_ability_ids = function_exists('wp_get_abilities') ? array_keys(wp_get_abilities()) : array();
+sort($registered_ability_ids);
+$sandbox_stack['abilities'] = array(
+    'count' => count($registered_ability_ids),
+    'ids' => $registered_ability_ids,
+    'requested' => $ability_name,
+    'requested_available' => null !== $ability,
+);
 $agent_input = ${JSON.stringify(JSON.stringify(input))};
 $decoded_agent_input = json_decode($agent_input, true);
 $provider_validation_error = wp_codebox_validate_requested_provider(is_array($decoded_agent_input) ? $decoded_agent_input : array(), $sandbox_stack);
