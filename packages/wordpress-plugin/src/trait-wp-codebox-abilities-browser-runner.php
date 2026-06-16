@@ -1082,6 +1082,74 @@ $declarations[\'filesystem_write\'] = array(
 return $declarations;
 }
 
+function wp_codebox_browser_runtime_ability_tool_declarations( array $payload ): array {
+$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
+$declared = is_array( $task_input[\'ability_tools\'] ?? null ) ? $task_input[\'ability_tools\'] : array();
+$tools = array();
+$invalid = array();
+
+foreach ( $declared as $index => $declaration ) {
+if ( ! is_array( $declaration ) ) {
+	$invalid[] = array( \'index\' => $index, \'code\' => \'ability_tool_declaration_invalid\', \'message\' => \'Ability tool declaration must be an object.\' );
+	continue;
+}
+
+$name = trim( (string) ( $declaration[\'name\'] ?? \'\' ) );
+$ability = trim( (string) ( $declaration[\'ability\'] ?? \'\' ) );
+if ( \'\' === $name || \'\' === $ability ) {
+	$invalid[] = array( \'index\' => $index, \'code\' => \'ability_tool_declaration_incomplete\', \'message\' => \'Ability tool declaration requires name and ability.\' );
+	continue;
+}
+
+$tool = $declaration;
+unset( $tool[\'name\'] );
+$tool[\'ability\'] = $ability;
+if ( ! isset( $tool[\'modes\'] ) ) {
+	$tool[\'modes\'] = array( \'chat\' );
+}
+$tools[ $name ] = $tool;
+}
+
+return array(
+	\'tools\' => $tools,
+	\'invalid\' => $invalid,
+);
+}
+
+function wp_codebox_browser_runtime_ability_tool_diagnostics( array $ability_tools ): array {
+$registered = array();
+$missing = array();
+$registry_available = class_exists( \'WP_Abilities_Registry\' );
+$registry = $registry_available ? WP_Abilities_Registry::get_instance() : null;
+
+foreach ( $ability_tools as $name => $declaration ) {
+$ability = is_array( $declaration ) ? (string) ( $declaration[\'ability\'] ?? \'\' ) : \'\';
+$is_registered = false;
+if ( $registry && method_exists( $registry, \'is_registered\' ) && \'\' !== $ability ) {
+	$is_registered = (bool) $registry->is_registered( $ability );
+}
+
+$row = array(
+	\'name\' => (string) $name,
+	\'ability\' => $ability,
+	\'registered\' => $is_registered,
+);
+if ( $is_registered ) {
+	$registered[] = $row;
+} else {
+	$missing[] = $row;
+}
+}
+
+return array(
+	\'count\' => count( $ability_tools ),
+	\'names\' => array_values( array_map( \'strval\', array_keys( $ability_tools ) ) ),
+	\'registry_available\' => $registry_available,
+	\'registered\' => $registered,
+	\'missing\' => $missing,
+);
+}
+
 function wp_codebox_browser_runtime_replay_ability_lifecycle(): array {
 if ( function_exists( \'wp_register_ability\' ) ) {
 if ( ! did_action( \'wp_abilities_api_categories_init\' ) ) {
@@ -1153,6 +1221,12 @@ if ( is_array( $raw_payload ) ) {
 
 $wp_codebox_browser_artifact_environment = wp_codebox_browser_artifact_environment( $payload );
 $provider_proxy_diagnostics = wp_codebox_browser_install_provider_proxy( $payload );
+$ability_tool_resolution = wp_codebox_browser_runtime_ability_tool_declarations( $payload );
+$wp_codebox_browser_runtime_ability_tools = is_array( $ability_tool_resolution[\'tools\'] ?? null ) ? $ability_tool_resolution[\'tools\'] : array();
+add_filter( \'datamachine_ability_tools\', function ( array $tools ) use ( &$wp_codebox_browser_runtime_ability_tools ): array {
+	return array_merge( $tools, $wp_codebox_browser_runtime_ability_tools );
+}, 20, 1 );
+$ability_tool_diagnostics = wp_codebox_browser_runtime_ability_tool_diagnostics( $wp_codebox_browser_runtime_ability_tools );
 
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
@@ -1188,6 +1262,8 @@ if ( empty( $sandbox_tool_ids ) && is_array( $payload[\'task_input\'][\'allowed_
 }
 $sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
 $runtime_tool_declarations = wp_codebox_browser_runtime_tool_declarations( $sandbox_tool_ids );
+$ability_tool_ids = array_values( array_map( \'strval\', array_keys( $wp_codebox_browser_runtime_ability_tools ) ) );
+$allowed_tool_ids = array_values( array_unique( array_merge( $sandbox_tool_ids, $ability_tool_ids ) ) );
 $base_input = array(
 \'agent\' => $agent,
 \'message\' => $message,
@@ -1227,17 +1303,20 @@ $base_input = array(
 	\'task_input\' => $payload[\'task_input\'] ?? array(),
 	\'runtime_tools\' => $runtime_tool_declarations,
 	\'runtime_tool_callback\' => \'wp_codebox_browser_runtime_tool_callback\',
+	\'ability_tools\' => $wp_codebox_browser_runtime_ability_tools,
 ),
 );
-if ( ! empty( $sandbox_tool_ids ) ) {
+if ( ! empty( $allowed_tool_ids ) ) {
 	$base_input[\'tool_policy\'] = array(
 		\'mode\' => \'allow\',
-		\'tools\' => $sandbox_tool_ids,
+		\'tools\' => $allowed_tool_ids,
 	);
-	$base_input[\'allow_only\'] = $sandbox_tool_ids;
-	$base_input[\'completion_assertions\'] = array(
-		\'required_tool_names\' => $sandbox_tool_ids,
-	);
+	$base_input[\'allow_only\'] = $allowed_tool_ids;
+	if ( ! empty( $sandbox_tool_ids ) ) {
+		$base_input[\'completion_assertions\'] = array(
+			\'required_tool_names\' => $sandbox_tool_ids,
+		);
+	}
 }
 $input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
 $event_sink_attached = false;
@@ -1342,6 +1421,9 @@ $diagnostics = array(
 ),
 \'provider_proxy\' => $provider_proxy_diagnostics,
 \'sandbox_tool_ids\' => $sandbox_tool_ids,
+\'ability_tools\' => $ability_tool_diagnostics,
+\'ability_tool_declaration_errors\' => is_array( $ability_tool_resolution[\'invalid\'] ?? null ) ? $ability_tool_resolution[\'invalid\'] : array(),
+\'allowed_tool_ids\' => $allowed_tool_ids,
 \'runtime_lifecycle\' => $runtime_lifecycle,
 \'input_controls\' => wp_codebox_browser_input_control_diagnostics( is_array( $input ?? null ) ? $input : array() ),
 \'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),

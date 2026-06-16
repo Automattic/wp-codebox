@@ -83,6 +83,7 @@ export const smokeGroups = {
       tsxSmoke("agent-runtime-workload-normalizer-smoke"),
       tsxSmoke("agent-runtime-signal-smoke"),
       tsxSmoke("agent-runtime-ability-lifecycle-smoke"),
+      tsxSmoke("agent-runtime-ability-tools-smoke"),
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
