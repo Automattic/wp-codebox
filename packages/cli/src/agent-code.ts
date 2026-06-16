@@ -6,6 +6,8 @@ import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 export interface AgentBundleSpec {
   source?: string
   bundle?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  ability_tools?: unknown
   slug?: string
   on_conflict?: "error" | "skip" | "upgrade"
   owner_id?: number
@@ -97,7 +99,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
-  const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
+  const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input, agentBundles)
   return `
 if (function_exists('wp_set_current_user')) {
     wp_set_current_user(1);
@@ -323,6 +325,63 @@ function wp_codebox_registered_provider_ids(object $registry): array {
     return $provider_ids;
 }
 
+function wp_codebox_runtime_ability_tools_from_input(array $runtime_task_input): array {
+    $declared = is_array($runtime_task_input['ability_tools'] ?? null) ? $runtime_task_input['ability_tools'] : array();
+    $tools = array();
+    $invalid = array();
+
+    foreach ($declared as $index => $declaration) {
+        if (!is_array($declaration)) {
+            $invalid[] = array('index' => $index, 'code' => 'ability_tool_declaration_invalid', 'message' => 'Ability tool declaration must be an object.');
+            continue;
+        }
+        $name = trim((string) ($declaration['name'] ?? ''));
+        $ability = trim((string) ($declaration['ability'] ?? ''));
+        if ('' === $name || '' === $ability) {
+            $invalid[] = array('index' => $index, 'code' => 'ability_tool_declaration_incomplete', 'message' => 'Ability tool declaration requires name and ability.');
+            continue;
+        }
+        $tool = $declaration;
+        unset($tool['name']);
+        $tool['ability'] = $ability;
+        if (!isset($tool['modes'])) {
+            $tool['modes'] = array('chat');
+        }
+        $tools[$name] = $tool;
+    }
+
+    return array('tools' => $tools, 'invalid' => $invalid);
+}
+
+function wp_codebox_runtime_ability_tool_diagnostics(array $ability_tools): array {
+    $registered = array();
+    $missing = array();
+    $registry_available = class_exists('WP_Abilities_Registry');
+    $registry = $registry_available ? WP_Abilities_Registry::get_instance() : null;
+
+    foreach ($ability_tools as $name => $declaration) {
+        $ability = is_array($declaration) ? (string) ($declaration['ability'] ?? '') : '';
+        $is_registered = false;
+        if ($registry && method_exists($registry, 'is_registered') && '' !== $ability) {
+            $is_registered = (bool) $registry->is_registered($ability);
+        }
+        $row = array('name' => (string) $name, 'ability' => $ability, 'registered' => $is_registered);
+        if ($is_registered) {
+            $registered[] = $row;
+        } else {
+            $missing[] = $row;
+        }
+    }
+
+    return array(
+        'count' => count($ability_tools),
+        'names' => array_values(array_map('strval', array_keys($ability_tools))),
+        'registry_available' => $registry_available,
+        'registered' => $registered,
+        'missing' => $missing,
+    );
+}
+
 $runtime_task_run = is_array($sandbox_runtime_task) && !empty($sandbox_runtime_task);
 $ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?? '') : 'agents/chat';
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
@@ -368,6 +427,13 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
     );
 } else {
     $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
+    $runtime_ability_tool_resolution = wp_codebox_runtime_ability_tools_from_input($runtime_task_input);
+    $runtime_ability_tools = is_array($runtime_ability_tool_resolution['tools'] ?? null) ? $runtime_ability_tool_resolution['tools'] : array();
+    add_filter('datamachine_ability_tools', static function (array $tools) use ($runtime_ability_tools): array {
+        return array_merge($tools, $runtime_ability_tools);
+    }, 20, 1);
+    $sandbox_stack['ability_tools'] = wp_codebox_runtime_ability_tool_diagnostics($runtime_ability_tools);
+    $sandbox_stack['ability_tool_declaration_errors'] = is_array($runtime_ability_tool_resolution['invalid'] ?? null) ? $runtime_ability_tool_resolution['invalid'] : array();
     $agent_result = $ability->execute($runtime_task_run ? $runtime_task_input : $decoded_agent_input);
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
@@ -489,6 +555,8 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
     if (bundle) normalized.bundle = bundle
     if (typeof spec.slug === "string" && spec.slug.trim()) normalized.slug = spec.slug.trim()
     normalized.on_conflict = spec.on_conflict && ["error", "skip", "upgrade"].includes(spec.on_conflict) ? spec.on_conflict : "upgrade"
+    if (spec.metadata && typeof spec.metadata === "object" && !Array.isArray(spec.metadata)) normalized.metadata = spec.metadata
+    if (Array.isArray(spec.ability_tools)) normalized.ability_tools = spec.ability_tools
     if (Number.isSafeInteger(spec.owner_id) && Number(spec.owner_id) > 0) normalized.owner_id = Number(spec.owner_id)
     if (typeof spec.token_env === "string" && spec.token_env.trim()) normalized.token_env = spec.token_env.trim()
     if (spec.import_principal && typeof spec.import_principal === "object" && !Array.isArray(spec.import_principal)) normalized.import_principal = spec.import_principal
@@ -496,7 +564,7 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
   })
 }
 
-function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {
+function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>, agentBundles: AgentBundleSpec[] = []): Record<string, unknown> | null {
   if (!config || typeof config !== "object" || Array.isArray(config)) return null
 
   const ability = stringFromKeys(config, ["ability", "ability_name", "abilityName"])
@@ -506,8 +574,16 @@ function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agent
   const input: Record<string, unknown> = {
     ...taskInput,
   }
+  const abilityTools = mergeAbilityTools(input.ability_tools, agentInput.ability_tools, ...agentBundles.flatMap(agentBundleAbilityTools))
+  if (abilityTools.length) {
+    input.ability_tools = abilityTools
+  }
   if (!recordValue(input.task_input)) {
     input.task_input = agentInput
+  }
+  const nestedTaskInput = recordValue(input.task_input)
+  if (nestedTaskInput && abilityTools.length && !Array.isArray(nestedTaskInput.ability_tools)) {
+    nestedTaskInput.ability_tools = abilityTools
   }
 
   const normalized: Record<string, unknown> = { ability, input }
@@ -524,6 +600,41 @@ function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agent
   }
 
   return normalized
+}
+
+function agentBundleAbilityTools(spec: AgentBundleSpec): unknown[] {
+  return [
+    spec.ability_tools,
+    nestedValue(spec, ["metadata", "codebox", "agent_runtime", "bundle", "ability_tools"]),
+    nestedValue(spec, ["metadata", "agent_runtime", "bundle", "ability_tools"]),
+    nestedValue(spec, ["bundle", "ability_tools"]),
+    nestedValue(spec, ["bundle", "metadata", "codebox", "agent_runtime", "bundle", "ability_tools"]),
+    nestedValue(spec, ["bundle", "metadata", "agent_runtime", "bundle", "ability_tools"]),
+  ]
+}
+
+function mergeAbilityTools(...sources: unknown[]): Array<Record<string, unknown>> {
+  const tools = new Map<string, Record<string, unknown>>()
+  for (const source of sources) {
+    if (!Array.isArray(source)) continue
+    for (const declaration of source) {
+      if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) continue
+      const name = typeof declaration.name === "string" ? declaration.name.trim() : ""
+      const ability = typeof declaration.ability === "string" ? declaration.ability.trim() : ""
+      if (!name || !ability) continue
+      tools.set(name, { ...declaration, name, ability })
+    }
+  }
+  return Array.from(tools.values())
+}
+
+function nestedValue(record: object, path: string[]): unknown {
+  let current: unknown = record
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  return current
 }
 
 function stringFromKeys(record: Record<string, unknown>, keys: string[]): string {
