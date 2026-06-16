@@ -9,10 +9,11 @@ const repoRoot = dirname(scriptDirectory)
 const distEntrypoint = join(repoRoot, "packages/cli/dist/index.js")
 const nodeModules = join(repoRoot, "node_modules")
 const packageLock = join(repoRoot, "package-lock.json")
+const callerCwd = process.cwd()
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
-    cwd: repoRoot,
+    cwd: options.cwd ?? repoRoot,
     stdio: options.delegate ? "inherit" : ["inherit", "pipe", "pipe"],
     encoding: options.delegate ? undefined : "utf8",
     env: process.env,
@@ -48,4 +49,4 @@ if (!existsSync(distEntrypoint)) {
   run("npm", ["run", "build"])
 }
 
-run(process.execPath, [distEntrypoint, ...process.argv.slice(2)], { delegate: true })
+run(process.execPath, [distEntrypoint, ...process.argv.slice(2)], { cwd: callerCwd, delegate: true })
