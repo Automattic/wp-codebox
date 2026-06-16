@@ -172,19 +172,67 @@ function diagnosticRecords(value: unknown, seen = new Set<unknown>()): Record<st
   }
   seen.add(value)
 
-  const record = value as Record<string, unknown>
+  const record = diagnosticRecord(value)
   return [
     record,
     ...["cause", "response", "result", "data", "output"].flatMap((key) => diagnosticRecords(record[key], seen)),
   ]
 }
 
+function diagnosticRecord(value: object): Record<string, unknown> {
+  const record: Record<string, unknown> = {}
+  for (const key of diagnosticPropertyNames(value)) {
+    const descriptor = getPropertyDescriptor(value, key)
+    if (!descriptor || !("value" in descriptor || descriptor.get)) {
+      continue
+    }
+
+    try {
+      record[key] = "value" in descriptor ? descriptor.value : descriptor.get?.call(value)
+    } catch {
+      // Ignore throwing diagnostic accessors; they are not useful crash context.
+    }
+  }
+
+  return record
+}
+
+function diagnosticPropertyNames(value: object): string[] {
+  const names = new Set<string>()
+  let current: object | null = value
+  while (current && current !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(current)) {
+      names.add(name)
+    }
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return [...names]
+}
+
+function getPropertyDescriptor(value: object, key: string): PropertyDescriptor | undefined {
+  let current: object | null = value
+  while (current && current !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor) {
+      return descriptor
+    }
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return undefined
+}
+
 function diagnosticText(value: unknown): string | undefined {
   if (typeof value === "string") {
     return playgroundOutputDiagnostic(value.trim())
   }
+  if (value instanceof ArrayBuffer) {
+    return playgroundOutputDiagnostic(new TextDecoder().decode(value).trim())
+  }
   if (value instanceof Uint8Array) {
     return playgroundOutputDiagnostic(new TextDecoder().decode(value).trim())
+  }
+  if (ArrayBuffer.isView(value)) {
+    return playgroundOutputDiagnostic(new TextDecoder().decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)).trim())
   }
   if (!value || typeof value !== "object" || typeof value === "function") {
     return undefined

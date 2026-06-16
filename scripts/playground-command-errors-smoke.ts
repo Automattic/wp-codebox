@@ -76,6 +76,28 @@ assert.match(nestedResponseMessage, /status=500/)
 assert.match(nestedResponseMessage, /--- Playground response text ---/)
 assert.match(nestedResponseMessage, /wp_codebox_missing_fixture/)
 
+const nonEnumerableFatal = new Error("PHP.run() failed with exit code 255")
+Object.defineProperties(nonEnumerableFatal, {
+  httpStatusCode: { value: 500 },
+  exitCode: { value: 255 },
+  response: {
+    value: Object.defineProperties({}, {
+      body: { value: new TextEncoder().encode("Fatal error: Uncaught Error: Call to undefined function wp_codebox_hidden_fixture()") },
+      headers: { value: { "content-type": "text/html; charset=UTF-8", authorization: "secret" } },
+    }),
+  },
+})
+
+const nonEnumerableFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", nonEnumerableFatal).message
+
+assert.match(nonEnumerableFatalMessage, /httpStatusCode=500/)
+assert.match(nonEnumerableFatalMessage, /exitCode=255/)
+assert.match(nonEnumerableFatalMessage, /--- Playground response body ---/)
+assert.match(nonEnumerableFatalMessage, /wp_codebox_hidden_fixture/)
+assert.doesNotMatch(nonEnumerableFatalMessage, /No Playground stdout, stderr, or response body was captured/)
+assert.doesNotMatch(nonEnumerableFatalMessage, /authorization/)
+assert.doesNotMatch(nonEnumerableFatalMessage, /secret/)
+
 const htmlFatal = "<br />\n<b>Fatal error</b>:  Uncaught Error: Call to a member function is_sandbox() on null in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b>:283\nStack trace:\n#0 {main}\n  thrown in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b> on line <b>283</b><br />"
 const byteMap = Object.fromEntries(Array.from(Buffer.from(htmlFatal, "utf8")).map((byte, index) => [String(index), byte]))
 const byteMapMessage = new PlaygroundCommandError("wordpress.bench", {
