@@ -18,6 +18,22 @@ Release tarball installs expose the `wp-codebox` binary from the compiled
 `packages/cli/dist/` entrypoint. Build from source with `npm run build` before
 running local package validation.
 
+## Source Checkouts
+
+Lab and CI snapshots may carry WP Codebox source without generated `dist/`
+files. For those source checkouts, point orchestration at the committed source
+entrypoint instead of an ignored build artifact:
+
+```bash
+node /path/to/wp-codebox/bin/wp-codebox-source.mjs commands --json
+```
+
+The source entrypoint runs the compiled CLI when `packages/cli/dist/index.js`
+exists. When `dist/` is absent, it installs dependencies if needed, runs
+`npm run build`, then delegates to the compiled CLI. Parent WordPress runners
+also fail early with a diagnostic if `wp_codebox_bin` points at a missing `.js`
+or `.mjs` file.
+
 ## Smoke
 
 ```bash
