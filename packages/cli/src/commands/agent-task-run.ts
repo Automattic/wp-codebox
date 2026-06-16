@@ -30,6 +30,7 @@ interface AgentTaskRunOutput {
   structured_artifacts: Array<Record<string, unknown>>
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
+  agent_runtime_diagnostics: Record<string, unknown>
   evidence_refs: Array<Record<string, unknown>>
   failure_evidence?: Record<string, unknown>
   run_metadata: Record<string, unknown>
@@ -120,6 +121,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       structured_artifacts: structuredArtifactRefs(agentTaskResult),
       run,
       diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
+      agent_runtime_diagnostics: await buildAgentRuntimeDiagnostics(run, input),
       evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
       failure_evidence: failureEvidence,
       run_metadata: stripUndefined({
@@ -158,6 +160,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       structured_artifacts: [],
       run,
       diagnostics: failureDiagnostics,
+      agent_runtime_diagnostics: await buildAgentRuntimeDiagnostics(run, input),
       evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
       failure_evidence: failureEvidence,
       run_metadata: stripUndefined({
@@ -177,6 +180,40 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
   } finally {
     await rm(recipeDirectory, { recursive: true, force: true })
   }
+}
+
+export async function buildAgentRuntimeDiagnostics(run: Record<string, unknown>, input: AgentTaskRunInput = {}): Promise<Record<string, unknown>> {
+  const artifactsRecord = objectValue(run.artifacts) || {}
+  const metadata = await readJsonRecord(stringValue(artifactsRecord.metadataPath))
+  const context = objectValue(metadata?.context) || {}
+  const recipe = objectValue(context.recipe) || {}
+  const task = objectValue(context.task) || {}
+  const recipeInputs = objectValue(recipe.inputs) || {}
+  const taskInputs = objectValue(task.inputs) || {}
+  const componentContracts = componentContractReport(run)
+  const executions = arrayRecords(run.executions)
+  const phaseEvidence = arrayRecords(run.phaseEvidence)
+  const sandboxRuntime = agentSandboxRuntime(run)
+  const sandboxInput = objectValue(sandboxRuntime?.input) || {}
+  const sandboxStack = objectValue(sandboxRuntime?.stack) || {}
+  const stackSignals = objectValue(sandboxStack.signals) || {}
+  const toolPolicy = objectValue(input.sandbox_tool_policy)
+  const requestedTools = sandboxToolIdsBeforeFiltering(toolPolicy)
+  const runtimeTools = stringArray(sandboxInput.allow_only).length > 0 ? stringArray(sandboxInput.allow_only) : stringArray(objectValue(sandboxInput.tool_policy)?.tools)
+
+  return stripUndefined({
+    schema: "wp-codebox/agent-runtime-diagnostics/v1",
+    component_contracts: componentContracts.map((contract) => compactRecord(contract, ["slug", "requestedPath", "preparedPath", "pluginFile", "loadAs", "activate", "status", "activationStatus", "failures"])),
+    prepared_paths: compactPreparedPaths(context, recipeInputs, taskInputs),
+    loader_entries: compactLoaderEntries(run, context, stackSignals),
+    loaded_entrypoints: compactLoadedEntrypoints(executions, sandboxStack, stackSignals),
+    lifecycle_actions: compactLifecycleActions(phaseEvidence, executions),
+    registered_abilities: compactRegisteredAbilities(sandboxRuntime, sandboxStack),
+    resolved_tool_ids: stripUndefined({
+      before_filtering: requestedTools.length > 0 ? requestedTools : undefined,
+      after_filtering: runtimeTools.length > 0 ? runtimeTools : undefined,
+    }),
+  })
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
@@ -396,6 +433,117 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
   const outputs = objectValue(agentTaskResult.outputs) || {}
   const fromOutputs = Array.isArray(outputs.structured_artifacts) ? outputs.structured_artifacts : []
   return fromOutputs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
+}
+
+async function readJsonRecord(path: string): Promise<Record<string, unknown> | undefined> {
+  if (!path) return undefined
+  try {
+    return objectValue(JSON.parse(await readFile(path, "utf8")))
+  } catch {
+    return undefined
+  }
+}
+
+function compactPreparedPaths(context: Record<string, unknown>, recipeInputs: Record<string, unknown>, taskInputs: Record<string, unknown>): Record<string, unknown> {
+  return stripUndefined({
+    component_contracts: arrayRecords(context.preparedComponentContracts).map((contract) => compactRecord(contract, ["slug", "requestedPath", "preparedPath", "pluginFile", "loadAs", "activate", "status"])),
+    workspaces: arrayRecords(context.preparedWorkspaces).map((workspace) => compactRecord(workspace, ["target", "mode", "metadata"])),
+    staged_files: arrayRecords(context.preparedStagedFiles).map((file) => compactRecord(file, ["sourceRef", "target", "type", "provenance", "metadata"])),
+    dependency_overlays: arrayRecords(context.preparedDependencyOverlays).map((overlay) => compactRecord(overlay, ["package", "target", "type", "mode", "metadata"])),
+    runtime_overlays: arrayRecords(context.preparedRuntimeOverlays).map((overlay) => compactRecord(overlay, ["target", "type", "mode", "metadata"])),
+    requested_component_contracts: arrayRecords(recipeInputs.component_contracts ?? taskInputs.component_contracts).map((contract) => compactRecord(contract, ["slug", "path", "loadAs", "activate"])),
+  })
+}
+
+function compactLoaderEntries(run: Record<string, unknown>, context: Record<string, unknown>, stackSignals: Record<string, unknown>): Array<Record<string, unknown>> {
+  const componentEntries = componentContractReport(run)
+    .map((contract) => compactRecord(contract, ["slug", "pluginFile", "preparedPath", "loadAs", "activationStatus", "status"]))
+  const preparedEntries = arrayRecords(context.preparedComponentContracts)
+    .map((contract) => compactRecord(contract, ["slug", "pluginFile", "preparedPath", "loadAs", "activate", "status"]))
+  const providerEntries = arrayRecords(stackSignals.provider_plugin_files)
+    .map((plugin) => compactRecord(plugin, ["slug", "source", "plugin_file", "mounted_path", "load_as", "mounted"]))
+  return dedupeRecords([...componentEntries, ...preparedEntries, ...providerEntries])
+}
+
+function compactLoadedEntrypoints(executions: Array<Record<string, unknown>>, sandboxStack: Record<string, unknown>, stackSignals: Record<string, unknown>): Array<Record<string, unknown>> {
+  const activationExecutions = executions
+    .filter((execution) => stringValue(execution.recipeCommand).startsWith("extra-plugin.activate:"))
+    .map((execution) => stripUndefined({ entrypoint: stringValue(execution.recipeCommand).replace("extra-plugin.activate:", ""), load_as: "plugin", exit_code: numberValue(execution.exitCode) }))
+  const pluginActivations = Object.entries(objectValue(sandboxStack.plugins) || {})
+    .map(([entrypoint, value]) => stripUndefined({ entrypoint, active: objectValue(value)?.active, load_as: stringValue(objectValue(value)?.load_as), error: stringValue(objectValue(value)?.error) || undefined }))
+  const providerPlugins = stringArray(stackSignals.provider_plugins)
+    .map((entrypoint) => ({ entrypoint, source: "provider_plugins" }))
+  return dedupeRecords([...activationExecutions, ...pluginActivations, ...providerPlugins])
+}
+
+function compactLifecycleActions(phaseEvidence: Array<Record<string, unknown>>, executions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const phases = phaseEvidence.map((phase) => compactRecord(phase, ["name", "status", "durationMs", "data", "error"]))
+  const commands = executions.map((execution) => stripUndefined({ phase: stringValue(execution.recipePhase), command: stringValue(execution.recipeCommand) || stringValue(execution.command), exit_code: numberValue(execution.exitCode) }))
+  return dedupeRecords([...phases, ...commands])
+}
+
+function compactRegisteredAbilities(sandboxRuntime: Record<string, unknown> | undefined, sandboxStack: Record<string, unknown>): Record<string, unknown> | undefined {
+  const stackAbilities = objectValue(sandboxStack.abilities)
+  const runtimeAbilities = objectValue(sandboxRuntime?.abilities)
+  const source = stackAbilities || runtimeAbilities
+  if (!source) return undefined
+  return stripUndefined({
+    count: numberValue(source.count),
+    ids: stringArray(source.ids),
+    requested: stringValue(source.requested) || undefined,
+    requested_available: typeof source.requested_available === "boolean" ? source.requested_available : undefined,
+  })
+}
+
+function agentSandboxRuntime(run: Record<string, unknown>): Record<string, unknown> | undefined {
+  const agentTaskResult = objectValue(run.agentTaskResult)
+  const raw = objectValue(agentTaskResult?.raw)
+  const direct = objectValue(raw?.agent_runtime)
+  if (direct) return direct
+
+  for (const execution of [...arrayRecords(run.executions)].reverse()) {
+    if (stringValue(execution.recipeCommand) !== "wp-codebox.agent-sandbox-run") continue
+    const parsed = parseJsonObject(stringValue(execution.stdout)) || parseJsonObject(stringValue(execution.stderr))
+    const runtime = objectValue(parsed?.agent_runtime)
+    if (runtime) return runtime
+  }
+  return undefined
+}
+
+function sandboxToolIdsBeforeFiltering(policy: Record<string, unknown> | undefined): string[] {
+  return stringArray(arrayRecords(policy?.tools).map((tool) => stringValue(tool.runtime_tool_id) || stringValue(tool.id)))
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  try {
+    return objectValue(JSON.parse(value))
+  } catch {
+    return undefined
+  }
+}
+
+function compactRecord(record: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  return stripUndefined(Object.fromEntries(keys.map((key) => [key, record[key]])))
+}
+
+function dedupeRecords(records: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>()
+  return records.filter((record) => {
+    if (Object.keys(record).length === 0) return false
+    const key = JSON.stringify(record)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function arrayRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.map((entry) => stringValue(entry)).filter(Boolean))].sort() : []
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
