@@ -1,6 +1,10 @@
 export interface PlaygroundRunResponse {
+  bytes?: unknown
+  cause?: unknown
   exitCode?: number
   errors?: string
+  httpStatusCode?: number
+  originalErrorClassName?: string
   text: string
 }
 
@@ -87,18 +91,48 @@ export function extractPhpunitFailureMessage(log: string): string | undefined {
 
 function playgroundFailureMessage(command: string, response: PlaygroundRunResponse): string {
   const lines = [`${command} failed with exit code ${response.exitCode ?? "unknown"}`]
-  const errors = response.errors?.trim()
-  const text = response.text?.trim()
+  const diagnostics = playgroundResponseDiagnostics(response)
 
-  if (errors) {
-    lines.push("", "--- Playground errors ---", errors)
-  }
-
-  if (text) {
-    lines.push("", "--- Playground output ---", playgroundOutputDiagnostic(text))
+  if (diagnostics.length > 0) {
+    lines.push("", "--- Playground response diagnostics ---", ...diagnostics)
   }
 
   return lines.join("\n")
+}
+
+function playgroundResponseDiagnostics(response: PlaygroundRunResponse): string[] {
+  const metadata: string[] = []
+  const sections: string[] = []
+  let capturedOutput = false
+
+  for (const [value, label] of [
+    [response.originalErrorClassName, "originalErrorClassName"],
+    [response.httpStatusCode, "httpStatusCode"],
+    [response.exitCode, "exitCode"],
+    [diagnosticCauseMessage(response.cause), "cause"],
+  ] as const) {
+    if ((typeof value === "number" || typeof value === "string") && value !== "") {
+      metadata.push(`${label}=${value}`)
+    }
+  }
+
+  for (const [value, label] of [
+    [response.errors, "Playground errors"],
+    [response.text, "Playground output"],
+    [response.bytes, "Playground response bytes"],
+  ] as const) {
+    const text = label === "Playground response bytes" ? diagnosticBytesText(value) : diagnosticText(value)
+    if (text) {
+      capturedOutput = true
+      sections.push(`--- ${label} ---`, text)
+    }
+  }
+
+  if (!capturedOutput && (metadata.length > 0 || hasEmptyByteMap(response.bytes) || response.errors === "" || response.text === "")) {
+    sections.push("No Playground response bytes, errors, or text were captured. The PHP fatal payload was absent from the wordpress.run-php response; inspect runtime command artifacts and Playground server diagnostics for the failing PHP process.")
+  }
+
+  return [...metadata, ...sections]
 }
 
 function playgroundCrashMessage(command: string, cause: unknown): string {
@@ -245,6 +279,24 @@ function diagnosticText(value: unknown): string | undefined {
   }
 }
 
+function diagnosticBytesText(value: unknown): string | undefined {
+  const bytes = byteMapFromUnknown(value)
+  if (!bytes || bytes.length === 0) {
+    return undefined
+  }
+
+  return playgroundOutputDiagnostic(new TextDecoder().decode(Uint8Array.from(bytes)).trim())
+}
+
+function diagnosticCauseMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+
+  const message = (value as { message?: unknown }).message
+  return typeof message === "string" && message.trim() ? message.trim() : undefined
+}
+
 function diagnosticHeaders(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined
@@ -299,6 +351,11 @@ function playgroundOutputDiagnostic(raw: string): string {
 
 function phpFatalSummary(text: string): string | undefined {
   const normalized = stripHtml(text).replace(/\s+/g, " ").trim()
+  const diagnostic = wpCodeboxPhpFatalSummary(normalized)
+  if (diagnostic) {
+    return diagnostic
+  }
+
   const fatal = normalized.match(/(?:PHP )?Fatal error:\s+(.+?)(?=(?: Stack trace:| thrown in |$))/)
   if (!fatal) {
     return undefined
@@ -307,6 +364,23 @@ function phpFatalSummary(text: string): string | undefined {
   const thrown = normalized.match(/thrown in ([^\s]+) on line (\d+)/)
   const location = thrown ? `\nLocation: ${thrown[1]}:${thrown[2]}` : ""
   return `PHP fatal: ${fatal[1].trim()}${location}`
+}
+
+function wpCodeboxPhpFatalSummary(text: string): string | undefined {
+  const marker = text.match(/WP_CODEBOX_PHP_FATAL_DIAGNOSTIC:({.+?})(?:\s|$)/)
+  if (!marker) {
+    return undefined
+  }
+
+  const diagnostic = parseJsonObject(marker[1]) as { message?: unknown; file?: unknown; line?: unknown } | undefined
+  if (!diagnostic || typeof diagnostic.message !== "string" || !diagnostic.message.trim()) {
+    return undefined
+  }
+
+  const file = typeof diagnostic.file === "string" ? diagnostic.file : ""
+  const line = typeof diagnostic.line === "number" ? diagnostic.line : 0
+  const location = file && line > 0 ? `\nLocation: ${file}:${line}` : ""
+  return `PHP fatal: ${diagnostic.message.trim()}${location}`
 }
 
 function stripHtml(text: string): string {
@@ -363,6 +437,18 @@ function findByteMap(value: unknown, seen = new Set<unknown>()): number[] | unde
   }
 
   return undefined
+}
+
+function byteMapFromUnknown(value: unknown): number[] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  return byteMapValues(value as Record<string, unknown>)
+}
+
+function hasEmptyByteMap(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)
 }
 
 function byteMapValues(record: Record<string, unknown>): number[] | undefined {

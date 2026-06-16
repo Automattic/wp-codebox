@@ -10,6 +10,7 @@ interface PhpBootstrapBridge {
 
 export function bootstrapAbilityPhpCode(spec: RuntimeCreateSpec, code: string): string {
   return `<?php
+${phpFatalDiagnosticPhp()}
 define( 'REST_REQUEST', true );
 $_SERVER['REQUEST_URI'] = '/wp-json/wp-codebox/ability';
 ${runtimeEnvPhp(spec)}
@@ -24,6 +25,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
   }
 
   return `<?php
+${phpFatalDiagnosticPhp()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${runtimeEnvPhp(spec)}
 require_once '/wordpress/wp-load.php';
@@ -33,6 +35,22 @@ ${wpCliBridge ? `putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_URL=${wpCliBri
 putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${phpBody(code)}`
+}
+
+function phpFatalDiagnosticPhp(): string {
+  return `register_shutdown_function(static function (): void {
+    $wp_codebox_fatal = error_get_last();
+    if (!is_array($wp_codebox_fatal) || !in_array($wp_codebox_fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+        return;
+    }
+    echo "\nWP_CODEBOX_PHP_FATAL_DIAGNOSTIC:" . json_encode(array(
+        'schema' => 'wp-codebox/php-fatal-diagnostic/v1',
+        'message' => isset($wp_codebox_fatal['message']) ? (string) $wp_codebox_fatal['message'] : '',
+        'file' => isset($wp_codebox_fatal['file']) ? (string) $wp_codebox_fatal['file'] : '',
+        'line' => isset($wp_codebox_fatal['line']) ? (int) $wp_codebox_fatal['line'] : 0,
+        'type' => isset($wp_codebox_fatal['type']) ? (int) $wp_codebox_fatal['type'] : 0,
+    ), JSON_UNESCAPED_SLASHES) . "\n";
+});`
 }
 
 interface RecipePluginMetadata {
