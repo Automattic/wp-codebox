@@ -22,6 +22,9 @@ export const defaultPolicy: RuntimePolicy = {
 
 const supportedRecipeCommands = new Set(recipeCommandDefinitions().map((command) => command.id))
 const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
+const supportedRuntimeOverlayKinds = ["bundled-library"] as const
+const supportedRuntimeOverlayLibraries = ["php-ai-client"] as const
+const supportedRuntimeOverlayStrategies = ["wordpress-scoped-bundle"] as const
 
 export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
   return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -347,26 +350,34 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
     throw new Error(`Recipe runtime overlays must be an array: ${recipePath}`)
   }
 
-  for (const overlay of overlays ?? []) {
-    if (overlay.kind !== "bundled-library") {
-      throw new Error(`Recipe runtime overlay kind is unsupported: ${recipePath}`)
+  for (const [index, overlay] of (overlays ?? []).entries()) {
+    const path = `runtime_overlays[${index}] ($.runtime.overlays[${index}])`
+    if (!overlay || typeof overlay !== "object" || Array.isArray(overlay)) {
+      throw new Error(runtimeOverlayValidationMessage(path, "entry", "must be an object", recipePath))
     }
-    if (overlay.library !== "php-ai-client") {
-      throw new Error(`Recipe runtime overlay library is unsupported: ${recipePath}`)
+    if (!supportedRuntimeOverlayKinds.includes(overlay.kind)) {
+      throw new Error(runtimeOverlayValidationMessage(path, "kind", `must be one of: ${supportedRuntimeOverlayKinds.join(", ")}`, recipePath))
     }
-    if (overlay.strategy !== "wordpress-scoped-bundle") {
-      throw new Error(`Recipe runtime overlay strategy is unsupported: ${recipePath}`)
+    if (!supportedRuntimeOverlayLibraries.includes(overlay.library)) {
+      throw new Error(runtimeOverlayValidationMessage(path, "library", `must be one of: ${supportedRuntimeOverlayLibraries.join(", ")}`, recipePath))
+    }
+    if (!supportedRuntimeOverlayStrategies.includes(overlay.strategy)) {
+      throw new Error(runtimeOverlayValidationMessage(path, "strategy", `must be one of: ${supportedRuntimeOverlayStrategies.join(", ")}`, recipePath))
     }
     if (!overlay.source || typeof overlay.source !== "string") {
-      throw new Error(`Recipe runtime overlays must include source: ${recipePath}`)
+      throw new Error(runtimeOverlayValidationMessage(path, "source", "must be a non-empty string", recipePath))
     }
     if (overlay.target !== undefined && typeof overlay.target !== "string") {
-      throw new Error(`Recipe runtime overlay target must be a string when provided: ${recipePath}`)
+      throw new Error(runtimeOverlayValidationMessage(path, "target", "must be a string when provided", recipePath))
     }
     if (overlay.metadata !== undefined && (!overlay.metadata || typeof overlay.metadata !== "object" || Array.isArray(overlay.metadata))) {
-      throw new Error(`Recipe runtime overlay metadata must be an object when provided: ${recipePath}`)
+      throw new Error(runtimeOverlayValidationMessage(path, "metadata", "must be an object when provided", recipePath))
     }
   }
+}
+
+function runtimeOverlayValidationMessage(path: string, field: string, problem: string, recipePath: string): string {
+  return `Recipe runtime overlay is unsupported at ${path}; field ${field} ${problem}; accepted canonical kind values: ${supportedRuntimeOverlayKinds.join(", ")}; recipe: ${recipePath}`
 }
 
 function validateRecipeDependencyOverlays(overlays: WorkspaceRecipeDependencyOverlay[] | undefined, recipePath: string): void {
