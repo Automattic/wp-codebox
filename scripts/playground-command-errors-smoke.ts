@@ -32,7 +32,7 @@ assert.match(hiddenFatalMessage, /Local wp-admin auth fixture user could not be 
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stdout ---\n\s*---/)
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stderr ---\n\s*---/)
 
-const emptyWpcomFatal = new Error("PHP.run() failed with exit code 255") as Error & {
+const emptyStructuredFatal = new Error("PHP.run() failed with exit code 255") as Error & {
   httpStatusCode?: number
   exitCode?: number
   stdout?: string
@@ -40,11 +40,11 @@ const emptyWpcomFatal = new Error("PHP.run() failed with exit code 255") as Erro
   response?: { headers?: Record<string, string> }
 }
 
-emptyWpcomFatal.httpStatusCode = 500
-emptyWpcomFatal.exitCode = 255
-emptyWpcomFatal.stdout = ""
-emptyWpcomFatal.stderr = ""
-emptyWpcomFatal.response = {
+emptyStructuredFatal.httpStatusCode = 500
+emptyStructuredFatal.exitCode = 255
+emptyStructuredFatal.stdout = ""
+emptyStructuredFatal.stderr = ""
+emptyStructuredFatal.response = {
   headers: {
     "content-type": "text/html; charset=UTF-8",
     "x-powered-by": "PHP/8.4.21",
@@ -52,16 +52,16 @@ emptyWpcomFatal.response = {
   },
 }
 
-const emptyWpcomFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", emptyWpcomFatal).message
+const emptyStructuredFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", emptyStructuredFatal).message
 
-assert.match(emptyWpcomFatalMessage, /wordpress\.run-php crashed before producing a structured response/)
-assert.match(emptyWpcomFatalMessage, /PHP\.run\(\) failed with exit code 255/)
-assert.match(emptyWpcomFatalMessage, /httpStatusCode=500/)
-assert.match(emptyWpcomFatalMessage, /exitCode=255/)
-assert.match(emptyWpcomFatalMessage, /--- Playground response headers ---/)
-assert.match(emptyWpcomFatalMessage, /x-powered-by: PHP\/8\.4\.21/)
-assert.match(emptyWpcomFatalMessage, /No Playground stdout, stderr, or response body was captured\./)
-assert.doesNotMatch(emptyWpcomFatalMessage, /wordpress_test_cookie/)
+assert.match(emptyStructuredFatalMessage, /wordpress\.run-php crashed before producing a structured response/)
+assert.match(emptyStructuredFatalMessage, /PHP\.run\(\) failed with exit code 255/)
+assert.match(emptyStructuredFatalMessage, /httpStatusCode=500/)
+assert.match(emptyStructuredFatalMessage, /exitCode=255/)
+assert.match(emptyStructuredFatalMessage, /--- Playground response headers ---/)
+assert.match(emptyStructuredFatalMessage, /x-powered-by: PHP\/8\.4\.21/)
+assert.match(emptyStructuredFatalMessage, /No Playground stdout, stderr, or response body was captured\./)
+assert.doesNotMatch(emptyStructuredFatalMessage, /wordpress_test_cookie/)
 
 const nestedResponseError = new Error("Playground request failed") as Error & {
   response?: { status?: number; text?: string }
