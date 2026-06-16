@@ -498,7 +498,7 @@ async function runSingleBrowserProbeCommand({
       await context.grantPermissions(requestedContext.permissions)
     }
     if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin, routeTracker)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin, routeTracker)
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (onProgress) {
@@ -521,7 +521,7 @@ async function runSingleBrowserProbeCommand({
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
     if (!context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.localOrigin, routeTracker)
+      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.effectiveOrigin, routeTracker)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -2310,7 +2310,7 @@ export async function runBrowserActionsCommand({
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     if (onProgress) {
@@ -3025,7 +3025,7 @@ export async function runEditorOpenCommand({
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
@@ -3234,7 +3234,7 @@ export async function runEditorActionsCommand({
   try {
     const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
     if (context) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
     authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
