@@ -14,6 +14,7 @@ require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-task-input-co
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
 
 $task_input = WP_Codebox_Browser_Task_Builder::normalize_task_input( array(
@@ -51,7 +52,28 @@ $payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	)
 );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
+$explicit_plan_payload = WP_Codebox_Browser_Task_Builder::task_payload(
+	array( 'secret_env' => array( 'IGNORED_BY_PLAN' ) ),
+	$task_input,
+	'session-123',
+	array(),
+	array( 'connectors' => array(), 'settings' => array() ),
+	array(
+		'runtime_dependency_plan' => static fn(): WP_Codebox_Runtime_Dependency_Plan => new WP_Codebox_Runtime_Dependency_Plan(
+			array( 'provider' => 'planned-provider', 'model' => 'planned-model' ),
+			array( '/tmp/provider-plugin' ),
+			array( array( 'slug' => 'provider-plugin', 'source' => '/tmp/provider-plugin' ) ),
+			array(),
+			array(),
+			array( 'connectors' => array( array( 'provider' => 'planned-provider', 'model' => 'planned-model' ) ), 'settings' => array() ),
+			array( 'connectors' => array( 'planned-connector' ), 'settings' => array() ),
+			array( array( 'source' => '/tmp/planned-bundle.zip' ) ),
+			array( 'PLANNED_SECRET', 'bad-name' )
+		),
+	)
+);
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
 `], {
   cwd: root.pathname,
   encoding: "utf8",
@@ -70,6 +92,10 @@ assert.equal(result.payload.model, "model-from-inheritance")
 assert.deepEqual(result.payload.secret_env, ["OPENAI_API_KEY"])
 assert.deepEqual(result.payload.task_input.context, { caller: "test" })
 assert.deepEqual(result.payload.agent_bundles, [{ source: "/tmp/agent-bundle.zip", on_conflict: "skip" }])
+assert.equal(result.explicit_plan_payload.provider, "planned-provider")
+assert.equal(result.explicit_plan_payload.model, "planned-model")
+assert.deepEqual(result.explicit_plan_payload.secret_env, ["PLANNED_SECRET"])
+assert.deepEqual(result.explicit_plan_payload.agent_bundles, [{ source: "/tmp/planned-bundle.zip" }])
 assert.equal(result.local_task.mode, "sandbox")
 assert.equal(result.local_task.target.kind, "browser-playground")
 assert.equal(result.local_task.target.ref, "session-123")

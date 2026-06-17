@@ -25,18 +25,33 @@ final class WP_Codebox_Host_Recipe_Builder {
 			return $credential_error;
 		}
 
-		$provider_plugins = array_map(
+		$provider_plugin_paths = $adapters['provider_plugin_paths']( $input, $inheritance );
+		$provider_plugins      = array_map(
 			static fn( string $path ): array => array(
 				'source'   => $path,
 				'slug'     => basename( $path ),
 				'activate' => false,
 			),
-			$adapters['provider_plugin_paths']( $input, $inheritance )
+			$provider_plugin_paths
 		);
-
-		$provider_slugs = array_map( static fn( array $plugin ): string => (string) $plugin['slug'], $provider_plugins );
-		$agent_bundles  = $adapters['agent_bundles']( $input );
-		$runtime_task   = $adapters['runtime_task']( $input );
+		$component_plugins     = $adapters['component_plugins']( $paths );
+		$dependency_plan       = new WP_Codebox_Runtime_Dependency_Plan(
+			array(
+				'agent'    => $adapters['agent_slug']( $input ),
+				'mode'     => $adapters['mode']( $input ),
+				'provider' => $adapters['provider']( $input, $inheritance ),
+				'model'    => $adapters['model']( $input, $inheritance ),
+			),
+			$provider_plugin_paths,
+			$provider_plugins,
+			$component_plugins,
+			is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
+			$inheritance,
+			$adapters['inheritance_request']( $input ),
+			$adapters['agent_bundles']( $input ),
+			$adapters['secret_env_names']( $input, $inheritance )
+		);
+		$runtime_task          = $adapters['runtime_task']( $input );
 		$steps          = array();
 		foreach ( $task_prompts as $task_prompt ) {
 			$task_input = $adapters['task_input']( array_merge( $input, array( 'goal' => $task_prompt ) ) );
@@ -46,15 +61,15 @@ final class WP_Codebox_Host_Recipe_Builder {
 
 			$args = array(
 				'task=' . $task_prompt,
-				'agent=' . $adapters['agent_slug']( $input ),
-				'mode=' . $adapters['mode']( $input ),
-				'provider=' . $adapters['provider']( $input, $inheritance ),
-				'model=' . $adapters['model']( $input, $inheritance ),
-				'provider-plugin-slugs=' . implode( ',', $provider_slugs ),
+				'agent=' . (string) ( $dependency_plan->selection()['agent'] ?? '' ),
+				'mode=' . (string) ( $dependency_plan->selection()['mode'] ?? '' ),
+				'provider=' . $dependency_plan->provider(),
+				'model=' . $dependency_plan->model(),
+				'provider-plugin-slugs=' . implode( ',', $dependency_plan->provider_plugin_slugs() ),
 				'sandbox-tool-policy-json=' . $adapters['json_encode']( $task_input['sandbox_tool_policy'] ),
 			);
-			if ( ! empty( $agent_bundles ) ) {
-				$args[] = 'agent-bundles-json=' . $adapters['json_encode']( $agent_bundles );
+			if ( ! empty( $dependency_plan->agent_bundles() ) ) {
+				$args[] = 'agent-bundles-json=' . $adapters['json_encode']( $dependency_plan->agent_bundles() );
 			}
 			if ( ! empty( $runtime_task ) ) {
 				$args[] = 'runtime-task-json=' . $adapters['json_encode']( $runtime_task );
@@ -93,21 +108,20 @@ final class WP_Codebox_Host_Recipe_Builder {
 			return $site_seed_payload;
 		}
 
-		$component_plugins  = $adapters['component_plugins']( $paths );
-		$component_manifest = self::component_manifest( $component_plugins, $provider_plugins );
+		$component_manifest = self::component_manifest( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() );
 
 		$recipe_inputs = array(
 			'mounts'             => $mounts,
 			'workspaces'         => $workspaces,
-			'inherit'            => $adapters['inheritance_request']( $input ),
-			'inheritance'        => $inheritance,
-			'extra_plugins'      => array_merge( $component_plugins, $provider_plugins ),
+			'inherit'            => $dependency_plan->inheritance_request(),
+			'inheritance'        => $dependency_plan->inheritance(),
+			'extra_plugins'      => array_merge( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() ),
 			'component_manifest' => $component_manifest,
 			'runtimeEnv'         => array_merge( $adapters['runtime_env']( $input ), self::AGENT_RUNTIME_ENV ),
-			'secretEnv'          => $adapters['secret_env_names']( $input, $inheritance ),
+			'secretEnv'          => $dependency_plan->secret_env_names(),
 		);
-		if ( ! empty( $agent_bundles ) ) {
-			$recipe_inputs['agent_bundles'] = $agent_bundles;
+		if ( ! empty( $dependency_plan->agent_bundles() ) ) {
+			$recipe_inputs['agent_bundles'] = $dependency_plan->agent_bundles();
 		}
 		if ( ! empty( $site_seed_payload['siteSeeds'] ) ) {
 			$recipe_inputs['siteSeeds'] = $site_seed_payload['siteSeeds'];

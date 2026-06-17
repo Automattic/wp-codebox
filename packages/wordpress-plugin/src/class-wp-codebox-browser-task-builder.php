@@ -100,7 +100,7 @@ final class WP_Codebox_Browser_Task_Builder {
 	 * @param string              $session_id  Browser sandbox session id.
 	 * @param array<int,array<string,mixed>> $artifacts Browser artifact specs.
 	 * @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance Resolved inheritance.
-	 * @param array<string,callable> $resolvers Optional field resolvers for agent, mode, provider, model, secret_env, and agent_bundles.
+	 * @param array<string,callable> $resolvers Optional field resolvers for agent, mode, provider, model, secret_env, agent_bundles, and runtime_dependency_plan.
 	 * @return array<string,mixed>
 	 */
 	public static function task_payload( array $input, array $task_input, string $session_id, array $artifacts, array $inheritance, array $resolvers = array() ): array {
@@ -112,19 +112,39 @@ final class WP_Codebox_Browser_Task_Builder {
 			return $fallback;
 		};
 
+		$dependency_plan = $resolve( 'runtime_dependency_plan', null );
+		if ( ! $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ) {
+			$dependency_plan = new WP_Codebox_Runtime_Dependency_Plan(
+				array(
+					'agent'    => self::agent_slug( $input ),
+					'mode'     => self::mode( $input ),
+					'provider' => self::provider( $input, $inheritance ),
+					'model'    => self::model( $input, $inheritance ),
+				),
+				self::string_list( $input['provider_plugin_paths'] ?? array() ),
+				array(),
+				array(),
+				self::array_resolver_value( $input['runtime_overlays'] ?? array() ),
+				$inheritance,
+				array( 'connectors' => array(), 'settings' => array() ),
+				self::array_resolver_value( $task_input['agent_bundles'] ?? array() ),
+				self::string_list( $input['secret_env'] ?? array() )
+			);
+		}
+
 		return array_filter(
 			array(
 				'schema'        => 'wp-codebox/browser-agent-task-payload/v1',
 				'agent'         => (string) $resolve( 'agent', self::agent_slug( $input ) ),
 				'mode'          => (string) $resolve( 'mode', self::mode( $input ) ),
-				'provider'      => (string) $resolve( 'provider', self::provider( $input, $inheritance ) ),
-				'model'         => (string) $resolve( 'model', self::model( $input, $inheritance ) ),
+				'provider'      => (string) $resolve( 'provider', $dependency_plan->provider() ),
+				'model'         => (string) $resolve( 'model', $dependency_plan->model() ),
 				'message'       => (string) $task_input['goal'],
 				'session_id'    => $session_id,
 				'task_input'    => $task_input,
-				'agent_bundles' => self::array_resolver_value( $resolve( 'agent_bundles', $task_input['agent_bundles'] ?? array() ) ),
-				'inheritance'   => $inheritance,
-				'secret_env'    => self::string_list( $resolve( 'secret_env', $input['secret_env'] ?? array() ) ),
+				'agent_bundles' => self::array_resolver_value( $resolve( 'agent_bundles', $dependency_plan->agent_bundles() ) ),
+				'inheritance'   => $dependency_plan->inheritance(),
+				'secret_env'    => self::string_list( $resolve( 'secret_env', $dependency_plan->secret_env_names() ) ),
 				'artifacts'     => array(
 					'schema' => 'wp-codebox/browser-artifacts/v1',
 					'files'  => $artifacts,

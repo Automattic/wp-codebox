@@ -47,6 +47,24 @@ private static function browser_task_payload( array $input, array $task_input, s
 		$artifacts,
 		$inheritance,
 		array(
+			'runtime_dependency_plan' => static function ( array $input, array $task_input, array $inheritance ): WP_Codebox_Runtime_Dependency_Plan {
+				return new WP_Codebox_Runtime_Dependency_Plan(
+					array(
+						'agent'    => self::browser_agent_slug( $input ),
+						'mode'     => self::browser_mode( $input ),
+						'provider' => self::browser_provider( $input, $inheritance ),
+						'model'    => self::browser_model( $input, $inheritance ),
+					),
+					self::browser_provider_plugin_paths( $input ),
+					array(),
+					array(),
+					is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
+					$inheritance,
+					self::browser_inheritance_request( $input ),
+					self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
+					self::browser_secret_env_names( $input )
+				);
+			},
 			'agent'         => static fn( array $input ): string => self::browser_agent_slug( $input ),
 			'mode'          => static fn( array $input ): string => self::browser_mode( $input ),
 			'provider'      => static fn( array $input, array $task_input, array $inheritance ): string => self::browser_provider( $input, $inheritance ),
