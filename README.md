@@ -47,7 +47,7 @@ What WP Codebox provides for product use cases:
 - Execute a WordPress Ability inside a disposable Playground runtime.
 - Run repeatable workspace recipes that mount plugins, seed workspaces, and capture outputs.
 - Drive stateful runtime episodes with reset, step, observe, snapshot, artifact, and close operations.
-- Launch sandboxed Data Machine / Agents API coding-agent tasks from the CLI or WordPress ability surface.
+- Launch sandboxed coding-agent tasks from the CLI or WordPress ability surface.
 - Fan out several task descriptions into separate isolated sandboxes.
 - Produce artifact bundles — patches, diffs, test results, live Playground preview URLs — that a parent product can review, replay, apply, or discard.
 
@@ -89,7 +89,7 @@ result outside the sandbox.
 `HostToolRegistry` is a WP Codebox transport adapter, not a generic tool
 contract. Agents API owns canonical tool declarations, tool calls, execution
 results, pending external-tool states, and product-neutral runtime metadata.
-Data Machine or another host owns the concrete tool sources and product policy.
+The caller owns the concrete tool sources and product policy.
 WP Codebox only exposes caller-provided per-run tool declarations to sandbox
 agents, routes allowed calls across the browser/host boundary, and records
 transport diagnostics.
@@ -161,9 +161,9 @@ code while `toolResult` maps the same failure to a canonical tool error. The
 `diagnostics` object is the Codebox-owned portion of the envelope and preserves
 the transport, policy command, validation schemas, and resolved policy metadata.
 
-Product-specific tools such as Homeboy evidence commands should live in product
+Product-specific tools such as evidence commands should live in product
 extensions that provide canonical tool declarations and handlers through this
-transport surface. Codebox should not encode Data Machine policy semantics,
+transport surface. Codebox should not encode product policy semantics,
 product tool names, or cross-product tool mediation rules in this layer.
 
 Trusted worker hosts that need repo-local commands can use the playground
@@ -207,7 +207,7 @@ than a git patch against a repo `HEAD`.
 
 `wp-content` runtime mounts can coexist with `/workspace` mounts. A caller may
 mount the same source into `/wordpress/wp-content/plugins/<slug>` so WordPress
-loads it, and into `/workspace/<repo-relative-path>` so DMC tools edit it with
+loads it, and into `/workspace/<repo-relative-path>` so sandbox tools edit it with
 repo-relative paths. Artifact metadata records both mount targets and any opaque
 mount metadata such as `repo`, `gitRef`, `default_branch`, `workspaceRef`,
 `component`, `wpContentPath`, and `sourceMode`.
@@ -831,7 +831,7 @@ Dry-run output uses `wp-codebox/recipe-run-dry-run/v1` and includes resolved mou
 
 `inputs.extra_plugins` accepts existing local plugin directory paths and external HTTPS zip sources. Local paths keep the existing behavior: they are resolved relative to the recipe file and mounted read-only under `/wordpress/wp-content/plugins/<slug>`.
 
-Set `loadAs` to `mu-plugin` for runtime substrate that should load as must-use infrastructure instead of appearing as a normal user-managed plugin. WP Codebox mounts those plugins under `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and writes a `wp-codebox-runtime-loader.php` setup loader. Use this for sandbox/runtime plumbing such as Agents API, Data Machine, Data Machine Code, and AI provider bridges. Leave user-visible site plugins as the default `plugin` load mode. Components and extra plugins may provide an explicit `pluginFile`; when omitted, WP Codebox resolves `<slug>/<slug>.php`, `<slug>/plugin.php`, then a top-level PHP file with a WordPress plugin header.
+Set `loadAs` to `mu-plugin` for runtime substrate that should load as must-use infrastructure instead of appearing as a normal user-managed plugin. WP Codebox mounts those plugins under `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and writes a `wp-codebox-runtime-loader.php` setup loader. Use this for sandbox/runtime plumbing such as agent runtimes, coding tools, and AI provider bridges. Leave user-visible site plugins as the default `plugin` load mode. Components and extra plugins may provide an explicit `pluginFile`; when omitted, WP Codebox resolves `<slug>/<slug>.php`, `<slug>/plugin.php`, then a top-level PHP file with a WordPress plugin header.
 
 Browser Playground callers can provide sandbox-owned MU plugin source through `runtime.mu_plugins` on `wp-codebox/create-browser-playground-session`. Those files are written into `/wordpress/wp-content/mu-plugins/` before the generated runner invokes sandbox-local work. Pair that with `browser_runner.invocation` to call a generic sandbox extension point:
 
@@ -1004,7 +1004,7 @@ See [`docs/benchmark-contract.md`](docs/benchmark-contract.md) for the generic b
 
 ### `agent-runtime-probe`
 
-Boot a sandbox with Agents API, Data Machine, and Data Machine Code mounted, then verify the stack loads.
+Boot a sandbox with the supported agent runtime components mounted, then verify the stack loads.
 
 ```bash
 npm run wp-codebox -- agent-runtime-probe \
@@ -1025,8 +1025,8 @@ npm run wp-codebox -- agent-sandbox-run \
   --data-machine-code ../data-machine-code \
   --agent sandbox-agent \
   --task "Add a Dry Rub filter to the wing locations map" \
-  --provider openai \
-  --model gpt-5.5 \
+  --provider example-ai \
+  --model example-model \
   --json
 ```
 
@@ -1086,7 +1086,7 @@ Recipes that import a generated site into a clean runtime can export replay evid
 ```json
 {
   "command": "wordpress.export-replay-package",
-  "args": ["label=studio-web-replay", "landing-page=/"]
+  "args": ["label=product-host-replay", "landing-page=/"]
 }
 ```
 
@@ -1171,14 +1171,14 @@ runtime-reference payload are best-effort diagnostics for failure enrichment.
       "version": "0.0.0",
       "wordpressVersion": "7.0"
     },
-    "agent": { "agent": "sandbox-agent", "provider": "openai", "model": "gpt-5.5" },
+    "agent": { "agent": "sandbox-agent", "provider": "example-ai", "model": "example-model" },
     "mounts": [
       {
         "type": "directory",
-        "source": "/path/to/data-machine-code",
-        "target": "/wordpress/wp-content/plugins/data-machine-code",
+        "source": "/path/to/example-plugin",
+        "target": "/wordpress/wp-content/plugins/example-plugin",
         "mode": "readonly",
-        "metadata": { "kind": "component", "slug": "data-machine-code" }
+        "metadata": { "kind": "component", "slug": "example-plugin" }
       }
     ]
   },
@@ -1292,15 +1292,15 @@ Generic caller-owned `request.json` payloads may use this shape:
 {
   "schema": "wp-codebox/task-input/v1",
   "goal": "Fix the failing audit finding and return a reviewable artifact.",
-  "provider": "openai",
-  "model": "gpt-5.5",
-  "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
+  "provider": "example-ai",
+  "model": "example-model",
+  "provider_plugin_paths": ["/srv/runtime/ai-provider-example"],
   "component_contracts": [
     { "slug": "agents-api", "path": "/srv/runtime/agents-api", "pluginFile": "agents-api/agents-api.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "pluginFile": "caller-runtime/caller-runtime.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "pluginFile": "caller-runtime-tools/caller-runtime-tools.php", "loadAs": "mu-plugin" }
   ],
-  "secret_env": ["OPENAI_API_KEY"],
+  "secret_env": ["EXAMPLE_AI_API_KEY"],
   "mounts": [
     {
       "source": "/srv/worktrees/plugin",
@@ -1389,10 +1389,10 @@ WP Codebox owns:
 
 WP Codebox does not own:
 
-- Agent identity, sessions, or model loop internals. Agents API and Data Machine own those.
+- Agent identity, sessions, or model loop internals. Mounted agent runtimes own those.
 - Model provider authentication. Provider plugins and parent control planes own credentials.
 - Production mutation or deploy. Apply-back must be separate and reviewed.
-- CI/eval orchestration. Parent control planes and other consumers can invoke WP Codebox; Homeboy is one example orchestrator.
+- CI/eval orchestration. Parent control planes and other consumers can invoke WP Codebox.
 - Frontend review UX. WP Codebox should produce renderable artifacts for those UIs.
 
 ## Near-Term Gaps
@@ -1404,6 +1404,6 @@ WP Codebox does not own:
 
 ## Development Notes
 
-- Keep the runtime contract consumer-agnostic. Parent control planes and mounted tools consume WP Codebox; they do not own the core artifact contract. Examples include Homeboy as an orchestrator and wp-gym as an evaluation implementation.
+- Keep the runtime contract consumer-agnostic. Parent control planes and mounted tools consume WP Codebox; they do not own the core artifact contract.
 - Prefer small seams: runtime lifecycle, command handlers, artifact capture, recipes, WordPress integration, and apply-back should stay separate.
 - When adding a new command or artifact type, update this README and `npm run check`.
