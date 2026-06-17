@@ -11,6 +11,7 @@ class WP_Error {
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
 

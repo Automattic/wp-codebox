@@ -7,7 +7,8 @@ product or job system.
 
 - TypeScript implementations live in `packages/runtime-core/src/artifact-storage.ts`,
   `packages/runtime-core/src/browser-session-origin.ts`, and
-  `packages/runtime-core/src/materialization-contracts.ts`.
+  `packages/runtime-core/src/materialization-contracts.ts`, and
+  `packages/runtime-core/src/evidence-artifact-envelope.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts`.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
@@ -32,6 +33,37 @@ only for loopback hosts.
 `wp-codebox/materialization-phase-result/v1` records phase status and artifact
 references produced while converting runtime output into durable artifacts. These
 refs can be folded into run records as `materialization:<kind>` artifact refs.
+
+## Evidence Artifact Envelopes
+
+`wp-codebox/evidence-artifact-envelope/v1` is a caller-neutral envelope for
+review artifacts produced by runtime workflows. It keeps product policy outside
+WP Codebox while giving upstream consumers one stable shape for browser captures
+and reviewer-safe artifact references.
+
+- Artifact refs use bundle-relative paths, never host filesystem paths.
+- Optional `publicUrl` values must be `http://` or `https://` and cannot point at
+  loopback hosts such as `localhost` or `127.0.0.1`.
+- Browser captures use `wp-codebox/browser-evidence-capture/v1` and group the
+  screenshot, HTML, console, network, review, or other artifacts for one browser
+  scenario without naming a downstream product.
+
+```ts
+import { evidenceArtifactEnvelope } from "@automattic/wp-codebox-core"
+
+const envelope = evidenceArtifactEnvelope({
+  id: "run-1",
+  subject: { kind: "component", id: "example" },
+  status: "passed",
+  artifacts: [{ path: "files/review.md", kind: "review" }],
+  browserCaptures: [{
+    id: "homepage",
+    status: "passed",
+    finalUrl: "https://example.test/",
+    artifacts: [{ path: "files/browser/home.png", kind: "browser-screenshot" }],
+  }],
+})
+```
 
 ## Target Context Provisioning
 

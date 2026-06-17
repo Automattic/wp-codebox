@@ -15,14 +15,17 @@ import {
   browserArtifactGrant,
   browserArtifactRef,
   captureArtifactFile,
+  evidenceArtifactEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
+  reviewerSafeArtifactRef,
   normalizeArtifactPartPath,
   normalizeRecipeMounts,
   normalizeSharedMounts,
   runtimeArtifactStorageDescriptor,
   trustedBrowserSessionOrigin,
   trustedBrowserSessionOrigins,
+  validateEvidenceArtifactEnvelope,
   writeArtifactPart,
 } from "../packages/runtime-core/src/index.js"
 import { benchRunCode } from "../packages/runtime-playground/src/bench-command-handlers.js"
@@ -89,6 +92,32 @@ assert.deepEqual(browserArtifactRef({ artifact_id: "artifact-bundle-sha256-abc",
 })
 assert.throws(() => browserArtifactGrant({ caller: "", sessionId: "session-123" }), /caller/)
 assert.throws(() => browserArtifactRef({ content_digest: "abc" }), /artifact_id/)
+
+assert.deepEqual(reviewerSafeArtifactRef({ path: "/files//browser/screenshot.png", kind: "browser-screenshot", digest: "abc", publicUrl: "https://artifacts.example.test/run-1/files/browser/screenshot.png#local" }), {
+  path: "files/browser/screenshot.png",
+  kind: "browser-screenshot",
+  digest: { algorithm: "sha256", value: "abc" },
+  publicUrl: "https://artifacts.example.test/run-1/files/browser/screenshot.png",
+})
+assert.throws(() => reviewerSafeArtifactRef({ path: "files/browser/screenshot.png", kind: "browser-screenshot", publicUrl: "http://localhost:8881/artifact.png" }), /loopback/)
+
+const evidenceEnvelope = evidenceArtifactEnvelope({
+  id: "run-1",
+  subject: { kind: "component", id: "example" },
+  status: "passed",
+  createdAt: new Date("2026-01-02T03:04:05.000Z"),
+  artifacts: [{ path: "files/review.md", kind: "review", contentType: "text/markdown" }],
+  browserCaptures: [{
+    id: "homepage",
+    status: "passed",
+    finalUrl: "https://example.test/",
+    artifacts: [{ path: "files/browser/home.png", kind: "browser-screenshot", publicUrl: "https://artifacts.example.test/run-1/files/browser/home.png" }],
+  }],
+})
+assert.equal(evidenceEnvelope.schema, "wp-codebox/evidence-artifact-envelope/v1")
+assert.equal(evidenceEnvelope.browserCaptures[0].schema, "wp-codebox/browser-evidence-capture/v1")
+assert.deepEqual(validateEvidenceArtifactEnvelope(evidenceEnvelope), { valid: true, errors: [] })
+assert.equal(validateEvidenceArtifactEnvelope({ ...evidenceEnvelope, artifacts: [{ path: "../secret.txt", kind: "file" }] }).valid, false)
 
 assert.deepEqual(normalizeRecipeMounts([{ source: "/host/plugin", target: "//wordpress//wp-content/plugins/plugin" }]), [{ source: "/host/plugin", target: "/wordpress/wp-content/plugins/plugin", mode: "readwrite" }])
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "wordpress/wp-content/plugins/plugin" }]), /absolute target/)
