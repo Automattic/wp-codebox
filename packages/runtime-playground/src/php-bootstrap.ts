@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { argValue, isSafeEnvName, normalizePhpCode, phpBody } from "./commands.js"
+import { argValue, normalizePhpCode, phpBody } from "./commands.js"
+import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
@@ -303,44 +304,18 @@ function pluginRuntimeBootstrapPhp(spec: RuntimeCreateSpec): string {
   if (Number.isInteger(maxExecutionTime) && typeof maxExecutionTime === "number" && maxExecutionTime >= 0 && maxExecutionTime <= 3600) {
     lines.push(`@set_time_limit(${maxExecutionTime});`)
   }
-  for (const [name, value] of Object.entries(runtime.wpConfigDefines ?? {})) {
-    if (!/^[A-Z_][A-Z0-9_]*$/i.test(name) || (!["string", "number", "boolean"].includes(typeof value) && value !== null)) {
-      continue
-    }
-    lines.push(`if (!defined(${JSON.stringify(name)})) { define(${JSON.stringify(name)}, ${phpLiteral(value as string | number | boolean | null)}); }`)
+  const wpConfigDefines = phpWpConfigDefineAssignments(runtime.wpConfigDefines ?? {}).trim()
+  if (wpConfigDefines) {
+    lines.push(wpConfigDefines)
   }
 
   return lines.length > 0 ? `${lines.join("\n")}\n` : ""
 }
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
-  const entries = Object.entries(spec.secretEnv ?? {}).filter(([name]) => isSafeEnvName(name))
-  if (entries.length === 0) {
-    return ""
-  }
-
-  return `${entries
-    .map(([name, value]) => `putenv(${JSON.stringify(`${name}=${value}`)});`)
-    .join("\n")}\n`
+  return phpEnvAssignments(spec.secretEnv ?? {})
 }
 
 function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
-  const entries = Object.entries(spec.runtimeEnv ?? {}).filter(([name]) => isSafeEnvName(name))
-  if (entries.length === 0) {
-    return ""
-  }
-
-  return `${entries
-    .map(([name, value]) => `putenv(${JSON.stringify(`${name}=${value}`)});`)
-    .join("\n")}\n`
-}
-
-function phpLiteral(value: string | number | boolean | null): string {
-  if (typeof value === "string") {
-    return JSON.stringify(value)
-  }
-  if (value === null) {
-    return "null"
-  }
-  return String(value)
+  return phpEnvAssignments(spec.runtimeEnv ?? {})
 }
