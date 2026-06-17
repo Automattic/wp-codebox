@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { commandRegistry, recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import Ajv2020 from "ajv/dist/2020.js"
+import { listCliRuntimeBackendKinds } from "../packages/cli/src/runtime-backends.js"
 
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path"
 import { assertWorkspaceRecipeJsonSchema, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
 export interface RecipeValidationIssue {
   code: string
@@ -34,7 +35,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   const recipe = parseWorkspaceRecipeJson(raw)
   normalizeWorkspaceRecipeCompatibility(recipe)
   validateWorkspaceRecipeShape(recipe, recipePath)
-  assertWorkspaceRecipeJsonSchema(recipe, { recipePath, recipeCommandIds: [...supportedRecipeCommands] })
+  assertWorkspaceRecipeJsonSchema(recipe, { recipePath, recipeCommandIds: [...supportedRecipeCommands], runtimeBackendKinds: listCliRuntimeBackendKinds() })
 
   return recipe
 }
