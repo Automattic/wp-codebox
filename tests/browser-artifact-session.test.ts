@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { resolve } from "node:path"
 
 import { BrowserArtifactSession } from "../packages/runtime-playground/src/browser-artifact-session.js"
+import { browserReviewSummary, type BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.js"
 import { assertJsonFile, assertTextFile, withTempDir } from "../scripts/test-kit.js"
 
 await withTempDir("wp-codebox-browser-artifact-session-", async (artifactRoot) => {
@@ -12,6 +13,7 @@ assert.equal(session.path("/tmp/snapshot.html"), "files/browser/snapshot.html")
 
 await session.writeText("html", "snapshot.html", "<html><body>secret</body></html>")
 await session.writeJsonLines("console", "console.jsonl", [{ type: "log", text: "visible" }])
+await session.writeJson("waterfall", "waterfall.json", { schema: "wp-codebox/browser-waterfall/v1", log: { entries: [] } })
 await session.writeJson("summary", "summary.json", { schema: "wp-codebox/browser-probe/v1", ok: true })
 await session.writeBuffer("screenshot", "screenshot.png", Buffer.from([0, 1, 2]))
 
@@ -34,6 +36,10 @@ assert.equal(files.get("files/browser/console.jsonl")?.kind, "browser-console")
 assert.equal(files.get("files/browser/console.jsonl")?.contentType, "application/x-ndjson")
 assert.equal(files.get("files/browser/console.jsonl")?.redaction?.policy, "required")
 
+assert.equal(files.get("files/browser/waterfall.json")?.kind, "browser-waterfall")
+assert.equal(files.get("files/browser/waterfall.json")?.contentType, "application/json")
+assert.equal(files.get("files/browser/waterfall.json")?.redaction?.policy, "required")
+
 assert.equal(files.get("files/browser/screenshot.png")?.kind, "browser-screenshot")
 assert.equal(files.get("files/browser/screenshot.png")?.contentType, "image/png")
 assert.deepEqual(files.get("files/browser/screenshot.png")?.redaction, { policy: "none", sensitive: false })
@@ -48,4 +54,14 @@ assert.equal(visualFiles.get("files/browser/visual-compare/mobile/visual-diff.js
 assert.equal(visualFiles.get("files/browser/visual-compare/mobile/visual-diff.json")?.redaction?.policy, "required")
 assert.equal(visualFiles.get("files/browser/visual-compare/mobile/source.png")?.kind, "browser-visual-source-screenshot")
 assert.deepEqual(visualFiles.get("files/browser/visual-compare/mobile/source.png")?.redaction, { policy: "none", sensitive: false })
+
+const review = browserReviewSummary([{
+  artifactType: "probe",
+  requestedUrl: "https://example.test/",
+  url: "https://example.test/",
+  preview: { requestedMode: "local", effectiveMode: "local", localOrigin: "https://example.test", effectiveOrigin: "https://example.test", diagnostics: [] },
+  files: { network: "files/browser/network.jsonl", waterfall: "files/browser/waterfall.json", summary: "files/browser/summary.json" },
+  summary: { consoleMessages: 0, errors: 0, finalUrl: "https://example.test/", htmlSnapshot: false, networkEvents: 1, replayability: "partial", screenshot: false, viewport: null },
+} satisfies BrowserArtifact])
+assert.equal(review?.probes[0]?.waterfall, "files/browser/waterfall.json")
 })

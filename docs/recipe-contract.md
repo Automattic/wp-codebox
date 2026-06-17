@@ -308,6 +308,13 @@ summary file, artifact file refs, summary payload, and `scriptResult` when the
 browser command produced one. The same browser evidence is mirrored into
 `latest-runtime.json` under the run artifact pointer.
 
+When a browser command captures network evidence, WP Codebox writes the raw
+`network.jsonl` stream and a derived `waterfall.json` artifact using the stable
+`wp-codebox/browser-waterfall/v1` schema. The waterfall is HAR-style JSON with
+redacted URLs, request/response status, resource type, sizes, and timing fields;
+both files are registered as redaction-required browser artifacts and surfaced
+through `browserEvidence.files`.
+
 `--preview-hold-seconds <duration>` records held-preview lifecycle metadata in the
 artifact bundle and returns after recipe work finishes. Use
 `--preview-hold-blocking` only for operator workflows that need the CLI process

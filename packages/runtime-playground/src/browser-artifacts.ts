@@ -66,6 +66,7 @@ export interface BrowserArtifactFiles {
   lifecycle?: string
   memory?: string
   network?: string
+  waterfall?: string
   performance?: string
   review?: string
   screenshot?: string
@@ -804,6 +805,59 @@ export interface BrowserProbeNetworkRecord {
   failure?: ReturnType<Request["failure"]>
 }
 
+export interface BrowserProbeWaterfallArtifact {
+  schema: "wp-codebox/browser-waterfall/v1"
+  version: 1
+  capturedAt: string
+  startedAt: string
+  summary: {
+    requests: number
+    responses: number
+    failures: number
+    transferSizeBytes: number
+  }
+  log: {
+    version: "1.2"
+    creator: { name: "wp-codebox"; version: "1" }
+    entries: BrowserProbeWaterfallEntry[]
+  }
+}
+
+export interface BrowserProbeWaterfallEntry {
+  startedDateTime: string
+  time: number
+  request: {
+    method: string
+    url: string
+  }
+  response: {
+    status: number
+    statusText: string
+    content: { mimeType: string }
+    redirectURL: string
+  }
+  cache: Record<string, never>
+  timings: {
+    blocked: number
+    dns: number
+    connect: number
+    ssl: number
+    send: number
+    wait: number
+    receive: number
+  }
+  _wpCodebox: {
+    type: BrowserProbeNetworkRecord["type"]
+    resourceType: string
+    timestamp: string
+    ok?: boolean
+    transferSize?: number
+    requestBodySize?: number
+    responseBodySize?: number
+    failure?: BrowserProbeNetworkRecord["failure"]
+  }
+}
+
 export interface BrowserProbeNetworkSizes {
   requestBodySize: number
   requestHeadersSize: number
@@ -839,6 +893,7 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       html: probe.files.html,
       lifecycle: probe.files.lifecycle,
       network: probe.files.network,
+      waterfall: probe.files.waterfall,
       networkEvents: probe.summary.networkEvents,
       screenshot: probe.files.screenshot,
       domSnapshots: probe.files.domSnapshots,
@@ -906,6 +961,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   lifecycle: { kind: "browser-lifecycle", contentType: "application/json", redact: true },
   memory: { kind: "browser-memory", contentType: "application/json", redact: true },
   network: { kind: "browser-network", contentType: "application/x-ndjson", redact: true },
+  waterfall: { kind: "browser-waterfall", contentType: "application/json", redact: true },
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },
   screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
