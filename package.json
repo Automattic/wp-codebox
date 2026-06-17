@@ -67,6 +67,7 @@
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
+    "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",

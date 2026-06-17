@@ -7,6 +7,7 @@ import { runCleanupCommand, runDoctorCommand } from "./commands/doctor.js"
 import { runRecipeBuildCommand } from "./commands/recipe-build.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
 import { runMaterializeReplayPackageCommand } from "./commands/replay-package.js"
+import { runMcpRenderClientConfigsCommand } from "./commands/mcp.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
 import { runRunsArtifactsCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runTargetProvisionCommand } from "./commands/target.js"
@@ -41,6 +42,7 @@ export async function runCli(args: string[]): Promise<number> {
     runsStatus: runRunsStatusCommand,
     runsArtifacts: runRunsArtifactsCommand,
     targetProvision: runTargetProvisionCommand,
+    mcpRenderClientConfigs: runMcpRenderClientConfigsCommand,
     commands: runCommandsCommand,
     recipeSchema: runRecipeSchemaCommand,
     doctor: runDoctorCommand,

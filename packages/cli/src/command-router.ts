@@ -41,6 +41,9 @@ const cliCommandRoutes = {
   target: {
     provision: "targetProvision",
   },
+  mcp: {
+    "render-client-configs": "mcpRenderClientConfigs",
+  },
   commands: "commands",
   doctor: "doctor",
   cleanup: "cleanup",
