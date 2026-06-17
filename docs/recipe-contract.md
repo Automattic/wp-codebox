@@ -159,6 +159,13 @@ otherwise successful recipe return `success: false`.
 are promoted into `browserEvidence` so callers can discover stable evidence
 without hardcoding artifact paths or parsing command stdout.
 
+The same output includes `result`, a normalized
+`wp-codebox/recipe-run-summary/v1` envelope for portable callers. It groups
+common artifact refs, command stdout/stderr tails, run/runtime metadata, failure
+phase and summary, and held-preview reviewer access. Consumers should prefer
+`result` before scraping `latest-runtime.json`, `commands.jsonl`, command stdout,
+or preview internals from the artifact bundle.
+
 Each `browserEvidence` entry includes the workflow phase/index, command,
 summary file, artifact file refs, summary payload, and `scriptResult` when the
 browser command produced one. The same browser evidence is mirrored into
