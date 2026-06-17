@@ -3320,14 +3320,10 @@ async function runVisualComparePairCommand({
     throw new Error("wordpress.visual-compare requires source-url/candidate-url or source-screenshot/candidate-screenshot")
   }
 
-  const browserDirectory = join(artifactRoot, artifactPathPrefix)
-  await mkdir(browserDirectory, { recursive: true })
-  const sourcePath = join(browserDirectory, "source.png")
-  const candidatePath = join(browserDirectory, "candidate.png")
-  const diffPath = join(browserDirectory, "diff.png")
-  const visualDiffPath = join(browserDirectory, "visual-diff.json")
-  const visualExplanationPath = join(browserDirectory, "visual-explanation.json")
-  const summaryPath = join(browserDirectory, "summary.json")
+  const artifactSession = new BrowserArtifactSession(artifactRoot, artifactPathPrefix, { source: "wordpress.visual-compare", operation: "visual-compare" })
+  const sourcePath = artifactSession.absolutePath("source.png")
+  const candidatePath = artifactSession.absolutePath("candidate.png")
+  const diffPath = artifactSession.absolutePath("diff.png")
   const startedAt = now()
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
   const sourceTargetUrl = sourceUrl ? resolveBrowserPreviewUrl(sourceUrl, preview.effectiveOrigin) : undefined
@@ -3351,7 +3347,7 @@ async function runVisualComparePairCommand({
   })
 
   const writePartialSummary = async (stage: "source-captured" | "candidate-captured"): Promise<void> => {
-    await writeVisualComparePartialSummary(summaryPath, {
+    await writeVisualComparePartialSummary(artifactSession, {
       artifactPathPrefix,
       stage,
       startedAt,
@@ -3369,28 +3365,39 @@ async function runVisualComparePairCommand({
       const page = await browser.newPage(requestedViewport ? { viewport: requestedViewport } : undefined)
       viewport = await browserProbeViewport(page)
       try {
-        const sourceCapture = await withBrowserCommandLiveness({
-          command: "wordpress.visual-compare",
-          phase: "source-capture",
-          operation: captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
-          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        let sourceCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
+        await artifactSession.writeGenerated("sourceScreenshot", "source.png", async (path) => {
+          sourceCapture = await withBrowserCommandLiveness({
+            command: "wordpress.visual-compare",
+            phase: "source-capture",
+            operation: captureVisualCompareUrl(page, sourceTargetUrl, path, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+          })
         })
+        if (!sourceCapture) {
+          throw new Error("wordpress.visual-compare did not produce source capture")
+        }
         finalSourceUrl = sourceCapture.finalUrl
         sourceDomSnapshot = sourceCapture.domSnapshot
         await writePartialSummary("source-captured")
-        const candidateCapture = await withBrowserCommandLiveness({
-          command: "wordpress.visual-compare",
-          phase: "candidate-capture",
-          operation: captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
-          policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+        let candidateCapture: Awaited<ReturnType<typeof captureVisualCompareUrl>> | undefined
+        await artifactSession.writeGenerated("candidateScreenshot", "candidate.png", async (path) => {
+          candidateCapture = await withBrowserCommandLiveness({
+            command: "wordpress.visual-compare",
+            phase: "candidate-capture",
+            operation: captureVisualCompareUrl(page, candidateTargetUrl, path, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors, visualTimeoutMs),
+            policy: { wallTimeoutMs: visualTimeoutMs, idleTimeoutMs: 0 },
+          })
         })
+        if (!candidateCapture) {
+          throw new Error("wordpress.visual-compare did not produce candidate capture")
+        }
         finalCandidateUrl = candidateCapture.finalUrl
         candidateDomSnapshot = candidateCapture.domSnapshot
         await writePartialSummary("candidate-captured")
       } catch (error) {
         const result = await writeVisualCompareFailureSummary({
-          summaryPath,
-          visualDiffPath,
+          artifactSession,
           artifactPathPrefix,
           startedAt,
           source: sourceSummary(),
@@ -3416,16 +3423,15 @@ async function runVisualComparePairCommand({
     if (missingInputs.length > 0) {
       const copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }> = {}
       if (sourceResolvedPath) {
-        await writeFile(sourcePath, await readFile(sourceResolvedPath))
+        await artifactSession.writeBuffer("sourceScreenshot", "source.png", await readFile(sourceResolvedPath))
         copiedFiles.sourceScreenshot = `${artifactPathPrefix}/source.png`
       }
       if (candidateResolvedPath) {
-        await writeFile(candidatePath, await readFile(candidateResolvedPath))
+        await artifactSession.writeBuffer("candidateScreenshot", "candidate.png", await readFile(candidateResolvedPath))
         copiedFiles.candidateScreenshot = `${artifactPathPrefix}/candidate.png`
       }
       const result = await writeVisualCompareMissingInputSummary({
-        summaryPath,
-        visualDiffPath,
+        artifactSession,
         artifactPathPrefix,
         startedAt,
         source: sourceSummary(),
@@ -3444,9 +3450,9 @@ async function runVisualComparePairCommand({
     if (!resolvedSourceScreenshotPath || !resolvedCandidateScreenshotPath) {
       throw new Error("wordpress.visual-compare expected screenshot inputs to be resolved after missing-input guard")
     }
-    await writeFile(sourcePath, await readFile(resolvedSourceScreenshotPath))
+    await artifactSession.writeBuffer("sourceScreenshot", "source.png", await readFile(resolvedSourceScreenshotPath))
     await writePartialSummary("source-captured")
-    await writeFile(candidatePath, await readFile(resolvedCandidateScreenshotPath))
+    await artifactSession.writeBuffer("candidateScreenshot", "candidate.png", await readFile(resolvedCandidateScreenshotPath))
     if (sourceDomSnapshotRef && candidateDomSnapshotRef) {
       const sourceArtifact = await readVisualCompareDomSnapshotArtifact(sourceDomSnapshotRef, artifactRoot)
       const candidateArtifact = await readVisualCompareDomSnapshotArtifact(candidateDomSnapshotRef, artifactRoot)
@@ -3459,7 +3465,13 @@ async function runVisualComparePairCommand({
     await writePartialSummary("candidate-captured")
   }
 
-  const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
+  let comparison: Awaited<ReturnType<typeof comparePngFiles>> | undefined
+  await artifactSession.writeGenerated("diffScreenshot", "diff.png", async (path) => {
+    comparison = await comparePngFiles(sourcePath, candidatePath, path, { threshold, includeAA, maxRegions })
+  })
+  if (!comparison) {
+    throw new Error("wordpress.visual-compare did not produce comparison metrics")
+  }
   const explanation = createVisualCompareExplanation({
     source: sourceDomSnapshot,
     candidate: candidateDomSnapshot,
@@ -3510,12 +3522,11 @@ async function runVisualComparePairCommand({
     comparison,
     ...(baseline ? { baseline } : {}),
   }
-  const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
-  await writeFile(visualDiffPath, summaryJson)
+  await artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
   if (explanation) {
-    await writeFile(visualExplanationPath, `${JSON.stringify(explanation, null, 2)}\n`)
+    await artifactSession.writeJson("visualExplanation", "visual-explanation.json", explanation)
   }
-  await writeFile(summaryPath, summaryJson)
+  await artifactSession.writeJson("summary", "summary.json", summary)
 
   const artifact: BrowserArtifact = {
     artifactType: "visual-compare",
@@ -3647,7 +3658,7 @@ function visualCompareMatrixArtifact(
   }
 }
 
-async function writeVisualComparePartialSummary(summaryPath: string, input: {
+async function writeVisualComparePartialSummary(artifactSession: BrowserArtifactSession, input: {
   artifactPathPrefix: string
   stage: "source-captured" | "candidate-captured"
   startedAt: string
@@ -3678,12 +3689,11 @@ async function writeVisualComparePartialSummary(summaryPath: string, input: {
     updatedAt: now(),
     files,
   }
-  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`)
+  await artifactSession.writeJson("summary", "summary.json", summary)
 }
 
 async function writeVisualCompareMissingInputSummary(input: {
-  summaryPath: string
-  visualDiffPath: string
+  artifactSession: BrowserArtifactSession
   artifactPathPrefix: string
   startedAt: string
   source: Record<string, unknown>
@@ -3722,15 +3732,13 @@ async function writeVisualCompareMissingInputSummary(input: {
       missingInputs: input.missingInputs,
     },
   }
-  const json = `${JSON.stringify(summary, null, 2)}\n`
-  await writeFile(input.visualDiffPath, json)
-  await writeFile(input.summaryPath, json)
+  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
+  await input.artifactSession.writeJson("summary", "summary.json", summary)
   return { files, summary }
 }
 
 async function writeVisualCompareFailureSummary(input: {
-  summaryPath: string
-  visualDiffPath: string
+  artifactSession: BrowserArtifactSession
   artifactPathPrefix: string
   startedAt: string
   source: Record<string, unknown>
@@ -3768,9 +3776,8 @@ async function writeVisualCompareFailureSummary(input: {
       message: input.message,
     },
   }
-  const json = `${JSON.stringify(summary, null, 2)}\n`
-  await writeFile(input.visualDiffPath, json)
-  await writeFile(input.summaryPath, json)
+  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
+  await input.artifactSession.writeJson("summary", "summary.json", summary)
   return { files, summary }
 }
 
@@ -3928,9 +3935,8 @@ async function writeVisualCompareMatrixSummary(
       limitations: ["visual compare matrix was interrupted or an expected input was missing before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports and structured diagnostics for incomplete entries"],
     } : {}),
   }
-  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
-  await mkdir(browserDirectory, { recursive: true })
-  await writeFile(join(browserDirectory, "matrix-summary.json"), `${JSON.stringify(matrixSummary, null, 2)}\n`)
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser/visual-compare", { source: "wordpress.visual-compare", operation: "visual-compare-matrix" })
+  await artifactSession.writeJson("summary", "matrix-summary.json", matrixSummary)
   return matrixSummary
 }
 
