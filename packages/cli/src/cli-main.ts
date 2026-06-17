@@ -1,5 +1,5 @@
 import { runCli } from "./cli-entry.js"
-import { serializeError } from "./output.js"
+import { serializeError, wantsJsonOutput, writeJsonFailure } from "./output.js"
 
 export type CliRunner = (args: string[]) => Promise<number>
 
@@ -10,6 +10,11 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): vo
   const writeStderr = process.stderr.write.bind(process.stderr)
   const handleBeforeExit = () => {
     if (settled) {
+      return
+    }
+    if (wantsJsonOutput(args)) {
+      writeJsonFailure(args[0], UNSETTLED_COMMAND_MESSAGE, { code: "unsettled-command" })
+      process.exitCode = 1
       return
     }
     writeStderr(`${UNSETTLED_COMMAND_MESSAGE}\n`)
@@ -26,7 +31,12 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): vo
     (error) => {
       settled = true
       process.off("beforeExit", handleBeforeExit)
-      writeStderr(`${serializeError(error)?.message ?? String(error)}\n`)
+      const serialized = serializeError(error)
+      if (wantsJsonOutput(args)) {
+        writeJsonFailure(args[0], serialized.message, { code: serialized.code ?? "uncaught-error", error: serialized })
+      } else {
+        writeStderr(`${serialized.message}\n`)
+      }
       process.exitCode = 1
     },
   )

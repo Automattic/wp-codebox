@@ -50,16 +50,23 @@ try {
   assert.equal(mismatch.valid, false)
   assert.equal(mismatch.violations.some((violation) => violation.code === "file-hash-mismatch" && violation.file === "files/runtime-evidence/typed-artifacts/summary-1.json"), true)
 
+  const payloadSchemaMismatch = join(workspace, "typed-payload-schema-mismatch")
+  await writeTypedArtifactBundle(payloadSchemaMismatch, { invalidPayloadForSchema: true })
+  const schemaMismatch = await verifyArtifactBundle(payloadSchemaMismatch)
+  assert.equal(schemaMismatch.valid, false)
+  assert.equal(schemaMismatch.violations.some((violation) => violation.code === "payload-schema-violation" && violation.path === "files/runtime-evidence/typed-artifacts/index.json:artifacts[0].payload"), true)
+
   console.log("Typed artifacts smoke passed")
 } finally {
   await rm(workspace, { recursive: true, force: true })
 }
 
-async function writeTypedArtifactBundle(directory: string, options: { omitTypedArtifactManifestEntry?: boolean; badTypedArtifactDigest?: boolean } = {}): Promise<void> {
+async function writeTypedArtifactBundle(directory: string, options: { omitTypedArtifactManifestEntry?: boolean; badTypedArtifactDigest?: boolean; invalidPayloadForSchema?: boolean } = {}): Promise<void> {
   await mkdir(join(directory, "files/runtime-evidence/typed-artifacts"), { recursive: true })
   await writeFile(join(directory, "metadata.json"), "{}\n")
 
-  const typedPayload = `${JSON.stringify({ ok: true }, null, 2)}\n`
+  const payload = options.invalidPayloadForSchema ? { ok: "yes" } : { ok: true }
+  const typedPayload = `${JSON.stringify(payload, null, 2)}\n`
   const typedPath = "files/runtime-evidence/typed-artifacts/summary-1.json"
   await writeFile(join(directory, typedPath), typedPayload)
   const typedDigest = artifactFileDigest(typedPayload).value
@@ -70,8 +77,8 @@ async function writeTypedArtifactBundle(directory: string, options: { omitTypedA
       schema: STRUCTURED_ARTIFACT_SCHEMA,
       name: "summary",
       type: "example.summary",
-      payload_schema: "example/summary/v1",
-      payload: { ok: true },
+      payload_schema: options.invalidPayloadForSchema ? { $id: "example/summary/v1", type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } : "example/summary/v1",
+      payload,
       metadata: {},
       provenance: { direction: "output", source: "/tmp/summary.json" },
       artifact: {
