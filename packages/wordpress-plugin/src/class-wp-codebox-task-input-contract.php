@@ -11,6 +11,7 @@ final class WP_Codebox_Task_Input_Contract {
 
 	public const SCHEMA  = 'wp-codebox/task-input/v1';
 	public const VERSION = 1;
+	public const ABILITY_ALIAS_FIELDS = array( 'goal', 'target', 'allowed_tools', 'sandbox_tool_policy', 'expected_artifacts', 'structured_artifacts', 'policy', 'context' );
 
 	/** @return array<string,mixed> */
 	public static function schema(): array {
@@ -64,7 +65,7 @@ final class WP_Codebox_Task_Input_Contract {
 							'name'           => array( 'type' => 'string' ),
 							'type'           => array( 'type' => 'string' ),
 							'payload_schema' => array( 'anyOf' => array( array( 'type' => 'string' ), array( 'type' => 'object' ) ) ),
-							'payload'        => array(),
+							'payload'        => (object) array(),
 							'metadata'       => array( 'type' => 'object' ),
 							'provenance'     => array( 'type' => 'object' ),
 						),
@@ -83,10 +84,19 @@ final class WP_Codebox_Task_Input_Contract {
 							'source'      => array( 'type' => 'string' ),
 							'bundle'      => array( 'type' => 'object' ),
 							'slug'        => array( 'type' => 'string' ),
-							'on_conflict' => array( 'type' => 'string', 'enum' => array( 'error', 'skip', 'upgrade' ) ),
-							'owner_id'    => array( 'type' => 'integer' ),
+							'on_conflict' => array( 'enum' => array( 'error', 'skip', 'upgrade' ) ),
+							'owner_id'    => array( 'type' => 'integer', 'minimum' => 1 ),
 							'token_env'   => array( 'type' => 'string' ),
-							'import_principal' => array( 'type' => 'object' ),
+							'import_principal' => array(
+								'type'       => 'object',
+								'properties' => array(
+									'agent_id'      => array( 'type' => 'integer', 'minimum' => 1 ),
+									'owner_id'      => array( 'type' => 'integer', 'minimum' => 1 ),
+									'token_id'      => array( 'type' => 'integer', 'minimum' => 1 ),
+									'capabilities'  => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+									'scope'         => array( 'type' => 'object' ),
+								),
+							),
 						),
 					),
 				),

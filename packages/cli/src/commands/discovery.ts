@@ -52,18 +52,32 @@ function parseDiscoveryJsonOption(args: string[]): boolean {
   return json
 }
 
-function commandCatalogOutput(): CommandCatalogOutput {
+const PRODUCT_HIDDEN_ARGS: Record<string, Set<string>> = {
+  "wp-codebox.agent-sandbox-run": new Set(["code", "code-file"]),
+}
+
+export function commandCatalogOutput(): CommandCatalogOutput {
   const commands = new Map<string, Omit<CommandDefinition, "handler">>()
   for (const { handler, ...metadata } of commandRegistry.filter((command) => command.recipe === false)) {
-    commands.set(metadata.id, metadata)
+    commands.set(metadata.id, productCatalogCommand(metadata))
   }
   for (const { handler, ...metadata } of listCliRecipeCommandDefinitions()) {
-    commands.set(metadata.id, metadata)
+    commands.set(metadata.id, productCatalogCommand(metadata))
   }
 
   return {
     schema: "wp-codebox/command-catalog/v1",
     commands: [...commands.values()],
+  }
+}
+
+function productCatalogCommand(command: Omit<CommandDefinition, "handler">): Omit<CommandDefinition, "handler"> {
+  const hiddenArgs = PRODUCT_HIDDEN_ARGS[command.id]
+  if (!hiddenArgs) return command
+
+  return {
+    ...command,
+    acceptedArgs: command.acceptedArgs.filter((arg) => !hiddenArgs.has(arg.name)),
   }
 }
 

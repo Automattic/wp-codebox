@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, type AgentTaskRunInput, type AgentTerminalResult } from "@automattic/wp-codebox-core"
+import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -17,7 +17,7 @@ export interface AgentTaskRunOptions {
 interface AgentTaskRunOutput {
   success: boolean
   schema: "wp-codebox/agent-task-run/v1"
-  status: "completed" | "failed"
+  status: AgentTaskRunResultSummary["status"]
   session: Record<string, unknown>
   task: string
   task_input: ReturnType<typeof normalizeTaskInput>
@@ -25,6 +25,7 @@ interface AgentTaskRunOutput {
   artifacts: string
   agent_result: Record<string, unknown>
   agent_task_result: Record<string, unknown>
+  agent_task_run_result: AgentTaskRunResultSummary
   terminal_result?: AgentTerminalResult
   completion_outcome: Record<string, unknown>
   component_contracts: Array<Record<string, unknown>>
@@ -65,11 +66,15 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-    return output.success ? 0 : 1
+    return agentTaskRunExitCode(output)
   }
 
   process.stdout.write(`${output.status}: ${output.task}\n`)
-  return output.success ? 0 : 1
+  return agentTaskRunExitCode(output)
+}
+
+export function agentTaskRunExitCode(output: Pick<AgentTaskRunOutput, "agent_task_run_result" | "success">): number {
+  return output.agent_task_run_result.success ? 0 : 1
 }
 
 export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptions): Promise<AgentTaskRunOutput> {
@@ -103,27 +108,50 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       workloadId: stringValue(agentBundle.workload_id) || stringValue(agentBundle.agent_slug) || stringValue(agentBundle.flow_slug) || undefined,
     })
     const hasAgentBundle = Object.keys(agentBundle).length > 0
-    const success = Boolean(run.success) && (!hasAgentBundle || workload.success)
+    const recipeSuccess = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
     const terminalResult = terminalResultFromRun(run, agentTaskResult)
+    const completionOutcome = objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {}
+    const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
+    const normalizedRunResult = normalizeAgentTaskRunResult({
+      ...run,
+      success: recipeSuccess,
+      agent_result: agentResult,
+      agent_task_result: agentTaskResult,
+      terminal_result: terminalResult,
+      completion_outcome: completionOutcome,
+      run_metadata: stripUndefined({
+        run_id: stringValue(runRecord.runId),
+        run_status: stringValue(runRecord.status),
+        runtime_id: stringValue(runtimeRecord.id),
+        runtime_status: stringValue(runtimeRecord.status),
+        sandbox_session_id: stringValue(input.sandbox_session_id),
+        orchestrator: input.orchestrator,
+        parent_request_schema: stringValue(input.parent_request?.schema),
+      }),
+    }, { exitStatus: capture.exitCode })
+    const success = normalizedRunResult.success
     const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, run, capture })
+    const outputDiagnostics = [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])]
+    const agentTaskRunResult = success ? normalizedRunResult : withFailureEvidence(normalizedRunResult, failureEvidence, outputDiagnostics)
     const output: AgentTaskRunOutput = {
       success,
       schema: "wp-codebox/agent-task-run/v1",
-      status: success ? "completed" : "failed",
+      status: agentTaskRunResult.status,
       session: sandboxSession(input, run, artifacts, success ? "completed" : "failed"),
       task,
       task_input: taskInput,
       wp: wpVersion,
       artifacts,
-      agent_result: objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {},
+      agent_result: agentResult,
       agent_task_result: agentTaskResult,
+      agent_task_run_result: agentTaskRunResult,
       terminal_result: terminalResult,
-      completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
+      completion_outcome: completionOutcome,
       component_contracts: componentContractReport(run),
       structured_artifacts: structuredArtifactRefs(agentTaskResult),
       run,
-      diagnostics: [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])],
+      diagnostics: outputDiagnostics,
       agent_runtime_diagnostics: await buildAgentRuntimeDiagnostics(run, input),
       evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
       failure_evidence: failureEvidence,
@@ -145,12 +173,14 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     return output
   } catch (error) {
     const run = { success: false, error: serializeUnknownError(error) }
+    const normalizedRunResult = normalizeAgentTaskRunResult(run, { exitStatus: capture?.exitCode ?? 1 })
     const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, run, capture, error })
     const failureDiagnostics = diagnostics(run, capture?.exitCode ?? 1, false, failureEvidence)
+    const agentTaskRunResult = withFailureEvidence(normalizedRunResult, failureEvidence, failureDiagnostics)
     return {
       success: false,
       schema: "wp-codebox/agent-task-run/v1",
-      status: "failed",
+      status: agentTaskRunResult.status,
       session: sandboxSession(input, run, artifacts, "failed"),
       task,
       task_input: taskInput,
@@ -158,6 +188,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       artifacts,
       agent_result: {},
       agent_task_result: {},
+      agent_task_run_result: agentTaskRunResult,
       terminal_result: normalizeAgentTerminalResult(run),
       completion_outcome: {},
       component_contracts: componentContractReport(run),
@@ -183,6 +214,19 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     }
   } finally {
     await rm(recipeDirectory, { recursive: true, force: true })
+  }
+}
+
+function withFailureEvidence(result: AgentTaskRunResultSummary, failureEvidence: Record<string, unknown> | undefined, diagnostics: Array<Record<string, unknown>>): AgentTaskRunResultSummary {
+  if (!failureEvidence) return result
+
+  return {
+    ...result,
+    diagnostics,
+    metadata: stripUndefined({
+      ...result.metadata,
+      failure_evidence: failureEvidence,
+    }),
   }
 }
 

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { mkdtempSync } from "node:fs"
 import {
   artifactFileDigest,
   artifactStoragePath,
   artifactStoragePublicUrl,
+  captureArtifactFile,
   materializationPhaseResult,
   materializationRunArtifactRefs,
   normalizeArtifactPartPath,
@@ -73,3 +74,43 @@ assert.deepEqual(part.manifestFile.redaction, { policy: "required", sensitive: t
 assert.deepEqual(part.manifestFile.provenance, { source: "test", operation: "write-artifact-part", id: "result" })
 assert.equal(normalizeArtifactPartPath("/files//check/result.json"), "files/check/result.json")
 assert.throws(() => normalizeArtifactPartPath("files/../secret.txt"), /relative path/)
+
+const captureRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-capture-"))
+const redactedCapture = await captureArtifactFile({
+  root: captureRoot,
+  path: "files/diagnostics/failure.txt",
+  kind: "diagnostics",
+  contents: "Authorization: bearer-secret\ntoken sk-abcdefghijklmnopqrstuvwxyz\n",
+  contentType: "text/plain; charset=utf-8",
+  redaction: { policy: "applied", sensitive: true },
+  provenance: { source: "test", operation: "capture" },
+})
+assert.equal(redactedCapture.status, "captured")
+assert.equal(await readFile(join(captureRoot, "files/diagnostics/failure.txt"), "utf8"), "Authorization: [redacted]\ntoken [redacted]\n")
+assert.equal(redactedCapture.manifestFile?.redaction?.policy, "applied")
+
+const sourceRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-capture-source-"))
+const largeSource = join(sourceRoot, "large.txt")
+await writeFile(largeSource, "0123456789")
+const oversizedCapture = await captureArtifactFile({
+  sourcePath: largeSource,
+  root: captureRoot,
+  path: "files/large.txt",
+  kind: "file",
+  allowedRoots: [sourceRoot],
+  maxBytes: 4,
+})
+assert.equal(oversizedCapture.status, "oversized")
+assert.equal(oversizedCapture.reason, "max-bytes-exceeded")
+assert.equal(oversizedCapture.originalBytes, 10)
+
+const sensitiveCapture = await captureArtifactFile({
+  root: captureRoot,
+  path: "files/sensitive.txt",
+  kind: "file",
+  contents: "token sk-abcdefghijklmnopqrstuvwxyz\n",
+  maxBytes: 1024,
+  skipSensitiveText: true,
+})
+assert.equal(sensitiveCapture.status, "sensitive")
+assert.equal(sensitiveCapture.reason, "secret-like-value")

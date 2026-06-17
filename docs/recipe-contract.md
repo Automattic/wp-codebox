@@ -66,6 +66,9 @@ top-level fields:
 - `mounts`
 - `workspaces`
 - `extra_plugins`
+- `component_manifest`
+- `dependency_overlays`
+- `runtimeEnv`
 - `secretEnv`
 - `pluginRuntime`
 - `fixtureDatabases`

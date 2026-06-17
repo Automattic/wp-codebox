@@ -247,7 +247,7 @@ export interface RecipeRunDeclaredArtifact {
   name: string
   path: string
   required: boolean
-  status: "collected" | "missing" | "failed"
+  status: "collected" | "missing" | "failed" | "oversized" | "sensitive" | "skipped"
   exists: boolean
   type?: "file" | "directory" | "other"
   size?: number
@@ -256,6 +256,7 @@ export interface RecipeRunDeclaredArtifact {
   materialized?: TypedArtifactRef
   metadata?: Record<string, unknown>
   error?: RunOutput["error"]
+  diagnostics?: Record<string, unknown>
 }
 
 export type RecipeInterruptionSignal = "SIGINT" | "SIGTERM" | "SIGHUP"

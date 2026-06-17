@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 
@@ -26,6 +26,8 @@ export interface RecipeRuntimeEvidenceFileInput {
   kind: string
   contentType: string
   contents: string | Buffer
+  maxBytes?: number
+  skipSensitiveText?: boolean
 }
 
 export interface RecipeArtifactEvidenceResult {
@@ -594,11 +596,23 @@ export async function appendRecipeRuntimeEvidenceFiles(artifacts: ArtifactBundle
   const evidenceFiles: RecipeArtifactEvidenceFile[] = []
   for (const file of files) {
     const path = join(evidenceDirectory, file.filename)
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, file.contents)
+    const captured = await captureArtifactFile({
+      root: artifacts.directory,
+      path: relative(artifacts.directory, path),
+      kind: file.kind,
+      contentType: file.contentType,
+      contents: file.contents,
+      maxBytes: file.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES,
+      skipSensitiveText: file.skipSensitiveText,
+      redaction: { policy: "applied", sensitive: file.skipSensitiveText === true, reason: "Runtime evidence files are redacted and bounded before capture." },
+      provenance: { source: "recipe-run", operation: "append-runtime-evidence-file", id: file.filename },
+    })
+    if (captured.status !== "captured" || !captured.sha256) {
+      continue
+    }
     evidenceFiles.push({
       path: relative(artifacts.directory, path),
-      sha256: artifactFileDigest(file.contents).value,
+      sha256: captured.sha256,
       kind: file.kind,
       contentType: file.contentType,
     })

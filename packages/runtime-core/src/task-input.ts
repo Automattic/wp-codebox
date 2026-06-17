@@ -6,6 +6,16 @@ export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {}
 
 export const TASK_INPUT_SCHEMA = "wp-codebox/task-input/v1" as const
 export const TASK_INPUT_VERSION = 1 as const
+export const TASK_INPUT_ABILITY_ALIAS_FIELDS = [
+  "goal",
+  "target",
+  "allowed_tools",
+  "sandbox_tool_policy",
+  "expected_artifacts",
+  "structured_artifacts",
+  "policy",
+  "context",
+] as const
 
 export interface TaskTarget {
   kind: TaskTargetKind
@@ -62,8 +72,8 @@ export const TASK_INPUT_JSON_SCHEMA = {
   type: "object",
   required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
   properties: {
-    schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
-    version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
+    schema: { type: "string", const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
+    version: { type: "integer", const: TASK_INPUT_VERSION, description: "Task input contract version." },
     goal: { type: "string", description: "User-facing outcome the sandboxed coding agent should accomplish." },
     target: {
       type: "object",
