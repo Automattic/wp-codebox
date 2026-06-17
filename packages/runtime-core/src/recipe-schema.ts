@@ -8,6 +8,10 @@ export type WorkspaceRecipeJsonSchema = Record<string, unknown>
 export interface WorkspaceRecipeJsonSchemaOptions {
   recipeCommandIds?: readonly string[]
   runtimeBackendKinds?: readonly string[]
+  runtimeWordPressInstallModes?: readonly string[]
+  runtimeOverlayKinds?: readonly string[]
+  runtimeOverlayLibraries?: readonly string[]
+  runtimeOverlayStrategies?: readonly string[]
 }
 
 export interface WorkspaceRecipeJsonSchemaValidationIssue {
@@ -28,6 +32,11 @@ export interface AssertWorkspaceRecipeJsonSchemaOptions extends WorkspaceRecipeJ
 export type WorkspaceRecipeRuntimeCollectedArtifact =
   | { kind: "path"; index: number; artifact: WorkspaceRecipeDeclaredArtifact }
   | { kind: "typed"; index: number; artifact: WorkspaceRecipeTypedArtifact }
+
+const defaultRuntimeWordPressInstallModes = ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"] as const
+const defaultRuntimeOverlayKinds = ["bundled-library"] as const
+const defaultRuntimeOverlayLibraries = ["php-ai-client"] as const
+const defaultRuntimeOverlayStrategies = ["wordpress-scoped-bundle"] as const
 
 export function validateWorkspaceRecipeJsonSchema(recipe: unknown, options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchemaValidationResult {
   const validate = new Ajv2020({ strict: false }).compile(createWorkspaceRecipeJsonSchema(options))
@@ -105,7 +114,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "PHP runtime version passed to WordPress Playground, for example 8.3 or 8.4.",
           },
           wordpressInstallMode: {
-            enum: ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"],
+            enum: enumValues(options.runtimeWordPressInstallModes, defaultRuntimeWordPressInstallModes),
             description: "Controls how Playground prepares a mounted WordPress directory. Use do-not-attempt-installing for custom distributions that own their own boot/readiness probes.",
           },
           blueprint: { type: "object" },
@@ -481,11 +490,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         additionalProperties: false,
         required: ["kind", "library", "source", "strategy"],
         properties: {
-          kind: { const: "bundled-library" },
-          library: { const: "php-ai-client" },
+          kind: { enum: enumValues(options.runtimeOverlayKinds, defaultRuntimeOverlayKinds) },
+          library: { enum: enumValues(options.runtimeOverlayLibraries, defaultRuntimeOverlayLibraries) },
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
-          strategy: { const: "wordpress-scoped-bundle" },
+          strategy: { enum: enumValues(options.runtimeOverlayStrategies, defaultRuntimeOverlayStrategies) },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
@@ -802,6 +811,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       },
     },
   }
+}
+
+function enumValues<T extends string>(values: readonly T[] | undefined, fallback: readonly T[]): T[] {
+  return [...(values && values.length > 0 ? values : fallback)]
 }
 
 function runtimeBackendSchema(runtimeBackendKinds: readonly string[] | undefined): Record<string, unknown> {

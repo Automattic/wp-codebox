@@ -1,6 +1,6 @@
 import type { ArtifactBundle, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
-import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
+import { listCliRecipeCommandDefinitions } from "./runtime-backends.js"
 
 interface CliError {
   name: string
@@ -286,7 +286,7 @@ export function printRecipeSchemaHumanOutput(output: RecipeSchemaOutputLike): vo
 }
 
 export function printHelp(): void {
-  const recipeCommandIds = recipeCommandDefinitions().map((command) => command.id)
+  const recipeCommandIds = listCliRecipeCommandDefinitions().map((command) => command.id)
 
   console.log(`Usage:
   wp-codebox commands [--json]
@@ -311,6 +311,7 @@ export function printHelp(): void {
   wp-codebox artifacts bench-compare --baseline-bundle <dir> --candidate-bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
+  wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
@@ -365,6 +366,14 @@ Options:
                        Durable run registry directory for recipe-run.
   --registry <dir>    Durable run registry directory for runs lookup commands.
   --run-id <id>       Run ID for runs lookup commands.
+  --id <id>           Target id for target provision. Defaults to default.
+  --kind <kind>       Target kind for target provision. Defaults to generic.
+  --artifact-public-url-root <url>
+                       Optional public artifact URL root for target provision.
+  --artifact-path-prefix <path>
+                       Optional safe relative artifact prefix for target provision.
+  --trusted-origin <url>
+                       Trusted browser-session origin for target provision. Repeatable.
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
   --arg <key=value>    Command argument. Repeatable.

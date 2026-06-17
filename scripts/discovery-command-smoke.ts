@@ -1,8 +1,8 @@
 import { resolve } from "node:path"
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
-import { commandRegistry, recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
+import { commandRegistry } from "@automattic/wp-codebox-core/contracts"
 import Ajv2020 from "ajv/dist/2020.js"
-import { listCliRuntimeBackendKinds } from "../packages/cli/src/runtime-backends.js"
+import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../packages/cli/src/runtime-backends.js"
 import { readJson, repoRoot, runCliJson, runCliText } from "./test-kit.ts"
 
 interface CommandCatalogOutput {
@@ -24,8 +24,11 @@ interface RecipeSchemaOutput {
 }
 
 // Registry metadata is the source of truth for discovery and recipe help.
-const expectedCommandIds = recipeCommandDefinitions().map((command) => command.id)
-const expectedCatalogCommandIds = commandRegistry.map((command) => command.id)
+const expectedCommandIds = listCliRecipeCommandDefinitions().map((command) => command.id)
+const expectedCatalogCommandIds = [
+  ...commandRegistry.filter((command) => command.recipe === false).map((command) => command.id),
+  ...expectedCommandIds,
+]
 
 const representativeRecipes = [
   {
@@ -95,10 +98,18 @@ async function main(): Promise<void> {
   }
 
   const schemaOutput = await runCliJson<RecipeSchemaOutput>(["schema", "recipe", "--json"])
+  const recipePolicy = cliRuntimeBackendRecipePolicy()
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")
   assert(schemaOutput.id === "wp-codebox/workspace-recipe/v1", "Unexpected recipe schema id")
   assert(
-    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({ recipeCommandIds: expectedCommandIds, runtimeBackendKinds: listCliRuntimeBackendKinds() })),
+    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({
+      recipeCommandIds: expectedCommandIds,
+      runtimeBackendKinds: listCliRuntimeBackendKinds(),
+      runtimeWordPressInstallModes: recipePolicy.wordpressInstallModes,
+      runtimeOverlayKinds: recipePolicy.runtimeOverlayKinds,
+      runtimeOverlayLibraries: recipePolicy.runtimeOverlayLibraries,
+      runtimeOverlayStrategies: recipePolicy.runtimeOverlayStrategies,
+    })),
     "CLI recipe schema must come from the shared runtime-core schema factory"
   )
 

@@ -3,6 +3,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
@@ -1135,6 +1136,13 @@ export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackend
 
 export const playgroundRuntimeBackendProvider: RuntimeBackendProvider = {
   kind: "wordpress-playground",
+  recipePolicy: {
+    recipeCommands: recipeCommandDefinitions(),
+    wordpressInstallModes: ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"],
+    runtimeOverlayKinds: ["bundled-library"],
+    runtimeOverlayLibraries: ["php-ai-client"],
+    runtimeOverlayStrategies: ["wordpress-scoped-bundle"],
+  },
   createBackend(context = {}) {
     return createPlaygroundRuntimeBackend({ cliModule: context.cliModule as PlaygroundCliModule | undefined })
   },

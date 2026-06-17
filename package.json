@@ -59,6 +59,7 @@
     "wp-codebox:source": "node bin/wp-codebox-source.mjs",
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
+    "test:generic-primitives": "tsx tests/generic-primitives.test.ts",
     "check": "npm run smoke -- --group=check"
   },
   "workspaces": [

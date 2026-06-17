@@ -9,6 +9,7 @@ import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe
 import { runMaterializeReplayPackageCommand } from "./commands/replay-package.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
 import { runRunsArtifactsCommand, runRunsStatusCommand } from "./commands/runs.js"
+import { runTargetProvisionCommand } from "./commands/target.js"
 import { runWorkspacePolicyCheckCommand } from "./commands/workspace-policy.js"
 import { printHelp } from "./output.js"
 
@@ -39,6 +40,7 @@ export async function runCli(args: string[]): Promise<number> {
     benchCompare: runBenchCompareCommand,
     runsStatus: runRunsStatusCommand,
     runsArtifacts: runRunsArtifactsCommand,
+    targetProvision: runTargetProvisionCommand,
     commands: runCommandsCommand,
     recipeSchema: runRecipeSchemaCommand,
     doctor: runDoctorCommand,

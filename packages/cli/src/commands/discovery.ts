@@ -1,7 +1,7 @@
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
-import { commandRegistry, recipeCommandDefinitions, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
+import { commandRegistry, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput } from "../output.js"
-import { listCliRuntimeBackendKinds } from "../runtime-backends.js"
+import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandDefinitions, listCliRuntimeBackendKinds } from "../runtime-backends.js"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -53,19 +53,32 @@ function parseDiscoveryJsonOption(args: string[]): boolean {
 }
 
 function commandCatalogOutput(): CommandCatalogOutput {
+  const commands = new Map<string, Omit<CommandDefinition, "handler">>()
+  for (const { handler, ...metadata } of commandRegistry.filter((command) => command.recipe === false)) {
+    commands.set(metadata.id, metadata)
+  }
+  for (const { handler, ...metadata } of listCliRecipeCommandDefinitions()) {
+    commands.set(metadata.id, metadata)
+  }
+
   return {
     schema: "wp-codebox/command-catalog/v1",
-    commands: commandRegistry.map(({ handler, ...metadata }) => metadata),
+    commands: [...commands.values()],
   }
 }
 
 function recipeSchemaOutput(): RecipeSchemaOutput {
+  const recipePolicy = cliRuntimeBackendRecipePolicy()
   return {
     schema: "wp-codebox/json-schema/v1",
     id: "wp-codebox/workspace-recipe/v1",
     jsonSchema: createWorkspaceRecipeJsonSchema({
-      recipeCommandIds: recipeCommandDefinitions().map((command) => command.id),
+      recipeCommandIds: listCliRecipeCommandDefinitions().map((command) => command.id),
       runtimeBackendKinds: listCliRuntimeBackendKinds(),
+      runtimeWordPressInstallModes: recipePolicy.wordpressInstallModes,
+      runtimeOverlayKinds: recipePolicy.runtimeOverlayKinds,
+      runtimeOverlayLibraries: recipePolicy.runtimeOverlayLibraries,
+      runtimeOverlayStrategies: recipePolicy.runtimeOverlayStrategies,
     }),
   }
 }
