@@ -43,6 +43,23 @@ throw new RuntimeException('explicit pluginFile resolution must not read plugin 
   assert.ok(providerPlugin, "provider plugin should be staged from provider_plugin_paths")
   assert.equal(providerPlugin?.pluginFile, "ai-provider-for-opencode/ai-provider-for-opencode.php")
 
+  const providerManifest = recipe.inputs?.component_manifest?.providers?.find((plugin) => plugin.slug === "ai-provider-for-opencode")
+  assert.ok(providerManifest, "provider plugin should be present in the authoritative component manifest")
+  assert.equal(providerManifest?.entrypoint, "ai-provider-for-opencode/ai-provider-for-opencode.php")
+  assert.equal(providerManifest?.pluginFile, "ai-provider-for-opencode/ai-provider-for-opencode.php")
+  assert.equal(providerManifest?.mountedPath, "/wordpress/wp-content/plugins/ai-provider-for-opencode")
+
+  const componentRecipe = buildAgentTaskRecipe({
+    goal: "verify explicit component entrypoint",
+    component_contracts: [{ slug: "explicit-component", path: explicitSource, pluginFile: "explicit-component/custom-entry.php", loadAs: "plugin", activate: true }],
+    artifacts_path: join(root, "component-artifacts"),
+  }, normalizeTaskInput({ goal: "verify explicit component entrypoint" }), "latest")
+  const componentManifest = componentRecipe.inputs?.component_manifest?.components?.find((plugin) => plugin.slug === "explicit-component")
+  assert.ok(componentManifest, "component plugin should be present in the authoritative component manifest")
+  assert.equal(componentManifest?.entrypoint, "explicit-component/custom-entry.php")
+  assert.equal(componentManifest?.mountedPath, "/wordpress/wp-content/plugins/explicit-component")
+  assert.equal(componentManifest?.activate, true)
+
   const sandboxStep = recipe.workflow.steps.find((step) => step.command === "wp-codebox.agent-sandbox-run")
   const contractsArg = sandboxStep?.args?.find((arg) => arg.startsWith("provider-plugin-contracts-json="))
   assert.ok(contractsArg, "agent sandbox step should receive provider plugin contracts")

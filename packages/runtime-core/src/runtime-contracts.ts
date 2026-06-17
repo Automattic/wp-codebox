@@ -269,11 +269,14 @@ export interface WorkspaceRecipeExtraPlugin {
 export interface WorkspaceRecipeComponentManifestEntry {
   slug?: string
   source?: string
+  mountedPath?: string
+  entrypoint?: string
   pluginFile?: string
   loadAs?: "plugin" | "mu-plugin"
   activate?: boolean
   contractIndex?: number
   requestedPath?: string
+  provenance?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeComponentManifest {

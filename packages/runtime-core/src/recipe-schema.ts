@@ -280,11 +280,14 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         properties: {
           slug: { type: "string" },
           source: { type: "string" },
+          mountedPath: { type: "string" },
+          entrypoint: { type: "string" },
           pluginFile: { type: "string" },
           loadAs: { enum: ["plugin", "mu-plugin"] },
           activate: { type: "boolean" },
           contractIndex: { type: "integer", minimum: 0 },
           requestedPath: { type: "string" },
+          provenance: { $ref: "#/$defs/metadata" },
         },
       },
       distribution: {

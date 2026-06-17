@@ -575,6 +575,53 @@ function pg_resolve_runtime_cwd(string $cwd, string $plugin_path): string {
     return $real;
 }
 
+function pg_manifest_component_entry(string $plugin_slug): ?array {
+    $manifest = $GLOBALS['wp_codebox_component_manifest'] ?? null;
+    if (!is_array($manifest)) {
+        $json = defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON') ? WP_CODEBOX_COMPONENT_MANIFEST_JSON : '';
+        $decoded = is_string($json) && $json !== '' ? json_decode($json, true) : null;
+        $manifest = is_array($decoded) ? $decoded : null;
+    }
+    if (!is_array($manifest)) {
+        return null;
+    }
+
+    foreach (array('components', 'providers') as $section) {
+        foreach (is_array($manifest[$section] ?? null) ? $manifest[$section] : array() as $entry) {
+            if (is_array($entry) && (string) ($entry['slug'] ?? '') === $plugin_slug) {
+                return $entry;
+            }
+        }
+    }
+
+    return null;
+}
+
+function pg_manifest_component_plugin_file(string $plugin_slug, string $plugin_path): ?string {
+    $entry = pg_manifest_component_entry($plugin_slug);
+    if ($entry === null) {
+        return null;
+    }
+
+    $entrypoint = trim(str_replace('\\\\', '/', (string) ($entry['entrypoint'] ?? $entry['pluginFile'] ?? '')));
+    if ($entrypoint === '' || str_starts_with($entrypoint, '/') || str_contains($entrypoint, '..') || !str_ends_with($entrypoint, '.php')) {
+        throw new RuntimeException('manifest contains unsafe component entrypoint for slug ' . $plugin_slug);
+    }
+    if (!str_starts_with($entrypoint, $plugin_slug . '/')) {
+        throw new RuntimeException('manifest component entrypoint must be relative to the mounted plugin slug: ' . $entrypoint);
+    }
+
+    $relative = substr($entrypoint, strlen($plugin_slug) + 1);
+    $file = rtrim($plugin_path, '/') . '/' . $relative;
+    $real = realpath($file);
+    $plugin_real = realpath($plugin_path);
+    if ($real === false || $plugin_real === false || strpos($real, rtrim($plugin_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0 || !is_file($real) || !is_readable($real)) {
+        throw new RuntimeException('manifest component entrypoint is not readable under mounted plugin path: ' . $entrypoint);
+    }
+
+    return $real;
+}
+
 function pg_plugin_real_path(string $relative_path, string $kind): ?string {
     global $plugin_path;
     $relative_path = trim(str_replace('\\\\', '/', $relative_path));
@@ -717,6 +764,7 @@ function pg_run_load_component_stage(array $cfg): ?string {
     pg_stage_begin('load_component');
     try {
         $plugin_path = $cfg['plugin_path'];
+        $plugin_slug = (string) ($cfg['plugin_slug'] ?? basename($plugin_path));
         $loaded_file = null;
         $style_css = $plugin_path . '/style.css';
         if (file_exists($style_css) && strpos(file_get_contents($style_css), 'Theme Name:') !== false) {
@@ -725,11 +773,12 @@ function pg_run_load_component_stage(array $cfg): ?string {
                 require_once $plugin_path . '/functions.php';
             }
         } else {
-            foreach (glob($plugin_path . '/*.php') ?: array() as $main_file) {
+            $manifest_file = pg_manifest_component_plugin_file($plugin_slug, $plugin_path);
+            foreach ($manifest_file !== null ? array($manifest_file) : (glob($plugin_path . '/*.php') ?: array()) as $main_file) {
                 if (basename($main_file) === 'db.php') {
                     continue;
                 }
-                if (strpos(file_get_contents($main_file), 'Plugin Name:') !== false) {
+                if ($manifest_file !== null || strpos(file_get_contents($main_file), 'Plugin Name:') !== false) {
                     pg_log('PLUGIN_DETECTED ' . basename($main_file));
                     pg_log('PLUGIN_LOAD_CONTEXT ' . basename($main_file) . ' activate=false ' . pg_diagnostic_context());
                     require_once $main_file;
@@ -855,9 +904,9 @@ $loaded_dep_files = array();
 $loaded_component_file = null;
 
 require_once $tests_dir . '/includes/functions.php';
-tests_add_filter('muplugins_loaded', function () use ($plugin_path, $dep_mounts, $pre_component_plugins_loaded_callbacks, $pre_component_init_callbacks, &$deferred_install_plugins_loaded_callbacks, &$deferred_install_init_callbacks, &$loaded_dep_files, &$loaded_component_file) {
+tests_add_filter('muplugins_loaded', function () use ($plugin_slug, $plugin_path, $dep_mounts, $pre_component_plugins_loaded_callbacks, $pre_component_init_callbacks, &$deferred_install_plugins_loaded_callbacks, &$deferred_install_init_callbacks, &$loaded_dep_files, &$loaded_component_file) {
     $loaded_dep_files = pg_run_load_deps_stage(array('dep_mounts' => $dep_mounts));
-    $loaded_component_file = pg_run_load_component_stage(array('plugin_path' => $plugin_path, 'activate' => false));
+    $loaded_component_file = pg_run_load_component_stage(array('plugin_slug' => $plugin_slug, 'plugin_path' => $plugin_path, 'activate' => false));
     $deferred_install_plugins_loaded_callbacks = pg_defer_new_wordpress_hook_callbacks('plugins_loaded', $pre_component_plugins_loaded_callbacks);
     $deferred_install_init_callbacks = pg_defer_new_wordpress_hook_callbacks('init', $pre_component_init_callbacks);
 });
