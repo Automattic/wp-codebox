@@ -12,6 +12,7 @@ import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeD
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
+import { captureBrowserDomSnapshot, type BrowserDomSnapshotArtifact } from "./browser-dom-snapshot.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
@@ -23,7 +24,6 @@ import { phpBrowserWordPressDiagnosticsPlugin } from "./php-snippets.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import type { Page } from "playwright"
-import { captureVisualCompareDomSnapshot, type VisualCompareDomSnapshotArtifact } from "./browser-visual-compare.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
 const BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000
@@ -2467,8 +2467,8 @@ async function captureBrowserActionDomSnapshot({
   const sanitizedName = step?.name ? sanitizeScreenshotName(step.name) : undefined
   const relativeSnapshotRef = snapshotRef ?? `files/browser/dom-snapshot-${sanitizedName || `step-${step?.index ?? 0}`}.json`
   const snapshotFileName = relativeSnapshotRef.replace(/^files\/browser\//, "")
-  const snapshot = await captureVisualCompareDomSnapshot(page, maxElements)
-  const artifact: VisualCompareDomSnapshotArtifact = {
+  const snapshot = await captureBrowserDomSnapshot(page, maxElements)
+  const artifact: BrowserDomSnapshotArtifact = {
     schema: "wp-codebox/browser-dom-snapshot/v1",
     command: "wordpress.browser-actions",
     screenshot: screenshotRef,
