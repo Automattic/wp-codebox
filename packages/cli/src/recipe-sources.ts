@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
-import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
+import { collectPreparedSourceCleanupPaths, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -63,11 +63,7 @@ export interface PreparedExtraPlugin {
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
 
-export interface RecipeStagedFileProvenance {
-  kind: "local"
-  original: string
-  localPathCategory?: "recipe-relative"
-}
+export type RecipeStagedFileProvenance = PreparedSourceProvenance
 
 export interface PreparedStagedFile {
   source: string
@@ -264,13 +260,8 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
 }
 
 export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = [], dependencyOverlays: PreparedDependencyOverlay[] = []): Promise<void> {
-  await Promise.all([
-    cleanupRecipeWorkspaces(workspaces),
-    ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...stagedFiles.flatMap((stagedFile) => stagedFile.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...overlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...dependencyOverlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-  ])
+  const cleanupPaths = collectPreparedSourceCleanupPaths(extraPlugins, stagedFiles, overlays, dependencyOverlays)
+  await Promise.all([cleanupRecipeWorkspaces(workspaces), ...cleanupPaths.map((path) => rm(path, { recursive: true, force: true }))])
 }
 
 export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedExtraPlugin[]> {
@@ -404,16 +395,21 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
     const originalSource = resolve(recipeDirectory, stagedFile.source)
     const type = await stagedFileMountType(originalSource)
     const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-staged-file-"))
-    const stagedSource = join(stagingRoot, basename(originalSource))
-    await cp(originalSource, stagedSource, { recursive: type === "directory" })
+    const staged = prepareLocalSourceStageSync({
+      source: originalSource,
+      sourceRef: stagedFile.source,
+      targetRoot: stagingRoot,
+      recipeDirectory,
+      excludeNames: [],
+    })
     const provenance = stagedFileProvenance(stagedFile, recipeDirectory)
     stagedFiles.push({
-      source: stagedSource,
+      source: staged.source,
       originalSource,
       sourceRef: stagedFile.source,
       target: stagedFile.target,
       type,
-      cleanupPaths: [stagingRoot],
+      cleanupPaths: staged.cleanupPaths,
       provenance,
       metadata: {
         kind: "staged-file",
@@ -498,11 +494,14 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
     throw new Error(`Composer-backed ${label} source has no vendor directory, and Composer is not available to hydrate dependencies. Run composer install in ${source}, or install Composer on PATH before running WP Codebox.`)
   }
 
-  const hydratedSource = join(stagingRoot, "composer-source")
-  await cp(source, hydratedSource, {
-    recursive: true,
-    filter: (entry) => !workspaceSeedExcludeMatches(relative(source, entry), "vendor"),
+  const staged = prepareLocalSourceStageSync({
+    source,
+    targetRoot: stagingRoot,
+    targetName: "composer-source",
+    cleanupRoot: false,
+    excludeNames: ["vendor"],
   })
+  const hydratedSource = staged.source
 
   try {
     await execFileAsync(composer, ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"])
@@ -849,11 +848,7 @@ export async function recipeMountType(source: string, explicitType?: MountSpec["
 }
 
 export function stagedFileProvenance(stagedFile: WorkspaceRecipeStagedFile, recipeDirectory: string): RecipeStagedFileProvenance {
-  return {
-    kind: "local",
-    original: stagedFile.source,
-    localPathCategory: resolve(recipeDirectory, stagedFile.source).startsWith(recipeDirectory) ? "recipe-relative" : undefined,
-  }
+  return localPreparedSourceProvenance(stagedFile.source, recipeDirectory)
 }
 
 async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFileRelativeToSource: string, sourceRef: string): Promise<void> {
