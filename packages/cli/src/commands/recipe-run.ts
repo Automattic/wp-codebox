@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, assertFixtureImportDeterministicIdsSupported, createRuntime, fixtureImportDeterministicIdPlan, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, assertFixtureImportDeterministicIdsSupported, createRuntime, fixtureImportDeterministicIdPlan, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
-import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
@@ -23,7 +22,8 @@ import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipe
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import { executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -653,168 +653,6 @@ function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
   return options as RecipeValidateOptions
 }
 
-function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string): RecipeExecutionResult {
-  return {
-    ...execution,
-    recipePhase,
-    recipeStepIndex,
-    recipeCommand,
-  }
-}
-
-function recipeWorkflowStepIsAdvisory(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
-  return step.allowFailure === true || step.advisory === true
-}
-
-function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown): RecipeAdvisoryFailure {
-  return {
-    schema: "wp-codebox/recipe-advisory-failure/v1",
-    phase: workflowStep.phase,
-    index: workflowStep.index,
-    command: workflowStep.step.command,
-    status: "failed",
-    error: serializeRecipeRunError(error),
-  }
-}
-
-async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[]): Promise<RecipeBrowserEvidence[]> {
-  const manifestFiles = await artifactManifestFilesByPath(artifacts)
-  return executions.flatMap((execution) => recipeBrowserEvidenceForExecution(execution, manifestFiles))
-}
-
-function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence[] {
-  const command = execution.recipeCommand ?? execution.command
-  if (!recipeCommandProducesBrowserEvidence(command)) {
-    return []
-  }
-
-  const parsed = parseJsonObject(execution.stdout)
-  if (!parsed) {
-    return []
-  }
-
-  if (Array.isArray(parsed.profiles)) {
-    return parsed.profiles.flatMap((profile) => {
-      const profileEvidence = recipeBrowserEvidenceFromParsedExecution(execution, command, profile, manifestFiles)
-      return profileEvidence ? [profileEvidence] : []
-    })
-  }
-
-  const evidence = recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles)
-  return evidence ? [evidence] : []
-}
-
-function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResult, command: string, parsed: Record<string, unknown>, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidence | undefined {
-  const files = recipeBrowserEvidenceFiles(parsed.files, manifestFiles)
-  const summaryFile = browserEvidenceFileRef(stringValue((parsed.files as Record<string, unknown> | undefined)?.summary), manifestFiles)
-  if (Object.keys(files).length === 0 && !summaryFile) {
-    return undefined
-  }
-
-  const summary = parsed.summary
-  const summaryObject = isRecord(summary) ? summary : undefined
-  return stripUndefined({
-    schema: "wp-codebox/recipe-browser-evidence/v1",
-    phase: execution.recipePhase,
-    index: execution.recipeStepIndex,
-    command,
-    status: execution.exitCode === 0 ? "completed" : "failed",
-    requestedUrl: stringValue(parsed.requestedUrl),
-    finalUrl: stringValue(parsed.finalUrl ?? summaryObject?.finalUrl),
-    summaryFile,
-    files,
-    summary,
-    scriptResult: summaryObject?.scriptResult,
-  }) as RecipeBrowserEvidence
-}
-
-function recipeBrowserEvidenceFiles(files: unknown, manifestFiles: Map<string, ArtifactManifestFile>): Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]> {
-  if (!isRecord(files)) {
-    return {}
-  }
-
-  const refs: Record<string, RecipeBrowserEvidenceFileRef | RecipeBrowserEvidenceFileRef[]> = {}
-  for (const [name, value] of Object.entries(files)) {
-    const ref = Array.isArray(value)
-      ? value.map((entry) => browserEvidenceFileRef(stringValue(entry), manifestFiles)).filter((entry): entry is RecipeBrowserEvidenceFileRef => Boolean(entry))
-      : browserEvidenceFileRef(stringValue(value), manifestFiles)
-    if (Array.isArray(ref)) {
-      if (ref.length > 0) {
-        refs[name] = ref
-      }
-      continue
-    }
-    if (ref) {
-      refs[name] = ref
-    }
-  }
-  return refs
-}
-
-function browserEvidenceFileRef(path: string | undefined, manifestFiles: Map<string, ArtifactManifestFile>): RecipeBrowserEvidenceFileRef | undefined {
-  if (!path) {
-    return undefined
-  }
-  const manifestFile = manifestFiles.get(path)
-  return stripUndefined({
-    path,
-    kind: manifestFile?.kind,
-    contentType: manifestFile?.contentType,
-    sha256: manifestFile?.sha256,
-  }) as RecipeBrowserEvidenceFileRef
-}
-
-function recipeCommandProducesBrowserEvidence(command: string): boolean {
-  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.html-capture"
-}
-
-function parseJsonObject(raw: string): Record<string, unknown> | undefined {
-  try {
-    const parsed = JSON.parse(raw)
-    return isRecord(parsed) ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions): Promise<RecipeExecutionResult> {
-  try {
-    if (workflowStep.step.command === "wp-codebox.agent-fanout") {
-      const startedAt = new Date().toISOString()
-      const result = await executeAgentFanoutFromArgs(workflowStep.step.args ?? [], {
-        artifactRoot: artifactRoot || recipeDirectory,
-        recipeDirectory,
-        previewHoldSeconds: options?.previewHoldSeconds === undefined ? "" : String(options.previewHoldSeconds),
-        previewPublicUrl: options?.previewPublicUrl,
-      })
-      const finishedAt = new Date().toISOString()
-      return withRecipeExecutionPhase({
-        id: `agent-fanout-${workflowStep.index}`,
-        command: workflowStep.step.command,
-        args: workflowStep.step.args ?? [],
-        exitCode: result.success ? 0 : 1,
-        stdout: `${JSON.stringify(result, null, 2)}\n`,
-        stderr: "",
-        startedAt,
-        finishedAt,
-      }, workflowStep.phase, workflowStep.index, workflowStep.step.command)
-    }
-    const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
-    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
-  }
-}
-
 async function importRecipeFixtureDatabases(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunFixtureDatabase[]> {
   const results: RecipeRunFixtureDatabase[] = []
   for (const [index, fixture] of (recipe.inputs?.fixtureDatabases ?? []).entries()) {
@@ -849,41 +687,6 @@ async function importRecipeFixtureDatabases(recipe: WorkspaceRecipe, recipeDirec
     })
   }
   return results
-}
-
-async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunProbe[]> {
-  const results: RecipeRunProbe[] = []
-  for (const [index, probe] of (recipe.probes ?? []).entries()) {
-    const execution = await executeRecipeProbe(runtime, probe, recipeDirectory, index)
-    executions.push(execution)
-    const parsedJson = parseProbeJson(execution.stdout)
-    const failedJsonExpectation = probe.expectJson === true && parsedJson === undefined
-    results.push(stripUndefined({
-      schema: "wp-codebox/recipe-probe-result/v1" as const,
-      index,
-      name: probe.name,
-      status: execution.exitCode === 0 && !failedJsonExpectation ? "passed" as const : "failed" as const,
-      command: execution.command,
-      args: execution.args,
-      exitCode: execution.exitCode,
-      stdout: execution.stdout,
-      stderr: execution.stderr,
-      parsedJson,
-      allowFailure: probe.allowFailure === true,
-      metadata: probe.metadata,
-    }))
-  }
-  return results
-}
-
-async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe, recipeDirectory: string, index: number): Promise<RecipeExecutionResult> {
-  try {
-    const execution = await runtime.execute(await recipeExecutionSpec(probe.step, recipeDirectory))
-    return withRecipeExecutionPhase(execution, "setup", index, `recipe.probe:${probe.name}`)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Recipe probe "${probe.name}" failed before producing a result: ${message}`, { cause: error })
-  }
 }
 
 function recipeFailureRuntimeEvidenceFile(args: {
@@ -961,18 +764,6 @@ function parseFixtureDatabaseImportResult(stdout: string): { counts: Record<stri
     }
   }
   return { counts }
-}
-
-function parseProbeJson(stdout: string): unknown | undefined {
-  const trimmed = stdout.trim()
-  if (!trimmed) {
-    return undefined
-  }
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    return undefined
-  }
 }
 
 function fixtureDatabaseImportCode(fixture: WorkspaceRecipeFixtureDatabase, sql: string, reset: RecipeRunFixtureDatabase["reset"]): string {
@@ -1427,8 +1218,16 @@ function pluginTargetForReport(slug: string, loadAs: string): string {
   return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 function numberValue(value: unknown): number | undefined {
