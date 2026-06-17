@@ -8,6 +8,7 @@ import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtif
 import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
+import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
@@ -70,38 +71,7 @@ interface ReviewerAuthBootstrapRecord {
   userId: number
 }
 
-function browserCommandRequestsWordPressAdminAuth(command: ExecutionResult): boolean {
-  if (!["wordpress.browser-actions", "wordpress.browser-probe", "wordpress.browser-scenario", "wordpress.visual-compare"].includes(command.command)) {
-    return false
-  }
-
-  return command.args.some((arg) => argRequestsWordPressAdminAuth(arg))
-}
-
-function argRequestsWordPressAdminAuth(arg: string): boolean {
-  const separator = arg.indexOf("=")
-  if (separator > 0) {
-    const key = arg.slice(0, separator).trim()
-    const value = arg.slice(separator + 1).trim()
-    if (key === "auth" && value === "wordpress-admin") {
-      return true
-    }
-    if ((key === "scenario" || key === "scenario-json") && /"auth"\s*:\s*"wordpress-admin"/.test(value)) {
-      return true
-    }
-  }
-
-  return /"auth"\s*:\s*"wordpress-admin"/.test(arg)
-}
-
-function browserCommandWordPressAdminAuthUserId(command: ExecutionResult): number {
-  const raw = command.args.map((arg) => argKeyValue(arg)).find((entry) => entry?.key === "auth-user-id")?.value
-  const userId = raw ? Number.parseInt(raw, 10) : 1
-  return Number.isInteger(userId) && userId > 0 ? userId : 1
-}
-
-function reviewerAuthRedirectUrl(command: ExecutionResult, serverUrl: string): string | undefined {
-  const url = command.args.map((arg) => argKeyValue(arg)).find((entry) => entry?.key === "url")?.value
+function reviewerAuthRedirectUrl(url: string | undefined, serverUrl: string): string | undefined {
   if (!url) {
     return undefined
   }
@@ -110,17 +80,6 @@ function reviewerAuthRedirectUrl(command: ExecutionResult, serverUrl: string): s
     return new URL(url, serverUrl).toString()
   } catch {
     return undefined
-  }
-}
-
-function argKeyValue(arg: string): { key: string; value: string } | undefined {
-  const separator = arg.indexOf("=")
-  if (separator <= 0) {
-    return undefined
-  }
-  return {
-    key: arg.slice(0, separator).trim(),
-    value: arg.slice(separator + 1).trim(),
   }
 }
 
@@ -566,15 +525,15 @@ class PlaygroundRuntime implements Runtime {
   }
 
   private createReviewerAuthBootstrap(server: PlaygroundCliServer, preview: ArtifactPreview, expiresAt: string, commands: ExecutionResult[]): ArtifactReviewerAuthBootstrap | undefined {
-    const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
-    if (!authCommand || !server.previewRoutes || !isLocalPreviewUrl(preview.localUrl ?? preview.url)) {
+    const authRequirement = firstCommandWordPressAdminAuthRequirement(commands)
+    if (!authRequirement || !server.previewRoutes || !isLocalPreviewUrl(preview.localUrl ?? preview.url)) {
       return undefined
     }
 
     this.registerReviewerAuthBootstrapRoute(server)
     const token = randomBytes(24).toString("base64url")
-    const userId = browserCommandWordPressAdminAuthUserId(authCommand)
-    const redirectUrl = reviewerAuthRedirectUrl(authCommand, server.serverUrl) ?? server.serverUrl
+    const userId = authRequirement.userId
+    const redirectUrl = reviewerAuthRedirectUrl(authRequirement.redirectUrl, server.serverUrl) ?? server.serverUrl
     this.reviewerAuthBootstraps.set(token, {
       expiresAt,
       redirectUrl,
@@ -592,7 +551,7 @@ class PlaygroundRuntime implements Runtime {
       redirectUrl,
       expiresAt,
       evidence: {
-        command: authCommand.command,
+        command: authRequirement.command.command,
         auth: "wordpress-admin",
         userId,
       },

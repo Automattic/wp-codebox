@@ -41,6 +41,7 @@ import {
 } from "@automattic/wp-codebox-core"
 import { normalizeJsonValue, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { BrowserArtifact } from "./browser-artifacts.js"
+import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
@@ -814,8 +815,8 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
     return preview
   }
 
-  const authCommand = commands.find((command) => browserCommandRequestsWordPressAdminAuth(command))
-  if (!authCommand) {
+  const authRequirement = firstCommandWordPressAdminAuthRequirement(commands)
+  if (!authRequirement) {
     return preview
   }
 
@@ -834,7 +835,7 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
     retryable: false,
     reviewerSafe: false,
     evidence: {
-      command: authCommand.command,
+      command: authRequirement.command.command,
       auth: "wordpress-admin",
     },
   }
@@ -844,30 +845,6 @@ export function heldPreviewWithExternalAccessBlockers(preview: ArtifactPreview |
     blockers: [...(preview.blockers ?? []), blocker],
     reviewerAccess: previewReviewerAccess({ ...preview, blockers: [...(preview.blockers ?? []), blocker] }),
   }
-}
-
-function browserCommandRequestsWordPressAdminAuth(command: ExecutionResult): boolean {
-  if (!["wordpress.browser-actions", "wordpress.browser-probe", "wordpress.browser-scenario", "wordpress.visual-compare"].includes(command.command)) {
-    return false
-  }
-
-  return command.args.some((arg) => argRequestsWordPressAdminAuth(arg))
-}
-
-function argRequestsWordPressAdminAuth(arg: string): boolean {
-  const separator = arg.indexOf("=")
-  if (separator > 0) {
-    const key = arg.slice(0, separator).trim()
-    const value = arg.slice(separator + 1).trim()
-    if (key === "auth" && value === "wordpress-admin") {
-      return true
-    }
-    if ((key === "scenario" || key === "scenario-json") && /"auth"\s*:\s*"wordpress-admin"/.test(value)) {
-      return true
-    }
-  }
-
-  return /"auth"\s*:\s*"wordpress-admin"/.test(arg)
 }
 
 function evidenceRef(path: string, kind: string, contentType = "application/json"): ArtifactEvidenceRef {

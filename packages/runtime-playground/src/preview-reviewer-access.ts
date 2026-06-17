@@ -5,6 +5,7 @@ export function previewReviewerAccess(preview: ArtifactPreview | undefined): Art
     return {
       schema: "wp-codebox/preview-reviewer-access/v1",
       status: "unavailable",
+      outcome: "blocked",
       mode: "none",
       reviewerSafe: false,
       reason: "preview-not-held",
@@ -15,6 +16,7 @@ export function previewReviewerAccess(preview: ArtifactPreview | undefined): Art
     return {
       schema: "wp-codebox/preview-reviewer-access/v1",
       status: "ready",
+      outcome: "bootstrap",
       mode: "auth-bootstrap",
       reviewerSafe: true,
       openUrl: preview.reviewerAuthBootstrap.bootstrapUrl,
@@ -28,6 +30,7 @@ export function previewReviewerAccess(preview: ArtifactPreview | undefined): Art
     return {
       schema: "wp-codebox/preview-reviewer-access/v1",
       status: "blocked",
+      outcome: preview.blockers.some((blocker) => blocker.code === "external-wordpress-admin-auth-unavailable") ? "auth-required" : "blocked",
       mode: "none",
       reviewerSafe: false,
       blockers: preview.blockers,
@@ -41,6 +44,7 @@ export function previewReviewerAccess(preview: ArtifactPreview | undefined): Art
     return {
       schema: "wp-codebox/preview-reviewer-access/v1",
       status: "ready",
+      outcome: "public",
       mode: "direct-url",
       reviewerSafe: true,
       openUrl: safeUrl,
@@ -52,6 +56,7 @@ export function previewReviewerAccess(preview: ArtifactPreview | undefined): Art
   return {
     schema: "wp-codebox/preview-reviewer-access/v1",
     status: "blocked",
+    outcome: "local",
     mode: "none",
     reviewerSafe: false,
     expiresAt: preview.expiresAt,
