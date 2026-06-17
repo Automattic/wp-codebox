@@ -30,10 +30,18 @@ private static function browser_inheritance_resolution_payload( array $input ): 
 	return array( 'inheritance' => $inheritance );
 }
 
-/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
-private static function browser_input_with_inheritance( array $input, array $inheritance ): array {
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed>|WP_Error */
+private static function browser_input_with_inheritance( array $input, array $inheritance ): array|WP_Error {
 	$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::browser_provider_plugin_paths( $input ), self::browser_inheritance_provider_plugin_paths( $inheritance ) ) ) );
 	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ) ) ) );
+	if ( class_exists( 'WP_Codebox_Runtime_Recipe_Resolver' ) ) {
+		$resolved = WP_Codebox_Runtime_Recipe_Resolver::apply_to_input( $input, $inheritance );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$input = $resolved;
+	}
 
 	return $input;
 }

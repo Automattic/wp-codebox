@@ -51,6 +51,9 @@ public static function create_browser_playground_session( array $input ): array|
 		return $inheritance_payload;
 	}
 	$input           = self::browser_input_with_inheritance( $input, $inheritance_payload['inheritance'] );
+	if ( is_wp_error( $input ) ) {
+		return $input;
+	}
 	$browser_runner  = is_array( $input['browser_runner'] ?? null ) ? $input['browser_runner'] : array();
 	$browser_plugins = self::browser_plugins( $input );
 	if ( is_wp_error( $browser_plugins ) ) {

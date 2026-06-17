@@ -650,6 +650,9 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'model'                   => self::string_property_schema( $detailed ? 'AI model id to seed into the browser Playground agent invocation.' : '' ),
 		'mode'                    => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
 		'provider_plugin_paths'   => self::string_array_property_schema( $detailed ? 'AI provider plugin directories the browser sandbox should have available before code execution.' : '' ),
+		'runtime_recipe'          => $detailed ? self::runtime_recipe_input_schema() : self::object_property_schema(),
+		'runtime_packages'        => self::string_array_property_schema( $detailed ? 'Portable runtime package ids WP Codebox should resolve through the runtime package registry.' : '' ),
+		'runtime_capabilities'    => self::string_array_property_schema( $detailed ? 'Portable runtime capabilities WP Codebox should satisfy through registered runtime packages.' : '' ),
 		'agent_bundles'           => self::agent_bundle_schema(),
 		'inherit'                 => $inherit_schema,
 		'secret_env'              => self::string_array_property_schema( $detailed ? 'Parent environment variable names expected to be available to the browser sandbox. Values are never accepted in this payload.' : '' ),
@@ -750,6 +753,9 @@ private static function browser_runtime_input_schema(): array {
 		'description' => 'Structured browser Playground runtime dependencies compiled by WP Codebox into the session blueprint.',
 		'properties'  => array(
 			'components' => array( 'type' => 'array' ),
+			'packages'   => array( 'type' => 'array' ),
+			'capabilities' => array( 'type' => 'array' ),
+			'recipe'     => self::runtime_recipe_input_schema(),
 			'plugins'    => array( 'type' => 'array' ),
 			'mu_plugins' => array( 'type' => 'array' ),
 			'themes'     => array( 'type' => 'array' ),
@@ -766,6 +772,18 @@ private static function browser_runtime_input_schema(): array {
 				),
 			),
 			'prepared_runtime' => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function runtime_recipe_input_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Portable runtime recipe request. Callers name package ids or capabilities; WP Codebox resolves registered dependencies, package rows, inheritance, and placement details.',
+		'properties'  => array(
+			'packages'     => array( 'type' => 'array' ),
+			'capabilities' => array( 'type' => 'array' ),
 		),
 	);
 }
