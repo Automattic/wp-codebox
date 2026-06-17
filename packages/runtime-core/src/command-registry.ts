@@ -24,6 +24,7 @@ export interface CommandDefinition {
   outputShape: string
   outputSchema?: CommandOutputSchemaContract
   policyRequirement: string
+  requiresPolicyCommands?: readonly string[]
   recipe: boolean
   handler: CommandHandlerBinding
 }
@@ -426,6 +427,7 @@ export const commandRegistry = [
     ],
     outputShape: "JSON probe result emitted by the sandbox PHP runner.",
     policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
+    requiresPolicyCommands: ["wordpress.run-php"],
     recipe: true,
     handler: { kind: "recipe-alias", command: "wordpress.run-php" },
   },
@@ -448,7 +450,8 @@ export const commandRegistry = [
       { name: "code-file", description: "Path to PHP runner override for operator/debug use.", format: "path" },
     ],
     outputShape: "JSON agent run result emitted by the sandbox PHP runner.",
-    policyRequirement: "Recipe policy maps this helper to wordpress.run-php.",
+    policyRequirement: "Recipe policy maps this helper to wordpress.run-php and wordpress.wp-cli.",
+    requiresPolicyCommands: ["wordpress.run-php", "wordpress.wp-cli"],
     recipe: true,
     handler: { kind: "recipe-alias", command: "wordpress.run-php" },
   },
@@ -477,6 +480,36 @@ export type PlaygroundRuntimeCommandId = PlaygroundRuntimeCommandDefinition["id"
 
 export function getCommandDefinition(command: string): CommandDefinition | undefined {
   return commandRegistry.find((definition) => definition.id === command)
+}
+
+export function effectivePolicyCommands(command: string, definitions: readonly CommandDefinition[] = commandRegistry): string[] {
+  const byId = new Map(definitions.map((definition) => [definition.id, definition]))
+  const commands: string[] = []
+  const visiting = new Set<string>()
+
+  const collect = (id: string): void => {
+    if (visiting.has(id)) return
+    visiting.add(id)
+
+    const definition = byId.get(id)
+    const requirements = definition?.requiresPolicyCommands
+    if (requirements) {
+      for (const requiredCommand of requirements) {
+        collect(requiredCommand)
+      }
+    } else if (!commands.includes(id)) {
+      commands.push(id)
+    }
+
+    visiting.delete(id)
+  }
+
+  collect(command)
+  return commands
+}
+
+export function effectivePolicyCommandsFor(commands: readonly string[], definitions: readonly CommandDefinition[] = commandRegistry): string[] {
+  return [...new Set(commands.flatMap((command) => effectivePolicyCommands(command, definitions)))]
 }
 
 export function runtimeCommandDefinitions(): CommandDefinition[] {

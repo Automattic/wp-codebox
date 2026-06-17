@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { normalizeAgentTaskRunResult } from "../packages/runtime-core/src/index.js"
+import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
+import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 
 const succeeded = normalizeAgentTaskRunResult({ success: true, status: "completed" }, { exitStatus: 0 })
 assert.equal(succeeded.status, "succeeded")
@@ -32,5 +34,42 @@ const agentSandboxRun = catalog.commands.find((command) => command.id === "wp-co
 assert.ok(agentSandboxRun, "catalog includes wp-codebox.agent-sandbox-run")
 assert.equal(agentSandboxRun.acceptedArgs.some((arg) => arg.name === "code"), false)
 assert.equal(agentSandboxRun.acceptedArgs.some((arg) => arg.name === "code-file"), false)
+assert.deepEqual(agentSandboxRun.requiresPolicyCommands, ["wordpress.run-php", "wordpress.wp-cli"])
+
+assert.deepEqual(effectivePolicyCommands("wp-codebox.agent-sandbox-run"), ["wordpress.run-php", "wordpress.wp-cli"])
+assert.deepEqual(effectivePolicyCommands("custom.wrapper", [
+  {
+    id: "custom.wrapper",
+    description: "test wrapper",
+    acceptedArgs: [],
+    outputShape: "test",
+    policyRequirement: "test",
+    requiresPolicyCommands: ["custom.inner"],
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "custom.inner" },
+  },
+  {
+    id: "custom.inner",
+    description: "test inner",
+    acceptedArgs: [],
+    outputShape: "test",
+    policyRequirement: "test",
+    requiresPolicyCommands: ["wordpress.run-php"],
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wordpress.run-php" },
+  },
+]), ["wordpress.run-php"])
+
+const agentRecipePolicy = recipePolicy({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      { command: "wp-codebox.agent-sandbox-run", args: ["task=Verify policy dependencies"] },
+    ],
+  },
+} as never)
+assert.equal(agentRecipePolicy.commands.includes("wordpress.run-php"), true)
+assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
+assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
 
 console.log("agent task contracts passed")

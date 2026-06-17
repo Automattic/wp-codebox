@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { effectivePolicyCommandsFor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -22,6 +23,7 @@ export const defaultPolicy: RuntimePolicy = {
 }
 
 const cliRuntimeRecipePolicy = cliRuntimeBackendRecipePolicy()
+const cliRecipeCommandDefinitions = cliRuntimeRecipePolicy.recipeCommands
 const supportedRecipeCommands = new Set(listCliRecipeCommandIds())
 const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
 const supportedRuntimeOverlayKinds = uniqueRuntimeOverlayDescriptorValues("kind")
@@ -763,13 +765,10 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     ...(recipe.inputs?.pluginRuntime?.healthProbes ?? []).map(pluginRuntimeHealthProbeStep),
   ].map((step) => step.command)
   const commands = [
-    ...recipeWorkflowSteps(recipe).map(({ step }) => step.command.startsWith("wp-codebox.agent-") ? "wordpress.run-php" : step.command),
-    ...pluginRuntimeCommands,
-    ...(recipe.probes ?? []).map((probe) => probe.step.command),
+    ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
   ]
-  if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wp-codebox.agent-sandbox-run")) {
-    commands.unshift("wordpress.wp-cli")
-  }
   if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {
     commands.unshift("wordpress.wp-cli")
   }
