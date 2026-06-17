@@ -1,4 +1,5 @@
 export * from "./artifact-manifest.js"
+export * from "./artifact-capture-policy.js"
 export * from "./artifact-layout.js"
 export * from "./artifact-references.js"
 export * from "./file-tree-policy.js"

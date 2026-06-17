@@ -1,6 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import { join, relative } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile } from "@automattic/wp-codebox-core"
+import { join } from "node:path"
+import { writeArtifactPart, type ArtifactManifestFile } from "@automattic/wp-codebox-core"
 import { redactArtifactFiles } from "./artifact-bundle-writer.js"
 import type { ArtifactRedactor } from "./artifacts.js"
 import type { normalizePluginCheckOutput, normalizeThemeCheckOutput } from "./commands.js"
@@ -11,6 +10,7 @@ export interface PluginCheckArtifact {
     raw: string
     normalized: string
   }
+  manifestFiles: ArtifactManifestFile[]
   summary: ReturnType<typeof normalizePluginCheckOutput>["summary"]
 }
 
@@ -20,6 +20,7 @@ export interface ThemeCheckArtifact {
     raw: string
     normalized: string
   }
+  manifestFiles: ArtifactManifestFile[]
   summary: ReturnType<typeof normalizeThemeCheckOutput>["summary"]
   status: ReturnType<typeof normalizeThemeCheckOutput>["status"]
   exitCode: number
@@ -31,20 +32,33 @@ export async function writePluginCheckArtifacts(
   rawOutput: string,
   normalized: ReturnType<typeof normalizePluginCheckOutput>,
 ): Promise<PluginCheckArtifact> {
-  const pluginCheckDirectory = join(artifactRoot, "files", "plugin-check")
-  await mkdir(pluginCheckDirectory, { recursive: true })
   const safeSlug = pluginSlug.replace(/[^a-z0-9_-]/gi, "-")
-  const rawPath = join(pluginCheckDirectory, `${safeSlug}.raw.json`)
-  const normalizedPath = join(pluginCheckDirectory, `${safeSlug}.json`)
-  await writeFile(rawPath, rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`)
-  await writeFile(normalizedPath, `${JSON.stringify(normalized, null, 2)}\n`)
+  const raw = await writeArtifactPart({
+    root: artifactRoot,
+    path: join("files", "plugin-check", `${safeSlug}.raw.json`),
+    kind: "plugin-check-raw",
+    contentType: "application/json",
+    contents: rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`,
+    redaction: { policy: "required", sensitive: true, reason: "Plugin check raw output may include local paths or captured diagnostics." },
+    provenance: { source: "runtime-playground", operation: "plugin-check", id: pluginSlug },
+  })
+  const normalizedArtifact = await writeArtifactPart({
+    root: artifactRoot,
+    path: join("files", "plugin-check", `${safeSlug}.json`),
+    kind: "plugin-check",
+    contentType: "application/json",
+    contents: `${JSON.stringify(normalized, null, 2)}\n`,
+    redaction: { policy: "required", sensitive: true, reason: "Plugin check normalized output may include local paths or captured diagnostics." },
+    provenance: { source: "runtime-playground", operation: "plugin-check", id: pluginSlug },
+  })
 
   return {
     targetPlugin: pluginSlug,
     files: {
-      raw: relative(artifactRoot, rawPath),
-      normalized: relative(artifactRoot, normalizedPath),
+      raw: raw.path,
+      normalized: normalizedArtifact.path,
     },
+    manifestFiles: [raw.manifestFile, normalizedArtifact.manifestFile],
     summary: normalized.summary,
   }
 }
@@ -56,44 +70,44 @@ export async function writeThemeCheckArtifacts(
   normalized: ReturnType<typeof normalizeThemeCheckOutput>,
 ): Promise<ThemeCheckArtifact> {
   const safeTheme = theme.replace(/[^a-z0-9_-]/gi, "-") || "theme"
-  const directory = join(artifactRoot, "files", "theme-check")
-  await mkdir(directory, { recursive: true })
-  const rawPath = join(directory, `${safeTheme}.raw.txt`)
-  const normalizedPath = join(directory, `${safeTheme}.normalized.json`)
-  await writeFile(rawPath, raw.endsWith("\n") ? raw : `${raw}\n`)
-  await writeFile(normalizedPath, `${JSON.stringify(normalized, null, 2)}\n`)
+  const rawArtifact = await writeArtifactPart({
+    root: artifactRoot,
+    path: join("files", "theme-check", `${safeTheme}.raw.txt`),
+    kind: "theme-check-raw",
+    contentType: "text/plain",
+    contents: raw.endsWith("\n") ? raw : `${raw}\n`,
+    redaction: { policy: "required", sensitive: true, reason: "Theme check raw output may include local paths or captured diagnostics." },
+    provenance: { source: "runtime-playground", operation: "theme-check", id: theme },
+  })
+  const normalizedArtifact = await writeArtifactPart({
+    root: artifactRoot,
+    path: join("files", "theme-check", `${safeTheme}.normalized.json`),
+    kind: "theme-check-normalized",
+    contentType: "application/json",
+    contents: `${JSON.stringify(normalized, null, 2)}\n`,
+    redaction: { policy: "required", sensitive: true, reason: "Theme check normalized output may include local paths or captured diagnostics." },
+    provenance: { source: "runtime-playground", operation: "theme-check", id: theme },
+  })
 
   return {
     theme,
     files: {
-      raw: relative(artifactRoot, rawPath),
-      normalized: relative(artifactRoot, normalizedPath),
+      raw: rawArtifact.path,
+      normalized: normalizedArtifact.path,
     },
+    manifestFiles: [rawArtifact.manifestFile, normalizedArtifact.manifestFile],
     summary: normalized.summary,
     status: normalized.status,
     exitCode: normalized.exitCode,
   }
 }
 
-export function pluginCheckManifestFiles(artifactRoot: string, pluginChecks: PluginCheckArtifact[]): ArtifactManifestFile[] {
-  return pluginChecks.flatMap((check) => [
-    artifactManifestFile(join(artifactRoot, check.files.raw), "plugin-check-raw", "application/json"),
-    artifactManifestFile(join(artifactRoot, check.files.normalized), "plugin-check", "application/json"),
-  ])
+export function pluginCheckManifestFiles(_artifactRoot: string, pluginChecks: PluginCheckArtifact[]): ArtifactManifestFile[] {
+  return pluginChecks.flatMap((check) => check.manifestFiles)
 }
 
-export function themeCheckManifestFiles(artifactRoot: string, themeChecks: ThemeCheckArtifact[]): ArtifactManifestFile[] {
-  if (themeChecks.length === 0) {
-    return []
-  }
-
-  const files = new Map<string, { kind: string; contentType: string }>()
-  for (const check of themeChecks) {
-    files.set(check.files.raw, { kind: "theme-check-raw", contentType: "text/plain" })
-    files.set(check.files.normalized, { kind: "theme-check-normalized", contentType: "application/json" })
-  }
-
-  return [...files.entries()].map(([path, entry]) => artifactManifestFile(join(artifactRoot, path), entry.kind, entry.contentType))
+export function themeCheckManifestFiles(_artifactRoot: string, themeChecks: ThemeCheckArtifact[]): ArtifactManifestFile[] {
+  return themeChecks.flatMap((check) => check.manifestFiles)
 }
 
 export async function redactPluginCheckArtifacts(artifactRoot: string, pluginChecks: PluginCheckArtifact[], redactor: ArtifactRedactor): Promise<void> {

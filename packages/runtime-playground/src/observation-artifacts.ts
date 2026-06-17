@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import type { ObservationSpec, RuntimeCreateSpec, RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import type { ArtifactManifestFile, ObservationSpec, RuntimeCreateSpec, RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import { writeArtifactPart } from "@automattic/wp-codebox-core"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
@@ -18,7 +17,7 @@ export async function observeWordPressState({
   server: PlaygroundCliServer
   spec: ObservationSpec
   runtimeSpec: RuntimeCreateSpec
-}): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
+}): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[]; artifactManifestFiles: ArtifactManifestFile[] }> {
   const config = {
     sections: spec.sections,
     redaction: spec.redaction ?? "safe",
@@ -37,20 +36,28 @@ export async function observeWordPressState({
   }
   const sectionArtifacts: Record<string, { artifact: string; sha256: string; bytes: number }> = {}
   const artifactRefs: RuntimeEpisodeTraceRef[] = []
+  const manifestFiles: ArtifactManifestFile[] = []
   const sections = stateExport.sections ?? {}
 
   for (const [section, contents] of Object.entries(sections)) {
     const serialized = `${JSON.stringify({ schema: "wp-codebox/wordpress-state-section/v1", version: 1, section, data: contents }, null, 2)}\n`
-    const digest = createHash("sha256").update(serialized).digest("hex")
     const relativePath = `files/observations/${observationId}-wordpress-state-${safeArtifactSegment(section)}.json`
-    await mkdir(dirname(join(artifactRoot, relativePath)), { recursive: true })
-    await writeFile(join(artifactRoot, relativePath), serialized)
-    sectionArtifacts[section] = { artifact: relativePath, sha256: digest, bytes: Buffer.byteLength(serialized) }
+    const part = await writeArtifactPart({
+      root: artifactRoot,
+      path: relativePath,
+      kind: "wordpress-state-section",
+      contentType: "application/json",
+      contents: serialized,
+      redaction: { policy: "required", sensitive: true, reason: "WordPress state sections can include site content, users, options, or route data depending on observation config." },
+      provenance: { source: "runtime-playground", operation: "observe-wordpress-state", id: `${observationId}:${section}` },
+    })
+    sectionArtifacts[section] = { artifact: part.path, sha256: part.manifestFile.sha256.value, bytes: part.bytes }
+    manifestFiles.push(part.manifestFile)
     artifactRefs.push({
       kind: "wordpress-state-section",
       id: `${observationId}:${section}`,
-      path: relativePath,
-      digest: { algorithm: "sha256", value: digest },
+      path: part.path,
+      digest: part.manifestFile.sha256,
     })
   }
 
@@ -64,6 +71,7 @@ export async function observeWordPressState({
       artifacts: sectionArtifacts,
     },
     artifactRefs,
+    artifactManifestFiles: manifestFiles,
   }
 }
 
@@ -77,7 +85,7 @@ export async function observeHttpResponse({
   observationId: string
   spec: ObservationSpec
   url: string
-}): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
+}): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[]; artifactManifestFiles: ArtifactManifestFile[] }> {
   const response = await fetch(url, {
     method: spec.method ?? "GET",
     headers: spec.headers,
@@ -86,6 +94,7 @@ export async function observeHttpResponse({
   const body = await response.text()
   const bodyDigest = createHash("sha256").update(body).digest("hex")
   const artifactRefs: RuntimeEpisodeTraceRef[] = []
+  const manifestFiles: ArtifactManifestFile[] = []
   const data: Record<string, unknown> = {
     url,
     method: spec.method ?? "GET",
@@ -100,17 +109,25 @@ export async function observeHttpResponse({
     data.body = body
   } else if (body.length > 0) {
     const relativePath = `files/observations/${observationId}-body.txt`
-    await mkdir(dirname(join(artifactRoot, relativePath)), { recursive: true })
-    await writeFile(join(artifactRoot, relativePath), body)
+    const part = await writeArtifactPart({
+      root: artifactRoot,
+      path: relativePath,
+      kind: "observation-artifact",
+      contentType: response.headers.get("content-type") ?? "text/plain",
+      contents: body,
+      redaction: { policy: "required", sensitive: true, reason: "Observed HTTP responses can include private content, headers, or credentials." },
+      provenance: { source: "runtime-playground", operation: "observe-http-response", id: observationId, metadata: { url, method: spec.method ?? "GET", status: response.status } },
+    })
+    manifestFiles.push(part.manifestFile)
     artifactRefs.push({
       kind: "observation-artifact",
       id: `${observationId}:body`,
-      path: relativePath,
-      digest: { algorithm: "sha256", value: bodyDigest },
+      path: part.path,
+      digest: part.manifestFile.sha256,
     })
   }
 
-  return { data, artifactRefs }
+  return { data, artifactRefs, artifactManifestFiles: manifestFiles }
 }
 
 function wordpressStateExportPhp(config: Record<string, unknown>): string {

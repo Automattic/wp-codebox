@@ -25,6 +25,7 @@ import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
 import type {
   ArtifactBundle,
+  ArtifactManifestFile,
   ArtifactPreview,
   ArtifactReviewerAuthBootstrap,
   ArtifactSpec,
@@ -302,6 +303,7 @@ class PlaygroundRuntime implements Runtime {
       data: observed.data,
       observedAt,
       ...(observed.artifactRefs.length > 0 ? { artifactRefs: observed.artifactRefs } : {}),
+      ...(observed.artifactManifestFiles.length > 0 ? { artifactManifestFiles: observed.artifactManifestFiles } : {}),
     }
     observation.digest = runtimeEpisodeDigest({
       schema: RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -1023,8 +1025,9 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     void Promise.resolve(this.spec.onBrowserStartupProgress?.(event)).catch(() => undefined)
   }
 
-  private async observeData(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[] }> {
+  private async observeData(spec: ObservationSpec, observationId: string): Promise<{ data: unknown; artifactRefs: RuntimeEpisodeTraceRef[]; artifactManifestFiles: ArtifactManifestFile[] }> {
     const artifactRefs: RuntimeEpisodeTraceRef[] = []
+    const artifactManifestFiles: ArtifactManifestFile[] = []
 
     if (spec.type === "command-result") {
       const command = spec.commandId ? this.commands.find((candidate) => candidate.id === spec.commandId) : this.commands.at(-1)
@@ -1043,6 +1046,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
             }
           : { commandId: spec.commandId ?? null, found: false },
         artifactRefs,
+        artifactManifestFiles,
       }
     }
 
@@ -1055,14 +1059,14 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     }
 
     if (spec.type === "browser-result") {
-      return { data: browserArtifactReviewSummary(this.browserProbes) ?? { probes: [] }, artifactRefs }
+      return { data: browserArtifactReviewSummary(this.browserProbes) ?? { probes: [] }, artifactRefs, artifactManifestFiles }
     }
 
     if (spec.type === "runtime-events" || spec.type === "runtime-logs") {
-      return { data: this.events, artifactRefs }
+      return { data: this.events, artifactRefs, artifactManifestFiles }
     }
 
-    return { data: await this.observeStub(spec), artifactRefs }
+    return { data: await this.observeStub(spec), artifactRefs, artifactManifestFiles }
   }
 
   private async observeStub(spec: ObservationSpec): Promise<unknown> {

@@ -31,7 +31,22 @@ export interface ArtifactManifestFile {
     | (string & {})
   contentType: string
   sha256: ArtifactFileDigest
+  redaction?: ArtifactRedactionMetadata
+  provenance?: ArtifactProvenanceMetadata
   viewer?: ArtifactViewerMetadata
+}
+
+export interface ArtifactRedactionMetadata {
+  policy: "none" | "required" | "applied" | (string & {})
+  reason?: string
+  sensitive?: boolean
+}
+
+export interface ArtifactProvenanceMetadata {
+  source: string
+  operation?: string
+  id?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface ArtifactViewerMetadata {
@@ -79,8 +94,15 @@ export function artifactFileDigest(contents: string | Buffer): ArtifactFileDiges
   return { algorithm: "sha256", value: createHash("sha256").update(contents).digest("hex") }
 }
 
-export function artifactManifestFile(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: ArtifactFileDigest = placeholderArtifactFileDigest(), viewer?: ArtifactViewerMetadata): ArtifactManifestFile {
-  return stripUndefined({ path, kind, contentType, sha256, viewer })
+export interface ArtifactManifestFileOptions {
+  viewer?: ArtifactViewerMetadata
+  redaction?: ArtifactRedactionMetadata
+  provenance?: ArtifactProvenanceMetadata
+}
+
+export function artifactManifestFile(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: ArtifactFileDigest = placeholderArtifactFileDigest(), viewerOrOptions?: ArtifactViewerMetadata | ArtifactManifestFileOptions): ArtifactManifestFile {
+  const options = artifactManifestFileOptions(viewerOrOptions)
+  return stripUndefined({ path, kind, contentType, sha256, ...options })
 }
 
 export function artifactManifestFileWithSha256(path: string, kind: ArtifactManifestFile["kind"], contentType: string, sha256: string): ArtifactManifestFile {
@@ -155,4 +177,14 @@ function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFil
 
 function stripUndefined<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T
+}
+
+function artifactManifestFileOptions(viewerOrOptions: ArtifactViewerMetadata | ArtifactManifestFileOptions | undefined): ArtifactManifestFileOptions {
+  if (!viewerOrOptions) {
+    return {}
+  }
+  if ("base" in viewerOrOptions && "query" in viewerOrOptions && "replay" in viewerOrOptions) {
+    return { viewer: viewerOrOptions }
+  }
+  return viewerOrOptions
 }

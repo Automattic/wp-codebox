@@ -1,13 +1,19 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
+import { mkdtempSync } from "node:fs"
 import {
+  artifactFileDigest,
   artifactStoragePath,
   artifactStoragePublicUrl,
   materializationPhaseResult,
   materializationRunArtifactRefs,
+  normalizeArtifactPartPath,
   runtimeArtifactStorageDescriptor,
   trustedBrowserSessionOrigin,
   trustedBrowserSessionOrigins,
+  writeArtifactPart,
 } from "../packages/runtime-core/src/index.js"
 
 const storage = runtimeArtifactStorageDescriptor({
@@ -48,3 +54,22 @@ assert.deepEqual(materializationRunArtifactRefs([phase]), [
     digest: { algorithm: "sha256", value: "abc" },
   },
 ])
+
+const artifactRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-artifact-part-"))
+const part = await writeArtifactPart({
+  root: artifactRoot,
+  path: "files/check/result.json",
+  kind: "check-result",
+  contentType: "application/json",
+  contents: "{\"ok\":true}\n",
+  redaction: { policy: "required", sensitive: true, reason: "test sensitive artifact" },
+  provenance: { source: "test", operation: "write-artifact-part", id: "result" },
+})
+
+assert.equal(part.path, "files/check/result.json")
+assert.equal(await readFile(part.absolutePath, "utf8"), "{\"ok\":true}\n")
+assert.deepEqual(part.manifestFile.sha256, artifactFileDigest("{\"ok\":true}\n"))
+assert.deepEqual(part.manifestFile.redaction, { policy: "required", sensitive: true, reason: "test sensitive artifact" })
+assert.deepEqual(part.manifestFile.provenance, { source: "test", operation: "write-artifact-part", id: "result" })
+assert.equal(normalizeArtifactPartPath("/files//check/result.json"), "files/check/result.json")
+assert.throws(() => normalizeArtifactPartPath("files/../secret.txt"), /relative path/)
