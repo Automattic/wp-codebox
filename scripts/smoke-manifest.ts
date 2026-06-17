@@ -56,6 +56,8 @@ export const smokeGroups = {
       tsxSmoke("file-tree-policy-smoke"),
       tsxSmoke("policy-validation-smoke"),
       tsxSmoke("workspace-policy-smoke"),
+      tsxSmoke("source-policy-smoke"),
+      tsxSmoke("overlay-preparer-registry-smoke"),
     ],
   },
   artifact: {
