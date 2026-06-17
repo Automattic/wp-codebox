@@ -38,6 +38,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private WP_Codebox_Host_Run_Result_Normalizer $run_result_normalizer;
 	private WP_Codebox_Parent_Site_Seed_Exporter $site_seed_exporter;
 	private WP_Codebox_Run_Plan $run_plan;
+	private WP_Codebox_Agent_Process_Runner $process_runner;
 
 	/**
 	 * @param array<string, callable> $callbacks Test seams for pure-PHP smoke coverage.
@@ -50,6 +51,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$this->run_result_normalizer = new WP_Codebox_Host_Run_Result_Normalizer();
 		$this->site_seed_exporter    = new WP_Codebox_Parent_Site_Seed_Exporter();
 		$this->run_plan              = new WP_Codebox_Run_Plan();
+		$this->process_runner        = new WP_Codebox_Agent_Process_Runner( $callbacks );
 	}
 
 	/**
@@ -59,7 +61,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public function run( array $input ): array|WP_Error {
-		if ( ! $this->shell_available() ) {
+		if ( ! $this->process_runner->shell_available() ) {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
@@ -68,7 +70,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $prepared;
 		}
 
-		$result = $this->run_command( (string) $prepared['command'], $prepared['process_secret_env'], (int) $prepared['timeout_seconds'] );
+		$result = $this->process_runner->run_command( (string) $prepared['command'], $prepared['process_secret_env'], (int) $prepared['timeout_seconds'] );
 
 		return $this->complete_agent_task_run( $prepared, $result );
 	}
@@ -80,7 +82,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public function run_fanout( array $input ): array|WP_Error {
-		if ( ! $this->shell_available() ) {
+		if ( ! $this->process_runner->shell_available() ) {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
@@ -268,7 +270,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public function run_batch( array $input ): array|WP_Error {
-		if ( ! $this->shell_available() ) {
+		if ( ! $this->process_runner->shell_available() ) {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
@@ -489,7 +491,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					continue;
 				}
 
-				$started = $this->start_prepared_fanout_worker( $item );
+				$started = $this->process_runner->start_fanout_worker_process( $item );
 				if ( is_wp_error( $started ) ) {
 					$runs[ (int) $item['index'] ] = $this->fanout_worker_error_result( $item, $started, 0, 0 );
 					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $item['index'] ] );
@@ -501,40 +503,14 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			}
 
 			foreach ( $active as $active_index => &$worker ) {
-				$worker['output'] .= (string) stream_get_contents( $worker['pipes'][1] );
-				$worker['error_output'] .= (string) stream_get_contents( $worker['pipes'][2] );
-				$status  = proc_get_status( $worker['process'] );
-				$running = (bool) ( $status['running'] ?? false );
-				$elapsed = microtime( true ) - (float) $worker['started_at'];
-				$timeout = (int) ( $worker['prepared']['timeout_seconds'] ?? 0 );
+				$captured = $this->process_runner->capture_fanout_worker_process_result( $worker );
+				$worker   = $captured['worker'];
 
-				if ( $running && $timeout > 0 && $elapsed >= $timeout ) {
-					proc_terminate( $worker['process'] );
-					$worker['timed_out'] = true;
-					$running = false;
-				}
-
-				if ( $running ) {
+				if ( null === $captured['result'] ) {
 					continue;
 				}
 
-				$worker['output'] .= (string) stream_get_contents( $worker['pipes'][1] );
-				$worker['error_output'] .= (string) stream_get_contents( $worker['pipes'][2] );
-				fclose( $worker['pipes'][1] );
-				fclose( $worker['pipes'][2] );
-				$exit_code = proc_close( $worker['process'] );
-				if ( true === ( $worker['timed_out'] ?? false ) ) {
-					$exit_code = 124;
-				}
-
-				$result = array(
-					'exit_code' => $exit_code,
-					'output'    => trim( (string) $worker['output'] . "\n" . (string) $worker['error_output'] ),
-				);
-				if ( true === ( $worker['timed_out'] ?? false ) ) {
-					$result['timed_out'] = true;
-					$result['timeout_seconds'] = $timeout;
-				}
+				$result = $captured['result'];
 
 				$completed = $this->complete_agent_task_run( $worker['prepared'], $result );
 				$runs[ (int) $worker['index'] ] = is_wp_error( $completed ) ? $this->fanout_worker_error_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) ) : $this->fanout_worker_success_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) );
@@ -551,39 +527,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $runs;
-	}
-
-	/** @param array<string,mixed> $item Prepared worker item. @return array<string,mixed>|WP_Error */
-	private function start_prepared_fanout_worker( array $item ): array|WP_Error {
-		if ( ! function_exists( 'proc_open' ) ) {
-			return new WP_Error( 'wp_codebox_proc_open_unavailable', 'Fanout execution requires proc_open support.', array( 'status' => 500 ) );
-		}
-
-		$prepared       = is_array( $item['prepared'] ?? null ) ? $item['prepared'] : array();
-		$descriptor_spec = array(
-			1 => array( 'pipe', 'w' ),
-			2 => array( 'pipe', 'w' ),
-		);
-		$current_env = getenv();
-		$secret_env  = is_array( $prepared['process_secret_env'] ?? null ) ? $prepared['process_secret_env'] : array();
-		$process     = proc_open( (string) $prepared['command'], $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
-		if ( ! is_resource( $process ) ) {
-			return new WP_Error( 'wp_codebox_fanout_worker_start_failed', 'Could not start fanout worker process.', array( 'status' => 500, 'worker_id' => (string) $item['id'] ) );
-		}
-
-		stream_set_blocking( $pipes[1], false );
-		stream_set_blocking( $pipes[2], false );
-
-		return array_merge(
-			$item,
-			array(
-				'process'      => $process,
-				'pipes'        => $pipes,
-				'started_at'   => microtime( true ),
-				'output'       => '',
-				'error_output' => '',
-			)
-		);
 	}
 
 	/** @param array<string,mixed> $worker Worker metadata. @param array<string,mixed> $result Worker result. @return array<string,mixed> */
@@ -792,14 +735,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$slug = strtolower( trim( $slug ) );
 		$slug = str_replace( '_', '-', $slug );
 		return preg_replace( '/[^a-z0-9-]+/', '', $slug ) ?? '';
-	}
-
-	private function shell_available(): bool {
-		if ( isset( $this->callbacks['shell_available'] ) ) {
-			return (bool) ( $this->callbacks['shell_available'] )();
-		}
-
-		return function_exists( 'exec' ) && function_exists( 'shell_exec' );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return true|WP_Error */
@@ -2254,82 +2189,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private function task_timeout_seconds( array $input ): int {
 		$timeout = (int) ( $input['task_timeout_seconds'] ?? 0 );
 		return max( 0, $timeout );
-	}
-
-	/** @param array<string,string> $secret_env Secret env values for the child process. @return array{exit_code:int,output:string,timed_out?:bool,timeout_seconds?:int} */
-	private function run_command( string $command, array $secret_env = array(), int $timeout_seconds = 0 ): array {
-		if ( isset( $this->callbacks['command_runner'] ) ) {
-			return ( $this->callbacks['command_runner'] )( $command, $secret_env, $timeout_seconds );
-		}
-
-		if ( ( ! empty( $secret_env ) || $timeout_seconds > 0 ) && ! function_exists( 'proc_open' ) ) {
-			return array(
-				'exit_code' => 1,
-				'output'    => 'WP Codebox inherited secret environment or timeout requires proc_open support.',
-			);
-		}
-
-		if ( ! empty( $secret_env ) || $timeout_seconds > 0 ) {
-			$descriptor_spec = array(
-				1 => array( 'pipe', 'w' ),
-				2 => array( 'pipe', 'w' ),
-			);
-			$current_env = getenv();
-			$process     = proc_open( $command, $descriptor_spec, $pipes, null, array_merge( is_array( $current_env ) ? $current_env : array(), $_ENV, $secret_env ) );
-			if ( is_resource( $process ) ) {
-				stream_set_blocking( $pipes[1], false );
-				stream_set_blocking( $pipes[2], false );
-				$output    = '';
-				$error     = '';
-				$started   = time();
-				$timed_out = false;
-
-				while ( true ) {
-					$output .= (string) stream_get_contents( $pipes[1] );
-					$error  .= (string) stream_get_contents( $pipes[2] );
-					$status = proc_get_status( $process );
-					if ( ! (bool) ( $status['running'] ?? false ) ) {
-						break;
-					}
-					if ( $timeout_seconds > 0 && time() - $started >= $timeout_seconds ) {
-						$timed_out = true;
-						proc_terminate( $process );
-						break;
-					}
-					usleep( 100000 );
-				}
-
-				$output .= (string) stream_get_contents( $pipes[1] );
-				$error  .= (string) stream_get_contents( $pipes[2] );
-				fclose( $pipes[1] );
-				fclose( $pipes[2] );
-				$exit_code = proc_close( $process );
-
-				if ( $timed_out ) {
-					return array(
-						'exit_code'       => 124,
-						'output'          => trim( (string) $output . "\n" . (string) $error . "\nWP Codebox task timed out after {$timeout_seconds} seconds." ),
-						'timed_out'       => true,
-						'timeout_seconds' => $timeout_seconds,
-					);
-				}
-
-				return array(
-					'exit_code' => $exit_code,
-					'output'    => trim( (string) $output . "\n" . (string) $error ),
-				);
-			}
-		}
-
-		$output = array();
-		$exit   = 0;
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Required host-side WP Codebox execution primitive.
-		exec( $command . ' 2>&1', $output, $exit );
-
-		return array(
-			'exit_code' => $exit,
-			'output'    => implode( "\n", $output ),
-		);
 	}
 
 	private function bound_output( string $output ): string {
