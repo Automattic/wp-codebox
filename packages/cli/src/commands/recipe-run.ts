@@ -17,9 +17,10 @@ import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipe
 import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
+import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
-import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { RecipePhaseError } from "./recipe-run-phases.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
@@ -149,7 +150,6 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
   let runtimeDestroyed = false
-  const phaseTracker = new RecipePhaseTracker(serializeRecipeRunError, isRecipeRunTimeoutError)
   const destroyActiveRuntime = async (): Promise<void> => {
     if (!runtime || runtimeDestroyed) {
       return
@@ -158,25 +158,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     runtimeDestroyed = true
     await bestEffortTimeout(runtime.destroy(), 2_000)
   }
-  const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
-    return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
-      .then(() => {
-        const promise = typeof promiseOrFactory === "function" ? promiseOrFactory() : promiseOrFactory
-        const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
-        return interruption ? interruption.interruptible(guarded) : guarded
-      })
-      .then(async (result) => {
-        await artifactPointer.update({ command: operation, commandStatus: "completed", phases: phaseTracker.list() })
-        return result
-      })
-      .catch(async (error: unknown) => {
-        if (isRecipeRunTimeoutError(error) || interruption?.metadata) {
-          await destroyActiveRuntime()
-        }
-        await artifactPointer.update({ command: operation, commandStatus: "failed", failure: serializeRecipeRunError(error), phases: phaseTracker.list() })
-        throw error
-      })
-  }
+  const phaseExecutor = new RecipeRunPhaseExecutor({ context, timeoutMs: options.timeoutMs, interruption, destroyActiveRuntime })
+  const phaseTracker = phaseExecutor.tracker
+  const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs?: number): Promise<T> => phaseExecutor.operation(operation, promiseOrFactory, timeoutMs)
 
   try {
     workspaceMounts = await prepareRecipeWorkspaces(recipe, recipeDirectory)
