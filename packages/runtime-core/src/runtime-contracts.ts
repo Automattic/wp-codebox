@@ -102,7 +102,7 @@ export interface WorkspaceRecipeRuntimeOverlay {
 }
 
 export interface WorkspaceRecipeRuntimeBackendPackage {
-  kind: "playground"
+  kind: string
   source: string
   package?: string
   entrypoint?: string

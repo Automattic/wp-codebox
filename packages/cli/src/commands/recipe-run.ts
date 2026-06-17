@@ -181,7 +181,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     dependencyOverlays = await prepareRecipeDependencyOverlays(recipe, recipeDirectory, extraPlugins)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
     overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
-    backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory)
+    backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory, plan.runtime.backend)
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
@@ -218,7 +218,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeEnvironment,
       }, async () => await awaitRecipe("runtime.create", () => createRuntime(
         runtimeCreateSpec,
-        resolveCliRuntimeBackend(runtimeCreateSpec.backend, { cliModule: backendPackage?.cliModule }),
+        resolveCliRuntimeBackend(runtimeCreateSpec.backend, backendPackage?.runtimeBackendContext),
       )))
       startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {

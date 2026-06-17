@@ -306,8 +306,8 @@ function validateRecipeRuntimeBackendPackage(backendPackage: WorkspaceRecipeRunt
   if (!backendPackage || typeof backendPackage !== "object" || Array.isArray(backendPackage)) {
     throw new Error(`Recipe runtime backendPackage must be an object: ${recipePath}`)
   }
-  if (backendPackage.kind !== "playground") {
-    throw new Error(`Recipe runtime backendPackage kind is unsupported: ${recipePath}`)
+  if (!backendPackage.kind || typeof backendPackage.kind !== "string") {
+    throw new Error(`Recipe runtime backendPackage kind must be a string: ${recipePath}`)
   }
   if (!backendPackage.source || typeof backendPackage.source !== "string") {
     throw new Error(`Recipe runtime backendPackage must include source: ${recipePath}`)
