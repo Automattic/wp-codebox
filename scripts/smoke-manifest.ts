@@ -65,6 +65,7 @@ export const smokeGroups = {
       tsxSmoke("partial-artifact-discovery-smoke"),
       tsxSmoke("mounted-workspace-diff-smoke"),
       tsxSmoke("replay-export-blueprint-smoke"),
+      tsxSmoke("replay-export-manifest-integrity-smoke"),
       tsxSmoke("materialize-replay-package-smoke"),
     ],
   },
