@@ -37,7 +37,10 @@ function is_wp_error( mixed $value ): bool {
     return $value instanceof WP_Error;
 }
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-run-plan.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-run-result-builder.php';
 
 function assert_same_contract( mixed $expected, mixed $actual, string $label ): void {
     if ( $expected !== $actual ) {
@@ -74,5 +77,67 @@ assert_same_contract( false, $run_plan->succeeded( array( 'failed' => 1, 'cancel
 $event = $run_plan->event( 'wp-codebox/agent-fanout-event/v1', array( 'event' => 'worker.completed', 'worker_id' => 'design', 'status' => 'completed' ) );
 unset( $event['time'] );
 assert_same_contract( array( 'schema' => 'wp-codebox/agent-fanout-event/v1', 'event' => 'worker.completed', 'worker_id' => 'design', 'status' => 'completed' ), $event, 'event envelope' );
+
+$builder = new WP_Codebox_Agent_Run_Result_Builder( $run_plan );
+$worker_result = $builder->fanout_worker_success_result(
+    array(
+        'id'       => 'design',
+        'index'    => 0,
+        'prepared' => array( 'input' => array( 'agent' => 'planner' ) ),
+    ),
+    array(
+        'exit_code' => 0,
+        'session'   => array(
+            'id'        => 'child-1',
+            'artifacts' => array( 'path' => '/tmp/artifacts', 'bundle_id' => 'bundle-1' ),
+        ),
+        'diagnostics'        => array( 'schema' => 'wp-codebox/agent-task-diagnostics/v1' ),
+        'evidence_refs'      => array( 'schema' => 'wp-codebox/agent-task-evidence-refs/v1' ),
+        'completion_outcome' => array( 'schema' => 'wp-codebox/sandbox-completion-outcome/v1' ),
+    ),
+    1000.0,
+    1001.25
+);
+assert_same_contract( 'completed', $worker_result['status'], 'fanout worker success status' );
+assert_same_contract( array( 'path' => '/tmp/artifacts', 'bundle_id' => 'bundle-1', 'namespace' => 'design', 'result' => 'result.json' ), $worker_result['artifacts'], 'fanout artifact result shaping' );
+
+$paths = $run_plan->paths( '/tmp/root', 'fanout' );
+$fanout_result = $builder->fanout_result(
+    'wp-codebox/agent-fanout-result/v1',
+    'wp-codebox/agent-fanout-artifacts/v1',
+    'bounded-concurrent-isolated-sandboxes',
+    'parent-1',
+    'completed',
+    array( 'session_id' => 'agent-session-1' ),
+    $paths,
+    $builder->status_counts( array( $worker_result ) ),
+    1000.0,
+    1001.25,
+    $run_plan->plan( 'wp-codebox/agent-fanout-plan/v1', 'parent-1', 2, array(), $descriptors ),
+    array( $worker_result )
+);
+assert_same_contract( true, $fanout_result['success'], 'fanout result success' );
+assert_same_contract( 'wp-codebox/agent-fanout-artifacts/v1', $fanout_result['artifacts']['schema'], 'fanout artifacts schema' );
+assert_same_contract( 'child-1', $fanout_result['session']['children'][0]['session_id'], 'fanout child session ref' );
+
+$batch_result = $builder->batch_result(
+    'wp-codebox/agent-task-batch/v1',
+    WP_Codebox_Agent_Task::session( 'batch-1', 'completed', array(), array( 'path' => '/tmp/batch' ) ),
+    array( 'Draft design direction.' ),
+    array( array( 'goal' => 'Draft design direction.' ) ),
+    'sequential-isolated-sandboxes',
+    'latest',
+    array(),
+    '/tmp/batch',
+    array(
+        $builder->batch_success_run(
+            0,
+            array( 'goal' => 'Draft design direction.' ),
+            array( 'exit_code' => 0, 'session' => array( 'artifacts' => array( 'bundle_id' => 'batch-bundle' ) ) )
+        ),
+    )
+);
+assert_same_contract( 1, $batch_result['completed'], 'batch completed count' );
+assert_same_contract( 'batch-bundle', $batch_result['runs'][0]['artifact_id'], 'batch artifact id shaping' );
 
 fwrite( STDOUT, "PHP run-plan contract smoke passed\n" );
