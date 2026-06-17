@@ -187,6 +187,64 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+## Fixture Imports And Bootstrap Declarations
+
+`inputs.siteSeeds` is the generic fixture import primitive. JSON fixture seeds
+import through WordPress APIs for posts, options, terms, users, media, active
+plugins, and active theme declarations. Those APIs can make semantic identifiers
+stable, such as post slugs, term slugs, option names, user logins, plugin files,
+and theme stylesheets. They cannot guarantee numeric primary keys.
+
+Use `deterministicIds` to make that boundary explicit:
+
+```json
+{
+  "inputs": {
+    "siteSeeds": [
+      {
+        "type": "fixture",
+        "name": "demo-content",
+        "source": "fixtures/content.json",
+        "format": "json",
+        "deterministicIds": {
+          "strategy": "platform-identifiers",
+          "onUnsupported": "block"
+        },
+        "scopes": {
+          "posts": { "slugs": ["home"] },
+          "options": { "names": ["blogname"] }
+        }
+      }
+    ]
+  }
+}
+```
+
+When `onUnsupported` is `block`, WP Codebox reports a validation/runtime blocker
+if the generic importer sees numeric `id`/`ID` fixture fields or a recipe requests
+the `numeric` strategy. Custom importers may add format-specific support later,
+but the generic contract stays honest about what platform APIs can guarantee.
+
+Recipes may also attach reusable bootstrap declarations to a site seed:
+
+```json
+{
+  "bootstrap": {
+    "multisite": {
+      "enabled": true,
+      "install": "subdomain",
+      "sites": [{ "domain": "example.test", "path": "/", "title": "Example" }]
+    },
+    "domains": [{ "domain": "example.test", "path": "/", "primary": true }]
+  }
+}
+```
+
+These are generic declarations for orchestrators and future runtime setup
+support. The current built-in fixture importer treats multisite/domain bootstrap
+as declared metadata and blocks executable fixture imports that require runtime
+setup not yet provided by WP Codebox.
+
 ```json
 {
   "command": "wordpress.browser-actions",
@@ -194,6 +252,43 @@ otherwise successful recipe return `success: false`.
   "advisory": true
 }
 ```
+
+## Fixture Browser Auth Storage State
+
+Hosts that need an authenticated browser session for a disposable WordPress
+sandbox can use the playground package's fixture auth storage-state helpers
+instead of baking product-specific site identifiers into recipes. The helper
+contract is generic: resolve or create a named WordPress fixture user inside the
+sandbox, mint short-lived WordPress admin cookies for declared browser origins,
+and return a Playwright-compatible `storageState` envelope:
+
+```ts
+import { wordpressFixtureUserStorageStatePhpCode } from "@automattic/wp-codebox-playground"
+```
+
+The emitted PHP returns `wp-codebox/browser-auth-storage-state/v1`:
+
+```json
+{
+  "schema": "wp-codebox/browser-auth-storage-state/v1",
+  "kind": "wordpress-fixture-user-admin-auth",
+  "user": {
+    "id": 1,
+    "username": "wp-codebox-fixture-admin",
+    "email": "wp-codebox-fixture-admin@example.test",
+    "role": "administrator",
+    "created": true
+  },
+  "storageState": {
+    "cookies": [],
+    "origins": []
+  }
+}
+```
+
+Callers own when to run the PHP and where to persist the returned storage-state
+JSON. Product policy, production identifiers, and cross-site account mapping stay
+outside WP Codebox.
 
 ## Recipe Output Evidence
 

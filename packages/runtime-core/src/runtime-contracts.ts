@@ -98,6 +98,7 @@ export interface WorkspaceRecipeRuntimeOverlay {
   source: string
   target?: string
   strategy: WorkspaceRecipeRuntimeOverlayStrategy
+  bundle?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
 
@@ -311,6 +312,34 @@ export interface WorkspaceRecipeDependencyOverlay {
 
 export type WorkspaceRecipeSiteSeedType = "fixture" | "parent_site"
 export type WorkspaceRecipeSiteSeedFormat = "json" | (string & {})
+export type WorkspaceRecipeSiteSeedDeterministicIdStrategy = "platform-identifiers" | "numeric"
+export type WorkspaceRecipeUnsupportedDeterministicIdPolicy = "block" | "warn"
+
+export interface WorkspaceRecipeSiteSeedDeterministicIds {
+  strategy: WorkspaceRecipeSiteSeedDeterministicIdStrategy
+  onUnsupported: WorkspaceRecipeUnsupportedDeterministicIdPolicy
+}
+
+export interface WorkspaceRecipeSiteSeedBootstrapSite {
+  domain: string
+  path?: string
+  title?: string
+}
+
+export interface WorkspaceRecipeSiteSeedBootstrapDomain {
+  domain: string
+  path?: string
+  primary?: boolean
+}
+
+export interface WorkspaceRecipeSiteSeedBootstrap {
+  multisite?: {
+    enabled: boolean
+    install?: "subdomain" | "subdirectory"
+    sites?: WorkspaceRecipeSiteSeedBootstrapSite[]
+  }
+  domains?: WorkspaceRecipeSiteSeedBootstrapDomain[]
+}
 
 export interface WorkspaceRecipeSiteSeedScopeSelector {
   ids?: number[]
@@ -330,6 +359,8 @@ export interface WorkspaceRecipeSiteSeed {
   name: string
   source?: string
   format?: WorkspaceRecipeSiteSeedFormat
+  deterministicIds?: WorkspaceRecipeSiteSeedDeterministicIds
+  bootstrap?: WorkspaceRecipeSiteSeedBootstrap
   scopes: {
     posts?: WorkspaceRecipeSiteSeedScopeSelector
     terms?: WorkspaceRecipeSiteSeedScopeSelector

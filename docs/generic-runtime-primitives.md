@@ -8,7 +8,8 @@ product or job system.
 - TypeScript implementations live in `packages/runtime-core/src/artifact-storage.ts`,
   `packages/runtime-core/src/browser-session-origin.ts`, and
   `packages/runtime-core/src/materialization-contracts.ts`, and
-  `packages/runtime-core/src/evidence-artifact-envelope.ts`.
+  `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
+  `packages/runtime-core/src/runtime-overlay-bundle.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts`.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
@@ -63,6 +64,42 @@ const envelope = evidenceArtifactEnvelope({
     artifacts: [{ path: "files/browser/home.png", kind: "browser-screenshot" }],
   }],
 })
+```
+
+## Runtime Overlay Bundles
+
+`wp-codebox/runtime-overlay-bundle/v1` is a generic runtime overlay metadata
+primitive for recipe authors and backend implementations. It describes what an
+overlay needs without encoding downstream product policy or executing the
+overlay by itself.
+
+- `files` declare sandbox files with local sources or inline contents.
+- `configPreludes` declare ordered snippets or files a backend can prepend to
+  runtime configuration.
+- `localRoutes` declare loopback-only route aliases; routes must set
+  `localOnly: true`.
+- `patches` record patch provenance with source and optional digest metadata.
+- `capabilities` is a manifest of provided, required, and optional capability
+  strings.
+- `unsupportedGaps` are explicit fail-closed blockers. `runtimeOverlayBundle()`
+  throws when any are present so callers do not silently run with a partial
+  overlay.
+
+Recipe schema accepts these bundles through `runtime.overlays[]`:
+
+```json
+{
+  "kind": "runtime-overlay-bundle",
+  "bundle": {
+    "schema": "wp-codebox/runtime-overlay-bundle/v1",
+    "id": "example-runtime-overlay",
+    "files": [{ "path": "/wordpress/wp-content/mu-plugins/example.php", "source": "overlays/example.php" }],
+    "configPreludes": [{ "target": "wp-config.php", "contents": "define('EXAMPLE_RUNTIME', true);", "order": 10 }],
+    "localRoutes": [{ "path": "/_runtime/example", "target": "http://127.0.0.1:9400/example", "localOnly": true }],
+    "patches": [{ "id": "example.patch", "source": "patches/example.patch", "appliesTo": "runtime" }],
+    "capabilities": { "provided": ["example/runtime-overlay"] }
+  }
+}
 ```
 
 ## Target Context Provisioning

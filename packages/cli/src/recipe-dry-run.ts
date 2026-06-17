@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path"
-import { validateRuntimePolicy, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { fixtureImportDeterministicIdPlan, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
@@ -202,6 +202,8 @@ export interface RecipeDryRunSiteSeed {
   source?: string
   format?: WorkspaceRecipeSiteSeed["format"]
   importer?: string
+  deterministicIds?: FixtureImportDeterministicIdPlan
+  bootstrap?: WorkspaceRecipeSiteSeedBootstrap
   scopes: WorkspaceRecipeSiteSeed["scopes"]
   bounded: boolean
   dryRunOnly: boolean
@@ -698,6 +700,8 @@ export function recipeDryRunSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: 
     ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
     ...(siteSeed.format ? { format: siteSeed.format } : {}),
     ...(siteSeed.type === "fixture" ? { importer: siteSeed.format ?? "json" } : {}),
+    ...(siteSeed.deterministicIds ? { deterministicIds: fixtureImportDeterministicIdPlan(siteSeed) } : {}),
+    ...(siteSeed.bootstrap ? { bootstrap: siteSeed.bootstrap } : {}),
     scopes: siteSeed.scopes,
     bounded: siteSeedScopesAreBounded(siteSeed),
     dryRunOnly: siteSeed.type !== "fixture",

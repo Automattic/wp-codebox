@@ -16,6 +16,7 @@ import {
   browserArtifactRef,
   captureArtifactFile,
   evidenceArtifactEnvelope,
+  fixtureImportDeterministicIdPlan,
   materializationPhaseResult,
   materializationRunArtifactRefs,
   compileRecipeTemplate,
@@ -26,11 +27,13 @@ import {
   normalizeArtifactPartPath,
   normalizeRecipeMounts,
   normalizeSharedMounts,
+  runtimeOverlayBundle,
   runtimeArtifactStorageDescriptor,
   trustedBrowserSessionOrigin,
   trustedBrowserSessionOrigins,
   validateEvidenceArtifactEnvelope,
   writeArtifactPart,
+  validateWorkspaceRecipeJsonSchema,
 } from "../packages/runtime-core/src/index.js"
 import { benchRunCode } from "../packages/runtime-playground/src/bench-command-handlers.js"
 import { browserPreviewAuthCookieUrls, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
@@ -139,6 +142,30 @@ assert.equal(evidenceEnvelope.schema, "wp-codebox/evidence-artifact-envelope/v1"
 assert.equal(evidenceEnvelope.browserCaptures[0].schema, "wp-codebox/browser-evidence-capture/v1")
 assert.deepEqual(validateEvidenceArtifactEnvelope(evidenceEnvelope), { valid: true, errors: [] })
 assert.equal(validateEvidenceArtifactEnvelope({ ...evidenceEnvelope, artifacts: [{ path: "../secret.txt", kind: "file" }] }).valid, false)
+
+const overlayBundle = runtimeOverlayBundle({
+  id: "example-runtime-overlay",
+  files: [{ path: "/wordpress/wp-content/mu-plugins/example.php", source: "overlays/example.php" }],
+  configPreludes: [{ target: "wp-config.php", contents: "define('EXAMPLE_RUNTIME', true);", order: 10 }],
+  localRoutes: [{ path: "/_runtime/example", target: "http://127.0.0.1:9400/example", methods: ["get"], localOnly: true }],
+  patches: [{ id: "example.patch", source: "patches/example.patch", appliesTo: "runtime" }],
+  capabilities: { provided: ["example/runtime-overlay", "example/runtime-overlay"], required: ["wordpress"] },
+})
+assert.equal(overlayBundle.schema, "wp-codebox/runtime-overlay-bundle/v1")
+assert.deepEqual(overlayBundle.localRoutes?.[0].methods, ["GET"])
+assert.deepEqual(overlayBundle.capabilities?.provided, ["example/runtime-overlay"])
+assert.throws(() => runtimeOverlayBundle({ id: "gap", unsupportedGaps: [{ capability: "route-alias", reason: "backend does not support local route aliases", failureMode: "fail-closed" }] }), /unsupported fail-closed gaps/)
+
+assert.equal(validateWorkspaceRecipeJsonSchema({
+  schema: "wp-codebox/workspace-recipe/v1",
+  runtime: { overlays: [{ kind: "runtime-overlay-bundle", bundle: overlayBundle }] },
+  workflow: { steps: [{ command: "noop" }] },
+}).valid, true)
+assert.equal(validateWorkspaceRecipeJsonSchema({
+  schema: "wp-codebox/workspace-recipe/v1",
+  runtime: { overlays: [{ kind: "runtime-overlay-bundle", bundle: { ...overlayBundle, localRoutes: [{ path: "/_runtime/example", target: "http://127.0.0.1:9400/example" }] } }] },
+  workflow: { steps: [{ command: "noop" }] },
+}).valid, false)
 
 assert.deepEqual(normalizeRecipeMounts([{ source: "/host/plugin", target: "//wordpress//wp-content/plugins/plugin" }]), [{ source: "/host/plugin", target: "/wordpress/wp-content/plugins/plugin", mode: "readwrite" }])
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "wordpress/wp-content/plugins/plugin" }]), /absolute target/)
@@ -274,6 +301,37 @@ const sensitiveCapture = await captureArtifactFile({
 })
 assert.equal(sensitiveCapture.status, "sensitive")
 assert.equal(sensitiveCapture.reason, "secret-like-value")
+
+const deterministicPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  format: "json",
+  deterministicIds: { strategy: "platform-identifiers", onUnsupported: "block" },
+  scopes: { posts: { postTypes: ["page"] } },
+}, { posts: [{ id: 42, slug: "home" }] })
+assert.equal(deterministicPlan?.schema, "wp-codebox/fixture-import-deterministic-ids/v1")
+assert.equal(deterministicPlan?.status, "blocked")
+assert.deepEqual(deterministicPlan?.unsupported, [{ scope: "posts", index: 0, field: "id", reason: "Numeric primary-key assignment is not supported by WordPress insert APIs." }])
+assert.deepEqual(deterministicPlan?.supportedIdentifiers.posts, ["slug", "post_name"])
+
+const semanticPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  deterministicIds: { strategy: "platform-identifiers", onUnsupported: "block" },
+  scopes: { posts: { slugs: ["home"] } },
+}, { posts: [{ slug: "home" }] })
+assert.equal(semanticPlan?.status, "supported")
+
+const numericPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  deterministicIds: { strategy: "numeric", onUnsupported: "warn" },
+  scopes: { posts: { slugs: ["home"] } },
+})
+assert.equal(numericPlan?.status, "best_effort")
 
 const benchRunner = benchRunCode({
   componentId: "component",

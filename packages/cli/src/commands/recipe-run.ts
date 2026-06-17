@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, redactJsonValue, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, assertFixtureImportDeterministicIdsSupported, createBenchResultsJsonSchema, createRuntime, fixtureImportDeterministicIdPlan, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, redactJsonValue, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -2593,6 +2593,7 @@ async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: s
     const source = resolve(recipeDirectory, siteSeed.source ?? "")
     if (format === "json") {
       const rawSeed = JSON.parse(await readFile(source, "utf8"))
+      assertFixtureImportDeterministicIdsSupported(siteSeed, rawSeed)
       const bounded = boundedFixtureSeed(rawSeed, siteSeed.scopes)
       const execution = await runtime.execute({
         command: "wordpress.run-php",
@@ -2608,6 +2609,7 @@ async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: s
           ...imported.counts,
         },
         ...(imported.warnings.length > 0 ? { warnings: imported.warnings } : {}),
+        ...(siteSeed.deterministicIds ? { deterministicIds: fixtureImportDeterministicIdPlan(siteSeed, rawSeed) } : {}),
         provenance: {
           importer: "json",
           source,
@@ -2618,6 +2620,7 @@ async function importRecipeSiteSeeds(recipe: WorkspaceRecipe, recipeDirectory: s
     }
 
     const sourceContents = await readFile(source, "utf8")
+    assertFixtureImportDeterministicIdsSupported(siteSeed)
     const execution = await runtime.execute({
       command: "wordpress.run-php",
       args: [`code=${siteSeedRegistryImportCode(siteSeed, format, source, sourceContents)}`],
@@ -2648,6 +2651,8 @@ function recipeSiteSeedRunBase(siteSeed: WorkspaceRecipeSiteSeed, recipeDirector
     ...(siteSeed.source ? { source: resolve(recipeDirectory, siteSeed.source) } : {}),
     ...(siteSeed.format ? { format: siteSeed.format } : {}),
     ...(siteSeed.type === "fixture" ? { importer: siteSeed.format ?? "json" } : {}),
+    ...(siteSeed.deterministicIds ? { deterministicIds: fixtureImportDeterministicIdPlan(siteSeed) } : {}),
+    ...(siteSeed.bootstrap ? { bootstrap: siteSeed.bootstrap } : {}),
     scopes: siteSeed.scopes,
     bounded: siteSeedScopesAreBounded(siteSeed),
     privacy: {
