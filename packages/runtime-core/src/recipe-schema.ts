@@ -1,7 +1,79 @@
+import { Ajv2020 } from "ajv/dist/2020.js"
+import type { ErrorObject } from "ajv"
+
+import type { WorkspaceRecipe, WorkspaceRecipeDeclaredArtifact, WorkspaceRecipeTypedArtifact } from "./runtime-contracts.js"
+
 export type WorkspaceRecipeJsonSchema = Record<string, unknown>
 
 export interface WorkspaceRecipeJsonSchemaOptions {
   recipeCommandIds?: readonly string[]
+}
+
+export interface WorkspaceRecipeJsonSchemaValidationIssue {
+  path: string
+  keyword: string
+  message: string
+}
+
+export interface WorkspaceRecipeJsonSchemaValidationResult {
+  valid: boolean
+  issues: WorkspaceRecipeJsonSchemaValidationIssue[]
+}
+
+export interface AssertWorkspaceRecipeJsonSchemaOptions extends WorkspaceRecipeJsonSchemaOptions {
+  recipePath?: string
+}
+
+export type WorkspaceRecipeRuntimeCollectedArtifact =
+  | { kind: "path"; index: number; artifact: WorkspaceRecipeDeclaredArtifact }
+  | { kind: "typed"; index: number; artifact: WorkspaceRecipeTypedArtifact }
+
+export function validateWorkspaceRecipeJsonSchema(recipe: unknown, options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchemaValidationResult {
+  const validate = new Ajv2020({ strict: false }).compile(createWorkspaceRecipeJsonSchema(options))
+  const valid = validate(recipe) === true
+  return {
+    valid,
+    issues: valid ? [] : workspaceRecipeJsonSchemaIssues(validate.errors ?? []),
+  }
+}
+
+export function assertWorkspaceRecipeJsonSchema(recipe: unknown, options: AssertWorkspaceRecipeJsonSchemaOptions = {}): asserts recipe is WorkspaceRecipe {
+  const result = validateWorkspaceRecipeJsonSchema(recipe, options)
+  if (result.valid) {
+    return
+  }
+
+  const location = options.recipePath ? ` in ${options.recipePath}` : ""
+  const details = result.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")
+  throw new Error(`Recipe JSON schema validation failed${location}: ${details}`)
+}
+
+export function workspaceRecipeRuntimeCollectedArtifacts(recipe: WorkspaceRecipe): WorkspaceRecipeRuntimeCollectedArtifact[] {
+  const paths = recipe.artifacts?.paths ?? []
+  return [
+    ...paths.map((artifact, index): WorkspaceRecipeRuntimeCollectedArtifact => ({ kind: "path", index, artifact })),
+    ...(recipe.artifacts?.typed ?? []).map((artifact, index): WorkspaceRecipeRuntimeCollectedArtifact => ({ kind: "typed", index: paths.length + index, artifact })),
+  ]
+}
+
+function workspaceRecipeJsonSchemaIssues(errors: ErrorObject[]): WorkspaceRecipeJsonSchemaValidationIssue[] {
+  return errors.map((error) => ({
+    path: jsonPointerToJsonPath(error.instancePath, error),
+    keyword: error.keyword,
+    message: error.message ?? `failed ${error.keyword} validation`,
+  }))
+}
+
+function jsonPointerToJsonPath(pointer: string, error: ErrorObject): string {
+  const segments = pointer.split("/").filter(Boolean).map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
+  if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
+    segments.push(error.params.missingProperty)
+  }
+  let path = "$"
+  for (const segment of segments) {
+    path += /^\d+$/.test(segment) ? `[${segment}]` : `.${segment}`
+  }
+  return path
 }
 
 export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchema {
