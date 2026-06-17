@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { wantsJsonOutput, writeJsonFailure } from "./output.js"
 
 type CliCommandHandler = (args: string[]) => Promise<number>
 
@@ -79,6 +80,10 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
 
   const route = routeForCommand(command)
   if (!route) {
+    if (wantsJsonOutput(argv)) {
+      writeJsonFailure(command, `Unknown command: ${command}`, { code: "unknown-command" })
+      return 1
+    }
     console.error(`Unknown command: ${command}`)
     router.printHelp()
     return 1
@@ -91,6 +96,10 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
   const subcommand = args.shift()
   const handlerName = subcommand ? (route as Partial<Record<string, CliCommandHandlerName>>)[subcommand] : undefined
   if (!handlerName) {
+    if (wantsJsonOutput(argv)) {
+      writeJsonFailure(command, `Unknown ${command} command: ${subcommand ?? ""}`, { code: "unknown-subcommand", subcommand: subcommand ?? null })
+      return 1
+    }
     console.error(`Unknown ${command} command: ${subcommand ?? ""}`)
     router.printHelp()
     return 1

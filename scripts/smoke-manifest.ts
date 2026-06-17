@@ -38,6 +38,7 @@ export const smokeGroups = {
       tsxSmoke("task-input-contract-smoke"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
+      tsxSmoke("cli-json-failure-smoke"),
       tsxSmoke("source-checkout-entrypoint-smoke"),
       tsxSmoke("cli-unsettled-command-smoke"),
       tsxSmoke("php-snippets-smoke"),

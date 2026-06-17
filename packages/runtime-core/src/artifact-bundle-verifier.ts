@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile, realpath } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
+import { Ajv2020 } from "ajv/dist/2020.js"
 import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
 import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
@@ -24,6 +25,7 @@ export type ArtifactBundleVerificationViolationCode =
   | "review-evidence-mismatch"
   | "unsafe-file"
   | "hardlink"
+  | "payload-schema-violation"
 
 export interface ArtifactBundleVerificationViolation {
   code: ArtifactBundleVerificationViolationCode
@@ -866,7 +868,37 @@ async function verifyTypedArtifactIndexArtifacts(directory: string, manifest: Ar
       if (typeof artifact.artifact.sha256 === "string") {
         await verifyTypedArtifactFileDigest(directory, artifact.artifact.path, artifact.artifact.sha256, `${fieldPath}.artifact.sha256`, violations)
       }
+      validateTypedArtifactPayloadSchema(artifact, fieldPath, file.path, violations)
     }
+  }
+}
+
+function validateTypedArtifactPayloadSchema(artifact: Record<string, unknown>, fieldPath: string, indexPath: string, violations: ArtifactBundleVerificationViolation[]): void {
+  const payloadSchema = artifact.payload_schema ?? artifact.payloadSchema
+  if (!isRecord(payloadSchema) || !("payload" in artifact)) {
+    return
+  }
+
+  try {
+    const validate = new Ajv2020({ strict: false, allErrors: true }).compile(payloadSchema)
+    if (validate(artifact.payload)) {
+      return
+    }
+
+    violations.push({
+      code: "payload-schema-violation",
+      path: `${fieldPath}.payload`,
+      file: indexPath,
+      message: `Typed artifact payload does not match payload_schema: ${(validate.errors ?? []).map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`).join("; ")}`,
+      details: { errors: validate.errors ?? [] },
+    })
+  } catch (error) {
+    violations.push({
+      code: "payload-schema-violation",
+      path: `${fieldPath}.payload_schema`,
+      file: indexPath,
+      message: `Typed artifact payload_schema is not a valid JSON Schema: ${errorMessage(error)}`,
+    })
   }
 }
 
