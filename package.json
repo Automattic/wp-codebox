@@ -61,6 +61,7 @@
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
+    "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
     "test:generic-primitives": "tsx tests/generic-primitives.test.ts",

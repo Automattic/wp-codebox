@@ -25,32 +25,13 @@ final class WP_Codebox_Host_Recipe_Builder {
 			return $credential_error;
 		}
 
-		$provider_plugin_paths = $adapters['provider_plugin_paths']( $input, $inheritance );
-		$provider_plugins      = array_map(
-			static fn( string $path ): array => array(
-				'source'   => $path,
-				'slug'     => basename( $path ),
-				'activate' => false,
-			),
-			$provider_plugin_paths
-		);
-		$component_plugins     = $adapters['component_plugins']( $paths );
-		$dependency_plan       = new WP_Codebox_Runtime_Dependency_Plan(
-			array(
-				'agent'    => $adapters['agent_slug']( $input ),
-				'mode'     => $adapters['mode']( $input ),
-				'provider' => $adapters['provider']( $input, $inheritance ),
-				'model'    => $adapters['model']( $input, $inheritance ),
-			),
-			$provider_plugin_paths,
-			$provider_plugins,
-			$component_plugins,
-			is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
-			$inheritance,
-			$adapters['inheritance_request']( $input ),
-			$adapters['agent_bundles']( $input ),
-			$adapters['secret_env_names']( $input, $inheritance )
-		);
+		$component_plugins = $adapters['component_plugins']( $paths );
+		$dependency_plan   = isset( $adapters['runtime_dependency_plan'] ) && is_callable( $adapters['runtime_dependency_plan'] )
+			? $adapters['runtime_dependency_plan']( $input, $inheritance, $component_plugins )
+			: self::runtime_dependency_plan_from_adapters( $input, $inheritance, $component_plugins, $adapters );
+		if ( ! $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ) {
+			return new WP_Error( 'wp_codebox_runtime_dependency_plan_invalid', 'Runtime dependency plan resolver must return a WP_Codebox_Runtime_Dependency_Plan.', array( 'status' => 500 ) );
+		}
 		$runtime_task          = $adapters['runtime_task']( $input );
 		$steps          = array();
 		foreach ( $task_prompts as $task_prompt ) {
@@ -98,7 +79,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 		if ( is_wp_error( $workspaces ) ) {
 			return $workspaces;
 		}
-		$runtime = $adapters['recipe_runtime']( $input, $wp_version );
+		$runtime = $adapters['recipe_runtime']( $input, $wp_version, $dependency_plan );
 		if ( is_wp_error( $runtime ) ) {
 			return $runtime;
 		}
@@ -151,6 +132,41 @@ final class WP_Codebox_Host_Recipe_Builder {
 		return array(
 			'path'          => $file,
 			'cleanup_paths' => $site_seed_payload['cleanup_paths'],
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $input Ability input.
+	 * @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance Resolved inheritance metadata.
+	 * @param array<int,array<string,mixed>> $component_plugins Prepared component plugin entries.
+	 * @param array<string,callable> $adapters Runner adapters for host-specific policy and filesystem concerns.
+	 */
+	private static function runtime_dependency_plan_from_adapters( array $input, array $inheritance, array $component_plugins, array $adapters ): WP_Codebox_Runtime_Dependency_Plan {
+		$provider_plugin_paths = $adapters['provider_plugin_paths']( $input, $inheritance );
+		$provider_plugins      = array_map(
+			static fn( string $path ): array => array(
+				'source'   => $path,
+				'slug'     => basename( $path ),
+				'activate' => false,
+			),
+			$provider_plugin_paths
+		);
+
+		return new WP_Codebox_Runtime_Dependency_Plan(
+			array(
+				'agent'    => $adapters['agent_slug']( $input ),
+				'mode'     => $adapters['mode']( $input ),
+				'provider' => $adapters['provider']( $input, $inheritance ),
+				'model'    => $adapters['model']( $input, $inheritance ),
+			),
+			$provider_plugin_paths,
+			$provider_plugins,
+			$component_plugins,
+			is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
+			$inheritance,
+			$adapters['inheritance_request']( $input ),
+			$adapters['agent_bundles']( $input ),
+			$adapters['secret_env_names']( $input, $inheritance )
 		);
 	}
 

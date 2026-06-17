@@ -135,8 +135,8 @@ final class WP_Codebox_Browser_Task_Builder {
 		return array_filter(
 			array(
 				'schema'        => 'wp-codebox/browser-agent-task-payload/v1',
-				'agent'         => (string) $resolve( 'agent', self::agent_slug( $input ) ),
-				'mode'          => (string) $resolve( 'mode', self::mode( $input ) ),
+				'agent'         => (string) $resolve( 'agent', (string) ( $dependency_plan->selection()['agent'] ?? self::agent_slug( $input ) ) ),
+				'mode'          => (string) $resolve( 'mode', (string) ( $dependency_plan->selection()['mode'] ?? self::mode( $input ) ) ),
 				'provider'      => (string) $resolve( 'provider', $dependency_plan->provider() ),
 				'model'         => (string) $resolve( 'model', $dependency_plan->model() ),
 				'message'       => (string) $task_input['goal'],

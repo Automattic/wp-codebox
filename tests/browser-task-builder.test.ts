@@ -59,7 +59,7 @@ $explicit_plan_payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	array( 'connectors' => array(), 'settings' => array() ),
 	array(
 		'runtime_dependency_plan' => static fn(): WP_Codebox_Runtime_Dependency_Plan => new WP_Codebox_Runtime_Dependency_Plan(
-			array( 'provider' => 'planned-provider', 'model' => 'planned-model' ),
+			array( 'agent' => 'planned-agent', 'mode' => 'planned-mode', 'provider' => 'planned-provider', 'model' => 'planned-model' ),
 			array( '/tmp/provider-plugin' ),
 			array( array( 'slug' => 'provider-plugin', 'source' => '/tmp/provider-plugin' ) ),
 			array(),
@@ -85,6 +85,8 @@ assert.equal(result.payload.model, "model-from-inheritance")
 assert.deepEqual(result.payload.secret_env, ["OPENAI_API_KEY"])
 assert.deepEqual(result.payload.task_input.context, { caller: "test" })
 assert.deepEqual(result.payload.agent_bundles, [{ source: "/tmp/agent-bundle.zip", on_conflict: "skip" }])
+assert.equal(result.explicit_plan_payload.agent, "planned-agent")
+assert.equal(result.explicit_plan_payload.mode, "planned-mode")
 assert.equal(result.explicit_plan_payload.provider, "planned-provider")
 assert.equal(result.explicit_plan_payload.model, "planned-model")
 assert.deepEqual(result.explicit_plan_payload.secret_env, ["PLANNED_SECRET"])

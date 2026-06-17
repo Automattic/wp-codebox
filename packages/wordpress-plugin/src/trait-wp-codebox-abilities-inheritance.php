@@ -65,12 +65,6 @@ private static function browser_task_payload( array $input, array $task_input, s
 					self::browser_secret_env_names( $input )
 				);
 			},
-			'agent'         => static fn( array $input ): string => self::browser_agent_slug( $input ),
-			'mode'          => static fn( array $input ): string => self::browser_mode( $input ),
-			'provider'      => static fn( array $input, array $task_input, array $inheritance ): string => self::browser_provider( $input, $inheritance ),
-			'model'         => static fn( array $input, array $task_input, array $inheritance ): string => self::browser_model( $input, $inheritance ),
-			'agent_bundles' => static fn( array $input ): array => self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
-			'secret_env'    => static fn( array $input ): array => self::browser_secret_env_names( $input ),
 		)
 	);
 }

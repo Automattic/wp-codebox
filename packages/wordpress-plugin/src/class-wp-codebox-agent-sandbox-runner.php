@@ -1010,6 +1010,40 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $this->inheritance_resolution_payload( $input )['inheritance_audit'];
 	}
 
+	/**
+	 * @param array<string,mixed> $input Ability input.
+	 * @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance Resolved inheritance metadata.
+	 * @param array<int,array<string,mixed>> $component_plugins Prepared component plugin entries.
+	 */
+	private function runtime_dependency_plan( array $input, array $inheritance, array $component_plugins ): WP_Codebox_Runtime_Dependency_Plan {
+		$provider_plugin_paths = $this->provider_plugin_paths( $input, $inheritance );
+		$provider_plugins      = array_map(
+			static fn( string $path ): array => array(
+				'source'   => $path,
+				'slug'     => basename( $path ),
+				'activate' => false,
+			),
+			$provider_plugin_paths
+		);
+
+		return new WP_Codebox_Runtime_Dependency_Plan(
+			array(
+				'agent'    => $this->agent_slug( $input ),
+				'mode'     => $this->mode( $input ),
+				'provider' => $this->provider( $input, $inheritance ),
+				'model'    => $this->model( $input, $inheritance ),
+			),
+			$provider_plugin_paths,
+			$provider_plugins,
+			$component_plugins,
+			is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
+			$inheritance,
+			$this->inheritance_request( $input ),
+			$this->agent_bundles( $input ),
+			$this->secret_env_names( $input, $inheritance )
+		);
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array{inheritance_audit:array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>},process_secret_env:array<string,string>} */
 	private function inheritance_resolution_payload( array $input ): array {
 		$payload = WP_Codebox_Inheritance::resolution_payload( $input, fn( string $path ): string => $this->clean_path( $path ) );
@@ -1921,7 +1955,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
-	private function recipe_runtime( array $input, string $wp_version ): array|WP_Error {
+	private function recipe_runtime( array $input, string $wp_version, ?WP_Codebox_Runtime_Dependency_Plan $dependency_plan = null ): array|WP_Error {
 		$runtime = array(
 			'wp'        => $wp_version,
 			'blueprint' => array( 'steps' => array() ),
@@ -1935,7 +1969,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$runtime['stack'] = array( 'mounts' => $stack_mounts );
 		}
 
-		$overlays = $this->merge_array_lists( $input['runtime_overlays'] ?? array() );
+		$overlays = $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ? $dependency_plan->runtime_overlays() : $this->merge_array_lists( $input['runtime_overlays'] ?? array() );
 		if ( ! empty( $overlays ) ) {
 			$runtime['overlays'] = $overlays;
 		}
@@ -2099,6 +2133,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			array(
 				'inheritance_resolution'     => fn( array $input ): array => $this->inheritance_resolution( $input ),
 				'connector_credentials_error' => fn( array $inheritance ): WP_Error|null => $this->connector_credentials_error( $inheritance ),
+				'runtime_dependency_plan'     => fn( array $input, array $inheritance, array $component_plugins ): WP_Codebox_Runtime_Dependency_Plan => $this->runtime_dependency_plan( $input, $inheritance, $component_plugins ),
 				'provider_plugin_paths'       => fn( array $input, array $inheritance ): array => $this->provider_plugin_paths( $input, $inheritance ),
 				'agent_bundles'               => fn( array $input ): array => $this->agent_bundles( $input ),
 				'runtime_task'                => fn( array $input ): array => $this->runtime_task( $input ),
@@ -2111,7 +2146,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'task_timeout_seconds'        => fn( array $input ): int => $this->task_timeout_seconds( $input ),
 				'recipe_mounts'               => fn( array $input ): array|WP_Error => $this->recipe_mounts( $input ),
 				'recipe_workspaces'           => fn( array $input ): array|WP_Error => $this->recipe_workspaces( $input ),
-				'recipe_runtime'              => fn( array $input, string $wp_version ): array|WP_Error => $this->recipe_runtime( $input, $wp_version ),
+				'recipe_runtime'              => fn( array $input, string $wp_version, WP_Codebox_Runtime_Dependency_Plan $dependency_plan ): array|WP_Error => $this->recipe_runtime( $input, $wp_version, $dependency_plan ),
 				'site_seed_recipe_entries'    => fn( array $input ): array|WP_Error => $this->parent_site_seed_recipe_entries( $input ),
 				'inheritance_request'         => fn( array $input ): array => $this->inheritance_request( $input ),
 				'component_plugins'           => fn( array $paths ): array => $this->component_plugins( $paths ),
