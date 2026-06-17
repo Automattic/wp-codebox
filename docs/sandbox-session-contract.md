@@ -60,6 +60,16 @@ resolves connector inheritance on the parent site, strips raw credential values,
 and dispatches the request through the `wp_codebox_browser_provider_request`
 filter.
 
+| Ability | Trusted scope | Purpose |
+| --- | --- | --- |
+| `wp-codebox/create-browser-playground-session` | `browser-session:create` | Create a disposable browser Playground session and materialization contract. |
+| `wp-codebox/browser-connector-request` | `browser-connector:request` | Resolve a connector-scoped request server-side without exposing raw credentials. |
+| `wp-codebox/execute-browser-provider-request` | `browser-connector:request` | Execute a provider request through the same connector/request boundary. |
+
+Administrators with `manage_options` retain access to all three abilities. A
+trusted orchestrator granted only `browser-session:create` can create browser
+sessions, but cannot execute connector/provider requests.
+
 ```text
 Browser connector bridge
   -> wp-codebox/execute-browser-provider-request
@@ -85,7 +95,7 @@ The adapter filter receives a redacted request envelope:
   "context": {
     "session_id": "browser-session-123",
     "caller": "trusted-orchestrator",
-    "authorization_scope": "browser-session:create"
+    "authorization_scope": "browser-connector:request"
   },
   "request": {}
 }

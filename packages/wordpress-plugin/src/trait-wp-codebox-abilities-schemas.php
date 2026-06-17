@@ -437,6 +437,11 @@ private static function browser_session_authorization_schema(): array {
 }
 
 /** @return array<string,mixed> */
+private static function browser_connector_authorization_schema(): array {
+	return self::trusted_orchestrator_authorization_schema( self::BROWSER_CONNECTOR_REQUEST_SCOPE, 'Explicit trusted orchestrator authorization for browser connector/provider requests. Callers must provide a caller id and the browser-connector:request scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' );
+}
+
+/** @return array<string,mixed> */
 private static function trusted_orchestrator_authorization_schema( string $scope, string $description ): array {
 	return array(
 		'type'        => 'object',
