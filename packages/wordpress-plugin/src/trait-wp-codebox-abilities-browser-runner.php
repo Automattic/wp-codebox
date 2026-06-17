@@ -177,12 +177,55 @@ private static function browser_runner_invocation_metadata( array $invocation ):
 	);
 }
 
+/** @param array<string,mixed> $task_input Normalized task input. @return array<string,mixed> */
+private static function browser_runner_component_manifest( array $task_input ): array {
+	$providers = array();
+	foreach ( is_array( $task_input['provider_plugin_paths'] ?? null ) ? $task_input['provider_plugin_paths'] : array() as $path ) {
+		$path = (string) $path;
+		if ( '' === $path ) {
+			continue;
+		}
+
+		$providers[] = array(
+			'slug'   => basename( $path ),
+			'source' => $path,
+		);
+	}
+
+	$components = array();
+	foreach ( is_array( $task_input['component_contracts'] ?? null ) ? $task_input['component_contracts'] : array() as $index => $contract ) {
+		if ( ! is_array( $contract ) ) {
+			continue;
+		}
+
+		$path = (string) ( $contract['path'] ?? '' );
+		$components[] = array_filter(
+			array(
+				'slug'          => (string) ( $contract['slug'] ?? ( '' !== $path ? basename( $path ) : '' ) ),
+				'source'        => $path,
+				'loadAs'        => (string) ( $contract['loadAs'] ?? 'mu-plugin' ),
+				'activate'      => isset( $contract['activate'] ) ? (bool) $contract['activate'] : null,
+				'contractIndex' => $index,
+				'requestedPath' => $path,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
+		);
+	}
+
+	return array(
+		'schema'     => 'wp-codebox/component-manifest/v1',
+		'components' => $components,
+		'providers'  => $providers,
+	);
+}
+
 private static function browser_agent_runner_php( array $task_input, string $session_id, string $task_path, string $result_path, array $invocation, array $captures ): string {
 	$default_payload = array(
 		'agent'      => 'wp-codebox-sandbox',
 		'message'    => (string) $task_input['goal'],
 		'session_id' => $session_id,
 		'task_input' => $task_input,
+		'component_manifest' => self::browser_runner_component_manifest( $task_input ),
 		'artifacts'  => array(),
 	);
 	$default_invocation = $invocation;

@@ -15,8 +15,9 @@ ${phpFatalDiagnosticPhp()}
 define( 'REST_REQUEST', true );
 $_SERVER['REQUEST_URI'] = '/wp-json/wp-codebox/ability';
 ${runtimeEnvPhp(spec)}
-require_once '/wordpress/wp-load.php';
 ${secretEnvPhp(spec)}
+${componentManifestPhp(spec)}
+require_once '/wordpress/wp-load.php';
 ${phpBody(code)}`
 }
 
@@ -29,9 +30,10 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 ${phpFatalDiagnosticPhp()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${runtimeEnvPhp(spec)}
+${secretEnvPhp(spec)}
+${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
 ${recipeActivePluginBootstrapPhp(spec)}
-${secretEnvPhp(spec)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
@@ -186,6 +188,46 @@ function pluginRuntimeBootstrapPhp(spec: RuntimeCreateSpec): string {
   }
 
   return lines.length > 0 ? `${lines.join("\n")}\n` : ""
+}
+
+function componentManifestPhp(spec: RuntimeCreateSpec): string {
+  const manifest = componentManifest(spec)
+  if (!manifest) {
+    return ""
+  }
+
+  const encoded = Buffer.from(JSON.stringify(manifest), "utf8").toString("base64")
+  return `$wp_codebox_component_manifest = json_decode(base64_decode('${encoded}'), true);
+if (is_array($wp_codebox_component_manifest)) {
+    $GLOBALS['wp_codebox_component_manifest'] = $wp_codebox_component_manifest;
+    if (!defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON')) {
+        define('WP_CODEBOX_COMPONENT_MANIFEST_JSON', json_encode($wp_codebox_component_manifest, JSON_UNESCAPED_SLASHES));
+    }
+}
+`
+}
+
+function componentManifest(spec: RuntimeCreateSpec): unknown {
+  const recipeManifest = metadataInputs(spec.metadata?.recipe)?.component_manifest
+  if (recipeManifest && typeof recipeManifest === "object" && !Array.isArray(recipeManifest)) {
+    return recipeManifest
+  }
+
+  const taskManifest = metadataInputs(spec.metadata?.task)?.component_manifest
+  if (taskManifest && typeof taskManifest === "object" && !Array.isArray(taskManifest)) {
+    return taskManifest
+  }
+
+  return undefined
+}
+
+function metadataInputs(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  const inputs = (value as { inputs?: unknown }).inputs
+  return inputs && typeof inputs === "object" && !Array.isArray(inputs) ? inputs as Record<string, unknown> : undefined
 }
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -2164,6 +2164,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     metadata: plugin.metadata,
   }))
   const componentContracts = componentContractResults(recipe, extraPlugins, [], [])
+  const componentManifest = recipeComponentManifest(extraPlugins, recipe.inputs?.component_manifest)
   const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
   const stagedFileProvenance = stagedFiles.map(recipeRunStagedFile)
   const workflow = recipeWorkflowMetadata(recipe)
@@ -2179,6 +2180,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_manifest: componentManifest,
         component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
@@ -2208,6 +2210,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_manifest: componentManifest,
         component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
@@ -2245,6 +2248,39 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     })),
     preparedComponentContracts: componentContracts,
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
+  }
+}
+
+function recipeComponentManifest(extraPlugins: PreparedExtraPlugin[], fallback: WorkspaceRecipeComponentManifest | undefined): Record<string, unknown> | undefined {
+  if (extraPlugins.length === 0) {
+    return fallback as Record<string, unknown> | undefined
+  }
+
+  const components: Record<string, unknown>[] = []
+  const providers: Record<string, unknown>[] = []
+  for (const plugin of extraPlugins) {
+    const contract = recordValue(plugin.metadata?.componentContract)
+    const entry = stripUndefined({
+      slug: plugin.slug,
+      source: plugin.source,
+      target: plugin.target,
+      pluginFile: plugin.pluginFile,
+      loadAs: plugin.loadAs,
+      activate: plugin.activate,
+      contractIndex: numberValue(contract?.index),
+      requestedPath: stringValue(contract?.requestedPath) || undefined,
+    })
+    if (contract) {
+      components.push(entry)
+    } else {
+      providers.push(entry)
+    }
+  }
+
+  return {
+    schema: "wp-codebox/component-manifest/v1",
+    components,
+    providers,
   }
 }
 
