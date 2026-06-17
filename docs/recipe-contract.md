@@ -153,6 +153,43 @@ otherwise successful recipe return `success: false`.
 }
 ```
 
+## Fixture Browser Auth Storage State
+
+Hosts that need an authenticated browser session for a disposable WordPress
+sandbox can use the playground package's fixture auth storage-state helpers
+instead of baking product-specific site identifiers into recipes. The helper
+contract is generic: resolve or create a named WordPress fixture user inside the
+sandbox, mint short-lived WordPress admin cookies for declared browser origins,
+and return a Playwright-compatible `storageState` envelope:
+
+```ts
+import { wordpressFixtureUserStorageStatePhpCode } from "@automattic/wp-codebox-playground"
+```
+
+The emitted PHP returns `wp-codebox/browser-auth-storage-state/v1`:
+
+```json
+{
+  "schema": "wp-codebox/browser-auth-storage-state/v1",
+  "kind": "wordpress-fixture-user-admin-auth",
+  "user": {
+    "id": 1,
+    "username": "wp-codebox-fixture-admin",
+    "email": "wp-codebox-fixture-admin@example.test",
+    "role": "administrator",
+    "created": true
+  },
+  "storageState": {
+    "cookies": [],
+    "origins": []
+  }
+}
+```
+
+Callers own when to run the PHP and where to persist the returned storage-state
+JSON. Product policy, production identifiers, and cross-site account mapping stay
+outside WP Codebox.
+
 ## Recipe Output Evidence
 
 `recipe-run --json` returns `wp-codebox/recipe-run/v1`. Browser command sidecars
