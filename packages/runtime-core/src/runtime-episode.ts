@@ -4,13 +4,18 @@ import { join } from "node:path"
 
 import { artifactFileDigest, artifactManifestFile, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles } from "./artifact-manifest.js"
 import type { ArtifactManifest, ArtifactSpec } from "./artifact-manifest.js"
+import { writeArtifactJson, writeArtifactManifestJson } from "./artifact-layout.js"
 import {
+  ARTIFACT_MANIFEST_PATH,
   RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH,
   RUNTIME_EPISODE_TRACE_ARTIFACT_PATH,
+  RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH,
   RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH,
   normalizeArtifactBundleTraceRef,
   normalizeRuntimeReferenceArtifactBundleRef,
   normalizeRuntimeReferenceManifestFileRefs,
+  runtimeReferenceManifestArtifactFiles,
+  runtimeReplayReferenceIndexArtifactFiles,
 } from "./artifact-references.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import {
@@ -271,8 +276,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
     const snapshotDirectory = join(this.artifacts.directory, "files/runtime-snapshots")
     await mkdir(snapshotDirectory, { recursive: true })
-    const baseRefs = manifest.files
-      .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json", "files/runtime-replay-index.json"].includes(file.path))
+    const baseRefs = runtimeReferenceManifestArtifactFiles(manifest.files)
     const snapshotRefs = normalizeRuntimeReferenceManifestFileRefs(baseRefs)
 
     for (const [index, snapshot] of this.snapshots.entries()) {
@@ -305,7 +309,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
         },
         refs: snapshotRefs,
       }
-      await writeFile(join(this.artifacts.directory, relativePath), `${JSON.stringify(bundle, null, 2)}\n`)
+      await writeArtifactJson(join(this.artifacts.directory, relativePath), bundle)
       const digest = artifactFileDigest(await readFile(join(this.artifacts.directory, relativePath)))
       const artifactRef: RuntimeEpisodeTraceRef = {
         kind: "runtime-snapshot-bundle",
@@ -324,8 +328,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       upsertArtifactManifestFiles(manifest, [artifactManifestFile(relativePath, "runtime-snapshot-bundle", "application/json")])
     }
 
-    await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
-    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeArtifactManifestJson(this.artifacts.directory, ARTIFACT_MANIFEST_PATH, manifest)
   }
 
   private async persistRuntimeEpisodeTraceArtifacts(): Promise<void> {
@@ -351,8 +354,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     }
 
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
-    const fileRefs = manifest.files
-      .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json", "files/runtime-replay-index.json"].includes(file.path))
+    const fileRefs = runtimeReferenceManifestArtifactFiles(manifest.files)
     const referenceFiles = normalizeRuntimeReferenceManifestFileRefs(fileRefs)
     const traceRef = referenceFiles.find((file) => file.path === traceRelativePath)
     const eventsRef = referenceFiles.find((file) => file.path === eventsRelativePath)
@@ -369,9 +371,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       ...(eventsRef ? { events: eventsRef } : {}),
       snapshots: this.snapshots,
     })
-    await writeFile(this.artifacts.runtimeReferenceManifestPath, `${JSON.stringify(referenceManifest, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.runtimeReferenceManifestPath, referenceManifest)
     await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
-    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.manifestPath, manifest)
   }
 
   private async updateRuntimeReplayReferenceIndexForRuntimeEpisodeTrace(trace: RuntimeEpisodeTrace, traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -380,12 +382,11 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     }
 
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
-    const fileRefs = manifest.files
-      .filter((file) => file.path !== "manifest.json")
+    const fileRefs = runtimeReplayReferenceIndexArtifactFiles(manifest.files)
     const referenceFiles = normalizeRuntimeReferenceManifestFileRefs(fileRefs)
     const traceRef = referenceFiles.find((file) => file.path === traceRelativePath)
     const eventsRef = referenceFiles.find((file) => file.path === eventsRelativePath)
-    const runtimeReferenceManifestRef = referenceFiles.find((file) => file.path === "files/runtime-reference-manifest.json")
+    const runtimeReferenceManifestRef = referenceFiles.find((file) => file.path === RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH)
     const artifactBundle = normalizeRuntimeReferenceArtifactBundleRef(manifest)
     if (!artifactBundle) {
       return
@@ -401,9 +402,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       snapshots: this.snapshots,
       episodeTrace: trace,
     })
-    await writeFile(this.artifacts.runtimeReplayReferenceIndexPath, `${JSON.stringify(replayIndex, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.runtimeReplayReferenceIndexPath, replayIndex)
     await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
-    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.manifestPath, manifest)
   }
 
   private async updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -418,7 +419,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       artifactManifestFile(RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH, "runtime-replay-index", "application/json"),
     ])
     await refreshArtifactManifestFileSha256s(this.artifacts.directory, manifest)
-    await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeArtifactManifestJson(this.artifacts.directory, ARTIFACT_MANIFEST_PATH, manifest)
   }
 
   private async updateArtifactMetadataForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -433,7 +434,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
       runtimeEpisodeEvents: eventsRelativePath,
       runtimeReplayReferenceIndex: RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH,
     }
-    await writeFile(this.artifacts.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.metadataPath, metadata)
   }
 
   private async updateArtifactReviewForRuntimeEpisodeTrace(traceRelativePath: string): Promise<void> {
@@ -452,7 +453,7 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
         timestamp: new Date().toISOString(),
       })
     }
-    await writeFile(this.artifacts.reviewPath, `${JSON.stringify(review, null, 2)}\n`)
+    await writeArtifactJson(this.artifacts.reviewPath, review)
   }
 
   async trace(): Promise<RuntimeEpisodeTrace> {

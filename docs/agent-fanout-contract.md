@@ -52,7 +52,7 @@ live in runtime-core as `wp-codebox/agent-fanout-aggregation-input/v1` and
     }
   ],
   "orchestrator": {
-    "product": "studio-web",
+    "product": "example-product",
     "request_id": "project-123"
   }
 }
@@ -145,9 +145,9 @@ embedding product placement policy in WP Codebox. A phase carries a request in
 
 WP Codebox passes the canonical request to the WordPress filter
 `wp_codebox_host_delegation_request`. Product hosts may satisfy it with any
-server-side implementation, including an Agents API safe workspace primitive, a
-queue-backed worker, or another host runtime. WP Codebox does not call Agents
-API, Data Machine, Data Machine Code, or product-specific APIs from this seam.
+server-side implementation, including a safe workspace primitive, a queue-backed
+worker, or another host runtime. WP Codebox does not call agent runtimes,
+coding-tool runtimes, or product-specific APIs from this seam.
 
 If no provider handles the request, WP Codebox returns a structured result:
 
@@ -173,7 +173,6 @@ should render delegation events as progress only; durable decisions should use
 the final `wp-codebox/host-delegation-result/v1` envelope plus product-owned
 evidence and artifacts.
 
-Product hosts such as Studio Web own placement scoring and policy. They may
-decide when to emit a host-delegation phase and how to interpret provider
-evidence, but WP Codebox remains product-neutral and only standardizes the
-delegation envelope.
+Product hosts own placement scoring and policy. They may decide when to emit a
+host-delegation phase and how to interpret provider evidence, but WP Codebox
+remains product-neutral and only standardizes the delegation envelope.

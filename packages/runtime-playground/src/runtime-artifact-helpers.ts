@@ -1,4 +1,3 @@
-import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { artifactManifestFile } from "@automattic/wp-codebox-core"
 import { normalizeJsonValue } from "@automattic/wp-codebox-core/internals"
@@ -17,6 +16,7 @@ import type {
   Snapshot,
 } from "@automattic/wp-codebox-core"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
+import { redactArtifactFiles } from "./artifact-bundle-writer.js"
 import type { ArtifactRedactor } from "./artifacts.js"
 import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { pluginCheckManifestFiles, redactPluginCheckArtifacts, redactThemeCheckArtifacts, themeCheckManifestFiles, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
@@ -112,13 +112,6 @@ function observationManifestFiles(artifactRoot: string, observations: Observatio
 
 async function redactBrowserArtifacts(artifactRoot: string, browserProbes: BrowserArtifact[], redactor: ArtifactRedactor): Promise<void> {
   for (const probe of browserProbes) {
-    for (const path of browserRedactionPaths(probe)) {
-      const absolutePath = join(artifactRoot, path)
-      try {
-        await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
-      } catch {
-        // Browser capture is best-effort; preserve artifact collection if a file vanished.
-      }
-    }
+    await redactArtifactFiles(artifactRoot, browserRedactionPaths(probe), redactor)
   }
 }

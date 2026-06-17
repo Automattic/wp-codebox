@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto"
 
 import type { ArtifactFileDigest, ArtifactViewerMetadata } from "./artifact-manifest.js"
-import { normalizeObservationArtifactRefs, normalizeRuntimeReferenceManifestFileRef } from "./artifact-references.js"
+import {
+  RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH,
+  RUNTIME_EPISODE_TRACE_ARTIFACT_PATH,
+  RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH,
+  normalizeObservationArtifactRefs,
+  normalizeRuntimeReferenceManifestFileRef,
+} from "./artifact-references.js"
 import { stableJson } from "./object-utils.js"
 import type {
   ObservationResult,
@@ -162,9 +168,9 @@ export function runtimeReferenceManifestDigest(manifest: RuntimeReferenceManifes
 export function buildRuntimeReplayReferenceIndex(input: BuildRuntimeReplayReferenceIndexInput): RuntimeReplayReferenceIndex {
   const filesByPath = new Map(input.files.map((file) => [file.path, runtimeReferenceManifestFileRef(file)]))
   const references = compactUndefined<RuntimeReplayReferenceIndex["references"]>({
-    trace: input.trace ? runtimeReferenceManifestFileRef(input.trace) : filesByPath.get("files/runtime-episode-trace.json"),
-    events: input.events ? runtimeReferenceManifestFileRef(input.events) : filesByPath.get("files/runtime-episode.jsonl"),
-    runtimeReferenceManifest: input.runtimeReferenceManifest ? runtimeReferenceManifestFileRef(input.runtimeReferenceManifest) : filesByPath.get("files/runtime-reference-manifest.json"),
+    trace: input.trace ? runtimeReferenceManifestFileRef(input.trace) : filesByPath.get(RUNTIME_EPISODE_TRACE_ARTIFACT_PATH),
+    events: input.events ? runtimeReferenceManifestFileRef(input.events) : filesByPath.get(RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH),
+    runtimeReferenceManifest: input.runtimeReferenceManifest ? runtimeReferenceManifestFileRef(input.runtimeReferenceManifest) : filesByPath.get(RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH),
     observations: filesByPath.get("observations.jsonl"),
     commands: filesByPath.get("commands.jsonl"),
     runtimeEvents: filesByPath.get("events.jsonl"),

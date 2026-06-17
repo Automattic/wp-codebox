@@ -1,6 +1,15 @@
+import { BROWSER_PROBE_ACCEPTED_ARGS } from "./browser-probe-contract.js"
+
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
   | { kind: "recipe-alias"; command: string }
+
+export type CommandJsonSchema = Record<string, unknown> & { $id?: string }
+
+export interface CommandOutputSchemaContract {
+  id: string
+  jsonSchema?: CommandJsonSchema
+}
 
 export interface CommandDefinition {
   id: string
@@ -13,10 +22,34 @@ export interface CommandDefinition {
     format?: string
   }>
   outputShape: string
+  outputSchema?: CommandOutputSchemaContract
   policyRequirement: string
   recipe: boolean
   handler: CommandHandlerBinding
 }
+
+const objectEnvelopeSchema = (id: string, extraProperties: Record<string, unknown> = {}): CommandOutputSchemaContract => ({
+  id,
+  jsonSchema: {
+    $id: id,
+    type: "object",
+    additionalProperties: true,
+    properties: {
+      schema: { const: id },
+      command: { type: "string" },
+      status: { type: "string" },
+      ...extraProperties,
+    },
+  },
+})
+
+const artifactSummarySchema = (id: string, artifactProperties: Record<string, unknown> = {}): CommandOutputSchemaContract => objectEnvelopeSchema(id, {
+  artifacts: {
+    type: "object",
+    additionalProperties: true,
+    properties: artifactProperties,
+  },
+})
 
 const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
   { name: "snapshot-include-wp-content", description: "Comma-separated wp-content-relative paths to include in the runtime snapshot. Defaults to all non-excluded paths.", format: "string" },
@@ -69,6 +102,10 @@ export const commandRegistry = [
       ...snapshotScopingAcceptedArgs,
     ],
     outputShape: "wp-codebox/wordpress-state-bundle-capture/v1 JSON with runtime snapshot id, artifact refs, replay status, and capture summary.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-state-bundle-capture/v1", {
+      runtimeSnapshot: { type: "string" },
+      manifest: { type: "string" },
+    }),
     policyRequirement: "Runtime policy commands must include wordpress.capture-state-bundle.",
     recipe: true,
     handler: { kind: "playground", method: "runCaptureStateBundle" },
@@ -84,6 +121,11 @@ export const commandRegistry = [
       ...snapshotScopingAcceptedArgs,
     ],
     outputShape: "wp-codebox/wordpress-replay-export/v1 JSON with import/materialization/snapshot/export metrics and manifest, blueprint.after.json, blueprint.after-notes.json, and files/runtime-snapshot.json artifact paths.",
+    outputSchema: artifactSummarySchema("wp-codebox/wordpress-replay-export/v1", {
+      manifest: { type: "string" },
+      blueprint: { type: "string" },
+      runtimeSnapshot: { type: "string" },
+    }),
     policyRequirement: "Runtime policy commands must include wordpress.export-replay-package.",
     recipe: true,
     handler: { kind: "playground", method: "runExportReplayPackage" },
@@ -133,6 +175,12 @@ export const commandRegistry = [
       { name: "reset-policy-json", description: "Explicit benchmark reset policy. Supports betweenIterations and betweenScenarios modes: none or object-cache.", format: "JSON object" },
     ],
     outputShape: "wp-codebox/bench-results/v1 JSON envelope with typed scenarios, metrics, diagnostics, artifacts, and provenance.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/bench-results/v1", {
+      scenarios: { type: "array" },
+      diagnostics: { type: "array" },
+      artifacts: { type: "object" },
+      provenance: { type: "object" },
+    }),
     policyRequirement: "Runtime policy commands must include wordpress.bench.",
     recipe: true,
     handler: { kind: "playground", method: "runBench" },
@@ -172,6 +220,10 @@ export const commandRegistry = [
       { name: "checks", description: "Optional comma-separated official Plugin Check slugs to run; omit to run the default suite.", format: "comma-separated check slugs" },
     ],
     outputShape: "wp-codebox/plugin-check/v1 JSON with command, target plugin, exit code/status, summary counts, and findings; raw and normalized outputs are captured in artifacts.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/plugin-check/v1", {
+      summary: { type: "object" },
+      findings: { type: "array" },
+    }),
     policyRequirement: "Runtime policy commands must include wordpress.plugin-check.",
     recipe: true,
     handler: { kind: "playground", method: "runPluginCheck" },
@@ -208,21 +260,7 @@ export const commandRegistry = [
   {
     id: "wordpress.browser-probe",
     description: "Open the live Playground preview in Playwright and capture generic browser replay/audit evidence artifacts.",
-    acceptedArgs: [
-      { name: "url", description: "Preview path or absolute URL to visit.", required: true, format: "path or URL" },
-      { name: "wait-for", description: "Navigation wait condition.", format: "domcontentloaded|load|networkidle|selector:<selector>|duration" },
-      { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
-      { name: "device", description: "Optional built-in Playwright device profile to use for the browser context.", format: "Playwright device name, e.g. iPhone 13" },
-      { name: "locale", description: "Optional browser context locale.", format: "BCP 47 locale, e.g. en-US" },
-      { name: "auth", description: "Optional in-memory browser authentication mode. Use wordpress-admin to bootstrap WordPress admin cookies from PHP without writing token-bearing storage-state artifacts.", format: "wordpress-admin" },
-      { name: "auth-user-id", description: "WordPress user ID used with auth=wordpress-admin; defaults to 1.", format: "positive integer" },
-      { name: "pre-page-script", description: "Optional JavaScript installed before navigation so page scripts can observe mocked browser/payment capabilities.", format: "JavaScript source" },
-      { name: "script", description: "Optional page-side JavaScript to evaluate after navigation and before final capture.", format: "JavaScript function body" },
-      { name: "assert", description: "Repeatable DOM/browser assertion. Supports advisory:<assertion>, exists:<selector>, not-exists:<selector>, visible:<selector>, hidden:<selector>, count:<selector><op><number>, text:<selector> contains <text>, attr:<selector>[name][=value], no-console-errors, no-page-errors, and no-errors.", repeatable: true, format: "browser assertion" },
-      { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,html,network,performance,memory,screenshot" },
-      { name: "repeat", description: "Optional repeated probe iterations for leak-oriented recipes.", format: "positive integer" },
-      { name: "reset-between", description: "Requested reset mode between repeated probe iterations.", format: "none|reload|new-page" },
-    ],
+    acceptedArgs: BROWSER_PROBE_ACCEPTED_ARGS,
     outputShape: "JSON summary with requested/effective browser context details plus assertion results and files/browser/console.jsonl, errors.jsonl, network.jsonl, performance.json, memory.json, checkpoints.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
     recipe: true,
@@ -324,6 +362,10 @@ export const commandRegistry = [
       { name: "max-regions", description: "Maximum mismatch regions to report; defaults to 8.", format: "positive integer" },
     ],
     outputShape: "wp-codebox/visual-compare/v1 JSON summary plus files/browser/visual-compare/source.png, candidate.png, diff.png, visual-diff.json, visual-explanation.json when DOM/style context is available, and optional baseline delta evidence when a previous visual comparison artifact is supplied. Matrix runs emit wp-codebox/visual-compare-matrix/v1 in files/browser/visual-compare/matrix-summary.json plus per-comparison subdirectories.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/visual-compare/v1", {
+      summary: { type: "object" },
+      artifacts: { type: "object" },
+    }),
     policyRequirement: "Runtime policy commands must include wordpress.visual-compare.",
     recipe: true,
     handler: { kind: "playground", method: "runVisualCompare" },
@@ -418,6 +460,11 @@ export const commandRegistry = [
       { name: "request-file", description: "Recipe-relative path to a wp-codebox/agent-fanout-request/v1 envelope.", format: "path" },
     ],
     outputShape: "JSON wp-codebox/agent-fanout-result/v1 envelope plus fanout/plan.json, fanout/events.jsonl, worker result refs, and aggregate/final refs in runtime evidence artifacts.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/agent-fanout-result/v1", {
+      fanout: { type: "object" },
+      workers: { type: "array" },
+      aggregate: { type: "object" },
+    }),
     policyRequirement: "Host-side recipe helper; it writes generic Codebox artifact envelopes and does not expose product or Data Machine internals.",
     recipe: true,
     handler: { kind: "recipe-alias", command: "wp-codebox.agent-fanout" },

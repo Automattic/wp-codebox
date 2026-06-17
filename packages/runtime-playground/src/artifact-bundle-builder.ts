@@ -1,6 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
 import {
+  ARTIFACT_MANIFEST_PATH,
+  CHANGED_FILES_ARTIFACT_PATH,
+  METADATA_ARTIFACT_PATH,
+  REVIEW_ARTIFACT_PATH,
+  RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH,
+  RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH,
   buildRuntimeReferenceManifest,
   buildRuntimeReplayReferenceIndex,
   artifactFileDigest,
@@ -8,6 +14,8 @@ import {
   artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
+  runtimeReferenceManifestArtifactFiles,
+  runtimeReplayReferenceIndexArtifactFiles,
   type ArtifactEvidenceRef,
   type ArtifactBundle,
   type ArtifactDurablePreviewRef,
@@ -51,6 +59,7 @@ import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
 import { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations } from "./replayable-wordpress-site-bundle.js"
 import { runtimeSnapshotPayload, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
+import { artifactJsonLines, writeRedactedArtifactFile } from "./artifact-bundle-writer.js"
 
 export interface ArtifactBundleBuilderSource {
   artifactRoot: string
@@ -94,8 +103,8 @@ export class ArtifactBundleBuilder {
     await mkdir(filesDirectory, { recursive: true })
 
     const createdAt = new Date().toISOString()
-    const manifestPath = join(source.artifactRoot, "manifest.json")
-    const metadataPath = join(source.artifactRoot, "metadata.json")
+    const manifestPath = join(source.artifactRoot, ARTIFACT_MANIFEST_PATH)
+    const metadataPath = join(source.artifactRoot, METADATA_ARTIFACT_PATH)
     const blueprintAfterPath = join(source.artifactRoot, "blueprint.after.json")
     const blueprintAfterNotesPath = join(source.artifactRoot, "blueprint.after-notes.json")
     const eventsPath = join(source.artifactRoot, "events.jsonl")
@@ -106,15 +115,15 @@ export class ArtifactBundleBuilder {
     const mountsPath = join(filesDirectory, "mounts.json")
     const capturedMountsPath = join(filesDirectory, "mounted-files.json")
     const diffsPath = join(filesDirectory, "diffs.json")
-    const changedFilesPath = join(filesDirectory, "changed-files.json")
+    const changedFilesPath = join(source.artifactRoot, CHANGED_FILES_ARTIFACT_PATH)
     const patchPath = join(filesDirectory, "patch.diff")
     const workspacePatchPath = join(filesDirectory, "workspace-patch.json")
     const diagnosticsPath = join(filesDirectory, "diagnostics.json")
     const testResultsPath = join(filesDirectory, "test-results.json")
-    const reviewPath = join(filesDirectory, "review.json")
-    const runtimeReferenceManifestPath = join(filesDirectory, "runtime-reference-manifest.json")
+    const reviewPath = join(source.artifactRoot, REVIEW_ARTIFACT_PATH)
+    const runtimeReferenceManifestPath = join(source.artifactRoot, RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH)
     const runtimeReferenceIndexPath = join(filesDirectory, "runtime-reference-index.json")
-    const runtimeReplayReferenceIndexPath = join(filesDirectory, "runtime-replay-index.json")
+    const runtimeReplayReferenceIndexPath = join(source.artifactRoot, RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH)
     const previewEvidencePath = join(filesDirectory, "preview-evidence.json")
     const previewSessionEvidencePath = join(filesDirectory, "preview-session-evidence.json")
     const redactor = new ArtifactRedactor(source.spec.secretEnv)
@@ -145,7 +154,7 @@ export class ArtifactBundleBuilder {
     const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
-    const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
+    const changedFilesJson = redactor.redact(CHANGED_FILES_ARTIFACT_PATH, `${JSON.stringify(changedFiles, null, 2)}\n`)
     const redactedPatch = redactor.redact("files/patch.diff", patch)
     const contentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
     const bundleId = `artifact-bundle-sha256-${contentDigest}`
@@ -373,7 +382,7 @@ export class ArtifactBundleBuilder {
       id: bundleId,
       contentDigest: {
         algorithm: "sha256",
-        inputs: ["files/changed-files.json", "files/patch.diff"],
+        inputs: [CHANGED_FILES_ARTIFACT_PATH, "files/patch.diff"],
         value: contentDigest,
       },
       createdAt,
@@ -401,17 +410,16 @@ export class ArtifactBundleBuilder {
         id: bundleId,
         digest: { algorithm: "sha256", value: contentDigest },
       },
-      files: manifest.files
-        .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json", "files/runtime-replay-index.json"].includes(file.path))
+      files: runtimeReferenceManifestArtifactFiles(manifest.files)
         .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
       snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReferenceManifestPath, artifactJson(runtimeReferenceManifest))
     const runtimeReferenceManifestRef = artifactManifestFileWithSha256(
-      "files/runtime-reference-manifest.json",
+      RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH,
       "runtime-reference-manifest",
       "application/json",
-      await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, artifactManifestFile("files/runtime-reference-manifest.json", "runtime-reference-manifest", "application/json")),
+      await calculateArtifactManifestFileSha256(source.artifactRoot, manifest, artifactManifestFile(RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH, "runtime-reference-manifest", "application/json")),
     )
     const runtimeReplayReferenceIndex = buildRuntimeReplayReferenceIndex({
       createdAt,
@@ -421,9 +429,8 @@ export class ArtifactBundleBuilder {
         id: bundleId,
         digest: { algorithm: "sha256", value: contentDigest },
       },
-      files: manifest.files
-        .filter((file) => !["manifest.json", "files/runtime-replay-index.json"].includes(file.path))
-        .map((file) => file.path === "files/runtime-reference-manifest.json" ? runtimeReferenceManifestRef : ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
+      files: runtimeReplayReferenceIndexArtifactFiles(manifest.files)
+        .map((file) => file.path === RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH ? runtimeReferenceManifestRef : ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256, ...(file.viewer ? { viewer: cloneArtifactViewerMetadata(file.viewer) } : {}) })),
       runtimeReferenceManifest: runtimeReferenceManifestRef,
       snapshots: runtimeSnapshots,
     })
@@ -718,15 +725,11 @@ function isLocalPreviewHost(hostname: string): boolean {
 }
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
-  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => artifactJsonLine(record)).join("\n")}\n` : "")
+  await writeRedactedArtifact(redactor, path, artifactRoot, artifactJsonLines(records.map((record) => normalizeJsonValue(record))))
 }
 
 function artifactJson(value: unknown): string {
   return `${JSON.stringify(normalizeJsonValue(value), null, 2)}\n`
-}
-
-function artifactJsonLine(value: unknown): string {
-  return JSON.stringify(normalizeJsonValue(value))
 }
 
 function buildPreviewSessionEvidence({
@@ -1150,5 +1153,5 @@ function stringValue(value: unknown): string | undefined {
 }
 
 async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {
-  await writeFile(path, redactor.redact(relative(artifactRoot, path), contents))
+  await writeRedactedArtifactFile(artifactRoot, path, contents, redactor)
 }

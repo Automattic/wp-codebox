@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { promisify } from "node:util"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, namedFileTreeSkipPolicy, registerRuntimeSecretRedactions, relativePathExcluded } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type {
   ArtifactDiagnostic,
@@ -153,7 +153,7 @@ interface RedactionResult {
 
 export const MAX_CAPTURED_MOUNT_FILES = 200
 export const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
-export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules", "target"])
+export const SKIPPED_CAPTURE_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
 
 const packageRequire = createRequire(import.meta.url)
 
@@ -175,15 +175,10 @@ export class ArtifactRedactor {
   constructor(secretEnv: Record<string, string> = {}) {
     this.replacements.push(...COMMON_SECRET_PATTERNS)
 
-    for (const [name, value] of Object.entries(secretEnv)) {
-      if (name.length > 0) {
-        this.replacements.push({ kind: "configured-secret-name", literal: name })
-      }
-
-      if (shouldRedactConfiguredSecretValue(value)) {
-        this.replacements.push({ kind: "configured-secret-value", literal: value })
-      }
-    }
+    registerRuntimeSecretRedactions(secretEnv, {
+      registerSecretName: (name) => this.replacements.push({ kind: "configured-secret-name", literal: name }),
+      registerSecretValue: (value) => this.replacements.push({ kind: "configured-secret-value", literal: value }),
+    })
   }
 
   redact(path: string, contents: string): string {
@@ -320,23 +315,6 @@ function redactPattern(contents: string, pattern: RegExp, replacement: string): 
 
   chunks.push(contents.slice(cursor))
   return { contents: chunks.join(""), count }
-}
-
-function shouldRedactConfiguredSecretValue(value: string): boolean {
-  const trimmed = value.trim()
-  if (trimmed.length < 8) {
-    return false
-  }
-
-  if (["true", "false", "null", "undefined"].includes(trimmed.toLowerCase())) {
-    return false
-  }
-
-  if (/^[0-9]+$/.test(trimmed)) {
-    return false
-  }
-
-  return true
 }
 
 function escapeRegExp(value: string): string {
@@ -870,25 +848,6 @@ async function listTextFiles(directory: string, prefix = "", excludePaths: strin
   }
 
   return files
-}
-
-function relativePathExcluded(relativePath: string, excludePaths: string[]): boolean {
-  const normalized = relativePath.replace(/^\/+/, "")
-  return excludePaths.some((pattern) => excludePathMatches(normalized, pattern))
-}
-
-function excludePathMatches(relativePath: string, pattern: string): boolean {
-  const normalizedPattern = pattern.trim().replace(/^\/+/, "").replace(/\/+$/, "")
-  if (!normalizedPattern) {
-    return false
-  }
-
-  if (normalizedPattern.endsWith("/**")) {
-    const prefix = normalizedPattern.slice(0, -3).replace(/\/+$/, "")
-    return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
-  }
-
-  return relativePath === normalizedPattern || relativePath.startsWith(`${normalizedPattern}/`)
 }
 
 function provenanceContext(context: Record<string, unknown>, key: string): Record<string, unknown> | undefined {

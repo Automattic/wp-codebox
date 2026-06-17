@@ -6,8 +6,12 @@ import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
-import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
+import { collectPreparedSourceCleanupPaths, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
+import { evaluateSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
+import { prepareZipSource } from "./zip-source.js"
+
+export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloadHosts, isSha256, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles, MAX_DOWNLOAD_BYTES_ENV, MAX_EXTRACTED_BYTES_ENV, MAX_EXTRACTED_FILES_ENV, REQUIRE_SOURCE_SHA256_ENV, sourceSha256Required } from "./source-policy.js"
 
 const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
 
@@ -66,11 +70,7 @@ export interface PreparedExtraPlugin {
 
 type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
 
-export interface RecipeStagedFileProvenance {
-  kind: "local"
-  original: string
-  localPathCategory?: "recipe-relative"
-}
+export type RecipeStagedFileProvenance = PreparedSourceProvenance
 
 export interface PreparedStagedFile {
   source: string
@@ -112,94 +112,12 @@ export interface ParsedRecipeSource {
   wporgSlug?: string
 }
 
-export interface RecipeSourcePolicyIssue {
-  code: string
-  message: string
-}
-
-export const ALLOW_NETWORK_DOWNLOADS_ENV = "WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS"
-export const ALLOWED_DOWNLOAD_HOSTS_ENV = "WP_CODEBOX_ALLOWED_DOWNLOAD_HOSTS"
-export const REQUIRE_SOURCE_SHA256_ENV = "WP_CODEBOX_REQUIRE_SOURCE_SHA256"
-export const MAX_DOWNLOAD_BYTES_ENV = "WP_CODEBOX_MAX_DOWNLOAD_BYTES"
-export const MAX_EXTRACTED_BYTES_ENV = "WP_CODEBOX_MAX_EXTRACTED_BYTES"
-export const MAX_EXTRACTED_FILES_ENV = "WP_CODEBOX_MAX_EXTRACTED_FILES"
-
-const DEFAULT_ALLOWED_DOWNLOAD_HOSTS = ["downloads.wordpress.org"]
-const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
-const DEFAULT_MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
-const DEFAULT_MAX_EXTRACTED_FILES = 5000
 const execFileAsync = promisify(execFile)
 const PHP_SCOPER_VERSION = "0.18.17"
 const PHP_SCOPER_URL = `https://github.com/humbug/php-scoper/releases/download/${PHP_SCOPER_VERSION}/php-scoper.phar`
 
-export function isSha256(value: string): boolean {
-  return /^[a-f0-9]{64}$/i.test(value)
-}
-
-export function evaluateRecipeSourcePolicy(source: ParsedRecipeSource, expectedSha256?: string): RecipeSourcePolicyIssue[] {
-  if (source.type === "local") {
-    return []
-  }
-
-  const issues: RecipeSourcePolicyIssue[] = []
-  if (process.env[ALLOW_NETWORK_DOWNLOADS_ENV] !== "1") {
-    issues.push({
-      code: "network-downloads-disabled",
-      message: `External recipe sources require ${ALLOW_NETWORK_DOWNLOADS_ENV}=1 before WP Codebox downloads anything.`,
-    })
-  }
-
-  if (!allowedDownloadHosts().includes(source.host)) {
-    issues.push({
-      code: "download-host-not-allowed",
-      message: `External recipe source host is not allowed: ${source.host}`,
-    })
-  }
-
-  if (expectedSha256 !== undefined && !isSha256(expectedSha256)) {
-    issues.push({
-      code: "invalid-source-sha256",
-      message: "External recipe source sha256 must be a 64-character hex digest.",
-    })
-  }
-
-  if (sourceSha256Required() && !expectedSha256) {
-    issues.push({
-      code: "missing-source-sha256",
-      message: `External recipe sources require sha256 when ${REQUIRE_SOURCE_SHA256_ENV}=1.`,
-    })
-  }
-
-  return issues
-}
-
-export function sourceSha256Required(): boolean {
-  return process.env[REQUIRE_SOURCE_SHA256_ENV] === "1"
-}
-
-export function allowedDownloadHosts(): string[] {
-  const configured = process.env[ALLOWED_DOWNLOAD_HOSTS_ENV]
-  return (configured ? configured.split(",") : DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean)
-}
-
-function envPositiveInteger(name: string, fallback: number): number {
-  const value = Number(process.env[name] ?? "")
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback
-}
-
-export function maxDownloadBytes(): number {
-  return envPositiveInteger(MAX_DOWNLOAD_BYTES_ENV, DEFAULT_MAX_DOWNLOAD_BYTES)
-}
-
-export function maxExtractedBytes(): number {
-  return envPositiveInteger(MAX_EXTRACTED_BYTES_ENV, DEFAULT_MAX_EXTRACTED_BYTES)
-}
-
-export function maxExtractedFiles(): number {
-  return envPositiveInteger(MAX_EXTRACTED_FILES_ENV, DEFAULT_MAX_EXTRACTED_FILES)
-}
+export type RecipeSourcePolicyIssue = SourcePolicyIssue
+export const evaluateRecipeSourcePolicy = evaluateSourcePolicy
 
 function normalizedWorkspaceSeedExcludePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "")
@@ -267,13 +185,8 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
 }
 
 export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = [], dependencyOverlays: PreparedDependencyOverlay[] = []): Promise<void> {
-  await Promise.all([
-    cleanupRecipeWorkspaces(workspaces),
-    ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...stagedFiles.flatMap((stagedFile) => stagedFile.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...overlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-    ...dependencyOverlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
-  ])
+  const cleanupPaths = collectPreparedSourceCleanupPaths(extraPlugins, stagedFiles, overlays, dependencyOverlays)
+  await Promise.all([cleanupRecipeWorkspaces(workspaces), ...cleanupPaths.map((path) => rm(path, { recursive: true, force: true }))])
 }
 
 export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedExtraPlugin[]> {
@@ -407,16 +320,21 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
     const originalSource = resolve(recipeDirectory, stagedFile.source)
     const type = await stagedFileMountType(originalSource)
     const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-staged-file-"))
-    const stagedSource = join(stagingRoot, basename(originalSource))
-    await cp(originalSource, stagedSource, { recursive: type === "directory" })
+    const staged = prepareLocalSourceStageSync({
+      source: originalSource,
+      sourceRef: stagedFile.source,
+      targetRoot: stagingRoot,
+      recipeDirectory,
+      excludeNames: [],
+    })
     const provenance = stagedFileProvenance(stagedFile, recipeDirectory)
     stagedFiles.push({
-      source: stagedSource,
+      source: staged.source,
       originalSource,
       sourceRef: stagedFile.source,
       target: stagedFile.target,
       type,
-      cleanupPaths: [stagingRoot],
+      cleanupPaths: staged.cleanupPaths,
       provenance,
       metadata: {
         kind: "staged-file",
@@ -510,11 +428,14 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
     throw new Error(`Composer-backed ${label} source has no vendor directory, and Composer is not available to hydrate dependencies. Run composer install in ${source}, or install Composer on PATH before running WP Codebox.`)
   }
 
-  const hydratedSource = join(stagingRoot, "composer-source")
-  await cp(source, hydratedSource, {
-    recursive: true,
-    filter: (entry) => !workspaceSeedExcludeMatches(relative(source, entry), "vendor"),
+  const staged = prepareLocalSourceStageSync({
+    source,
+    targetRoot: stagingRoot,
+    targetName: "composer-source",
+    cleanupRoot: false,
+    excludeNames: ["vendor"],
   })
+  const hydratedSource = staged.source
 
   try {
     await execFileAsync(composer, ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"])
@@ -861,11 +782,7 @@ export async function recipeMountType(source: string, explicitType?: MountSpec["
 }
 
 export function stagedFileProvenance(stagedFile: WorkspaceRecipeStagedFile, recipeDirectory: string): RecipeStagedFileProvenance {
-  return {
-    kind: "local",
-    original: stagedFile.source,
-    localPathCategory: resolve(recipeDirectory, stagedFile.source).startsWith(recipeDirectory) ? "recipe-relative" : undefined,
-  }
+  return localPreparedSourceProvenance(stagedFile.source, recipeDirectory)
 }
 
 async function assertPreparedPluginFileExists(sourceDirectory: string, pluginFileRelativeToSource: string, sourceRef: string): Promise<void> {
@@ -896,105 +813,18 @@ async function prepareRecipeSource(sourceRef: string, recipeDirectory: string, s
     throw new Error(policyIssue.message)
   }
 
-  const directory = await mkdtemp(join(tmpdir(), `wp-codebox-source-${slug}-`))
-  const zipPath = join(directory, "source.zip")
-  const extractDirectory = join(directory, "extracted")
-  await mkdir(extractDirectory, { recursive: true })
-  const digest = await downloadRecipeSourceZip(source, zipPath)
-  await assertSafeZipEntries(zipPath)
-  await execFileAsync("unzip", ["-q", zipPath, "-d", extractDirectory])
-  await assertExtractedSourceBounds(extractDirectory)
+  const preparedZip = await prepareZipSource(source, slug, recipeRedirectSource)
 
   return {
-    source: await extractedPluginSourceDirectory(extractDirectory, slug),
-    cleanupPaths: [directory],
+    source: await extractedPluginSourceDirectory(preparedZip.extractDirectory, slug),
+    cleanupPaths: [preparedZip.root],
     provenance: {
       ...recipeSourceProvenance(source, recipeDirectory),
-      digest: { sha256: digest, ...(source.expectedSha256 ? { expected: source.expectedSha256, verified: true } : {}) },
-      policy: {
-        host: source.host,
-        maxDownloadBytes: maxDownloadBytes(),
-        maxExtractedBytes: maxExtractedBytes(),
-        maxExtractedFiles: maxExtractedFiles(),
-        sha256Required: sourceSha256Required(),
-      },
+      digest: { sha256: preparedZip.digest, ...(source.expectedSha256 ? { expected: source.expectedSha256, verified: true } : {}) },
+      policy: sourcePolicySnapshot(source.host),
       localPathCategory: "temporary-download",
     },
   }
-}
-
-async function downloadRecipeSourceZip(source: ParsedRecipeSource, targetPath: string): Promise<string> {
-  const response = await fetch(source.resolvedUrl)
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download recipe source ${source.resolvedUrl}: HTTP ${response.status}`)
-  }
-
-  const finalSource = recipeRedirectSource(source, response.url || source.resolvedUrl, response.headers)
-
-  if (finalSource.type === "local" || !allowedDownloadHosts().includes(finalSource.host)) {
-    throw new Error(`Recipe source redirected to a host that is not allowed: ${finalSource.host || finalSource.resolvedUrl}`)
-  }
-
-  const contentLength = Number(response.headers.get("content-length") ?? "0")
-  if (contentLength > maxDownloadBytes()) {
-    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${source.resolvedUrl}`)
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer())
-  if (buffer.byteLength > maxDownloadBytes()) {
-    throw new Error(`Recipe source download exceeds ${maxDownloadBytes()} bytes: ${source.resolvedUrl}`)
-  }
-
-  const digest = createHash("sha256").update(buffer).digest("hex")
-  if (source.expectedSha256 && digest !== source.expectedSha256.toLowerCase()) {
-    throw new Error(`Recipe source sha256 mismatch for ${source.resolvedUrl}: expected ${source.expectedSha256.toLowerCase()}, got ${digest}`)
-  }
-
-  await writeFile(targetPath, buffer)
-  return digest
-}
-
-async function assertSafeZipEntries(zipPath: string): Promise<void> {
-  const { stdout } = await execFileAsync("unzip", ["-Z1", zipPath])
-  const entries = stdout.split(/\r?\n/).filter(Boolean)
-  if (entries.length > maxExtractedFiles()) {
-    throw new Error(`Recipe source zip contains too many entries: ${entries.length}`)
-  }
-
-  for (const entry of entries) {
-    const normalized = entry.replace(/\\/g, "/")
-    if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
-      throw new Error(`Recipe source zip contains an unsafe path: ${entry}`)
-    }
-  }
-}
-
-async function assertExtractedSourceBounds(directory: string): Promise<void> {
-  const totals = await directoryTotals(directory)
-  if (totals.files > maxExtractedFiles()) {
-    throw new Error(`Recipe source extraction contains too many files: ${totals.files}`)
-  }
-  if (totals.bytes > maxExtractedBytes()) {
-    throw new Error(`Recipe source extraction exceeds ${maxExtractedBytes()} bytes: ${totals.bytes}`)
-  }
-}
-
-async function directoryTotals(directory: string): Promise<{ files: number; bytes: number }> {
-  let files = 0
-  let bytes = 0
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) {
-      const child = await directoryTotals(path)
-      files += child.files
-      bytes += child.bytes
-    } else if (entry.isFile()) {
-      const result = await stat(path)
-      files += 1
-      bytes += result.size
-    }
-  }
-  return { files, bytes }
 }
 
 async function extractedPluginSourceDirectory(extractDirectory: string, slug: string): Promise<string> {
@@ -1180,13 +1010,7 @@ export function recipeSourceProvenance(source: ParsedRecipeSource, recipeDirecto
     original: source.resolvedUrl,
     resolvedUrl: source.resolvedUrl,
     ...(source.expectedSha256 ? { digest: { sha256: source.expectedSha256, expected: source.expectedSha256, verified: false } } : {}),
-    policy: {
-      host: source.host,
-      maxDownloadBytes: maxDownloadBytes(),
-      maxExtractedBytes: maxExtractedBytes(),
-      maxExtractedFiles: maxExtractedFiles(),
-      sha256Required: sourceSha256Required(),
-    },
+    policy: sourcePolicySnapshot(source.host),
   }
 }
 

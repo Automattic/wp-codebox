@@ -196,7 +196,7 @@ See [External Apply Adapter Contract](../../docs/external-apply-adapter-contract
 for the parent-control-plane contract. The documented smoke fixture proves that
 an external adapter can consume the verified artifact payload and record adapter
 metadata, PR URL, branch, commit, and artifact digest without WP Codebox calling
-Data Machine Code or any other product-specific apply-back system.
+any product-specific apply-back system.
 
 ## Configuration
 
@@ -246,12 +246,12 @@ npm run smoke -- --group package
 
 ## Boundary
 
-Data Machine Code is the mounted coding-tools component for file-editing agent
-sandboxes. It provides sandbox-scoped workspace and file tools inside the
-isolated runtime. This plugin owns the parent-site ability surface and sandbox
-lifecycle boundary; DMC does not own that control plane.
+A mounted coding-tools component can provide file-editing tools for agent
+sandboxes inside the isolated runtime. This plugin owns the parent-site ability
+surface and sandbox lifecycle boundary; mounted tools do not own that control
+plane.
 
-Sandbox-safe DMC abilities are an explicit allow-list:
+Sandbox-safe tool abilities should be an explicit allow-list:
 
 - Workspace read/list/search/edit primitives: `datamachine/workspace-read`,
   `datamachine/workspace-ls`, `datamachine/workspace-grep`,
@@ -259,7 +259,7 @@ Sandbox-safe DMC abilities are an explicit allow-list:
 - Read-only GitHub context primitives: issue, PR, PR file, check/status, tree,
   file, and repo list/get abilities.
 
-Parent-only DMC abilities include workspace clone/adopt/remove/delete, worktree
+Parent-only coding-tool abilities include workspace clone/adopt/remove/delete, worktree
 lifecycle and cleanup, git status/log/diff/pull/add/commit/push/rebase/reset, GitSync
 bind/pull/submit/push/policy changes, issue/PR creation or mutation, comments,
 review comments, merges, PR cleanup, GitHub file writes, and code-task creation.
@@ -270,8 +270,8 @@ creation.
 
 The WordPress runner validates requested `allowed_tools` against the caller's
 resolved `sandbox_tool_policy` before the sandbox process starts. Product layers
-such as Data Machine own their own tool taxonomy and risk policy; WP Codebox only
+own their own tool taxonomy and risk policy; WP Codebox only
 validates the generic snapshot shape and enforces the resolved boundary.
 
-Data Machine, Data Machine Code, and other systems are consumers or mounted
-tools. They do not own WP Codebox's artifact contract.
+External systems are consumers or mounted tools. They do not own WP Codebox's
+artifact contract.

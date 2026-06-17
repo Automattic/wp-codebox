@@ -15,13 +15,12 @@ Parent control plane
     <- returns wp-codebox/sandbox-session/v1 for correlation
 
 Disposable Playground sandbox
-  may mount Agents API, Data Machine, Data Machine Code, and provider plugins
+  may mount agent runtimes, coding tools, and provider plugins
   owns in-sandbox agent behavior only
 ```
 
 The host WP Codebox plugin should not depend on a specific parent job system.
-External orchestrators, including Homeboy, consume the same abilities and
-artifact contracts.
+External orchestrators consume the same abilities and artifact contracts.
 
 ## Browser Playground Permission Model
 
@@ -75,13 +74,13 @@ The adapter filter receives a redacted request envelope:
 {
   "schema": "wp-codebox/browser-provider-adapter-request/v1",
   "operation": "chat.completions",
-  "provider": "openai",
-  "model": "gpt-5.5",
+  "provider": "example-ai",
+  "model": "example-model",
   "connector": {
     "name": "primary-ai",
     "status": "resolved",
-    "provider": "openai",
-    "model": "gpt-5.5"
+    "provider": "example-ai",
+    "model": "example-model"
   },
   "context": {
     "session_id": "browser-session-123",
@@ -113,7 +112,7 @@ optional correlation fields:
   "sandbox_session_id": "external-job-123",
   "session_id": "sandbox-agent-conversation-456",
   "orchestrator": {
-    "type": "data-machine-job",
+    "type": "external-job",
     "id": "parent-site-control-plane",
     "job_id": "123"
   }
@@ -139,7 +138,7 @@ The ability response includes a `wp-codebox/sandbox-session/v1` envelope:
     "persistence": "external-orchestrator",
     "agent_session_id": "sandbox-agent-conversation-456",
     "orchestrator": {
-      "type": "data-machine-job",
+      "type": "external-job",
       "id": "parent-site-control-plane",
       "job_id": "123"
     },

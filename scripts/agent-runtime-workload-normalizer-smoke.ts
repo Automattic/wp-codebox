@@ -1,17 +1,45 @@
 import { normalizeAgentRuntimeWorkload } from "@automattic/wp-codebox-core"
 
-const bundleRun = normalizeAgentRuntimeWorkload({
+const canonicalEnvelope = normalizeAgentRuntimeWorkload({
+  schema: "wp-codebox/agent-runtime-workload/v1",
+  success: true,
+  outputs: { preview_url: "https://example.test/canonical" },
+  scenarios: [{ id: "canonical", status: "completed", outputs: { preview_url: "https://example.test/canonical" } }],
+  diagnostics: [{ class: "agent_runtime.note", message: "canonical envelope retained" }],
+  artifacts: [{ kind: "runtime-report", path: "runtime/report.json" }],
+})
+assertEqual(canonicalEnvelope.schema, "wp-codebox/agent-runtime-workload/v1", "canonical schema is stable")
+assertEqual(canonicalEnvelope.success, true, "canonical envelope succeeds")
+assertEqual(canonicalEnvelope.outputs.preview_url, "https://example.test/canonical", "canonical outputs are preserved")
+assertEqual(canonicalEnvelope.scenarios[0]?.id, "canonical", "canonical scenario id is preserved")
+assertEqual(canonicalEnvelope.diagnostics[0]?.message, "canonical envelope retained", "canonical diagnostics are preserved")
+assertEqual(canonicalEnvelope.artifacts[0]?.path, "runtime/report.json", "canonical artifacts are preserved")
+
+const explicitEnvelope = normalizeAgentRuntimeWorkload({
+  agent_runtime_workload: {
+    schema: "wp-codebox/agent-runtime-workload/v1",
+    success: true,
+    outputs: { report_path: "runtime/report.json" },
+    scenarios: [{ id: "explicit" }],
+  },
+  stdout: JSON.stringify({ success: false, outputs: { report_path: "legacy/report.json" } }),
+})
+assertEqual(explicitEnvelope.success, true, "explicit envelope wins over legacy extraction")
+assertEqual(explicitEnvelope.outputs.report_path, "runtime/report.json", "explicit envelope output is used")
+assertEqual(explicitEnvelope.scenarios[0]?.id, "explicit", "explicit envelope scenario is used")
+
+const legacyBundleRun = normalizeAgentRuntimeWorkload({
   schema: "example/agent-bundle-run/v1",
   success: true,
   bundle: { bundle_slug: "site-build" },
   outputs: { preview_url: "https://example.test/preview" },
   workflow: { steps: [{ id: "generate" }, { id: "verify" }] },
 }, { requiredOutputs: { preview_url: "outputs.preview_url" } })
-assertEqual(bundleRun.schema, "wp-codebox/agent-runtime-workload/v1", "schema is stable")
-assertEqual(bundleRun.success, true, "bundle run succeeds")
-assertEqual(bundleRun.outputs.preview_url, "https://example.test/preview", "bundle outputs are preserved")
-assertEqual(bundleRun.scenarios[0]?.id, "site-build", "bundle scenario id is normalized")
-assertEqual(bundleRun.scenarios[0]?.metrics?.workflow_step_count, 2, "workflow step count is exposed")
+assertEqual(legacyBundleRun.schema, "wp-codebox/agent-runtime-workload/v1", "legacy bundle run emits canonical schema")
+assertEqual(legacyBundleRun.success, true, "legacy bundle run succeeds")
+assertEqual(legacyBundleRun.outputs.preview_url, "https://example.test/preview", "legacy bundle outputs are preserved")
+assertEqual(legacyBundleRun.scenarios[0]?.id, "site-build", "legacy bundle scenario id is normalized")
+assertEqual(legacyBundleRun.scenarios[0]?.metrics?.workflow_step_count, 2, "legacy workflow step count is exposed")
 
 const stdoutWrapper = normalizeAgentRuntimeWorkload({
   stdout: JSON.stringify({

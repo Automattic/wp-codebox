@@ -519,110 +519,7 @@ $plugins = array_merge(array(
     'agents-api/agents-api.php',
 ), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
 
-function wp_codebox_plugin_entry_path(string $plugin): ?array {
-    $plugin = ltrim($plugin, '/');
-    if ('' === $plugin || str_contains($plugin, '..') || !str_ends_with($plugin, '.php')) {
-        return null;
-    }
-    $normal_path = WP_PLUGIN_DIR . '/' . $plugin;
-    if (file_exists($normal_path)) {
-        return array('path' => $normal_path, 'load_as' => 'plugin');
-    }
-    $mu_path = WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $plugin;
-    if (file_exists($mu_path)) {
-        return array('path' => $mu_path, 'load_as' => 'mu-plugin');
-    }
-    return null;
-}
-
-function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
-    $entries = array();
-    foreach ($provider_plugins as $plugin) {
-        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
-        if ('' === $slug) {
-            continue;
-        }
-        $matched = wp_codebox_resolve_provider_plugin_entry($plugin, $slug);
-        if (null !== $matched) {
-            $entries[] = $matched;
-        }
-    }
-    return $entries;
-}
-
-function wp_codebox_provider_plugin_file_diagnostics(array $provider_plugins): array {
-    $diagnostics = array();
-    foreach ($provider_plugins as $plugin) {
-        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
-        if ('' === $slug) {
-            continue;
-        }
-
-        $entry = null;
-        $entry_path = null;
-        $load_as = null;
-        foreach (wp_codebox_provider_plugin_entries(array($plugin)) as $candidate) {
-            $candidate_entry = wp_codebox_plugin_entry_path($candidate);
-            if ($candidate_entry) {
-                $entry = $candidate;
-                $entry_path = $candidate_entry['path'];
-                $load_as = $candidate_entry['load_as'];
-                break;
-            }
-        }
-
-        $diagnostics[] = array(
-            'slug' => $slug,
-            'source' => isset($plugin['source']) ? (string) $plugin['source'] : '',
-            'plugin_file' => $entry,
-            'mounted_path' => $entry_path,
-            'load_as' => $load_as,
-            'mounted' => null !== $entry_path,
-        );
-    }
-    return $diagnostics;
-}
-
-function wp_codebox_resolve_provider_plugin_entry(array $plugin, string $slug): ?string {
-    $explicit = isset($plugin['pluginFile']) ? ltrim((string) $plugin['pluginFile'], '/') : '';
-    if ('' !== $explicit && wp_codebox_plugin_entry_path($explicit)) {
-        return $explicit;
-    }
-
-    $candidates = array($slug . '/' . $slug . '.php', $slug . '/plugin.php');
-    foreach ($candidates as $candidate) {
-        if (wp_codebox_plugin_entry_path($candidate)) {
-            return $candidate;
-        }
-    }
-
-    return wp_codebox_provider_plugin_entry_by_header($slug);
-}
-
-function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
-    // The conventional entries (<slug>/plugin.php, <slug>/<slug>.php) are absent.
-    // This happens when the plugin directory was renamed so its name no longer
-    // matches the entry file (e.g. a Lab workspace synced under a uniquified
-    // <slug>-<hash>-<uuid> directory). Fall back to the single top-level *.php
-    // file declaring a WordPress plugin header.
-    foreach (array(WP_PLUGIN_DIR . '/' . $slug, WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $slug) as $dir) {
-        if (!is_dir($dir)) {
-            continue;
-        }
-        $files = glob($dir . '/*.php') ?: array();
-        sort($files);
-        foreach ($files as $file) {
-            $header = @file_get_contents($file, false, null, 0, 8192);
-            if (false !== $header && preg_match('/Plugin Name:[ \\t]*[^ \\t\\r\\n]/', $header)) {
-                $candidate = $slug . '/' . basename($file);
-                if (wp_codebox_plugin_entry_path($candidate)) {
-                    return $candidate;
-                }
-            }
-        }
-    }
-    return null;
-}
+${providerPluginResolutionPhp()}
 
 function wp_codebox_json_encode_sandbox_payload($value): string {
     $json = wp_json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
@@ -643,21 +540,7 @@ function wp_codebox_json_encode_sandbox_payload($value): string {
     return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 }
 
-function wp_codebox_runtime_replay_component_lifecycle(): array {
-    do_action('plugins_loaded');
-    do_action('init');
-    do_action('wp_abilities_api_categories_init');
-    do_action('wp_abilities_api_init');
-    do_action('wp_codebox_runtime_abilities_ready');
-
-    return array(
-        'plugins_loaded' => function_exists('did_action') ? did_action('plugins_loaded') : null,
-        'init' => function_exists('did_action') ? did_action('init') : null,
-        'wp_abilities_api_categories_init' => function_exists('did_action') ? did_action('wp_abilities_api_categories_init') : null,
-        'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
-        'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
-    );
-}
+${runtimeLifecycleReplayPhp()}
 
 $activation_results = array();
 
@@ -727,7 +610,53 @@ $plugins = array_merge(array(
     'agents-api/agents-api.php',
 ), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
 
-function wp_codebox_plugin_entry_path(string $plugin): ?array {
+${providerPluginResolutionPhp()}
+
+${runtimeLifecycleReplayPhp()}
+
+$activation_results = array();
+
+foreach ($plugins as $plugin) {
+    $entry = wp_codebox_plugin_entry_path($plugin);
+    if (!$entry) {
+        $activation_results[$plugin] = array('active' => false, 'error' => 'Plugin is not mounted.');
+        continue;
+    }
+    $result = null;
+    if ('mu-plugin' === $entry['load_as']) {
+        require_once $entry['path'];
+    } else {
+        $result = activate_plugin($plugin);
+    }
+    $activation_results[$plugin] = array(
+        'active' => 'mu-plugin' === $entry['load_as'] ? true : is_plugin_active($plugin),
+        'load_as' => $entry['load_as'],
+        'error' => is_wp_error($result) ? $result->get_error_message() : null,
+    );
+}
+
+$runtime_lifecycle = wp_codebox_runtime_replay_component_lifecycle();
+
+echo json_encode(
+    array(
+        'command' => 'agent-runtime.probe',
+        'wp_loaded' => function_exists('wp_insert_post'),
+        'plugins' => $activation_results,
+        'signals' => array(
+            'agents_api_loaded' => defined('AGENTS_API_LOADED'),
+            'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'runtime_lifecycle' => $runtime_lifecycle,
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+        ),
+    ),
+    JSON_PRETTY_PRINT
+);
+`
+}
+
+function providerPluginResolutionPhp(): string {
+  return `function wp_codebox_plugin_entry_path(string $plugin): ?array {
     $plugin = ltrim($plugin, '/');
     if ('' === $plugin || str_contains($plugin, '..') || !str_ends_with($plugin, '.php')) {
         return null;
@@ -830,9 +759,11 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
         }
     }
     return null;
+}`
 }
 
-function wp_codebox_runtime_replay_component_lifecycle(): array {
+function runtimeLifecycleReplayPhp(): string {
+  return `function wp_codebox_runtime_replay_component_lifecycle(): array {
     do_action('plugins_loaded');
     do_action('init');
     do_action('wp_abilities_api_categories_init');
@@ -846,45 +777,5 @@ function wp_codebox_runtime_replay_component_lifecycle(): array {
         'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
         'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
     );
-}
-
-$activation_results = array();
-
-foreach ($plugins as $plugin) {
-    $entry = wp_codebox_plugin_entry_path($plugin);
-    if (!$entry) {
-        $activation_results[$plugin] = array('active' => false, 'error' => 'Plugin is not mounted.');
-        continue;
-    }
-    $result = null;
-    if ('mu-plugin' === $entry['load_as']) {
-        require_once $entry['path'];
-    } else {
-        $result = activate_plugin($plugin);
-    }
-    $activation_results[$plugin] = array(
-        'active' => 'mu-plugin' === $entry['load_as'] ? true : is_plugin_active($plugin),
-        'load_as' => $entry['load_as'],
-        'error' => is_wp_error($result) ? $result->get_error_message() : null,
-    );
-}
-
-$runtime_lifecycle = wp_codebox_runtime_replay_component_lifecycle();
-
-echo json_encode(
-    array(
-        'command' => 'agent-runtime.probe',
-        'wp_loaded' => function_exists('wp_insert_post'),
-        'plugins' => $activation_results,
-        'signals' => array(
-            'agents_api_loaded' => defined('AGENTS_API_LOADED'),
-            'agents_registry_class' => class_exists('WP_Agents_Registry'),
-            'runtime_lifecycle' => $runtime_lifecycle,
-            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-        ),
-    ),
-    JSON_PRETTY_PRINT
-);
-`
+}`
 }

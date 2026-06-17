@@ -6,7 +6,9 @@ import { join } from "node:path"
 import {
   phpEnvAssignmentFunction,
   phpEnvAssignments,
+  phpBrowserWordPressDiagnosticsPlugin,
   phpLiteral,
+  phpRuntimeComponentLifecycleReplayFunction,
   phpWpConfigDefineAppenderFunction,
   phpWpConfigDefineAssignment,
   phpWpConfigDefineAssignments,
@@ -56,3 +58,13 @@ assert($invalid_define === array('INVALID-NAME'));
 `)
 execFileSync("php", ["-l", runtimePhp], { stdio: "pipe" })
 execFileSync("php", [runtimePhp], { stdio: "pipe" })
+
+const lifecyclePhp = join(dir, "lifecycle.php")
+writeFileSync(lifecyclePhp, `<?php
+${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_smoke")}
+`)
+execFileSync("php", ["-l", lifecyclePhp], { stdio: "pipe" })
+
+const browserDiagnosticsPhp = join(dir, "browser-diagnostics.php")
+writeFileSync(browserDiagnosticsPhp, phpBrowserWordPressDiagnosticsPlugin())
+execFileSync("php", ["-l", browserDiagnosticsPhp], { stdio: "pipe" })

@@ -112,6 +112,34 @@ export function serializeError(error: unknown): CliError {
   return { name: "Error", message: String(error) }
 }
 
+export function cliFailureEnvelope(command: string | undefined, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema: "wp-codebox/cli-failure/v1",
+    success: false,
+    status: "error",
+    ...(command ? { command } : {}),
+    error: {
+      name: "Error",
+      message,
+    },
+    diagnostics: [
+      {
+        code: "cli-error",
+        message,
+        ...details,
+      },
+    ],
+  }
+}
+
+export function wantsJsonOutput(args: readonly string[]): boolean {
+  return args.includes("--json")
+}
+
+export function writeJsonFailure(command: string | undefined, message: string, details: Record<string, unknown> = {}): void {
+  process.stdout.write(`${JSON.stringify(cliFailureEnvelope(command, message, details), null, 2)}\n`)
+}
+
 export function printHumanOutput(output: RunOutputLike): void {
   if (!output.success) {
     console.error(output.error?.message ?? "WP Codebox failed")

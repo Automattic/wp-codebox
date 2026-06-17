@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -10,7 +10,7 @@ import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, appendRecipeRuntimeEvidenceFiles, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, appendRecipeRuntimeEvidenceFiles, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -126,7 +126,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
   const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
   const runtimeEnv = normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {})
-  const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
+  const secretEnv = resolveSecretEnvNames(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
@@ -181,7 +181,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     dependencyOverlays = await prepareRecipeDependencyOverlays(recipe, recipeDirectory, extraPlugins)
     stagedFiles = await prepareRecipeStagedFiles(recipe, recipeDirectory)
     overlays = await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory)
-    backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory)
+    backendPackage = await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory, plan.runtime.backend)
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
@@ -218,7 +218,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeEnvironment,
       }, async () => await awaitRecipe("runtime.create", () => createRuntime(
         runtimeCreateSpec,
-        resolveCliRuntimeBackend(runtimeCreateSpec.backend, { cliModule: backendPackage?.cliModule }),
+        resolveCliRuntimeBackend(runtimeCreateSpec.backend, backendPackage?.runtimeBackendContext),
       )))
       startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {
@@ -499,6 +499,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
         ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
         ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
+        ...(evidence.terminalResult ? { terminalResult: recipeTerminalResultOutput(evidence.terminalResult) } : {}),
         ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
         ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
         artifacts,
@@ -534,7 +535,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
       ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
-      ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
+        ...(evidence.terminalResult ? { terminalResult: recipeTerminalResultOutput(evidence.terminalResult) } : {}),
+        ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
       ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
       artifacts,
       run: runRecord,
@@ -1102,65 +1104,25 @@ function dedupeBenchmarkArtifactRefs(refs: BenchmarkArtifactRef[]): BenchmarkArt
   return deduped
 }
 
-function resolveSecretEnv(names: string[]): Record<string, string> {
-  const secretEnv: Record<string, string> = {}
-  for (const name of names) {
-    const normalized = name.trim()
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
-      throw new Error(`Invalid --secret-env name: ${name}`)
-    }
-
-    const value = process.env[normalized]
-    if (value) {
-      secretEnv[normalized] = value
-    }
-  }
-
-  return secretEnv
-}
-
 function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, string> {
-  const runtimeEnv: Record<string, string> = {}
-  for (const [name, value] of Object.entries(values)) {
-    const normalized = name.trim()
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized) || typeof value !== "string") {
-      continue
-    }
-
-    runtimeEnv[normalized] = value
-  }
-
-  return runtimeEnv
+  return normalizeRuntimeEnvRecord(values, { field: "inputs.runtimeEnv", invalid: "omit" })
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false, previewHoldBlocking: false, timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
+  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking"]))
+  if (parsed.positionals.length > 0) {
+    throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
+  }
+  const options: Partial<RecipeRunOptions> = {
+    json: parsed.options.get("--json") === true,
+    dryRun: parsed.options.get("--dry-run") === true,
+    previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
+    timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
+  }
+  for (const [name, value] of parsed.options) {
+    if (value === true) {
       continue
     }
-
-    if (arg === "--dry-run") {
-      options.dryRun = true
-      continue
-    }
-
-    if (arg === "--preview-hold-blocking") {
-      options.previewHoldBlocking = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
     switch (name) {
       case "--recipe":
         options.recipePath = value
@@ -1217,23 +1179,15 @@ function parseRecipeRunTimeoutMs(value: unknown): number {
 }
 
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
-  const options: Partial<RecipeValidateOptions> = { json: false }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
+  const parsed = parseCommandOptions(args, new Set(["--json"]))
+  if (parsed.positionals.length > 0) {
+    throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
+  }
+  const options: Partial<RecipeValidateOptions> = { json: parsed.options.get("--json") === true }
+  for (const [name, value] of parsed.options) {
+    if (value === true) {
       continue
     }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
     switch (name) {
       case "--recipe":
         options.recipePath = value
@@ -2210,6 +2164,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     metadata: plugin.metadata,
   }))
   const componentContracts = componentContractResults(recipe, extraPlugins, [], [])
+  const componentManifest = recipeComponentManifest(extraPlugins, recipe.inputs?.component_manifest)
   const siteSeedProvenance = recipeDryRunSiteSeeds(recipe, dirname(recipePath))
   const stagedFileProvenance = stagedFiles.map(recipeRunStagedFile)
   const workflow = recipeWorkflowMetadata(recipe)
@@ -2225,6 +2180,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_manifest: componentManifest,
         component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
@@ -2254,6 +2210,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
         workspaces: recipe.inputs?.workspaces ?? [],
         mounts: recipe.inputs?.mounts ?? [],
         extra_plugins: extraPluginMetadata,
+        component_manifest: componentManifest,
         component_contracts: componentContracts,
         dependency_overlays: recipe.inputs?.dependency_overlays ?? [],
         pluginRuntime: recipe.inputs?.pluginRuntime ?? {},
@@ -2291,6 +2248,39 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     })),
     preparedComponentContracts: componentContracts,
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
+  }
+}
+
+function recipeComponentManifest(extraPlugins: PreparedExtraPlugin[], fallback: WorkspaceRecipeComponentManifest | undefined): Record<string, unknown> | undefined {
+  if (extraPlugins.length === 0) {
+    return fallback as Record<string, unknown> | undefined
+  }
+
+  const components: Record<string, unknown>[] = []
+  const providers: Record<string, unknown>[] = []
+  for (const plugin of extraPlugins) {
+    const contract = recordValue(plugin.metadata?.componentContract)
+    const entry = stripUndefined({
+      slug: plugin.slug,
+      source: plugin.source,
+      target: plugin.target,
+      pluginFile: plugin.pluginFile,
+      loadAs: plugin.loadAs,
+      activate: plugin.activate,
+      contractIndex: numberValue(contract?.index),
+      requestedPath: stringValue(contract?.requestedPath) || undefined,
+    })
+    if (contract) {
+      components.push(entry)
+    } else {
+      providers.push(entry)
+    }
+  }
+
+  return {
+    schema: "wp-codebox/component-manifest/v1",
+    components,
+    providers,
   }
 }
 

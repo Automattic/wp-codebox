@@ -1,14 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { BrowserArtifact } from "../packages/runtime-playground/src/browser-artifacts.ts"
 import { BrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-runners.ts"
 import { collectPlaygroundArtifacts } from "../packages/runtime-playground/src/runtime-artifact-helpers.ts"
+import { readJson, withTempDir } from "./test-kit.ts"
 
-const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-browser-error-artifacts-"))
-
-try {
+await withTempDir("wp-codebox-browser-error-artifacts-", async (workspace) => {
   const artifactRoot = join(workspace, "artifacts")
   await mkdir(join(artifactRoot, "files/browser"), { recursive: true })
   await writeFile(join(artifactRoot, "files/browser/summary.json"), "{\"status\":\"failed\"}\n")
@@ -65,13 +63,11 @@ try {
   const commandsLog = await readFile(bundle.commandsLogPath, "utf8")
   assert.equal(commandsLog, "\n")
 
-  const manifest = JSON.parse(await readFile(bundle.manifestPath, "utf8"))
+  const manifest = await readJson<{ files: Array<{ path?: string }> }>(bundle.manifestPath)
   assert.equal(manifest.files.some((file: { path?: string }) => file.path === "files/browser/summary.json"), true)
 
   console.log("Artifact browser error collection smoke passed")
-} finally {
-  await rm(workspace, { recursive: true, force: true })
-}
+})
 
 function browserArtifactFixture(): BrowserArtifact {
   return {

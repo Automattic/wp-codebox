@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildAgentTaskRecipe } from "../packages/runtime-core/src/agent-task-recipe.js"
@@ -39,6 +39,9 @@ try {
   assert.equal(domain?.metadata?.componentContract?.requestedPath, domainPlugin)
   assert.equal(domain?.metadata?.componentContract?.preparedPath, domain?.source)
   assert.equal(domain?.metadata?.componentContract?.pluginFile, "domain-component/domain-component.php")
+  assert.equal(existsSync(join(String(domain?.source), ".git")), false, "prepared component source should exclude VCS metadata")
+  assert.equal(existsSync(join(String(domain?.source), "node_modules")), false, "prepared component source should exclude Node dependencies")
+  assert.equal(existsSync(join(String(domain?.source), "vendor")), false, "prepared component source should exclude Composer dependencies before hydration")
   assert.equal(runtime?.metadata?.componentContract?.requestedPath, runtimePlugin)
   assert.equal(runtime?.metadata?.componentContract?.preparedPath, runtime?.source)
   assert.equal(runtime?.metadata?.componentContract?.pluginFile, "runtime-component/runtime-component.php")
@@ -89,6 +92,9 @@ try {
 function writePlugin(rootPath: string, slug: string, name: string): string {
   const pluginPath = join(rootPath, slug)
   mkdirSync(pluginPath, { recursive: true })
+  mkdirSync(join(pluginPath, ".git"), { recursive: true })
+  mkdirSync(join(pluginPath, "node_modules"), { recursive: true })
+  mkdirSync(join(pluginPath, "vendor"), { recursive: true })
   writeFileSync(join(pluginPath, `${slug}.php`), `<?php
 /**
  * Plugin Name: ${name}

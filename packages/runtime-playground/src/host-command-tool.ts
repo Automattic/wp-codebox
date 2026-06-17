@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { realpath } from "node:fs/promises"
 import { resolve } from "node:path"
-import type { HostToolDefinition, JsonObject, JsonValue } from "@automattic/wp-codebox-core"
+import { assertRuntimeEnvName, normalizeRuntimeEnvRecord, type HostToolDefinition, type JsonObject, type JsonValue } from "@automattic/wp-codebox-core"
 
 export interface HostCommandToolConfig {
   name: string
@@ -146,7 +146,7 @@ function normalizeHostCommandInput(input: JsonValue): HostCommandInput {
     args: input.args === undefined ? undefined : stringArray(input.args, "args"),
     cwd: input.cwd === undefined ? undefined : stringValue(input.cwd, "cwd"),
     timeoutMs: input.timeoutMs === undefined ? undefined : boundedPositiveInteger(input.timeoutMs, "timeoutMs"),
-    env: input.env === undefined ? undefined : stringRecord(input.env, "env"),
+    env: input.env === undefined ? undefined : normalizeRuntimeEnvRecord(stringRecord(input.env, "env"), { field: "env" }),
   }
 }
 
@@ -162,11 +162,13 @@ async function resolveAllowedCwd(config: HostCommandToolConfig, requestedCwd?: s
 function commandEnv(config: HostCommandToolConfig, inputEnv: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? "",
-    ...config.env,
+    ...normalizeRuntimeEnvRecord(config.env ?? {}, { field: "config.env" }),
   }
   for (const name of config.inheritedEnv ?? []) {
-    if (process.env[name] !== undefined) {
-      env[name] = process.env[name]
+    const normalized = name.trim()
+    assertRuntimeEnvName(normalized, "config.inheritedEnv")
+    if (process.env[normalized] !== undefined) {
+      env[normalized] = process.env[normalized]
     }
   }
   const allowedInputEnv = new Set(config.allowedInputEnv ?? [])

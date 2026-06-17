@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
+import { normalizeRootedPath, pathIsWithinRoot, relativePathIsWithinRoot } from "./file-tree-policy.js"
 import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import type { MountSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
@@ -453,19 +454,11 @@ async function resolveRuntimeActionMountedPath(
 }
 
 function normalizeSandboxRuntimeActionPath(path: string): string {
-  const absolutePath = path.startsWith("/") ? path : join(SANDBOX_WORKSPACE_ROOT, path)
-  const normalized = normalize(absolutePath)
-  if (!normalized.startsWith("/")) {
-    return `/${normalized}`
-  }
-
-  return normalized
+  return normalizeRootedPath(path, SANDBOX_WORKSPACE_ROOT)
 }
 
 function isRuntimeActionPathWithinRoot(path: string, root: string): boolean {
-  const normalizedRoot = normalizeSandboxRuntimeActionPath(root)
-  const relativePath = relative(normalizedRoot, normalizeSandboxRuntimeActionPath(path))
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+  return relativePathIsWithinRoot(normalizeSandboxRuntimeActionPath(path), normalizeSandboxRuntimeActionPath(root))
 }
 
 async function assertRuntimeActionHostPathWithinMount(action: RuntimeFilesystemAction, hostPath: string, source: string): Promise<void> {
@@ -480,8 +473,7 @@ async function assertRuntimeActionHostPathWithinMount(action: RuntimeFilesystemA
     }
     real = await nearestExistingRuntimeActionParent(existingPath, root)
   }
-  const relativePath = relative(root, real)
-  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+  if (!pathIsWithinRoot(real, root)) {
     throw new RuntimeActionPolicyError(`Filesystem action path resolves outside mounted workspace root: ${action.path}`, action)
   }
 }

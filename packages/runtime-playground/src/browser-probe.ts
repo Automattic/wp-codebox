@@ -1,4 +1,5 @@
 import type { Frame, Page } from "playwright"
+import { BROWSER_PROBE_CAPTURE_VALUES } from "@automattic/wp-codebox-core"
 import type {
   BrowserProbeCheckpointRecord,
   BrowserProbeErrorRecord,
@@ -11,8 +12,6 @@ import type {
   BrowserStepAssertion,
 } from "./browser-artifacts.js"
 import { browserProbeMemorySummary, browserProbePerformanceSummary, browserProbePhaseMetrics, cdpDomCounters, cdpHeapUsage, cdpPerformanceMetrics } from "./browser-metrics.js"
-
-export const BROWSER_PROBE_CAPTURE_VALUES = ["console", "errors", "html", "network", "performance", "memory", "screenshot"] as const
 
 export const BROWSER_PROBE_STATE_INIT_SCRIPT = `
 (() => {

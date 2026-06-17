@@ -136,6 +136,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/extraPlugin" },
           },
+          component_manifest: { $ref: "#/$defs/componentManifest" },
           dependency_overlays: {
             type: "array",
             description: "Typed local dependency overlays mounted into a consumer plugin before setup, activation, and workflow steps.",
@@ -253,6 +254,29 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       metadata: {
         type: "object",
         additionalProperties: true,
+      },
+      componentManifest: {
+        type: "object",
+        additionalProperties: false,
+        required: ["schema"],
+        properties: {
+          schema: { const: "wp-codebox/component-manifest/v1" },
+          components: { type: "array", items: { $ref: "#/$defs/componentManifestEntry" } },
+          providers: { type: "array", items: { $ref: "#/$defs/componentManifestEntry" } },
+        },
+      },
+      componentManifestEntry: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          slug: { type: "string" },
+          source: { type: "string" },
+          pluginFile: { type: "string" },
+          loadAs: { enum: ["plugin", "mu-plugin"] },
+          activate: { type: "boolean" },
+          contractIndex: { type: "integer", minimum: 0 },
+          requestedPath: { type: "string" },
+        },
       },
       distribution: {
         type: "object",
@@ -441,11 +465,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       },
       runtimeBackendPackage: {
         type: "object",
-        additionalProperties: false,
+        additionalProperties: true,
         required: ["kind", "source"],
-        description: "Optional local Playground backend package or entrypoint used to boot the runtime. This selects the backend package itself and is separate from /wordpress filesystem overlays.",
+        description: "Optional local backend package or entrypoint used to boot the runtime. This selects the backend package itself and is separate from /wordpress filesystem overlays.",
         properties: {
-          kind: { const: "playground" },
+          kind: { type: "string", minLength: 1 },
           source: { type: "string" },
           package: { type: "string" },
           entrypoint: { type: "string" },

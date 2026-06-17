@@ -240,5 +240,5 @@ WP Codebox benchmark helpers do not define or store:
 - Historical regression decisions.
 - Publishing or PR/report workflows.
 
-Those belong to callers such as wp-gym, Studio Web, Homeboy rigs, or other eval
-harnesses that project WP Codebox evidence into their own product schemas.
+Those belong to callers such as eval harnesses, product hosts, or CI systems
+that project WP Codebox evidence into their own product schemas.

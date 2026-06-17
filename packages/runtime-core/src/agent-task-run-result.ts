@@ -1,4 +1,5 @@
 import { isPlainObject, stripUndefined } from "./object-utils.js"
+import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
 
 export const AGENT_TASK_RUN_RESULT_SCHEMA = "wp-codebox/agent-task-run-result/v1" as const
 
@@ -39,6 +40,7 @@ export interface AgentTaskRunResultSummary {
   }
   diagnostics: Array<Record<string, unknown>>
   metadata: Record<string, unknown>
+  terminal_result?: AgentTerminalResult
   no_op: {
     detected: boolean
     reason?: string
@@ -61,10 +63,15 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
   const completionOutcome = completionOutcomeRecord(result)
   const runMetadata = objectValue(result.run_metadata)
   const patch = objectValue(agentResult.patch)
-  const status = normalizeStatus(result, agentResult, exitStatus)
+  const terminalResult = normalizeAgentTerminalResult(result.terminal_result)
+    ?? normalizeAgentTerminalResult(result.terminalResult)
+    ?? normalizeAgentTerminalResult(agentResult.terminal_result)
+    ?? normalizeAgentTerminalResult(agentResult.terminalResult)
+    ?? normalizeAgentTerminalResult(objectValue(agentResult.raw).agent_runtime)
+  const status = normalizeStatus(result, agentResult, exitStatus, terminalResult)
   const artifacts = normalizeArtifacts(result, agentResult, completionOutcome)
   const noOp = noOpMetadata(result, agentResult)
-  const failureClassification = stringValue(result.failure_classification) || failureClassificationForStatus(status)
+  const failureClassification = stringValue(result.failure_classification) || terminalResult?.failure_classification || failureClassificationForStatus(status)
 
   return stripUndefined({
     schema: AGENT_TASK_RUN_RESULT_SCHEMA,
@@ -97,12 +104,21 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       timeout: result.timeout === true ? true : undefined,
       failure_evidence: objectValue(result.failure_evidence),
     }),
+    terminal_result: terminalResult,
     no_op: noOp,
     failure_classification: failureClassification || undefined,
   }) as AgentTaskRunResultSummary
 }
 
-function normalizeStatus(result: Record<string, unknown>, agentResult: Record<string, unknown>, exitStatus: number): AgentTaskRunStatus {
+function normalizeStatus(result: Record<string, unknown>, agentResult: Record<string, unknown>, exitStatus: number, terminalResult?: AgentTerminalResult): AgentTaskRunStatus {
+  if (terminalResult) {
+    if (terminalResult.status === "max_turns") return "timeout"
+    if (terminalResult.status === "incomplete") return "failed"
+    if (terminalResult.status === "succeeded") return "succeeded"
+    if (terminalResult.status === "failed") return "failed"
+    if (KNOWN_STATUSES.has(terminalResult.status)) return terminalResult.status as AgentTaskRunStatus
+  }
+
   const explicitStatus = stringValue(result.status)
   if (KNOWN_STATUSES.has(explicitStatus)) return explicitStatus as AgentTaskRunStatus
   if (explicitStatus === "completed") return result.success === true && exitStatus === 0 ? "succeeded" : "failed"
@@ -207,14 +223,17 @@ function agentResultRecord(result: Record<string, unknown>): Record<string, unkn
   return firstObject(
     objectValue(result.run).agentResult,
     result.agentResult,
+    result.agent_result,
+    result.agent_task_result,
     metadataRecipeRun.agentResult,
+    metadataRecipeRun.agent_task_result,
     objectValue(metadataRecipeRun.run).agentResult,
   )
 }
 
 function completionOutcomeRecord(result: Record<string, unknown>): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(result.completionOutcome, metadataRecipeRun.completionOutcome)
+  return firstObject(result.completionOutcome, result.completion_outcome, metadataRecipeRun.completionOutcome, metadataRecipeRun.completion_outcome)
 }
 
 function runRecord(result: Record<string, unknown>): Record<string, unknown> {

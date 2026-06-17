@@ -93,14 +93,18 @@ final class WP_Codebox_Host_Recipe_Builder {
 			return $site_seed_payload;
 		}
 
+		$component_plugins  = $adapters['component_plugins']( $paths );
+		$component_manifest = self::component_manifest( $component_plugins, $provider_plugins );
+
 		$recipe_inputs = array(
-			'mounts'        => $mounts,
-			'workspaces'    => $workspaces,
-			'inherit'       => $adapters['inheritance_request']( $input ),
-			'inheritance'   => $inheritance,
-			'extra_plugins' => array_merge( $adapters['component_plugins']( $paths ), $provider_plugins ),
-			'runtimeEnv'    => array_merge( $adapters['runtime_env']( $input ), self::AGENT_RUNTIME_ENV ),
-			'secretEnv'     => $adapters['secret_env_names']( $input, $inheritance ),
+			'mounts'             => $mounts,
+			'workspaces'         => $workspaces,
+			'inherit'            => $adapters['inheritance_request']( $input ),
+			'inheritance'        => $inheritance,
+			'extra_plugins'      => array_merge( $component_plugins, $provider_plugins ),
+			'component_manifest' => $component_manifest,
+			'runtimeEnv'         => array_merge( $adapters['runtime_env']( $input ), self::AGENT_RUNTIME_ENV ),
+			'secretEnv'          => $adapters['secret_env_names']( $input, $inheritance ),
 		);
 		if ( ! empty( $agent_bundles ) ) {
 			$recipe_inputs['agent_bundles'] = $agent_bundles;
@@ -133,6 +137,38 @@ final class WP_Codebox_Host_Recipe_Builder {
 		return array(
 			'path'          => $file,
 			'cleanup_paths' => $site_seed_payload['cleanup_paths'],
+		);
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $component_plugins Prepared runtime component plugin entries.
+	 * @param array<int,array<string,mixed>> $provider_plugins Provider plugin entries.
+	 * @return array<string,mixed>
+	 */
+	private static function component_manifest( array $component_plugins, array $provider_plugins ): array {
+		return array(
+			'schema'     => 'wp-codebox/component-manifest/v1',
+			'components' => array_values( array_map( array( self::class, 'component_manifest_plugin_entry' ), $component_plugins ) ),
+			'providers'  => array_values( array_map( array( self::class, 'component_manifest_plugin_entry' ), $provider_plugins ) ),
+		);
+	}
+
+	/** @param array<string,mixed> $plugin Prepared plugin entry. @return array<string,mixed> */
+	private static function component_manifest_plugin_entry( array $plugin ): array {
+		$metadata = is_array( $plugin['metadata'] ?? null ) ? $plugin['metadata'] : array();
+		$contract = is_array( $metadata['componentContract'] ?? null ) ? $metadata['componentContract'] : array();
+
+		return array_filter(
+			array(
+				'slug'          => (string) ( $plugin['slug'] ?? '' ),
+				'source'        => (string) ( $plugin['source'] ?? '' ),
+				'pluginFile'    => (string) ( $plugin['pluginFile'] ?? '' ),
+				'loadAs'        => (string) ( $plugin['loadAs'] ?? '' ),
+				'activate'      => isset( $plugin['activate'] ) ? (bool) $plugin['activate'] : null,
+				'contractIndex' => isset( $contract['index'] ) ? (int) $contract['index'] : null,
+				'requestedPath' => (string) ( $contract['requestedPath'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
 		);
 	}
 }

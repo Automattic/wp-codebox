@@ -1,4 +1,7 @@
 export * from "./benchmark-substrate.js"
 export * from "./fanout-aggregation.js"
 export * from "./object-utils.js"
+export * from "./prepared-source-staging.js"
+export * from "./redaction.js"
 export * from "./runtime-action-adapter.js"
+export * from "./file-tree-policy.js"

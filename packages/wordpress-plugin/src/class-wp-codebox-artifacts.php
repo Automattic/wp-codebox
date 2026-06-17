@@ -246,7 +246,20 @@ final class WP_Codebox_Artifacts {
 		$destination    = $root . DIRECTORY_SEPARATOR . $bundle_id;
 		if ( file_exists( $destination ) ) {
 			$this->remove_directory( $tmp );
-			return new WP_Error( 'wp_codebox_artifact_already_exists', 'Artifact bundle already exists for this browser artifact content digest.', array( 'status' => 409, 'artifact_id' => $bundle_id ) );
+			$bundle = $this->read_bundle_at_manifest( $destination . DIRECTORY_SEPARATOR . 'manifest.json', true );
+			if ( is_wp_error( $bundle ) ) {
+				return $bundle;
+			}
+
+			return array(
+				'success'        => true,
+				'schema'         => self::BROWSER_PERSIST_SCHEMA,
+				'status'         => 'existing',
+				'artifact_id'    => $bundle_id,
+				'content_digest' => $content_digest,
+				'directory'      => $destination,
+				'artifact'       => $bundle,
+			);
 		}
 
 		$provenance = is_array( $input['provenance'] ?? null ) ? $input['provenance'] : array();
@@ -329,6 +342,7 @@ final class WP_Codebox_Artifacts {
 		return array(
 			'success'        => true,
 			'schema'         => self::BROWSER_PERSIST_SCHEMA,
+			'status'         => 'created',
 			'artifact_id'    => $bundle_id,
 			'content_digest' => $content_digest,
 			'directory'      => $destination,

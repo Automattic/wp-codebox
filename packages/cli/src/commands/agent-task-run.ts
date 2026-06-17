@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, type AgentTaskRunInput } from "@automattic/wp-codebox-core"
+import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, type AgentTaskRunInput, type AgentTerminalResult } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -25,6 +25,7 @@ interface AgentTaskRunOutput {
   artifacts: string
   agent_result: Record<string, unknown>
   agent_task_result: Record<string, unknown>
+  terminal_result?: AgentTerminalResult
   completion_outcome: Record<string, unknown>
   component_contracts: Array<Record<string, unknown>>
   structured_artifacts: Array<Record<string, unknown>>
@@ -104,6 +105,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const hasAgentBundle = Object.keys(agentBundle).length > 0
     const success = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
+    const terminalResult = terminalResultFromRun(run, agentTaskResult)
     const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, run, capture })
     const output: AgentTaskRunOutput = {
       success,
@@ -116,6 +118,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       artifacts,
       agent_result: objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {},
       agent_task_result: agentTaskResult,
+      terminal_result: terminalResult,
       completion_outcome: objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {},
       component_contracts: componentContractReport(run),
       structured_artifacts: structuredArtifactRefs(agentTaskResult),
@@ -155,6 +158,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       artifacts,
       agent_result: {},
       agent_task_result: {},
+      terminal_result: normalizeAgentTerminalResult(run),
       completion_outcome: {},
       component_contracts: componentContractReport(run),
       structured_artifacts: [],
@@ -217,42 +221,25 @@ export async function buildAgentRuntimeDiagnostics(run: Record<string, unknown>,
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
-  let inputPath = ""
-  let json = false
-  let previewHoldSeconds = ""
-  let previewPublicUrl = ""
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[index + 1]
-    switch (name) {
-      case "--input-file":
-        inputPath = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      case "--json":
-        json = true
-        break
-      case "--format":
-        json = value === "json"
-        if (inlineValue === undefined) index += 1
-        break
-      case "--preview-hold-seconds":
-        previewHoldSeconds = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      case "--preview-public-url":
-        previewPublicUrl = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      default:
-        throw new Error(`Unknown agent-task-run option: ${arg}`)
+  const { options, positionals } = parseCommandOptions(args, new Set(["--json"]))
+  if (positionals.length > 0) {
+    throw new Error(`Unknown agent-task-run option: ${positionals[0]}`)
+  }
+  for (const name of options.keys()) {
+    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url"].includes(name)) {
+      throw new Error(`Unknown agent-task-run option: ${name}`)
     }
   }
+  const inputPath = stringOption(options, "--input-file")
   if (!inputPath) {
     throw new Error("agent-task-run requires --input-file <path>")
   }
-  return { inputPath, json, previewHoldSeconds, previewPublicUrl }
+  return {
+    inputPath,
+    json: options.get("--json") === true || stringOption(options, "--format") === "json",
+    previewHoldSeconds: stringOption(options, "--preview-hold-seconds"),
+    previewPublicUrl: stringOption(options, "--preview-public-url"),
+  }
 }
 
 async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
@@ -292,8 +279,13 @@ function parseRecipeRunOutput(stdout: string): Record<string, unknown> {
   if (!trimmed) {
     return { success: false, error: { message: "WP Codebox recipe run returned no JSON output." } }
   }
-  const parsed = JSON.parse(trimmed)
+  const parsed = parseCommandJson(trimmed, "WP Codebox recipe run output")
   return objectValue(parsed) || { success: false, error: { message: "WP Codebox recipe run returned a non-object JSON value." } }
+}
+
+function stringOption(options: Map<string, string | true>, name: string): string {
+  const value = options.get(name)
+  return typeof value === "string" ? value : ""
 }
 
 function sandboxSession(input: AgentTaskRunInput, run: Record<string, unknown>, artifacts: string, status: "completed" | "failed"): Record<string, unknown> {
@@ -339,14 +331,24 @@ function diagnostics(run: Record<string, unknown>, exitCode: number, normalizedS
 
 function evidenceRefs(run: Record<string, unknown>, artifacts: string, failureEvidence?: Record<string, unknown>): Array<Record<string, unknown>> {
   const artifactsRecord = objectValue(run.artifacts) || {}
+  const terminalResult = terminalResultFromRun(run, objectValue(run.agentTaskResult) || {})
   const refs: Array<Record<string, unknown> | null> = [
     { kind: "codebox-artifacts", uri: artifacts, label: "WP Codebox artifacts" },
     stringValue(artifactsRecord.manifestPath) ? { kind: "codebox-manifest", uri: stringValue(artifactsRecord.manifestPath), label: "WP Codebox artifact manifest" } : null,
     stringValue(artifactsRecord.reviewPath) ? { kind: "codebox-review", uri: stringValue(artifactsRecord.reviewPath), label: "WP Codebox review payload" } : null,
     stringValue(artifactsRecord.patchPath) ? { kind: "codebox-patch", uri: stringValue(artifactsRecord.patchPath), label: "WP Codebox patch" } : null,
+    terminalResult ? { kind: "codebox-agent-terminal-result", uri: artifacts, label: "WP Codebox agent terminal result", metadata: terminalResult } : null,
     failureEvidence ? { kind: "codebox-agent-task-failure-evidence", uri: artifacts, label: "WP Codebox agent task failure evidence", metadata: failureEvidenceSummary(failureEvidence) } : null,
   ]
   return refs.filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function terminalResultFromRun(run: Record<string, unknown>, agentTaskResult: Record<string, unknown>): AgentTerminalResult | undefined {
+  return normalizeAgentTerminalResult(run.terminalResult)
+    ?? normalizeAgentTerminalResult(run.terminal_result)
+    ?? normalizeAgentTerminalResult(agentTaskResult.terminal_result)
+    ?? normalizeAgentTerminalResult(agentTaskResult.terminalResult)
+    ?? normalizeAgentTerminalResult(agentSandboxRuntime(run))
 }
 
 function componentContractReport(run: Record<string, unknown>): Array<Record<string, unknown>> {

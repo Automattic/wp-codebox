@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
-import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
-import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { phpEnvAssignments, phpRuntimeComponentLifecycleReplayFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { normalizeRuntimeEnvRecord, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string
@@ -15,8 +15,9 @@ ${phpFatalDiagnosticPhp()}
 define( 'REST_REQUEST', true );
 $_SERVER['REQUEST_URI'] = '/wp-json/wp-codebox/ability';
 ${runtimeEnvPhp(spec)}
-require_once '/wordpress/wp-load.php';
 ${secretEnvPhp(spec)}
+${componentManifestPhp(spec)}
+require_once '/wordpress/wp-load.php';
 ${phpBody(code)}`
 }
 
@@ -29,9 +30,10 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
 ${phpFatalDiagnosticPhp()}
 ${pluginRuntimeBootstrapPhp(spec)}
 ${runtimeEnvPhp(spec)}
+${secretEnvPhp(spec)}
+${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
 ${recipeActivePluginBootstrapPhp(spec)}
-${secretEnvPhp(spec)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
@@ -68,7 +70,7 @@ function recipeActivePluginBootstrapPhp(spec: RuntimeCreateSpec): string {
     return ""
   }
 
-  return `${runtimeComponentLifecycleReplayPhp("wp_codebox_run_php")}
+  return `${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_run_php")}
 $wp_codebox_run_php_active_plugins = json_decode(base64_decode('${Buffer.from(JSON.stringify(plugins), "utf8").toString("base64")}'), true);
 function wp_codebox_run_php_plugin_load_diagnostic(array $plugin, string $error = ''): string {
     $plugin_file = isset($plugin['pluginFile']) ? (string) $plugin['pluginFile'] : '';
@@ -119,130 +121,6 @@ foreach (is_array($wp_codebox_run_php_active_plugins) ? $wp_codebox_run_php_acti
     }
 }
 `
-}
-
-function runtimeComponentLifecycleReplayPhp(prefix: string): string {
-  const snapshot = `${prefix}_component_lifecycle_snapshot_hook_callbacks`
-  const defer = `${prefix}_component_lifecycle_defer_new_hook_callbacks`
-  const run = `${prefix}_component_lifecycle_run_deferred_hook_callbacks`
-  const reopen = `${prefix}_component_lifecycle_reopen_action`
-  const restore = `${prefix}_component_lifecycle_restore_action`
-  const abilityNames = `${prefix}_component_lifecycle_ability_names`
-  const prepare = `${prefix}_component_lifecycle_replay_prepare`
-  const complete = `${prefix}_component_lifecycle_replay_complete`
-
-  return `if (!function_exists('${prepare}')) {
-function ${snapshot}(string $hook_name): array {
-    global $wp_filter;
-    $snapshot = array();
-    if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
-        return $snapshot;
-    }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
-        foreach (array_keys($callbacks) as $callback_id) {
-            $snapshot[$priority . ':' . $callback_id] = true;
-        }
-    }
-    return $snapshot;
-}
-function ${defer}(string $hook_name, array $before): array {
-    global $wp_filter;
-    $deferred = array();
-    if (!isset($wp_filter[$hook_name]) || !isset($wp_filter[$hook_name]->callbacks)) {
-        return $deferred;
-    }
-    foreach ($wp_filter[$hook_name]->callbacks as $priority => $callbacks) {
-        foreach ($callbacks as $callback_id => $callback) {
-            if (isset($before[$priority . ':' . $callback_id])) {
-                continue;
-            }
-            $deferred[] = array('priority' => (int) $priority, 'callback' => $callback);
-            unset($wp_filter[$hook_name]->callbacks[$priority][$callback_id]);
-        }
-        if (empty($wp_filter[$hook_name]->callbacks[$priority])) {
-            unset($wp_filter[$hook_name]->callbacks[$priority]);
-        }
-    }
-    usort($deferred, static function (array $left, array $right): int { return ($left['priority'] ?? 10) <=> ($right['priority'] ?? 10); });
-    return $deferred;
-}
-function ${run}(array $deferred, string $hook_name, array $args = array()): void {
-    global $wp_current_filter;
-    if (!is_array($wp_current_filter)) {
-        $wp_current_filter = array();
-    }
-    $wp_current_filter[] = $hook_name;
-    try {
-        foreach ($deferred as $entry) {
-            $callback = $entry['callback'] ?? null;
-            if (!is_array($callback) || !isset($callback['function'])) {
-                continue;
-            }
-            $accepted_args = isset($callback['accepted_args']) ? (int) $callback['accepted_args'] : count($args);
-            call_user_func_array($callback['function'], array_slice($args, 0, $accepted_args));
-        }
-    } finally {
-        array_pop($wp_current_filter);
-    }
-}
-function ${reopen}(string $hook_name): int {
-    global $wp_actions;
-    $count = function_exists('did_action') ? (int) did_action($hook_name) : 0;
-    if ($count > 0) {
-        if (!is_array($wp_actions)) {
-            $wp_actions = array();
-        }
-        $wp_actions[$hook_name] = 0;
-    }
-    return $count;
-}
-function ${restore}(string $hook_name, int $count): void {
-    global $wp_actions;
-    if ($count <= 0) {
-        return;
-    }
-    if (!is_array($wp_actions)) {
-        $wp_actions = array();
-    }
-    $wp_actions[$hook_name] = max($count, (int) ($wp_actions[$hook_name] ?? 0), 1);
-}
-function ${abilityNames}(): array {
-    if (!function_exists('wp_get_abilities')) {
-        return array();
-    }
-    $abilities = wp_get_abilities();
-    return is_array($abilities) ? array_values(array_map('strval', array_keys($abilities))) : array();
-}
-function ${prepare}(): array {
-    $hooks = array('plugins_loaded', 'init', 'wp_abilities_api_categories_init', 'wp_abilities_api_init', 'wp_codebox_runtime_abilities_ready');
-    $state = array('hooks' => array(), 'abilities_before' => ${abilityNames}());
-    foreach ($hooks as $hook_name) {
-        $state['hooks'][$hook_name] = array(
-            'callbacks' => ${snapshot}($hook_name),
-            'did_action' => ${reopen}($hook_name),
-        );
-    }
-    return $state;
-}
-function ${complete}(array $state): array {
-    $diagnostic = array(
-        'schema' => 'wp-codebox/runtime-component-lifecycle-replay/v1',
-        'hooks' => array(),
-        'abilities_before' => $state['abilities_before'] ?? array(),
-        'abilities_after' => array(),
-        'abilities_added' => array(),
-    );
-    foreach (($state['hooks'] ?? array()) as $hook_name => $hook_state) {
-        $deferred = ${defer}((string) $hook_name, is_array($hook_state['callbacks'] ?? null) ? $hook_state['callbacks'] : array());
-        ${run}($deferred, (string) $hook_name);
-        ${restore}((string) $hook_name, (int) ($hook_state['did_action'] ?? 0));
-        $diagnostic['hooks'][(string) $hook_name] = array('replayed_callbacks' => count($deferred), 'previous_did_action' => (int) ($hook_state['did_action'] ?? 0));
-    }
-    $diagnostic['abilities_after'] = ${abilityNames}();
-    $diagnostic['abilities_added'] = array_values(array_diff($diagnostic['abilities_after'], is_array($diagnostic['abilities_before']) ? $diagnostic['abilities_before'] : array()));
-    return $diagnostic;
-}
-}`
 }
 
 function recipeActivePluginMetadata(spec: RuntimeCreateSpec): RecipePluginMetadata[] {
@@ -312,10 +190,50 @@ function pluginRuntimeBootstrapPhp(spec: RuntimeCreateSpec): string {
   return lines.length > 0 ? `${lines.join("\n")}\n` : ""
 }
 
+function componentManifestPhp(spec: RuntimeCreateSpec): string {
+  const manifest = componentManifest(spec)
+  if (!manifest) {
+    return ""
+  }
+
+  const encoded = Buffer.from(JSON.stringify(manifest), "utf8").toString("base64")
+  return `$wp_codebox_component_manifest = json_decode(base64_decode('${encoded}'), true);
+if (is_array($wp_codebox_component_manifest)) {
+    $GLOBALS['wp_codebox_component_manifest'] = $wp_codebox_component_manifest;
+    if (!defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON')) {
+        define('WP_CODEBOX_COMPONENT_MANIFEST_JSON', json_encode($wp_codebox_component_manifest, JSON_UNESCAPED_SLASHES));
+    }
+}
+`
+}
+
+function componentManifest(spec: RuntimeCreateSpec): unknown {
+  const recipeManifest = metadataInputs(spec.metadata?.recipe)?.component_manifest
+  if (recipeManifest && typeof recipeManifest === "object" && !Array.isArray(recipeManifest)) {
+    return recipeManifest
+  }
+
+  const taskManifest = metadataInputs(spec.metadata?.task)?.component_manifest
+  if (taskManifest && typeof taskManifest === "object" && !Array.isArray(taskManifest)) {
+    return taskManifest
+  }
+
+  return undefined
+}
+
+function metadataInputs(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+
+  const inputs = (value as { inputs?: unknown }).inputs
+  return inputs && typeof inputs === "object" && !Array.isArray(inputs) ? inputs as Record<string, unknown> : undefined
+}
+
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(spec.secretEnv ?? {})
+  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.secretEnv ?? {}, { field: "secretEnv" }))
 }
 
 function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(spec.runtimeEnv ?? {})
+  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.runtimeEnv ?? {}, { field: "runtimeEnv" }))
 }

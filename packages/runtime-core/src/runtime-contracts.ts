@@ -102,7 +102,7 @@ export interface WorkspaceRecipeRuntimeOverlay {
 }
 
 export interface WorkspaceRecipeRuntimeBackendPackage {
-  kind: "playground"
+  kind: string
   source: string
   package?: string
   entrypoint?: string
@@ -266,6 +266,22 @@ export interface WorkspaceRecipeExtraPlugin {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeComponentManifestEntry {
+  slug?: string
+  source?: string
+  pluginFile?: string
+  loadAs?: "plugin" | "mu-plugin"
+  activate?: boolean
+  contractIndex?: number
+  requestedPath?: string
+}
+
+export interface WorkspaceRecipeComponentManifest {
+  schema: "wp-codebox/component-manifest/v1"
+  components?: WorkspaceRecipeComponentManifestEntry[]
+  providers?: WorkspaceRecipeComponentManifestEntry[]
+}
+
 export interface WorkspaceRecipeDependencyOverlay {
   kind: "composer-package"
   package: string
@@ -364,6 +380,7 @@ export interface WorkspaceRecipe {
     workspaces?: WorkspaceRecipeWorkspace[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
+    component_manifest?: WorkspaceRecipeComponentManifest
     dependency_overlays?: WorkspaceRecipeDependencyOverlay[]
     runtimeEnv?: Record<string, string>
     secretEnv?: string[]

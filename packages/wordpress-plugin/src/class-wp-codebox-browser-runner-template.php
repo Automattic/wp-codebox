@@ -21,12 +21,6 @@ final class WP_Codebox_Browser_Runner_Template {
 	public static function bootstrap_fragment( string $task_path, string $result_path, array $payload, array $invocation, array $captures ): string {
 		return '<?php
 $_GET[\'rest_route\'] = \'/wp-codebox/browser-runner\';
-require_once \'/wordpress/wp-load.php\';
-
-if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_current_user\' ) && get_current_user_id() <= 0 ) {
-	wp_set_current_user( 1 );
-}
-
 $task_path = ' . var_export( $task_path, true ) . ';
 $result_path = ' . var_export( $result_path, true ) . ';
 $event_path = "/tmp/wp-codebox-agent-events.jsonl";
@@ -35,6 +29,27 @@ $invocation = ' . var_export( $invocation, true ) . ';
 $capture_paths = ' . var_export( $captures, true ) . ';
 $started_at = gmdate( \'c\' );
 $started_monotonic = microtime( true );
+
+if ( is_readable( $task_path ) ) {
+	$raw_payload = json_decode( (string) file_get_contents( $task_path ), true );
+	if ( is_array( $raw_payload ) ) {
+		$payload = array_replace_recursive( $payload, $raw_payload );
+	}
+}
+
+$wp_codebox_component_manifest = is_array( $payload[\'component_manifest\'] ?? null ) ? $payload[\'component_manifest\'] : array();
+if ( ! empty( $wp_codebox_component_manifest ) ) {
+	$GLOBALS[\'wp_codebox_component_manifest\'] = $wp_codebox_component_manifest;
+	if ( ! defined( \'WP_CODEBOX_COMPONENT_MANIFEST_JSON\' ) ) {
+		define( \'WP_CODEBOX_COMPONENT_MANIFEST_JSON\', json_encode( $wp_codebox_component_manifest, JSON_UNESCAPED_SLASHES ) );
+	}
+}
+
+require_once \'/wordpress/wp-load.php\';
+
+if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_current_user\' ) && get_current_user_id() <= 0 ) {
+	wp_set_current_user( 1 );
+}
 ';
 	}
 }

@@ -19,6 +19,13 @@ function main(): void {
     assert(command.id.length > 0, "Command id must be non-empty")
     assert(command.description.length > 0, `${command.id} is missing description`)
     assert(command.outputShape.length > 0, `${command.id} is missing outputShape`)
+    if (command.outputSchema) {
+      assert(command.outputSchema.id.length > 0, `${command.id} outputSchema is missing id`)
+      assert(command.outputShape.includes(command.outputSchema.id), `${command.id} outputShape should mention outputSchema id`)
+      if (command.outputSchema.jsonSchema) {
+        assert(command.outputSchema.jsonSchema.$id === command.outputSchema.id, `${command.id} outputSchema JSON Schema $id must match id`)
+      }
+    }
     assert(command.policyRequirement.length > 0, `${command.id} is missing policyRequirement`)
     assert(Array.isArray(command.acceptedArgs), `${command.id} acceptedArgs must be an array`)
   }
@@ -35,6 +42,8 @@ function main(): void {
     assert(command.handler.kind === "playground", `${command.id} must bind to a Playground handler`)
     assert(command.handler.method.length > 0, `${command.id} must name its Playground handler method`)
   }
+
+  assert(commandRegistry.some((command) => command.outputSchema?.jsonSchema), "Command registry should expose structured output schemas where available")
 }
 
 main()
