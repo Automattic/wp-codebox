@@ -5,10 +5,10 @@ the product-specific apply-back adapter, such as opening a branch and pull
 request in an external system.
 
 Use `wp-codebox/stage-artifact-apply` for normal user-facing review flows. It
-creates a Data Machine pending action and resolves approved actions through the
-same validated apply path. Use `wp-codebox/apply-approved-artifact` directly only
-for adapter integration tests or trusted lower-level control-plane code that
-already owns approval and audit UX.
+delegates staging to the host approval adapter and resolves approved actions
+through the same validated apply path. Use `wp-codebox/apply-approved-artifact`
+directly only for adapter integration tests or trusted lower-level control-plane
+code that already owns approval and audit UX.
 
 ## Boundary
 
@@ -90,8 +90,8 @@ throws only when asked to create a request from a non-ready preflight.
 
 ## Smoke Fixture
 
-`npm run smoke -- --command external-adapter-contract-smoke` demonstrates the contract without
-depending on Data Machine Code or any other apply-back implementation.
+`npm run smoke -- --command artifact-apply-adapter-smoke` demonstrates the contract without
+depending on a specific host approval or apply-back implementation.
 The fixture builds a verified artifact payload, runs a stand-in parent control
 plane adapter, and persists this external record shape:
 
