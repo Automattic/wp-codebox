@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { createServer } from "node:http"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -25,6 +26,8 @@ import {
   writeArtifactPart,
 } from "../packages/runtime-core/src/index.js"
 import { benchRunCode } from "../packages/runtime-playground/src/bench-command-handlers.js"
+import { browserPreviewAuthCookieUrls, browserPreviewTopology } from "../packages/runtime-playground/src/browser-preview-routing.js"
+import { closeHttpServer, listenLocalHttpServer, withPreviewProxy, type PlaygroundCliServer } from "../packages/runtime-playground/src/preview-server.js"
 
 const storage = runtimeArtifactStorageDescriptor({
   root: "./artifacts",
@@ -90,6 +93,63 @@ assert.throws(() => browserArtifactRef({ content_digest: "abc" }), /artifact_id/
 assert.deepEqual(normalizeRecipeMounts([{ source: "/host/plugin", target: "//wordpress//wp-content/plugins/plugin" }]), [{ source: "/host/plugin", target: "/wordpress/wp-content/plugins/plugin", mode: "readwrite" }])
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "wordpress/wp-content/plugins/plugin" }]), /absolute target/)
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "/wordpress/../escape" }]), /parent-directory/)
+
+const topology = browserPreviewTopology(
+  ["preview-mode=secure", "route-host=example.test,static.example.test", "network-policy=block", "allow-host=cdn.example.test"],
+  { preview: { publicUrl: "https://example.test/site" } },
+  "http://127.0.0.1:9400",
+)
+assert.equal(topology.preview.effectiveOrigin, "https://example.test/site")
+assert.equal(topology.resolveUrl("/wp-admin/"), "https://example.test/wp-admin/")
+assert.deepEqual(topology.routedHosts, ["example.test", "static.example.test"])
+assert.deepEqual(topology.origins, {
+  localPreviewOrigin: "http://127.0.0.1:9400",
+  requestedPreviewOrigin: "https://example.test/site",
+  effectivePreviewOrigin: "https://example.test/site",
+})
+assert.deepEqual(topology.authCookieUrls(["https://example.test/wp-admin/"]), [
+  "http://127.0.0.1/",
+  "https://example.test/",
+  "https://static.example.test/",
+])
+assert.equal(topology.networkPolicy.mode, "block")
+assert.deepEqual([...topology.networkPolicy.routeHosts].sort(), ["example.test", "static.example.test"])
+assert.deepEqual(browserPreviewAuthCookieUrls("http://localhost:9400", ["PUBLIC.example.test"], ["https://public.example.test/wp-admin/"]), ["http://localhost/", "https://public.example.test/"])
+
+let activeUpstreamRequests = 0
+let maxActiveUpstreamRequests = 0
+const targetServer = createServer(async (_request, response) => {
+  activeUpstreamRequests += 1
+  maxActiveUpstreamRequests = Math.max(maxActiveUpstreamRequests, activeUpstreamRequests)
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
+  activeUpstreamRequests -= 1
+  response.end("ok")
+})
+const targetServerUrl = await listenLocalHttpServer(targetServer)
+let disposed = false
+const proxied = await withPreviewProxy({
+  playground: { async run() { return { text: "" } } },
+  serverUrl: targetServerUrl,
+  async [Symbol.asyncDispose]() {
+    disposed = true
+  },
+} satisfies PlaygroundCliServer, 0)
+try {
+  assert.deepEqual(proxied.previewProxyDiagnostics, {
+    schema: "wp-codebox/preview-proxy-diagnostics/v1",
+    upstreamConcurrency: "serialized",
+    maxConcurrentUpstreamRequests: 1,
+    queue: "fifo",
+    bind: "127.0.0.1",
+    targetOrigin: new URL(targetServerUrl).origin,
+  })
+  await Promise.all([fetch(proxied.serverUrl), fetch(proxied.serverUrl)])
+  assert.equal(maxActiveUpstreamRequests, 1)
+} finally {
+  await proxied[Symbol.asyncDispose]()
+  await closeHttpServer(targetServer)
+}
+assert.equal(disposed, true)
 
 const phase = materializationPhaseResult({
   phase: "persist-browser-artifacts",

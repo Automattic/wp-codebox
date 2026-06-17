@@ -1,5 +1,6 @@
 import { join } from "node:path"
 import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
+import type { PlaygroundPreviewProxyDiagnostics } from "./preview-server.js"
 import type { Request } from "playwright"
 
 export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
@@ -11,6 +12,7 @@ export interface BrowserArtifactBase {
   requestedUrl: string
   url: string
   preview: BrowserProbePreviewRouting
+  previewProxy?: PlaygroundPreviewProxyDiagnostics
   networkPolicy?: BrowserProbeNetworkPolicySummary
   localPreviewOrigin?: string
   requestedPreviewOrigin?: string
@@ -133,6 +135,7 @@ export interface BrowserArtifactSummary {
     truncated: boolean
   }>
   networkPolicy?: BrowserProbeNetworkPolicySummary
+  previewProxy?: PlaygroundPreviewProxyDiagnostics
   lifecycle?: BrowserProbeLifecycleSummary
   liveness?: {
     wallTimeoutMs?: number

@@ -12,7 +12,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
-import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
@@ -368,18 +368,16 @@ async function runSingleBrowserProbeCommand({
   const wallTimeoutMs = runPlan.wallTimeoutMs
   const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs, idleTimeoutMs: stallTimeoutMs })
   const lifecycleSelectors = runPlan.lifecycleSelectors
-  const routedHosts = commaListArg(args, "route-host")
   const assertions = runPlan.assertions
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesNetworkForAssertions = browserProbeAssertionsNeedNetwork(assertions)
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory") || browserProbeAssertionsNeedMetrics(assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
-  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const { preview, networkPolicy } = topology
   const routeTracker = createBrowserPreviewRouteTracker()
-  const previewOrigins = browserPreviewOrigins(preview)
-  const targetUrl = resolveBrowserPreviewUrl(runPlan.url, preview.effectiveOrigin)
+  const targetUrl = topology.resolveUrl(runPlan.url)
   const artifactSession = new BrowserArtifactSession(artifactRoot, browserFilesDirectory, { source: command, operation: "browser-probe" })
 
   const consoleMessages: Record<string, unknown>[] = []
@@ -458,7 +456,7 @@ async function runSingleBrowserProbeCommand({
       })
     }
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -708,8 +706,9 @@ async function runSingleBrowserProbeCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
         ...(capture.has("console") || capturesConsoleForAssertions ? { console: `${browserFilesDirectory}/console.jsonl` } : {}),
@@ -733,6 +732,7 @@ async function runSingleBrowserProbeCommand({
         finalUrl,
         ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
         htmlSnapshot: Boolean(htmlSha256),
+        ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         liveness: { wallTimeoutMs, stallTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
@@ -758,8 +758,9 @@ async function runSingleBrowserProbeCommand({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       finalUrl,
       ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
       waitFor,
@@ -804,8 +805,9 @@ async function runSingleBrowserProbeCommand({
       command,
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -2121,8 +2123,6 @@ export async function runBrowserActionsCommand({
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
-  const routedHosts = commaListArg(args, "route-host")
-
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -2145,10 +2145,9 @@ export async function runBrowserActionsCommand({
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, 0)
   const browser = await launchChromiumBrowser()
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
-  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
-  const previewOrigins = browserPreviewOrigins(preview)
-  let requestedUrl = initialUrl ? resolveBrowserPreviewUrl(initialUrl, preview.effectiveOrigin) : preview.effectiveOrigin
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const { preview, networkPolicy } = topology
+  let requestedUrl = initialUrl ? topology.resolveUrl(initialUrl) : preview.effectiveOrigin
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
@@ -2177,7 +2176,7 @@ export async function runBrowserActionsCommand({
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (authRequest) {
-      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
+      authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: topology.authCookieUrls(browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
@@ -2333,8 +2332,9 @@ export async function runBrowserActionsCommand({
       requestedUrl,
       url: requestedUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
@@ -2355,6 +2355,7 @@ export async function runBrowserActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: Boolean(htmlSha256),
+        ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         liveness: { wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: livenessPolicy.networkSettleTimeoutMs },
@@ -2371,6 +2372,7 @@ export async function runBrowserActionsCommand({
       schema: "wp-codebox/browser-actions/v1",
       requestedUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       finalUrl,
       capture: [...capture].sort(),
       stepTimeoutMs,
@@ -2411,6 +2413,7 @@ export async function runBrowserActionsCommand({
       command: "wordpress.browser-actions",
       requestedUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -2845,11 +2848,9 @@ export async function runEditorOpenCommand({
   }
 
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
-  const routedHosts = commaListArg(args, "route-host")
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
-  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
-  const previewOrigins = browserPreviewOrigins(preview)
-  const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const { preview, networkPolicy } = topology
+  const targetUrl = topology.resolveUrl(target.url)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -2880,7 +2881,7 @@ export async function runEditorOpenCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
-    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-open", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -2951,8 +2952,9 @@ export async function runEditorOpenCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
@@ -2968,6 +2970,7 @@ export async function runEditorOpenCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
         auth: authSummary,
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
@@ -2982,8 +2985,9 @@ export async function runEditorOpenCommand({
       target,
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -3011,6 +3015,7 @@ export async function runEditorOpenCommand({
       target,
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -3053,11 +3058,9 @@ export async function runEditorActionsCommand({
   const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const stepTimeoutMs = durationArg(args, "step-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
-  const routedHosts = commaListArg(args, "route-host")
-  const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
-  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
-  const previewOrigins = browserPreviewOrigins(preview)
-  const targetUrl = resolveBrowserPreviewUrl(target.url, preview.effectiveOrigin)
+  const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
+  const { preview, networkPolicy } = topology
+  const targetUrl = topology.resolveUrl(target.url)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -3091,7 +3094,7 @@ export async function runEditorActionsCommand({
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
     const page = context ? await context.newPage() : await browser.newPage()
-    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: browserAuthCookieUrls(server.serverUrl, routedHosts, [targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
+    authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.editor-actions", cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: 1 })
     viewport = await browserProbeViewport(page)
     attachBrowserCaptureListeners({
       captureConsole: capture.has("console"),
@@ -3194,8 +3197,9 @@ export async function runEditorActionsCommand({
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       files: {
         ...(capture.has("steps") ? { steps: "files/browser/editor-action-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-action-console.jsonl" } : {}),
@@ -3212,6 +3216,7 @@ export async function runEditorActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
         auth: authSummary,
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         networkEvents: 0,
@@ -3229,8 +3234,9 @@ export async function runEditorActionsCommand({
       actions: actionSteps,
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
-      ...previewOrigins,
+      ...topology.origins,
       finalUrl,
       capture: [...capture].sort(),
       waitTimeoutMs,
@@ -3261,6 +3267,7 @@ export async function runEditorActionsCommand({
       actions: actionSteps.length,
       requestedUrl: targetUrl,
       preview,
+      ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       finalUrl: artifact.summary.finalUrl ?? finalUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -5269,16 +5276,6 @@ echo wp_json_encode( $cookies );
 `
 }
 
-function browserAuthCookieUrls(serverUrl: string, routedHosts: string[], targetUrls: string[]): string[] {
-  const urls = [serverUrl]
-  for (const host of routedHosts.map(normalizeBrowserCookieHost).filter(Boolean)) {
-    const matchingTarget = targetUrls.find((targetUrl) => normalizeBrowserCookieHost(browserUrlHostname(targetUrl) ?? "") === host)
-    const protocol = matchingTarget ? new URL(matchingTarget).protocol : browserAuthCookieProtocol(targetUrls)
-    urls.push(`${protocol}//${host}/`)
-  }
-  return uniqueBrowserAuthCookieUrls(urls)
-}
-
 function browserActionTargetUrls(steps: BrowserInteractionStep[], effectiveOrigin: string, fallbackUrl: string): string[] {
   const urls = steps
     .filter((step) => step.kind === "navigate" && typeof step.url === "string" && step.url.trim().length > 0)
@@ -5297,25 +5294,6 @@ function uniqueBrowserAuthCookieUrls(urls: string[]): string[] {
     }
   }
   return [...unique.values()]
-}
-
-function browserAuthCookieProtocol(targetUrls: string[]): string {
-  for (const targetUrl of targetUrls) {
-    try {
-      return new URL(targetUrl).protocol
-    } catch {
-      // Keep looking for a usable target URL.
-    }
-  }
-  return "http:"
-}
-
-function browserUrlHostname(url: string): string | undefined {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return undefined
-  }
 }
 
 function normalizeBrowserCookieHost(host: string): string {

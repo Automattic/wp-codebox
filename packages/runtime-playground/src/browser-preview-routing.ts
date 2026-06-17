@@ -15,6 +15,15 @@ export interface BrowserPreviewNetworkPolicy {
   stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
 }
 
+export interface BrowserPreviewTopology {
+  preview: BrowserProbePreviewRouting
+  networkPolicy: BrowserPreviewNetworkPolicy
+  routedHosts: string[]
+  origins: { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string }
+  resolveUrl(pathOrUrl: string): string
+  authCookieUrls(targetUrls: string[]): string[]
+}
+
 export interface BrowserPreviewRouteTracker {
   pending: Set<Promise<void>>
   errors: unknown[]
@@ -62,6 +71,25 @@ export function browserPreviewRouting(args: string[], runtimeSpec: RuntimeCreate
   }
 }
 
+export function browserPreviewTopology(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserPreviewTopology {
+  const preview = browserPreviewRouting(args, runtimeSpec, localPreviewOrigin)
+  const routedHosts = commaListArg(args, "route-host")
+  const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+
+  return {
+    preview,
+    networkPolicy,
+    routedHosts,
+    origins: browserPreviewOrigins(preview),
+    resolveUrl(pathOrUrl) {
+      return resolveBrowserPreviewUrl(pathOrUrl, preview.effectiveOrigin)
+    },
+    authCookieUrls(targetUrls) {
+      return browserPreviewAuthCookieUrls(localPreviewOrigin, routedHosts, targetUrls)
+    },
+  }
+}
+
 export function browserPreviewOrigins(preview: BrowserProbePreviewRouting): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
   return {
     localPreviewOrigin: preview.localOrigin,
@@ -100,6 +128,16 @@ export function resolveBrowserPreviewUrl(pathOrUrl: string, baseUrl: string): st
   } catch {
     return new URL(pathOrUrl, baseUrl).toString()
   }
+}
+
+export function browserPreviewAuthCookieUrls(localPreviewOrigin: string, routedHosts: string[], targetUrls: string[]): string[] {
+  const urls = [localPreviewOrigin]
+  for (const host of routedHosts.map(normalizeBrowserPreviewHost).filter(Boolean)) {
+    const matchingTarget = targetUrls.find((targetUrl) => normalizeBrowserPreviewHost(browserPreviewUrlHostname(targetUrl) ?? "") === host)
+    const protocol = matchingTarget ? new URL(matchingTarget).protocol : browserPreviewAuthCookieProtocol(targetUrls)
+    urls.push(`${protocol}//${host}/`)
+  }
+  return uniqueBrowserPreviewAuthCookieUrls(urls)
 }
 
 export function browserPreviewNetworkPolicy(args: string[], routeHosts: string[], preview: BrowserProbePreviewRouting): BrowserPreviewNetworkPolicy {
@@ -266,6 +304,30 @@ function browserPreviewUrlHostname(url: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function uniqueBrowserPreviewAuthCookieUrls(urls: string[]): string[] {
+  const unique = new Map<string, string>()
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url)
+      unique.set(`${parsed.protocol}//${normalizeBrowserPreviewHost(parsed.hostname)}`, `${parsed.protocol}//${parsed.hostname}/`)
+    } catch {
+      // Ignore invalid cookie URL inputs; callers still include the local preview origin.
+    }
+  }
+  return [...unique.values()]
+}
+
+function browserPreviewAuthCookieProtocol(targetUrls: string[]): string {
+  for (const targetUrl of targetUrls) {
+    try {
+      return new URL(targetUrl).protocol
+    } catch {
+      // Keep looking for a usable target URL.
+    }
+  }
+  return "http:"
 }
 
 function normalizeBrowserPreviewHost(host: string): string {

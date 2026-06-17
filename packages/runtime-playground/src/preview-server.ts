@@ -16,7 +16,17 @@ export interface PlaygroundCliServer {
   }
   serverUrl: string
   previewRoutes?: PlaygroundPreviewRouteRegistry
+  previewProxyDiagnostics?: PlaygroundPreviewProxyDiagnostics
   [Symbol.asyncDispose](): Promise<void>
+}
+
+export interface PlaygroundPreviewProxyDiagnostics {
+  schema: "wp-codebox/preview-proxy-diagnostics/v1"
+  upstreamConcurrency: "serialized"
+  maxConcurrentUpstreamRequests: 1
+  queue: "fifo"
+  bind: string
+  targetOrigin: string
 }
 
 export interface PlaygroundPreviewRouteRegistry {
@@ -28,6 +38,7 @@ export type PlaygroundPreviewRouteHandler = (incoming: IncomingMessage, outgoing
 interface PlaygroundPreviewProxy {
   serverUrl: string
   previewRoutes: PlaygroundPreviewRouteRegistry
+  diagnostics: PlaygroundPreviewProxyDiagnostics
   dispose(): Promise<void>
 }
 
@@ -55,6 +66,7 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
     ...server,
     serverUrl: proxy.serverUrl,
     previewRoutes: proxy.previewRoutes,
+    previewProxyDiagnostics: proxy.diagnostics,
     async [Symbol.asyncDispose]() {
       await proxy.dispose()
       await server[Symbol.asyncDispose]()
@@ -90,6 +102,14 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
   return {
     serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
     previewRoutes: routes,
+    diagnostics: {
+      schema: "wp-codebox/preview-proxy-diagnostics/v1",
+      upstreamConcurrency: "serialized",
+      maxConcurrentUpstreamRequests: 1,
+      queue: "fifo",
+      bind,
+      targetOrigin: target.origin,
+    },
     async dispose() {
       await closePreviewProxyServers(servers)
     },
