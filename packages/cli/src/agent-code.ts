@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { normalizeAgentBundles, sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload, type TaskInputAgentBundle } from "@automattic/wp-codebox-core"
+import { normalizeAgentBundles, phpRuntimeComponentLifecycleActionReplayFunction, sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload, type TaskInputAgentBundle } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
 export type AgentBundleSpec = TaskInputAgentBundle
@@ -540,7 +540,7 @@ function wp_codebox_json_encode_sandbox_payload($value): string {
     return (string) wp_json_encode($fallback, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 }
 
-${runtimeLifecycleReplayPhp()}
+${phpRuntimeComponentLifecycleActionReplayFunction("wp_codebox_runtime_replay_component_lifecycle")}
 
 $activation_results = array();
 
@@ -612,7 +612,7 @@ $plugins = array_merge(array(
 
 ${providerPluginResolutionPhp()}
 
-${runtimeLifecycleReplayPhp()}
+${phpRuntimeComponentLifecycleActionReplayFunction("wp_codebox_runtime_replay_component_lifecycle")}
 
 $activation_results = array();
 
@@ -759,23 +759,5 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
         }
     }
     return null;
-}`
-}
-
-function runtimeLifecycleReplayPhp(): string {
-  return `function wp_codebox_runtime_replay_component_lifecycle(): array {
-    do_action('plugins_loaded');
-    do_action('init');
-    do_action('wp_abilities_api_categories_init');
-    do_action('wp_abilities_api_init');
-    do_action('wp_codebox_runtime_abilities_ready');
-
-    return array(
-        'plugins_loaded' => function_exists('did_action') ? did_action('plugins_loaded') : null,
-        'init' => function_exists('did_action') ? did_action('init') : null,
-        'wp_abilities_api_categories_init' => function_exists('did_action') ? did_action('wp_abilities_api_categories_init') : null,
-        'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
-        'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
-    );
 }`
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 
 const runtimeSpec = {
@@ -39,9 +40,11 @@ assert.ok(
 
 const recipeRunSource = readFileSync(join(process.cwd(), "packages/cli/src/commands/recipe-run.ts"), "utf8")
 const activateFunction = recipeRunSource.slice(recipeRunSource.indexOf("function activateExtraPluginCode"), recipeRunSource.indexOf("async function activePlugins"))
+const activationReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")
 
-assert.match(activateFunction, /wp-codebox\/runtime-component-lifecycle-replay\/v1/, "activation setup should expose lifecycle replay diagnostics")
-assert.match(activateFunction, /wp_codebox_runtime_abilities_ready/, "activation setup should replay the post-abilities contract hook")
+assert.match(activateFunction, /phpRuntimeComponentLifecycleReplayFunction\("wp_codebox_activate_plugin"\)/, "activation setup should use the shared lifecycle replay snippet")
+assert.match(activationReplaySnippet, /wp-codebox\/runtime-component-lifecycle-replay\/v1/, "activation setup should expose lifecycle replay diagnostics")
+assert.match(activationReplaySnippet, /wp_codebox_runtime_abilities_ready/, "activation setup should replay the post-abilities contract hook")
 assert.ok(
   activateFunction.indexOf("$lifecycle = wp_codebox_activate_plugin_component_lifecycle_replay_prepare();") < activateFunction.indexOf("activate_plugin($plugin_file"),
   "activation setup should reopen lifecycle before activate_plugin loads plugin code",

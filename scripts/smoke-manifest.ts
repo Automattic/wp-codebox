@@ -109,6 +109,7 @@ export const smokeGroups = {
       tsxSmoke("runtime-command-result-envelope-smoke"),
       tsxSmoke("replay-export-snapshot-scoping-smoke"),
       tsxSmoke("runtime-overlay-validation-smoke"),
+      npmScript("test:runtime-php-snippets"),
       tsxSmoke("composer-backed-source-hydration-smoke"),
       tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),
       tsxSmoke("runtime-component-lifecycle-replay-smoke"),

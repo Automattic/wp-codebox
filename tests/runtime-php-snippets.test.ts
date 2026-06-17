@@ -1,0 +1,73 @@
+import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
+import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
+
+const lifecycleReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("wp_codebox_test")
+assert.match(lifecycleReplaySnippet, /function wp_codebox_test_component_lifecycle_replay_prepare\(\): array/)
+assert.match(lifecycleReplaySnippet, /'schema' => 'wp-codebox\/runtime-component-lifecycle-replay\/v1'/)
+
+const replayOutput = execFileSync(
+  "php",
+  [
+    "-r",
+    `${lifecycleReplaySnippet}
+
+class WP_Hook {
+    public array $callbacks = array();
+}
+
+$wp_filter = array('init' => new WP_Hook());
+$wp_actions = array('init' => 1);
+$wp_current_filter = array();
+$GLOBALS['calls'] = array();
+
+function did_action($hook_name) { return (int) ($GLOBALS['wp_actions'][$hook_name] ?? 0); }
+function wp_get_abilities() { return array('before' => true, 'after' => true); }
+
+$GLOBALS['wp_filter']['init']->callbacks[10]['existing'] = array('function' => static function () { $GLOBALS['calls'][] = 'existing'; }, 'accepted_args' => 0);
+$state = wp_codebox_test_component_lifecycle_replay_prepare();
+$GLOBALS['wp_filter']['init']->callbacks[20]['new'] = array('function' => static function () { $GLOBALS['calls'][] = 'new'; }, 'accepted_args' => 0);
+$diagnostic = wp_codebox_test_component_lifecycle_replay_complete($state);
+
+echo json_encode(array(
+    'calls' => $GLOBALS['calls'],
+    'did_init' => did_action('init'),
+    'init' => $diagnostic['hooks']['init'],
+    'abilities_added' => $diagnostic['abilities_added'],
+));`,
+  ],
+  { encoding: "utf8" },
+)
+
+assert.deepEqual(JSON.parse(replayOutput), {
+  calls: ["new"],
+  did_init: 1,
+  init: { replayed_callbacks: 1, previous_did_action: 1 },
+  abilities_added: [],
+})
+
+const actionReplaySnippet = phpRuntimeComponentLifecycleActionReplayFunction("wp_codebox_runtime_replay_component_lifecycle")
+assert.match(actionReplaySnippet, /function wp_codebox_runtime_replay_component_lifecycle\(\): array/)
+
+const actionOutput = execFileSync(
+  "php",
+  [
+    "-r",
+    `${actionReplaySnippet}
+
+$wp_actions = array();
+function do_action($hook_name) { $GLOBALS['wp_actions'][$hook_name] = (int) ($GLOBALS['wp_actions'][$hook_name] ?? 0) + 1; }
+function did_action($hook_name) { return (int) ($GLOBALS['wp_actions'][$hook_name] ?? 0); }
+
+echo json_encode(wp_codebox_runtime_replay_component_lifecycle());`,
+  ],
+  { encoding: "utf8" },
+)
+
+assert.deepEqual(JSON.parse(actionOutput), {
+  plugins_loaded: 1,
+  init: 1,
+  wp_abilities_api_categories_init: 1,
+  wp_abilities_api_init: 1,
+  wp_codebox_runtime_abilities_ready: 1,
+})
