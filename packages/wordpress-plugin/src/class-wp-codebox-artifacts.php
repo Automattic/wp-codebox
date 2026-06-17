@@ -209,8 +209,13 @@ final class WP_Codebox_Artifacts {
 		$manifest_files = array();
 
 		foreach ( $files as $file ) {
-			$artifact_path = 'files/browser/' . $file['path'];
-			$target_path   = $tmp . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $artifact_path );
+			$artifact_path = WP_Codebox_Path_Policy::normalize_artifact_relative_path( 'files/browser/' . $file['path'], 'Browser artifact file', 'wp_codebox_browser_artifact_path_invalid' );
+			if ( is_wp_error( $artifact_path ) ) {
+				$this->remove_directory( $tmp );
+				return $artifact_path;
+			}
+
+			$target_path   = $this->resolve_artifact_file( $tmp, $artifact_path );
 			$target_dir    = dirname( $target_path );
 			if ( ! is_dir( $target_dir ) && ! $this->mkdir_p( $target_dir ) ) {
 				$this->remove_directory( $tmp );
@@ -891,7 +896,7 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function normalize_browser_bundle_root( string $root ): string|WP_Error {
-		$root = rtrim( trim( str_replace( '\\', '/', $root ) ), '/' );
+		$root = trim( str_replace( '\\', '/', $root ) );
 		if ( '' === $root ) {
 			return '';
 		}
@@ -919,22 +924,17 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function validate_browser_bundle_file_path( string $path, int $index ): string|WP_Error {
-		if ( '' === $path || str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
-			return new WP_Error( 'wp_codebox_browser_artifact_path_invalid', 'Browser artifact file paths must be safe relative paths.', array( 'status' => 400, 'index' => $index, 'path' => $path ) );
+		$normalized = WP_Codebox_Path_Policy::normalize_artifact_relative_path( $path, 'Browser artifact file path', 'wp_codebox_browser_artifact_path_invalid', array( 'index' => $index ) );
+		if ( is_wp_error( $normalized ) ) {
+			return $normalized;
 		}
 
-		foreach ( explode( '/', $path ) as $segment ) {
-			if ( '' === $segment || '.' === $segment || '..' === $segment ) {
-				return new WP_Error( 'wp_codebox_browser_artifact_path_invalid', 'Browser artifact file paths must not contain empty, current-directory, or parent-directory segments.', array( 'status' => 400, 'index' => $index, 'path' => $path, 'segment' => $segment ) );
-			}
-		}
-
-		$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+		$extension = strtolower( pathinfo( $normalized, PATHINFO_EXTENSION ) );
 		if ( in_array( $extension, array( 'php', 'phtml', 'phar', 'cgi', 'pl', 'py', 'rb', 'asp', 'aspx', 'jsp' ), true ) ) {
-			return new WP_Error( 'wp_codebox_browser_artifact_extension_blocked', 'Browser artifact files must not use executable server-side extensions.', array( 'status' => 400, 'index' => $index, 'path' => $path, 'extension' => $extension ) );
+			return new WP_Error( 'wp_codebox_browser_artifact_extension_blocked', 'Browser artifact files must not use executable server-side extensions.', array( 'status' => 400, 'index' => $index, 'path' => $normalized, 'extension' => $extension ) );
 		}
 
-		return $path;
+		return $normalized;
 	}
 
 	private function browser_bundle_mime_type( string $path ): string {
@@ -1315,7 +1315,12 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function resolve_artifact_file( string $directory, string $relative_path ): string {
-		$path = $directory . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
+		$relative_path = WP_Codebox_Path_Policy::normalize_artifact_relative_path( $relative_path );
+		if ( is_wp_error( $relative_path ) ) {
+			return '';
+		}
+
+		$path = rtrim( $directory, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
 		$real = realpath( $path );
 
 		return false !== $real ? $real : $path;

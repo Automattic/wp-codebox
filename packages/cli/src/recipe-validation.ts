@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, parseCommandJson, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -340,6 +340,12 @@ function validateRecipeMounts(mounts: WorkspaceRecipeMount[] | undefined, label:
   for (const mount of mounts ?? []) {
     if (!mount.source || !mount.target) {
       throw new Error(`Recipe ${label} mounts must include source and target: ${recipePath}`)
+    }
+
+    try {
+      normalizeRuntimeMountTarget(mount.target, `Recipe ${label} mount`)
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}: ${recipePath}`)
     }
 
     if (mount.type && mount.type !== "directory" && mount.type !== "file") {
@@ -713,7 +719,12 @@ function validateDistributionScalar(value: unknown, path: string, addIssue: (cod
 }
 
 function isRelativeArtifactPath(path: string): boolean {
-  return path.length > 0 && !path.startsWith("/") && !path.includes("..")
+  try {
+    safeArtifactRelativePath(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function recipeWorkflowSteps(recipe: WorkspaceRecipe): Array<{ phase: Exclude<RecipeWorkflowPhase, "setup">; index: number; step: WorkspaceRecipe["workflow"]["steps"][number] }> {
@@ -1413,8 +1424,10 @@ async function validateExistingMountSource(path: string, type: MountSpec["type"]
 }
 
 function validateAbsoluteSandboxPath(path: string, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
-  if (!path.startsWith("/")) {
-    addIssue("invalid-sandbox-path", issuePath, `Sandbox paths must be absolute: ${path}`)
+  try {
+    normalizeRuntimeMountTarget(path, "Sandbox path")
+  } catch (error) {
+    addIssue("invalid-sandbox-path", issuePath, error instanceof Error ? error.message : String(error))
   }
 }
 

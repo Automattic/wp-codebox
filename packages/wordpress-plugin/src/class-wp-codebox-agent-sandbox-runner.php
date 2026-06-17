@@ -1808,13 +1808,13 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			}
 
 			$source = $this->clean_path( (string) ( $mount['source'] ?? '' ) );
-			$target = trim( (string) ( $mount['target'] ?? '' ) );
+			$target = WP_Codebox_Path_Policy::normalize_sandbox_mount_target( (string) ( $mount['target'] ?? '' ), 'WP Codebox mount ' . $index, 'wp_codebox_mount_target_invalid', array( 'index' => $index ) );
 			if ( '' === $source || ( ! is_dir( $source ) && ! is_file( $source ) ) ) {
 				return new WP_Error( 'wp_codebox_mount_source_invalid', 'WP Codebox mount source must be an existing file or directory.', array( 'status' => 400, 'index' => $index ) );
 			}
 
-			if ( '' === $target || ! str_starts_with( $target, '/' ) ) {
-				return new WP_Error( 'wp_codebox_mount_target_invalid', 'WP Codebox mount target must be an absolute sandbox path.', array( 'status' => 400, 'index' => $index ) );
+			if ( is_wp_error( $target ) ) {
+				return $target;
 			}
 
 			$mode = (string) ( $mount['mode'] ?? 'readwrite' );
@@ -1869,6 +1869,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 
 		$stack_mounts = $this->runtime_stack_mounts( $input );
+		if ( is_wp_error( $stack_mounts ) ) {
+			return $stack_mounts;
+		}
 		if ( ! empty( $stack_mounts ) ) {
 			$runtime['stack'] = array( 'mounts' => $stack_mounts );
 		}
@@ -1881,8 +1884,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $runtime;
 	}
 
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
-	private function runtime_stack_mounts( array $input ): array {
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
+	private function runtime_stack_mounts( array $input ): array|WP_Error {
 		$mounts = $this->merge_array_lists(
 			$input['runtime_stack_mounts'] ?? array(),
 			$input['runtime_config_mounts'] ?? array(),
@@ -1891,19 +1894,22 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$input['runtimeStateMounts'] ?? array()
 		);
 
-		return array_values(
-			array_map(
-				function ( array $mount ): array {
-					if ( ! isset( $mount['metadata'] ) || ! is_array( $mount['metadata'] ) ) {
-						$mount['metadata'] = array();
-					}
-					$mount['metadata'] = array_merge( array( 'kind' => 'runtime-state-mount' ), $mount['metadata'] );
+		$normalized = array();
+		foreach ( $mounts as $index => $mount ) {
+			$target = WP_Codebox_Path_Policy::normalize_sandbox_mount_target( (string) ( $mount['target'] ?? '' ), 'Runtime stack mount ' . $index, 'wp_codebox_runtime_mount_target_invalid', array( 'index' => $index ) );
+			if ( is_wp_error( $target ) ) {
+				return $target;
+			}
 
-					return $mount;
-				},
-				$mounts
-			)
-		);
+			$mount['target'] = $target;
+			if ( ! isset( $mount['metadata'] ) || ! is_array( $mount['metadata'] ) ) {
+				$mount['metadata'] = array();
+			}
+			$mount['metadata'] = array_merge( array( 'kind' => 'runtime-state-mount' ), $mount['metadata'] );
+			$normalized[] = $mount;
+		}
+
+		return $normalized;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,string> */
