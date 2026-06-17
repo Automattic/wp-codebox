@@ -5,6 +5,7 @@ import { join } from "node:path"
 
 const dir = mkdtempSync(join(tmpdir(), "wp-codebox-browser-artifact-idempotency-"))
 const smokePhp = join(dir, "smoke.php")
+const jsonPath = new URL("../packages/wordpress-plugin/src/class-wp-codebox-json.php", import.meta.url).pathname
 const classPath = new URL("../packages/wordpress-plugin/src/class-wp-codebox-artifacts.php", import.meta.url).pathname
 
 writeFileSync(smokePhp, `<?php
@@ -59,6 +60,7 @@ function smoke_remove_tree(string $path): void {
 	rmdir($path);
 }
 
+require ${JSON.stringify(jsonPath)};
 require ${JSON.stringify(classPath)};
 
 $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'wp-codebox-artifacts-' . bin2hex(random_bytes(8));

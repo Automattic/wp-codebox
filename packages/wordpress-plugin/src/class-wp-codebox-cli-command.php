@@ -188,8 +188,8 @@ final class WP_Codebox_CLI_Command {
 
 	/** @return array<string,mixed> */
 	private function json_object( string $json, string $field ): array {
-		$decoded = json_decode( $json, true );
-		if ( ! is_array( $decoded ) || array_is_list( $decoded ) ) {
+		$decoded = WP_Codebox_Json::decode_object( $json );
+		if ( null === $decoded ) {
 			\WP_CLI::error( $field . ' must be a JSON object.' );
 		}
 
@@ -200,8 +200,8 @@ final class WP_Codebox_CLI_Command {
 	private function json_or_list( string $value, string $field ): array {
 		$trimmed = trim( $value );
 		if ( str_starts_with( $trimmed, '[' ) ) {
-			$decoded = json_decode( $trimmed, true );
-			if ( ! is_array( $decoded ) || ! array_is_list( $decoded ) ) {
+			$decoded = WP_Codebox_Json::decode_list( $trimmed );
+			if ( null === $decoded ) {
 				\WP_CLI::error( $field . ' must be a JSON array.' );
 			}
 
@@ -239,12 +239,6 @@ final class WP_Codebox_CLI_Command {
 
 	/** @param array<string,mixed> $data Data to encode. */
 	private function json_encode( array $data ): string {
-		if ( function_exists( 'wp_json_encode' ) ) {
-			$encoded = wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-		} else {
-			$encoded = json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-		}
-
-		return false === $encoded ? '{}' : (string) $encoded;
+		return WP_Codebox_Json::encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, '{}' );
 	}
 }

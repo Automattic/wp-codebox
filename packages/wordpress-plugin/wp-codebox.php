@@ -27,6 +27,7 @@ require_once __DIR__ . '/src/class-wp-codebox-host-tool-policy-validator.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-recipe-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
+require_once __DIR__ . '/src/class-wp-codebox-json.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';

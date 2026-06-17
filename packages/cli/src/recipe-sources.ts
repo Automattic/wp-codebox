@@ -242,6 +242,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       command: "composer",
       args: ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
       cwd: stagedSource,
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       allowedCwdRoots: [stagingRoot],
       maxOutputBytes: 1024 * 1024 * 10,
       label: "prepare Composer autoload for recipe extra plugin",
