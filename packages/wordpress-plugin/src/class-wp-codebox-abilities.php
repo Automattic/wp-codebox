@@ -575,7 +575,7 @@ final class WP_Codebox_Abilities {
 							'caller_session_id'  => array( 'type' => 'string' ),
 							'job_id'             => array( 'type' => 'string' ),
 							'orchestrator'       => $session_input['orchestrator'],
-							'authorization'      => self::browser_session_authorization_schema(),
+							'authorization'      => self::browser_connector_authorization_schema(),
 						),
 					),
 					'output_schema'       => array(
@@ -592,7 +592,7 @@ final class WP_Codebox_Abilities {
 						),
 					),
 					'execute_callback'    => array( self::class, 'execute_browser_provider_request' ),
-					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+					'permission_callback' => array( self::class, 'can_request_browser_connector' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
