@@ -69,6 +69,8 @@ export interface RuntimeDependencyPlanContractInput {
   inheritance?: { connectors?: unknown; settings?: unknown }
   agent_bundles?: unknown
   secret_env?: unknown
+  runtime_env?: unknown
+  runtimeEnv?: unknown
 }
 
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskInput, wpVersion: string): WorkspaceRecipe {
@@ -176,7 +178,22 @@ export function runtimeDependencyPlanContract(input: RuntimeDependencyPlanContra
     },
     agent_bundles: objectList(input.agent_bundles),
     secret_env: stringList(input.secret_env).filter((name) => /^[A-Z_][A-Z0-9_]*$/.test(name)),
+    runtime_env: runtimeEnvMap(input.runtime_env ?? input.runtimeEnv),
   })
+}
+
+function runtimeEnvMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([name, entry]) => /^[A-Z_][A-Z0-9_]*$/.test(name) && (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean"))
+      .map(([name, entry]) => [name, runtimeEnvString(entry)]),
+  )
+}
+
+function runtimeEnvString(value: string | number | boolean): string {
+  return typeof value === "boolean" ? (value ? "1" : "") : String(value)
 }
 
 function componentManifestEntry(plugin: WorkspaceRecipeExtraPlugin): WorkspaceRecipeComponentManifestEntry {

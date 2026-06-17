@@ -39,6 +39,7 @@ require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-redac
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-run-plan.php';
 
 $fixture = json_decode( file_get_contents( __DIR__ . '/../tests/fixtures/primitive-contracts.json' ), true );
 if ( ! is_array( $fixture ) ) {
@@ -117,7 +118,8 @@ $plan          = new WP_Codebox_Runtime_Dependency_Plan(
     $runtime_input['inheritance'],
     $runtime_input['inheritance_request'],
     $runtime_input['agent_bundles'],
-    $runtime_input['secret_env']
+    $runtime_input['secret_env'],
+    $runtime_input['runtime_env']
 );
 assert_same_contract( $fixture['runtimeDependencyPlan']['expected'], $plan->to_contract(), 'runtime dependency plan contract' );
 
@@ -127,5 +129,11 @@ assert_same_contract(
     $component_manifest->invoke( null, $fixture['componentManifest']['components'], $fixture['componentManifest']['providers'] ),
     'component manifest contract'
 );
+
+$run_plan = new WP_Codebox_Run_Plan();
+assert_same_contract( $fixture['runPlan']['counts'], $run_plan->result_counts( $fixture['runPlan']['children'] ), 'run-plan result counts' );
+assert_same_contract( $fixture['runPlan']['succeeded'], $run_plan->succeeded( $fixture['runPlan']['counts'] ), 'run-plan succeeded contract' );
+assert_same_contract( $fixture['runPlan']['concurrency']['defaulted'], $run_plan->normalize_concurrency( '', array( 'default_concurrency' => 3, 'max_concurrency' => 5 ) ), 'run-plan default concurrency' );
+assert_same_contract( $fixture['runPlan']['concurrency']['clamped'], $run_plan->normalize_concurrency( 99, array( 'max_concurrency' => 2 ) ), 'run-plan clamped concurrency' );
 
 fwrite( STDOUT, "PHP primitive contract parity smoke passed\n" );

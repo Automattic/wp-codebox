@@ -7,6 +7,7 @@ import {
   normalizeCheckStatus,
   normalizeCommandEnvelopeStatus,
   normalizePhaseRecipeStatus,
+  normalizeRunPlanConcurrency,
   normalizeRuntimeMountTarget,
   redactJsonValue,
   resolveEffectiveRuntimeToolPolicy,
@@ -20,8 +21,10 @@ import {
   type SandboxToolPolicySnapshot,
   type WorkspaceRecipeExtraPlugin,
 } from "../packages/runtime-core/src/index.js"
+import { primitiveContractsFixture } from "../scripts/primitive-contract-fixture.js"
 
 const fixture = JSON.parse(await readFile(new URL("./fixtures/primitive-contracts.json", import.meta.url), "utf8"))
+assert.deepEqual(fixture, primitiveContractsFixture(), "primitive contracts fixture must match generated TS contracts")
 
 for (const [profile, contract] of Object.entries(fixture.redaction.profiles) as Array<[string, { input: unknown; expected: unknown }]>) {
   assert.deepEqual(redactJsonValue(contract.input, { profile: profile as never, redactStrings: false }), contract.expected, `${profile} redaction contract`)
@@ -29,7 +32,7 @@ for (const [profile, contract] of Object.entries(fixture.redaction.profiles) as 
 
 for (const contract of fixture.pathPolicy.mountTargets as Array<{ input: string; expected?: string; error?: boolean }>) {
   if (contract.error) {
-    assert.throws(() => normalizeRuntimeMountTarget(contract.input), /directory/)
+    assert.throws(() => normalizeRuntimeMountTarget(contract.input), /absolute|directory/)
   } else {
     assert.equal(normalizeRuntimeMountTarget(contract.input), contract.expected)
   }
@@ -37,7 +40,7 @@ for (const contract of fixture.pathPolicy.mountTargets as Array<{ input: string;
 
 for (const contract of fixture.pathPolicy.artifactPaths as Array<{ input: string; expected?: string; error?: boolean }>) {
   if (contract.error) {
-    assert.throws(() => safeArtifactRelativePath(contract.input), /directory/)
+    assert.throws(() => safeArtifactRelativePath(contract.input), /relative|directory/)
   } else {
     assert.equal(safeArtifactRelativePath(contract.input), contract.expected)
   }
@@ -76,6 +79,8 @@ assert.deepEqual(
 
 assert.deepEqual(countRunPlanChildResults(fixture.runPlan.children), fixture.runPlan.counts)
 assert.equal(runPlanSucceeded(fixture.runPlan.counts), fixture.runPlan.succeeded)
+assert.equal(normalizeRunPlanConcurrency("", { defaultConcurrency: 3, maxConcurrency: 5 }), fixture.runPlan.concurrency.defaulted)
+assert.equal(normalizeRunPlanConcurrency(99, { maxConcurrency: 2 }), fixture.runPlan.concurrency.clamped)
 assert.deepEqual(fixture.runPlan.schemas, {
   plan: RUN_PLAN_SCHEMA,
   event: RUN_PLAN_EVENT_SCHEMA,

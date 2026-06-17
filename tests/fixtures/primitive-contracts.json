@@ -1,4 +1,5 @@
 {
+  "generatedBy": "scripts/primitive-contract-fixture.ts",
   "redaction": {
     "profiles": {
       "provider_proxy": {
@@ -38,7 +39,19 @@
         "expected": "/wordpress/wp-content/plugins/plugin"
       },
       {
+        "input": " \\wordpress\\wp-content\\mu-plugins\\runtime ",
+        "expected": "/wordpress/wp-content/mu-plugins/runtime"
+      },
+      {
+        "input": "/",
+        "expected": "/"
+      },
+      {
         "input": "/wordpress/../escape",
+        "error": true
+      },
+      {
+        "input": "relative/runtime",
         "error": true
       }
     ],
@@ -48,7 +61,15 @@
         "expected": "files/output.json"
       },
       {
+        "input": " logs\\run.json ",
+        "expected": "logs/run.json"
+      },
+      {
         "input": "files/../secret.txt",
+        "error": true
+      },
+      {
+        "input": "C:/secret.txt",
         "error": true
       }
     ]
@@ -61,7 +82,9 @@
         {
           "id": "filesystem-write",
           "runtime_tool_id": "client/filesystem-write",
-          "aliases": ["filesystem_write"],
+          "aliases": [
+            "filesystem_write"
+          ],
           "execution_location": "sandbox",
           "transport_visibility": "sandbox",
           "allowed": true,
@@ -71,7 +94,9 @@
           },
           "metadata": {
             "schema": "example/input/v1",
-            "aliases": ["write_file"],
+            "aliases": [
+              "write_file"
+            ],
             "policy": {
               "permission": "write"
             }
@@ -107,10 +132,18 @@
     "effective": {
       "schema": "wp-codebox/sandbox-tool-policy/v1",
       "version": 1,
-      "allowedRuntimeToolIds": ["client/filesystem-write"],
-      "visibleRuntimeToolIds": ["client/filesystem-write"],
-      "parentOnlyRuntimeToolIds": ["client/browser-review"],
-      "hiddenRuntimeToolIds": ["client/internal-token"],
+      "allowedRuntimeToolIds": [
+        "client/filesystem-write"
+      ],
+      "visibleRuntimeToolIds": [
+        "client/filesystem-write"
+      ],
+      "parentOnlyRuntimeToolIds": [
+        "client/browser-review"
+      ],
+      "hiddenRuntimeToolIds": [
+        "client/internal-token"
+      ],
       "metadata": {
         "source": "primitive-contracts"
       }
@@ -123,21 +156,27 @@
   },
   "statusTaxonomy": [
     {
-      "input": { "status": "succeeded" },
+      "input": {
+        "status": "succeeded"
+      },
       "command": "completed",
       "phase": "succeeded",
       "agentTask": "succeeded",
       "check": "passed"
     },
     {
-      "input": { "status": "timed_out" },
+      "input": {
+        "status": "timed_out"
+      },
       "command": "timed_out",
       "phase": "failed",
       "agentTask": "timeout",
       "check": "failed"
     },
     {
-      "input": { "status": "blocked" },
+      "input": {
+        "status": "blocked"
+      },
       "command": "failed",
       "phase": "blocked",
       "agentTask": "unable_to_remediate",
@@ -145,17 +184,30 @@
     }
   ],
   "jsonCodec": {
-    "prettyValue": { "path": "files/result.json" },
+    "prettyValue": {
+      "path": "files/result.json"
+    },
     "prettyExpected": "{\n    \"path\": \"files/result.json\"\n}",
     "object": "{\"ok\":true}",
     "list": "[\"a\",\"b\"]",
     "trailing": "warning\n{\"status\":\"ok\"}",
     "fragment": "prefix {\"result\":{\"ok\":true}} suffix",
     "expected": {
-      "object": { "ok": true },
-      "list": ["a", "b"],
-      "trailing": { "status": "ok" },
-      "fragment": { "result": { "ok": true } }
+      "object": {
+        "ok": true
+      },
+      "list": [
+        "a",
+        "b"
+      ],
+      "trailing": {
+        "status": "ok"
+      },
+      "fragment": {
+        "result": {
+          "ok": true
+        }
+      }
     }
   },
   "runtimeDependencyPlan": {
@@ -167,7 +219,11 @@
         "model": "gpt-test",
         "empty": ""
       },
-      "provider_plugin_paths": ["/runtime/providers/openai", "/runtime/providers/openai", ""],
+      "provider_plugin_paths": [
+        "/runtime/providers/openai",
+        "/runtime/providers/openai",
+        ""
+      ],
       "provider_plugins": [
         {
           "source": "/runtime/providers/openai",
@@ -197,15 +253,44 @@
         }
       ],
       "inheritance_request": {
-        "connectors": ["openai", "openai", ""],
-        "settings": ["model"]
+        "connectors": [
+          "openai",
+          "openai",
+          ""
+        ],
+        "settings": [
+          "model"
+        ]
       },
       "inheritance": {
-        "connectors": [{ "id": "openai", "status": "available" }],
-        "settings": [{ "name": "model", "status": "resolved" }]
+        "connectors": [
+          {
+            "id": "openai",
+            "status": "available"
+          }
+        ],
+        "settings": [
+          {
+            "name": "model",
+            "status": "resolved"
+          }
+        ]
       },
-      "agent_bundles": [{ "source": "/workspace/agent-bundle" }],
-      "secret_env": ["OPENAI_API_KEY", "bad-name", "OPENAI_API_KEY"]
+      "agent_bundles": [
+        {
+          "source": "/workspace/agent-bundle"
+        }
+      ],
+      "secret_env": [
+        "OPENAI_API_KEY",
+        "bad-name",
+        "OPENAI_API_KEY"
+      ],
+      "runtime_env": {
+        "WP_ENVIRONMENT_TYPE": "local",
+        "badName": "ignored",
+        "WP_DEBUG": true
+      }
     },
     "expected": {
       "schema": "wp-codebox/runtime-dependency-plan/v1",
@@ -215,7 +300,9 @@
         "provider": "openai",
         "model": "gpt-test"
       },
-      "provider_plugin_paths": ["/runtime/providers/openai"],
+      "provider_plugin_paths": [
+        "/runtime/providers/openai"
+      ],
       "provider_plugins": [
         {
           "source": "/runtime/providers/openai",
@@ -245,15 +332,39 @@
         }
       ],
       "inheritance_request": {
-        "connectors": ["openai"],
-        "settings": ["model"]
+        "connectors": [
+          "openai"
+        ],
+        "settings": [
+          "model"
+        ]
       },
       "inheritance": {
-        "connectors": [{ "id": "openai", "status": "available" }],
-        "settings": [{ "name": "model", "status": "resolved" }]
+        "connectors": [
+          {
+            "id": "openai",
+            "status": "available"
+          }
+        ],
+        "settings": [
+          {
+            "name": "model",
+            "status": "resolved"
+          }
+        ]
       },
-      "agent_bundles": [{ "source": "/workspace/agent-bundle" }],
-      "secret_env": ["OPENAI_API_KEY"]
+      "agent_bundles": [
+        {
+          "source": "/workspace/agent-bundle"
+        }
+      ],
+      "secret_env": [
+        "OPENAI_API_KEY"
+      ],
+      "runtime_env": {
+        "WP_ENVIRONMENT_TYPE": "local",
+        "WP_DEBUG": "1"
+      }
     }
   },
   "componentManifest": {
@@ -335,9 +446,18 @@
   },
   "runPlan": {
     "children": [
-      { "success": true, "status": "succeeded" },
-      { "success": false, "status": "failed" },
-      { "success": false, "status": "cancelled" }
+      {
+        "success": true,
+        "status": "succeeded"
+      },
+      {
+        "success": false,
+        "status": "failed"
+      },
+      {
+        "success": false,
+        "status": "cancelled"
+      }
     ],
     "counts": {
       "total": 3,
@@ -346,6 +466,10 @@
       "cancelled": 1
     },
     "succeeded": false,
+    "concurrency": {
+      "defaulted": 3,
+      "clamped": 2
+    },
     "schemas": {
       "plan": "wp-codebox/run-plan/v1",
       "event": "wp-codebox/run-plan-event/v1",
