@@ -2,6 +2,65 @@ import { isPlainObject, stripUndefined } from "./object-utils.js"
 
 export const AGENT_RUNTIME_WORKLOAD_SCHEMA = "wp-codebox/agent-runtime-workload/v1" as const
 
+export const AGENT_RUNTIME_WORKLOAD_JSON_SCHEMA = {
+  $id: AGENT_RUNTIME_WORKLOAD_SCHEMA,
+  type: "object",
+  required: ["schema"],
+  properties: {
+    schema: { const: AGENT_RUNTIME_WORKLOAD_SCHEMA, description: "Canonical WP Codebox agent runtime workload envelope schema." },
+    success: { type: "boolean", description: "Whether the workload completed successfully before Codebox-required output checks." },
+    outputs: { type: "object", description: "Caller-defined semantic outputs produced by the runtime." },
+    scenarios: {
+      type: "array",
+      description: "One or more normalized workload scenarios, attempts, or cases.",
+      items: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+          success: { type: "boolean" },
+          summary: { type: "string" },
+          outputs: { type: "object" },
+          metrics: { type: "object" },
+          metadata: { type: "object" },
+        },
+      },
+    },
+    diagnostics: {
+      type: "array",
+      description: "Runtime diagnostics using class/message/data entries.",
+      items: {
+        type: "object",
+        required: ["class", "message"],
+        properties: {
+          class: { type: "string" },
+          message: { type: "string" },
+          data: { type: "object" },
+        },
+      },
+    },
+    artifacts: {
+      type: "array",
+      description: "Artifacts emitted by the runtime workload.",
+      items: {
+        type: "object",
+        required: ["kind"],
+        properties: {
+          id: { type: "string" },
+          kind: { type: "string" },
+          path: { type: "string" },
+          url: { type: "string" },
+          sha256: { type: "string" },
+          size_bytes: { type: "number" },
+          metadata: { type: "object" },
+        },
+      },
+    },
+    metadata: { type: "object", description: "Non-secret caller/runtime metadata." },
+  },
+} as const
+
 export interface AgentRuntimeWorkloadArtifact {
   id?: string
   kind: string
@@ -73,6 +132,12 @@ function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): Wo
   const record = objectValue(parsed)
   if (!record) return undefined
 
+  const canonical = parseAgentRuntimeWorkloadEnvelope(record, options)
+  if (canonical) return canonical
+
+  const explicitEnvelope = workloadFromExplicitEnvelopeField(record, options)
+  if (explicitEnvelope) return explicitEnvelope
+
   const stdout = stringValue(record.stdout)
   if (stdout) {
     const stdoutWorkload = workloadFromRaw(stdout, options)
@@ -84,7 +149,10 @@ function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): Wo
   const candidateRecord = objectValue(candidate)
   if (!candidateRecord) return undefined
 
-  if (isAgentBundleRun(candidateRecord)) return workloadFromBundleRun(candidateRecord, options)
+  const canonicalCandidate = parseAgentRuntimeWorkloadEnvelope(candidateRecord, options)
+  if (canonicalCandidate) return canonicalCandidate
+
+  if (isLegacyAgentBundleRun(candidateRecord)) return workloadFromLegacyAgentBundleRun(candidateRecord, options)
   if (Array.isArray(candidateRecord.scenarios)) return workloadFromScenarioWorkload(candidateRecord, options)
   if (isSingleResultWorkload(candidateRecord)) return workloadFromSingleResult(candidateRecord, options)
 
@@ -107,6 +175,39 @@ function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): Wo
     }
   }
 
+  return undefined
+}
+
+function parseAgentRuntimeWorkloadEnvelope(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+  const record = objectValue(parseJsonEnvelope(raw))
+  if (!record || stringValue(record.schema) !== AGENT_RUNTIME_WORKLOAD_SCHEMA) return undefined
+
+  const scenarios = arrayObjects(record.scenarios).map((scenario) => normalizeScenario(scenario, options))
+  return {
+    success: typeof record.success === "boolean" ? record.success : undefined,
+    outputs: objectValue(record.outputs) ?? {},
+    scenarios,
+    diagnostics: diagnosticsFromRaw(record.diagnostics),
+    artifacts: [...artifactsFromRaw(record.artifacts), ...artifactsFromScenarios(scenarios)],
+    metadata: objectValue(record.metadata) ?? {},
+  }
+}
+
+function workloadFromExplicitEnvelopeField(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+  const agentRuntime = objectValue(record.agent_runtime) ?? objectValue(record.agentRuntime)
+  const candidates = [
+    record.agent_runtime_workload,
+    record.agentRuntimeWorkload,
+    record.workload,
+    agentRuntime?.workload,
+    agentRuntime?.workload_envelope,
+    agentRuntime?.workloadEnvelope,
+  ]
+
+  for (const candidate of candidates) {
+    const workload = parseAgentRuntimeWorkloadEnvelope(candidate, options)
+    if (workload) return workload
+  }
   return undefined
 }
 
@@ -155,7 +256,7 @@ function workloadFromSingleResult(record: Record<string, unknown>, options: Agen
   }
 }
 
-function workloadFromBundleRun(bundleRun: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft {
+function workloadFromLegacyAgentBundleRun(bundleRun: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft {
   const bundle = objectValue(bundleRun.bundle) ?? {}
   const workflow = objectValue(bundleRun.workflow) ?? {}
   const workflowSteps = Array.isArray(workflow.steps) ? workflow.steps : []
@@ -364,7 +465,7 @@ function parseJson(value: string): unknown {
   }
 }
 
-function isAgentBundleRun(record: Record<string, unknown>): boolean {
+function isLegacyAgentBundleRun(record: Record<string, unknown>): boolean {
   return stringValue(record.schema).endsWith("/agent-bundle-run/v1")
 }
 
