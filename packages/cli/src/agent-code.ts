@@ -1,17 +1,9 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload } from "@automattic/wp-codebox-core"
+import { normalizeAgentBundles, sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type StructuredArtifactPayload, type TaskInputAgentBundle } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
-export interface AgentBundleSpec {
-  source?: string
-  bundle?: Record<string, unknown>
-  slug?: string
-  on_conflict?: "error" | "skip" | "upgrade"
-  owner_id?: number
-  token_env?: string
-  import_principal?: Record<string, unknown>
-}
+export type AgentBundleSpec = TaskInputAgentBundle
 
 export interface AgentSandboxCodeOptions {
   task: string
@@ -96,7 +88,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
 
   const timeoutSeconds = Number.parseInt(options.timeoutSeconds ?? '', 10)
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
-  const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
+  const agentBundles = normalizeAgentBundles(options.agentBundles ?? [])
   const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
   return `
 if (function_exists('wp_set_current_user')) {
@@ -475,25 +467,6 @@ function defaultSandboxWorkspace(workspace: SandboxWorkspaceContract | undefined
   if (!workspace?.mounts.length) return null
   const mount = workspace.mounts.find((entry) => entry.mode === "readwrite" && entry.target.startsWith(SANDBOX_WORKSPACE_ROOT)) ?? workspace.mounts[0]
   return mount ? { ...mount } : null
-}
-
-function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] {
-  return specs.flatMap((spec) => {
-    if (!spec || typeof spec !== "object") return []
-    const source = typeof spec.source === "string" ? spec.source.trim() : ""
-    const bundle = spec.bundle && typeof spec.bundle === "object" && !Array.isArray(spec.bundle) ? spec.bundle : undefined
-    if (!source && !bundle) return []
-
-    const normalized: AgentBundleSpec = {}
-    if (source) normalized.source = source
-    if (bundle) normalized.bundle = bundle
-    if (typeof spec.slug === "string" && spec.slug.trim()) normalized.slug = spec.slug.trim()
-    normalized.on_conflict = spec.on_conflict && ["error", "skip", "upgrade"].includes(spec.on_conflict) ? spec.on_conflict : "upgrade"
-    if (Number.isSafeInteger(spec.owner_id) && Number(spec.owner_id) > 0) normalized.owner_id = Number(spec.owner_id)
-    if (typeof spec.token_env === "string" && spec.token_env.trim()) normalized.token_env = spec.token_env.trim()
-    if (spec.import_principal && typeof spec.import_principal === "object" && !Array.isArray(spec.import_principal)) normalized.import_principal = spec.import_principal
-    return [normalized]
-  })
 }
 
 function normalizeRuntimeTask(config: Record<string, unknown> | undefined, agentInput: Record<string, unknown>): Record<string, unknown> | null {

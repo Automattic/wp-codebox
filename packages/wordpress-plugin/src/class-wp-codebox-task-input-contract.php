@@ -17,7 +17,7 @@ final class WP_Codebox_Task_Input_Contract {
 		return array(
 			'$id'        => self::SCHEMA,
 			'type'       => 'object',
-			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'sandbox_tool_policy', 'policy', 'context' ),
+			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'agent_bundles', 'sandbox_tool_policy', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
 					'type'        => 'string',
@@ -52,6 +52,23 @@ final class WP_Codebox_Task_Input_Contract {
 					'type'        => 'array',
 					'description' => 'Artifact kinds the caller wants back, such as patch, review, tests, preview, or package.',
 					'items'       => array( 'type' => 'string' ),
+				),
+				'structured_artifacts' => array(
+					'type'        => 'array',
+					'description' => 'Named JSON artifacts supplied by the caller as typed task inputs.',
+					'items'       => array(
+						'type'       => 'object',
+						'required'   => array( 'schema', 'name', 'type', 'payload', 'metadata', 'provenance' ),
+						'properties' => array(
+							'schema'         => array( 'const' => 'wp-codebox/structured-artifact/v1' ),
+							'name'           => array( 'type' => 'string' ),
+							'type'           => array( 'type' => 'string' ),
+							'payload_schema' => array( 'anyOf' => array( array( 'type' => 'string' ), array( 'type' => 'object' ) ) ),
+							'payload'        => array(),
+							'metadata'       => array( 'type' => 'object' ),
+							'provenance'     => array( 'type' => 'object' ),
+						),
+					),
 				),
 				'agent_bundles'      => array(
 					'type'        => 'array',
@@ -103,11 +120,66 @@ final class WP_Codebox_Task_Input_Contract {
 			'target'             => is_array( $input['target'] ?? null ) ? $input['target'] : array(),
 			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
 			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
+			'structured_artifacts' => self::structured_artifacts( $input['structured_artifacts'] ?? array() ),
 			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? array() ),
 			'sandbox_tool_policy' => is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array(),
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
 		);
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function structured_artifacts( mixed $value ): array {
+		$artifacts = array();
+		foreach ( is_array( $value ) ? $value : array() as $entry ) {
+			if ( ! is_array( $entry ) ) {
+				continue;
+			}
+
+			$name = isset( $entry['name'] ) ? trim( (string) $entry['name'] ) : '';
+			$type = isset( $entry['type'] ) ? trim( (string) $entry['type'] ) : '';
+			if ( '' === $name || '' === $type ) {
+				continue;
+			}
+
+			$artifact = array(
+				'schema'     => 'wp-codebox/structured-artifact/v1',
+				'name'       => $name,
+				'type'       => $type,
+				'payload'    => $entry['payload'] ?? null,
+				'metadata'   => is_array( $entry['metadata'] ?? null ) ? $entry['metadata'] : array(),
+				'provenance' => array_merge(
+					is_array( $entry['provenance'] ?? null ) ? $entry['provenance'] : array(),
+					array( 'direction' => 'input' )
+				),
+			);
+
+			$payload_schema = self::structured_payload_schema( $entry['payload_schema'] ?? $entry['payloadSchema'] ?? $entry['artifact_schema'] ?? $entry['artifactSchema'] ?? null );
+			if ( null !== $payload_schema ) {
+				$artifact['payload_schema'] = $payload_schema;
+			}
+			if ( isset( $artifact['provenance']['source'] ) ) {
+				$source = trim( (string) $artifact['provenance']['source'] );
+				if ( '' !== $source ) {
+					$artifact['provenance']['source'] = $source;
+				} else {
+					unset( $artifact['provenance']['source'] );
+				}
+			}
+
+			$artifacts[] = $artifact;
+		}
+
+		return $artifacts;
+	}
+
+	private static function structured_payload_schema( mixed $value ): mixed {
+		if ( is_string( $value ) ) {
+			$value = trim( $value );
+			return '' !== $value ? $value : null;
+		}
+
+		return is_array( $value ) ? $value : null;
 	}
 
 	/** @return array<int,array<string,mixed>> */

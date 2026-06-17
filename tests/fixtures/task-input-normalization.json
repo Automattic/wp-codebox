@@ -31,7 +31,16 @@
           "source": "/tmp/site-generator-agent.json",
           "slug": "site-generator",
           "on_conflict": "upgrade",
-          "owner_id": 1
+          "owner_id": 1,
+          "import_principal": {
+            "agent_id": "12",
+            "owner_id": 7,
+            "token_id": 3,
+            "capabilities": ["agents.import", "", "agents.import"],
+            "scope": {
+              "runtime": "sandbox"
+            }
+          }
         },
         {
           "bundle": {
@@ -86,7 +95,16 @@
           "source": "/tmp/site-generator-agent.json",
           "slug": "site-generator",
           "on_conflict": "upgrade",
-          "owner_id": 1
+          "owner_id": 1,
+          "import_principal": {
+            "agent_id": 12,
+            "owner_id": 7,
+            "token_id": 3,
+            "capabilities": ["agents.import"],
+            "scope": {
+              "runtime": "sandbox"
+            }
+          }
         },
         {
           "bundle": {
