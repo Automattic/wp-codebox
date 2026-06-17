@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, redactJsonValue, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, redactJsonValue, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -112,8 +112,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", failure }) },
       error: failure,
     })
-    await artifactPointer.update({ command: "recipe.validate", commandStatus: "failed", failure })
-    return {
+    const output: RecipeRunOutput = recipeRunOutputWithResult({
       success: false,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
@@ -122,7 +121,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       validation: { issues },
       run: runRecord,
       error: failure,
-    }
+    })
+    await artifactPointer.update({ command: "recipe.validate", commandStatus: "failed", failure, result: output.result })
+    return output
   }
 
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
@@ -481,8 +482,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: recipeFailure, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
         error: recipeFailure,
       })
-      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list(), browserEvidence })
-      return {
+      const output: RecipeRunOutput = recipeRunOutputWithResult({
         success: false,
         schema: "wp-codebox/recipe-run/v1",
         recipePath,
@@ -507,7 +507,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         artifacts,
         run: runRecord,
         error: recipeFailure,
-      }
+      })
+      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list(), browserEvidence, result: output.result })
+      return output
     }
 
     runRecord = await runRegistry.update(runRecord.runId, {
@@ -517,8 +519,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       artifactRefs: artifactBundleRunRef(artifacts),
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
     })
-    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
-    return {
+    const output: RecipeRunOutput = recipeRunOutputWithResult({
       success: true,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
@@ -542,7 +543,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
       artifacts,
       run: runRecord,
-    }
+    })
+    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence, result: output.result })
+    return output
   } catch (error) {
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
@@ -627,9 +630,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
       error: serializedError,
     })
-    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence, diagnosticArtifacts })
-
-    return {
+    const output: RecipeRunOutput = recipeRunOutputWithResult({
       success: false,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
@@ -648,8 +649,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       run: runRecord,
       ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
       error: serializedError,
-    }
+    })
+    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence, diagnosticArtifacts, result: output.result })
+
+    return output
   }
+}
+
+function recipeRunOutputWithResult<T extends RecipeRunOutput>(output: T): T {
+  output.result = normalizeRecipeRunSummary(output)
+  return output
 }
 
 function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {

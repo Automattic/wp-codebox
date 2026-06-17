@@ -14,6 +14,8 @@ export interface RecipeRunSummary {
   failure_summary?: string
   diagnostics: Array<Record<string, unknown>>
   artifacts: AgentTaskRunArtifactRef[]
+  commands: RecipeRunCommandSummary[]
+  preview?: RecipeRunPreviewSummary
   refs: {
     startup_logs: AgentTaskRunArtifactRef[]
     probe_json: AgentTaskRunArtifactRef[]
@@ -30,6 +32,28 @@ export interface RecipeRunSummary {
   metadata: Record<string, unknown>
 }
 
+export interface RecipeRunCommandSummary {
+  index: number
+  command: string
+  status: "succeeded" | "failed" | "unknown"
+  exit_code?: number
+  duration_ms?: number
+  recipe_phase?: string
+  recipe_step_index?: number
+  stdout_tail?: string
+  stderr_tail?: string
+}
+
+export interface RecipeRunPreviewSummary {
+  status?: string
+  lifecycle?: string
+  source?: string
+  created_at?: string
+  expires_at?: string
+  hold_seconds?: number
+  reviewer_access?: Record<string, unknown>
+}
+
 export interface RecipeRunSummaryOptions {
   exitStatus?: number
 }
@@ -41,6 +65,8 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
   const failedPhase = failedPhaseFromRecipeRun(result)
   const diagnostics = arrayObjects(result.diagnostics)
   const artifacts = normalizeRecipeRunArtifacts(result, agentTask.artifacts)
+  const commands = recipeRunCommandSummaries(result)
+  const preview = recipeRunPreviewSummary(result)
   const summary = failureSummary(result, diagnostics, failedPhase)
 
   return stripUndefined({
@@ -52,7 +78,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
     diagnostics,
     artifacts,
     refs: {
-      startup_logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log" || artifact.kind === "codebox-event-log" || artifact.kind === "codebox-runtime-metadata"),
+      startup_logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log" || artifact.kind === "codebox-command-events" || artifact.kind === "codebox-event-log" || artifact.kind === "codebox-runtime-metadata"),
       probe_json: artifacts.filter((artifact) => artifact.kind === "browser-summary" || artifact.kind === "recipe-probe-results"),
       screenshots: artifacts.filter((artifact) => artifact.kind === "browser-screenshot" || artifact.kind === "screenshot"),
       side_effects: artifacts.filter((artifact) => artifact.kind === "recipe-side-effects" || artifact.kind === "runtime-side-effects" || artifact.kind === "codebox-observations"),
@@ -61,9 +87,11 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
       changed_files: artifacts.filter((artifact) => artifact.kind === "codebox-changed-files"),
       patches: artifacts.filter((artifact) => artifact.kind === "codebox-patch"),
       transcripts: artifacts.filter((artifact) => artifact.kind === "codebox-transcript"),
-      logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log" || artifact.kind === "codebox-event-log"),
+      logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log" || artifact.kind === "codebox-command-events" || artifact.kind === "codebox-event-log"),
       runtimes: agentTask.refs.runtimes,
     },
+    commands,
+    preview,
     metadata: stripUndefined({
       run_id: stringValue(objectValue(result.run).runId) || stringValue(objectValue(result.run_metadata).run_id) || stringValue(agentTask.metadata.run_id),
       run_status: stringValue(objectValue(result.run).status) || stringValue(objectValue(result.run_metadata).run_status) || stringValue(agentTask.metadata.run_status),
@@ -121,6 +149,7 @@ function normalizeRecipeRunArtifacts(result: Record<string, unknown>, agentTaskA
   const bundleDirectory = stringValue(bundle.directory) || stringValue(result.artifacts)
   appendUniqueArtifact(artifacts, stripUndefined({ id: stringValue(bundle.id), kind: "codebox-artifact-bundle", path: bundleDirectory, sha256: stringValue(bundle.contentDigest) }))
   appendPathArtifact(artifacts, "codebox-event-log", bundle.eventsPath)
+  appendPathArtifact(artifacts, "codebox-command-events", bundle.commandsPath)
   appendPathArtifact(artifacts, "codebox-command-log", bundle.commandsLogPath || bundle.commandsPath)
   appendPathArtifact(artifacts, "codebox-runtime-log", bundle.runtimeLogPath)
   appendPathArtifact(artifacts, "codebox-runtime-metadata", bundle.metadataPath)
@@ -151,6 +180,46 @@ function normalizeRecipeRunArtifacts(result: Record<string, unknown>, agentTaskA
   }
 
   return artifacts
+}
+
+function recipeRunCommandSummaries(result: Record<string, unknown>): RecipeRunCommandSummary[] {
+  return arrayObjects(result.executions).map((execution, index) => {
+    const exitCode = numberValue(execution.exitCode)
+    return stripUndefined({
+      index,
+      command: stringValue(execution.command) || `command-${index + 1}`,
+      status: exitCode === undefined ? "unknown" : exitCode === 0 ? "succeeded" : "failed",
+      exit_code: exitCode,
+      duration_ms: numberValue(execution.durationMs),
+      recipe_phase: stringValue(execution.recipePhase),
+      recipe_step_index: numberValue(execution.recipeStepIndex),
+      stdout_tail: textTail(execution.stdout),
+      stderr_tail: textTail(execution.stderr),
+    }) as RecipeRunCommandSummary
+  })
+}
+
+function recipeRunPreviewSummary(result: Record<string, unknown>): RecipeRunPreviewSummary | undefined {
+  const preview = objectValue(objectValue(result.artifacts).preview)
+  const runPreview = objectValue(objectValue(result.run).preview)
+  const value = Object.keys(preview).length > 0 ? preview : runPreview
+  if (Object.keys(value).length === 0) return undefined
+
+  return stripUndefined({
+    status: stringValue(value.status),
+    lifecycle: stringValue(value.lifecycle),
+    source: stringValue(value.source),
+    created_at: stringValue(value.createdAt),
+    expires_at: stringValue(value.expiresAt),
+    hold_seconds: numberValue(value.holdSeconds),
+    reviewer_access: objectValue(value.reviewerAccess),
+  }) as RecipeRunPreviewSummary
+}
+
+function textTail(value: unknown, maxChars = 4_000): string | undefined {
+  const text = stringValue(value)
+  if (!text) return undefined
+  return text.length > maxChars ? text.slice(-maxChars) : text
 }
 
 function appendPathArtifact(artifacts: AgentTaskRunArtifactRef[], kind: string, value: unknown): void {
