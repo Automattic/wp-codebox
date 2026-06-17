@@ -24,6 +24,192 @@ final class WP_Codebox_Agent_Runtime_Invoker {
 		return ( new WP_Codebox_Agent_Sandbox_Runner() )->run_fanout( $input );
 	}
 
+	public function is_agents_api_ready(): bool {
+		return $this->is_ability_available( 'agents/chat' );
+	}
+
+	public function is_ability_available( string $name ): bool {
+		if ( '' === $name || ! function_exists( 'wp_get_ability' ) ) {
+			return false;
+		}
+
+		return (bool) wp_get_ability( $name );
+	}
+
+	/** @param array{url:string,method:string,headers:array<string,string>,body:string} $prepared Prepared request. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
+	public function authenticate_provider_request( string $provider, array $prepared ): array|WP_Error {
+		if ( ! class_exists( '\WordPress\AiClient\AiClient' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\DTO\Request' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum' ) ) {
+			return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_unavailable', 'PHP AI Client request authentication is unavailable.', array( 'status' => 500, 'provider' => $provider ) );
+		}
+
+		try {
+			$registry       = \WordPress\AiClient\AiClient::defaultRegistry();
+			$authentication = method_exists( $registry, 'getProviderRequestAuthentication' ) ? $registry->getProviderRequestAuthentication( $provider ) : null;
+			$method_enum    = \WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum::tryFrom( $prepared['method'] );
+			if ( null === $authentication || null === $method_enum ) {
+				return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_authentication_missing', 'PHP AI Client request authentication is not registered for this provider.', array( 'status' => 403, 'provider' => $provider ) );
+			}
+
+			$auth_request = new \WordPress\AiClient\Providers\Http\DTO\Request( $method_enum, $prepared['url'], $prepared['headers'], $prepared['body'] );
+			$auth_request = $authentication->authenticateRequest( $auth_request );
+
+			return array(
+				'url'     => $auth_request->getUri(),
+				'method'  => $auth_request->getMethod()->value,
+				'headers' => self::flat_headers( $auth_request->getHeaders() ),
+				'body'    => (string) $auth_request->getBody(),
+			);
+		} catch ( Throwable $throwable ) {
+			return new WP_Error( 'wp_codebox_browser_provider_bridge_authentication_failed', $throwable->getMessage(), array( 'status' => 500, 'provider' => $provider, 'type' => get_class( $throwable ) ) );
+		}
+	}
+
+	/** @param array<string,array<int,string>|string> $headers Header lists. @return array<string,string> */
+	private static function flat_headers( array $headers ): array {
+		$flat = array();
+		foreach ( $headers as $name => $values ) {
+			$flat[ (string) $name ] = is_array( $values ) ? implode( ', ', array_map( 'strval', $values ) ) : (string) $values;
+		}
+
+		return $flat;
+	}
+
+	/** Builds the generated PHP provider transport registration fragment. */
+	public static function browser_provider_proxy_php(): string {
+		return '
+function wp_codebox_browser_install_provider_proxy( array $payload ): array {
+$diagnostics = array( \'schema\' => \'wp-codebox/browser-provider-proxy-diagnostics/v1\', \'installed\' => false );
+if ( ! function_exists( \'post_message_to_js\' ) || ! class_exists( \'\\WordPress\\AiClient\\AiClient\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' ) ) {
+	$diagnostics[\'early_return\'] = \'missing_browser_proxy_dependencies\';
+	$diagnostics[\'has_post_message_to_js\'] = function_exists( \'post_message_to_js\' );
+	$diagnostics[\'has_ai_client\'] = class_exists( \'\\WordPress\\AiClient\\AiClient\' );
+	$diagnostics[\'has_http_transporter_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' );
+	$diagnostics[\'has_request_authentication_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' );
+	return $diagnostics;
+}
+
+$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
+$provider = trim( (string) ( $payload[\'provider\'] ?? $task_input[\'provider\'] ?? \'\' ) );
+$diagnostics[\'provider\'] = $provider;
+if ( \'\' === $provider ) {
+	$diagnostics[\'early_return\'] = \'provider_missing\';
+	return $diagnostics;
+}
+
+$registry = \\WordPress\\AiClient\\AiClient::defaultRegistry();
+if ( ! method_exists( $registry, \'setHttpTransporter\' ) || ! method_exists( $registry, \'setProviderRequestAuthentication\' ) ) {
+	$diagnostics[\'early_return\'] = \'registry_methods_missing\';
+	$diagnostics[\'has_set_http_transporter\'] = method_exists( $registry, \'setHttpTransporter\' );
+	$diagnostics[\'has_set_provider_request_authentication\'] = method_exists( $registry, \'setProviderRequestAuthentication\' );
+	return $diagnostics;
+}
+
+$provider_id = $provider;
+if ( method_exists( $registry, \'getProviderId\' ) ) {
+	try {
+		$provider_id = (string) $registry->getProviderId( $provider );
+	} catch ( Throwable $exception ) {
+		$provider_id = $provider;
+	}
+}
+$diagnostics[\'provider_id\'] = $provider_id;
+
+$inherit = is_array( $payload[\'inherit\'] ?? null ) ? $payload[\'inherit\'] : ( is_array( $task_input[\'inherit\'] ?? null ) ? $task_input[\'inherit\'] : array() );
+if ( empty( $inherit[\'connectors\'] ) && is_array( $payload[\'inheritance\'][\'connectors\'] ?? null ) ) {
+	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
+		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
+	}, $payload[\'inheritance\'][\'connectors\'] ) ) );
+}
+if ( empty( $inherit[\'connectors\'] ) && is_array( $task_input[\'inheritance\'][\'connectors\'] ?? null ) ) {
+	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
+		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
+	}, $task_input[\'inheritance\'][\'connectors\'] ) ) );
+}
+if ( empty( $inherit[\'connectors\'] ) ) {
+	$inherit[\'connectors\'] = array( $provider );
+}
+$diagnostics[\'connector_count\'] = count( is_array( $inherit[\'connectors\'] ?? null ) ? $inherit[\'connectors\'] : array() );
+$diagnostics[\'connector\'] = (string) ( $inherit[\'connectors\'][0] ?? \'\' );
+
+$request_authentication = class_exists( \'\\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication\' )
+	? new \\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication( \'wp-codebox-browser-provider-proxy\' )
+	: new class implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface {
+		public static function getJsonSchema(): array {
+			return array( \'type\' => \'object\' );
+		}
+
+		public function authenticateRequest( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request {
+			return $request;
+		}
+	};
+$registry->setProviderRequestAuthentication( $provider_id, $request_authentication );
+$diagnostics[\'request_authentication_class\'] = get_class( $request_authentication );
+$diagnostics[\'request_authentication_bound\'] = true;
+
+$registry->setHttpTransporter(
+	new class( $payload, $inherit ) implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface {
+		private array $payload;
+		private array $inherit;
+
+		public function __construct( array $payload, array $inherit ) {
+			$this->payload = $payload;
+			$this->inherit = $inherit;
+		}
+
+		public function send( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request, ?\\WordPress\\AiClient\\Providers\\Http\\DTO\\RequestOptions $options = null ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response {
+			unset( $options );
+			$connector = trim( (string) ( $this->payload[\'connector\'] ?? $this->inherit[\'connectors\'][0] ?? \'\' ) );
+			$message   = array(
+				\'schema\'             => \'wp-codebox/browser-provider-proxy-request/v1\',
+				\'id\'                 => \'provider-\' . bin2hex( random_bytes( 8 ) ),
+				\'operation\'          => \'http.request\',
+				\'provider\'           => (string) ( $this->payload[\'provider\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'provider\'] ?? \'\' ) : \'\' ) ),
+				\'model\'              => (string) ( $this->payload[\'model\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'model\'] ?? \'\' ) : \'\' ) ),
+				\'connector\'          => $connector,
+				\'inherit\'            => $this->inherit,
+				\'sandbox_session_id\' => (string) ( $this->payload[\'sandbox_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
+				\'caller_session_id\'  => (string) ( $this->payload[\'caller_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
+				\'job_id\'             => (string) ( $this->payload[\'job_id\'] ?? \'\' ),
+				\'orchestrator\'       => is_array( $this->payload[\'orchestrator\'] ?? null ) ? $this->payload[\'orchestrator\'] : array(),
+				\'authorization\'      => is_array( $this->payload[\'authorization\'] ?? null ) ? $this->payload[\'authorization\'] : array(),
+				\'request\'            => array(
+					\'method\'  => method_exists( $request->getMethod(), \'value\' ) ? $request->getMethod()->value : (string) $request->getMethod(),
+					\'uri\'     => $request->getUri(),
+					\'headers\' => $request->getHeaders(),
+					\'body\'    => $request->getBody(),
+					\'data\'    => $request->getData(),
+				),
+			);
+
+			$response_json = post_message_to_js( wp_json_encode( $message, JSON_UNESCAPED_SLASHES ) );
+			$response      = json_decode( is_string( $response_json ) ? $response_json : \'\', true );
+			if ( ! is_array( $response ) || empty( $response[\'success\'] ) ) {
+				$error = is_array( $response[\'error\'] ?? null ) ? $response[\'error\'] : array();
+				throw new RuntimeException( (string) ( $error[\'message\'] ?? \'Browser provider proxy request failed.\' ) );
+			}
+
+			$response_payload = is_array( $response[\'response\'] ?? null ) ? $response[\'response\'] : array();
+			$http = is_array( $response_payload[\'http\'] ?? null ) ? $response_payload[\'http\'] : ( is_array( $response[\'http\'] ?? null ) ? $response[\'http\'] : array() );
+			$status = (int) ( $http[\'status\'] ?? 0 );
+			if ( $status < 100 || $status > 599 ) {
+				throw new RuntimeException( \'Browser provider proxy returned a malformed HTTP response.\' );
+			}
+
+			return new \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response(
+				$status,
+				is_array( $http[\'headers\'] ?? null ) ? $http[\'headers\'] : array( \'Content-Type\' => \'application/json\' ),
+				isset( $http[\'body\'] ) ? (string) $http[\'body\'] : \'\'
+			);
+		}
+	}
+);
+$diagnostics[\'http_transporter_bound\'] = true;
+$diagnostics[\'installed\'] = true;
+return $diagnostics;
+}
+';
+	}
+
 	/** @return string Browser-runtime PHP fragment defining the portable invoker functions. */
 	public static function browser_runtime_php(): string {
 		return <<<'PHP'

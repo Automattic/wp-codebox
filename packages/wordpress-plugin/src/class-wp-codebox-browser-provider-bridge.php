@@ -292,30 +292,7 @@ final class WP_Codebox_Browser_Provider_Bridge {
 
 	/** @param array{url:string,method:string,headers:array<string,string>,body:string} $prepared Prepared request. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
 	private static function authenticate_with_php_ai_client( string $provider, array $prepared ): array|WP_Error {
-		if ( ! class_exists( '\WordPress\AiClient\AiClient' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\DTO\Request' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum' ) ) {
-			return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_unavailable', 'PHP AI Client request authentication is unavailable.', array( 'status' => 500, 'provider' => $provider ) );
-		}
-
-		try {
-			$registry       = \WordPress\AiClient\AiClient::defaultRegistry();
-			$authentication = method_exists( $registry, 'getProviderRequestAuthentication' ) ? $registry->getProviderRequestAuthentication( $provider ) : null;
-			$method_enum    = \WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum::tryFrom( $prepared['method'] );
-			if ( null === $authentication || null === $method_enum ) {
-				return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_authentication_missing', 'PHP AI Client request authentication is not registered for this provider.', array( 'status' => 403, 'provider' => $provider ) );
-			}
-
-			$auth_request = new \WordPress\AiClient\Providers\Http\DTO\Request( $method_enum, $prepared['url'], $prepared['headers'], $prepared['body'] );
-			$auth_request = $authentication->authenticateRequest( $auth_request );
-
-			return array(
-				'url'     => $auth_request->getUri(),
-				'method'  => $auth_request->getMethod()->value,
-				'headers' => self::flat_headers( $auth_request->getHeaders() ),
-				'body'    => (string) $auth_request->getBody(),
-			);
-		} catch ( Throwable $throwable ) {
-			return new WP_Error( 'wp_codebox_browser_provider_bridge_authentication_failed', $throwable->getMessage(), array( 'status' => 500, 'provider' => $provider, 'type' => get_class( $throwable ) ) );
-		}
+		return ( new WP_Codebox_Agent_Runtime_Invoker() )->authenticate_provider_request( $provider, $prepared );
 	}
 
 	/** @param mixed $request Prepared request candidate. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */

@@ -1,5 +1,6 @@
 <?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+require_once dirname(__DIR__, 2) . '/packages/wordpress-plugin/src/class-wp-codebox-agent-runtime-invoker.php';
 
 $plugins = array(
     'agents-api/agents-api.php',
@@ -29,7 +30,7 @@ echo json_encode(
         'plugins' => $activation_results,
         'signals' => array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
-            'agents_registry_class' => class_exists('WP_Agents_Registry'),
+            'agents_chat_ability_available' => (new WP_Codebox_Agent_Runtime_Invoker())->is_agents_api_ready(),
             'data_machine_version' => defined('DATAMACHINE_VERSION') ? DATAMACHINE_VERSION : null,
             'data_machine_permission_helper' => class_exists('DataMachine\\Abilities\\PermissionHelper'),
             'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,

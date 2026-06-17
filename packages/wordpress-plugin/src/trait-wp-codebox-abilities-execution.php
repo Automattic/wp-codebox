@@ -984,7 +984,7 @@ private static function browser_component_readiness_probe_ready( array $probe ):
 	$type = (string) ( $probe['type'] ?? '' );
 	if ( 'ability' === $type ) {
 		$name = (string) ( $probe['name'] ?? '' );
-		return '' !== $name && function_exists( 'wp_get_ability' ) && (bool) wp_get_ability( $name );
+		return ( new WP_Codebox_Agent_Runtime_Invoker() )->is_ability_available( $name );
 	}
 
 	if ( 'filter' === $type ) {
@@ -1012,11 +1012,7 @@ private static function browser_runtime_component_readiness_metadata( array $inp
 }
 
 private static function agents_api_ready(): bool {
-	if ( ! function_exists( 'wp_get_ability' ) ) {
-		return false;
-	}
-
-	return (bool) wp_get_ability( 'agents/chat' );
+	return ( new WP_Codebox_Agent_Runtime_Invoker() )->is_agents_api_ready();
 }
 
 /** @param array<int,string> $paths Paths to verify. */
