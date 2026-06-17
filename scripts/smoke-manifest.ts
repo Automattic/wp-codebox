@@ -25,6 +25,14 @@ function tsxSmoke(name: string, script = name): SmokeCommand {
   }
 }
 
+function phpSmoke(name: string, script = name): SmokeCommand {
+  return {
+    name,
+    command: "php",
+    args: [`scripts/${script}.php`],
+  }
+}
+
 export const smokeGroups = {
   core: {
     description: "Build and core command contract smoke checks.",
@@ -123,6 +131,7 @@ export const smokeGroups = {
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
+      phpSmoke("php-run-plan-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("codex-agent-recipe-smoke"),
       tsxSmoke("claude-code-agent-recipe-smoke"),
