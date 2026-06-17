@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, parseCommandOptions, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -1134,33 +1134,20 @@ function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, st
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const options: Partial<RecipeRunOptions> = { json: false, dryRun: false, previewHoldBlocking: false, timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
+  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking"]))
+  if (parsed.positionals.length > 0) {
+    throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
+  }
+  const options: Partial<RecipeRunOptions> = {
+    json: parsed.options.get("--json") === true,
+    dryRun: parsed.options.get("--dry-run") === true,
+    previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
+    timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
+  }
+  for (const [name, value] of parsed.options) {
+    if (value === true) {
       continue
     }
-
-    if (arg === "--dry-run") {
-      options.dryRun = true
-      continue
-    }
-
-    if (arg === "--preview-hold-blocking") {
-      options.previewHoldBlocking = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
     switch (name) {
       case "--recipe":
         options.recipePath = value
@@ -1217,23 +1204,15 @@ function parseRecipeRunTimeoutMs(value: unknown): number {
 }
 
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
-  const options: Partial<RecipeValidateOptions> = { json: false }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
+  const parsed = parseCommandOptions(args, new Set(["--json"]))
+  if (parsed.positionals.length > 0) {
+    throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
+  }
+  const options: Partial<RecipeValidateOptions> = { json: parsed.options.get("--json") === true }
+  for (const [name, value] of parsed.options) {
+    if (value === true) {
       continue
     }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
     switch (name) {
       case "--recipe":
         options.recipePath = value

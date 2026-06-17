@@ -1,3 +1,5 @@
+import { parseCommandJsonArray, parseCommandJsonObject, parseCommandStringList } from "@automattic/wp-codebox-core"
+
 export function argValue(args: string[], name: string): string | undefined {
   const prefix = `${name}=`
   const match = args.find((arg) => arg.startsWith(prefix))
@@ -83,35 +85,15 @@ export function viewportArg(args: string[], name: string): { width: number; heig
 }
 
 export function commaListArg(args: string[], name: string): string[] {
-  return (argValue(args, name) ?? "").split(",").map((item) => item.trim()).filter(Boolean)
+  return parseCommandStringList(argValue(args, name))
 }
 
 export function jsonObjectArg(args: string[], name: string): Record<string, unknown> {
-  const raw = argValue(args, name)
-  if (!raw) {
-    return {}
-  }
-
-  const parsed = JSON.parse(raw)
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${name} must be a JSON object`)
-  }
-
-  return parsed as Record<string, unknown>
+  return parseCommandJsonObject(argValue(args, name), name)
 }
 
 export function jsonArrayArg(args: string[], name: string): unknown[] {
-  const raw = argValue(args, name)
-  if (!raw) {
-    return []
-  }
-
-  const parsed = JSON.parse(raw)
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${name} must be a JSON array`)
-  }
-
-  return parsed
+  return parseCommandJsonArray(argValue(args, name), name)
 }
 
 export function isSafeEnvName(name: string): boolean {
