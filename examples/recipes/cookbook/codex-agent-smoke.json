@@ -11,12 +11,12 @@
       {
         "kind": "bundled-library",
         "library": "php-ai-client",
-        "source": "/absolute/path/to/php-ai-client-with-bearer-token-auth-and-vendor",
+        "source": "/sample/prepared-provider-stack/php-ai-client",
         "target": "/wordpress/wp-includes/php-ai-client",
         "strategy": "wordpress-scoped-bundle",
         "metadata": {
           "component": "php-ai-client",
-          "purpose": "provider-supplied bearer-token request authentication with Composer vendor installed"
+          "purpose": "provider-supplied request authentication and installed Composer dependencies"
         }
       }
     ]
@@ -24,22 +24,22 @@
   "inputs": {
     "extra_plugins": [
       {
-        "source": "/path/to/agents-api",
+        "source": "/sample/prepared-component-stack/agents-api",
         "slug": "agents-api",
         "activate": true
       },
       {
-        "source": "/path/to/data-machine",
+        "source": "/sample/prepared-component-stack/data-machine",
         "slug": "data-machine",
         "activate": true
       },
       {
-        "source": "/path/to/data-machine-code",
+        "source": "/sample/prepared-component-stack/data-machine-code",
         "slug": "data-machine-code",
         "activate": true
       },
       {
-        "source": "/absolute/path/to/ai-provider-for-openai-that-registers-codex",
+        "source": "/sample/prepared-provider-stack/ai-provider-for-openai",
         "slug": "ai-provider-for-openai",
         "activate": false
       }
@@ -57,12 +57,14 @@
       {
         "command": "wp-codebox.agent-sandbox-run",
         "args": [
-          "task=Run a minimal headless WP Codebox smoke. Inspect the WordPress runtime, report the site title and active theme, and do not modify files.",
+          "task=Run a minimal headless WP Codebox smoke. Inspect the WordPress runtime with read-only checks and report the site title plus active theme.",
           "agent=wp-codebox-sandbox",
           "mode=default",
           "provider=codex",
           "model=gpt-5.5",
           "provider-plugin-slugs=ai-provider-for-openai",
+          "provider-plugin-contracts-json=[{\"slug\":\"ai-provider-for-openai\",\"pluginFile\":\"ai-provider-for-openai/ai-provider-for-openai.php\",\"loadAs\":\"plugin\"}]",
+          "sandbox-tool-policy-json={\"schema\":\"wp-codebox/sandbox-tool-policy/v1\",\"version\":1,\"tools\":[{\"id\":\"deny-all\",\"runtime_tool_id\":\"deny-all\",\"execution_location\":\"parent\",\"transport_visibility\":\"hidden\",\"allowed\":false,\"runtime\":{\"environment\":\"control_plane\",\"capability_scope\":\"control_plane\"}}],\"metadata\":{\"source\":\"cookbook.sample-default-deny\"}}",
           "max-turns=1",
           "timeout-seconds=300"
         ]

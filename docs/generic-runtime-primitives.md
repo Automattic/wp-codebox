@@ -3,6 +3,14 @@
 WP Codebox exposes generic contracts for parent control planes without naming a
 product or job system.
 
+## Contract Authority
+
+- TypeScript implementations live in `packages/runtime-core/src/artifact-storage.ts`,
+  `packages/runtime-core/src/browser-session-origin.ts`, and
+  `packages/runtime-core/src/materialization-contracts.ts`.
+- Coverage lives in `tests/generic-primitives.test.ts`.
+- `npm run check` runs that coverage through the smoke manifest `core` group.
+
 ## Artifact Storage
 
 `wp-codebox/runtime-artifact-storage/v1` describes where runtime artifacts can be

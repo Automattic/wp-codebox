@@ -21,6 +21,9 @@ unless this index says otherwise.
   documents the stable orchestrator-facing agent-task CLI, schema boundary,
   artifacts, runner workspace publication, lifecycle metadata, provider
   overlays, and default sandbox bootstrap expectations.
+- [Generic runtime primitives](./generic-runtime-primitives.md) documents the
+  caller-neutral artifact storage, trusted browser origin, materialization, and
+  target-context envelopes shared by runtime integrations.
 - [Portable WP Codebox](./portable-wp-codebox.md) documents portable runtime
   packaging and invocation.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
@@ -43,4 +46,10 @@ unless this index says otherwise.
 - Command catalog: `npm run wp-codebox -- commands --json`.
 - Runtime TypeScript contracts:
   `packages/runtime-core/src/runtime-contracts.ts`.
+- Generic primitive TypeScript contracts:
+  `packages/runtime-core/src/artifact-storage.ts`,
+  `packages/runtime-core/src/browser-session-origin.ts`, and
+  `packages/runtime-core/src/materialization-contracts.ts`.
 - JSON Schema factory: `packages/runtime-core/src/recipe-schema.ts`.
+- Default check coverage: `npm run check` includes
+  `npm run test:generic-primitives` through the smoke manifest `core` group.

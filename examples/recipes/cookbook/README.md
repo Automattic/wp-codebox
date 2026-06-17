@@ -13,15 +13,13 @@ smoke testing.
 ## Site seed planning boundary
 
 Recipe authors can use `inputs.siteSeeds` to describe fixture or parent-site
-content shapes for dry-run review, but the current cookbook recipes still seed
-runtime content through explicit fixture scripts. WP Codebox does not snapshot a
-parent site, read private production rows, copy uploads, or import site seed
-records from `inputs.siteSeeds` in this slice.
+content shapes for dry-run review. The current cookbook recipes seed runtime
+content through explicit fixture scripts so every example is portable and
+reviewable from the recipe directory.
 
-Treat parent-site seed declarations as a reviewable manifest only: opt in to
-bounded scopes, name exact option keys, keep user data anonymized, and keep
-secrets, credentials, private post bodies, raw option values, and upload files
-out of recipe files and dry-run evidence.
+Treat parent-site seed declarations as a reviewable manifest: opt in to bounded
+scopes, name exact option keys, use anonymized fixture data, and keep recipe
+files plus dry-run evidence limited to shareable metadata.
 
 ## Available recipes
 
@@ -33,32 +31,38 @@ proving that WP Codebox can mount the agent runtime stack, overlay a
 `php-ai-client` branch with provider-supplied request auth, activate a Codex
 provider plugin branch, and execute `agents/chat` through `wp-codebox.agent-sandbox-run`.
 
-**Replace** these recipe paths before running. They must be materialized local
-filesystem paths on the host running WP Codebox, not remote refs, repo handles,
-or orchestration-layer aliases:
+**Prepare** the component and provider stack before running. The sample recipe
+uses explicit placeholder input paths so callers can see the full contract shape
+and replace each path with their prepared local checkout or artifact:
 
-- `/path/to/agents-api`
-- `/path/to/data-machine`
-- `/path/to/data-machine-code`
-- `/absolute/path/to/php-ai-client-with-bearer-token-auth-and-vendor`
-- `/absolute/path/to/ai-provider-for-openai-that-registers-codex`
+- `/sample/prepared-component-stack/agents-api`
+- `/sample/prepared-component-stack/data-machine`
+- `/sample/prepared-component-stack/data-machine-code`
+- `/sample/prepared-provider-stack/php-ai-client`
+- `/sample/prepared-provider-stack/ai-provider-for-openai`
 
 #### Codex runtime contract
 
-The Codex smoke requires a matched provider stack. WP Codebox stays generic and
-local-path based; it mounts what the caller provides and does not resolve
-orchestrator references, repository handles, or remote checkout aliases.
+The Codex smoke accepts a prepared provider/component stack. WP Codebox mounts
+the local paths supplied by the caller, validates the recipe contract, and emits
+a dry-run plan with the sandbox backend, overlays, extra plugins, secret
+environment names, and resolved agent command arguments.
 
-- The provider plugin checkout must register the `codex` provider id with
-  `wp-ai-client`. If it does not, the sandbox fails with `Provider codex is not
-  registered in wp-ai-client`.
-- The `php-ai-client` overlay must include bearer-token request authentication
-  support. Older checkouts fail when Codex asks for bearer-token auth.
-- The `php-ai-client` checkout must have Composer dependencies installed before
-  WP Codebox runs. Confirm `vendor/composer/installed.json` exists, for example
-  by running `composer install` in that checkout.
-- Orchestrators should persist or materialize their selected checkouts first,
-  then write those absolute local paths into the recipe passed to WP Codebox.
+- The component stack provides the WordPress plugins needed by the sandbox agent
+  runtime: `agents-api`, `data-machine`, and `data-machine-code`.
+- The provider stack provides the `php-ai-client` overlay and provider plugin
+  selected by `provider=codex` and
+  `provider-plugin-slugs=ai-provider-for-openai`.
+- The provider plugin is mounted with `activate: false` so the sandbox agent task
+  owns provider activation during runtime bootstrap.
+- `provider-plugin-contracts-json` declares the mounted provider plugin entrypoint,
+  and `sandbox-tool-policy-json` supplies a concrete default-deny tool policy for
+  the agent runtime.
+- The recipe references secret environment variable names only. Token values stay
+  in the caller environment and out of recipe files and artifacts.
+- Run `npm run wp-codebox -- recipe validate --recipe <recipe> --json` or
+  `npm run wp-codebox -- recipe-run --recipe <recipe> --dry-run --json` to inspect
+  the contract before starting WordPress.
 
 Export Codex OAuth credentials in the shell that runs WP Codebox. Keep token
 values out of recipe files and artifacts:
@@ -84,17 +88,11 @@ wp-codebox recipe-run \
   --json
 ```
 
-The stable installed path is the GitHub Release workspace tarball from a release
-that includes the root `bin` mapping, not the unpublished npm package:
+Install release builds from the GitHub Release workspace tarball:
 
 ```bash
 npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
 ```
-
-`v0.4.0` includes the fresh sandbox session fix used by the Codex smoke path, but
-its release asset predates the root `bin` mapping. Release managers should cut a
-new release, attach a new root workspace tarball, and publish the scoped npm
-packages from the same commit once npm publishing is approved.
 
 The expected successful response is a JSON recipe run whose agent runtime
 reports the Playground site title and active theme. Fleet runners should

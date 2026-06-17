@@ -2,7 +2,7 @@
   "schema": "wp-codebox/workspace-recipe/v1",
   "runtime": {
     "backend": "wordpress-playground",
-    "name": "provider-agent-smoke",
+    "name": "claude-code-agent-smoke",
     "wp": "trunk",
     "blueprint": {
       "steps": []
@@ -11,7 +11,7 @@
       {
         "kind": "bundled-library",
         "library": "php-ai-client",
-        "source": "/path/to/php-ai-client-claude-code-compatible-branch",
+        "source": "/sample/prepared-provider-stack/php-ai-client",
         "target": "/wordpress/wp-includes/php-ai-client",
         "strategy": "wordpress-scoped-bundle",
         "metadata": {
@@ -24,22 +24,22 @@
   "inputs": {
     "extra_plugins": [
       {
-        "source": "/path/to/agents-api",
+        "source": "/sample/prepared-component-stack/agents-api",
         "slug": "agents-api",
         "activate": true
       },
       {
-        "source": "/path/to/data-machine",
+        "source": "/sample/prepared-component-stack/data-machine",
         "slug": "data-machine",
         "activate": true
       },
       {
-        "source": "/path/to/data-machine-code",
+        "source": "/sample/prepared-component-stack/data-machine-code",
         "slug": "data-machine-code",
         "activate": true
       },
       {
-        "source": "/path/to/wp-coding-agents/carried-plugins/ai-provider-for-claude-code",
+        "source": "/sample/prepared-provider-stack/ai-provider-for-claude-code",
         "slug": "ai-provider-for-claude-code",
         "activate": false
       }
@@ -55,12 +55,14 @@
       {
         "command": "wp-codebox.agent-sandbox-run",
         "args": [
-          "task=Run a minimal headless WP Codebox smoke. Inspect the WordPress runtime, report the site title and active theme, and do not modify files.",
+          "task=Run a minimal headless WP Codebox smoke. Inspect the WordPress runtime with read-only checks and report the site title plus active theme.",
           "agent=wp-codebox-sandbox",
           "mode=default",
           "provider=claude-code",
           "model=claude-code",
           "provider-plugin-slugs=ai-provider-for-claude-code",
+          "provider-plugin-contracts-json=[{\"slug\":\"ai-provider-for-claude-code\",\"pluginFile\":\"ai-provider-for-claude-code/ai-provider-for-claude-code.php\",\"loadAs\":\"plugin\"}]",
+          "sandbox-tool-policy-json={\"schema\":\"wp-codebox/sandbox-tool-policy/v1\",\"version\":1,\"tools\":[{\"id\":\"deny-all\",\"runtime_tool_id\":\"deny-all\",\"execution_location\":\"parent\",\"transport_visibility\":\"hidden\",\"allowed\":false,\"runtime\":{\"environment\":\"control_plane\",\"capability_scope\":\"control_plane\"}}],\"metadata\":{\"source\":\"cookbook.sample-default-deny\"}}",
           "max-turns=1",
           "timeout-seconds=300"
         ]
