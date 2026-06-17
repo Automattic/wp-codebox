@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto"
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, assertFixtureImportDeterministicIdsSupported, createRuntime, fixtureImportDeterministicIdPlan, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, redactJsonValue, resolveSecretEnvNames, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, assertFixtureImportDeterministicIdsSupported, createRuntime, fixtureImportDeterministicIdPlan, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, appendRecipeRuntimeEvidenceFiles, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -17,17 +17,16 @@ import { resolveCliRuntimeBackend } from "../runtime-backends.js"
 import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 import { artifactManifestFilesByPath, parseBenchResults, writeBenchmarkArtifactEvidence } from "./recipe-run-benchmark-artifacts.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
+import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
+import { runRecipeCleanup, runResourceEvidence, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
-const DECLARED_ARTIFACT_CAPTURE_MAX_BYTES = DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
-const declaredArtifactContents = new WeakMap<RecipeRunDeclaredArtifact, Buffer>()
-
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
@@ -638,171 +637,6 @@ function isUrl(value: string): boolean {
   return /^https?:\/\//i.test(value)
 }
 
-interface RunResourceCleanupEvidence {
-  durationMs: number
-  state: "completed" | "failed"
-  status: RuntimeRunRecord["lifecycle"]["cleanup"]["status"]
-  attempts: number
-  error?: RunOutput["error"]
-}
-
-interface RunResourceEvidenceOptions {
-  startedAtMs: number
-  status: RuntimeRunRecord["status"]
-  startupDurationMs?: number
-  cleanup?: RunResourceCleanupEvidence
-  artifacts?: ArtifactBundle
-  failure?: RunOutput["error"]
-  phaseEvidence?: RecipePhaseEvidence[]
-}
-
-async function runRecipeCleanup(runRegistry: RuntimeRunRegistry, runRecord: RuntimeRunRecord, cleanup: () => Promise<void>): Promise<RunResourceCleanupEvidence> {
-  const startedAtMs = Date.now()
-  await runRegistry.update(runRecord.runId, { cleanup: { status: "running" } })
-  try {
-    await cleanup()
-    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "succeeded" } })
-    return cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs)
-  } catch (error) {
-    const updatedRunRecord = await runRegistry.update(runRecord.runId, { cleanup: { status: "failed", error: serializeError(error) } })
-    const cleanupError = serializeRecipeRunError(error)
-    cleanupEvidenceFromRunRecord(updatedRunRecord, Date.now() - startedAtMs, cleanupError)
-    throw error
-  }
-}
-
-function cleanupEvidenceFromRunRecord(runRecord: RuntimeRunRecord, durationMs: number, error?: RunOutput["error"]): RunResourceCleanupEvidence {
-  const cleanup = runRecord.lifecycle.cleanup
-  return stripUndefined({
-    durationMs,
-    state: cleanup.status === "failed" ? "failed" as const : "completed" as const,
-    status: cleanup.status,
-    attempts: cleanup.attempts,
-    error: error ?? cleanup.error,
-  }) as RunResourceCleanupEvidence
-}
-
-async function runResourceEvidence(options: RunResourceEvidenceOptions): Promise<Record<string, unknown>> {
-  return stripUndefined({
-    schema: "wp-codebox/run-resource-evidence/v1",
-    status: options.status,
-    timing: {
-      startup: metricOrUnavailable(options.startupDurationMs, "runtime creation was not reached"),
-      duration: { available: true, unit: "ms", value: Date.now() - options.startedAtMs },
-      cleanup: options.cleanup ?? unavailableMetric("runtime cleanup was not reached"),
-    },
-    resources: {
-      hostProcess: hostProcessResourceEvidence(),
-      runtimeMemory: unavailableMetric("WordPress Playground runtime memory is not exposed by the runtime backend"),
-      runtimeProcessCount: unavailableMetric("WordPress Playground runtime process count is not exposed by the runtime backend"),
-    },
-    artifacts: await artifactSizeEvidence(options.artifacts),
-    phases: options.phaseEvidence ?? [],
-    reliability: {
-      failureClassification: classifyRunResourceFailure(options.status, options.failure),
-      retryCount: unavailableMetric("recipe-run does not retry worker executions"),
-    },
-  })
-}
-
-function metricOrUnavailable(value: number | undefined, reason: string): Record<string, unknown> {
-  return typeof value === "number" ? { available: true, unit: "ms", value } : unavailableMetric(reason)
-}
-
-function unavailableMetric(reason: string): Record<string, unknown> {
-  return { available: false, reason }
-}
-
-function hostProcessResourceEvidence(): Record<string, unknown> {
-  const memory = process.memoryUsage()
-  const usage = process.resourceUsage()
-  return {
-    available: true,
-    pid: process.pid,
-    rssBytes: memory.rss,
-    heapUsedBytes: memory.heapUsed,
-    maxRssBytes: usage.maxRSS > 0 ? usage.maxRSS * 1024 : undefined,
-    source: "node-process",
-  }
-}
-
-async function artifactSizeEvidence(artifacts: ArtifactBundle | undefined): Promise<Record<string, unknown>> {
-  if (!artifacts) {
-    return unavailableMetric("artifact bundle was not created")
-  }
-
-  try {
-    return {
-      available: true,
-      directory: artifacts.directory,
-      bytes: await directorySizeBytes(artifacts.directory),
-      bundleId: artifacts.id,
-    }
-  } catch (error) {
-    return unavailableMetric(`artifact size could not be measured: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
-async function directorySizeBytes(directory: string): Promise<number> {
-  const entries = await readdir(directory, { withFileTypes: true })
-  let total = 0
-  for (const entry of entries) {
-    const path = resolve(directory, entry.name)
-    if (entry.isDirectory()) {
-      total += await directorySizeBytes(path)
-    } else if (entry.isFile()) {
-      total += (await stat(path)).size
-    }
-  }
-  return total
-}
-
-function classifyRunResourceFailure(status: RuntimeRunRecord["status"], failure: RunOutput["error"] | undefined): Record<string, unknown> {
-  if (!failure) {
-    return { available: true, value: status === "succeeded" ? "none" : "unknown" }
-  }
-
-  const code = failure.code ?? failure.name
-  const phase = typeof failure.phase === "string" ? failure.phase : undefined
-  const value = code === "recipe-phase-failed" && phase
-    ? classifyRecipePhaseFailure(phase)
-    : code === "recipe-run-timeout"
-    ? "timeout"
-    : code === "recipe-interrupted"
-      ? "cancelled"
-      : code === "recipe-cleanup-failed"
-        ? "cleanup"
-      : code === "recipe-runtime-create-failed" || code === "wp-codebox-playground-cli-exited"
-        ? "startup"
-        : status === "cancelled"
-          ? "cancelled"
-          : "execution"
-
-  return { available: true, value, code, ...(phase ? { phase } : {}), message: failure.message }
-}
-
-function classifyRecipePhaseFailure(phase: string): string {
-  switch (phase) {
-    case "runtime_startup":
-    case "run_blueprint_steps":
-      return "startup"
-    case "mount_plugins":
-      return "plugin_mount"
-    case "activate_plugins":
-      return "plugin_activation"
-    case "import_fixture_databases":
-      return "fixture_database"
-    case "run_workloads":
-      return "workload"
-    case "run_probes":
-      return "probe"
-    case "collect_artifacts":
-      return "artifact_collection"
-    default:
-      return "execution"
-  }
-}
-
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
   try {
     return await prepareRecipeRuntimeOverlays(recipe, recipeDirectory)
@@ -1203,225 +1037,6 @@ async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe,
   }
 }
 
-async function collectRecipeDeclaredArtifacts(recipe: WorkspaceRecipe, runtime: Runtime): Promise<RecipeRunDeclaredArtifact[]> {
-  const results: RecipeRunDeclaredArtifact[] = []
-  for (const { kind, index, artifact } of workspaceRecipeRuntimeCollectedArtifacts(recipe)) {
-    results.push(kind === "typed"
-      ? await collectRecipeTypedArtifact(runtime, artifact, index)
-      : await collectRecipeDeclaredArtifact(runtime, artifact, index))
-  }
-  return results
-}
-
-async function collectRecipeDeclaredArtifact(runtime: Runtime, artifact: WorkspaceRecipeDeclaredArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
-  const required = artifact.required !== false
-  try {
-    const execution = await runtime.execute({
-      command: "wordpress.run-php",
-      args: [`code=${declaredArtifactReadCode(artifact.path, artifact.parseJson === true, false)}`],
-    })
-    const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
-    const exists = collected.exists === true
-    return stripUndefined({
-      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
-      index,
-      name: artifact.name,
-      path: artifact.path,
-      required,
-      status: declaredArtifactCollectionStatus(collected, exists),
-      exists,
-      type: collected.type,
-      size: collected.size,
-      sha256: collected.sha256,
-      parsedJson: collected.parsedJson === undefined ? undefined : redactJsonValue(collected.parsedJson),
-      metadata: artifact.metadata,
-      diagnostics: declaredArtifactDiagnostics(collected),
-    }) as RecipeRunDeclaredArtifact
-  } catch (error) {
-    return stripUndefined({
-      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
-      index,
-      name: artifact.name,
-      path: artifact.path,
-      required,
-      status: "failed" as const,
-      exists: false,
-      error: serializeRecipeRunError(error),
-      metadata: artifact.metadata,
-    }) as RecipeRunDeclaredArtifact
-  }
-}
-
-async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceRecipeTypedArtifact, index: number): Promise<RecipeRunDeclaredArtifact> {
-  try {
-    const execution = await runtime.execute({
-      command: "wordpress.run-php",
-      args: [`code=${declaredArtifactReadCode(artifact.path, artifact.parseJson === true, true)}`],
-    })
-    const collected = JSON.parse(execution.stdout.trim() || "{}") as Record<string, unknown>
-    const exists = collected.exists === true
-    const result = stripUndefined({
-      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
-      index,
-      name: artifact.name,
-      path: artifact.path,
-      required: artifact.required !== false,
-      status: declaredArtifactCollectionStatus(collected, exists),
-      exists,
-      type: collected.type,
-      size: collected.size,
-      sha256: collected.sha256,
-      parsedJson: collected.parsedJson === undefined ? undefined : redactJsonValue(collected.parsedJson),
-      typedArtifact: {
-        name: artifact.name,
-        type: artifact.type,
-        payloadSchema: artifact.payloadSchema,
-        contentType: artifact.contentType ?? typedArtifactContentType(artifact),
-      },
-      metadata: artifact.metadata,
-      diagnostics: declaredArtifactDiagnostics(collected),
-    }) as RecipeRunDeclaredArtifact
-    if (result.status === "collected" && typeof collected.contentBase64 === "string" && collected.contentBase64.length > 0) {
-      declaredArtifactContents.set(result, Buffer.from(collected.contentBase64, "base64"))
-    }
-    return result
-  } catch (error) {
-    return stripUndefined({
-      schema: "wp-codebox/recipe-declared-artifact-result/v1" as const,
-      index,
-      name: artifact.name,
-      path: artifact.path,
-      required: artifact.required !== false,
-      status: "failed" as const,
-      exists: false,
-      metadata: artifact.metadata,
-      error: serializeRecipeRunError(error),
-    }) as RecipeRunDeclaredArtifact
-  }
-}
-
-async function materializeTypedRecipeDeclaredArtifacts(artifacts: ArtifactBundle, declaredArtifacts: RecipeRunDeclaredArtifact[]): Promise<void> {
-  const refs: TypedArtifactRef[] = []
-  const files = []
-  for (const artifact of declaredArtifacts) {
-    const typedArtifact = recipeRunTypedArtifactDeclaration(artifact)
-    const contents = declaredArtifactContents.get(artifact)
-    if (!typedArtifact || artifact.status !== "collected" || !contents) {
-      continue
-    }
-
-    const filename = `typed-artifacts/${safeTypedArtifactName(typedArtifact.name)}-${artifact.index + 1}${typedArtifactExtension(typedArtifact.contentType)}`
-    const sha256 = artifactFileDigest(contents).value
-    const ref: TypedArtifactRef = stripUndefined({
-      schema: STRUCTURED_ARTIFACT_SCHEMA,
-      name: typedArtifact.name,
-      type: typedArtifact.type,
-      payload_schema: typedArtifact.payloadSchema,
-      payload: artifact.parsedJson,
-      metadata: artifact.metadata ?? {},
-      provenance: {
-        direction: "output",
-        source: artifact.path,
-      },
-      artifact: {
-        path: `files/runtime-evidence/${filename}`,
-        kind: "typed-artifact",
-        contentType: typedArtifact.contentType,
-        sha256,
-      },
-    }) as TypedArtifactRef
-    refs.push(ref)
-    artifact.materialized = ref
-    delete (artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
-    files.push({ filename, kind: "typed-artifact", contentType: typedArtifact.contentType, contents, maxBytes: DECLARED_ARTIFACT_CAPTURE_MAX_BYTES })
-  }
-
-  if (refs.length === 0) {
-    return
-  }
-
-  const index: TypedArtifactIndex = {
-    schema: TYPED_ARTIFACT_INDEX_SCHEMA,
-    direction: "output",
-    artifacts: refs,
-  }
-  files.push({ filename: "typed-artifacts/index.json", kind: "typed-artifacts-index", contentType: "application/json", contents: `${JSON.stringify(index, null, 2)}\n` })
-  await appendRecipeRuntimeEvidenceFiles(artifacts, files)
-}
-
-function recipeRunTypedArtifactDeclaration(artifact: RecipeRunDeclaredArtifact): { name: string; type: string; contentType: string; payloadSchema?: string | Record<string, unknown> } | undefined {
-  const typedArtifact = (artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
-  if (!typedArtifact || typeof typedArtifact !== "object") {
-    return undefined
-  }
-  const record = typedArtifact as Record<string, unknown>
-  if (typeof record.name !== "string" || typeof record.type !== "string" || typeof record.contentType !== "string") {
-    return undefined
-  }
-  return stripUndefined({
-    name: record.name,
-    type: record.type,
-    contentType: record.contentType,
-    payloadSchema: typeof record.payloadSchema === "string" || isRecordValue(record.payloadSchema) ? record.payloadSchema : undefined,
-  })
-}
-
-function typedArtifactContentType(artifact: WorkspaceRecipeTypedArtifact): string {
-  return artifact.parseJson === true ? "application/json" : "application/octet-stream"
-}
-
-function typedArtifactExtension(contentType: string): string {
-  if (contentType === "application/json") return ".json"
-  if (contentType.startsWith("text/")) return ".txt"
-  return ".bin"
-}
-
-function safeTypedArtifactName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
-}
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
-
-function declaredArtifactCollectionStatus(collected: Record<string, unknown>, exists: boolean): RecipeRunDeclaredArtifact["status"] {
-  if (!exists) return "missing"
-  if (collected.oversized === true) return "oversized"
-  if (collected.sensitive === true) return "sensitive"
-  if (collected.skipped === true) return "skipped"
-  return "collected"
-}
-
-function declaredArtifactDiagnostics(collected: Record<string, unknown>): Record<string, unknown> | undefined {
-  const diagnostics = stripUndefined({
-    capture: {
-      schema: "wp-codebox/declared-artifact-capture-diagnostics/v1",
-      status: collected.oversized === true ? "oversized" : collected.sensitive === true ? "sensitive" : collected.skipped === true ? "skipped" : collected.exists === true ? "captured" : "missing",
-      reason: typeof collected.reason === "string" ? collected.reason : undefined,
-      maxBytes: typeof collected.maxBytes === "number" ? collected.maxBytes : undefined,
-      binary: typeof collected.binary === "boolean" ? collected.binary : undefined,
-      redacted: collected.redacted === true,
-    },
-  })
-  return Object.keys(diagnostics.capture).length > 1 ? diagnostics : undefined
-}
-
-function recipeProbeFailure(probes: RecipeRunProbe[]): RecipeProbeFailureError | undefined {
-  return probes.some((probe) => probe.status === "failed" && !probe.allowFailure) ? new RecipeProbeFailureError(probes) : undefined
-}
-
-function recipeDeclaredArtifactFailure(declaredArtifacts: RecipeRunDeclaredArtifact[]): RecipeDeclaredArtifactFailureError | undefined {
-  return declaredArtifacts.some((artifact) => artifact.required && artifact.status !== "collected") ? new RecipeDeclaredArtifactFailureError(declaredArtifacts) : undefined
-}
-
-function recipeRuntimeEvidenceFiles(fixtureDatabases: RecipeRunFixtureDatabase[], probes: RecipeRunProbe[], declaredArtifacts: RecipeRunDeclaredArtifact[]): Array<{ filename: string; kind: string; value: unknown }> {
-  return [
-    ...(fixtureDatabases.length > 0 ? [{ filename: "fixture-databases.json", kind: "fixture-database-results", value: { schema: "wp-codebox/fixture-database-results/v1", fixtures: fixtureDatabases } }] : []),
-    ...(probes.length > 0 ? [{ filename: "recipe-probes.json", kind: "recipe-probe-results", value: { schema: "wp-codebox/recipe-probe-results/v1", passed: !recipeProbeFailure(probes), probes } }] : []),
-    ...(declaredArtifacts.length > 0 ? [{ filename: "recipe-declared-artifacts.json", kind: "recipe-declared-artifact-results", value: { schema: "wp-codebox/recipe-declared-artifact-results/v1", passed: !recipeDeclaredArtifactFailure(declaredArtifacts), artifacts: declaredArtifacts } }] : []),
-  ]
-}
-
 function recipeFailureRuntimeEvidenceFile(args: {
   recipe: WorkspaceRecipe
   recipePath: string
@@ -1554,64 +1169,6 @@ foreach ($statements as $statement) {
     $counts['statements']++;
 }
 echo wp_json_encode(array('counts' => $counts));`
-}
-
-function declaredArtifactReadCode(path: string, parseJson: boolean, includeContents: boolean): string {
-  const encodedPath = JSON.stringify(path)
-  const maxBytes = DECLARED_ARTIFACT_CAPTURE_MAX_BYTES
-  return `
-$path = ${encodedPath};
-$parse_json = ${parseJson ? "true" : "false"};
-$include_contents = ${includeContents ? "true" : "false"};
-$max_bytes = ${maxBytes};
-$result = array('exists' => file_exists($path));
-if (!$result['exists']) {
-    echo wp_json_encode($result);
-    return;
-}
-$result['type'] = is_dir($path) ? 'directory' : (is_file($path) ? 'file' : 'other');
-if (is_file($path)) {
-    $file_size = filesize($path);
-    if (false === $file_size) {
-        throw new RuntimeException('Unable to stat declared artifact path: ' . $path);
-    }
-    $result['size'] = $file_size;
-    $result['maxBytes'] = $max_bytes;
-    if ($file_size > $max_bytes) {
-        $result['oversized'] = true;
-        $result['reason'] = 'max-bytes-exceeded';
-        echo wp_json_encode($result);
-        return;
-    }
-    $contents = file_get_contents($path);
-    if (false === $contents) {
-        throw new RuntimeException('Unable to read declared artifact path: ' . $path);
-    }
-    $result['sha256'] = hash('sha256', $contents);
-    $result['binary'] = 1 !== preg_match('//u', $contents);
-    if (preg_match('/\\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\\b/', $contents)) {
-        $result['sensitive'] = true;
-        $result['reason'] = 'secret-like-value';
-        echo wp_json_encode($result);
-        return;
-    }
-    if ($parse_json) {
-        $decoded = json_decode($contents, true);
-        if (JSON_ERROR_NONE !== json_last_error()) {
-            throw new RuntimeException('Declared artifact JSON parse failed for ' . $path . ': ' . json_last_error_msg());
-        }
-        $result['parsedJson'] = $decoded;
-    }
-    if ($include_contents) {
-        $result['contentBase64'] = base64_encode($contents);
-    }
-} elseif (is_dir($path)) {
-    $entries = array_values(array_diff(scandir($path) ?: array(), array('.', '..')));
-    sort($entries);
-    $result['size'] = count($entries);
-    $result['sha256'] = hash('sha256', wp_json_encode($entries));
-}
-echo wp_json_encode($result);`
 }
 
 function activateExtraPluginCode(pluginFile: string): string {
