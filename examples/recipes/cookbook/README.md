@@ -47,7 +47,7 @@ or orchestration-layer aliases:
 
 The Codex smoke requires a matched provider stack. WP Codebox stays generic and
 local-path based; it mounts what the caller provides and does not resolve
-Homeboy, Data Machine Code, GitHub, or other orchestrator references.
+orchestrator references, repository handles, or remote checkout aliases.
 
 - The provider plugin checkout must register the `codex` provider id with
   `wp-ai-client`. If it does not, the sandbox fails with `Provider codex is not
@@ -57,9 +57,8 @@ Homeboy, Data Machine Code, GitHub, or other orchestrator references.
 - The `php-ai-client` checkout must have Composer dependencies installed before
   WP Codebox runs. Confirm `vendor/composer/installed.json` exists, for example
   by running `composer install` in that checkout.
-- Orchestrators such as Homeboy should persist or materialize their selected
-  checkouts first, then write those absolute local paths into the recipe passed
-  to WP Codebox.
+- Orchestrators should persist or materialize their selected checkouts first,
+  then write those absolute local paths into the recipe passed to WP Codebox.
 
 Export Codex OAuth credentials in the shell that runs WP Codebox. Keep token
 values out of recipe files and artifacts:
@@ -98,11 +97,10 @@ new release, attach a new root workspace tarball, and publish the scoped npm
 packages from the same commit once npm publishing is approved.
 
 The expected successful response is a JSON recipe run whose agent runtime
-reports the Playground site title and active theme. Fleet runners such as
-Homeboy should generate one recipe/run per task and own queueing,
-concurrency, retry policy, durable run records, and PR/comment workflows above
-WP Codebox. WP Codebox owns the sandbox, mounts, overlays, agent invocation,
-and artifact bundle.
+reports the Playground site title and active theme. Fleet runners should
+generate one recipe/run per task and own queueing, concurrency, retry policy,
+durable run records, and PR/comment workflows above WP Codebox. WP Codebox owns
+the sandbox, mounts, overlays, agent invocation, and artifact bundle.
 
 ### `multisite-network.json`
 
