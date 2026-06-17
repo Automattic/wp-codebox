@@ -35,5 +35,8 @@
   ],
   "scripts": {
     "build": "tsc -b"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0"
   }
 }
