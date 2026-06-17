@@ -38,6 +38,7 @@ require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-managed-host-command.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
 require_once __DIR__ . '/src/class-wp-codebox-json.php';
+require_once __DIR__ . '/src/class-wp-codebox-run-plan.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';

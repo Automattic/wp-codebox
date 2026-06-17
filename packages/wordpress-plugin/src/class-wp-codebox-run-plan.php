@@ -1,0 +1,247 @@
+<?php
+/**
+ * Generic host-side run-plan helpers.
+ *
+ * @package WPCodebox
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+final class WP_Codebox_Run_Plan {
+
+	public const SCHEMA        = 'wp-codebox/run-plan/v1';
+	public const EVENT_SCHEMA  = 'wp-codebox/run-plan-event/v1';
+	public const RESULT_SCHEMA = 'wp-codebox/run-plan-result/v1';
+
+	/** @param array<string,mixed> $options Normalization options. */
+	public function normalize_concurrency( mixed $value, array $options = array() ): int|WP_Error {
+		$default = max( 1, (int) floor( (float) ( $options['default_concurrency'] ?? $options['defaultConcurrency'] ?? 1 ) ) );
+		$max     = max( 1, (int) floor( (float) ( $options['max_concurrency'] ?? $options['maxConcurrency'] ?? PHP_INT_MAX ) ) );
+		$mode    = (string) ( $options['concurrency_mode'] ?? $options['concurrencyMode'] ?? 'clamp' );
+		$number  = is_numeric( $value ) ? (int) floor( (float) $value ) : $default;
+		$number  = 0 === $number ? $default : $number;
+
+		if ( 'validate' === $mode && ( $number < 1 || $number > $max ) ) {
+			return new WP_Error( 'wp_codebox_run_plan_concurrency_invalid', 'Run plan concurrency must be between 1 and ' . $max . '.', array( 'status' => 400, 'max' => $max ) );
+		}
+
+		return max( 1, min( $max, $number ) );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $workers Workers.
+	 * @param array<string,mixed>            $options Normalization options.
+	 * @return array<int,array<string,mixed>>|WP_Error
+	 */
+	public function normalize_worker_descriptors( array $workers, array $options = array() ): array|WP_Error {
+		if ( empty( $workers ) ) {
+			return new WP_Error( 'wp_codebox_run_plan_workers_missing', 'Run plan requires at least one worker.', array( 'status' => 400 ) );
+		}
+
+		$seen        = array();
+		$descriptors = array();
+		foreach ( $workers as $index => $worker ) {
+			if ( ! is_array( $worker ) ) {
+				return new WP_Error( 'wp_codebox_run_plan_worker_invalid', 'Each run plan worker must be an object.', array( 'status' => 400, 'index' => $index ) );
+			}
+
+			$id = $this->safe_path_segment( $worker['id'] ?? '' );
+			if ( is_wp_error( $id ) ) {
+				$id->add_data( array_merge( is_array( $id->get_error_data() ) ? $id->get_error_data() : array(), array( 'index' => $index ) ) );
+				return $id;
+			}
+
+			if ( isset( $seen[ $id ] ) ) {
+				return new WP_Error( 'wp_codebox_run_plan_worker_id_duplicate', 'Run plan worker ids must be unique.', array( 'status' => 400, 'worker_id' => $id ) );
+			}
+			$seen[ $id ] = true;
+
+			$goal = $this->string_value( $worker['goal'] ?? '' );
+			if ( ! empty( $options['require_goal'] ) || ! empty( $options['requireGoal'] ) ) {
+				if ( '' === $goal ) {
+					return new WP_Error( 'wp_codebox_run_plan_worker_goal_missing', 'Run plan worker requires goal.', array( 'status' => 400, 'worker_id' => $id ) );
+				}
+			}
+
+			$artifact_namespace = $this->safe_namespace( $worker['artifactNamespace'] ?? $worker['artifact_namespace'] ?? $id );
+			if ( is_wp_error( $artifact_namespace ) ) {
+				$artifact_namespace->add_data( array_merge( is_array( $artifact_namespace->get_error_data() ) ? $artifact_namespace->get_error_data() : array(), array( 'worker_id' => $id ) ) );
+				return $artifact_namespace;
+			}
+
+			$worker['id'] = $id;
+			if ( '' !== $goal ) {
+				$worker['goal'] = $goal;
+			}
+
+			$descriptors[] = array(
+				'id'                 => $id,
+				'index'              => $index,
+				'worker'             => $worker,
+				'goal'               => $goal,
+				'agent'              => $this->string_value( $worker['agent'] ?? $options['default_agent'] ?? $options['defaultAgent'] ?? '' ),
+				'artifact_namespace' => $artifact_namespace,
+				'required'           => false !== ( $worker['required'] ?? true ),
+				'depends_on'         => $this->string_list( $worker['dependsOn'] ?? $worker['depends_on'] ?? array() ),
+				'timeout_seconds'    => $this->positive_integer( $worker['timeoutSeconds'] ?? $worker['timeout_seconds'] ?? $worker['task_timeout_seconds'] ?? null ),
+				'cancellation'       => $this->cancellation_metadata( $worker ),
+			);
+		}
+
+		return $descriptors;
+	}
+
+	/** @param array<string,mixed> $source Source. @return array<string,mixed> */
+	public function cancellation_metadata( array $source ): array {
+		$timeout = $this->positive_integer( $source['timeoutSeconds'] ?? $source['timeout_seconds'] ?? $source['task_timeout_seconds'] ?? null );
+		$reason  = $this->string_value( $source['cancelReason'] ?? $source['cancel_reason'] ?? '' );
+		$deadline = $this->string_value( $source['deadline'] ?? '' );
+
+		return array_filter(
+			array(
+				'cancel_requested' => (bool) ( $source['cancelRequested'] ?? $source['cancel_requested'] ?? $source['cancelled'] ?? false ),
+				'reason'           => $reason,
+				'timeout_seconds'  => $timeout,
+				'deadline'         => $deadline,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value
+		);
+	}
+
+	/** @return array<string,string> */
+	public function paths( string $base_artifacts, string $namespace ): array {
+		$root      = rtrim( $base_artifacts, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . $namespace;
+		$workers   = $root . DIRECTORY_SEPARATOR . 'workers';
+		$aggregate = $root . DIRECTORY_SEPARATOR . 'aggregate';
+
+		return array(
+			'root'                => $root,
+			'workers'             => $workers,
+			'aggregate'           => $aggregate,
+			'aggregate_artifacts' => $aggregate . DIRECTORY_SEPARATOR . 'artifacts',
+			'plan'                => $root . DIRECTORY_SEPARATOR . 'plan.json',
+			'events'              => $root . DIRECTORY_SEPARATOR . 'events.jsonl',
+			'result'              => $root . DIRECTORY_SEPARATOR . 'result.json',
+			'aggregate_result'    => $aggregate . DIRECTORY_SEPARATOR . 'result.json',
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $descriptors Worker descriptors. @return array<string,mixed> */
+	public function plan( string $schema, string $session_id, int $concurrency, array $orchestrator, array $descriptors ): array {
+		return array(
+			'schema'       => $schema,
+			'session_id'   => $session_id,
+			'concurrency'  => $concurrency,
+			'orchestrator' => $orchestrator,
+			'workers'      => array_map(
+				static fn( array $descriptor ): array => array_filter(
+					array(
+						'id'                 => (string) $descriptor['id'],
+						'agent'              => (string) $descriptor['agent'],
+						'goal'               => (string) $descriptor['goal'],
+						'artifact_namespace' => (string) $descriptor['artifact_namespace'],
+						'required'           => (bool) $descriptor['required'],
+						'depends_on'         => $descriptor['depends_on'],
+						'cancellation'       => $descriptor['cancellation'],
+					),
+					static fn( mixed $value ): bool => array() !== $value
+				),
+				$descriptors
+			),
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $runs Child run results. @return array{total:int,completed:int,failed:int,cancelled:int} */
+	public function result_counts( array $runs ): array {
+		$completed = count( array_filter( $runs, static fn( array $run ): bool => true === ( $run['success'] ?? false ) ) );
+		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
+
+		return array(
+			'total'     => count( $runs ),
+			'completed' => $completed,
+			'failed'    => count( $runs ) - $completed - $cancelled,
+			'cancelled' => $cancelled,
+		);
+	}
+
+	/** @param array{failed:int,cancelled:int} $counts Counts. */
+	public function succeeded( array $counts ): bool {
+		return 0 === $counts['failed'] && 0 === $counts['cancelled'];
+	}
+
+	/** @param array<string,string> $paths Run-plan artifact paths. @return array<string,mixed> */
+	public function artifacts( string $schema, array $paths ): array {
+		return array(
+			'schema'         => $schema,
+			'path'           => $paths['root'],
+			'plan'           => 'plan.json',
+			'events'         => 'events.jsonl',
+			'workers_path'   => 'workers',
+			'aggregate_path' => 'aggregate',
+			'result'         => 'result.json',
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $runs Child run results. @return array<int,array<string,mixed>> */
+	public function failures( array $runs ): array {
+		return array_values( array_filter( $runs, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) );
+	}
+
+	/** @param array{completed:int,failed:int,cancelled:int} $counts Counts. @return array<string,mixed> */
+	public function aggregate_result( string $schema, string $status, array $counts ): array {
+		return array(
+			'schema'    => $schema,
+			'status'    => $status,
+			'completed' => $counts['completed'],
+			'failed'    => $counts['failed'],
+			'cancelled' => $counts['cancelled'],
+		);
+	}
+
+	/** @param array<string,mixed> $event Event data. @return array<string,mixed> */
+	public function event( string $schema, array $event ): array {
+		return array_merge( array( 'schema' => $schema, 'time' => gmdate( 'c' ) ), $event );
+	}
+
+	private function safe_path_segment( mixed $value ): string|WP_Error {
+		$segment = $this->string_value( $value );
+		if ( '' === $segment || ! preg_match( '/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $segment ) ) {
+			return new WP_Error( 'wp_codebox_run_plan_path_segment_invalid', 'Run plan path segment must be safe.', array( 'status' => 400, 'segment' => $segment ) );
+		}
+
+		return $segment;
+	}
+
+	private function safe_namespace( mixed $value ): string|WP_Error {
+		$namespace = $this->string_value( $value );
+		if ( '' === $namespace ) {
+			return new WP_Error( 'wp_codebox_run_plan_namespace_invalid', 'Run plan namespace must contain safe path segments.', array( 'status' => 400 ) );
+		}
+
+		foreach ( explode( '/', $namespace ) as $segment ) {
+			if ( is_wp_error( $this->safe_path_segment( $segment ) ) ) {
+				return new WP_Error( 'wp_codebox_run_plan_namespace_invalid', 'Run plan namespace must contain safe path segments.', array( 'status' => 400, 'namespace' => $namespace ) );
+			}
+		}
+
+		return $namespace;
+	}
+
+	private function positive_integer( mixed $value ): ?int {
+		$number = is_numeric( $value ) ? (int) floor( (float) $value ) : 0;
+		return $number > 0 ? $number : null;
+	}
+
+	/** @return array<int,string> */
+	private function string_list( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( fn( mixed $item ): string => $this->string_value( $item ), $value ), static fn( string $item ): bool => '' !== $item ) );
+	}
+
+	private function string_value( mixed $value ): string {
+		return trim( (string) ( $value ?? '' ) );
+	}
+}
