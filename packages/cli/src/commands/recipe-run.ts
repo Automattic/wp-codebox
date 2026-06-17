@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
-import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeArtifactEvidenceFailure, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
+import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import type { PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { cleanupRecipePreparedSources, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { loadWorkspaceRecipe, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -16,10 +16,10 @@ import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "..
 import { artifactManifestFilesByPath, parseBenchResults, writeBenchmarkArtifactEvidence } from "./recipe-run-benchmark-artifacts.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
-import { runRecipeCleanup, runResourceEvidence, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
+import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
-import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
+import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
@@ -84,23 +84,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
       issues,
     }
-    runRecord = await runRegistry.update(runRecord.runId, {
-      status: "failed",
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", failure }) },
-      error: failure,
-    })
-    const output: RecipeRunOutput = recipeRunOutputWithResult({
-      success: false,
-      schema: "wp-codebox/recipe-run/v1",
+    return await finalizeRecipeValidationFailure({
       recipePath,
-      executions: [],
+      runRegistry,
+      runRecord,
+      artifactPointer,
+      startedAtMs,
+      failure,
       componentContracts: componentContractResults(recipe, [], [], [], failure),
       validation: { issues },
-      run: runRecord,
-      error: failure,
     })
-    await artifactPointer.update({ command: "recipe.validate", commandStatus: "failed", failure, result: output.result })
-    return output
   }
 
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
@@ -312,78 +305,43 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     if (recipeFailure) {
-      runRecord = await runRegistry.update(runRecord.runId, {
-        status: "failed",
-        runtime: runtimeInfo ?? await runtime.info(),
-        preview: artifacts.preview,
-        artifactRefs: artifactBundleRunRef(artifacts),
-        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: recipeFailure, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
-        error: recipeFailure,
-      })
-      const output: RecipeRunOutput = recipeRunOutputWithResult({
+      const finalRuntimeInfo = runtimeInfo ?? await runtime.info()
+      return await finalizeCompletedRecipeRun({
         success: false,
-        schema: "wp-codebox/recipe-run/v1",
         recipePath,
-        runtime: runtimeInfo ?? await runtime.info(),
-        executions,
-        componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions),
-        stagedFiles: stagedFiles.map(recipeRunStagedFile),
-        fixtureDatabases,
-        siteSeeds,
-        probes,
-        declaredArtifacts,
-        phaseEvidence: phaseTracker.list(),
-        ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
-        ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
-        ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
-        ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
-        ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
-        ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
-        ...(evidence.terminalResult ? { terminalResult: recipeTerminalResultOutput(evidence.terminalResult) } : {}),
-        ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
-        ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
+        runRegistry,
+        runRecord,
+        artifactPointer,
+        startedAtMs,
+        runtime: finalRuntimeInfo,
         artifacts,
-        run: runRecord,
-        error: recipeFailure,
+        startupDurationMs,
+        cleanup: cleanupEvidence,
+        phaseEvidence: phaseTracker.list(),
+        browserEvidence,
+        replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
+        failure: recipeFailure,
+        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
       })
-      await artifactPointer.update({ commandStatus: "failed", runtime: runtimeInfo ?? await runtime.info(), artifacts, failure: recipeFailure, phases: phaseTracker.list(), browserEvidence, result: output.result })
-      return output
     }
 
-    runRecord = await runRegistry.update(runRecord.runId, {
-      status: "succeeded",
-      runtime: runtimeInfo ?? await runtime.info(),
-      preview: artifacts.preview,
-      artifactRefs: artifactBundleRunRef(artifacts),
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts, phaseEvidence: phaseTracker.list() }), ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}) },
-    })
-    const output: RecipeRunOutput = recipeRunOutputWithResult({
+    const finalRuntimeInfo = runtimeInfo ?? await runtime.info()
+    return await finalizeCompletedRecipeRun({
       success: true,
-      schema: "wp-codebox/recipe-run/v1",
       recipePath,
-      runtime: runtimeInfo ?? await runtime.info(),
-      executions,
-      componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions),
-      stagedFiles: stagedFiles.map(recipeRunStagedFile),
-      fixtureDatabases,
-      siteSeeds,
-      probes,
-      declaredArtifacts,
-      phaseEvidence: phaseTracker.list(),
-      ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
-      ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
-      ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
-      ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
-      ...(evidence.agentResult ? { agentResult: recipeAgentResultOutput(evidence.agentResult) } : {}),
-      ...(evidence.agentTaskResult ? { agentTaskResult: recipeAgentTaskResultOutput(evidence.agentTaskResult) } : {}),
-        ...(evidence.terminalResult ? { terminalResult: recipeTerminalResultOutput(evidence.terminalResult) } : {}),
-        ...(evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(evidence.completionOutcome) } : {}),
-      ...(evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(evidence.replayStatus) } : {}),
+      runRegistry,
+      runRecord,
+      artifactPointer,
+      startedAtMs,
+      runtime: finalRuntimeInfo,
       artifacts,
-      run: runRecord,
+      startupDurationMs,
+      cleanup: cleanupEvidence,
+      phaseEvidence: phaseTracker.list(),
+      browserEvidence,
+      replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
+      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
     })
-    await artifactPointer.update({ commandStatus: "completed", runtime: runtimeInfo ?? await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence, result: output.result })
-    return output
   } catch (error) {
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
@@ -461,42 +419,36 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
-    runRecord = await runRegistry.update(runRecord.runId, {
-      status: recipeRunFailureStatus(error, interruption),
-      ...(runtime ? { runtime: await runtime.info() } : {}),
-      ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
-      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
-      error: serializedError,
-    })
-    const output: RecipeRunOutput = recipeRunOutputWithResult({
-      success: false,
-      schema: "wp-codebox/recipe-run/v1",
+    return await finalizeRecoveredRecipeFailure({
       recipePath,
+      runRegistry,
+      runRecord,
+      artifactPointer,
+      startedAtMs,
+      originalError: error,
+      serializedError,
       ...(runtime ? { runtime: await runtime.info() } : {}),
-      executions,
-      componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions, error),
-      stagedFiles: stagedFiles.map(recipeRunStagedFile),
-      fixtureDatabases,
-      probes,
-      declaredArtifacts,
-      phaseEvidence: phaseTracker.list(),
-      ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
-      ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
-      diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       ...(artifacts ? { artifacts } : {}),
-      run: runRecord,
-      ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
-      error: serializedError,
+      startupDurationMs,
+      cleanup: cleanupEvidence,
+      phaseEvidence: phaseTracker.list(),
+      browserEvidence,
+      diagnosticArtifacts,
+      interruption,
+      output: {
+        executions,
+        componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions, error),
+        stagedFiles: stagedFiles.map(recipeRunStagedFile),
+        fixtureDatabases,
+        probes,
+        declaredArtifacts,
+        phaseEvidence: phaseTracker.list(),
+        ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
+        ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
+        diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
+      },
     })
-    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence, diagnosticArtifacts, result: output.result })
-
-    return output
   }
-}
-
-function recipeRunOutputWithResult<T extends RecipeRunOutput>(output: T): T {
-  output.result = normalizeRecipeRunSummary(output)
-  return output
 }
 
 function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {
