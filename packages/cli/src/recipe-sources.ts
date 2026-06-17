@@ -243,6 +243,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       args: ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
       cwd: stagedSource,
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: "prepare Composer autoload for recipe extra plugin",
     })
@@ -444,6 +445,7 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
       args: ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"],
       cwd: hydratedSource,
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: `hydrate Composer-backed ${label}`,
     })
