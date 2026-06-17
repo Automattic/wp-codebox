@@ -32,6 +32,8 @@ export const smokeGroups = {
       npmScript("build"),
       npmScript("test:generic-primitives"),
       npmScript("test:php-json-codec"),
+      npmScript("test:primitive-contract-parity"),
+      npmScript("test:php-primitive-contract-parity"),
       npmScript("test:browser-task-builder"),
       npmScript("test:browser-runner-template"),
       tsxSmoke("runtime-backend-registry-smoke"),

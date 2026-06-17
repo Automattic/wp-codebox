@@ -1,0 +1,355 @@
+{
+  "redaction": {
+    "profiles": {
+      "provider_proxy": {
+        "input": {
+          "provider": "generic",
+          "request": {
+            "authorization": "Bearer abc",
+            "model": "example",
+            "messages": [
+              {
+                "role": "user",
+                "content": "visible"
+              }
+            ]
+          }
+        },
+        "expected": {
+          "provider": "generic",
+          "request": {
+            "authorization": "[redacted]",
+            "model": "example",
+            "messages": [
+              {
+                "role": "user",
+                "content": "visible"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "pathPolicy": {
+    "mountTargets": [
+      {
+        "input": "//wordpress//wp-content/plugins/plugin",
+        "expected": "/wordpress/wp-content/plugins/plugin"
+      },
+      {
+        "input": "/wordpress/../escape",
+        "error": true
+      }
+    ],
+    "artifactPaths": [
+      {
+        "input": "/files//output.json",
+        "expected": "files/output.json"
+      },
+      {
+        "input": "files/../secret.txt",
+        "error": true
+      }
+    ]
+  },
+  "toolPolicy": {
+    "snapshot": {
+      "schema": "wp-codebox/sandbox-tool-policy/v1",
+      "version": 1,
+      "tools": [
+        {
+          "id": "filesystem-write",
+          "runtime_tool_id": "client/filesystem-write",
+          "aliases": ["filesystem_write"],
+          "execution_location": "sandbox",
+          "transport_visibility": "sandbox",
+          "allowed": true,
+          "runtime": {
+            "environment": "runtime_local",
+            "capability_scope": "runtime_local"
+          },
+          "metadata": {
+            "schema": "example/input/v1",
+            "aliases": ["write_file"],
+            "policy": {
+              "permission": "write"
+            }
+          }
+        },
+        {
+          "id": "browser-review",
+          "runtime_tool_id": "client/browser-review",
+          "execution_location": "parent",
+          "transport_visibility": "parent",
+          "allowed": true,
+          "runtime": {
+            "environment": "control_plane",
+            "capability_scope": "control_plane"
+          }
+        },
+        {
+          "id": "internal-token",
+          "runtime_tool_id": "client/internal-token",
+          "execution_location": "sandbox",
+          "transport_visibility": "hidden",
+          "allowed": true,
+          "runtime": {
+            "environment": "runtime_local",
+            "capability_scope": "runtime_local"
+          }
+        }
+      ],
+      "metadata": {
+        "source": "primitive-contracts"
+      }
+    },
+    "effective": {
+      "schema": "wp-codebox/sandbox-tool-policy/v1",
+      "version": 1,
+      "allowedRuntimeToolIds": ["client/filesystem-write"],
+      "visibleRuntimeToolIds": ["client/filesystem-write"],
+      "parentOnlyRuntimeToolIds": ["client/browser-review"],
+      "hiddenRuntimeToolIds": ["client/internal-token"],
+      "metadata": {
+        "source": "primitive-contracts"
+      }
+    },
+    "aliases": {
+      "filesystem_write": "client/filesystem-write",
+      "write_file": "client/filesystem-write",
+      "client/browser-review": "client/browser-review"
+    }
+  },
+  "statusTaxonomy": [
+    {
+      "input": { "status": "succeeded" },
+      "command": "completed",
+      "phase": "succeeded",
+      "agentTask": "succeeded",
+      "check": "passed"
+    },
+    {
+      "input": { "status": "timed_out" },
+      "command": "timed_out",
+      "phase": "failed",
+      "agentTask": "timeout",
+      "check": "failed"
+    },
+    {
+      "input": { "status": "blocked" },
+      "command": "failed",
+      "phase": "blocked",
+      "agentTask": "unable_to_remediate",
+      "check": "warning"
+    }
+  ],
+  "jsonCodec": {
+    "prettyValue": { "path": "files/result.json" },
+    "prettyExpected": "{\n    \"path\": \"files/result.json\"\n}",
+    "object": "{\"ok\":true}",
+    "list": "[\"a\",\"b\"]",
+    "trailing": "warning\n{\"status\":\"ok\"}",
+    "fragment": "prefix {\"result\":{\"ok\":true}} suffix",
+    "expected": {
+      "object": { "ok": true },
+      "list": ["a", "b"],
+      "trailing": { "status": "ok" },
+      "fragment": { "result": { "ok": true } }
+    }
+  },
+  "runtimeDependencyPlan": {
+    "input": {
+      "selection": {
+        "agent": "wp-codebox-sandbox",
+        "mode": "sandbox",
+        "provider": "openai",
+        "model": "gpt-test",
+        "empty": ""
+      },
+      "provider_plugin_paths": ["/runtime/providers/openai", "/runtime/providers/openai", ""],
+      "provider_plugins": [
+        {
+          "source": "/runtime/providers/openai",
+          "slug": "ai-provider-for-openai",
+          "activate": false
+        }
+      ],
+      "component_plugins": [
+        {
+          "source": "/workspace/plugin",
+          "slug": "demo-plugin",
+          "pluginFile": "demo-plugin/demo.php",
+          "loadAs": "plugin",
+          "activate": true,
+          "metadata": {
+            "componentContract": {
+              "index": 2,
+              "requestedPath": "/workspace/plugin"
+            }
+          }
+        }
+      ],
+      "runtime_overlays": [
+        {
+          "kind": "composer-package",
+          "source": "/runtime/overlays/pkg"
+        }
+      ],
+      "inheritance_request": {
+        "connectors": ["openai", "openai", ""],
+        "settings": ["model"]
+      },
+      "inheritance": {
+        "connectors": [{ "id": "openai", "status": "available" }],
+        "settings": [{ "name": "model", "status": "resolved" }]
+      },
+      "agent_bundles": [{ "source": "/workspace/agent-bundle" }],
+      "secret_env": ["OPENAI_API_KEY", "bad-name", "OPENAI_API_KEY"]
+    },
+    "expected": {
+      "schema": "wp-codebox/runtime-dependency-plan/v1",
+      "selection": {
+        "agent": "wp-codebox-sandbox",
+        "mode": "sandbox",
+        "provider": "openai",
+        "model": "gpt-test"
+      },
+      "provider_plugin_paths": ["/runtime/providers/openai"],
+      "provider_plugins": [
+        {
+          "source": "/runtime/providers/openai",
+          "slug": "ai-provider-for-openai",
+          "activate": false
+        }
+      ],
+      "component_plugins": [
+        {
+          "source": "/workspace/plugin",
+          "slug": "demo-plugin",
+          "pluginFile": "demo-plugin/demo.php",
+          "loadAs": "plugin",
+          "activate": true,
+          "metadata": {
+            "componentContract": {
+              "index": 2,
+              "requestedPath": "/workspace/plugin"
+            }
+          }
+        }
+      ],
+      "runtime_overlays": [
+        {
+          "kind": "composer-package",
+          "source": "/runtime/overlays/pkg"
+        }
+      ],
+      "inheritance_request": {
+        "connectors": ["openai"],
+        "settings": ["model"]
+      },
+      "inheritance": {
+        "connectors": [{ "id": "openai", "status": "available" }],
+        "settings": [{ "name": "model", "status": "resolved" }]
+      },
+      "agent_bundles": [{ "source": "/workspace/agent-bundle" }],
+      "secret_env": ["OPENAI_API_KEY"]
+    }
+  },
+  "componentManifest": {
+    "components": [
+      {
+        "source": "/workspace/plugin",
+        "slug": "demo-plugin",
+        "pluginFile": "demo-plugin/demo.php",
+        "loadAs": "plugin",
+        "activate": true,
+        "metadata": {
+          "componentContract": {
+            "index": 2,
+            "requestedPath": "/workspace/plugin"
+          },
+          "sourceKind": "local"
+        }
+      },
+      {
+        "source": "/workspace/mu",
+        "slug": "demo-mu",
+        "pluginFile": "demo-mu/demo-mu.php",
+        "loadAs": "mu-plugin",
+        "activate": false
+      }
+    ],
+    "providers": [
+      {
+        "source": "/runtime/providers/openai",
+        "slug": "ai-provider-for-openai",
+        "pluginFile": "ai-provider-for-openai/provider.php",
+        "loadAs": "plugin",
+        "activate": false
+      }
+    ],
+    "expected": {
+      "schema": "wp-codebox/component-manifest/v1",
+      "components": [
+        {
+          "slug": "demo-plugin",
+          "source": "/workspace/plugin",
+          "mountedPath": "/wordpress/wp-content/plugins/demo-plugin",
+          "entrypoint": "demo-plugin/demo.php",
+          "pluginFile": "demo-plugin/demo.php",
+          "loadAs": "plugin",
+          "activate": true,
+          "contractIndex": 2,
+          "requestedPath": "/workspace/plugin",
+          "provenance": {
+            "componentContract": {
+              "index": 2,
+              "requestedPath": "/workspace/plugin"
+            },
+            "sourceKind": "local"
+          }
+        },
+        {
+          "slug": "demo-mu",
+          "source": "/workspace/mu",
+          "mountedPath": "/wordpress/wp-content/mu-plugins/wp-codebox-runtime/demo-mu",
+          "entrypoint": "demo-mu/demo-mu.php",
+          "pluginFile": "demo-mu/demo-mu.php",
+          "loadAs": "mu-plugin",
+          "activate": false
+        }
+      ],
+      "providers": [
+        {
+          "slug": "ai-provider-for-openai",
+          "source": "/runtime/providers/openai",
+          "mountedPath": "/wordpress/wp-content/plugins/ai-provider-for-openai",
+          "entrypoint": "ai-provider-for-openai/provider.php",
+          "pluginFile": "ai-provider-for-openai/provider.php",
+          "loadAs": "plugin",
+          "activate": false
+        }
+      ]
+    }
+  },
+  "runPlan": {
+    "children": [
+      { "success": true, "status": "succeeded" },
+      { "success": false, "status": "failed" },
+      { "success": false, "status": "cancelled" }
+    ],
+    "counts": {
+      "total": 3,
+      "completed": 1,
+      "failed": 1,
+      "cancelled": 1
+    },
+    "succeeded": false,
+    "schemas": {
+      "plan": "wp-codebox/run-plan/v1",
+      "event": "wp-codebox/run-plan-event/v1",
+      "result": "wp-codebox/run-plan-result/v1"
+    }
+  }
+}
