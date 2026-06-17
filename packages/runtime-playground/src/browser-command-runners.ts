@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { access, readFile, writeFile } from "node:fs/promises"
+import { dirname, join, relative } from "node:path"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, redactString, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import pixelmatch from "pixelmatch"
+import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError, isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
 import { normalizeBrowserStorageStatePayload, type BrowserAuthStorageState, type BrowserStorageStateImportSummary } from "./browser-auth-storage-state.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserProbeWaterfallArtifact, BrowserProbeWaterfallEntry, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
@@ -511,6 +514,7 @@ async function runSingleBrowserProbeCommand({
     }
     if (capture.has("network") || capturesNetworkForAssertions) {
       await artifactSession.writeJsonLines("network", "network.jsonl", network)
+      await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
     if (checkpoints.length > 0) {
       await artifactSession.writeJsonLines("checkpoints", "checkpoints.jsonl", checkpoints)
@@ -576,6 +580,7 @@ async function runSingleBrowserProbeCommand({
         lifecycle: Boolean(lifecycleArtifact),
         memory: Boolean(memoryArtifact),
         network: capture.has("network") || capturesNetworkForAssertions,
+        waterfall: capture.has("network") || capturesNetworkForAssertions,
         performance: Boolean(performanceArtifact),
         redirectDiagnostics: Boolean(redirectDiagnostics),
         screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
@@ -611,6 +616,7 @@ async function runSingleBrowserProbeCommand({
         ...(lifecycleArtifact ? { lifecycle: `${browserFilesDirectory}/lifecycle.json` } : {}),
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
+        ...(capture.has("network") || capturesNetworkForAssertions ? { waterfall: `${browserFilesDirectory}/waterfall.json` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: `${browserFilesDirectory}/redirect-diagnostics.json` } : {}),
         review: `${browserFilesDirectory}/review.json`,
@@ -1003,7 +1009,7 @@ function browserProbeReviewSummary(input: {
       page: browserProbeIssueSummary(pageErrors.length, Boolean(input.files.errors), input.files.errors?.path),
       probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
     },
-    network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    network: browserProbeNetworkReviewSummary(input.network, input.files.network, input.files.waterfall),
     ...(input.redirectDiagnostics ? { redirectDiagnostics: input.redirectDiagnostics } : {}),
     ...(input.wordpressDiagnostics ? { wordpressDiagnostics: input.wordpressDiagnostics } : {}),
     milestones: {
@@ -1033,8 +1039,8 @@ function browserProbeIssueSummary(count: number, captured: boolean, artifact?: s
   }
 }
 
-function browserProbeNetworkReviewSummary(network: BrowserProbeNetworkRecord[], artifact?: BrowserProbeArtifactRef): BrowserProbeNetworkReviewSummary {
-  if (!artifact) {
+function browserProbeNetworkReviewSummary(network: BrowserProbeNetworkRecord[], networkArtifact?: BrowserProbeArtifactRef, waterfallArtifact?: BrowserProbeArtifactRef): BrowserProbeNetworkReviewSummary {
+  if (!networkArtifact) {
     return { status: "not-captured", events: 0, responses: 0, failures: 0, byHost: {}, byType: {} }
   }
 
@@ -1052,8 +1058,103 @@ function browserProbeNetworkReviewSummary(network: BrowserProbeNetworkRecord[], 
     failures: network.filter((record) => record.type === "requestfailed").length,
     byHost: sortBrowserProbeNetworkCounts(byHost),
     byType: sortBrowserProbeNetworkCounts(byType),
-    waterfall: artifact,
+    ...(waterfallArtifact ? { waterfall: waterfallArtifact } : {}),
   }
+}
+
+function browserProbeWaterfallArtifact(network: BrowserProbeNetworkRecord[], startedAt: string): BrowserProbeWaterfallArtifact {
+  return {
+    schema: "wp-codebox/browser-waterfall/v1",
+    version: 1,
+    capturedAt: now(),
+    startedAt,
+    summary: {
+      requests: network.length,
+      responses: network.filter((record) => record.type === "response").length,
+      failures: network.filter((record) => record.type === "requestfailed").length,
+      transferSizeBytes: network.reduce((total, record) => total + finiteNumber(record.transferSize, 0), 0),
+    },
+    log: {
+      version: "1.2",
+      creator: { name: "wp-codebox", version: "1" },
+      entries: network.map(browserProbeWaterfallEntry),
+    },
+  }
+}
+
+function browserProbeWaterfallEntry(record: BrowserProbeNetworkRecord): BrowserProbeWaterfallEntry {
+  const timings = browserProbeWaterfallTimings(record.timing ?? {})
+  const startedDateTime = browserProbeWaterfallStartedDateTime(record)
+  const responseEnd = finiteNumber(record.timing?.responseEnd, 0)
+  const fallbackTime = Math.max(0, Date.parse(record.timestamp) - Date.parse(startedDateTime))
+  const time = responseEnd > 0 ? responseEnd : fallbackTime
+  return {
+    startedDateTime,
+    time,
+    request: {
+      method: record.method,
+      url: redactBrowserArtifactUrl(record.url),
+    },
+    response: {
+      status: record.status ?? 0,
+      statusText: record.statusText ?? (record.type === "requestfailed" ? "Request Failed" : ""),
+      content: { mimeType: record.contentType ?? "" },
+      redirectURL: "",
+    },
+    cache: {},
+    timings,
+    _wpCodebox: {
+      type: record.type,
+      resourceType: record.resourceType,
+      timestamp: record.timestamp,
+      ...(typeof record.ok === "boolean" ? { ok: record.ok } : {}),
+      ...(typeof record.transferSize === "number" ? { transferSize: record.transferSize } : {}),
+      ...(typeof record.requestBodySize === "number" ? { requestBodySize: record.requestBodySize } : {}),
+      ...(typeof record.responseBodySize === "number" ? { responseBodySize: record.responseBodySize } : {}),
+      ...(record.failure ? { failure: record.failure } : {}),
+    },
+  }
+}
+
+function browserProbeWaterfallTimings(timing: Record<string, number>): BrowserProbeWaterfallEntry["timings"] {
+  const requestStart = finiteNumber(timing.requestStart, 0)
+  const responseStart = finiteNumber(timing.responseStart, 0)
+  const responseEnd = finiteNumber(timing.responseEnd, responseStart)
+  const dns = timingDelta(timing.domainLookupStart, timing.domainLookupEnd)
+  const connect = timingDelta(timing.connectStart, timing.connectEnd)
+  const ssl = timingDelta(timing.secureConnectionStart, timing.connectEnd)
+  return {
+    blocked: Math.max(0, requestStart),
+    dns,
+    connect,
+    ssl,
+    send: timingDelta(timing.requestStart, timing.requestStart),
+    wait: responseStart >= requestStart ? responseStart - requestStart : 0,
+    receive: responseEnd >= responseStart ? responseEnd - responseStart : 0,
+  }
+}
+
+function browserProbeWaterfallStartedDateTime(record: BrowserProbeNetworkRecord): string {
+  const startTime = record.timing?.startTime
+  if (typeof startTime === "number" && Number.isFinite(startTime) && startTime > 0) {
+    return new Date(startTime).toISOString()
+  }
+  return record.timestamp
+}
+
+function timingDelta(start: number | undefined, end: number | undefined): number {
+  if (typeof start !== "number" || typeof end !== "number" || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
+    return -1
+  }
+  return end - start
+}
+
+function finiteNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function redactBrowserArtifactUrl(url: string): string {
+  return redactString(url, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }
 
 function addBrowserProbeNetworkCount(target: Record<string, BrowserProbeNetworkCountSummary>, key: string, record: BrowserProbeNetworkRecord): void {
@@ -1089,6 +1190,7 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
   lifecycle: boolean
   memory: boolean
   network: boolean
+  waterfall: boolean
   performance: boolean
   redirectDiagnostics: boolean
   screenshot?: string
@@ -1102,6 +1204,7 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
     ...(input.lifecycle ? { lifecycle: { path: `${browserFilesDirectory}/lifecycle.json`, kind: "json" as const } } : {}),
     ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
     ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
+    ...(input.waterfall ? { waterfall: { path: `${browserFilesDirectory}/waterfall.json`, kind: "json" as const } } : {}),
     ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
     ...(input.redirectDiagnostics ? { redirectDiagnostics: { path: `${browserFilesDirectory}/redirect-diagnostics.json`, kind: "json" as const } } : {}),
     review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
@@ -2194,6 +2297,7 @@ export async function runBrowserActionsCommand({
     }
     if (capture.has("network")) {
       await artifactSession.writeJsonLines("network", "network.jsonl", network)
+      await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
 
     const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
@@ -2234,6 +2338,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
         ...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
         ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+        ...(capture.has("network") ? { waterfall: "files/browser/waterfall.json" } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),

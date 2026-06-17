@@ -109,6 +109,7 @@ export interface ArtifactReviewBrowserSummary {
     html?: string
     lifecycle?: string
     network?: string
+    waterfall?: string
     networkEvents?: number
     checkpoints?: string
     memory?: string
