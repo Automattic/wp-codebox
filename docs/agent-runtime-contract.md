@@ -217,4 +217,24 @@ Current exported code covers the entry point, task input normalization, agent-ta
 - Heartbeats are recorded in the run registry, but there is no separate long-running streaming/progress protocol; orchestrators should poll or observe run records/artifacts they own.
 - Retention metadata is represented but not enforced by WP Codebox. External orchestrators own retention execution for their job and runner resources.
 - Provider overlay compatibility is validated by runtime activation and diagnostics, not by provider-specific schema in WP Codebox core.
-- Browser-sandbox agent invocation and provider proxy registration are centralized in `WP_Codebox_Agent_Runtime_Invoker`, but the generated sandbox fragment still has to call the WordPress Ability API, the Agents API runtime-principal permission filter, and PHP AI Client provider-registry hooks directly. Agents API/PHP AI Client do not yet expose a single stable browser-runtime invocation primitive that combines bundle import, provider readiness, provider proxying, runtime-principal authorization, and `agents/chat` execution for disposable Playground runtimes.
+- Browser-sandbox agent invocation and provider proxy registration are centralized in `WP_Codebox_Agent_Runtime_Invoker`, but the generated sandbox fragment still has to assemble runtime-principal authorization, bundle import, provider readiness/proxying, and `agents/chat` execution from lower-level WordPress Ability API, Agents API, and PHP AI Client hooks.
+
+### Browser-runtime invocation primitive
+
+Until the upstream agent/provider stack exposes one stable browser-runtime primitive, WP Codebox owns the integration glue for disposable Playground runtimes:
+
+- authorizing the runtime principal that is allowed to execute the sandbox task;
+- importing caller-provided agent bundles into the sandbox runtime;
+- checking provider readiness and registering browser-safe provider proxies;
+- executing the selected agent through `agents/chat` with runtime-scoped context; and
+- returning structured success, no-op, provider-error, and diagnostic evidence to the artifact bundle.
+
+The desired upstream contract is a generic capability with a single request/result boundary, not a Codebox-specific adapter. A browser runtime should be able to call one stable primitive with:
+
+- a runtime principal or capability token supplied by the caller;
+- task text plus optional structured context and tool policy;
+- agent bundle references or inline bundle content;
+- provider selection, readiness requirements, and proxy descriptors; and
+- artifact/diagnostic sinks for transcripts, provider failures, and normalized agent output.
+
+The primitive should validate authorization, import bundles, prepare provider access, run the agent, and return a normalized result envelope. With that contract in place, `WP_Codebox_Agent_Runtime_Invoker` can shrink to request construction, artifact persistence, and compatibility checks while the upstream agent/provider stack owns browser-runtime invocation semantics.
