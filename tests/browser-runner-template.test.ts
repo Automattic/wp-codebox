@@ -12,6 +12,7 @@ class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 }
 require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-runner-template.php';
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-runtime-invoker.php';
 require '${rootPath}packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-runner.php';
 
 class Browser_Runner_Template_Test_Harness {
@@ -74,7 +75,7 @@ echo json_encode( array(
 assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
-assert.equal(result.sha256, "ffee48b4efb48acb64b378cd555405e3c84d970c8ce598f5fa6da9bcd534a486")
+assert.equal(result.sha256, "13f4c791af25d4a17926f9f7916ee0383c7224bf0362bf077724a25384b53b4f")
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,
