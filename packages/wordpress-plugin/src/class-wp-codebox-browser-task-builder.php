@@ -161,10 +161,17 @@ final class WP_Codebox_Browser_Task_Builder {
 		);
 
 		$merged    = self::merge_defaults( self::merge_defaults( $input, $defaults ), $generic_defaults );
+		if ( class_exists( 'WP_Codebox_Runtime_Recipe_Resolver' ) ) {
+			$resolved = WP_Codebox_Runtime_Recipe_Resolver::apply_to_input( $merged );
+			if ( ! is_wp_error( $resolved ) ) {
+				$merged = $resolved;
+			}
+		}
 		$placement = is_array( $merged['placement'] ?? null ) ? $merged['placement'] : $generic_defaults['placement'];
 		$placement['required_capabilities'] = self::string_list_lower(
 			array_merge(
 				$generic_defaults['placement']['required_capabilities'],
+				is_array( $placement['required_capabilities'] ?? null ) ? $placement['required_capabilities'] : array(),
 				is_array( $defaults['placement']['required_capabilities'] ?? null ) ? $defaults['placement']['required_capabilities'] : array(),
 				is_array( $input['placement']['required_capabilities'] ?? null ) ? $input['placement']['required_capabilities'] : array()
 			)
