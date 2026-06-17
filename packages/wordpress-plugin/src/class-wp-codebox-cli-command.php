@@ -93,7 +93,7 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function run_agent_task( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_Abilities::run_agent_task( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_task( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -104,7 +104,7 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function run_agent_task_fanout( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_Abilities::run_agent_task_fanout( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_fanout( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**

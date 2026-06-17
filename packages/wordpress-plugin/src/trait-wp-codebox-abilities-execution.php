@@ -10,17 +10,17 @@ defined( 'ABSPATH' ) || exit;
 trait WP_Codebox_Abilities_Execution {
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_agent_task( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Agent_Sandbox_Runner() )->run( $input );
+	return ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_task( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_agent_task_batch( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Agent_Sandbox_Runner() )->run_batch( $input );
+	return ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_batch( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_agent_task_fanout( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Agent_Sandbox_Runner() )->run_fanout( $input );
+	return ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_fanout( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

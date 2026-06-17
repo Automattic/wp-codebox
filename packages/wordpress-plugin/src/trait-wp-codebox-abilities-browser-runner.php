@@ -231,7 +231,7 @@ private static function browser_agent_runner_php( array $task_input, string $ses
 	$default_invocation = $invocation;
 	$default_captures   = $captures;
 
-		return WP_Codebox_Browser_Runner_Template::bootstrap_fragment( $task_path, $result_path, $default_payload, $default_invocation, $default_captures ) . '
+		return WP_Codebox_Browser_Runner_Template::bootstrap_fragment( $task_path, $result_path, $default_payload, $default_invocation, $default_captures ) . WP_Codebox_Agent_Runtime_Invoker::browser_runtime_php() . '
 function wp_codebox_browser_normalize_error( $error ) {
 if ( is_wp_error( $error ) ) {
 	return array(
@@ -1016,54 +1016,6 @@ return array_filter( array(
 ) );
 }
 
-function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
-if ( empty( $bundle_specs ) ) {
-	return array();
-}
-
-if ( function_exists( \'wp_agent_import_runtime_bundles\' ) ) {
-	return wp_agent_import_runtime_bundles( $bundle_specs, array( \'owner_id\' => get_current_user_id() ?: 1 ) );
-}
-
-$imports = array();
-foreach ( $bundle_specs as $index => $spec ) {
-	if ( ! is_array( $spec ) ) {
-		$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_spec_invalid\', \'message\' => \'Agent bundle spec must be an object.\' ) );
-		continue;
-	}
-	if ( ! isset( $spec[\'source\'] ) && ! isset( $spec[\'bundle\'] ) ) {
-		$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_source_missing\', \'message\' => \'Agent bundle spec requires source or bundle.\' ) );
-		continue;
-	}
-
-	$input = array( \'on_conflict\' => (string) ( $spec[\'on_conflict\'] ?? \'upgrade\' ) );
-	if ( isset( $spec[\'source\'] ) && \'\' !== trim( (string) $spec[\'source\'] ) ) {
-		$input[\'source\'] = trim( (string) $spec[\'source\'] );
-	}
-	foreach ( array( \'slug\', \'token_env\' ) as $field ) {
-		if ( isset( $spec[ $field ] ) && \'\' !== trim( (string) $spec[ $field ] ) ) {
-			$input[ $field ] = trim( (string) $spec[ $field ] );
-		}
-	}
-	if ( isset( $spec[\'bundle\'] ) && is_array( $spec[\'bundle\'] ) ) {
-		$input[\'bundle\'] = $spec[\'bundle\'];
-	}
-	$input[\'owner_id\'] = isset( $spec[\'owner_id\'] ) && (int) $spec[\'owner_id\'] > 0 ? (int) $spec[\'owner_id\'] : ( get_current_user_id() ?: 1 );
-	if ( isset( $spec[\'import_principal\'] ) && is_array( $spec[\'import_principal\'] ) ) {
-		$input[\'import_principal\'] = $spec[\'import_principal\'];
-	}
-	$result = apply_filters( \'wp_agent_runtime_import_bundle\', null, $spec, $input, $index );
-	if ( null === $result ) {
-		$result = new WP_Error( \'wp_codebox_agent_bundle_importer_unavailable\', \'No browser runtime agent bundle importer handled this bundle spec.\', array( \'index\' => $index ) );
-	}
-	$imports[] = is_wp_error( $result )
-		? array( \'success\' => false, \'index\' => $index, \'source\' => isset( $input[\'source\'] ) ? $input[\'source\'] : \'inline\', \'error\' => array( \'code\' => $result->get_error_code(), \'message\' => $result->get_error_message(), \'data\' => $result->get_error_data() ) )
-		: array_merge( array( \'index\' => $index, \'source\' => isset( $input[\'source\'] ) ? $input[\'source\'] : \'inline\' ), is_array( $result ) ? $result : array( \'result\' => $result ) );
-}
-
-return $imports;
-}
-
 class WP_Codebox_Browser_Filesystem_Write_Tool {
 	public function handle_tool_call( array $parameters, array $tool_def = array() ): array {
 		global $wp_codebox_browser_artifact_environment;
@@ -1294,17 +1246,9 @@ add_filter( \'datamachine_ability_tools\', function ( array $tools ) use ( &$wp_
 }, 20, 1 );
 $ability_tool_diagnostics = wp_codebox_browser_runtime_ability_tool_diagnostics( $wp_codebox_browser_runtime_ability_tools );
 
-$agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
-$message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
-$runtime_user_id = (int) ( $payload[\'user_id\'] ?? ( function_exists( \'get_current_user_id\' ) ? get_current_user_id() : 0 ) );
-if ( $runtime_user_id <= 0 ) {
-	$runtime_user_id = 1;
-}
-if ( function_exists( \'wp_set_current_user\' ) ) {
-	wp_set_current_user( $runtime_user_id );
-}
 $agent_bundle_imports = array();
+$runtime_invocation_preflight = array();
 $sandbox_tool_ids = array();
 $sandbox_policy = is_array( $payload[\'task_input\'][\'sandbox_tool_policy\'] ?? null ) ? $payload[\'task_input\'][\'sandbox_tool_policy\'] : array();
 foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'tools\'] : array() as $tool_policy_entry ) {
@@ -1331,61 +1275,7 @@ $sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
 $runtime_tool_declarations = wp_codebox_browser_runtime_tool_declarations( $sandbox_tool_ids );
 $ability_tool_ids = array_values( array_map( \'strval\', array_keys( $wp_codebox_browser_runtime_ability_tools ) ) );
 $allowed_tool_ids = array_values( array_unique( array_merge( $sandbox_tool_ids, $ability_tool_ids ) ) );
-$base_input = array(
-\'agent\' => $agent,
-\'message\' => $message,
-\'user_id\' => $runtime_user_id,
-\'provider\' => (string) ( $payload[\'provider\'] ?? ( is_array( $payload[\'task_input\'] ?? null ) ? ( $payload[\'task_input\'][\'provider\'] ?? \'\' ) : \'\' ) ),
-\'model\' => (string) ( $payload[\'model\'] ?? ( is_array( $payload[\'task_input\'] ?? null ) ? ( $payload[\'task_input\'][\'model\'] ?? \'\' ) : \'\' ) ),
-\'session_owner\' => array(
-	\'type\' => \'browser-playground\',
-	\'key\' => $session_id,
-	\'label\' => \'WP Codebox Browser Playground\',
-),
-\'principal\' => array(
-	\'acting_user_id\' => 0,
-	\'effective_agent_id\' => $agent,
-	\'auth_source\' => \'runtime\',
-	\'request_context\' => \'runtime\',
-	\'token_id\' => null,
-	\'request_metadata\' => array(
-		\'source\' => \'wp-codebox\',
-		\'mode\' => \'browser-playground\',
-		\'codebox_session_id\' => $session_id,
-	),
-	\'workspace_id\' => \'wp-codebox\',
-	\'client_id\' => \'wp-codebox-browser-runner\',
-	\'audience_id\' => $session_id,
-	\'audience_claims\' => array(
-		\'runtime_type\' => \'wordpress-playground\',
-	),
-	\'owner_type\' => \'runtime\',
-	\'owner_key\' => $session_id,
-),
-\'client_context\' => array(
-	\'source\' => \'peer-agent\',
-	\'client_name\' => \'wp-codebox-browser-runner\',
-	\'peer_agent_call\' => true,
-	\'caller_session_id\' => $session_id,
-	\'task_input\' => $payload[\'task_input\'] ?? array(),
-	\'runtime_tools\' => $runtime_tool_declarations,
-	\'runtime_tool_callback\' => \'wp_codebox_browser_runtime_tool_callback\',
-	\'ability_tools\' => $wp_codebox_browser_runtime_ability_tools,
-),
-);
-if ( ! empty( $allowed_tool_ids ) ) {
-	$base_input[\'tool_policy\'] = array(
-		\'mode\' => \'allow\',
-		\'tools\' => $allowed_tool_ids,
-	);
-	$base_input[\'allow_only\'] = $allowed_tool_ids;
-	if ( ! empty( $sandbox_tool_ids ) ) {
-		$base_input[\'completion_assertions\'] = array(
-			\'required_tool_names\' => $sandbox_tool_ids,
-		);
-	}
-}
-$input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
+$input = wp_codebox_browser_runtime_prepare_input( $payload, $invocation, $session_id, $runtime_tool_declarations, $wp_codebox_browser_runtime_ability_tools, $allowed_tool_ids, $sandbox_tool_ids );
 $event_sink_attached = false;
 
 $event_sink = wp_codebox_browser_runtime_event_sink( $event_path, $input, $payload );
@@ -1397,67 +1287,10 @@ if ( null !== $event_sink ) {
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
 
 /* WP_CODEBOX_BROWSER_RUNNER_BODY_START */
-if ( ! $wp_codebox_is_playground ) {
-$response = new WP_Error(
-	\'wp_codebox_browser_runner_not_playground\',
-	\'The browser agent runner runtime-principal authorization is only allowed inside the disposable WordPress Playground sandbox.\',
-	array(
-		\'execution_scope\' => \'disposable-playground\',
-		\'permission_model\' => \'runtime-principal\',
-		\'detected_root\' => $wp_codebox_playground_root,
-		\'detected_php_os_family\' => PHP_OS_FAMILY,
-	)
-);
-} else {
-$agent_bundle_imports = wp_codebox_browser_import_agent_bundles( is_array( $payload[\'agent_bundles\'] ?? null ) ? $payload[\'agent_bundles\'] : array() );
-$wp_codebox_browser_runtime_principal_permission = static function ( bool $allowed, $principal, array $permission_input ) use ( $session_id ): bool {
-	if ( ! $principal instanceof AgentsAPI\\AI\\WP_Agent_Execution_Principal ) {
-		return $allowed;
-	}
-	if ( \'runtime\' !== $principal->auth_source || \'runtime\' !== $principal->request_context ) {
-		return $allowed;
-	}
-	if ( \'wp-codebox-browser-runner\' !== $principal->client_id || \'wp-codebox\' !== $principal->workspace_id || \'runtime\' !== $principal->owner_type ) {
-		return $allowed;
-	}
-	if ( $session_id !== $principal->audience_id || $session_id !== $principal->owner_key ) {
-		return $allowed;
-	}
-	if ( \'wordpress-playground\' !== (string) ( $principal->audience_claims[\'runtime_type\'] ?? \'\' ) ) {
-		return $allowed;
-	}
-	return \'wp-codebox\' === (string) ( $permission_input[\'principal\'][\'workspace_id\'] ?? \'\' ) && \'wp-codebox-browser-runner\' === (string) ( $permission_input[\'principal\'][\'client_id\'] ?? \'\' );
-};
-add_filter( \'agents_chat_runtime_principal_permission\', $wp_codebox_browser_runtime_principal_permission, 999, 3 );
-
-try {
-	$failed_imports = array_filter( $agent_bundle_imports, static fn( $import ) => is_array( $import ) && empty( $import[\'success\'] ) );
-	if ( ! empty( $failed_imports ) ) {
-		$response = new WP_Error( \'wp_codebox_agent_bundle_import_failed\', \'One or more runtime agent bundles failed to import before sandbox invocation.\', array( \'agent_bundle_imports\' => array_values( $failed_imports ) ) );
-	} elseif ( \'task\' === $invocation_type ) {
-		$hook = (string) ( $invocation[\'hook\'] ?? $invocation[\'name\'] ?? \'\' );
-		if ( \'\' === $hook || ! has_filter( $hook ) ) {
-			$response = new WP_Error( \'wp_codebox_browser_task_unavailable\', \'The requested sandbox task hook is not registered inside the Playground site.\', array( \'hook\' => $hook ) );
-		} else {
-			$response = apply_filters( $hook, null, $input, $payload );
-		}
-	} else {
-		$ability_name = (string) ( $invocation[\'name\'] ?? \'agents/chat\' );
-		$ability = function_exists( \'wp_get_ability\' ) ? wp_get_ability( $ability_name ) : null;
-		if ( ! $ability instanceof WP_Ability ) {
-			$response = new WP_Error( \'wp_codebox_browser_ability_unavailable\', \'The requested ability is not available inside the Playground site.\', array( \'ability\' => $ability_name ) );
-		} else {
-			$response = $ability->execute( $input );
-		}
-	}
-} catch ( Throwable $exception ) {
-	$response = $exception;
-} finally {
-	if ( function_exists( \'remove_filter\' ) ) {
-		remove_filter( \'agents_chat_runtime_principal_permission\', $wp_codebox_browser_runtime_principal_permission, 999 );
-	}
-}
-}
+$runtime_invocation = wp_codebox_browser_runtime_invoke_agent_task( $payload, $invocation, $input, $session_id, $wp_codebox_is_playground, $wp_codebox_playground_root );
+$response = $runtime_invocation[\'response\'] ?? null;
+$agent_bundle_imports = is_array( $runtime_invocation[\'agent_bundle_imports\'] ?? null ) ? $runtime_invocation[\'agent_bundle_imports\'] : array();
+$runtime_invocation_preflight = is_array( $runtime_invocation[\'preflight\'] ?? null ) ? $runtime_invocation[\'preflight\'] : array();
 
 /* WP_CODEBOX_BROWSER_RUNNER_BODY_END */
 $captures = array();
@@ -1480,6 +1313,7 @@ $diagnostics = array(
 \'capture_count\' => count( $captures ),
 \'captured_paths\' => array_values( array_map( static fn( $capture ) => (string) ( $capture[\'path\'] ?? \'\' ), $captures ) ),
 \'agent_bundle_imports\' => $agent_bundle_imports,
+\'runtime_invocation\' => $runtime_invocation_preflight,
 \'event_stream\' => array(
 	\'path\' => $event_path,
 	\'sink_attached\' => $event_sink_attached,
