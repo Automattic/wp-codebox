@@ -2,12 +2,28 @@ import type { ArtifactBundle, RuntimeEpisodeContentDigest, RuntimeEpisodeTraceRe
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef } from "./runtime-reference.js"
 
+export const METADATA_ARTIFACT_PATH = "metadata.json" as const
+export const REVIEW_ARTIFACT_PATH = "files/review.json" as const
 export const RUNTIME_EPISODE_TRACE_ARTIFACT_PATH = "files/runtime-episode-trace.json" as const
 export const RUNTIME_EPISODE_EVENTS_ARTIFACT_PATH = "files/runtime-episode.jsonl" as const
 export const RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH = "files/runtime-reference-manifest.json" as const
 export const RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH = "files/runtime-replay-index.json" as const
+export const RUNTIME_SNAPSHOT_ARTIFACT_PATH = "files/runtime-snapshot.json" as const
 export const CHANGED_FILES_ARTIFACT_PATH = "files/changed-files.json" as const
 export const ARTIFACT_MANIFEST_PATH = "manifest.json" as const
+
+const RUNTIME_REFERENCE_MANIFEST_EXCLUDED_PATHS = new Set<string>([
+  ARTIFACT_MANIFEST_PATH,
+  METADATA_ARTIFACT_PATH,
+  REVIEW_ARTIFACT_PATH,
+  RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH,
+  RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH,
+])
+
+const RUNTIME_REPLAY_REFERENCE_INDEX_EXCLUDED_PATHS = new Set<string>([
+  ARTIFACT_MANIFEST_PATH,
+  RUNTIME_REPLAY_REFERENCE_INDEX_ARTIFACT_PATH,
+])
 
 export interface ArtifactReferenceDigestInput {
   algorithm?: string
@@ -115,6 +131,14 @@ export function normalizeRuntimeReferenceManifestFileRefs(inputs: Array<Artifact
   return inputs
     .map((input) => normalizeRuntimeReferenceManifestFileRef(input))
     .filter((ref): ref is RuntimeReferenceManifestFileRef => ref !== undefined)
+}
+
+export function runtimeReferenceManifestArtifactFiles(files: ArtifactManifestFile[]): ArtifactManifestFile[] {
+  return files.filter((file) => !RUNTIME_REFERENCE_MANIFEST_EXCLUDED_PATHS.has(file.path))
+}
+
+export function runtimeReplayReferenceIndexArtifactFiles(files: ArtifactManifestFile[]): ArtifactManifestFile[] {
+  return files.filter((file) => !RUNTIME_REPLAY_REFERENCE_INDEX_EXCLUDED_PATHS.has(file.path))
 }
 
 export function normalizeRuntimeEpisodeTraceRef(input: ArtifactReferenceTraceInput, defaults: NormalizeRuntimeEpisodeTraceRefDefaults = {}): RuntimeEpisodeTraceRef | undefined {

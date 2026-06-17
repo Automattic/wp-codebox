@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import type { MountSpec } from "@automattic/wp-codebox-core"
+import { namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 
@@ -114,9 +114,10 @@ async function hostFileHashes(directory: string, relativeDirectory = ""): Promis
 
 export function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string {
   const payload = JSON.stringify(JSON.stringify({ mounts: hostSnapshots }))
+  const skipList = phpStringArrayLiteral(namedFileTreeSkipPolicyNames("captured-mount"))
   return `<?php
 $payload = json_decode(${payload}, true);
-$skip = array_fill_keys(array('.git', 'node_modules', 'target'), true);
+$skip = array_fill_keys(${skipList}, true);
 
 function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $skip): array {
     $files = array();

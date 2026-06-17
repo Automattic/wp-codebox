@@ -30,7 +30,7 @@ import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playgr
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import type { ExecutionSpec, MountSpec, RuntimeCommandResultEnvelope, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { redactJsonValue, type ExecutionSpec, type MountSpec, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
@@ -185,17 +185,7 @@ function browserProviderProxyError(code: string, message: string, data: Record<s
 }
 
 function redactBrowserProviderProxyData(value: unknown): unknown {
-  if (!value || typeof value !== "object") {
-    return value
-  }
-  if (Array.isArray(value)) {
-    return value.map(redactBrowserProviderProxyData)
-  }
-
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-    key,
-    /authorization|secret|token|password|credential|private_key|api_key|\bkey\b|\bvalue\b/i.test(key) ? "[redacted]" : redactBrowserProviderProxyData(item),
-  ]))
+  return redactJsonValue(value, { redactStrings: false, extraPattern: /\b(?:key|value)\b/i })
 }
 
 export async function runPluginCheckCommand({

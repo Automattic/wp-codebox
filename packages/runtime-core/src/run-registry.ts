@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path"
 import type { ArtifactBundle, ArtifactPreview, RuntimeInfo } from "./runtime-contracts.js"
 import { normalizeArtifactDigest } from "./artifact-references.js"
 import { stripUndefined } from "./object-utils.js"
+import { redactJsonValue } from "./redaction.js"
 
 export type RuntimeRunStatus = "queued" | "booting" | "running" | "collecting_artifacts" | "succeeded" | "failed" | "timed_out" | "cancelled"
 
@@ -276,31 +277,7 @@ function sanitizeRunMetadata(metadata: Record<string, unknown> | undefined): Rec
     return undefined
   }
 
-  return sanitizeValue(metadata) as Record<string, unknown>
-}
-
-function sanitizeValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(sanitizeValue)
-  }
-
-  if (!value || typeof value !== "object") {
-    return value
-  }
-
-  const sanitized: Record<string, unknown> = {}
-  for (const [key, child] of Object.entries(value)) {
-    if (isSensitiveMetadataKey(key)) {
-      sanitized[key] = "[redacted]"
-    } else {
-      sanitized[key] = sanitizeValue(child)
-    }
-  }
-  return sanitized
-}
-
-function isSensitiveMetadataKey(key: string): boolean {
-  return /secret|token|credential|password|api[_-]?key/i.test(key)
+  return redactJsonValue(metadata, { redactStrings: false, pattern: /secret|token|credential|password|api[_-]?key/i }) as Record<string, unknown>
 }
 
 function assertSafeRunId(runId: string): void {

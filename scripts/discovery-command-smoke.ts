@@ -1,16 +1,9 @@
-import { execFile } from "node:child_process"
-import { readFile } from "node:fs/promises"
-import { dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
-import { promisify } from "node:util"
+import { resolve } from "node:path"
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { commandRegistry, recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import Ajv2020 from "ajv/dist/2020.js"
 import { listCliRuntimeBackendKinds } from "../packages/cli/src/runtime-backends.js"
-
-const execFileAsync = promisify(execFile)
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const cliPath = resolve(repoRoot, "packages/cli/dist/index.js")
+import { readJson, repoRoot, runCliJson, runCliText } from "./test-kit.ts"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -68,16 +61,6 @@ const representativeRecipes = [
   },
 ] satisfies WorkspaceRecipe[]
 
-async function cliJson<T>(args: string[]): Promise<T> {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], { cwd: repoRoot })
-  return JSON.parse(stdout) as T
-}
-
-async function cliText(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], { cwd: repoRoot })
-  return stdout
-}
-
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
@@ -85,7 +68,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function main(): Promise<void> {
-  const catalog = await cliJson<CommandCatalogOutput>(["commands", "--json"])
+  const catalog = await runCliJson<CommandCatalogOutput>(["commands", "--json"])
   assert(catalog.schema === "wp-codebox/command-catalog/v1", "Unexpected command catalog schema")
   assert(JSON.stringify(catalog.commands.map((command) => command.id)) === JSON.stringify(expectedCatalogCommandIds), "Command ids changed unexpectedly")
 
@@ -104,14 +87,14 @@ async function main(): Promise<void> {
   const pluginCheck = catalog.commands.find((command) => command.id === "wordpress.plugin-check")
   assert(pluginCheck?.acceptedArgs.some((arg) => arg.name === "plugin-slug" && arg.required), "wordpress.plugin-check must document required plugin-slug arg")
 
-  const help = await cliText(["--help"])
+  const help = await runCliText(["--help"])
   const recipeHelp = help.slice(help.indexOf("Recipe commands:"))
   assert(recipeHelp.startsWith("Recipe commands:"), "Help output must include generated recipe command section")
   for (const commandId of expectedCommandIds) {
     assert(recipeHelp.includes(`  ${commandId}\n`) || recipeHelp.includes(`  ${commandId}`), `Help output is missing recipe command: ${commandId}`)
   }
 
-  const schemaOutput = await cliJson<RecipeSchemaOutput>(["schema", "recipe", "--json"])
+  const schemaOutput = await runCliJson<RecipeSchemaOutput>(["schema", "recipe", "--json"])
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")
   assert(schemaOutput.id === "wp-codebox/workspace-recipe/v1", "Unexpected recipe schema id")
   assert(
@@ -127,7 +110,7 @@ async function main(): Promise<void> {
     "examples/recipes/bench-plugin.json",
     "examples/recipes/cookbook/seeded-content.json",
   ]) {
-    const recipe = JSON.parse(await readFile(resolve(repoRoot, recipePath), "utf8"))
+    const recipe = await readJson(resolve(repoRoot, recipePath))
     assert(validate(recipe), `${recipePath} does not validate against discovery schema: ${ajv.errorsText(validate.errors)}`)
   }
 

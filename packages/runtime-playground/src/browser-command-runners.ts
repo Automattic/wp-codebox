@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -12,10 +12,11 @@ import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowse
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
-import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
+import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { phpBrowserWordPressDiagnosticsPlugin } from "./php-snippets.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import type { Page } from "playwright"
@@ -29,12 +30,6 @@ const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 const VISUAL_EXPLANATION_STYLE_PROPERTIES = ["display", "position", "box-sizing", "width", "height", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "color", "background-color", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "opacity", "transform", "visibility"] as const
 const VISUAL_EXPLANATION_ATTRIBUTE_NAMES = ["id", "class", "role", "aria-label", "title", "href", "src", "type", "name"] as const
-
-interface BrowserProbeProfileDefinition {
-  id: string
-  browser: "chromium" | "webkit"
-  args: string[]
-}
 
 interface BrowserProbeRunPlan {
   url: string
@@ -200,34 +195,6 @@ interface VisualCompareBaselineDelta {
   }
 }
 
-const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
-  "desktop-chrome": {
-    id: "desktop-chrome",
-    browser: "chromium",
-    args: ["browser=chromium", "viewport=1280x720"],
-  },
-  "mobile-chrome": {
-    id: "mobile-chrome",
-    browser: "chromium",
-    args: ["browser=chromium", "device=Pixel 5"],
-  },
-  "low-end-mobile-slow-4g": {
-    id: "low-end-mobile-slow-4g",
-    browser: "chromium",
-    args: ["browser=chromium", "device=Pixel 5", "throttle=low-end-mobile-slow-4g"],
-  },
-  "desktop-webkit": {
-    id: "desktop-webkit",
-    browser: "webkit",
-    args: ["browser=webkit", "viewport=1280x720"],
-  },
-  "mobile-webkit": {
-    id: "mobile-webkit",
-    browser: "webkit",
-    args: ["browser=webkit", "device=iPhone 13"],
-  },
-}
-
 interface BrowserProbeThrottleProfileDefinition {
   id: string
   cpuSlowdownRate: number
@@ -293,9 +260,6 @@ export async function runBrowserProbeCommand({
     const profileId = argValue(spec.args ?? [], "profile")?.trim()
     if (profileId) {
       const profile = browserProbeProfile(profileId)
-      if (profile.browser !== "chromium") {
-        throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
-      }
       return runSingleBrowserProbeCommand({
         abortSignal,
         artifactRoot,
@@ -313,12 +277,6 @@ export async function runBrowserProbeCommand({
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
-  for (const profile of profiles) {
-    if (profile.browser !== "chromium") {
-      throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
-    }
-  }
-
   const artifacts: BrowserProbeArtifact[] = []
   const outputs: unknown[] = []
   for (const profile of profiles) {
@@ -446,8 +404,8 @@ async function runSingleBrowserProbeCommand({
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { devices } = await import("playwright")
-  if (requestedContext.browser && requestedContext.browser !== "chromium") {
-    throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; use browser=chromium or a Chromium profile.`)
+  if (requestedContext.browser && !(BROWSER_PROBE_BROWSER_VALUES as readonly string[]).includes(requestedContext.browser)) {
+    throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; supported browsers: ${BROWSER_PROBE_BROWSER_VALUES.join(", ")}.`)
   }
   const deviceProfile = requestedContext.device ? devices[requestedContext.device] : undefined
   if (requestedContext.device && !deviceProfile) {
@@ -885,9 +843,9 @@ function browserProbeProfileIds(args: string[]): string[] {
 }
 
 function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
-  const profile = BROWSER_PROBE_PROFILES[profileId]
+  const profile = BROWSER_PROBE_PROFILES[profileId as keyof typeof BROWSER_PROBE_PROFILES]
   if (!profile) {
-    throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_PROFILES).join(", ")}`)
+    throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${BROWSER_PROBE_CHROMIUM_PROFILE_IDS.join(", ")}`)
   }
   return profile
 }
@@ -942,7 +900,7 @@ function browserProbeThrottleProfile(args: string[]): BrowserProbeThrottleProfil
 
   const profile = BROWSER_PROBE_THROTTLE_PROFILES[profileId]
   if (!profile) {
-    throw new Error(`wordpress.browser-probe unknown throttle profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_THROTTLE_PROFILES).join(", ")}`)
+    throw new Error(`wordpress.browser-probe unknown throttle profile: ${profileId}. Supported profiles: ${BROWSER_PROBE_THROTTLE_PROFILE_IDS.join(", ")}`)
   }
   return profile
 }
@@ -1464,102 +1422,7 @@ interface BrowserWordPressDiagnosticsArtifact {
 
 const BROWSER_WORDPRESS_DIAGNOSTICS_LOG = "/wordpress/wp-content/wp-codebox-browser-diagnostics.jsonl"
 const BROWSER_WORDPRESS_DIAGNOSTICS_MU_PLUGIN = "/wordpress/wp-content/mu-plugins/000-wp-codebox-browser-diagnostics.php"
-const BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN = `<?php
-/**
- * Plugin Name: WP Codebox Browser Diagnostics
- */
-
-if ( ! defined( 'WPINC' ) ) {
-    return;
-}
-
-function wp_codebox_browser_diagnostics_write( array $record ): void {
-    file_put_contents( WP_CONTENT_DIR . '/wp-codebox-browser-diagnostics.jsonl', wp_json_encode( $record ) . "\n", FILE_APPEND | LOCK_EX );
-}
-
-function wp_codebox_browser_diagnostics_backtrace(): array {
-    $frames = debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 12 );
-    $frames = array_slice( $frames, 2 );
-
-    return array_map(
-        static function ( array $frame ): array {
-            return array_filter(
-                array(
-                    'file'     => isset( $frame['file'] ) ? (string) $frame['file'] : null,
-                    'line'     => isset( $frame['line'] ) ? (int) $frame['line'] : null,
-                    'function' => isset( $frame['function'] ) ? (string) $frame['function'] : null,
-                    'class'    => isset( $frame['class'] ) ? (string) $frame['class'] : null,
-                    'type'     => isset( $frame['type'] ) ? (string) $frame['type'] : null,
-                ),
-                static fn ( $value ) => null !== $value && '' !== $value
-            );
-        },
-        $frames
-    );
-}
-
-add_filter(
-    'status_header',
-    static function ( string $status_header, int $code ): string {
-        if ( $code >= 500 && $code < 600 ) {
-            wp_codebox_browser_diagnostics_write(
-                array(
-                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
-                    'classification' => 'http-5xx-status',
-                    'severity'       => 'error',
-                    'status'         => $code,
-                    'statusHeader'   => $status_header,
-                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
-                    'message'        => 'WordPress emitted a 5xx status header during browser navigation.',
-                    'backtrace'      => wp_codebox_browser_diagnostics_backtrace(),
-                    'capturedAt'     => gmdate( 'c' ),
-                )
-            );
-        }
-
-        return $status_header;
-    },
-    10,
-    2
-);
-
-register_shutdown_function(
-    static function (): void {
-        $error = error_get_last();
-        $fatal_types = array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR );
-        if ( is_array( $error ) && in_array( $error['type'] ?? null, $fatal_types, true ) ) {
-            wp_codebox_browser_diagnostics_write(
-                array(
-                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
-                    'classification' => 'php-fatal',
-                    'severity'       => 'error',
-                    'errorType'      => (int) ( $error['type'] ?? 0 ),
-                    'message'        => (string) ( $error['message'] ?? '' ),
-                    'file'           => (string) ( $error['file'] ?? '' ),
-                    'line'           => (int) ( $error['line'] ?? 0 ),
-                    'capturedAt'     => gmdate( 'c' ),
-                )
-            );
-            return;
-        }
-
-        $status = http_response_code();
-        if ( is_int( $status ) && $status >= 500 && $status < 600 ) {
-            wp_codebox_browser_diagnostics_write(
-                array(
-                    'schema'         => 'wp-codebox/browser-wordpress-diagnostic-record/v1',
-                    'classification' => 'http-response-code-5xx',
-                    'severity'       => 'error',
-                    'status'         => $status,
-                    'requestUri'     => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
-                    'message'        => 'Browser navigation finished with a 5xx HTTP response code and no PHP fatal.',
-                    'capturedAt'     => gmdate( 'c' ),
-                )
-            );
-        }
-    }
-);
-`
+const BROWSER_WORDPRESS_DIAGNOSTICS_PLUGIN = phpBrowserWordPressDiagnosticsPlugin()
 
 async function installBrowserWordPressDiagnostics(
   runPlaygroundCommand: ((command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>) | undefined,

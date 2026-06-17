@@ -3,6 +3,7 @@ import { join } from "node:path"
 
 import type { ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
 import { ARTIFACT_MANIFEST_PATH, CHANGED_FILES_ARTIFACT_PATH, RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH } from "./artifact-references.js"
+import { redactJsonValue } from "./redaction.js"
 
 export interface PartialArtifactDiscoveryOptions {
   artifactsRoot: string
@@ -225,7 +226,7 @@ async function fileRef(directory: string, relativePath: string, options: { parse
   }
 
   try {
-    ref.payload = redact(await readJsonFile(absolutePath))
+    ref.payload = redactJsonValue(await readJsonFile(absolutePath))
   } catch (error) {
     ref.error = error instanceof Error ? error.message : String(error)
   }
@@ -353,24 +354,4 @@ function parseTimestampMs(value: string | undefined): number | undefined {
   }
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : undefined
-}
-
-function redact(value: unknown, key = ""): unknown {
-  if (isRedactedKey(key)) {
-    return "[redacted]"
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redact(entry))
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [entryKey, redact(entryValue, entryKey)]))
-  }
-  if (typeof value === "string") {
-    return value.replace(/(bearer|token|api[_-]?key|password|cookie|authorization|private[_-]?key)(\s*[:=]\s*)[^\s,;]+/gi, "$1$2[redacted]")
-  }
-  return value
-}
-
-function isRedactedKey(key: string): boolean {
-  return /secret|token|credential|password|api[_-]?key|authorization|cookie|private[_-]?key/i.test(key)
 }

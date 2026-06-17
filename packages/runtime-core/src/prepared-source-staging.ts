@@ -1,5 +1,6 @@
 import { cpSync, mkdirSync, rmSync } from "node:fs"
 import { basename, join, relative, resolve } from "node:path"
+import { fileTreeEntryNameSkipped, namedFileTreeSkipPolicyNames } from "./file-tree-policy.js"
 
 export interface PreparedSourceStage {
   source: string
@@ -26,7 +27,7 @@ export interface PrepareLocalSourceStageOptions {
   excludeNames?: string[]
 }
 
-export const DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES = [".git", "node_modules", "vendor"]
+export const DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES = namedFileTreeSkipPolicyNames("prepared-source")
 
 export function prepareLocalSourceStageSync(options: PrepareLocalSourceStageOptions): PreparedSourceStage {
   const source = resolve(options.source)
@@ -55,7 +56,7 @@ export function copyPreparedSourceFilteredSync(source: string, target: string, e
   const excluded = new Set(excludeNames)
   cpSync(source, target, {
     recursive: true,
-    filter: (entry: string) => !excluded.has(basename(entry)),
+    filter: (entry: string) => !fileTreeEntryNameSkipped(basename(entry), excluded),
   })
 }
 

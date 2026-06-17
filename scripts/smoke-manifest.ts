@@ -33,6 +33,7 @@ export const smokeGroups = {
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),
+      tsxSmoke("browser-probe-contract-smoke"),
       tsxSmoke("command-codecs-smoke"),
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),
@@ -52,14 +53,18 @@ export const smokeGroups = {
   policy: {
     description: "Workspace and runtime policy smoke checks.",
     commands: [
+      tsxSmoke("file-tree-policy-smoke"),
       tsxSmoke("policy-validation-smoke"),
       tsxSmoke("workspace-policy-smoke"),
+      tsxSmoke("source-policy-smoke"),
+      tsxSmoke("overlay-preparer-registry-smoke"),
     ],
   },
   artifact: {
     description: "Artifact contract and normalization smoke checks.",
     commands: [
       tsxSmoke("artifact-bundle-verifier-smoke"),
+      tsxSmoke("artifact-layout-writer-smoke"),
       tsxSmoke("artifact-apply-adapter-smoke"),
       tsxSmoke("transfer-proof-smoke"),
       tsxSmoke("artifact-redaction-smoke"),
@@ -68,6 +73,7 @@ export const smokeGroups = {
       tsxSmoke("artifact-diagnostics-normalizer-smoke"),
       tsxSmoke("typed-artifacts-smoke"),
       tsxSmoke("artifact-browser-error-collection-smoke"),
+      tsxSmoke("browser-artifact-persistence-idempotency-smoke"),
       tsxSmoke("partial-artifact-discovery-smoke"),
       tsxSmoke("mounted-workspace-diff-smoke"),
       tsxSmoke("replay-export-blueprint-smoke"),

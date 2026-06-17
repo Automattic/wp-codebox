@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import type { ArtifactManifest } from "@automattic/wp-codebox-core"
+import { redactString, type ArtifactManifest } from "@automattic/wp-codebox-core"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
   BrowserArtifact,
@@ -597,21 +597,7 @@ async function browserDocument5xxResponsePreview(response: Response): Promise<Pi
 }
 
 function redactBrowserResponseText(body: string): string {
-  return body
-    .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => redactBrowserUrlQueryValues(match))
-    .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, "$1=[redacted]")
-    .replace(/((?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)["'\s:=]+)[^\s"'<>]+/gi, "$1[redacted]")
-}
-
-function redactBrowserUrlQueryValues(value: string): string {
-  try {
-    const url = new URL(value)
-    const queryKeys = [...new Set([...url.searchParams.keys()])].sort()
-    const query = queryKeys.length > 0 ? `?${queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}` : ""
-    return `${url.origin}${url.pathname}${query}${url.hash ? "#[redacted]" : ""}`
-  } catch {
-    return value
-  }
+  return redactString(body, { redactAllUrlQueryValues: true, redactUrlHash: true, redactQueryAssignments: true })
 }
 
 export function serializeBrowserRequestFailure(request: Request, timestamp = now()): BrowserProbeNetworkRecord {
