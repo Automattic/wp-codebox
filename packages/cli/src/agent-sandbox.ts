@@ -9,9 +9,6 @@ import type { PreparedWorkspaceMount } from "./recipe-sources.js"
 import { defaultPolicy } from "./recipe-validation.js"
 
 export interface AgentRuntimeProbeOptions {
-  agentsApiPath?: string
-  dataMachinePath?: string
-  dataMachineCodePath?: string
   providerPluginPaths: string[]
   components: AgentRuntimeComponent[]
   mounts: AgentRuntimeMount[]
@@ -211,13 +208,13 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 
     switch (name) {
       case "--agents-api":
-        options.agentsApiPath = value
+        options.components = [...(options.components ?? []), componentFromPath(value, "agents-api", undefined, "mu-plugin", "component")]
         break
       case "--data-machine":
-        options.dataMachinePath = value
+        options.components = [...(options.components ?? []), componentFromPath(value, "data-machine", undefined, "mu-plugin", "component")]
         break
       case "--data-machine-code":
-        options.dataMachineCodePath = value
+        options.components = [...(options.components ?? []), componentFromPath(value, "data-machine-code", undefined, "mu-plugin", "component")]
         break
       case "--provider-plugin":
         options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
@@ -242,17 +239,6 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
           break
         }
         throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  const componentSlugs = new Set((options.components ?? []).map((component) => component.slug))
-  for (const [key, option, slug] of [
-    ["--agents-api", options.agentsApiPath, "agents-api"],
-    ["--data-machine", options.dataMachinePath, "data-machine"],
-    ["--data-machine-code", options.dataMachineCodePath, "data-machine-code"],
-  ] as const) {
-    if (!option && !componentSlugs.has(slug)) {
-      throw new Error(`Missing required option: ${key} or --component ${slug}=<path>`)
     }
   }
 
@@ -491,14 +477,8 @@ function parseSandboxToolPolicy(args: string[]): SandboxToolPolicySnapshot | und
 }
 
 function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntimeComponent[] {
-  const compatibility = [
-    options.agentsApiPath ? componentFromPath(options.agentsApiPath, "agents-api", undefined, "mu-plugin", "component") : undefined,
-    options.dataMachinePath ? componentFromPath(options.dataMachinePath, "data-machine", undefined, "mu-plugin", "component") : undefined,
-    options.dataMachineCodePath ? componentFromPath(options.dataMachineCodePath, "data-machine-code", undefined, "mu-plugin", "component") : undefined,
-  ].filter((component): component is AgentRuntimeComponent => Boolean(component))
-
   const bySlug = new Map<string, AgentRuntimeComponent>()
-  for (const component of [...compatibility, ...options.components]) {
+  for (const component of options.components) {
     bySlug.set(component.slug, component)
   }
   return [...bySlug.values()]
