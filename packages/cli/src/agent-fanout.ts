@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { commandArgValue, countRunPlanChildResults, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
+import { commandArgValue, countRunPlanChildResults, createRunPlanEvent, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, parseCommandJsonObject, runBoundedConcurrent, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
 import { agentTaskStatusSucceeded, aggregateFanoutOutputs, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
@@ -44,6 +44,7 @@ interface AgentFanoutWorkerResult {
 }
 
 type AgentFanoutWorkerOutput = Record<string, unknown> & { success?: boolean; evidence_refs?: unknown[]; error?: unknown }
+type AgentFanoutWorkerDescriptor = RunPlanWorkerDescriptor<FanoutRequestContract["workers"][number]>
 
 export async function executeAgentFanoutRequest(request: FanoutRequestContract, options: AgentFanoutExecutionOptions): Promise<AgentFanoutExecutionResult> {
   if (request.schema && request.schema !== FANOUT_REQUEST_SCHEMA) {
@@ -54,7 +55,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   }
 
   const sessionId = stringValue(request.orchestrator?.session_id) || stringValue(request.orchestrator?.request_id) || `fanout-${Date.now()}`
-  const concurrency = Math.max(1, Math.min(MAX_FANOUT_CONCURRENCY, Math.floor(Number(request.concurrency) || 1)))
+  const concurrency = normalizeRunPlanConcurrency(request.concurrency, { maxConcurrency: MAX_FANOUT_CONCURRENCY, concurrencyMode: "clamp" })
   const fanoutRoot = join(options.artifactRoot, "fanout")
   const workersRoot = join(fanoutRoot, "workers")
   const aggregateRoot = join(fanoutRoot, "aggregate")
@@ -65,38 +66,25 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   await mkdir(workersRoot, { recursive: true })
   await mkdir(aggregateFinalRoot, { recursive: true })
 
-  const workers = request.workers.map((worker) => {
-    const id = safeWorkerId(worker.id)
-    return {
-      ...worker,
-      id,
-      agent: stringValue(worker.agent) || stringValue(request.agent),
-      artifact_namespace: safeArtifactNamespace(worker.artifactNamespace, id),
-      required: worker.required !== false,
-    }
-  })
-
-  if (new Set(workers.map((worker) => worker.id)).size !== workers.length) {
-    throw new Error("wp-codebox.agent-fanout worker ids must be unique")
-  }
+  const workers = normalizeRunPlanWorkerDescriptors(request.workers, { defaultAgent: stringValue(request.agent), requireGoal: true })
 
   const plan = {
     schema: FANOUT_PLAN_SCHEMA,
     session_id: sessionId,
     concurrency,
     orchestrator: request.orchestrator ?? {},
-    workers: workers.map((worker) => ({
-      id: worker.id,
-      agent: worker.agent,
-      goal: worker.goal,
-      artifact_namespace: worker.artifact_namespace,
+    workers: workers.map((descriptor) => ({
+      id: descriptor.id,
+      agent: descriptor.agent,
+      goal: descriptor.goal,
+      artifact_namespace: descriptor.artifactNamespace,
     })),
   }
   await writeJson(planPath, plan)
   await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 })
 
   const runWorker = options.runWorker ?? (async (input: AgentTaskRunInput, workerOptions: AgentTaskRunOptions): Promise<AgentFanoutWorkerOutput> => runAgentTask(input, workerOptions) as unknown as AgentFanoutWorkerOutput)
-  const workerResults = await runBounded(workers, concurrency, async (worker): Promise<AgentFanoutWorkerResult> => {
+  const workerResults = await runBoundedConcurrent(workers, concurrency, async (worker): Promise<AgentFanoutWorkerResult> => {
     const workerArtifacts = join(workersRoot, worker.id, "artifacts")
     const childSessionId = `${sessionId}:${worker.id}`
     await mkdir(workerArtifacts, { recursive: true })
@@ -143,7 +131,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
 
   await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length })
   const aggregate = aggregateFanoutOutputs({
-    plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: Array.isArray(worker.dependsOn) ? worker.dependsOn.filter((dependency): dependency is string => typeof dependency === "string") : [], required: worker.required, artifactNamespace: worker.artifact_namespace })) },
+    plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
     policy: stringValue(request.aggregation?.policy) || "fail",
     aggregation: request.aggregation,
     worker_results: workerResults.map((worker) => ({
@@ -207,7 +195,8 @@ async function fanoutRequestFromArgs(args: string[], recipeDirectory: string): P
   return parseCommandJsonObject(text, "wp-codebox.agent-fanout fanout-json") as FanoutRequestContract
 }
 
-function workerInput(request: FanoutRequestContract, worker: Record<string, unknown>, childSessionId: string, artifactsPath: string): AgentTaskRunInput {
+function workerInput(request: FanoutRequestContract, descriptor: AgentFanoutWorkerDescriptor, childSessionId: string, artifactsPath: string): AgentTaskRunInput {
+  const worker = descriptor.worker
   const parentInput = objectValue(request.task_input) || objectValue(request.taskInput) || {}
   const workerTaskInput = objectValue(worker.task_input) || objectValue(worker.taskInput) || {}
   const inherited = inheritedAgentTaskInput(request)
@@ -217,13 +206,13 @@ function workerInput(request: FanoutRequestContract, worker: Record<string, unkn
     ...parentInput,
     ...workerInherited,
     ...workerTaskInput,
-    goal: stringValue(worker.task) || stringValue(worker.goal),
-    agent: stringValue(worker.agent) || stringValue(parentInput.agent) || stringValue(request.agent),
+    goal: stringValue(worker.task) || descriptor.goal,
+    agent: descriptor.agent || stringValue(parentInput.agent) || stringValue(request.agent),
     artifacts_path: artifactsPath,
     session_id: childSessionId,
     sandbox_session_id: childSessionId,
     parent_request: request as unknown as Record<string, unknown>,
-    orchestrator: stripUndefined({ ...(request.orchestrator ?? {}), fanout_worker_id: worker.id }),
+    orchestrator: stripUndefined({ ...(request.orchestrator ?? {}), fanout_worker_id: descriptor.id }),
   }) as AgentTaskRunInput
 }
 
@@ -254,21 +243,8 @@ function inheritedAgentTaskInput(source: Record<string, unknown>): Record<string
   return result
 }
 
-async function runBounded<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let next = 0
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await worker(items[index])
-    }
-  })
-  await Promise.all(runners)
-  return results
-}
-
 async function emitEvent(path: string, event: Omit<FanoutLifecycleEvent, "schema" | "time" | "worker_id"> & { worker_id?: string }): Promise<void> {
-  await appendFile(path, `${JSON.stringify({ schema: FANOUT_EVENT_SCHEMA, time: new Date().toISOString(), ...event })}\n`)
+  await appendFile(path, `${JSON.stringify(createRunPlanEvent<FanoutLifecycleEvent>(FANOUT_EVENT_SCHEMA, event))}\n`)
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -286,22 +262,6 @@ function workerArtifactRefs(workerId: string, output: Record<string, unknown>): 
     kind: stringValue(ref.kind) || "codebox-evidence",
     metadata: ref,
   }))
-}
-
-function safeWorkerId(value: unknown): string {
-  const id = stringValue(value)
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
-    throw new Error(`wp-codebox.agent-fanout worker id must be a safe path segment: ${id || "<empty>"}`)
-  }
-  return id
-}
-
-function safeArtifactNamespace(value: unknown, fallback: string): string {
-  const namespace = stringValue(value) || fallback
-  if (namespace.split("/").some((segment) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(segment))) {
-    throw new Error(`wp-codebox.agent-fanout artifact namespace must contain safe path segments: ${namespace}`)
-  }
-  return namespace
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

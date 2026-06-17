@@ -10,7 +10,11 @@ import {
   RUN_PLAN_RESULT_SCHEMA,
   RUN_PLAN_SCHEMA,
   countRunPlanChildResults,
+  createRunPlanEvent,
   isFanoutEventType,
+  normalizeRunPlanConcurrency,
+  normalizeRunPlanWorkerDescriptors,
+  runBoundedConcurrent,
   runPlanSucceeded,
   type FanoutExecutionStrategy,
   type FanoutLifecycleEvent,
@@ -66,6 +70,15 @@ const counts = countRunPlanChildResults([
   { success: false, status: "failed" },
   { success: false, status: "cancelled" },
 ])
+const descriptors = normalizeRunPlanWorkerDescriptors(
+  [
+    { id: "design", goal: "Draft design direction.", agent: "planner", timeout_seconds: 30 },
+    { id: "copy", goal: "Draft page copy.", artifactNamespace: "copy/final", required: false, cancel_requested: true, cancel_reason: "caller stopped" },
+  ],
+  { defaultAgent: "default-agent", requireGoal: true },
+)
+const emittedFanoutEvent = createRunPlanEvent<FanoutLifecycleEvent>(FANOUT_EVENT_SCHEMA, { event: "worker.completed", worker_id: "design", status: "completed", time: "2026-06-06T00:00:09Z" })
+const boundedResults = await runBoundedConcurrent(["a", "b", "c"], 2, async (value, index) => `${index}:${value}`)
 
 assert.equal(FANOUT_RESULT_SCHEMA, "wp-codebox/agent-fanout-result/v1")
 assert.equal(RUN_PLAN_RESULT_SCHEMA, "wp-codebox/run-plan-result/v1")
@@ -76,6 +89,15 @@ assert.equal(genericPlan.schema, RUN_PLAN_SCHEMA)
 assert.equal(genericEvent.schema, RUN_PLAN_EVENT_SCHEMA)
 assert.deepEqual(counts, { total: 3, completed: 1, failed: 1, cancelled: 1 })
 assert.equal(runPlanSucceeded(counts), false)
+assert.equal(normalizeRunPlanConcurrency(99, { maxConcurrency: 8, concurrencyMode: "clamp" }), 8)
+assert.throws(() => normalizeRunPlanConcurrency(9, { maxConcurrency: 8, concurrencyMode: "validate" }), /between 1 and 8/)
+assert.equal(descriptors[0].timeoutSeconds, 30)
+assert.deepEqual(descriptors[0].cancellation, { cancelRequested: false, timeoutSeconds: 30 })
+assert.equal(descriptors[1].artifactNamespace, "copy/final")
+assert.equal(descriptors[1].required, false)
+assert.deepEqual(descriptors[1].cancellation, { cancelRequested: true, reason: "caller stopped" })
+assert.deepEqual(emittedFanoutEvent, { schema: FANOUT_EVENT_SCHEMA, time: "2026-06-06T00:00:09Z", event: "worker.completed", worker_id: "design", status: "completed" })
+assert.deepEqual(boundedResults, ["0:a", "1:b", "2:c"])
 assert.ok(events.every((event) => event.schema === FANOUT_EVENT_SCHEMA && isFanoutEventType(event.event)))
 assert.equal(isFanoutEventType("worker_finished"), false)
 assert.equal(isFanoutEventType("worker.completed"), true)
