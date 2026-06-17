@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 
 import type { RuntimeInfo } from "./runtime-contracts.js"
+import { resolveArtifactPath } from "./artifact-paths.js"
 import { stableJson } from "./object-utils.js"
 
 export interface ArtifactSpec {
@@ -120,7 +120,7 @@ export async function calculateArtifactContentDigest(directory: string, inputs: 
       hash.update("\n")
     }
     hash.update(`${input}\n`)
-    hash.update(await readFile(join(directory, input)))
+    hash.update(await readFile(resolveArtifactPath(directory, input).absolutePath))
   }
 
   return hash.digest("hex")
@@ -131,7 +131,7 @@ export async function calculateArtifactManifestFileSha256(directory: string, man
     return calculateArtifactManifestSelfSha256(manifest, manifestFileName)
   }
 
-  return artifactFileDigest(await readFile(join(directory, file.path))).value
+  return artifactFileDigest(await readFile(resolveArtifactPath(directory, file.path).absolutePath)).value
 }
 
 export function calculateArtifactManifestSelfSha256(manifest: ArtifactManifest, manifestFileName = "manifest.json"): string {

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
-import { isAbsolute, normalize as normalizePath, sep } from "node:path"
 
 import type { ArtifactFileDigest, ArtifactManifest } from "./artifact-manifest.js"
+import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
 
 export interface ReviewerArtifactExportLink {
   path: string
@@ -27,7 +27,7 @@ export interface ReviewerArtifactExportLinkOptions {
 
 export async function buildReviewerArtifactExportLinks(bundleDirectory: string, options: ReviewerArtifactExportLinkOptions): Promise<ReviewerArtifactExportLinks> {
   const baseUrl = normalizeReviewerArtifactBaseUrl(options.baseUrl)
-  const manifest = JSON.parse(await readFile(`${bundleDirectory}/manifest.json`, "utf8")) as ArtifactManifest
+  const manifest = JSON.parse(await readFile(resolveArtifactPath(bundleDirectory, "manifest.json").absolutePath, "utf8")) as ArtifactManifest
   const includeKinds = new Set(options.includeKinds ?? [])
   const includePaths = new Set(options.includePaths ?? [])
   const files = manifest.files
@@ -70,14 +70,6 @@ export function reviewerArtifactExportUrl(baseUrl: string, artifactPath: string)
   const safePath = safeArtifactRelativePath(artifactPath)
   const encodedPath = safePath.split("/").map((part) => encodeURIComponent(part)).join("/")
   return new URL(encodedPath, normalizeReviewerArtifactBaseUrl(baseUrl)).toString()
-}
-
-function safeArtifactRelativePath(path: string): string {
-  const normalized = normalizePath(path).split(sep).join("/")
-  if (isAbsolute(path) || normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
-    throw new Error(`Artifact export path must stay inside the bundle: ${path}`)
-  }
-  return normalized
 }
 
 function reviewerSafeArtifactHost(hostname: string): boolean {

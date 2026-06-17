@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import { captureStdout, printBlueprintValidateHumanOutput, printBootHumanOutput, printHumanOutput } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { boot, run, validateBlueprint, type BlueprintValidateOptions, type BootOptions, type RunOptions } from "../runtime-command-wrappers.js"
-import type { RuntimePolicy } from "@automattic/wp-codebox-core"
+import { normalizeSharedMounts, type RuntimePolicy } from "@automattic/wp-codebox-core"
 
 export async function runBootCommand(args: string[]): Promise<number> {
   const options = await parseBootOptions(args)
@@ -268,14 +268,14 @@ function parseMount(value: string): RunOptions["mounts"][number] {
     throw new Error(`Invalid mount mode, expected readonly or readwrite: ${mode}`)
   }
 
-  return {
+  return normalizeSharedMounts([{
     source: resolve(source),
     target,
     mode,
     metadata: {
       kind: "cli-mount",
     },
-  }
+  }], { label: "CLI mount" })[0] as RunOptions["mounts"][number]
 }
 
 async function parsePolicy(value: string): Promise<RuntimePolicy> {

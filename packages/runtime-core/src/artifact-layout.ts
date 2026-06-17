@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join, relative } from "node:path"
+import { dirname, isAbsolute, relative, resolve } from "node:path"
 
 import { artifactManifestFile, refreshArtifactManifestFileSha256s, type ArtifactManifest, type ArtifactManifestFile, type ArtifactViewerMetadata } from "./artifact-manifest.js"
+import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
 
 export interface ManifestedArtifactFileInput {
   path: string
@@ -33,7 +34,7 @@ export class ArtifactBundleWriter {
   ) {}
 
   path(path: string): string {
-    return join(this.directory, path)
+    return resolveArtifactPath(this.directory, path).absolutePath
   }
 
   relativePath(path: string): string {
@@ -83,7 +84,13 @@ export function artifactJsonLines(records: unknown[]): string {
 }
 
 export function artifactManifestRelativePath(artifactRoot: string, path: string): string {
-  return relative(artifactRoot, path).replace(/\\/g, "/")
+  const root = resolve(artifactRoot)
+  const absolutePath = isAbsolute(path) ? resolve(path) : resolveArtifactPath(root, path).absolutePath
+  const relativePath = relative(root, absolutePath).replace(/\\/g, "/")
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+    throw new Error(`Artifact path must stay inside the artifact root: ${path}`)
+  }
+  return safeArtifactRelativePath(relativePath)
 }
 
 export async function writeArtifactJson(path: string, value: unknown): Promise<void> {
@@ -93,7 +100,7 @@ export async function writeArtifactJson(path: string, value: unknown): Promise<v
 
 export async function writeArtifactManifestJson(directory: string, manifestPath: string, manifest: ArtifactManifest): Promise<void> {
   await refreshArtifactManifestFileSha256s(directory, manifest, manifestPath)
-  await writeArtifactJson(join(directory, manifestPath), manifest)
+  await writeArtifactJson(resolveArtifactPath(directory, manifestPath).absolutePath, manifest)
   await refreshArtifactManifestFileSha256s(directory, manifest, manifestPath)
-  await writeArtifactJson(join(directory, manifestPath), manifest)
+  await writeArtifactJson(resolveArtifactPath(directory, manifestPath).absolutePath, manifest)
 }

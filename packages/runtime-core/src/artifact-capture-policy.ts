@@ -1,7 +1,8 @@
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
-import { dirname, join, relative, resolve } from "node:path"
+import { dirname, isAbsolute, relative, resolve } from "node:path"
 
 import { artifactFileDigest, artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions } from "./artifact-manifest.js"
+import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
 import { containsSecretLikeValue, redactString } from "./redaction.js"
 
 export interface ArtifactPartInput {
@@ -61,20 +62,19 @@ export interface CapturedArtifactFile {
 export const DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES = 1024 * 1024
 
 export async function writeArtifactPart(input: ArtifactPartInput): Promise<ArtifactPart> {
-  const relativePath = normalizeArtifactPartPath(input.path)
+  const { relativePath, absolutePath } = resolveArtifactPath(input.root, input.path)
   const contents = typeof input.contents === "string" ? input.contents : Buffer.from(input.contents)
-  const absolutePath = join(input.root, relativePath)
 
   await mkdir(dirname(absolutePath), { recursive: true })
   await writeFile(absolutePath, contents)
 
-  const manifestFile = artifactManifestFile(absolutePath, input.kind, input.contentType, artifactFileDigest(contents), {
+  const manifestFile = artifactManifestFile(relativePath, input.kind, input.contentType, artifactFileDigest(contents), {
     redaction: input.redaction,
     provenance: input.provenance,
   })
 
   return {
-    path: relative(input.root, absolutePath).replace(/\\/g, "/"),
+    path: relativePath,
     absolutePath,
     bytes: Buffer.byteLength(contents),
     manifestFile,
@@ -82,10 +82,9 @@ export async function writeArtifactPart(input: ArtifactPartInput): Promise<Artif
 }
 
 export async function captureArtifactFile(input: CapturedArtifactFileInput): Promise<CapturedArtifactFile> {
-  const relativePath = normalizeArtifactPartPath(input.path)
+  const { relativePath, absolutePath } = resolveArtifactPath(input.root, input.path)
   const maxBytes = input.maxBytes ?? DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
   const allowedRoots = await Promise.all((input.allowedRoots ?? [input.root]).map((root) => realpath(root).catch(() => resolve(root))))
-  const destination = join(input.root, relativePath)
 
   try {
     const contents = input.contents === undefined ? await readAllowedSource(input.sourcePath, allowedRoots, maxBytes) : Buffer.isBuffer(input.contents) ? input.contents : Buffer.from(input.contents, "utf8")
@@ -100,8 +99,8 @@ export async function captureArtifactFile(input: CapturedArtifactFileInput): Pro
     }
 
     const capturedContents = binary ? contents : Buffer.from(input.redact ? input.redact(relativePath, text) : redactString(text), "utf8")
-    await mkdir(dirname(destination), { recursive: true })
-    await writeFile(destination, capturedContents)
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, capturedContents)
     const manifestFile = artifactManifestFile(relativePath, input.kind, input.contentType ?? (binary ? "application/octet-stream" : "text/plain; charset=utf-8"), artifactFileDigest(capturedContents), {
       redaction: input.redaction,
       provenance: input.provenance,
@@ -111,7 +110,7 @@ export async function captureArtifactFile(input: CapturedArtifactFileInput): Pro
       schema: "wp-codebox/captured-artifact-file/v1",
       status: "captured",
       path: relativePath,
-      absolutePath: destination,
+      absolutePath,
       ...(input.sourcePath ? { sourcePath: input.sourcePath } : {}),
       bytes: capturedContents.byteLength,
       originalBytes: contents.byteLength,
@@ -130,11 +129,7 @@ export async function captureArtifactFile(input: CapturedArtifactFileInput): Pro
 }
 
 export function normalizeArtifactPartPath(path: string): string {
-  const segments = path.replace(/\\/g, "/").split("/").filter(Boolean)
-  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
-    throw new Error("Artifact part path must be a relative path without current-directory or parent-directory segments")
-  }
-  return segments.join("/")
+  return safeArtifactRelativePath(path)
 }
 
 async function readAllowedSource(sourcePath: string | undefined, allowedRoots: string[], maxBytes: number): Promise<Buffer> {
@@ -142,7 +137,7 @@ async function readAllowedSource(sourcePath: string | undefined, allowedRoots: s
     throw new Error("Captured artifact sourcePath is required when contents are not provided")
   }
   const resolvedSource = await realpath(sourcePath)
-  if (!allowedRoots.some((root) => resolvedSource === root || resolvedSource.startsWith(`${root}/`))) {
+  if (!allowedRoots.some((root) => pathIsWithinRoot(root, resolvedSource))) {
     throw new Error(`Captured artifact source path is outside allowed roots: ${sourcePath}`)
   }
   const sourceStats = await stat(resolvedSource)
@@ -153,6 +148,11 @@ async function readAllowedSource(sourcePath: string | undefined, allowedRoots: s
     throw new OversizedArtifactError(sourceStats.size)
   }
   return readFile(resolvedSource)
+}
+
+function pathIsWithinRoot(root: string, path: string): boolean {
+  const relativePath = relative(root, path)
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath))
 }
 
 class OversizedArtifactError extends Error {

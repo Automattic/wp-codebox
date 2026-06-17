@@ -11,6 +11,7 @@ import {
   buildRuntimeReplayReferenceIndex,
   artifactFileDigest,
   artifactManifestFile,
+  artifactManifestRelativePath,
   artifactManifestFileWithSha256,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
@@ -390,7 +391,7 @@ export class ArtifactBundleBuilder {
       runtime,
       files: manifestFiles.map((file) => ({
         ...file,
-        path: relative(source.artifactRoot, file.path),
+        path: artifactManifestRelativePath(source.artifactRoot, file.path),
       })),
     }
     await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
