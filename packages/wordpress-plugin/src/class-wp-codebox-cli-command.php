@@ -55,7 +55,7 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	/**
-	 * Stage a reviewed artifact apply through Data Machine pending actions.
+	 * Stage a reviewed artifact apply through the host approval adapter.
 	 *
 	 * @param array<int,string>   $args       Positional arguments.
 	 * @param array<string,mixed> $assoc_args Associated arguments.

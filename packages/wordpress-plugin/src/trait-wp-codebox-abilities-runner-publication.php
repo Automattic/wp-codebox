@@ -141,7 +141,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'timeout_seconds'     => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 600 ),
 				'env'                 => array( 'type' => 'object' ),
 				'context'             => array( 'type' => 'object' ),
-				'allow_local_fallback' => array( 'type' => 'boolean', 'default' => true ),
+				'allow_local_fallback' => array( 'type' => 'boolean', 'default' => false ),
 			),
 		);
 	}
@@ -206,9 +206,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$add_ability   = (string) ( $abilities['workspace_worktree_add'] ?? '' );
 
 		$checkout_path = (string) $normalized['checkout_path'];
-		$workspace_path_constant = (string) ( $backend['workspace_path_constant'] ?? '' );
-		if ( '' !== $checkout_path && '' !== $workspace_path_constant && ! defined( $workspace_path_constant ) ) {
-			define( $workspace_path_constant, rtrim( dirname( $checkout_path ), '/' ) );
+		$workspace_root_constant = (string) ( $backend['workspace_root_constant'] ?? '' );
+		if ( '' !== $checkout_path && '' !== $workspace_root_constant && ! defined( $workspace_root_constant ) ) {
+			define( $workspace_root_constant, rtrim( dirname( $checkout_path ), '/' ) );
 		}
 
 		$required = '' !== $checkout_path
@@ -488,7 +488,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input, (string) ( $result['backend'] ?? $backend_config['id'] ?? '' ) );
 		}
 
-		if ( false !== ( $input['allow_local_fallback'] ?? true ) && '' !== $normalized['workspace_path'] && is_dir( $normalized['workspace_path'] ) ) {
+		if ( true === ( $input['allow_local_fallback'] ?? false ) && '' !== $normalized['workspace_path'] && is_dir( $normalized['workspace_path'] ) ) {
 			return self::run_local_runner_workspace_command( $command, $normalized, $backend_input );
 		}
 

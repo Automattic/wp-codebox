@@ -159,17 +159,15 @@ explicit `approved_files[]` list, and the artifact content digest before handing
 the exact approved `files/patch.diff` to the `wp_codebox_apply_approved_artifact`
 adapter filter.
 
-When Data Machine is installed, `wp-codebox/stage-artifact-apply` stages the same
-apply input as a Data Machine pending action with kind `wp_codebox_apply_back`.
-The pending action preview includes `files/review.json`, canonical changed files,
-normalized test results, and the approved file list. Accepting the pending action
-calls the registered handler, which delegates back to
-`wp-codebox/apply-approved-artifact`; rejecting it leaves the artifact untouched.
+`wp-codebox/stage-artifact-apply` stages the same apply input through the host
+approval adapter. A host approval adapter should present `files/review.json`,
+canonical changed files, normalized test results, and the approved file list.
+Accepting the staged action delegates back to `wp-codebox/apply-approved-artifact`;
+rejecting it leaves the artifact untouched.
 
-Without Data Machine pending actions, `stage-artifact-apply` fails closed with
-`wp_codebox_datamachine_pending_actions_missing`. Direct reviewed apply remains
-available through `apply-approved-artifact` for hosts that provide their own
-approval surface.
+Without a host approval adapter, `stage-artifact-apply` fails closed. Direct
+reviewed apply remains available through `apply-approved-artifact` for hosts that
+provide their own approval surface.
 
 ## WP-CLI
 

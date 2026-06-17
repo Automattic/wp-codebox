@@ -186,8 +186,8 @@ Transfer checklist:
 - `wp-codebox/list-artifacts`, `wp-codebox/get-artifact`, and
   `wp-codebox/discard-artifact` operate inside the configured artifact root with
   path validation.
-- `wp-codebox/stage-artifact-apply` stages a review action when Data Machine
-  pending actions are available and fails closed when they are not.
+- `wp-codebox/stage-artifact-apply` stages a review action through the host
+  approval adapter and fails closed when no adapter is available.
 - `wp-codebox/apply-approved-artifact` validates bundle id, content digest,
   changed files, approved file list, and patch hash before delegating through the
   `wp_codebox_apply_approved_artifact` adapter filter.
