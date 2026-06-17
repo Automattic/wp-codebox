@@ -72,7 +72,50 @@ $explicit_plan_payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	)
 );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
+$intent_task = WP_Codebox_Browser_Task_Builder::browser_task_input_from_intent( array(
+	'product_intent' => array(
+		'product' => 'demo-product',
+		'orchestrator' => 'demo-orchestrator',
+		'goal' => 'Build from intent.',
+		'target_kind' => 'new-site',
+		'target_ref' => 'project-7',
+	),
+	'active_project_context' => array(
+		'project_id' => 7,
+		'project_kind' => 'static-site',
+	),
+	'desired_capabilities' => array( 'Artifact.Website-Bundle', 'artifact.website-bundle' ),
+	'desired_tools' => array( 'filesystem-write', 'browser.review', 'filesystem-write' ),
+	'artifacts' => array(
+		'expected' => array( 'website-artifact-bundle', 'static-site-importer-report' ),
+		'base_path' => '/wordpress/wp-content/uploads/demo-product',
+		'base_url' => '/wp-content/uploads/demo-product',
+		'preview_url' => '/?preview=1',
+		'task_path' => '/tmp/demo-task.json',
+		'result_path' => '/tmp/demo-result.json',
+		'invocation' => array( 'type' => 'task', 'hook' => 'demo_task' ),
+		'capture_paths' => array( array( 'path' => '/wordpress/wp-content/uploads/demo-product/report.json', 'name' => 'report' ) ),
+	),
+	'callback_refs' => array(
+		'success' => array( 'ability' => 'demo/task-success', 'ref' => 'project-7' ),
+	),
+	'session_id' => 'demo-session',
+) );
+
+$fanout_request = WP_Codebox_Browser_Task_Builder::fanout_request( array(
+	'concurrency' => 2,
+	'workers' => array(
+		array(
+			'id' => 'Planner Worker',
+			'agent' => 'demo-agent',
+			'goal' => 'Plan the artifact.',
+			'context' => array( 'role' => 'planner' ),
+		),
+	),
+	'orchestrator' => array( 'id' => 'demo-orchestrator' ),
+) );
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -99,5 +142,27 @@ assert.equal(result.local_task.context.caller, "test")
 assert.deepEqual(result.local_task.placement.allowed_targets, ["browser"])
 assert.deepEqual(result.local_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
 assert.equal(result.local_task.browser_runner.invocation.name, "agents/chat")
+assert.equal(result.intent_task.goal, "Build from intent.")
+assert.equal(result.intent_task.target.kind, "new-site")
+assert.equal(result.intent_task.target.ref, "project-7")
+assert.deepEqual(result.intent_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
+assert.deepEqual(result.intent_task.allowed_tools, ["filesystem-write", "browser.review"])
+assert.equal(result.intent_task.sandbox_tool_policy.tools[0].id, "filesystem-write")
+assert.equal(result.intent_task.sandbox_tool_policy.tools[0].runtime_tool_id, "filesystem_write")
+assert.equal(result.intent_task.sandbox_tool_policy.tools[1].runtime_tool_id, "browser_review")
+assert.equal(result.intent_task.context.product, "demo-product")
+assert.equal(result.intent_task.context.active_project_context.project_id, 7)
+assert.equal(result.intent_task.context.callback_refs.success.ability, "demo/task-success")
+assert.equal(result.intent_task.playground.scope, "demo-session")
+assert.equal(result.intent_task.playground.artifact_base_path, "/wordpress/wp-content/uploads/demo-product")
+assert.equal(result.intent_task.playground.preview_url, "/?preview=1")
+assert.equal(result.intent_task.browser_runner.task_path, "/tmp/demo-task.json")
+assert.equal(result.intent_task.browser_runner.result_path, "/tmp/demo-result.json")
+assert.equal(result.intent_task.browser_runner.invocation.hook, "demo_task")
+assert.equal(result.intent_task.callback_refs.success.ref, "project-7")
+assert.equal(result.fanout_request.schema, "wp-codebox/agent-fanout-request/v1")
+assert.equal(result.fanout_request.concurrency, 2)
+assert.equal(result.fanout_request.workers[0].schema, "wp-codebox/agent-fanout-worker/v1")
+assert.equal(result.fanout_request.workers[0].id, "planner-worker")
 
 console.log("browser task builder ok")
