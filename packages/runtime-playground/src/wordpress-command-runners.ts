@@ -3,6 +3,7 @@ import { promoteBrowserMetricsToBenchResults } from "./browser-metrics.js"
 import { writePluginCheckArtifacts, writeThemeCheckArtifacts, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
 import {
   abilityInputFromArgs,
+  abilityResponseToCommandEnvelope,
   abilityPhpCode,
   argValue,
   benchRunCode,
@@ -29,7 +30,7 @@ import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playgr
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import type { ExecutionSpec, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import type { ExecutionSpec, MountSpec, RuntimeCommandResultEnvelope, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
@@ -298,7 +299,7 @@ export async function runAbilityCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<string> {
+}): Promise<RuntimeCommandResultEnvelope> {
   const name = argValue(spec.args ?? [], "name")?.trim()
   if (!name) {
     throw new Error("wordpress.ability requires name=<ability-name>")
@@ -307,7 +308,7 @@ export async function runAbilityCommand({
   const input = abilityInputFromArgs(spec.args ?? [])
   const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode(name, input)) })
   assertPlaygroundResponseOk("wordpress.ability", response)
-  return response.text
+  return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input)
 }
 
 export async function runRestRequestCommand({

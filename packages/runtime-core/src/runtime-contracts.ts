@@ -523,8 +523,30 @@ export interface ExecutionResult {
   exitCode: number
   stdout: string
   stderr: string
+  result?: RuntimeCommandResultEnvelope
   startedAt: string
   finishedAt: string
+}
+
+export const RUNTIME_COMMAND_RESULT_SCHEMA = "wp-codebox/runtime-command-result/v1" as const
+
+export type RuntimeCommandResultStatus = "ok" | "error" | (string & {})
+
+export interface RuntimeCommandResultError {
+  code: string
+  message: string
+  data?: unknown
+}
+
+export interface RuntimeCommandResultEnvelope {
+  schema: typeof RUNTIME_COMMAND_RESULT_SCHEMA
+  status: RuntimeCommandResultStatus
+  stdout?: string
+  stderr?: string
+  json?: unknown
+  diagnostics?: unknown
+  artifactRefs?: RuntimeEpisodeTraceRef[]
+  error?: RuntimeCommandResultError
 }
 
 export interface ObservationSpec {

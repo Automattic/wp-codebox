@@ -1,7 +1,9 @@
-import { createHostToolTransportError, executeHostTool, type HostToolRegistry, type JsonValue } from "@automattic/wp-codebox-core"
+import { createHostToolTransportError, createRuntimeCommandResultEnvelope, executeHostTool, type HostToolRegistry, type JsonValue, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
 import { getCommandDefinition, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core/contracts"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 import { argValue } from "./command-args.js"
+
+export type PlaygroundCommandOutput = string | RuntimeCommandResultEnvelope
 
 interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>
@@ -10,7 +12,7 @@ interface PlaygroundCommandRuntime {
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
-  runAbility(spec: ExecutionSpec): Promise<string>
+  runAbility(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runBench(spec: ExecutionSpec): Promise<string>
   runPhpunit(spec: ExecutionSpec): Promise<string>
   runPluginCheck(spec: ExecutionSpec): Promise<string>
@@ -47,13 +49,13 @@ const playgroundCommandHandlers = {
   "wordpress.visual-compare": (runtime, spec) => runtime.runVisualCompare(spec),
   "wordpress.editor-open": (runtime, spec) => runtime.runEditorOpen(spec),
   "wordpress.editor-actions": (runtime, spec) => runtime.runEditorActions(spec),
-} satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<string>>
+} satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<PlaygroundCommandOutput>>
 
 export function playgroundRuntimeCommandIds(): string[] {
   return Object.keys(playgroundCommandHandlers)
 }
 
-export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime, spec: ExecutionSpec, hostTools?: HostToolRegistry): Promise<string> {
+export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime, spec: ExecutionSpec, hostTools?: HostToolRegistry): Promise<PlaygroundCommandOutput> {
   const hostTool = hostTools?.get(spec.command)
   if (hostTool) {
     const startedAt = new Date().toISOString()
@@ -61,7 +63,8 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
     try {
       input = hostToolInput(spec.args ?? [])
     } catch (error) {
-      return JSON.stringify(createHostToolTransportError(hostTool, spec.command, startedAt, "host-tool-invalid-input-json", error instanceof Error ? error.message : String(error)))
+      const result = createHostToolTransportError(hostTool, spec.command, startedAt, "host-tool-invalid-input-json", error instanceof Error ? error.message : String(error))
+      return createRuntimeCommandResultEnvelope({ status: "error", stdout: `${JSON.stringify(result)}\n`, json: result, error: { code: result.error.code, message: result.error.message }, diagnostics: result.diagnostics })
     }
 
     const result = await executeHostTool(hostTool, input, {
@@ -69,7 +72,7 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
       policyCommand: spec.command,
       metadata: { cwd: spec.cwd ?? null, timeoutMs: spec.timeoutMs ?? null },
     })
-    return JSON.stringify(result)
+    return createRuntimeCommandResultEnvelope({ status: result.status, stdout: `${JSON.stringify(result)}\n`, json: result, ...(result.status === "error" ? { error: { code: result.error.code, message: result.error.message } } : {}), diagnostics: result.diagnostics })
   }
 
   const definition = getCommandDefinition(spec.command)

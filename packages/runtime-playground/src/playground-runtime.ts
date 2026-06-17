@@ -40,6 +40,7 @@ import type {
   RuntimeRestoreSpec,
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
+  RuntimeCommandResultEnvelope,
   Snapshot,
 } from "@automattic/wp-codebox-core"
 function now(): string {
@@ -48,6 +49,17 @@ function now(): string {
 
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function commandExitCode(envelope: RuntimeCommandResultEnvelope | undefined): number {
+  return envelope?.status === "error" ? 1 : 0
+}
+
+function commandEnvelopeStdout(envelope: RuntimeCommandResultEnvelope): string {
+  if (typeof envelope.stdout === "string") {
+    return envelope.stdout
+  }
+  return envelope.json === undefined ? "" : `${JSON.stringify(envelope.json, null, 2)}\n`
 }
 
 interface ReviewerAuthBootstrapRecord {
@@ -267,13 +279,16 @@ class PlaygroundRuntime implements Runtime {
     this.activeExecutionAbortControllers.add(abortController)
     this.activeExecutionSignal = abortController.signal
     try {
+      const output = await executePlaygroundCommand(this, spec, this.hostTools)
+      const envelope = typeof output === "string" ? undefined : output
       const result: ExecutionResult = {
         id: commandId,
         command: spec.command,
         args: spec.args ?? [],
-        exitCode: 0,
-        stdout: await executePlaygroundCommand(this, spec, this.hostTools),
-        stderr: "",
+        exitCode: commandExitCode(envelope),
+        stdout: typeof output === "string" ? output : commandEnvelopeStdout(output),
+        stderr: envelope?.stderr ?? "",
+        ...(envelope ? { result: envelope } : {}),
         startedAt,
         finishedAt: now(),
       }
@@ -932,7 +947,7 @@ class PlaygroundRuntime implements Runtime {
     return createRuntimeWpCliBridge((argv) => this.runWpCliCommand(server, argv))
   }
 
-  async runAbility(spec: ExecutionSpec): Promise<string> {
+  async runAbility(spec: ExecutionSpec): Promise<RuntimeCommandResultEnvelope> {
     const server = await this.bootPlayground()
     return runAbilityCommand({
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
@@ -1062,6 +1077,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
               exitCode: command.exitCode,
               stdout: command.stdout,
               stderr: command.stderr,
+              ...(command.result ? { result: command.result } : {}),
               startedAt: command.startedAt,
               finishedAt: command.finishedAt,
             }
