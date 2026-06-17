@@ -121,6 +121,16 @@ final class WP_Codebox_Inheritance {
 				$entry['credentials'] = $credentials;
 			}
 
+			$bridge = self::sanitize_connector_bridge( $connector['bridge'] ?? null );
+			if ( ! empty( $bridge ) ) {
+				$entry['bridge'] = $bridge;
+			}
+
+			$capability_scope = array_values( array_filter( self::string_list( $connector['capability_scope'] ?? $connector['capabilityScope'] ?? array() ) ) );
+			if ( ! empty( $capability_scope ) ) {
+				$entry['capabilityScope'] = array_values( array_unique( $capability_scope ) );
+			}
+
 			$sanitized[] = $entry;
 		}
 
@@ -168,6 +178,46 @@ final class WP_Codebox_Inheritance {
 			}
 
 			$entry['secrets'][] = $secret_entry;
+		}
+
+		return $entry;
+	}
+
+	/** @return array<string,mixed> */
+	private static function sanitize_connector_bridge( mixed $bridge ): array {
+		if ( ! is_array( $bridge ) ) {
+			return array();
+		}
+
+		$entry = array(
+			'schema' => 'wp-codebox/browser-provider-bridge-connector/v1',
+		);
+		$authentication = trim( (string) ( $bridge['authentication'] ?? '' ) );
+		if ( '' !== $authentication ) {
+			$entry['authentication'] = $authentication;
+		}
+
+		$base_urls = array();
+		foreach ( is_array( $bridge['base_urls'] ?? null ) ? $bridge['base_urls'] : ( is_array( $bridge['baseUrls'] ?? null ) ? $bridge['baseUrls'] : array() ) as $candidate ) {
+			if ( ! is_scalar( $candidate ) ) {
+				continue;
+			}
+
+			$base_url = trim( (string) $candidate );
+			if ( '' === $base_url || ! in_array( strtolower( (string) wp_parse_url( $base_url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) {
+				continue;
+			}
+
+			$base_urls[] = rtrim( $base_url, '/' ) . '/';
+		}
+
+		if ( ! empty( $base_urls ) ) {
+			$entry['baseUrls'] = array_values( array_unique( $base_urls ) );
+		}
+
+		$timeout = isset( $bridge['timeout'] ) && is_numeric( $bridge['timeout'] ) ? (int) $bridge['timeout'] : 0;
+		if ( $timeout > 0 ) {
+			$entry['timeout'] = $timeout;
 		}
 
 		return $entry;

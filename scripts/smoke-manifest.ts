@@ -37,6 +37,7 @@ export const smokeGroups = {
       npmScript("test:browser-task-builder"),
       npmScript("test:host-recipe-builder"),
       npmScript("test:browser-runner-template"),
+      npmScript("test:browser-provider-bridge-inheritance"),
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),

@@ -123,7 +123,8 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		 * @param array<string,mixed>     $request  Redacted adapter request.
 		 * @param array<string,mixed>     $input    Original ability input.
 		 */
-		$policy = apply_filters( 'wp_codebox_browser_provider_bridge_policy', null, $provider, $request, $input );
+		$policy = self::default_provider_policy( $provider, $request, $input );
+		$policy = apply_filters( 'wp_codebox_browser_provider_bridge_policy', $policy, $provider, $request, $input );
 		if ( empty( $policy ) ) {
 			return array();
 		}
@@ -140,6 +141,60 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		}
 
 		return $policy;
+	}
+
+	/** @param array<string,mixed> $request Redacted adapter request. @param array<string,mixed> $input Original ability input. @return array<string,mixed> */
+	private static function default_provider_policy( string $provider, array $request, array $input ): array {
+		$connector = is_array( $request['connector'] ?? null ) ? $request['connector'] : array();
+		if ( $provider !== sanitize_key( (string) ( $connector['provider'] ?? $connector['name'] ?? '' ) ) ) {
+			return array();
+		}
+
+		$scope = WP_Codebox_Agent_Task::string_list( $connector['capabilityScope'] ?? $connector['capability_scope'] ?? array() );
+		if ( ! in_array( 'browser-connector:request', $scope, true ) ) {
+			return array();
+		}
+
+		$bridge = is_array( $connector['bridge'] ?? null ) ? $connector['bridge'] : array();
+		if ( empty( $bridge ) ) {
+			return array();
+		}
+
+		$allowed_base_urls = self::allowed_bridge_base_urls( $bridge );
+		if ( empty( $allowed_base_urls ) ) {
+			return array();
+		}
+
+		$timeout = isset( $bridge['timeout'] ) && is_numeric( $bridge['timeout'] ) ? (int) $bridge['timeout'] : 0;
+
+		return array_filter(
+			array(
+				'provider'          => $provider,
+				'allowed_base_urls' => $allowed_base_urls,
+				'authentication'    => (string) ( $bridge['authentication'] ?? 'php-ai-client' ),
+				'timeout'           => $timeout > 0 ? $timeout : null,
+			),
+			static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $bridge Connector bridge metadata. @return string[] */
+	private static function allowed_bridge_base_urls( array $bridge ): array {
+		$base_urls = array();
+		foreach ( is_array( $bridge['baseUrls'] ?? null ) ? $bridge['baseUrls'] : ( is_array( $bridge['base_urls'] ?? null ) ? $bridge['base_urls'] : array() ) as $candidate ) {
+			if ( ! is_scalar( $candidate ) ) {
+				continue;
+			}
+
+			$base_url = trim( (string) $candidate );
+			if ( '' === $base_url || ! in_array( strtolower( (string) wp_parse_url( $base_url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) {
+				continue;
+			}
+
+			$base_urls[] = rtrim( $base_url, '/' ) . '/';
+		}
+
+		return array_values( array_unique( $base_urls ) );
 	}
 
 	/** @param array<string,mixed> $policy Provider policy. @param array<string,mixed> $request Redacted adapter request. @param array<string,mixed> $input Original ability input. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
