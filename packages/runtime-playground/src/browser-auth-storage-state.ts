@@ -36,6 +36,22 @@ export interface WordPressFixtureUserStorageStateEnvelope {
   storageState: BrowserAuthStorageState
 }
 
+export interface BrowserStorageStateImportSummary {
+  status: "ready" | "unsupported" | "error"
+  source: "inline" | "file"
+  schema?: string
+  kind?: string
+  cookieCount: number
+  cookieHosts: Array<{ host: string; cookieCount: number }>
+  originCount: number
+  diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: Record<string, unknown> }>
+}
+
+export interface BrowserStorageStateImportResult {
+  storageState: BrowserAuthStorageState
+  summary: BrowserStorageStateImportSummary
+}
+
 export function browserStorageStateFromWordPressAuthCookies(cookies: Array<Partial<BrowserStorageStateCookie>>): BrowserAuthStorageState {
   return {
     cookies: cookies.map((cookie) => ({
@@ -50,6 +66,92 @@ export function browserStorageStateFromWordPressAuthCookies(cookies: Array<Parti
     })),
     origins: [],
   }
+}
+
+export function normalizeBrowserStorageStatePayload(payload: unknown, source: "inline" | "file"): BrowserStorageStateImportResult {
+  const diagnostics: BrowserStorageStateImportSummary["diagnostics"] = []
+  const object = isRecord(payload) ? payload : {}
+  const schema = typeof object.schema === "string" ? object.schema : undefined
+  const kind = typeof object.kind === "string" ? object.kind : undefined
+  const stateCandidate = isRecord(object.storageState) ? object.storageState : object
+  const cookies = Array.isArray(stateCandidate.cookies) ? stateCandidate.cookies : undefined
+  const origins = Array.isArray(stateCandidate.origins) ? stateCandidate.origins : undefined
+
+  if (!isRecord(payload)) {
+    diagnostics.push({ code: "storage-state-not-object", severity: "error", message: "storage-state must be a Playwright storageState object or wp-codebox storage-state envelope" })
+  }
+  if (!cookies) {
+    diagnostics.push({ code: "storage-state-cookies-invalid", severity: "error", message: "storage-state cookies must be an array" })
+  }
+  if (!origins) {
+    diagnostics.push({ code: "storage-state-origins-invalid", severity: "error", message: "storage-state origins must be an array" })
+  }
+  if (schema && schema !== "wp-codebox/browser-auth-storage-state/v1") {
+    diagnostics.push({ code: "storage-state-schema-unsupported", severity: "error", message: "storage-state envelope schema is unsupported", details: { schema } })
+  }
+
+  const storageState: BrowserAuthStorageState = {
+    cookies: (cookies ?? []).map((cookie) => normalizeBrowserStorageStateCookie(cookie)),
+    origins: (origins ?? []).map((origin) => normalizeBrowserStorageStateOrigin(origin)),
+  }
+  const invalidCookies = storageState.cookies.filter((cookie) => !cookie.name || !cookie.domain).length
+  if (invalidCookies > 0) {
+    diagnostics.push({ code: "storage-state-cookie-unsupported", severity: "error", message: "storage-state cookies require name and domain fields", details: { invalidCookies } })
+  }
+
+  return {
+    storageState,
+    summary: {
+      status: diagnostics.some((diagnostic) => diagnostic.severity === "error") ? "unsupported" : "ready",
+      source,
+      ...(schema ? { schema } : {}),
+      ...(kind ? { kind } : {}),
+      cookieCount: storageState.cookies.length,
+      cookieHosts: browserStorageStateCookieHostSummary(storageState.cookies),
+      originCount: storageState.origins.length,
+      diagnostics,
+    },
+  }
+}
+
+export function browserStorageStateCookieHostSummary(cookies: Array<{ domain?: string }>): Array<{ host: string; cookieCount: number }> {
+  const counts = new Map<string, number>()
+  for (const cookie of cookies) {
+    const host = String(cookie.domain ?? "").trim().toLowerCase().replace(/:\d+$/, "")
+    if (!host) continue
+    counts.set(host, (counts.get(host) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([host, cookieCount]) => ({ host, cookieCount }))
+}
+
+function normalizeBrowserStorageStateCookie(cookie: unknown): BrowserStorageStateCookie {
+  const object = isRecord(cookie) ? cookie : {}
+  return {
+    name: String(object.name ?? ""),
+    value: String(object.value ?? ""),
+    domain: String(object.domain ?? ""),
+    path: typeof object.path === "string" && object.path.length > 0 ? object.path : "/",
+    expires: typeof object.expires === "number" ? object.expires : Math.floor(Date.now() / 1000) + 3600,
+    httpOnly: object.httpOnly !== false,
+    secure: object.secure === true,
+    sameSite: object.sameSite === "Strict" || object.sameSite === "None" ? object.sameSite : "Lax",
+  }
+}
+
+function normalizeBrowserStorageStateOrigin(origin: unknown): BrowserAuthStorageState["origins"][number] {
+  const object = isRecord(origin) ? origin : {}
+  const localStorage = Array.isArray(object.localStorage) ? object.localStorage : []
+  return {
+    origin: String(object.origin ?? ""),
+    localStorage: localStorage.map((entry) => {
+      const item = isRecord(entry) ? entry : {}
+      return { name: String(item.name ?? ""), value: String(item.value ?? "") }
+    }),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 export function wordpressFixtureUserStorageStatePhpCode({

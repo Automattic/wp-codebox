@@ -290,6 +290,20 @@ Callers own when to run the PHP and where to persist the returned storage-state
 JSON. Product policy, production identifiers, and cross-site account mapping stay
 outside WP Codebox.
 
+`wordpress.browser-probe` and `wordpress.browser-actions` can import a reusable
+storage state with `storage-state=<json>` or `storage-state=@./state.json`. The
+value may be a raw Playwright `storageState` object or the
+`wp-codebox/browser-auth-storage-state/v1` envelope shown above. WP Codebox passes
+the state directly to a fresh Playwright context and records only redacted
+provenance in browser summaries: source type, optional schema/kind, cookie count,
+cookie hosts, origin count, and diagnostics. Cookie values and localStorage values
+are never written to browser evidence artifacts.
+
+Use one browser authentication source per command. `auth=wordpress-admin` creates
+short-lived in-memory cookies from the disposable WordPress sandbox; `storage-state`
+imports caller-provided reusable state. Supplying both is rejected with structured
+storage-state diagnostics rather than silently preferring one source.
+
 ## Recipe Output Evidence
 
 `recipe-run --json` returns `wp-codebox/recipe-run/v1`. Browser command sidecars

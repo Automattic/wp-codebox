@@ -6,6 +6,7 @@ import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
+import { normalizeBrowserStorageStatePayload, type BrowserAuthStorageState, type BrowserStorageStateImportSummary } from "./browser-auth-storage-state.js"
 import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
@@ -43,6 +44,7 @@ interface BrowserProbeRunPlan {
   prePageScript?: string
   script?: string
   authRequest?: { userId: number }
+  storageStateImport?: BrowserStorageStateImport
   failFast: boolean
   stallTimeoutMs: number
   wallTimeoutMs: number
@@ -59,7 +61,13 @@ interface BrowserActionsRunPlan {
   networkSettleTimeoutMs: number
   requestedViewport?: { width: number; height: number }
   authRequest?: { userId: number }
+  storageStateImport?: BrowserStorageStateImport
   maxDomSnapshotElements: number
+}
+
+interface BrowserStorageStateImport {
+  storageState: BrowserAuthStorageState
+  summary: BrowserStorageStateImportSummary
 }
 
 interface BrowserRunPlan {
@@ -342,7 +350,7 @@ async function runSingleBrowserProbeCommand({
   onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
-  const runPlan = plan ?? browserProbeRunPlanFromArgs(args, profileId)
+  const runPlan = plan ?? await browserProbeRunPlanFromArgs(args, profileId)
   if (!runPlan.url) {
     throw new Error("wordpress.browser-probe requires url=<path-or-url>")
   }
@@ -363,6 +371,10 @@ async function runSingleBrowserProbeCommand({
   const prePageScript = runPlan.prePageScript
   const script = runPlan.script
   const authRequest = runPlan.authRequest
+  const storageStateImport = runPlan.storageStateImport
+  if (authRequest && storageStateImport) {
+    throw new Error(`${command} supports one browser authentication source at a time: use auth=wordpress-admin or storage-state, not both`)
+  }
   const failFast = runPlan.failFast
   const stallTimeoutMs = runPlan.stallTimeoutMs
   const wallTimeoutMs = runPlan.wallTimeoutMs
@@ -430,9 +442,10 @@ async function runSingleBrowserProbeCommand({
       abortHandler()
       throw pendingError
     }
-    context = browserPreviewNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
+    context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
+        ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
         ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
         ...(requestedContext.timezone ? { timezoneId: requestedContext.timezone } : {}),
         ...(requestedContext.userAgent ? { userAgent: requestedContext.userAgent } : {}),
@@ -454,6 +467,9 @@ async function runSingleBrowserProbeCommand({
         progress.mark("checkpoint", normalized.timestamp, normalized)
         onProgress({ command, phase: "checkpoint", checkpoint: normalized, progress: progress.summary() })
       })
+    }
+    if (storageStateImport) {
+      authSummary = browserStorageStateAuthSummary(storageStateImport.summary)
     }
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command, cookieUrls: topology.authCookieUrls([targetUrl]), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
@@ -841,7 +857,7 @@ function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
   return profile
 }
 
-function browserProbeRunPlanFromArgs(args: string[], profileId?: string): BrowserProbeRunPlan {
+async function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Promise<BrowserProbeRunPlan> {
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("console")
@@ -863,6 +879,7 @@ function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Browse
     prePageScript: argValue(args, "pre-page-script"),
     script: argValue(args, "script"),
     authRequest: browserAuthRequest(args),
+    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-probe"),
     failFast: strictBooleanArg(args, "fail-fast", false),
     stallTimeoutMs: durationArg(args, "stall-timeout", 0),
     wallTimeoutMs: durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs),
@@ -2119,6 +2136,10 @@ export async function runBrowserActionsCommand({
   const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs: totalTimeoutMs, networkSettleTimeoutMs: runPlan.networkSettleTimeoutMs })
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
+  const storageStateImport = runPlan.storageStateImport
+  if (authRequest && storageStateImport) {
+    throw new Error("wordpress.browser-actions supports one browser authentication source at a time: use auth=wordpress-admin or storage-state, not both")
+  }
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-actions", operation: "browser-actions" })
 
@@ -2146,7 +2167,9 @@ export async function runBrowserActionsCommand({
   let wordpressDiagnosticsReady = false
 
   try {
-    const context = browserPreviewNeedsContextRouting(networkPolicy) ? await browser.newContext() : null
+    const context = browserPreviewNeedsContextRouting(networkPolicy) || !!storageStateImport ? await browser.newContext({
+      ...(storageStateImport ? { storageState: storageStateImport.storageState } : {}),
+    }) : null
     if (context) {
       await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.effectiveOrigin)
     }
@@ -2162,6 +2185,9 @@ export async function runBrowserActionsCommand({
       })
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
+    if (storageStateImport) {
+      authSummary = browserStorageStateAuthSummary(storageStateImport.summary)
+    }
     if (authRequest) {
       authSummary = await installWordPressAdminAuthCookies({ command: "wordpress.browser-actions", cookieUrls: topology.authCookieUrls(browserActionTargetUrls(steps, preview.effectiveOrigin, requestedUrl)), page, runPlaygroundCommand, runtimeSpec, server, userId: authRequest.userId })
     }
@@ -2432,6 +2458,7 @@ async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserAct
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
     authRequest: browserAuthRequest(args),
+    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions"),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
   }
 }
@@ -5297,6 +5324,55 @@ function browserAuthRequest(args: string[]): { userId: number } | undefined {
     throw new Error(`Browser auth supports wordpress-admin: ${auth}`)
   }
   return { userId: positiveIntegerArg(args, "auth-user-id", 1) }
+}
+
+async function browserStorageStateImportFromArgs(args: string[], command: string): Promise<BrowserStorageStateImport | undefined> {
+  const raw = argValue(args, "storage-state")?.trim()
+  if (!raw) {
+    return undefined
+  }
+
+  const source = raw.startsWith("@") ? "file" : "inline"
+  const text = source === "file" ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch (error) {
+    throw new BrowserStorageStateImportError(`${command} storage-state must be valid JSON`, {
+      status: "error",
+      source,
+      cookieCount: 0,
+      cookieHosts: [],
+      originCount: 0,
+      diagnostics: [{ code: "storage-state-json-invalid", severity: "error", message: error instanceof Error ? error.message : String(error) }],
+    })
+  }
+
+  const normalized = normalizeBrowserStorageStatePayload(payload, source)
+  if (normalized.summary.status !== "ready") {
+    throw new BrowserStorageStateImportError(`${command} storage-state is unsupported`, normalized.summary)
+  }
+  return normalized
+}
+
+function browserStorageStateAuthSummary(summary: BrowserStorageStateImportSummary): BrowserProbeAuthSummary {
+  return {
+    mode: "storage-state",
+    storageState: summary,
+    cookieCount: summary.cookieCount,
+    cookieHosts: summary.cookieHosts,
+  }
+}
+
+class BrowserStorageStateImportError extends Error {
+  constructor(message: string, readonly storageState: BrowserStorageStateImportSummary) {
+    super(message)
+    this.name = "BrowserStorageStateImportError"
+  }
+
+  toJSON(): { name: string; message: string; storageState: BrowserStorageStateImportSummary } {
+    return { name: this.name, message: this.message, storageState: this.storageState }
+  }
 }
 
 function now(): string {

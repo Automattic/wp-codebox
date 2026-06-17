@@ -188,10 +188,20 @@ export interface BrowserEditorSaveSummary {
 }
 
 export interface BrowserProbeAuthSummary {
-  mode: "wordpress-admin"
-  userId: number
+  mode: "wordpress-admin" | "storage-state"
+  userId?: number
   cookieCount: number
   cookieHosts: Array<{ host: string; cookieCount: number }>
+  storageState?: {
+    status: "ready" | "unsupported" | "error"
+    source: "inline" | "file"
+    schema?: string
+    kind?: string
+    cookieCount: number
+    cookieHosts: Array<{ host: string; cookieCount: number }>
+    originCount: number
+    diagnostics: Array<{ code: string; severity: "error" | "warning" | "info"; message: string; details?: Record<string, unknown> }>
+  }
 }
 
 export interface BrowserEditorCanvasProbeSummary {
