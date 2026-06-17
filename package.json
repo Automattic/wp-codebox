@@ -62,6 +62,7 @@
     "test:generic-primitives": "tsx tests/generic-primitives.test.ts",
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
+    "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "check": "npm run smoke -- --group=check"
   },
   "workspaces": [
