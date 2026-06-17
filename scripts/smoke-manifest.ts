@@ -31,6 +31,7 @@ export const smokeGroups = {
     commands: [
       npmScript("build"),
       npmScript("test:generic-primitives"),
+      npmScript("test:php-json-codec"),
       npmScript("test:browser-task-builder"),
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),

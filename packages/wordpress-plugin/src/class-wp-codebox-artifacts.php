@@ -315,9 +315,9 @@ final class WP_Codebox_Artifacts {
 			'tests'  => array(),
 		);
 
-		file_put_contents( $tmp . DIRECTORY_SEPARATOR . 'metadata.json', $this->json_encode_pretty( $metadata ) );
-		file_put_contents( $tmp . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'review.json', $this->json_encode_pretty( $review ) );
-		file_put_contents( $tmp . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'test-results.json', $this->json_encode_pretty( $test_results ) );
+		WP_Codebox_Json::write_file( $tmp . DIRECTORY_SEPARATOR . 'metadata.json', $metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		WP_Codebox_Json::write_file( $tmp . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'review.json', $review, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		WP_Codebox_Json::write_file( $tmp . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'test-results.json', $test_results, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 
 		$manifest = array(
 			'id'            => $bundle_id,
@@ -337,7 +337,7 @@ final class WP_Codebox_Artifacts {
 			),
 		);
 		$manifest['files'][0]['sha256']['value'] = $this->manifest_self_hash( $manifest );
-		file_put_contents( $tmp . DIRECTORY_SEPARATOR . 'manifest.json', $this->json_encode_pretty( $manifest ) );
+		WP_Codebox_Json::write_file( $tmp . DIRECTORY_SEPARATOR . 'manifest.json', $manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 
 		if ( ! rename( $tmp, $destination ) ) {
 			$this->remove_directory( $tmp );
@@ -1113,9 +1113,7 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function json_encode_pretty( mixed $value ): string {
-		$json = json_encode( $value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-
-		return false === $json ? "{}\n" : $json . "\n";
+		return WP_Codebox_Json::encode( $value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, '{}' ) . "\n";
 	}
 
 	private function mkdir_p( string $path ): bool {
@@ -1238,8 +1236,8 @@ final class WP_Codebox_Artifacts {
 			return new WP_Error( 'wp_codebox_artifact_file_missing', 'Artifact file is missing.', array( 'status' => 400, 'path' => $path ) );
 		}
 
-		$decoded = json_decode( $contents, true );
-		if ( ! is_array( $decoded ) ) {
+		$decoded = WP_Codebox_Json::decode_array( (string) $contents );
+		if ( null === $decoded ) {
 			return new WP_Error( 'wp_codebox_artifact_json_invalid', 'Artifact JSON could not be decoded.', array( 'status' => 400, 'path' => $path ) );
 		}
 
@@ -1566,12 +1564,9 @@ final class WP_Codebox_Artifacts {
 		}
 
 		$record = $this->strip_null_values( $record );
-		$line   = function_exists( 'wp_json_encode' ) ? wp_json_encode( $record, JSON_UNESCAPED_SLASHES ) : json_encode( $record, JSON_UNESCAPED_SLASHES );
-		if ( false === $line ) {
+		if ( ! WP_Codebox_Json::append_jsonl( $this->apply_audit_path( $root ), $record, JSON_UNESCAPED_SLASHES, FILE_APPEND | LOCK_EX ) ) {
 			return;
 		}
-
-		file_put_contents( $this->apply_audit_path( $root ), $line . "\n", FILE_APPEND | LOCK_EX );
 	}
 
 	/** @param array<string,mixed> $bundle Artifact bundle. @param array<string,mixed> $decision Normalized decision. @param mixed $result Review adapter result. */
@@ -1603,12 +1598,9 @@ final class WP_Codebox_Artifacts {
 		}
 
 		$record = $this->strip_null_values( $record );
-		$line   = function_exists( 'wp_json_encode' ) ? wp_json_encode( $record, JSON_UNESCAPED_SLASHES ) : json_encode( $record, JSON_UNESCAPED_SLASHES );
-		if ( false === $line ) {
+		if ( ! WP_Codebox_Json::append_jsonl( $this->review_audit_path( $root ), $record, JSON_UNESCAPED_SLASHES, FILE_APPEND | LOCK_EX ) ) {
 			return;
 		}
-
-		file_put_contents( $this->review_audit_path( $root ), $line . "\n", FILE_APPEND | LOCK_EX );
 	}
 
 	private function apply_audit_path( string $root ): string {

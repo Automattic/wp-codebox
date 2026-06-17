@@ -683,20 +683,13 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $data Data to write. */
 	private function write_json_file( string $path, array $data ): void {
-		$this->ensure_directory( dirname( $path ) );
-		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) : json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-		if ( is_string( $encoded ) ) {
-			file_put_contents( $path, $encoded . "\n" );
-		}
+		WP_Codebox_Json::write_file( $path, $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 	}
 
 	/** @param array<string,mixed> $event Event data. */
 	private function append_fanout_event( string $fanout_path, array $event ): void {
 		$event = array_merge( array( 'schema' => self::FANOUT_EVENT_SCHEMA, 'time' => gmdate( 'c' ) ), $event );
-		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $event, JSON_UNESCAPED_SLASHES ) : json_encode( $event, JSON_UNESCAPED_SLASHES );
-		if ( is_string( $encoded ) ) {
-			file_put_contents( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', $encoded . "\n", FILE_APPEND );
-		}
+		WP_Codebox_Json::append_jsonl( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', $event, JSON_UNESCAPED_SLASHES );
 	}
 
 	/**
@@ -1251,8 +1244,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function json_encode( mixed $value ): string {
-		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
-		return is_string( $encoded ) ? $encoded : '[]';
+		return WP_Codebox_Json::encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE, '[]' );
 	}
 
 	/** @param string[] $tools @param array<string,mixed>|null $task_input Normalized task input. */
@@ -1461,7 +1453,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		if ( '' !== $directory ) {
 			$changed_files_path = $directory . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'changed-files.json';
 			if ( is_readable( $changed_files_path ) ) {
-				$decoded = json_decode( (string) file_get_contents( $changed_files_path ), true );
+				$decoded = WP_Codebox_Json::read_array_file( $changed_files_path ) ?? array();
 				foreach ( is_array( $decoded['files'] ?? null ) ? $decoded['files'] : array() as $file ) {
 					if ( is_array( $file ) ) {
 						$changed_files[] = array_filter(
@@ -1508,25 +1500,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @return array<string,mixed>|null */
 	private function decode_json_fragment( string $text ): ?array {
-		$text = trim( $text );
-		if ( '' === $text ) {
-			return null;
-		}
-
-		$decoded = json_decode( $text, true );
-		if ( is_array( $decoded ) ) {
-			return $decoded;
-		}
-
-		$start = strpos( $text, '{' );
-		$end   = strrpos( $text, '}' );
-		if ( false === $start || false === $end || $end <= $start ) {
-			return null;
-		}
-
-		$decoded = json_decode( substr( $text, $start, $end - $start + 1 ), true );
-
-		return is_array( $decoded ) ? $decoded : null;
+		return WP_Codebox_Json::decode_fragment_array( $text );
 	}
 
 	/** @param array<string,mixed> $run Decoded CLI run output. @param string[] $keys */
@@ -2446,17 +2420,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return new WP_Error( 'empty_output', 'Empty output.' );
 		}
 
-		$decoded = json_decode( $trimmed, true );
-		if ( is_array( $decoded ) ) {
+		$decoded = WP_Codebox_Json::decode_trailing_array( $trimmed );
+		if ( null !== $decoded ) {
 			return $decoded;
-		}
-
-		$offset = strrpos( $trimmed, "\n{" );
-		if ( false !== $offset ) {
-			$decoded = json_decode( substr( $trimmed, $offset + 1 ), true );
-			if ( is_array( $decoded ) ) {
-				return $decoded;
-			}
 		}
 
 		return new WP_Error( 'json_decode_failed', json_last_error_msg() );
