@@ -1,5 +1,6 @@
 import type { ArtifactBundle, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
+import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 
 interface CliError {
   name: string
@@ -257,6 +258,8 @@ export function printRecipeSchemaHumanOutput(output: RecipeSchemaOutputLike): vo
 }
 
 export function printHelp(): void {
+  const recipeCommandIds = recipeCommandDefinitions().map((command) => command.id)
+
   console.log(`Usage:
   wp-codebox commands [--json]
   wp-codebox schema recipe [--json]
@@ -272,7 +275,7 @@ export function printHelp(): void {
   wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox artifacts diagnostics --input <json> [--source <id>] [--stage <id>] [--observation-type <id>] [--ref <path[:kind]>] [--json]
-  wp-codebox artifacts transfer-verify --bundle <dir> [--json]
+  wp-codebox artifacts transfer-verify --bundle <dir> [--private-host-pattern <host>] [--json]
   wp-codebox artifacts transfer-probes --bundle <dir> [--json]
   wp-codebox artifacts discover-partial --artifacts <dir> [--session-id <id>] [--started-at <iso>] [--finished-at <iso>] [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
@@ -305,7 +308,11 @@ Options:
   --approved-file <path>
                        Changed file approved for artifacts apply-preflight. Repeatable.
   --approved-files <paths>
-                       Comma-separated changed files approved for artifacts apply-preflight.
+                        Comma-separated changed files approved for artifacts apply-preflight.
+  --private-host-pattern <host>
+                       Host pattern treated as private reviewer evidence for transfer-verify.
+                       Repeatable; supports exact hosts and *.suffix patterns. Can also be set with
+                       WP_CODEBOX_TRANSFER_PROOF_PRIVATE_HOSTS.
   --scenario-id <id>  Filter benchmark artifact refs to one scenario.
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.
@@ -332,7 +339,7 @@ Options:
   --run-id <id>       Run ID for runs lookup commands.
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
   --command <id>       Command/action id to execute.
-  --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.core-phpunit, wordpress.plugin-check, wordpress.wp-cli, wordpress.ability, wordpress.bench, and wordpress.browser-probe.
+  --arg <key=value>    Command argument. Repeatable.
   --wp <version>       WordPress version for Playground. Defaults to latest; accepts trunk, nightly, or numeric versions.
   --blueprint <json|file>
                         WordPress Playground blueprint JSON or path for boot or validate-blueprint.
@@ -372,6 +379,9 @@ Workspace policy:
 Discovery:
   commands             Print supported runtime and recipe command metadata.
   schema recipe        Print the wp-codebox/workspace-recipe/v1 JSON Schema.
+
+Recipe commands:
+${recipeCommandIds.map((id) => `  ${id}`).join("\n")}
 
 Example:
   wp-codebox run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)

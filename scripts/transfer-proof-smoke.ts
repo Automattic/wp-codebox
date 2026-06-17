@@ -56,6 +56,25 @@ try {
   assert.equal(unsafeResult.valid, false)
   assert.ok(unsafeResult.violations.some((violation) => violation.code === "unsafe-reviewer-evidence"), unsafeResult.violations.map((violation) => violation.code).join(", "))
 
+  const callerPrivateHost = await copyBundle(validBundle, join(workspace, "caller-private-host"))
+  const callerPrivateHostMetadata = JSON.parse(await readText(join(callerPrivateHost, "metadata.json")))
+  callerPrivateHostMetadata.transferProofBundle.summary = "Caller-private proof URL: https://github.a8c.com/Automattic/wp-codebox/pull/1"
+  await writeJson(join(callerPrivateHost, "metadata.json"), callerPrivateHostMetadata)
+  await rewriteManifestHashes(callerPrivateHost)
+  const callerPrivateHostDefaultResult = await verifyTransferProofBundle(callerPrivateHost)
+  assert.equal(callerPrivateHostDefaultResult.valid, true)
+  const callerPrivateHostConfiguredResult = await verifyTransferProofBundle(callerPrivateHost, { privateHostPatterns: ["github.a8c.com"] })
+  assert.equal(callerPrivateHostConfiguredResult.valid, false)
+  assert.ok(callerPrivateHostConfiguredResult.violations.some((violation) => violation.code === "unsafe-reviewer-evidence"), callerPrivateHostConfiguredResult.violations.map((violation) => violation.code).join(", "))
+
+  const unrelatedPublicHost = await copyBundle(validBundle, join(workspace, "unrelated-public-host"))
+  const unrelatedPublicHostMetadata = JSON.parse(await readText(join(unrelatedPublicHost, "metadata.json")))
+  unrelatedPublicHostMetadata.transferProofBundle.summary = "Public proof URL: https://github.com/Automattic/wp-codebox/pull/1"
+  await writeJson(join(unrelatedPublicHost, "metadata.json"), unrelatedPublicHostMetadata)
+  await rewriteManifestHashes(unrelatedPublicHost)
+  const unrelatedPublicHostResult = await verifyTransferProofBundle(unrelatedPublicHost, { privateHostPatterns: ["github.a8c.com"] })
+  assert.equal(unrelatedPublicHostResult.valid, true)
+
   const broken = await copyBundle(validBundle, join(workspace, "broken"))
   await writeFile(join(broken, "files/browser/network.jsonl"), `${JSON.stringify({ type: "response", url: "https://example.com/missing.png", resourceType: "image", status: 404 })}\n`)
   await rewriteManifestHashes(broken)

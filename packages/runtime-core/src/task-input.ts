@@ -28,6 +28,15 @@ export interface TaskInputAgentBundle {
   on_conflict?: "error" | "skip" | "upgrade"
   owner_id?: number
   token_env?: string
+  import_principal?: TaskInputAgentBundleImportPrincipal
+}
+
+export interface TaskInputAgentBundleImportPrincipal {
+  agent_id?: number
+  owner_id?: number
+  token_id?: number
+  capabilities?: string[]
+  scope?: Record<string, unknown>
 }
 
 export interface TaskInput {
@@ -106,6 +115,16 @@ export const TASK_INPUT_JSON_SCHEMA = {
           on_conflict: { enum: ["error", "skip", "upgrade"] },
           owner_id: { type: "integer", minimum: 1 },
           token_env: { type: "string" },
+          import_principal: {
+            type: "object",
+            properties: {
+              agent_id: { type: "integer", minimum: 1 },
+              owner_id: { type: "integer", minimum: 1 },
+              token_id: { type: "integer", minimum: 1 },
+              capabilities: { type: "array", items: { type: "string" } },
+              scope: { type: "object" },
+            },
+          },
         },
       },
     },
@@ -143,7 +162,7 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
   }
 }
 
-function normalizeAgentBundles(value: unknown): TaskInputAgentBundle[] {
+export function normalizeAgentBundles(value: unknown): TaskInputAgentBundle[] {
   if (!Array.isArray(value)) return []
 
   return value.flatMap((entry): TaskInputAgentBundle[] => {
@@ -159,6 +178,24 @@ function normalizeAgentBundles(value: unknown): TaskInputAgentBundle[] {
     normalized.on_conflict = ["error", "skip", "upgrade"].includes(String(entry.on_conflict)) ? entry.on_conflict as TaskInputAgentBundle["on_conflict"] : "upgrade"
     if (Number.isSafeInteger(entry.owner_id) && Number(entry.owner_id) > 0) normalized.owner_id = Number(entry.owner_id)
     if (typeof entry.token_env === "string" && entry.token_env.trim()) normalized.token_env = entry.token_env.trim()
+    const importPrincipal = normalizeAgentBundleImportPrincipal(entry.import_principal)
+    if (importPrincipal) normalized.import_principal = importPrincipal
     return [normalized]
   })
+}
+
+function normalizeAgentBundleImportPrincipal(value: unknown): TaskInputAgentBundleImportPrincipal | undefined {
+  if (!isPlainObject(value)) return undefined
+
+  const normalized: TaskInputAgentBundleImportPrincipal = {}
+  for (const field of ["agent_id", "owner_id", "token_id"] as const) {
+    const numericValue = Number(value[field])
+    if (Number.isSafeInteger(numericValue) && numericValue > 0) normalized[field] = numericValue
+  }
+
+  const capabilities = stringList(value.capabilities)
+  if (capabilities.length) normalized.capabilities = capabilities
+  if (isPlainObject(value.scope)) normalized.scope = value.scope
+
+  return Object.keys(normalized).length ? normalized : undefined
 }

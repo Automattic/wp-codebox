@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { validateBrowserInteractionScript, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertWorkspaceRecipeJsonSchema, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 
@@ -34,6 +34,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   const recipe = parseWorkspaceRecipeJson(raw)
   normalizeWorkspaceRecipeCompatibility(recipe)
   validateWorkspaceRecipeShape(recipe, recipePath)
+  assertWorkspaceRecipeJsonSchema(recipe, { recipePath, recipeCommandIds: [...supportedRecipeCommands] })
 
   return recipe
 }
@@ -722,7 +723,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   if ((recipe.inputs?.siteSeeds ?? []).some((siteSeed) => siteSeed.type === "fixture")) {
     commands.unshift("wordpress.run-php")
   }
-  if ((recipe.inputs?.fixtureDatabases ?? []).length > 0 || (recipe.artifacts?.paths ?? []).length > 0) {
+  if ((recipe.inputs?.fixtureDatabases ?? []).length > 0 || workspaceRecipeRuntimeCollectedArtifacts(recipe).length > 0) {
     commands.unshift("wordpress.run-php")
   }
   // Auto-grant the evaluate capability when a browser-actions step opts into the

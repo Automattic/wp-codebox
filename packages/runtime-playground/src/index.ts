@@ -1,4 +1,5 @@
 export { playgroundRuntimeCommandIds } from "./command-router.js"
+export { ArtifactBundleWriter, ManifestedArtifactSet, type ManifestedArtifactFileInput } from "./artifact-bundle-writer.js"
 export { buildArtifactDiagnostics } from "./artifacts.js"
 export { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"

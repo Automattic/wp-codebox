@@ -186,8 +186,8 @@ Transfer checklist:
 - `wp-codebox/list-artifacts`, `wp-codebox/get-artifact`, and
   `wp-codebox/discard-artifact` operate inside the configured artifact root with
   path validation.
-- `wp-codebox/stage-artifact-apply` stages a review action when Data Machine
-  pending actions are available and fails closed when they are not.
+- `wp-codebox/stage-artifact-apply` stages a review action through the host
+  approval adapter and fails closed when no adapter is available.
 - `wp-codebox/apply-approved-artifact` validates bundle id, content digest,
   changed files, approved file list, and patch hash before delegating through the
   `wp_codebox_apply_approved_artifact` adapter filter.
@@ -217,6 +217,11 @@ Transfer checklist:
 - Secrets should be passed by environment-variable name or connector reference,
   redacted from recipes, logs, metadata, patches, and review files, and excluded
   from artifact provenance except for sanitized availability/status metadata.
+- Transfer-proof reviewer evidence treats localhost, private-network, and common
+  internal host suffixes as unsafe by default. Parent control planes with
+  organization-private public DNS names should pass caller-owned private host
+  patterns, for example `WP_CODEBOX_TRANSFER_PROOF_PRIVATE_HOSTS=github.a8c.com`
+  or `wp-codebox artifacts transfer-verify --private-host-pattern github.a8c.com`.
 - Generated browser runners that bypass host permission checks must assert they
   are executing inside a disposable Playground runtime before registering the
   bypass.

@@ -8,6 +8,7 @@ import { printArtifactVerifyHumanOutput } from "../output.js"
 interface ArtifactVerifyOptions {
   bundleDirectory: string
   json: boolean
+  privateHostPatterns?: string[]
 }
 
 interface ArtifactApplyPreflightOptions extends ArtifactVerifyOptions {
@@ -186,7 +187,7 @@ async function browserMetrics(options: ArtifactVerifyOptions): Promise<BrowserAr
 }
 
 async function transferVerify(options: ArtifactVerifyOptions): Promise<TransferProofBundleVerificationResult> {
-  return verifyTransferProofBundle(resolve(options.bundleDirectory))
+  return verifyTransferProofBundle(resolve(options.bundleDirectory), { privateHostPatterns: options.privateHostPatterns })
 }
 
 async function transferProbes(options: ArtifactVerifyOptions): Promise<TransferProbeDiagnosticsResult> {
@@ -632,6 +633,14 @@ function parseArtifactVerifyOptions(args: string[]): ArtifactVerifyOptions {
       case "--bundle":
       case "--artifacts":
         options.bundleDirectory = value
+        break
+      case "--private-host-pattern":
+        options.privateHostPatterns ??= []
+        options.privateHostPatterns?.push(value)
+        break
+      case "--private-host-patterns":
+        options.privateHostPatterns ??= []
+        options.privateHostPatterns?.push(...value.split(",").map((pattern) => pattern.trim()).filter(Boolean))
         break
       default:
         throw new Error(`Unknown option: ${name}`)

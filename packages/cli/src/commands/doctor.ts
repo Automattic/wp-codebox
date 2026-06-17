@@ -275,7 +275,7 @@ async function processRows(): Promise<ProcessRow[]> {
 }
 
 function isRecipeRunCommand(command: string): boolean {
-  return (/wp-codebox/.test(command) && /recipe-run/.test(command)) || /homeboy-wp-codebox-task-runner/.test(command)
+  return /wp-codebox/.test(command) && /recipe-run/.test(command)
 }
 
 async function* walkArchiveFiles(root: string): AsyncGenerator<string> {

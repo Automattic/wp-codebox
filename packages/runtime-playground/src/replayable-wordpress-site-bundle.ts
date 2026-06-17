@@ -7,6 +7,7 @@ import {
   type ArtifactManifest,
   type RuntimeInfo,
 } from "@automattic/wp-codebox-core"
+import { ArtifactBundleWriter } from "./artifact-bundle-writer.js"
 import { runtimeSnapshotRestorePhp, runtimeSnapshotRestorePhpFromFile, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 
 export interface ReplayableWordPressSiteBundleOptions {
@@ -76,33 +77,30 @@ export interface ReplayExportPackage {
 export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact, options: ReplayExportPackageOptions): Promise<ReplayExportPackage> {
   const createdAt = options.createdAt ?? new Date().toISOString()
   const directory = options.directory
-  const filesDirectory = join(directory, "files")
-  await mkdir(filesDirectory, { recursive: true })
-
-  const snapshotPath = join(filesDirectory, "runtime-snapshot.json")
-  const blueprintPath = join(directory, "blueprint.after.json")
-  const playgroundBundlePath = join(directory, "blueprint.zip")
-  const notesPath = join(directory, "blueprint.after-notes.json")
-  const manifestPath = join(directory, "manifest.json")
+  const writer = new ArtifactBundleWriter(directory)
+  const snapshotPath = "files/runtime-snapshot.json"
+  const blueprintPath = "blueprint.after.json"
+  const playgroundBundlePath = "blueprint.zip"
+  const notesPath = "blueprint.after-notes.json"
   const blueprint = buildReplayExportBlueprint(snapshot, options)
   const notes = buildReplayableWordPressSiteLimitations(snapshot, {
     source: {
       kind: "wordpress.export-replay-package",
-      snapshotPath: "files/runtime-snapshot.json",
+      snapshotPath,
       mode: "external-runtime-snapshot",
       ...(options.source ?? {}),
     },
   })
 
-  await writeJson(blueprintPath, blueprint)
-  await writeJson(snapshotPath, snapshot)
-  await writeJson(notesPath, notes)
-  await writePlaygroundBlueprintBundle(playgroundBundlePath, [
+  await writer.writeJson(blueprintPath, blueprint, { kind: "blueprint-after" })
+  await writer.writeJson(snapshotPath, snapshot, { kind: "runtime-snapshot" })
+  await writer.writeJson(notesPath, notes, { kind: "blueprint-after-notes" })
+  await writer.writeGenerated(playgroundBundlePath, { kind: "playground-blueprint-bundle", contentType: "application/zip" }, (path) => writePlaygroundBlueprintBundle(path, [
     { path: "blueprint.json", data: `${JSON.stringify(blueprint, null, 2)}\n` },
     { path: "files/runtime-snapshot.json", data: `${JSON.stringify(snapshot, null, 2)}\n` },
-  ])
+  ]))
 
-  const contentInputs = ["blueprint.after.json", "blueprint.zip", "files/runtime-snapshot.json", "blueprint.after-notes.json"]
+  const contentInputs = [blueprintPath, playgroundBundlePath, snapshotPath, notesPath]
   const contentDigest = await calculateArtifactContentDigest(directory, contentInputs)
   const id = options.id ?? `replay-export-package-sha256-${contentDigest}`
   const manifest: ReplayableWordPressSiteBundleManifest = {
@@ -116,35 +114,26 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
     },
     createdAt,
     runtime: runtimeInfoForReplayableWordPressSite(snapshot, id, createdAt, blueprint),
-    files: [
-      artifactManifestFile("manifest.json", "manifest", "application/json"),
-      artifactManifestFile("blueprint.after.json", "blueprint-after", "application/json"),
-      artifactManifestFile("blueprint.zip", "playground-blueprint-bundle", "application/zip"),
-      artifactManifestFile("files/runtime-snapshot.json", "runtime-snapshot", "application/json"),
-      artifactManifestFile("blueprint.after-notes.json", "blueprint-after-notes", "application/json"),
-    ],
+    files: [],
     replayableWordPressSite: {
-      blueprintPath: "blueprint.after.json",
-      playgroundBundlePath: "blueprint.zip",
-      publicViewerArtifactPath: "blueprint.zip",
-      snapshotPath: "files/runtime-snapshot.json",
-      limitationsPath: "blueprint.after-notes.json",
+      blueprintPath,
+      playgroundBundlePath,
+      publicViewerArtifactPath: playgroundBundlePath,
+      snapshotPath,
+      limitationsPath: notesPath,
       replayStatus: "replayable-runtime-state",
       source: {
         kind: "wordpress.export-replay-package",
-        snapshotPath: "files/runtime-snapshot.json",
+        snapshotPath,
         mode: "external-runtime-snapshot",
         ...(options.source ?? {}),
       },
     },
   }
 
-  await refreshArtifactManifestFileSha256s(directory, manifest)
-  await writeJson(manifestPath, manifest)
-  await refreshArtifactManifestFileSha256s(directory, manifest)
-  await writeJson(manifestPath, manifest)
+  await writer.writeManifest(manifest)
 
-  const [snapshotStats, blueprintStats] = await Promise.all([stat(snapshotPath), stat(blueprintPath)])
+  const [snapshotStats, blueprintStats] = await Promise.all([stat(writer.path(snapshotPath)), stat(writer.path(blueprintPath))])
   return {
     status: "passed",
     directory,
@@ -160,10 +149,10 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
     },
     artifacts: {
       manifest: "manifest.json",
-      blueprint: "blueprint.after.json",
-      playgroundBundle: "blueprint.zip",
-      snapshot: "files/runtime-snapshot.json",
-      notes: "blueprint.after-notes.json",
+      blueprint: blueprintPath,
+      playgroundBundle: playgroundBundlePath,
+      snapshot: snapshotPath,
+      notes: notesPath,
     },
     manifest,
   }

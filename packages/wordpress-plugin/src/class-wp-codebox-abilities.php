@@ -894,7 +894,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/stage-artifact-apply',
 				array(
 					'label'               => 'Stage WP Codebox Artifact Apply',
-					'description'         => 'Preferred user-facing API: stage a reviewed WP Codebox artifact apply-back request through Data Machine pending actions before resolving via apply-approved-artifact.',
+					'description'         => 'Preferred user-facing API: stage a reviewed WP Codebox artifact apply-back request through the host approval adapter before resolving via apply-approved-artifact.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',

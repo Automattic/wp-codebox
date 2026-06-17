@@ -1,3 +1,5 @@
+import { phpEnvAssignmentFunction } from "./php-snippets.js"
+
 export interface BenchRunCodeOptions {
   componentId: string
   pluginSlug: string
@@ -15,6 +17,7 @@ export interface BenchRunCodeOptions {
 
 export function benchRunCode(options: BenchRunCodeOptions): string {
   return `require_once ABSPATH . 'wp-admin/includes/plugin.php';
+${phpEnvAssignmentFunction("wp_codebox_bench_apply_env", "wp_json_encode")}
 
 $component_id = ${JSON.stringify(options.componentId)};
 $plugin_slug = ${JSON.stringify(options.pluginSlug)};
@@ -31,15 +34,7 @@ $bench_reset_policy = ${phpJsonDecodeExpression(options.resetPolicy)};
 $wp_cli_bridge_url = ${JSON.stringify(options.wpCliBridge?.url ?? null)};
 $wp_cli_bridge_token = ${JSON.stringify(options.wpCliBridge?.token ?? null)};
 
-if (is_array($bench_env)) {
-    foreach ($bench_env as $name => $value) {
-        if (is_string($name) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
-            $string_value = is_scalar($value) ? (string) $value : wp_json_encode($value);
-            putenv($name . '=' . $string_value);
-            $_ENV[$name] = $string_value;
-        }
-    }
-}
+wp_codebox_bench_apply_env($bench_env);
 
 function wp_codebox_bench_percentile(array $samples, float $percentile): float {
     if (empty($samples)) {
