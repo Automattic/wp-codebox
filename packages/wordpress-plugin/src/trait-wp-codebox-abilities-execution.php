@@ -565,18 +565,7 @@ private static function compact_browser_dto_key_should_omit( string $key ): bool
 }
 
 private static function compact_browser_dto_key_should_redact( string $key ): bool {
-	$normalized = strtolower( $key );
-	if ( in_array( $normalized, array( 'secret_env', 'secretenv', 'secret_env_names' ), true ) ) {
-		return false;
-	}
-
-	foreach ( array( 'secret', 'token', 'password', 'private_key', 'api_key', 'credential' ) as $needle ) {
-		if ( str_contains( $normalized, $needle ) ) {
-			return true;
-		}
-	}
-
-	return false;
+	return WP_Codebox_Redaction_Policy::key_should_redact( 'public_session_dto', $key );
 }
 
 /** @param array<string,mixed> $input Ability input. @param array<string,mixed> $session_envelope Primary browser session envelope. @return array<int,array<string,mixed>>|WP_Error */

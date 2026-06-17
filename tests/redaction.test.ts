@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { containsSecretLikeValue, isRedactedValue, isSensitiveKey, redactJsonValue, redactString, redactUrl } from "../packages/runtime-core/src/redaction.js"
+import { readFile } from "node:fs/promises"
+import { containsSecretLikeValue, isRedactedValue, isSensitiveKey, redactJsonValue, redactString, redactUrl, type RedactionPolicyProfileName } from "../packages/runtime-core/src/redaction.js"
 
 const sensitiveKeyCases: Array<[string, boolean]> = [
   ["token", true],
@@ -47,3 +48,17 @@ assert.equal(
   redactUrl("https://example.com/path?plain=ok&token=abc#frag"),
   "https://example.com/path?plain=ok&token=[redacted]#frag",
 )
+
+const fixture = JSON.parse(await readFile(new URL("./fixtures/redaction-policy-profiles.json", import.meta.url), "utf8")) as {
+  profiles: Record<RedactionPolicyProfileName, { redact: string[]; preserve: string[] }>
+}
+
+for (const [profile, cases] of Object.entries(fixture.profiles) as Array<[RedactionPolicyProfileName, { redact: string[]; preserve: string[] }]>) {
+  for (const key of cases.redact) {
+    assert.equal(isSensitiveKey(key, { profile }), true, `${profile} should redact ${key}`)
+  }
+
+  for (const key of cases.preserve) {
+    assert.equal(isSensitiveKey(key, { profile }), false, `${profile} should preserve ${key}`)
+  }
+}

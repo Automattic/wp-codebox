@@ -22,6 +22,7 @@ define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 require_once __DIR__ . '/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/src/class-wp-codebox-inheritance.php';
+require_once __DIR__ . '/src/class-wp-codebox-redaction-policy.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-request-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-tool-policy-validator.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-recipe-builder.php';

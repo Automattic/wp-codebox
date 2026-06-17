@@ -1,8 +1,18 @@
 export const REDACTED_VALUE = "[redacted]"
 
+export type RedactionPolicyProfileName = "audit_metadata" | "provider_proxy" | "browser_event" | "public_session_dto"
+
+export interface RedactionPolicyProfile {
+  name: RedactionPolicyProfileName
+  exactKeys: readonly string[]
+  sensitiveKeyTokens: readonly string[]
+  allowedKeys?: readonly string[]
+}
+
 export interface SensitiveKeyOptions {
   pattern?: RegExp
   extraPattern?: RegExp
+  profile?: RedactionPolicyProfileName
 }
 
 export interface RedactJsonOptions extends SensitiveKeyOptions {
@@ -19,7 +29,44 @@ const SENSITIVE_KEY_PATTERN = /(?:secret|token|credential|password|pass|api[_-]?
 const SECRET_LIKE_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/
 const SECRET_LIKE_VALUE_GLOBAL_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/g
 
+const REDACTION_POLICY_PROFILES: Record<RedactionPolicyProfileName, RedactionPolicyProfile> = {
+  audit_metadata: {
+    name: "audit_metadata",
+    exactKeys: ["authorization", "key", "value"],
+    sensitiveKeyTokens: ["secret", "token", "password", "credential", "private_key", "api_key"],
+  },
+  provider_proxy: {
+    name: "provider_proxy",
+    exactKeys: ["authorization", "key", "value"],
+    sensitiveKeyTokens: ["secret", "token", "password", "credential", "private_key", "api_key"],
+  },
+  browser_event: {
+    name: "browser_event",
+    exactKeys: ["authorization"],
+    sensitiveKeyTokens: ["secret", "token", "password", "credential", "private_key", "api_key", "cookie"],
+  },
+  public_session_dto: {
+    name: "public_session_dto",
+    exactKeys: [],
+    sensitiveKeyTokens: ["secret", "token", "password", "private_key", "api_key", "credential"],
+    allowedKeys: ["secret_env", "secretenv", "secret_env_names"],
+  },
+}
+
+export function getRedactionPolicyProfile(profile: RedactionPolicyProfileName): RedactionPolicyProfile {
+  return REDACTION_POLICY_PROFILES[profile]
+}
+
 export function isSensitiveKey(key: string, options: SensitiveKeyOptions = {}): boolean {
+  if (options.profile) {
+    const normalizedKey = key.toLowerCase()
+    const profile = getRedactionPolicyProfile(options.profile)
+    if (profile.allowedKeys?.includes(normalizedKey)) {
+      return false
+    }
+    return profile.exactKeys.includes(normalizedKey) || profile.sensitiveKeyTokens.some((token) => normalizedKey.includes(token)) || Boolean(options.extraPattern?.test(key))
+  }
+
   return (options.pattern ?? SENSITIVE_KEY_PATTERN).test(key) || Boolean(options.extraPattern?.test(key))
 }
 
