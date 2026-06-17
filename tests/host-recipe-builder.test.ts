@@ -1,17 +1,22 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 
-const root = new URL("../", import.meta.url)
-const rootPath = root.pathname.replace(/'/g, "'\\''")
-
-const php = spawnSync("php", ["-r", `
-define('ABSPATH', '${rootPath}');
+const result = await runPhpJson<{
+  legacy_adapter_calls: string[]
+  recipe: {
+    schema: string
+    inputs: { inherit: unknown; secretEnv: string[]; agent_bundles: unknown[]; extra_plugins: unknown[] }
+    workflow: { steps: Array<{ command: string; args: string[] }> }
+    runtime: { overlays: unknown[] }
+  }
+}>(`
+define('ABSPATH', ${phpStringLiteral(repoRoot)});
 class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php';
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php`)};
 
 $legacy_adapter_calls = array();
 $dependency_plan = new WP_Codebox_Runtime_Dependency_Plan(
@@ -67,13 +72,7 @@ $recipe = json_decode( file_get_contents( $result['path'] ), true );
 unlink( $result['path'] );
 
 echo json_encode( array( 'legacy_adapter_calls' => $legacy_adapter_calls, 'recipe' => $recipe ), JSON_UNESCAPED_SLASHES );
-`], {
-  cwd: root.pathname,
-  encoding: "utf8",
-})
-
-assert.equal(php.status, 0, php.stderr)
-const result = JSON.parse(php.stdout)
+`)
 
 assert.deepEqual(result.legacy_adapter_calls, [])
 assert.equal(result.recipe.schema, "wp-codebox/workspace-recipe/v1")

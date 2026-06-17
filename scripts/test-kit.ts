@@ -38,6 +38,10 @@ export async function runPhpJson<T>(code: string, options: CommandOptions = {}):
   return runCommandJson<T>("php", ["-r", code], options)
 }
 
+export async function runPhpFileJson<T>(path: string, options: CommandOptions = {}): Promise<T> {
+  return runCommandJson<T>("php", [path], options)
+}
+
 export async function evaluatePhpJson<T>(expression: string, requires: string[] = []): Promise<T> {
   const code = [
     `define('ABSPATH', ${phpStringLiteral(repoRoot)});`,

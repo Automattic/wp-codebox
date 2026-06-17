@@ -1,10 +1,8 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
-import { mkdtempSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { phpFunctionBlock, runPhpFileJson, withTempDir } from "../scripts/test-kit.js"
 import {
   artifactFileDigest,
   artifactManifestRelativePath,
@@ -91,12 +89,13 @@ assert.equal(composerPolicy.command, "composer")
 assert.deepEqual(composerPolicy.inheritedEnv, ["HOME", "COMPOSER_HOME"])
 assert.equal(composerPolicy.allowedCwdRoots?.[0], process.cwd())
 
-const composerSourceRoot = mkdtempSync(join(tmpdir(), "wp-codebox-composer-source-"))
-writeFileSync(join(composerSourceRoot, "composer.json"), JSON.stringify({ name: "example/plugin" }))
-assert.throws(
-  () => prepareRecipeSourcePackageSync({ source: composerSourceRoot, slug: "example-plugin", artifactsRoot: "" }),
-  /requires Composer dependencies but no artifacts directory/,
-)
+await withTempDir("wp-codebox-composer-source-", async (composerSourceRoot) => {
+  await writeFile(join(composerSourceRoot, "composer.json"), JSON.stringify({ name: "example/plugin" }))
+  assert.throws(
+    () => prepareRecipeSourcePackageSync({ source: composerSourceRoot, slug: "example-plugin", artifactsRoot: "" }),
+    /requires Composer dependencies but no artifacts directory/,
+  )
+})
 
 assert.deepEqual(trustedBrowserSessionOrigin("http://localhost:8881/path?x=1"), {
   schema: "wp-codebox/trusted-browser-session-origin/v1",
@@ -336,65 +335,68 @@ assert.equal(callbackEnvelope.schema, "wp-codebox/browser-callback-result/v1")
 assert.deepEqual(callbackEnvelope.artifactRefs, projection.artifactRefs)
 assert.throws(() => normalizeMaterializationResultEnvelope({ success: true, response: { success: false, error: { message: "fixture failure" } } }), /fixture failure/)
 
-const artifactRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-artifact-part-"))
-const part = await writeArtifactPart({
-  root: artifactRoot,
-  path: "files/check/result.json",
-  kind: "check-result",
-  contentType: "application/json",
-  contents: "{\"ok\":true}\n",
-  redaction: { policy: "required", sensitive: true, reason: "test sensitive artifact" },
-  provenance: { source: "test", operation: "write-artifact-part", id: "result" },
-})
+await withTempDir("wp-codebox-artifact-part-", async (artifactRoot) => {
+  const part = await writeArtifactPart({
+    root: artifactRoot,
+    path: "files/check/result.json",
+    kind: "check-result",
+    contentType: "application/json",
+    contents: "{\"ok\":true}\n",
+    redaction: { policy: "required", sensitive: true, reason: "test sensitive artifact" },
+    provenance: { source: "test", operation: "write-artifact-part", id: "result" },
+  })
 
-assert.equal(part.path, "files/check/result.json")
-assert.equal(await readFile(part.absolutePath, "utf8"), "{\"ok\":true}\n")
-assert.equal(part.manifestFile.path, "files/check/result.json")
-assert.deepEqual(part.manifestFile.sha256, artifactFileDigest("{\"ok\":true}\n"))
-assert.deepEqual(part.manifestFile.redaction, { policy: "required", sensitive: true, reason: "test sensitive artifact" })
-assert.deepEqual(part.manifestFile.provenance, { source: "test", operation: "write-artifact-part", id: "result" })
+  assert.equal(part.path, "files/check/result.json")
+  assert.equal(await readFile(part.absolutePath, "utf8"), "{\"ok\":true}\n")
+  assert.equal(part.manifestFile.path, "files/check/result.json")
+  assert.deepEqual(part.manifestFile.sha256, artifactFileDigest("{\"ok\":true}\n"))
+  assert.deepEqual(part.manifestFile.redaction, { policy: "required", sensitive: true, reason: "test sensitive artifact" })
+  assert.deepEqual(part.manifestFile.provenance, { source: "test", operation: "write-artifact-part", id: "result" })
+})
 assert.equal(normalizeArtifactPartPath("/files//check/result.json"), "files/check/result.json")
 assert.throws(() => normalizeArtifactPartPath("files/../secret.txt"), /relative path/)
 
-const captureRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-capture-"))
-const redactedCapture = await captureArtifactFile({
-  root: captureRoot,
-  path: "files/diagnostics/failure.txt",
-  kind: "diagnostics",
-  contents: "Authorization: bearer-secret\ntoken sk-abcdefghijklmnopqrstuvwxyz\n",
-  contentType: "text/plain; charset=utf-8",
-  redaction: { policy: "applied", sensitive: true },
-  provenance: { source: "test", operation: "capture" },
-})
-assert.equal(redactedCapture.status, "captured")
-assert.equal(await readFile(join(captureRoot, "files/diagnostics/failure.txt"), "utf8"), "Authorization: [redacted]\ntoken [redacted]\n")
-assert.equal(redactedCapture.manifestFile?.redaction?.policy, "applied")
+await withTempDir("wp-codebox-capture-", async (captureRoot) => {
+  const redactedCapture = await captureArtifactFile({
+    root: captureRoot,
+    path: "files/diagnostics/failure.txt",
+    kind: "diagnostics",
+    contents: "Authorization: bearer-secret\ntoken sk-abcdefghijklmnopqrstuvwxyz\n",
+    contentType: "text/plain; charset=utf-8",
+    redaction: { policy: "applied", sensitive: true },
+    provenance: { source: "test", operation: "capture" },
+  })
+  assert.equal(redactedCapture.status, "captured")
+  assert.equal(await readFile(join(captureRoot, "files/diagnostics/failure.txt"), "utf8"), "Authorization: [redacted]\ntoken [redacted]\n")
+  assert.equal(redactedCapture.manifestFile?.redaction?.policy, "applied")
 
-const sourceRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-capture-source-"))
-const largeSource = join(sourceRoot, "large.txt")
-await writeFile(largeSource, "0123456789")
-const oversizedCapture = await captureArtifactFile({
-  sourcePath: largeSource,
-  root: captureRoot,
-  path: "files/large.txt",
-  kind: "file",
-  allowedRoots: [sourceRoot],
-  maxBytes: 4,
-})
-assert.equal(oversizedCapture.status, "oversized")
-assert.equal(oversizedCapture.reason, "max-bytes-exceeded")
-assert.equal(oversizedCapture.originalBytes, 10)
+  await withTempDir("wp-codebox-capture-source-", async (sourceRoot) => {
+    const largeSource = join(sourceRoot, "large.txt")
+    await writeFile(largeSource, "0123456789")
+    const oversizedCapture = await captureArtifactFile({
+      sourcePath: largeSource,
+      root: captureRoot,
+      path: "files/large.txt",
+      kind: "file",
+      allowedRoots: [sourceRoot],
+      maxBytes: 4,
+    })
+    assert.equal(oversizedCapture.status, "oversized")
+    assert.equal(oversizedCapture.reason, "max-bytes-exceeded")
+    assert.equal(oversizedCapture.originalBytes, 10)
+  })
 
-const sensitiveCapture = await captureArtifactFile({
-  root: captureRoot,
-  path: "files/sensitive.txt",
-  kind: "file",
-  contents: "token sk-abcdefghijklmnopqrstuvwxyz\n",
-  maxBytes: 1024,
-  skipSensitiveText: true,
+  const sensitiveCapture = await captureArtifactFile({
+    root: captureRoot,
+    path: "files/sensitive.txt",
+    kind: "file",
+    contents: "token sk-abcdefghijklmnopqrstuvwxyz\n",
+    maxBytes: 1024,
+    skipSensitiveText: true,
+  })
+  assert.equal(sensitiveCapture.status, "sensitive")
+  assert.equal(sensitiveCapture.reason, "secret-like-value")
 })
-assert.equal(sensitiveCapture.status, "sensitive")
-assert.equal(sensitiveCapture.reason, "secret-like-value")
 
 const deterministicPlan = fixtureImportDeterministicIdPlan({
   type: "fixture",
@@ -445,13 +447,18 @@ assert.match(benchRunner, /function wp_codebox_bench_run_ability_step\(array \$s
 assert.match(benchRunner, /'schema' => 'wp-codebox\/bench-command-step\/v1'/)
 assert.doesNotMatch(benchRunner, /\} elseif \(\$type === 'ability'\) \{[\s\S]{0,500}\$ability->execute/)
 
-const commandStepHelpers = benchRunner.match(/function wp_codebox_bench_metric_prefix[\s\S]*?\nfunction wp_codebox_bench_run_rest_request_step/)?.[0].replace(/\nfunction wp_codebox_bench_run_rest_request_step$/, "")
-assert.ok(commandStepHelpers, "bench command step helpers are emitted")
+const commandStepHelpers = [
+  "wp_codebox_bench_metric_prefix",
+  "wp_codebox_bench_command_step_record",
+  "wp_codebox_bench_run_command_step",
+  "wp_codebox_bench_command_step_payload",
+].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
-const phpTestFile = join(mkdtempSync(join(tmpdir(), "wp-codebox-bench-step-")), "command-step.php")
-writeFileSync(
-  phpTestFile,
-  `<?php
+const commandStepPayload = await withTempDir("wp-codebox-bench-step-", async (directory) => {
+  const phpTestFile = join(directory, "command-step.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
 ${commandStepHelpers}
 $execution = wp_codebox_bench_run_command_step(array('type' => 'ability', 'name' => 'example/run'), 'ability', static function (array $step): array {
     return array('metrics' => array('custom_count' => 2), 'metadata' => array('called' => $step['name']));
@@ -459,8 +466,9 @@ $execution = wp_codebox_bench_run_command_step(array('type' => 'ability', 'name'
 $payload = wp_codebox_bench_command_step_payload($execution, 'ability');
 echo json_encode($payload, JSON_UNESCAPED_SLASHES);
 `,
-)
-const commandStepPayload = JSON.parse(execFileSync("php", [phpTestFile], { encoding: "utf8" }))
+  )
+  return runPhpFileJson<{ steps: Array<{ schema: string; type: string; name: string; timing: { duration_ms: number } }>; metrics: { ability_duration_ms: number; custom_count: number }; metadata: { called: string } }>(phpTestFile)
+})
 assert.equal(commandStepPayload.steps[0].schema, "wp-codebox/bench-command-step/v1")
 assert.equal(commandStepPayload.steps[0].type, "ability")
 assert.equal(commandStepPayload.steps[0].name, "example/run")

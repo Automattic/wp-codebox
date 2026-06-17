@@ -1,11 +1,21 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 
-const root = new URL("../", import.meta.url)
-const rootPath = root.pathname.replace(/'/g, "'\\''")
-
-const php = spawnSync("php", ["-r", `
-define('ABSPATH', '${rootPath}');
+const result = await runPhpJson<{
+  resolved: {
+    runtime: { components: string[]; plugins: Array<{ slug: string }>; resolved_recipe: { schema: string; summary: { packages: number } } }
+    inherit: { connectors: string[] }
+    provider_plugin_paths: string[]
+    secret_env: string[]
+    placement: { required_capabilities: string[] }
+  }
+  local_task: {
+    runtime: { components: string[] }
+    inherit: { connectors: string[] }
+    placement: { required_capabilities: string[] }
+  }
+}>(`
+define('ABSPATH', ${phpStringLiteral(repoRoot)});
 class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 }
@@ -53,13 +63,13 @@ function apply_filters( $hook, $value, ...$args ) {
 	return $value;
 }
 
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-recipe-resolver.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-recipe-resolver.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
 
 $input = array(
 	'runtime_recipe' => array(
@@ -79,13 +89,7 @@ $local_task = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 ) );
 
 echo json_encode( array( 'resolved' => $resolved, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
-`], {
-  cwd: root.pathname,
-  encoding: "utf8",
-})
-
-assert.equal(php.status, 0, php.stderr)
-const result = JSON.parse(php.stdout)
+`)
 
 assert.deepEqual(result.resolved.runtime.components, ["agents-api", "data-machine", "data-machine-code"])
 assert.deepEqual(result.resolved.runtime.plugins.map((plugin: { slug: string }) => plugin.slug), ["caller-plugin", "agents-api", "data-machine", "data-machine-code"])
