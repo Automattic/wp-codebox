@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { compileSourcePackage, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
+import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
@@ -251,14 +251,12 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   await cp(prepared.source, stagedSource, { recursive: true })
   try {
     await executeManagedHostCommand({
-      command: "composer",
-      args: ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
+      ...composerManagedHostCommandConfig({
+        cwd: stagedSource,
+        allowedCwdRoots: [stagingRoot],
+        label: "prepare Composer autoload for recipe extra plugin",
+      }),
       cwd: stagedSource,
-      env: composerManagedHostEnv(),
-      allowedCwdRoots: [stagingRoot],
-      inheritedEnv: ["HOME", "COMPOSER_HOME"],
-      maxOutputBytes: 1024 * 1024 * 10,
-      label: "prepare Composer autoload for recipe extra plugin",
     })
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
@@ -522,14 +520,14 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
 
   try {
     await executeManagedHostCommand({
+      ...composerManagedHostCommandConfig({
+        cwd: hydratedSource,
+        allowedCwdRoots: [stagingRoot],
+        args: ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"],
+        label: `hydrate Composer-backed ${label}`,
+      }),
       command: composer,
-      args: ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"],
       cwd: hydratedSource,
-      env: composerManagedHostEnv(),
-      allowedCwdRoots: [stagingRoot],
-      inheritedEnv: ["HOME", "COMPOSER_HOME"],
-      maxOutputBytes: 1024 * 1024 * 10,
-      label: `hydrate Composer-backed ${label}`,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -565,14 +563,6 @@ async function resolveComposerCommand(): Promise<string> {
     return "composer"
   } catch {
     return ""
-  }
-}
-
-function composerManagedHostEnv(): Record<string, string> {
-  const home = process.env.HOME || homedir()
-  return {
-    ...(home ? { HOME: home } : {}),
-    ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
   }
 }
 

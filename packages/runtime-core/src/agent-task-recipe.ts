@@ -1,6 +1,4 @@
-import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { existsSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
@@ -8,7 +6,7 @@ import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import type { WorkspaceRecipe, WorkspaceRecipeComponentManifest, WorkspaceRecipeComponentManifestEntry, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 import { resolvePluginEntrypointContract, sanitizePluginSlug } from "./component-contracts.js"
-import { prepareLocalSourceStageSync, preparedSourcePath, preparedSourceRoot } from "./prepared-source-staging.js"
+import { prepareRecipeSourcePackageSync } from "./recipe-source-packages.js"
 
 const AGENT_RUNTIME_ENV = { WP_AGENT_RUNTIME: "1" }
 
@@ -82,7 +80,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const providerPlugins: WorkspaceRecipeExtraPlugin[] = stringList(input.provider_plugin_paths)
     .map((plugin) => {
       const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
-      const preparedSource = prepareComposerPluginSource(plugin, slug, artifacts)
+      const preparedSource = prepareRecipeSourcePackageSync({ source: plugin, slug, artifactsRoot: artifacts, packageRootName: "prepared-plugins" })
       const entrypoint = resolvePluginEntrypointContract({ source: preparedSource, slug })
       return { source: preparedSource, slug, pluginFile: entrypoint.pluginFile, activate: true, loadAs: "plugin" }
     })
@@ -330,109 +328,7 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
 }
 
 function prepareComponentPluginSource(source: string, originalSource: string, slug: string, artifactsRoot: string): string {
-  if (!artifactsRoot) {
-    return prepareComposerPluginSource(originalSource || source, slug, artifactsRoot)
-  }
-
-  const preparedSource = preparedPluginSource(artifactsRoot, slug)
-  const copySource = localSourcePath(originalSource || source)
-  if (!pathExists(copySource)) {
-    return prepareComposerPluginSource(source, slug, artifactsRoot)
-  }
-
-  if (resolve(copySource) !== resolve(preparedSource)) {
-    prepareLocalSourceStageSync({
-      source: copySource,
-      sourceRef: originalSource || source,
-      targetRoot: preparedPluginRoot(artifactsRoot),
-      targetName: slug,
-      cleanupRoot: false,
-    })
-  } else {
-    mkdirSyncSafe(preparedSource)
-  }
-
-  return installComposerDependenciesIfNeeded(preparedSource, slug)
-}
-
-function prepareComposerPluginSource(source: string, slug: string, artifactsRoot: string): string {
-  if (!source) return source
-
-  const localSource = localSourcePath(source)
-  if (!pathExists(join(localSource, "composer.json"))) {
-    return pathExists(localSource) ? localSource : source
-  }
-  if (pathExists(join(localSource, "vendor", "autoload.php"))) {
-    return localSource
-  }
-  if (!artifactsRoot) {
-    throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
-  }
-
-  const preparedRoot = preparedPluginRoot(artifactsRoot)
-  const preparedSource = preparedPluginSource(artifactsRoot, slug)
-  if (resolve(localSource) !== resolve(preparedSource)) {
-    prepareLocalSourceStageSync({
-      source: localSource,
-      sourceRef: source,
-      targetRoot: preparedRoot,
-      targetName: slug,
-      cleanupRoot: false,
-    })
-  } else {
-    mkdirSyncSafe(preparedSource)
-  }
-
-  return installComposerDependenciesIfNeeded(preparedSource, slug)
-}
-
-function installComposerDependenciesIfNeeded(source: string, slug: string): string {
-  if (!pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
-    return source
-  }
-
-  const result = spawnSync("composer", ["install", "--no-interaction", "--prefer-dist", "--no-progress"], {
-    cwd: source,
-    encoding: "utf8",
-    env: composerChildEnv(),
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-  if (result.status !== 0) {
-    throw new Error(`Composer install failed for plugin ${slug}: ${result.stderr || result.stdout || `exit ${result.status}`}`)
-  }
-  if (!pathExists(join(source, "vendor", "autoload.php"))) {
-    throw new Error(`Composer install for plugin ${slug} did not create vendor/autoload.php.`)
-  }
-  return source
-}
-
-function composerChildEnv(): NodeJS.ProcessEnv {
-  const home = process.env.HOME || homedir()
-  return {
-    ...process.env,
-    ...(home ? { HOME: home } : {}),
-    COMPOSER_HOME: process.env.COMPOSER_HOME || (home ? join(home, ".composer") : undefined),
-  }
-}
-
-function preparedPluginRoot(artifactsRoot: string): string {
-  return preparedSourceRoot(artifactsRoot, "prepared-plugins")
-}
-
-function preparedPluginSource(artifactsRoot: string, slug: string): string {
-  return preparedSourcePath(artifactsRoot, "prepared-plugins", slug)
-}
-
-function localSourcePath(source: string): string {
-  return pathExists(source) ? resolve(source) : source
-}
-
-function pathExists(filePath: string): boolean {
-  return existsSync(filePath)
-}
-
-function mkdirSyncSafe(filePath: string): void {
-  mkdirSync(filePath, { recursive: true })
+  return prepareRecipeSourcePackageSync({ source, originalSource, slug, artifactsRoot, packageRootName: "prepared-plugins" })
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): SandboxToolPolicySnapshot {

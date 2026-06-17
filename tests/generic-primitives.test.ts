@@ -16,6 +16,7 @@ import {
   browserArtifactRef,
   captureArtifactFile,
   browserArtifactPersistenceProjection,
+  composerManagedHostCommandConfig,
   evidenceArtifactEnvelope,
   fixtureImportDeterministicIdPlan,
   normalizeMaterializationResultEnvelope,
@@ -24,6 +25,7 @@ import {
   compileRecipeTemplate,
   normalizeReviewerSafePath,
   normalizeWorkspaceRelativeTarget,
+  prepareRecipeSourcePackageSync,
   reviewerSafeArtifactRef,
   sourcePackagePathAllowed,
   normalizeArtifactPartPath,
@@ -79,6 +81,18 @@ assert.deepEqual(template.sourcePackages[0]?.stagedFile, { source: "./fixture", 
 assert.equal(template.recipe.inputs?.sourcePackages?.[0]?.target, "fixtures/plugin")
 assert.equal(template.recipe.artifacts?.paths?.[0]?.name, "source-package-fixture")
 assert.equal(template.recipe.artifacts?.paths?.[0]?.path, "/workspace/fixtures/plugin/.wp-codebox-source-package.json")
+
+const composerPolicy = composerManagedHostCommandConfig({ cwd: process.cwd(), allowedCwdRoots: [process.cwd()], label: "composer policy test" })
+assert.equal(composerPolicy.command, "composer")
+assert.deepEqual(composerPolicy.inheritedEnv, ["HOME", "COMPOSER_HOME"])
+assert.equal(composerPolicy.allowedCwdRoots?.[0], process.cwd())
+
+const composerSourceRoot = mkdtempSync(join(tmpdir(), "wp-codebox-composer-source-"))
+writeFileSync(join(composerSourceRoot, "composer.json"), JSON.stringify({ name: "example/plugin" }))
+assert.throws(
+  () => prepareRecipeSourcePackageSync({ source: composerSourceRoot, slug: "example-plugin", artifactsRoot: "" }),
+  /requires Composer dependencies but no artifacts directory/,
+)
 
 assert.deepEqual(trustedBrowserSessionOrigin("http://localhost:8881/path?x=1"), {
   schema: "wp-codebox/trusted-browser-session-origin/v1",
