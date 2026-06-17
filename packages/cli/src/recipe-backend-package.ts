@@ -2,12 +2,12 @@ import { createHash } from "node:crypto"
 import { readFile, stat } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import type { WorkspaceRecipe, WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
+import type { RuntimeBackendFactoryContext, RuntimeBackendKind, WorkspaceRecipe, WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliModule } from "@automattic/wp-codebox-playground"
 
 export interface RuntimeBackendPackageProvenance {
   schema: "wp-codebox/runtime-backend-package/v1"
-  kind: "playground"
+  kind: string
   source: string
   resolvedSource: string
   entrypoint: string
@@ -22,9 +22,76 @@ export interface RuntimeBackendPackageProvenance {
 }
 
 export interface PreparedRuntimeBackendPackage {
-  cliModule: PlaygroundCliModule
+  runtimeBackendContext: RuntimeBackendFactoryContext
   provenance: RuntimeBackendPackageProvenance
 }
+
+interface LoadedRuntimeBackendPackage {
+  backendPackage: WorkspaceRecipeRuntimeBackendPackage
+  resolvedSource: string
+  entrypoint: string
+  entrypointContents: string
+  manifest?: { raw: string; json: Record<string, unknown> }
+  module: unknown
+}
+
+interface PreparedRuntimeBackendPackageAdapterResult {
+  runtimeBackendContext: RuntimeBackendFactoryContext
+  diagnostics: Array<{ status: "passed"; message: string }>
+}
+
+interface RuntimeBackendPackageAdapter {
+  readonly backendKind: RuntimeBackendKind
+  prepare(loadedPackage: LoadedRuntimeBackendPackage): PreparedRuntimeBackendPackageAdapterResult
+}
+
+class RuntimeBackendPackageAdapterRegistry {
+  readonly #adapters = new Map<RuntimeBackendKind, RuntimeBackendPackageAdapter>()
+
+  constructor(adapters: readonly RuntimeBackendPackageAdapter[] = []) {
+    for (const adapter of adapters) {
+      this.register(adapter)
+    }
+  }
+
+  register(adapter: RuntimeBackendPackageAdapter): void {
+    if (this.#adapters.has(adapter.backendKind)) {
+      throw new Error(`Runtime backend package adapter is already registered: ${adapter.backendKind}`)
+    }
+
+    this.#adapters.set(adapter.backendKind, adapter)
+  }
+
+  resolve(backendKind: RuntimeBackendKind): RuntimeBackendPackageAdapter {
+    const adapter = this.#adapters.get(backendKind)
+    if (!adapter) {
+      const known = this.#adapters.size > 0 ? [...this.#adapters.keys()].join(", ") : "none"
+      throw new Error(`Unsupported runtime backend package backend: ${backendKind}; known backend package backends: ${known}`)
+    }
+
+    return adapter
+  }
+}
+
+const playgroundRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
+  backendKind: "wordpress-playground",
+  prepare(loadedPackage) {
+    const { backendPackage, entrypoint, module } = loadedPackage
+    if (backendPackage.kind !== "playground") {
+      throw backendPackageError(backendPackage, `Unsupported WordPress Playground runtime backend package kind: ${backendPackage.kind}`)
+    }
+    if (!isPlaygroundCliModule(module)) {
+      throw backendPackageError(backendPackage, `Runtime backend package entrypoint must export runCLI(): ${entrypoint}`)
+    }
+
+    return {
+      runtimeBackendContext: { cliModule: module as PlaygroundCliModule },
+      diagnostics: [{ status: "passed", message: "Entrypoint exports runCLI" }],
+    }
+  },
+}
+
+const runtimeBackendPackageAdapterRegistry = new RuntimeBackendPackageAdapterRegistry([playgroundRuntimeBackendPackageAdapter])
 
 export class RecipeRuntimeBackendPackageError extends Error {
   readonly code = "recipe-runtime-backend-package-invalid"
@@ -35,14 +102,10 @@ export class RecipeRuntimeBackendPackageError extends Error {
   }
 }
 
-export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeBackendPackage | undefined> {
+export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe, recipeDirectory: string, backendKind: RuntimeBackendKind = recipe.runtime?.backend ?? "wordpress-playground"): Promise<PreparedRuntimeBackendPackage | undefined> {
   const backendPackage = recipe.runtime?.backendPackage
   if (!backendPackage) {
     return undefined
-  }
-
-  if (backendPackage.kind !== "playground") {
-    throw backendPackageError(backendPackage, `Unsupported runtime backend package kind: ${backendPackage.kind}`)
   }
 
   const resolvedSource = resolve(recipeDirectory, backendPackage.source)
@@ -58,15 +121,14 @@ export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe
     : resolvedSource
   const entrypointContents = await readBackendEntrypoint(backendPackage, entrypoint)
   const module = await importBackendEntrypoint(backendPackage, entrypoint)
-  if (!isPlaygroundCliModule(module)) {
-    throw backendPackageError(backendPackage, `Runtime backend package entrypoint must export runCLI(): ${entrypoint}`)
-  }
+  const adapter = runtimeBackendPackageAdapterRegistry.resolve(backendKind)
+  const adapterResult = adapter.prepare({ backendPackage, resolvedSource, entrypoint, entrypointContents, manifest, module })
 
   return {
-    cliModule: module as PlaygroundCliModule,
+    runtimeBackendContext: adapterResult.runtimeBackendContext,
     provenance: {
       schema: "wp-codebox/runtime-backend-package/v1",
-      kind: "playground",
+      kind: backendPackage.kind,
       source: backendPackage.source,
       resolvedSource,
       entrypoint,
@@ -75,7 +137,7 @@ export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe
       diagnostics: [
         { status: "passed", message: "Source exists" },
         { status: "passed", message: "Entrypoint resolved" },
-        { status: "passed", message: "Entrypoint exports runCLI" },
+        ...adapterResult.diagnostics,
       ],
       ...(backendPackage.metadata ? { metadata: backendPackage.metadata } : {}),
     },

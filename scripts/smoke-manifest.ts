@@ -31,6 +31,7 @@ export const smokeGroups = {
     commands: [
       npmScript("build"),
       tsxSmoke("runtime-backend-registry-smoke"),
+      tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),

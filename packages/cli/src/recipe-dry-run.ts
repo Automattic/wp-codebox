@@ -39,7 +39,7 @@ export interface RecipePlan {
   runtime: {
     backend: string
     backendPackage?: {
-      kind: "playground"
+      kind: string
       source: string
       package?: string
       entrypoint?: string

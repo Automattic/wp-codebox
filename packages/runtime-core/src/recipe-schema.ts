@@ -441,11 +441,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       },
       runtimeBackendPackage: {
         type: "object",
-        additionalProperties: false,
+        additionalProperties: true,
         required: ["kind", "source"],
-        description: "Optional local Playground backend package or entrypoint used to boot the runtime. This selects the backend package itself and is separate from /wordpress filesystem overlays.",
+        description: "Optional local backend package or entrypoint used to boot the runtime. This selects the backend package itself and is separate from /wordpress filesystem overlays.",
         properties: {
-          kind: { const: "playground" },
+          kind: { type: "string", minLength: 1 },
           source: { type: "string" },
           package: { type: "string" },
           entrypoint: { type: "string" },
