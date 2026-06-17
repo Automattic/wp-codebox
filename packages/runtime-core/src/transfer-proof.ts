@@ -74,6 +74,10 @@ export interface TransferProofBundleVerificationResult {
   diagnostics: TransferProbeDiagnosticsResult
 }
 
+export interface TransferProofVerificationOptions {
+  privateHostPatterns?: string[]
+}
+
 export type TransferProbeDiagnosticCode =
   | "page-unavailable"
   | "broken-link"
@@ -138,8 +142,9 @@ const REVIEWER_EVIDENCE_KINDS = new Set([
   "probe-results",
 ])
 
-export async function verifyTransferProofBundle(directory: string): Promise<TransferProofBundleVerificationResult> {
+export async function verifyTransferProofBundle(directory: string, options: TransferProofVerificationOptions = {}): Promise<TransferProofBundleVerificationResult> {
   const bundleDirectory = normalize(directory)
+  const resolvedOptions = resolveTransferProofVerificationOptions(options)
   const artifactVerification = await verifyArtifactBundle(bundleDirectory)
   const diagnostics = await buildTransferProbeDiagnostics(bundleDirectory, artifactVerification.manifest)
   const violations: TransferProofViolation[] = artifactVerification.valid ? [] : artifactVerification.violations.map(artifactViolationToTransferViolation)
@@ -147,8 +152,8 @@ export async function verifyTransferProofBundle(directory: string): Promise<Tran
   if (artifactVerification.manifest) {
     verifyRequiredTransferArtifacts(artifactVerification.manifest, violations)
     await verifyPreviewSessionEvidenceRef(bundleDirectory, artifactVerification.manifest, violations)
-    await verifyTransferProofMetadata(bundleDirectory, artifactVerification.manifest, violations)
-    await verifyReviewerEvidenceSafety(bundleDirectory, artifactVerification.manifest, violations)
+    await verifyTransferProofMetadata(bundleDirectory, artifactVerification.manifest, violations, resolvedOptions)
+    await verifyReviewerEvidenceSafety(bundleDirectory, artifactVerification.manifest, violations, resolvedOptions)
   }
 
   return {
@@ -242,14 +247,24 @@ function verifyRequiredTransferArtifacts(manifest: ArtifactManifest, violations:
   }
 }
 
-async function verifyTransferProofMetadata(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[]): Promise<void> {
+function resolveTransferProofVerificationOptions(options: TransferProofVerificationOptions): Required<TransferProofVerificationOptions> {
+  return {
+    privateHostPatterns: options.privateHostPatterns ?? parsePrivateHostPatterns(process.env.WP_CODEBOX_TRANSFER_PROOF_PRIVATE_HOSTS),
+  }
+}
+
+function parsePrivateHostPatterns(value: string | undefined): string[] {
+  return value?.split(",").map((pattern) => pattern.trim()).filter(Boolean) ?? []
+}
+
+async function verifyTransferProofMetadata(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[], options: Required<TransferProofVerificationOptions>): Promise<void> {
   const metadata = await readJson(join(directory, "metadata.json"))
   const transferProofBundle = isRecord(metadata) && isRecord(metadata.transferProofBundle) ? metadata.transferProofBundle : undefined
   if (!transferProofBundle) {
     return
   }
 
-  for (const finding of unsafeReviewerEvidenceFindings(`${JSON.stringify(transferProofBundle, null, 2)}\n`, "metadata.json")) {
+  for (const finding of unsafeReviewerEvidenceFindings(`${JSON.stringify(transferProofBundle, null, 2)}\n`, "metadata.json", options)) {
     violations.push(finding)
   }
 
@@ -366,19 +381,19 @@ async function verifyPreviewSessionEvidenceRef(directory: string, manifest: Arti
   }
 }
 
-async function verifyReviewerEvidenceSafety(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[]): Promise<void> {
+async function verifyReviewerEvidenceSafety(directory: string, manifest: ArtifactManifest, violations: TransferProofViolation[], options: Required<TransferProofVerificationOptions>): Promise<void> {
   for (const file of manifest.files) {
     if (!REVIEWER_EVIDENCE_KINDS.has(file.kind)) {
       continue
     }
     const text = await readFile(join(directory, file.path), "utf8")
-    for (const finding of unsafeReviewerEvidenceFindings(text, file.path)) {
+    for (const finding of unsafeReviewerEvidenceFindings(text, file.path, options)) {
       violations.push(finding)
     }
   }
 }
 
-function unsafeReviewerEvidenceFindings(text: string, file: string): TransferProofViolation[] {
+function unsafeReviewerEvidenceFindings(text: string, file: string, options: Required<TransferProofVerificationOptions>): TransferProofViolation[] {
   const findings: TransferProofViolation[] = []
   let parsed: unknown
   try {
@@ -388,36 +403,36 @@ function unsafeReviewerEvidenceFindings(text: string, file: string): TransferPro
   }
 
   if (parsed !== undefined) {
-    walkReviewerEvidence(parsed, [], file, findings)
+    walkReviewerEvidence(parsed, [], file, findings, options)
   } else {
     for (const [index, line] of text.split(/\r?\n/).entries()) {
-      scanReviewerEvidenceString(line, [`line:${index + 1}`], file, findings)
+      scanReviewerEvidenceString(line, [`line:${index + 1}`], file, findings, options)
     }
   }
   return findings
 }
 
-function walkReviewerEvidence(value: unknown, path: JsonPath, file: string, findings: TransferProofViolation[]): void {
+function walkReviewerEvidence(value: unknown, path: JsonPath, file: string, findings: TransferProofViolation[], options: Required<TransferProofVerificationOptions>): void {
   if (typeof value === "string") {
-    scanReviewerEvidenceString(value, path, file, findings)
+    scanReviewerEvidenceString(value, path, file, findings, options)
     if (isSecretKeyPath(path) && !isRedactedSecretValue(value)) {
       findings.push(unsafeFinding(file, path, "secret-shaped value", "Reviewer-facing evidence includes a secret-shaped field value."))
     }
     return
   }
   if (Array.isArray(value)) {
-    value.forEach((item, index) => walkReviewerEvidence(item, [...path, index], file, findings))
+    value.forEach((item, index) => walkReviewerEvidence(item, [...path, index], file, findings, options))
     return
   }
   if (isRecord(value)) {
     for (const [key, item] of Object.entries(value)) {
-      walkReviewerEvidence(item, [...path, key], file, findings)
+      walkReviewerEvidence(item, [...path, key], file, findings, options)
     }
   }
 }
 
-function scanReviewerEvidenceString(value: string, path: JsonPath, file: string, findings: TransferProofViolation[]): void {
-  if (unsafeUrl(value)) {
+function scanReviewerEvidenceString(value: string, path: JsonPath, file: string, findings: TransferProofViolation[], options: Required<TransferProofVerificationOptions>): void {
+  if (unsafeUrl(value, options)) {
     findings.push(unsafeFinding(file, path, "unsafe URL", "Reviewer-facing evidence includes a localhost, local, or private URL."))
   }
   if (unsafeLocalPath(value)) {
@@ -432,7 +447,7 @@ function unsafeFinding(file: string, path: JsonPath, kind: string, message: stri
   return { code: "unsafe-reviewer-evidence", path: `${file}:${formatJsonPath(path)}`, file, message, details: { kind } }
 }
 
-function unsafeUrl(value: string): boolean {
+function unsafeUrl(value: string, options: Required<TransferProofVerificationOptions>): boolean {
   const matches = value.matchAll(/\b(?:https?|file):\/\/[^\s"'<>]+/gi)
   for (const match of matches) {
     try {
@@ -441,11 +456,31 @@ function unsafeUrl(value: string): boolean {
       if (url.protocol === "file:" || host === "localhost" || host === "0.0.0.0" || host === "127.0.0.1" || host === "::1") {
         return true
       }
-      if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host) || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".corp") || host.endsWith(".lan") || host === "github.a8c.com") {
+      if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host) || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".corp") || host.endsWith(".lan") || privateHostPatternMatches(host, options.privateHostPatterns)) {
         return true
       }
     } catch {
       continue
+    }
+  }
+  return false
+}
+
+function privateHostPatternMatches(host: string, patterns: string[]): boolean {
+  for (const pattern of patterns) {
+    const normalized = pattern.trim().toLowerCase()
+    if (!normalized) {
+      continue
+    }
+    if (normalized.startsWith("*.")) {
+      const suffix = normalized.slice(1)
+      if (host.endsWith(suffix) && host.length > suffix.length) {
+        return true
+      }
+      continue
+    }
+    if (host === normalized) {
+      return true
     }
   }
   return false

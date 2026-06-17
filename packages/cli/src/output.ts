@@ -272,7 +272,7 @@ export function printHelp(): void {
   wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox artifacts diagnostics --input <json> [--source <id>] [--stage <id>] [--observation-type <id>] [--ref <path[:kind]>] [--json]
-  wp-codebox artifacts transfer-verify --bundle <dir> [--json]
+  wp-codebox artifacts transfer-verify --bundle <dir> [--private-host-pattern <host>] [--json]
   wp-codebox artifacts transfer-probes --bundle <dir> [--json]
   wp-codebox artifacts discover-partial --artifacts <dir> [--session-id <id>] [--started-at <iso>] [--finished-at <iso>] [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
@@ -305,7 +305,11 @@ Options:
   --approved-file <path>
                        Changed file approved for artifacts apply-preflight. Repeatable.
   --approved-files <paths>
-                       Comma-separated changed files approved for artifacts apply-preflight.
+                        Comma-separated changed files approved for artifacts apply-preflight.
+  --private-host-pattern <host>
+                       Host pattern treated as private reviewer evidence for transfer-verify.
+                       Repeatable; supports exact hosts and *.suffix patterns. Can also be set with
+                       WP_CODEBOX_TRANSFER_PROOF_PRIVATE_HOSTS.
   --scenario-id <id>  Filter benchmark artifact refs to one scenario.
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.

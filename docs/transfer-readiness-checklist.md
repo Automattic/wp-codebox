@@ -217,6 +217,11 @@ Transfer checklist:
 - Secrets should be passed by environment-variable name or connector reference,
   redacted from recipes, logs, metadata, patches, and review files, and excluded
   from artifact provenance except for sanitized availability/status metadata.
+- Transfer-proof reviewer evidence treats localhost, private-network, and common
+  internal host suffixes as unsafe by default. Parent control planes with
+  organization-private public DNS names should pass caller-owned private host
+  patterns, for example `WP_CODEBOX_TRANSFER_PROOF_PRIVATE_HOSTS=github.a8c.com`
+  or `wp-codebox artifacts transfer-verify --private-host-pattern github.a8c.com`.
 - Generated browser runners that bypass host permission checks must assert they
   are executing inside a disposable Playground runtime before registering the
   bypass.
