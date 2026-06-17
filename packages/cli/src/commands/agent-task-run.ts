@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTerminalResult, normalizeTaskInput, type AgentTaskRunInput, type AgentTerminalResult } from "@automattic/wp-codebox-core"
+import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, type AgentTaskRunInput, type AgentTerminalResult } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -221,42 +221,25 @@ export async function buildAgentRuntimeDiagnostics(run: Record<string, unknown>,
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
-  let inputPath = ""
-  let json = false
-  let previewHoldSeconds = ""
-  let previewPublicUrl = ""
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[index + 1]
-    switch (name) {
-      case "--input-file":
-        inputPath = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      case "--json":
-        json = true
-        break
-      case "--format":
-        json = value === "json"
-        if (inlineValue === undefined) index += 1
-        break
-      case "--preview-hold-seconds":
-        previewHoldSeconds = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      case "--preview-public-url":
-        previewPublicUrl = value ?? ""
-        if (inlineValue === undefined) index += 1
-        break
-      default:
-        throw new Error(`Unknown agent-task-run option: ${arg}`)
+  const { options, positionals } = parseCommandOptions(args, new Set(["--json"]))
+  if (positionals.length > 0) {
+    throw new Error(`Unknown agent-task-run option: ${positionals[0]}`)
+  }
+  for (const name of options.keys()) {
+    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url"].includes(name)) {
+      throw new Error(`Unknown agent-task-run option: ${name}`)
     }
   }
+  const inputPath = stringOption(options, "--input-file")
   if (!inputPath) {
     throw new Error("agent-task-run requires --input-file <path>")
   }
-  return { inputPath, json, previewHoldSeconds, previewPublicUrl }
+  return {
+    inputPath,
+    json: options.get("--json") === true || stringOption(options, "--format") === "json",
+    previewHoldSeconds: stringOption(options, "--preview-hold-seconds"),
+    previewPublicUrl: stringOption(options, "--preview-public-url"),
+  }
 }
 
 async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
@@ -296,8 +279,13 @@ function parseRecipeRunOutput(stdout: string): Record<string, unknown> {
   if (!trimmed) {
     return { success: false, error: { message: "WP Codebox recipe run returned no JSON output." } }
   }
-  const parsed = JSON.parse(trimmed)
+  const parsed = parseCommandJson(trimmed, "WP Codebox recipe run output")
   return objectValue(parsed) || { success: false, error: { message: "WP Codebox recipe run returned a non-object JSON value." } }
+}
+
+function stringOption(options: Map<string, string | true>, name: string): string {
+  const value = options.get(name)
+  return typeof value === "string" ? value : ""
 }
 
 function sandboxSession(input: AgentTaskRunInput, run: Record<string, unknown>, artifacts: string, status: "completed" | "failed"): Record<string, unknown> {
