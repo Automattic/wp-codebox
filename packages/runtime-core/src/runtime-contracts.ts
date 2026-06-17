@@ -88,9 +88,9 @@ export interface WorkspaceRecipeRuntimeStack {
   mounts?: WorkspaceRecipeMount[]
 }
 
-export type WorkspaceRecipeRuntimeOverlayKind = "bundled-library"
-export type WorkspaceRecipeRuntimeOverlayLibrary = "php-ai-client"
-export type WorkspaceRecipeRuntimeOverlayStrategy = "wordpress-scoped-bundle"
+export type WorkspaceRecipeRuntimeOverlayKind = string
+export type WorkspaceRecipeRuntimeOverlayLibrary = string
+export type WorkspaceRecipeRuntimeOverlayStrategy = string
 
 export interface WorkspaceRecipeRuntimeOverlay {
   kind: WorkspaceRecipeRuntimeOverlayKind

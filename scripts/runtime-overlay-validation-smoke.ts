@@ -30,7 +30,7 @@ assert.throws(
     assert.ok(error instanceof Error)
     assert.match(error.message, /runtime_overlays\[0\]/)
     assert.match(error.message, /\$\.runtime\.overlays\[0\]/)
-    assert.match(error.message, /field kind must be one of: bundled-library/)
+    assert.match(error.message, /field kind must be a non-empty string/)
     assert.match(error.message, /accepted canonical kind values: bundled-library/)
     assert.match(error.message, new RegExp(recipePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
     return true
@@ -47,7 +47,8 @@ assert.throws(
   (error) => {
     assert.ok(error instanceof Error)
     assert.match(error.message, /runtime_overlays\[0\]/)
-    assert.match(error.message, /field kind must be one of: bundled-library/)
+    assert.match(error.message, /field descriptor must match a registered runtime overlay descriptor/)
+    assert.match(error.message, /bundled-library\/php-ai-client\/wordpress-scoped-bundle/)
     assert.match(error.message, /accepted canonical kind values: bundled-library/)
     assert.match(error.message, /recipe: \/tmp\/wp-codebox-runtime-overlay-recipe\.json/)
     return true

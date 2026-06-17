@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
 export interface RecipeValidationIssue {
@@ -23,9 +24,9 @@ export const defaultPolicy: RuntimePolicy = {
 const cliRuntimeRecipePolicy = cliRuntimeBackendRecipePolicy()
 const supportedRecipeCommands = new Set(listCliRecipeCommandIds())
 const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
-const supportedRuntimeOverlayKinds = cliRuntimeRecipePolicy.runtimeOverlayKinds
-const supportedRuntimeOverlayLibraries = cliRuntimeRecipePolicy.runtimeOverlayLibraries
-const supportedRuntimeOverlayStrategies = cliRuntimeRecipePolicy.runtimeOverlayStrategies
+const supportedRuntimeOverlayKinds = uniqueRuntimeOverlayDescriptorValues("kind")
+const supportedRuntimeOverlayLibraries = uniqueRuntimeOverlayDescriptorValues("library")
+const supportedRuntimeOverlayStrategies = uniqueRuntimeOverlayDescriptorValues("strategy")
 
 export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
   return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -365,14 +366,17 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
     if (!overlay || typeof overlay !== "object" || Array.isArray(overlay)) {
       throw new Error(runtimeOverlayValidationMessage(path, "entry", "must be an object", recipePath))
     }
-    if (!supportedRuntimeOverlayKinds.includes(overlay.kind)) {
-      throw new Error(runtimeOverlayValidationMessage(path, "kind", `must be one of: ${supportedRuntimeOverlayKinds.join(", ")}`, recipePath))
+    if (typeof overlay.kind !== "string" || overlay.kind === "") {
+      throw new Error(runtimeOverlayValidationMessage(path, "kind", "must be a non-empty string", recipePath))
     }
-    if (!supportedRuntimeOverlayLibraries.includes(overlay.library)) {
-      throw new Error(runtimeOverlayValidationMessage(path, "library", `must be one of: ${supportedRuntimeOverlayLibraries.join(", ")}`, recipePath))
+    if (typeof overlay.library !== "string" || overlay.library === "") {
+      throw new Error(runtimeOverlayValidationMessage(path, "library", "must be a non-empty string", recipePath))
     }
-    if (!supportedRuntimeOverlayStrategies.includes(overlay.strategy)) {
-      throw new Error(runtimeOverlayValidationMessage(path, "strategy", `must be one of: ${supportedRuntimeOverlayStrategies.join(", ")}`, recipePath))
+    if (typeof overlay.strategy !== "string" || overlay.strategy === "") {
+      throw new Error(runtimeOverlayValidationMessage(path, "strategy", "must be a non-empty string", recipePath))
+    }
+    if (!runtimeOverlayDescriptor(overlay)) {
+      throw new Error(runtimeOverlayValidationMessage(path, "descriptor", `must match a registered runtime overlay descriptor; accepted descriptors: ${runtimeOverlayDescriptorNames()}`, recipePath))
     }
     if (!overlay.source || typeof overlay.source !== "string") {
       throw new Error(runtimeOverlayValidationMessage(path, "source", "must be a non-empty string", recipePath))
@@ -388,6 +392,16 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
 
 function runtimeOverlayValidationMessage(path: string, field: string, problem: string, recipePath: string): string {
   return `Recipe runtime overlay is unsupported at ${path}; field ${field} ${problem}; accepted canonical kind values: ${supportedRuntimeOverlayKinds.join(", ")}; recipe: ${recipePath}`
+}
+
+function uniqueRuntimeOverlayDescriptorValues(field: "kind" | "library" | "strategy"): string[] {
+  return [...new Set(registeredRuntimeOverlayDescriptors().map((descriptor) => descriptor[field]))]
+}
+
+function runtimeOverlayDescriptorNames(): string {
+  return registeredRuntimeOverlayDescriptors()
+    .map((descriptor) => `${descriptor.kind}/${descriptor.library}/${descriptor.strategy}`)
+    .join(", ")
 }
 
 function validateRecipeDependencyOverlays(overlays: WorkspaceRecipeDependencyOverlay[] | undefined, recipePath: string): void {
@@ -450,7 +464,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
   for (const [index, overlay] of (recipe.runtime?.overlays ?? []).entries()) {
     const path = `$.runtime.overlays[${index}]`
     await validateExistingDirectory(resolve(recipeDirectory, overlay.source), `${path}.source`, addIssue)
-    validateAbsoluteSandboxPath(overlay.target ?? "/wordpress/wp-includes/php-ai-client", `${path}.target`, addIssue)
+    validateAbsoluteSandboxPath(runtimeOverlayTarget(overlay), `${path}.target`, addIssue)
   }
 
   for (const [index, workspace] of (recipe.inputs?.workspaces ?? []).entries()) {

@@ -4,6 +4,7 @@ import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-c
 import { serializeError } from "./output.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
+import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 
 export interface RecipeDryRunOptions {
   recipePath: string
@@ -317,7 +318,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
   }))
   const runtimeOverlays = (recipe.runtime?.overlays ?? []).map((overlay, index) => ({
     type: "directory" as const,
-    target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+    target: runtimeOverlayTarget(overlay),
     mode: "readonly" as const,
     metadata: {
       kind: "runtime-overlay",
@@ -326,7 +327,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       library: overlay.library,
       strategy: overlay.strategy,
       source: overlay.source,
-      target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+      target: runtimeOverlayTarget(overlay),
       ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
     },
     planned: "generated" as const,
