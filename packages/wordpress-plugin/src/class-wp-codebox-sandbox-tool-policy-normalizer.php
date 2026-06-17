@@ -17,6 +17,12 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 	private const AGENTS_API_RUNTIME_CAPABILITY_SCOPE = 'capability_scope';
 	private const AGENTS_API_RUNTIME_LOCAL = 'runtime_local';
 
+	private WP_Codebox_Runtime_Tool_Policy_Descriptor $descriptor_resolver;
+
+	public function __construct() {
+		$this->descriptor_resolver = new WP_Codebox_Runtime_Tool_Policy_Descriptor();
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function normalize_for_task_input( array $input ): array|WP_Error {
 		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array();
@@ -52,8 +58,8 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 
 		$denied = array();
 		foreach ( $this->string_list( $tools ) as $tool ) {
-			$policy_tool = $this->policy_tool( $policy, $tool );
-			$reason      = null === $policy_tool ? 'not-in-policy' : $this->policy_denial_reason( $policy_tool );
+			$descriptor = $this->descriptor_resolver->resolve_runtime_tool_alias( $policy, $tool );
+			$reason     = $this->descriptor_resolver->denial_reason( $descriptor );
 			if ( null !== $reason ) {
 				$denied[] = array(
 					'tool'   => $tool,
@@ -111,9 +117,10 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 
 	/** @return string[] */
 	public function allowed_tools( array $policy ): array {
+		$effective = $this->descriptor_resolver->resolve_effective_runtime_tool_policy( $policy );
 		$allowed = array();
-		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
-			if ( is_array( $tool ) && null === $this->policy_denial_reason( $tool ) ) {
+		foreach ( is_array( $effective['tools'] ?? null ) ? $effective['tools'] : array() as $tool ) {
+			if ( is_array( $tool ) && null === $this->descriptor_resolver->denial_reason( $tool ) ) {
 				$allowed[] = (string) $tool['id'];
 			}
 		}
@@ -217,45 +224,4 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		);
 	}
 
-	/** @param array<string,mixed> $policy @return array<string,mixed>|null */
-	private function policy_tool( array $policy, string $tool_id ): array|null {
-		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
-			if ( is_array( $tool ) && $tool_id === (string) ( $tool['id'] ?? '' ) ) {
-				return $tool;
-			}
-		}
-
-		return null;
-	}
-
-	/** @param array<string,mixed> $tool */
-	private function policy_denial_reason( array $tool ): string|null {
-		$runtime = $this->runtime_metadata( $tool );
-
-		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) {
-			return 'parent-only';
-		}
-		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) {
-			return 'not-visible-in-sandbox';
-		}
-		if ( true !== ( $tool['allowed'] ?? false ) ) {
-			return 'not-allowed';
-		}
-
-		return null;
-	}
-
-	/** @param array<string,mixed> $tool @return array{environment:string,capability_scope:string} */
-	private function runtime_metadata( array $tool ): array {
-		$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
-
-		return array(
-			self::AGENTS_API_RUNTIME_ENVIRONMENT => isset( $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
-				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
-				: '',
-			self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE => isset( $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
-				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
-				: '',
-		);
-	}
 }

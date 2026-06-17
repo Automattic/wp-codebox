@@ -29,6 +29,7 @@ function is_wp_error( mixed $value ): bool {
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-tool-policy-validator.php';
@@ -63,6 +64,7 @@ assert_same( 'runtime_local', $task_input['sandbox_tool_policy']['tools'][0]['ru
 
 $validator = new WP_Codebox_Host_Tool_Policy_Validator();
 assert_same( null, $validator->validate_task_tools( $task_input ), 'validator accepts normalized semantic policy' );
+assert_same( null, $validator->validate_allowed_tools( array( 'filesystem_write' ), $task_input ), 'validator accepts generated runtime tool id alias' );
 
 $explicit_policy = WP_Codebox_Agent_Task::normalize_input(
 	array(
@@ -90,5 +92,65 @@ $explicit_policy = WP_Codebox_Agent_Task::normalize_input(
 
 assert_not_error( $explicit_policy, 'explicit policy remains accepted' );
 assert_same( 'custom_filesystem_write', $explicit_policy['sandbox_tool_policy']['tools'][0]['runtime_tool_id'], 'explicit runtime id preserved' );
+assert_same( null, $validator->validate_allowed_tools( array( 'custom_filesystem_write' ), $explicit_policy ), 'validator accepts explicit runtime tool id alias' );
+
+$descriptor_policy = array(
+	'schema'  => 'wp-codebox/sandbox-tool-policy/v1',
+	'version' => 1,
+	'tools'   => array(
+		array(
+			'id'                   => 'filesystem-write',
+			'runtime_tool_id'      => 'client/filesystem-write',
+			'aliases'              => array( 'filesystem_write' ),
+			'execution_location'   => 'sandbox',
+			'transport_visibility' => 'sandbox',
+			'allowed'              => true,
+			'runtime'              => array(
+				'environment'      => 'runtime_local',
+				'capability_scope' => 'runtime_local',
+			),
+			'metadata'             => array(
+				'aliases' => array( 'write_file' ),
+				'schema'  => 'example/input/v1',
+				'policy'  => array( 'permission' => 'write' ),
+			),
+		),
+		array(
+			'id'                   => 'browser-review',
+			'runtime_tool_id'      => 'client/browser-review',
+			'execution_location'   => 'parent',
+			'transport_visibility' => 'parent',
+			'allowed'              => true,
+			'runtime'              => array(
+				'environment'      => 'control_plane',
+				'capability_scope' => 'control_plane',
+			),
+		),
+		array(
+			'id'                   => 'internal-token',
+			'runtime_tool_id'      => 'client/internal-token',
+			'execution_location'   => 'sandbox',
+			'transport_visibility' => 'hidden',
+			'allowed'              => true,
+			'runtime'              => array(
+				'environment'      => 'runtime_local',
+				'capability_scope' => 'runtime_local',
+			),
+		),
+	),
+	'metadata' => array( 'source' => 'php-tool-policy-normalization-smoke' ),
+);
+
+$resolver = new WP_Codebox_Runtime_Tool_Policy_Descriptor();
+$effective = $resolver->resolve_effective_runtime_tool_policy( $descriptor_policy );
+assert_same( array( 'client/filesystem-write' ), $effective['allowedRuntimeToolIds'], 'effective allowed runtime ids match runtime-core' );
+assert_same( array( 'client/filesystem-write' ), $effective['visibleRuntimeToolIds'], 'effective visible runtime ids match runtime-core' );
+assert_same( array( 'client/browser-review' ), $effective['parentOnlyRuntimeToolIds'], 'effective parent runtime ids match runtime-core' );
+assert_same( array( 'client/internal-token' ), $effective['hiddenRuntimeToolIds'], 'effective hidden runtime ids match runtime-core' );
+assert_same( 'client/filesystem-write', $resolver->resolve_runtime_tool_alias( $descriptor_policy, 'write_file' )['runtimeToolId'], 'metadata alias resolves' );
+assert_same( 'example/input/v1', $resolver->resolve_runtime_tool_alias( $descriptor_policy, 'filesystem_write' )['schema'], 'metadata schema mirrors descriptor' );
+assert_same( array( 'permission' => 'write' ), $resolver->resolve_runtime_tool_alias( $descriptor_policy, 'filesystem_write' )['policy'], 'metadata policy mirrors descriptor' );
+assert_same( 'parent-only', $resolver->denial_reason( $resolver->resolve_runtime_tool_alias( $descriptor_policy, 'client/browser-review' ) ), 'parent-only tool denied by descriptor' );
+assert_same( 'hidden', $resolver->denial_reason( $resolver->resolve_runtime_tool_alias( $descriptor_policy, 'client/internal-token' ) ), 'hidden tool denied by descriptor' );
 
 fwrite( STDOUT, "PHP tool policy normalization smoke passed\n" );
