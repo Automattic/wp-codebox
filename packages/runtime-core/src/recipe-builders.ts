@@ -1,5 +1,6 @@
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
+import { normalizeSharedMounts } from "./mount-primitives.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
 type JsonObject = Record<string, unknown>
@@ -50,29 +51,7 @@ export interface WordPressBenchRecipeOptions {
 }
 
 export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = [], options: NormalizeRecipeMountsOptions = {}): WorkspaceRecipeMount[] {
-  const defaultMode = options.defaultMode ?? "readwrite"
-  return mounts.map((mount, index) => {
-    if (!mount.source || typeof mount.source !== "string") {
-      throw new Error(`Recipe mount ${index} requires source`)
-    }
-    if (!mount.target || typeof mount.target !== "string" || !mount.target.startsWith("/")) {
-      throw new Error(`Recipe mount ${index} requires an absolute target`)
-    }
-
-    const normalized: WorkspaceRecipeMount = {
-      source: mount.source,
-      target: mount.target,
-      mode: mount.mode ?? defaultMode,
-    }
-    if (mount.type !== undefined) {
-      normalized.type = mount.type
-    }
-    if (mount.metadata !== undefined) {
-      normalized.metadata = mount.metadata
-    }
-
-    return normalized
-  })
+  return normalizeSharedMounts(mounts, { defaultMode: options.defaultMode ?? "readwrite", label: "Recipe mount" })
 }
 
 export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptions): WorkspaceRecipe {

@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join, relative } from "node:path"
+import { dirname } from "node:path"
 
 import { artifactFileDigest, artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions } from "./artifact-manifest.js"
+import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
 
 export interface ArtifactPartInput {
   root: string
@@ -21,20 +22,19 @@ export interface ArtifactPart {
 }
 
 export async function writeArtifactPart(input: ArtifactPartInput): Promise<ArtifactPart> {
-  const relativePath = normalizeArtifactPartPath(input.path)
+  const { relativePath, absolutePath } = resolveArtifactPath(input.root, input.path)
   const contents = typeof input.contents === "string" ? input.contents : Buffer.from(input.contents)
-  const absolutePath = join(input.root, relativePath)
 
   await mkdir(dirname(absolutePath), { recursive: true })
   await writeFile(absolutePath, contents)
 
-  const manifestFile = artifactManifestFile(absolutePath, input.kind, input.contentType, artifactFileDigest(contents), {
+  const manifestFile = artifactManifestFile(relativePath, input.kind, input.contentType, artifactFileDigest(contents), {
     redaction: input.redaction,
     provenance: input.provenance,
   })
 
   return {
-    path: relative(input.root, absolutePath).replace(/\\/g, "/"),
+    path: relativePath,
     absolutePath,
     bytes: Buffer.byteLength(contents),
     manifestFile,
@@ -42,9 +42,5 @@ export async function writeArtifactPart(input: ArtifactPartInput): Promise<Artif
 }
 
 export function normalizeArtifactPartPath(path: string): string {
-  const segments = path.replace(/\\/g, "/").split("/").filter(Boolean)
-  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
-    throw new Error("Artifact part path must be a relative path without current-directory or parent-directory segments")
-  }
-  return segments.join("/")
+  return safeArtifactRelativePath(path)
 }

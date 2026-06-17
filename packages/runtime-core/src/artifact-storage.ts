@@ -1,4 +1,5 @@
 import { resolve } from "node:path"
+import { safeArtifactRelativePath } from "./artifact-paths.js"
 
 export interface RuntimeArtifactStorageInput {
   root?: string
@@ -61,13 +62,7 @@ export function normalizeArtifactPathPrefix(prefix: string | undefined): string 
   if (!trimmed || trimmed === "/") {
     return ""
   }
-
-  const segments = trimmed.split("/").filter(Boolean)
-  if (segments.some((segment) => segment === "." || segment === "..")) {
-    throw new Error("Artifact path prefix must not contain current-directory or parent-directory segments")
-  }
-
-  return segments.join("/")
+  return safeArtifactRelativePath(trimmed)
 }
 
 export function artifactStoragePath(descriptor: RuntimeArtifactStorageDescriptor, relativePath: string): string {
