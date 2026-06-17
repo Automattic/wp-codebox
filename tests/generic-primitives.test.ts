@@ -15,8 +15,10 @@ import {
   browserArtifactGrant,
   browserArtifactRef,
   captureArtifactFile,
+  browserArtifactPersistenceProjection,
   evidenceArtifactEnvelope,
   fixtureImportDeterministicIdPlan,
+  normalizeMaterializationResultEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
   compileRecipeTemplate,
@@ -241,6 +243,46 @@ assert.deepEqual(materializationRunArtifactRefs([phase]), [
     digest: { algorithm: "sha256", value: "abc" },
   },
 ])
+
+const materializationEnvelope = normalizeMaterializationResultEnvelope({
+  success: true,
+  response: {
+    schema: "wp-codebox/materialization-result/v1",
+    task: "persist-browser-artifacts",
+    success: true,
+    response: {
+      success: true,
+      result: {
+        artifact: { path: "files/browser/index.html", kind: "browser-html", sha256: "def" },
+        artifact_bundle: { id: "artifact-bundle-sha256-abc", contentDigest: { algorithm: "sha256", value: "abc" }, directory: "artifacts/run-1" },
+        materialization: { id: "materialization-1", status: "completed" },
+      },
+    },
+  },
+})
+assert.equal(materializationEnvelope.schema, "wp-codebox/materialization-result/v1")
+assert.equal(materializationEnvelope.task, "persist-browser-artifacts")
+const projection = browserArtifactPersistenceProjection(materializationEnvelope)
+assert.equal(projection.schema, "wp-codebox/browser-artifact-persistence-projection/v1")
+assert.deepEqual(projection.artifacts, [{ path: "files/browser/index.html", kind: "browser-html", sha256: "def" }])
+assert.deepEqual(projection.artifactRefs, [
+  {
+    kind: "artifact-bundle",
+    id: "artifact-bundle-sha256-abc",
+    path: "artifacts/run-1",
+    digest: { algorithm: "sha256", value: "abc" },
+  },
+  {
+    kind: "browser-html",
+    path: "files/browser/index.html",
+    digest: { algorithm: "sha256", value: "def" },
+  },
+  {
+    kind: "materialization",
+    id: "materialization-1",
+  },
+])
+assert.throws(() => normalizeMaterializationResultEnvelope({ success: true, response: { success: false, error: { message: "fixture failure" } } }), /fixture failure/)
 
 const artifactRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-artifact-part-"))
 const part = await writeArtifactPart({
