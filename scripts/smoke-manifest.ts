@@ -35,6 +35,7 @@ export const smokeGroups = {
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),
       tsxSmoke("host-command-tool-smoke"),
+      tsxSmoke("runtime-env-smoke"),
       tsxSmoke("task-input-contract-smoke"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
