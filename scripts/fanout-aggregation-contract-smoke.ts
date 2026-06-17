@@ -53,6 +53,16 @@ assert.equal(success.rawWorkerArtifactRefs.length, 2)
 assert.deepEqual(success.finalArtifactRefs, [{ path: "aggregate/final/report.json", kind: "aggregate-report" }])
 assert.deepEqual(success.conflicts, [])
 
+const legacyWorkerStatuses = normalizeFanoutAggregationInput({
+  ...successfulInput,
+  worker_results: [
+    { worker_id: "worker-a", status: "completed", success: true, artifact_refs: [] },
+    { worker_id: "worker-b", status: "no_op", artifact_refs: [] },
+  ],
+})
+assert.equal(legacyWorkerStatuses.workerResultRefs[0].status, "succeeded")
+assert.equal(legacyWorkerStatuses.workerResultRefs[1].status, "no_op")
+
 const deterministic = aggregateFanoutOutputs(successfulInput)
 assert.equal(defaultFanoutAggregationOutputPath(successfulInput), "aggregate/final/result.json")
 assert.deepEqual(deterministic.finalArtifactRefs, [{

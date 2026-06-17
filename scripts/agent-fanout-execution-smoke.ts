@@ -23,8 +23,10 @@ const result = await executeAgentFanoutRequest({
   recipeDirectory: artifactRoot,
   runWorker: async (input) => {
     seenWorkers.push(String(input.orchestrator?.fanout_worker_id))
+    const workerId = String(input.orchestrator?.fanout_worker_id)
     return {
       success: true,
+      status: workerId === "copy" ? "no_op" : "completed",
       evidence_refs: [
         { kind: "worker-result", uri: `${input.artifacts_path}/result.json`, label: String(input.goal) },
       ],
@@ -39,7 +41,7 @@ assert.equal(result.status, "completed")
 assert.equal(result.concurrency, 2)
 assert.deepEqual(seenWorkers.sort(), ["copy", "design"])
 assert.equal(result.session.children.length, 2)
-assert.equal(result.workers.every((worker) => worker.status === "succeeded"), true)
+assert.deepEqual(result.workers.map((worker) => worker.status).sort(), ["no_op", "succeeded"])
 assert.equal(result.aggregate.status, "succeeded")
 assert.deepEqual(result.aggregate.finalArtifactRefs, [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }])
 

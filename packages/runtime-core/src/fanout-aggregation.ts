@@ -1,3 +1,5 @@
+import { agentTaskStatusSucceeded, normalizeAgentTaskStatus } from "./status-taxonomy.js"
+
 export const FANOUT_AGGREGATION_INPUT_SCHEMA = "wp-codebox/agent-fanout-aggregation-input/v1" as const
 export const FANOUT_AGGREGATION_OUTPUT_SCHEMA = "wp-codebox/agent-fanout-aggregation-output/v1" as const
 
@@ -219,7 +221,7 @@ export function detectWorkerDependencyConflicts(plan: FanoutPlan, workerResults:
   const resultByWorkerId = new Map(workerResults.map((result) => [result.workerId, result]))
 
   for (const result of workerResults) {
-    if (result.required && result.status !== "succeeded") {
+    if (result.required && !agentTaskStatusSucceeded(result.status)) {
       conflicts.push({
         type: "failed-worker",
         severity: "error",
@@ -245,7 +247,7 @@ export function detectWorkerDependencyConflicts(plan: FanoutPlan, workerResults:
         continue
       }
 
-      if (dependency.status !== "succeeded") {
+      if (!agentTaskStatusSucceeded(dependency.status)) {
         conflicts.push({
           type: "failed-worker-dependency",
           severity: "error",
@@ -302,7 +304,7 @@ function normalizeWorkerResultRef(workerResult: unknown): FanoutWorkerResultRef 
 
   return {
     workerId: isString(source.workerId) ? source.workerId : isString(source.worker_id) ? source.worker_id : "",
-    status: isString(source.status) ? source.status : "missing",
+    status: isString(source.status) ? normalizeAgentTaskStatus({ status: source.status, success: source.success }) : "missing",
     required: source.required !== false,
     resultRef: isString(source.resultRef) ? source.resultRef : isString(source.result_ref) ? source.result_ref : undefined,
     artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map((artifact) => normalizeArtifactRef(artifact, source.workerId ?? source.worker_id)) : [],

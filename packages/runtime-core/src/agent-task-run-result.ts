@@ -1,5 +1,6 @@
 import { isPlainObject, stripUndefined } from "./object-utils.js"
 import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
+import { normalizeAgentTaskStatus } from "./status-taxonomy.js"
 
 export const AGENT_TASK_RUN_RESULT_SCHEMA = "wp-codebox/agent-task-run-result/v1" as const
 
@@ -53,8 +54,6 @@ export interface AgentTaskRunResultSummary {
 export interface AgentTaskRunResultOptions {
   exitStatus?: number
 }
-
-const KNOWN_STATUSES = new Set(["succeeded", "failed", "no_op", "timeout", "provider_error", "unable_to_remediate"])
 
 export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunResultOptions = {}): AgentTaskRunResultSummary {
   const result = objectValue(raw)
@@ -114,21 +113,19 @@ function normalizeStatus(result: Record<string, unknown>, agentResult: Record<st
   if (terminalResult) {
     if (terminalResult.status === "max_turns") return "timeout"
     if (terminalResult.status === "incomplete") return "failed"
-    if (terminalResult.status === "succeeded") return "succeeded"
-    if (terminalResult.status === "failed") return "failed"
-    if (KNOWN_STATUSES.has(terminalResult.status)) return terminalResult.status as AgentTaskRunStatus
+    const terminalStatus = normalizeAgentTaskStatus({ status: terminalResult.status, success: terminalResult.success })
+    if (terminalStatus === "succeeded" || terminalStatus === "failed" || terminalStatus === "no_op" || terminalStatus === "timeout" || terminalStatus === "provider_error" || terminalStatus === "unable_to_remediate") return terminalStatus
   }
 
-  const explicitStatus = stringValue(result.status)
-  if (KNOWN_STATUSES.has(explicitStatus)) return explicitStatus as AgentTaskRunStatus
-  if (explicitStatus === "completed") return result.success === true && exitStatus === 0 ? "succeeded" : "failed"
-
   if (noOpMetadata(result, agentResult).detected) return "no_op"
-  if (result.unable_to_remediate === true) return "unable_to_remediate"
-  if (result.timeout === true) return "timeout"
-  if (result.provider_error) return "provider_error"
-
-  return result.success === true && exitStatus === 0 ? "succeeded" : "failed"
+  return normalizeAgentTaskStatus({
+    status: result.status,
+    success: result.success,
+    exitStatus,
+    timeout: result.timeout,
+    providerError: result.provider_error,
+    unableToRemediate: result.unable_to_remediate,
+  })
 }
 
 function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record<string, unknown>, completionOutcome: Record<string, unknown>): AgentTaskRunArtifactRef[] {

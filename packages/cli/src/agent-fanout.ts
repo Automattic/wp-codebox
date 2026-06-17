@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { commandArgValue, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
-import { aggregateFanoutOutputs, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
+import { agentTaskStatusSucceeded, aggregateFanoutOutputs, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
 const MAX_FANOUT_CONCURRENCY = 8
@@ -34,7 +34,7 @@ export interface AgentFanoutExecutionResult {
 
 interface AgentFanoutWorkerResult {
   worker_id: string
-  status: "succeeded" | "failed"
+  status: string
   required: boolean
   session_id: string
   result_ref: string
@@ -108,11 +108,12 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
         previewHoldSeconds: options.previewHoldSeconds ?? "",
         previewPublicUrl: options.previewPublicUrl ?? "",
       })
-      const success = output.success === true
+      const status = normalizeAgentTaskStatus({ status: output.status, success: output.success })
+      const success = agentTaskStatusSucceeded(status)
       const resultRef = `fanout/workers/${worker.id}/result.json`
       const workerResult = stripUndefined({
         worker_id: worker.id,
-        status: success ? "succeeded" : "failed",
+        status,
         required: worker.required,
         session_id: childSessionId,
         result_ref: resultRef,
@@ -140,7 +141,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     }
   })
 
-  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => worker.status === "succeeded").length, failed: workerResults.filter((worker) => worker.status === "failed").length })
+  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length })
   const aggregate = aggregateFanoutOutputs({
     plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: Array.isArray(worker.dependsOn) ? worker.dependsOn.filter((dependency): dependency is string => typeof dependency === "string") : [], required: worker.required, artifactNamespace: worker.artifact_namespace })) },
     policy: stringValue(request.aggregation?.policy) || "fail",
@@ -162,8 +163,8 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
 
   const counts = {
     total: workerResults.length,
-    completed: workerResults.filter((worker) => worker.status === "succeeded").length,
-    failed: workerResults.filter((worker) => worker.status === "failed").length,
+    completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length,
+    failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length,
     cancelled: 0,
   }
   const success = aggregate.status === "succeeded"
