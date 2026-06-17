@@ -48,8 +48,9 @@ unless this index says otherwise.
   `packages/runtime-core/src/runtime-contracts.ts`.
 - Generic primitive TypeScript contracts:
   `packages/runtime-core/src/artifact-storage.ts`,
-  `packages/runtime-core/src/browser-session-origin.ts`, and
-  `packages/runtime-core/src/materialization-contracts.ts`.
+  `packages/runtime-core/src/browser-session-origin.ts`,
+  `packages/runtime-core/src/materialization-contracts.ts`, and
+  `packages/runtime-core/src/evidence-artifact-envelope.ts`.
 - JSON Schema factory: `packages/runtime-core/src/recipe-schema.ts`.
 - Default check coverage: `npm run check` includes
   `npm run test:generic-primitives` through the smoke manifest `core` group.
