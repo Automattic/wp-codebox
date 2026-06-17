@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
-import type { ArtifactDiagnostic, MountSpec } from "@automattic/wp-codebox-core"
+import { relativePathExcluded, type ArtifactDiagnostic, type MountSpec } from "@automattic/wp-codebox-core"
 import {
   MAX_CAPTURED_MOUNT_FILE_BYTES,
   MAX_CAPTURED_MOUNT_FILES,
@@ -262,23 +262,4 @@ function mountArtifactExcludePaths(mount: MountSpec): string[] {
   }
 
   return value.map((item) => String(item).trim()).filter((item) => item.length > 0)
-}
-
-function relativePathExcluded(relativePath: string, excludePaths: string[]): boolean {
-  const normalized = relativePath.replace(/^\/+/, "")
-  return excludePaths.some((pattern) => excludePathMatches(normalized, pattern))
-}
-
-function excludePathMatches(relativePath: string, pattern: string): boolean {
-  const normalizedPattern = pattern.replace(/^\/+/, "").replace(/\/+$/, "")
-  if (!normalizedPattern) {
-    return false
-  }
-
-  if (normalizedPattern.endsWith("/**")) {
-    const prefix = normalizedPattern.slice(0, -3).replace(/\/+$/, "")
-    return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
-  }
-
-  return relativePath === normalizedPattern || relativePath.startsWith(`${normalizedPattern}/`)
 }

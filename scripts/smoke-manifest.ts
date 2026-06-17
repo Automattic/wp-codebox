@@ -52,6 +52,7 @@ export const smokeGroups = {
   policy: {
     description: "Workspace and runtime policy smoke checks.",
     commands: [
+      tsxSmoke("file-tree-policy-smoke"),
       tsxSmoke("policy-validation-smoke"),
       tsxSmoke("workspace-policy-smoke"),
     ],

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { promisify } from "node:util"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest, registerRuntimeSecretRedactions } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, namedFileTreeSkipPolicy, registerRuntimeSecretRedactions, relativePathExcluded } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type {
   ArtifactDiagnostic,
@@ -153,7 +153,7 @@ interface RedactionResult {
 
 export const MAX_CAPTURED_MOUNT_FILES = 200
 export const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
-export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules", "target"])
+export const SKIPPED_CAPTURE_DIRECTORIES = namedFileTreeSkipPolicy("captured-mount")
 
 const packageRequire = createRequire(import.meta.url)
 
@@ -848,25 +848,6 @@ async function listTextFiles(directory: string, prefix = "", excludePaths: strin
   }
 
   return files
-}
-
-function relativePathExcluded(relativePath: string, excludePaths: string[]): boolean {
-  const normalized = relativePath.replace(/^\/+/, "")
-  return excludePaths.some((pattern) => excludePathMatches(normalized, pattern))
-}
-
-function excludePathMatches(relativePath: string, pattern: string): boolean {
-  const normalizedPattern = pattern.trim().replace(/^\/+/, "").replace(/\/+$/, "")
-  if (!normalizedPattern) {
-    return false
-  }
-
-  if (normalizedPattern.endsWith("/**")) {
-    const prefix = normalizedPattern.slice(0, -3).replace(/\/+$/, "")
-    return relativePath === prefix || relativePath.startsWith(`${prefix}/`)
-  }
-
-  return relativePath === normalizedPattern || relativePath.startsWith(`${normalizedPattern}/`)
 }
 
 function provenanceContext(context: Record<string, unknown>, key: string): Record<string, unknown> | undefined {

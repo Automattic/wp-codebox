@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { lstat, readdir, realpath } from "node:fs/promises"
-import { isAbsolute, normalize, relative, resolve, sep } from "node:path"
+import { isAbsolute, resolve, sep } from "node:path"
 import { promisify } from "node:util"
+import { normalizeRelativePath, pathIsWithinRoot } from "./file-tree-policy.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -129,9 +130,8 @@ async function checkWorkspacePath(policy: NormalizedWorkspacePolicy, path: strin
   const violations: WorkspacePolicyViolation[] = []
   const normalizedPath = normalizePolicyPath(path)
   const absolutePath = resolve(policy.workspaceRoot, normalizedPath)
-  const relativePath = relative(policy.workspaceRoot, absolutePath)
 
-  if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+  if (!pathIsWithinRoot(absolutePath, policy.workspaceRoot)) {
     return [{ code: "path-outside-workspace", path, message: `Path escapes workspace root: ${path}` }]
   }
 
@@ -175,8 +175,7 @@ async function checkWorkspacePath(policy: NormalizedWorkspacePolicy, path: strin
     try {
       const entryRealpath = await realpath(absolutePath)
       const rootRealpath = await realpath(policy.workspaceRoot)
-      const realRelative = relative(rootRealpath, entryRealpath)
-      if (realRelative === ".." || realRelative.startsWith(`..${sep}`) || isAbsolute(realRelative)) {
+      if (!pathIsWithinRoot(entryRealpath, rootRealpath)) {
         violations.push({ code: "path-outside-workspace", path: normalizedPath, message: `Path resolves outside workspace root: ${normalizedPath}` })
       }
     } catch {
@@ -259,7 +258,7 @@ async function readUnmergedIndexPaths(workspaceRoot: string): Promise<string[]> 
 }
 
 function normalizePolicyPath(path: string): string {
-  return normalize(path.replaceAll("\\", "/")).replaceAll("\\", "/").replace(/^\.\//, "")
+  return normalizeRelativePath(path)
 }
 
 function isPathUnderAny(path: string, roots: string[]): boolean {
