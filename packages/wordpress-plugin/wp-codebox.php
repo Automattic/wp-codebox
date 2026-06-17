@@ -32,6 +32,8 @@ require_once __DIR__ . '/src/class-wp-codebox-inheritance.php';
 require_once __DIR__ . '/src/class-wp-codebox-redaction-policy.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-request-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-tool-policy-validator.php';
+require_once __DIR__ . '/src/class-wp-codebox-host-preview-args-builder.php';
+require_once __DIR__ . '/src/class-wp-codebox-host-runtime-config-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-recipe-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-status-taxonomy.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';

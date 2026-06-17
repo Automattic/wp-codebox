@@ -114,7 +114,7 @@ final class WP_Codebox_Runtime_Tool_Policy_Descriptor {
 	}
 
 	/** @param array<string,mixed> $tool @return array{environment:string,capability_scope:string} */
-	private function runtime_metadata( array $tool ): array {
+	public function runtime_metadata( array $tool ): array {
 		$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
 
 		return array(

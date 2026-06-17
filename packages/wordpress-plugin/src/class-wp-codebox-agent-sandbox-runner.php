@@ -33,6 +33,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private array $callbacks;
 	private WP_Codebox_Host_Request_Normalizer $request_normalizer;
 	private WP_Codebox_Host_Tool_Policy_Validator $tool_policy_validator;
+	private WP_Codebox_Host_Preview_Args_Builder $preview_args_builder;
+	private WP_Codebox_Host_Runtime_Config_Builder $runtime_config_builder;
 	private WP_Codebox_Host_Recipe_Builder $recipe_builder;
 	private WP_Codebox_Host_Run_Result_Normalizer $run_result_normalizer;
 	private WP_Codebox_Agent_Run_Result_Builder $result_builder;
@@ -44,15 +46,17 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param array<string, callable> $callbacks Test seams for pure-PHP smoke coverage.
 	 */
 	public function __construct( array $callbacks = array() ) {
-		$this->callbacks             = $callbacks;
-		$this->request_normalizer    = new WP_Codebox_Host_Request_Normalizer();
-		$this->tool_policy_validator = new WP_Codebox_Host_Tool_Policy_Validator();
-		$this->recipe_builder        = new WP_Codebox_Host_Recipe_Builder();
-		$this->run_result_normalizer = new WP_Codebox_Host_Run_Result_Normalizer();
-		$this->site_seed_exporter    = new WP_Codebox_Parent_Site_Seed_Exporter();
-		$this->run_plan              = new WP_Codebox_Run_Plan();
-		$this->process_runner        = new WP_Codebox_Agent_Process_Runner( $callbacks );
-		$this->result_builder        = new WP_Codebox_Agent_Run_Result_Builder( $this->run_plan );
+		$this->callbacks              = $callbacks;
+		$this->request_normalizer     = new WP_Codebox_Host_Request_Normalizer();
+		$this->tool_policy_validator  = new WP_Codebox_Host_Tool_Policy_Validator();
+		$this->preview_args_builder   = new WP_Codebox_Host_Preview_Args_Builder();
+		$this->runtime_config_builder = new WP_Codebox_Host_Runtime_Config_Builder();
+		$this->recipe_builder         = new WP_Codebox_Host_Recipe_Builder();
+		$this->run_result_normalizer  = new WP_Codebox_Host_Run_Result_Normalizer();
+		$this->site_seed_exporter     = new WP_Codebox_Parent_Site_Seed_Exporter();
+		$this->run_plan               = new WP_Codebox_Run_Plan();
+		$this->process_runner         = new WP_Codebox_Agent_Process_Runner( $callbacks );
+		$this->result_builder         = new WP_Codebox_Agent_Run_Result_Builder( $this->run_plan );
 	}
 
 	/**
@@ -670,21 +674,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$paths      = is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : array();
 		$paths      = array_merge( is_array( $paths ) ? $paths : array(), $this->inheritance_provider_plugin_paths( $input, $inheritance ) );
 
-		if ( ! is_array( $paths ) ) {
-			return array();
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					array_map(
-						fn( $path ): string => $this->clean_path( (string) $path ),
-						$paths
-					),
-					static fn( string $path ): bool => '' !== $path && is_dir( $path )
-				)
-			)
-		);
+		return $this->runtime_config_builder->existing_host_directories( is_array( $paths ) ? $paths : array() );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string[] */
@@ -1394,125 +1384,32 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function resolved_sandbox_tool_policy( array $input ): array|WP_Error {
-		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array();
-		if ( empty( $policy ) && function_exists( 'apply_filters' ) ) {
-			$policy = apply_filters( 'wp_codebox_resolved_sandbox_tool_policy', $policy, $input );
-		}
-
-		$issues = $this->sandbox_tool_policy_issues( is_array( $policy ) ? $policy : array() );
-		if ( ! empty( $issues ) ) {
-			return new WP_Error(
-				'wp_codebox_sandbox_tool_policy_invalid',
-				'Allowed tools require a valid resolved sandbox_tool_policy snapshot.',
-				array(
-					'status' => 400,
-					'schema' => 'wp-codebox/sandbox-tool-policy-validation/v1',
-					'issues' => $issues,
-				)
-			);
-		}
-
-		return $policy;
+		return $this->tool_policy_validator->resolved_policy( $input );
 	}
 
 	/** @param array<string,mixed> $policy @return array<int,array<string,string>> */
 	private function sandbox_tool_policy_issues( array $policy ): array {
-		$issues = array();
-		if ( self::SANDBOX_TOOL_POLICY_SCHEMA !== ( $policy['schema'] ?? '' ) ) {
-			$issues[] = array( 'field' => 'schema', 'message' => 'sandbox_tool_policy.schema must be ' . self::SANDBOX_TOOL_POLICY_SCHEMA . '.' );
-		}
-		if ( 1 !== (int) ( $policy['version'] ?? 0 ) ) {
-			$issues[] = array( 'field' => 'version', 'message' => 'sandbox_tool_policy.version must be 1.' );
-		}
-		if ( empty( $policy['tools'] ) || ! is_array( $policy['tools'] ) ) {
-			$issues[] = array( 'field' => 'tools', 'message' => 'sandbox_tool_policy.tools must be a non-empty array.' );
-			return $issues;
-		}
-
-		$seen = array();
-		foreach ( $policy['tools'] as $index => $tool ) {
-			if ( ! is_array( $tool ) ) {
-				$issues[] = array( 'field' => 'tools[' . $index . ']', 'message' => 'Each sandbox tool policy tool must be an object.' );
-				continue;
-			}
-			$id = trim( (string) ( $tool['id'] ?? '' ) );
-			if ( '' === $id ) {
-				$issues[] = array( 'field' => 'tools[' . $index . '].id', 'message' => 'Tool id must be a non-empty string.' );
-			} elseif ( isset( $seen[ $id ] ) ) {
-				$issues[] = array( 'field' => 'tools[' . $index . '].id', 'message' => 'Duplicate tool id: ' . $id . '.' );
-			}
-			$seen[ $id ] = true;
-			foreach ( array( 'runtime_tool_id' ) as $field ) {
-				if ( '' === trim( (string) ( $tool[ $field ] ?? '' ) ) ) {
-					$issues[] = array( 'field' => 'tools[' . $index . '].' . $field, 'message' => 'Tool ' . $field . ' must be a non-empty string.' );
-				}
-			}
-			$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
-			foreach ( array( self::AGENTS_API_RUNTIME_ENVIRONMENT, self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ) as $field ) {
-				if ( '' === trim( (string) ( $runtime[ $field ] ?? '' ) ) ) {
-					$issues[] = array( 'field' => 'tools[' . $index . '].runtime.' . $field, 'message' => 'Tool runtime.' . $field . ' must be a non-empty string.' );
-				}
-			}
-			if ( ! is_bool( $tool['allowed'] ?? null ) ) {
-				$issues[] = array( 'field' => 'tools[' . $index . '].allowed', 'message' => 'Tool allowed must be boolean.' );
-			}
-		}
-
-		return $issues;
+		return $this->tool_policy_validator->policy_issues( $policy );
 	}
 
 	/** @param array<string,mixed> $policy @return string[] */
 	private function allowed_sandbox_tools( array $policy ): array {
-		$allowed = array();
-		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
-			if ( is_array( $tool ) && null === $this->sandbox_policy_denial_reason( $tool ) ) {
-				$allowed[] = (string) $tool['id'];
-			}
-		}
-
-		return array_values( array_unique( $allowed ) );
+		return $this->tool_policy_validator->allowed_tools( $policy );
 	}
 
 	/** @param array<string,mixed> $policy @return array<string,mixed>|null */
 	private function sandbox_policy_tool( array $policy, string $tool_id ): array|null {
-		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
-			if ( is_array( $tool ) && $tool_id === (string) ( $tool['id'] ?? '' ) ) {
-				return $tool;
-			}
-		}
-
-		return null;
+		return $this->tool_policy_validator->policy_tool( $policy, $tool_id );
 	}
 
 	/** @param array<string,mixed> $tool */
 	private function sandbox_policy_denial_reason( array $tool ): string|null {
-		$runtime = $this->sandbox_tool_runtime_metadata( $tool );
-
-		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) {
-			return 'parent-only';
-		}
-		if ( self::AGENTS_API_RUNTIME_LOCAL !== $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) {
-			return 'not-visible-in-sandbox';
-		}
-		if ( true !== ( $tool['allowed'] ?? false ) ) {
-			return 'not-allowed';
-		}
-
-		return null;
+		return $this->tool_policy_validator->denial_reason( $tool );
 	}
 
 	/** @param array<string,mixed> $tool @return array{environment:string,capability_scope:string} */
 	private function sandbox_tool_runtime_metadata( array $tool ): array {
-		$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
-
-		return array(
-			self::AGENTS_API_RUNTIME_ENVIRONMENT => isset( $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
-				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
-				: '',
-			self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE => isset( $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
-				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
-				: '',
-		);
+		return $this->tool_policy_validator->runtime_metadata( $tool );
 	}
 
 	private function default_artifacts_path(): string {
@@ -1548,27 +1445,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function preview_args( array $input ): string|WP_Error {
-		$options = WP_Codebox_Preview_Options::normalize( $input );
-		if ( is_wp_error( $options ) ) {
-			return $options;
-		}
-
-		$args = $options['preview_hold_seconds'] > 0 ? ' --preview-hold-seconds ' . escapeshellarg( (string) $options['preview_hold_seconds'] ) : '';
-		$port = $options['preview_port'];
-		$bind = $options['preview_bind'];
-		$public = $options['preview_public_url'];
-
-		if ( null !== $port ) {
-			$args .= ' --preview-port ' . escapeshellarg( (string) $port );
-		}
-		if ( null !== $bind ) {
-			$args .= ' --preview-bind ' . escapeshellarg( $bind );
-		}
-		if ( null !== $public ) {
-			$args .= ' --preview-public-url ' . escapeshellarg( $public );
-		}
-
-		return $args;
+		return $this->preview_args_builder->build( $input );
 	}
 
 	private function preview_hold_arg( array $input ): string {
@@ -1591,131 +1468,27 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
 	private function recipe_mounts( array $input ): array|WP_Error {
-		$mounts = is_array( $input['mounts'] ?? null ) ? $input['mounts'] : array();
-		$normalized = array();
-
-		foreach ( $mounts as $index => $mount ) {
-			if ( ! is_array( $mount ) ) {
-				return new WP_Error( 'wp_codebox_mount_invalid', 'Each WP Codebox mount must be an object.', array( 'status' => 400, 'index' => $index ) );
-			}
-
-			$source = $this->clean_path( (string) ( $mount['source'] ?? '' ) );
-			$target = WP_Codebox_Path_Policy::normalize_sandbox_mount_target( (string) ( $mount['target'] ?? '' ), 'WP Codebox mount ' . $index, 'wp_codebox_mount_target_invalid', array( 'index' => $index ) );
-			if ( '' === $source || ( ! is_dir( $source ) && ! is_file( $source ) ) ) {
-				return new WP_Error( 'wp_codebox_mount_source_invalid', 'WP Codebox mount source must be an existing file or directory.', array( 'status' => 400, 'index' => $index ) );
-			}
-
-			if ( is_wp_error( $target ) ) {
-				return $target;
-			}
-
-			$mode = (string) ( $mount['mode'] ?? 'readwrite' );
-			if ( 'readonly' !== $mode && 'readwrite' !== $mode ) {
-				return new WP_Error( 'wp_codebox_mount_mode_invalid', 'WP Codebox mount mode must be readonly or readwrite.', array( 'status' => 400, 'index' => $index ) );
-			}
-
-			$entry = array(
-				'type'   => is_file( $source ) ? 'file' : 'directory',
-				'source' => $source,
-				'target' => $target,
-				'mode'   => $mode,
-			);
-			if ( isset( $mount['type'] ) && in_array( (string) $mount['type'], array( 'file', 'directory' ), true ) ) {
-				$entry['type'] = (string) $mount['type'];
-			}
-
-			if ( isset( $mount['metadata'] ) && ! is_array( $mount['metadata'] ) ) {
-				return new WP_Error( 'wp_codebox_mount_metadata_invalid', 'WP Codebox mount metadata must be an object.', array( 'status' => 400, 'index' => $index ) );
-			}
-
-			if ( isset( $mount['metadata'] ) ) {
-				$entry['metadata'] = $mount['metadata'];
-			}
-
-			$normalized[] = $entry;
-		}
-
-		return $normalized;
+		return $this->runtime_config_builder->recipe_mounts( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
 	private function recipe_workspaces( array $input ): array|WP_Error {
-		$workspaces = is_array( $input['workspaces'] ?? null ) ? $input['workspaces'] : array();
-		foreach ( $workspaces as $index => $workspace ) {
-			if ( ! is_array( $workspace ) || ! is_array( $workspace['seed'] ?? null ) ) {
-				return new WP_Error( 'wp_codebox_workspace_invalid', 'Each WP Codebox workspace must include a seed object.', array( 'status' => 400, 'index' => $index ) );
-			}
-			if ( 'directory' === (string) ( $workspace['seed']['type'] ?? '' ) && empty( $workspace['seed']['source'] ) ) {
-				return new WP_Error( 'wp_codebox_workspace_source_missing', 'Directory workspaces require seed.source.', array( 'status' => 400, 'index' => $index ) );
-			}
-		}
-
-		return $workspaces;
+		return $this->runtime_config_builder->recipe_workspaces( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function recipe_runtime( array $input, string $wp_version, ?WP_Codebox_Runtime_Dependency_Plan $dependency_plan = null ): array|WP_Error {
-		$runtime = array(
-			'wp'        => $wp_version,
-			'blueprint' => array( 'steps' => array() ),
-		);
-
-		$stack_mounts = $this->runtime_stack_mounts( $input );
-		if ( is_wp_error( $stack_mounts ) ) {
-			return $stack_mounts;
-		}
-		if ( ! empty( $stack_mounts ) ) {
-			$runtime['stack'] = array( 'mounts' => $stack_mounts );
-		}
-
-		$overlays = $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ? $dependency_plan->runtime_overlays() : $this->merge_array_lists( $input['runtime_overlays'] ?? array() );
-		if ( ! empty( $overlays ) ) {
-			$runtime['overlays'] = $overlays;
-		}
-
-		return $runtime;
+		return $this->runtime_config_builder->recipe_runtime( $input, $wp_version, $dependency_plan );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
 	private function runtime_stack_mounts( array $input ): array|WP_Error {
-		$mounts = $this->merge_array_lists(
-			$input['runtime_stack_mounts'] ?? array(),
-			$input['runtime_config_mounts'] ?? array(),
-			$input['runtimeConfigMounts'] ?? array(),
-			$input['runtime_state_mounts'] ?? array(),
-			$input['runtimeStateMounts'] ?? array()
-		);
-
-		$normalized = array();
-		foreach ( $mounts as $index => $mount ) {
-			$target = WP_Codebox_Path_Policy::normalize_sandbox_mount_target( (string) ( $mount['target'] ?? '' ), 'Runtime stack mount ' . $index, 'wp_codebox_runtime_mount_target_invalid', array( 'index' => $index ) );
-			if ( is_wp_error( $target ) ) {
-				return $target;
-			}
-
-			$mount['target'] = $target;
-			if ( ! isset( $mount['metadata'] ) || ! is_array( $mount['metadata'] ) ) {
-				$mount['metadata'] = array();
-			}
-			$mount['metadata'] = array_merge( array( 'kind' => 'runtime-state-mount' ), $mount['metadata'] );
-			$normalized[] = $mount;
-		}
-
-		return $normalized;
+		return $this->runtime_config_builder->runtime_stack_mounts( $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,string> */
 	private function runtime_env( array $input ): array {
-		$raw = is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : ( is_array( $input['runtimeEnv'] ?? null ) ? $input['runtimeEnv'] : array() );
-		$env = array();
-		foreach ( $raw as $name => $value ) {
-			$name = trim( (string) $name );
-			if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) && is_scalar( $value ) ) {
-				$env[ $name ] = (string) $value;
-			}
-		}
-
-		return $env;
+		return $this->runtime_config_builder->runtime_env( $input );
 	}
 
 	private function command_prefix( string $bin ): string|WP_Error {
@@ -1868,40 +1641,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function component_plugins( array $paths ): array {
-		$plugins = array();
-		foreach ( $paths as $index => $contract ) {
-			$path = (string) ( $contract['path'] ?? '' );
-			if ( '' === $path ) {
-				continue;
-			}
-
-			$slug     = (string) ( $contract['slug'] ?? basename( $path ) );
-			$load_as  = (string) ( $contract['loadAs'] ?? 'mu-plugin' );
-			$activate = (bool) ( $contract['activate'] ?? false );
-
-			$plugins[] = array(
-				'source'   => $path,
-				'slug'     => $slug,
-				'activate' => $activate,
-				'loadAs'   => $load_as,
-				'metadata' => array(
-					'componentContract' => array_filter(
-						array(
-							'index'         => $index,
-							'slug'          => $slug,
-							'requestedPath' => $path,
-							'originalPath'  => isset( $contract['original_path'] ) ? (string) $contract['original_path'] : ( isset( $contract['originalPath'] ) ? (string) $contract['originalPath'] : '' ),
-							'preparedPath'  => $path,
-							'loadAs'        => $load_as,
-							'activate'      => $activate,
-						),
-						static fn( mixed $value ): bool => '' !== $value
-					),
-				),
-			);
-		}
-
-		return $plugins;
+		return $this->runtime_config_builder->component_plugins( $paths );
 	}
 
 	private function generate_run_id(): string {
