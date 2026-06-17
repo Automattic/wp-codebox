@@ -61,6 +61,18 @@ interface RuntimeOverlayProfileDefaults {
   runtimeOverlays: Array<Record<string, unknown>>
 }
 
+export interface RuntimeDependencyPlanContractInput {
+  selection?: Record<string, unknown>
+  provider_plugin_paths?: unknown
+  provider_plugins?: unknown
+  component_plugins?: unknown
+  runtime_overlays?: unknown
+  inheritance_request?: { connectors?: unknown; settings?: unknown }
+  inheritance?: { connectors?: unknown; settings?: unknown }
+  agent_bundles?: unknown
+  secret_env?: unknown
+}
+
 export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskInput, wpVersion: string): WorkspaceRecipe {
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
@@ -81,7 +93,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     ...componentPluginEntries,
     ...providerPlugins,
   ].filter(Boolean)
-  const componentManifest = componentManifestForPlugins(componentPluginEntries, providerPlugins)
+  const componentManifest = componentManifestForRuntimePlugins(componentPluginEntries, providerPlugins)
   const workflowArgs = [
     `task=${taskInput.goal}`,
     `agent=${stringValue(input.agent) || "wp-codebox-sandbox"}`,
@@ -138,12 +150,35 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   }) as WorkspaceRecipe
 }
 
-function componentManifestForPlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {
+export function componentManifestForRuntimePlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {
   return {
     schema: "wp-codebox/component-manifest/v1",
     components: componentPlugins.map(componentManifestEntry),
     providers: providerPlugins.map(componentManifestEntry),
   }
+}
+
+export function runtimeDependencyPlanContract(input: RuntimeDependencyPlanContractInput): Record<string, unknown> {
+  const inheritance = input.inheritance && typeof input.inheritance === "object" ? input.inheritance : {}
+  const inheritanceRequest = input.inheritance_request && typeof input.inheritance_request === "object" ? input.inheritance_request : {}
+  return stripEmptyContractFields({
+    schema: "wp-codebox/runtime-dependency-plan/v1",
+    selection: stripEmptyRecordFields(input.selection ?? {}),
+    provider_plugin_paths: stringList(input.provider_plugin_paths),
+    provider_plugins: objectList(input.provider_plugins),
+    component_plugins: objectList(input.component_plugins),
+    runtime_overlays: objectList(input.runtime_overlays),
+    inheritance_request: {
+      connectors: stringList(inheritanceRequest.connectors),
+      settings: stringList(inheritanceRequest.settings),
+    },
+    inheritance: {
+      connectors: objectList(inheritance.connectors),
+      settings: objectList(inheritance.settings),
+    },
+    agent_bundles: objectList(input.agent_bundles),
+    secret_env: stringList(input.secret_env).filter((name) => /^[A-Z_][A-Z0-9_]*$/.test(name)),
+  })
 }
 
 function componentManifestEntry(plugin: WorkspaceRecipeExtraPlugin): WorkspaceRecipeComponentManifestEntry {
@@ -164,6 +199,18 @@ function componentManifestEntry(plugin: WorkspaceRecipeExtraPlugin): WorkspaceRe
     requestedPath: stringValue(contract.requestedPath) || undefined,
     provenance: Object.keys(metadata).length > 0 ? metadata : undefined,
   })
+}
+
+function objectList(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter(isPlainObject) : []
+}
+
+function stripEmptyRecordFields(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== "" && !(Array.isArray(entry) && entry.length === 0)))
+}
+
+function stripEmptyContractFields(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== "" && !(Array.isArray(entry) && entry.length === 0)))
 }
 
 function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): string {

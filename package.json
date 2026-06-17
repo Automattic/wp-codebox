@@ -74,6 +74,8 @@
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
     "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",
+    "test:primitive-contract-parity": "tsx tests/primitive-contract-parity.test.ts",
+    "test:php-primitive-contract-parity": "php scripts/php-primitive-contract-parity-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-source-packages": "tsx tests/recipe-source-packages.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
