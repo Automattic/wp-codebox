@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, checkWorkspacePolicy, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 
@@ -44,6 +44,9 @@ export interface RecipeArtifactEvidenceResult {
     artifact: RecipeArtifactEvidenceFile
   }
   agentTaskResult?: AgentTaskSingleResult & {
+    artifact: RecipeArtifactEvidenceFile
+  }
+  terminalResult?: AgentTerminalResult & {
     artifact: RecipeArtifactEvidenceFile
   }
   completionOutcome?: SandboxCompletionOutcome & {
@@ -86,6 +89,7 @@ export interface AgentTaskSingleResult {
   status: "completed" | "failed"
   outputs: Record<string, unknown>
   structured_artifacts: StructuredArtifactRef[]
+  terminal_result?: AgentTerminalResult
   diagnostics: Record<string, unknown>
   raw: {
     agent_runtime?: Record<string, unknown>
@@ -603,7 +607,7 @@ export async function appendRecipeRuntimeEvidenceFiles(artifacts: ArtifactBundle
   return evidenceFiles
 }
 
-export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "agentTaskResult" | "completionOutcome" | "transcript">> {
+export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, executions: RecipeEvidenceExecutionResult[]): Promise<Pick<RecipeArtifactEvidenceResult, "agentResult" | "agentTaskResult" | "terminalResult" | "completionOutcome" | "transcript">> {
   const transcript = buildAgentSandboxTranscript(executions)
   if (transcript.executions.length === 0) {
     return {}
@@ -612,6 +616,7 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
   const transcriptPath = join(dirname(artifacts.reviewPath), "transcript.json")
   const agentResultPath = join(dirname(artifacts.reviewPath), "agent-result.json")
   const agentTaskResultPath = join(dirname(artifacts.reviewPath), "agent-task-result.json")
+  const terminalResultPath = join(dirname(artifacts.reviewPath), "terminal-result.json")
   const completionOutcomePath = join(dirname(artifacts.reviewPath), "completion-outcome.json")
   const transcriptFile = await writeRecipeEvidenceJson(artifacts.directory, transcriptPath, transcript, "agent-transcript")
   const agentTaskResult = buildAgentTaskSingleResult(transcript)
@@ -622,13 +627,16 @@ export async function finalizeAgentSandboxEvidence(artifacts: ArtifactBundle, ex
   const agentResultFile = await writeRecipeEvidenceJson(artifacts.directory, agentResultPath, agentResult, "agent-result")
   const structuredArtifactFiles = agentTaskResult ? await writeAgentTaskStructuredArtifacts(artifacts, agentTaskResult) : []
   const agentTaskResultFile = agentTaskResult ? await writeRecipeEvidenceJson(artifacts.directory, agentTaskResultPath, agentTaskResult, "agent-task-result") : undefined
+  const terminalResult = agentTaskResult?.terminal_result ?? latestAgentTerminalResult(transcript)
+  const terminalResultFile = terminalResult ? await writeRecipeEvidenceJson(artifacts.directory, terminalResultPath, terminalResult, "agent-terminal-result") : undefined
   const completionOutcome = buildSandboxCompletionOutcome(artifacts, agentResult, transcript)
   const completionOutcomeFile = await writeRecipeEvidenceJson(artifacts.directory, completionOutcomePath, completionOutcome, "completion-outcome")
-  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...structuredArtifactFiles, ...(agentTaskResultFile ? [agentTaskResultFile] : []), completionOutcomeFile, transcriptFile])
+  await updateRecipeArtifactEvidenceReferences(artifacts, [agentResultFile, ...structuredArtifactFiles, ...(agentTaskResultFile ? [agentTaskResultFile] : []), ...(terminalResultFile ? [terminalResultFile] : []), completionOutcomeFile, transcriptFile])
 
   return {
     agentResult: { ...agentResult, artifact: agentResultFile },
     ...(agentTaskResult && agentTaskResultFile ? { agentTaskResult: { ...agentTaskResult, artifact: agentTaskResultFile } } : {}),
+    ...(terminalResult && terminalResultFile ? { terminalResult: { ...terminalResult, artifact: terminalResultFile } } : {}),
     completionOutcome: { ...completionOutcome, artifact: completionOutcomeFile },
     transcript: { ...transcript, artifact: transcriptFile },
   }
@@ -764,12 +772,14 @@ export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): 
   const rawResult = runtime.result
   const resultRecord = isRecord(rawResult) ? rawResult : undefined
   const success = runtime.success === true
+  const terminalResult = normalizeAgentTerminalResult(runtime)
   return {
     schema: "wp-codebox/agent-task-result/v1",
     success,
     status: success ? "completed" : "failed",
     outputs: semanticOutputs(resultRecord),
     structured_artifacts: [],
+    ...(terminalResult ? { terminal_result: terminalResult } : {}),
     diagnostics: stripUndefined({
       runtime: isRecord(resultRecord?.diagnostics) || Array.isArray(resultRecord?.diagnostics) ? resultRecord?.diagnostics : undefined,
       error: isRecord(runtime.error) ? runtime.error : undefined,
@@ -932,6 +942,26 @@ function firstTranscriptMessage(execution: AgentSandboxTranscriptExecution): str
 
 export function agentSandboxRuntimeFailure(execution: AgentSandboxTranscriptExecution): AgentSandboxRuntimeFailure | undefined {
   const parsed = isRecord(execution.parsed) ? execution.parsed : undefined
+  const terminalResult = agentTerminalResultFromRecord(parsed)
+  if (terminalResult?.source === "canonical") {
+    return terminalResult.success ? undefined : {
+      code: terminalResult.failure_classification || terminalResult.status,
+      message: terminalResult.status === "max_turns"
+        ? "Agent sandbox runtime reached the configured max turns before completing."
+        : terminalResult.pending_tools?.detected
+          ? "Agent sandbox runtime ended before the nested agent completed pending tool work."
+          : "Agent sandbox runtime reported terminal failure.",
+      data: stripUndefined({
+        status: terminalResult.status,
+        failure_classification: terminalResult.failure_classification,
+        pending_tools: terminalResult.pending_tools,
+        max_turns: terminalResult.max_turns,
+        evidence_refs: terminalResult.evidence_refs.length > 0 ? terminalResult.evidence_refs : undefined,
+        source: terminalResult.source,
+      }),
+    }
+  }
+
   const directFailure = agentRuntimeFailureFromRecord(parsed)
   if (directFailure) {
     return directFailure
@@ -987,6 +1017,22 @@ function agentRuntimeIncompleteFromRecord(record: Record<string, unknown> | unde
   }
 
   return undefined
+}
+
+function latestAgentTerminalResult(transcript: AgentSandboxTranscript): AgentTerminalResult | undefined {
+  for (const execution of [...transcript.executions].reverse()) {
+    const terminalResult = agentTerminalResultFromRecord(isRecord(execution.parsed) ? execution.parsed : undefined)
+    if (terminalResult) return terminalResult
+  }
+  return undefined
+}
+
+function agentTerminalResultFromRecord(record: Record<string, unknown> | undefined): AgentTerminalResult | undefined {
+  if (!record) return undefined
+  const direct = normalizeAgentTerminalResult(record)
+  if (direct) return direct
+  const output = typeof record.output === "string" ? decodeJsonFragment(record.output) : undefined
+  return normalizeAgentTerminalResult(output)
 }
 
 function isIncompleteAgentResult(result: Record<string, unknown>): boolean {
@@ -1121,6 +1167,15 @@ export function recipeAgentTaskResultOutput(agentTaskResult: RecipeArtifactEvide
   }
 
   const { artifact: _artifact, ...result } = agentTaskResult
+  return result
+}
+
+export function recipeTerminalResultOutput(terminalResult: RecipeArtifactEvidenceResult["terminalResult"]): AgentTerminalResult | undefined {
+  if (!terminalResult) {
+    return undefined
+  }
+
+  const { artifact: _artifact, ...result } = terminalResult
   return result
 }
 
