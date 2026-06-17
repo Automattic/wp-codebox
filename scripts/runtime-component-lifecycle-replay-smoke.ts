@@ -38,8 +38,8 @@ assert.ok(
   "late include bootstrap should replay newly registered callbacks after including plugin code",
 )
 
-const recipeRunSource = readFileSync(join(process.cwd(), "packages/cli/src/commands/recipe-run.ts"), "utf8")
-const activateFunction = recipeRunSource.slice(recipeRunSource.indexOf("function activateExtraPluginCode"), recipeRunSource.indexOf("async function activePlugins"))
+const recipeRuntimeSetupSource = readFileSync(join(process.cwd(), "packages/cli/src/commands/recipe-runtime-setup.ts"), "utf8")
+const activateFunction = recipeRuntimeSetupSource.slice(recipeRuntimeSetupSource.indexOf("function activateExtraPluginCode"), recipeRuntimeSetupSource.length)
 const activationReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")
 
 assert.match(activateFunction, /phpRuntimeComponentLifecycleReplayFunction\("wp_codebox_activate_plugin"\)/, "activation setup should use the shared lifecycle replay snippet")
