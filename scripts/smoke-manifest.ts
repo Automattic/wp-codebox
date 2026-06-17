@@ -33,6 +33,7 @@ export const smokeGroups = {
       npmScript("test:generic-primitives"),
       npmScript("test:php-json-codec"),
       npmScript("test:browser-task-builder"),
+      npmScript("test:browser-runner-template"),
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),
