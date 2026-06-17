@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 
 import { createWorkspaceRecipeJsonSchema, TASK_INPUT_ABILITY_ALIAS_FIELDS, TASK_INPUT_JSON_SCHEMA } from "../packages/runtime-core/src/index.js"
+import { evaluatePhpJson } from "../scripts/test-kit.js"
 
-const root = new URL("../", import.meta.url)
+const taskInputContract = "packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php"
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(sortObject(value), null, 2)
@@ -16,19 +16,10 @@ function sortObject(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, sortObject(entry)]))
 }
 
-function phpJson(expression: string): unknown {
-  const php = spawnSync("php", ["-r", `define('ABSPATH', '${root.pathname.replace(/'/g, "'\\''")}'); require '${root.pathname.replace(/'/g, "'\\''")}packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php'; echo json_encode(${expression}, JSON_UNESCAPED_SLASHES);`], {
-    cwd: root.pathname,
-    encoding: "utf8",
-  })
-  assert.equal(php.status, 0, php.stderr)
-  return JSON.parse(php.stdout)
-}
-
-const phpTaskInputSchema = phpJson("WP_Codebox_Task_Input_Contract::schema()")
+const phpTaskInputSchema = await evaluatePhpJson("WP_Codebox_Task_Input_Contract::schema()", [taskInputContract])
 assert.equal(canonicalJson(phpTaskInputSchema), canonicalJson(TASK_INPUT_JSON_SCHEMA), "PHP task input schema must match runtime-core TASK_INPUT_JSON_SCHEMA")
 
-const phpAliasFields = phpJson("WP_Codebox_Task_Input_Contract::ABILITY_ALIAS_FIELDS")
+const phpAliasFields = await evaluatePhpJson("WP_Codebox_Task_Input_Contract::ABILITY_ALIAS_FIELDS", [taskInputContract])
 assert.deepEqual(phpAliasFields, [...TASK_INPUT_ABILITY_ALIAS_FIELDS], "PHP ability task aliases must match runtime-core alias fields")
 
 const recipeSchema = createWorkspaceRecipeJsonSchema()

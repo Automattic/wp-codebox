@@ -1,21 +1,20 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
 
-const root = new URL("../", import.meta.url)
-const rootPath = root.pathname.replace(/'/g, "'\\''")
+import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 
-const php = spawnSync("php", ["-r", `
-define('ABSPATH', '${rootPath}');
+const rootPath = phpStringLiteral(repoRoot)
+const result = await runPhpJson<any>(`
+define('ABSPATH', ${rootPath});
 class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
-require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
 
 $task_input = WP_Codebox_Browser_Task_Builder::normalize_task_input( array(
 	'goal' => 'Build a generic browser task.',
@@ -74,13 +73,7 @@ $explicit_plan_payload = WP_Codebox_Browser_Task_Builder::task_payload(
 );
 
 echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
-`], {
-  cwd: root.pathname,
-  encoding: "utf8",
-})
-
-assert.equal(php.status, 0, php.stderr)
-const result = JSON.parse(php.stdout)
+`)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
 assert.deepEqual(result.task_input.allowed_tools, ["filesystem_write"])

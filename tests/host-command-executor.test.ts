@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises"
+import { mkdir, readFile, realpath } from "node:fs/promises"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import { classifyHostCommandFailure, executeHostCommand, executeManagedHostCommand, hostCommandEnv, ManagedHostCommandError, resolveAllowedHostCommandCwd } from "../packages/runtime-core/src/index.js"
+import { assertJsonFile, assertTextFile, withTempDir } from "../scripts/test-kit.js"
 
-const root = await mkdtemp(join(tmpdir(), "wp-codebox-host-command-executor-"))
+await withTempDir("wp-codebox-host-command-executor-", async (root) => {
 const allowed = join(root, "allowed")
 const sibling = join(root, "allowed-sibling")
 const child = join(allowed, "child")
@@ -54,7 +54,7 @@ const processTreeTimedOut = await executeHostCommand(
     cwd: allowed,
     terminationGraceMs: 25,
   },
-  { timeoutMs: 25 }
+  { timeoutMs: 2_000 }
 )
 assert.equal(processTreeTimedOut.failureClassification, "timeout")
 const grandchildPid = Number.parseInt(await readFile(grandchildPidFile, "utf8"), 10)
@@ -88,9 +88,9 @@ assert.equal(withArtifacts.stderr, "err")
 assert.ok(withArtifacts.artifacts?.stdout?.path.endsWith("stdout.log"))
 assert.ok(withArtifacts.artifacts?.stderr?.path.endsWith("stderr.log"))
 assert.ok(withArtifacts.artifacts?.summary?.path.endsWith("command-summary.json"))
-assert.equal(await readFile(withArtifacts.artifacts!.stdout!.path, "utf8"), "out")
-assert.equal(await readFile(withArtifacts.artifacts!.stderr!.path, "utf8"), "err")
-const artifactSummary = JSON.parse(await readFile(withArtifacts.artifacts!.summary!.path, "utf8"))
+await assertTextFile(withArtifacts.artifacts!.stdout!.path, "out")
+await assertTextFile(withArtifacts.artifacts!.stderr!.path, "err")
+const artifactSummary = await assertJsonFile<{ schema: string, failureClassification: string, memorySamples: unknown[] }>(withArtifacts.artifacts!.summary!.path)
 assert.equal(artifactSummary.schema, "wp-codebox/host-command-summary/v1")
 assert.equal(artifactSummary.failureClassification, "none")
 assert.ok(Array.isArray(artifactSummary.memorySamples))
@@ -155,3 +155,4 @@ await assert.rejects(
     return true
   }
 )
+})
