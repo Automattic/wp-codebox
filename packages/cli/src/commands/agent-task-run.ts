@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult } from "@automattic/wp-codebox-core"
+import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -557,7 +557,8 @@ function agentSandboxRuntime(run: Record<string, unknown>): Record<string, unkno
 }
 
 function sandboxToolIdsBeforeFiltering(policy: Record<string, unknown> | undefined): string[] {
-  return stringArray(arrayRecords(policy?.tools).map((tool) => stringValue(tool.runtime_tool_id) || stringValue(tool.id)))
+  if (!policy || !Array.isArray(policy.tools)) return []
+  return resolveEffectiveRuntimeToolPolicy(policy as unknown as SandboxToolPolicySnapshot).tools.map((tool) => tool.runtimeToolId)
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | undefined {

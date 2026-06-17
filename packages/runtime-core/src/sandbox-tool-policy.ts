@@ -20,6 +20,7 @@ export interface AgentsApiRuntimeToolMetadata {
 export interface SandboxToolPolicyTool {
   id: string
   runtime_tool_id: string
+  aliases?: string[]
   execution_location: SandboxToolExecutionLocation
   transport_visibility: SandboxToolTransportVisibility
   allowed: boolean
@@ -45,6 +46,33 @@ export interface SandboxToolPolicyIssue {
 export interface SandboxToolPolicyValidationResult {
   valid: boolean
   issues: SandboxToolPolicyIssue[]
+}
+
+export interface RuntimeToolDescriptor {
+  id: string
+  runtimeToolId: string
+  aliases: string[]
+  allowed: boolean
+  executionLocation: SandboxToolExecutionLocation
+  transportVisibility: SandboxToolTransportVisibility
+  visible: boolean
+  parentOnly: boolean
+  hidden: boolean
+  runtime: Required<Pick<AgentsApiRuntimeToolMetadata, typeof AGENTS_API_RUNTIME_ENVIRONMENT | typeof AGENTS_API_RUNTIME_CAPABILITY_SCOPE>>
+  schema?: string
+  policy?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export interface EffectiveRuntimeToolPolicy {
+  schema: typeof SANDBOX_TOOL_POLICY_SCHEMA
+  version: typeof SANDBOX_TOOL_POLICY_VERSION
+  tools: RuntimeToolDescriptor[]
+  allowedRuntimeToolIds: string[]
+  visibleRuntimeToolIds: string[]
+  parentOnlyRuntimeToolIds: string[]
+  hiddenRuntimeToolIds: string[]
+  metadata: Record<string, unknown>
 }
 
 export class SandboxToolPolicyValidationError extends Error {
@@ -132,9 +160,28 @@ export function assertSandboxToolPolicySnapshot(input: unknown): asserts input i
 }
 
 export function sandboxAllowedRuntimeToolIds(policy: SandboxToolPolicySnapshot): string[] {
-  return stringList(policy.tools
-    .filter((tool) => tool.allowed && sandboxToolRuntimeMetadata(tool).environment === AGENTS_API_RUNTIME_LOCAL && sandboxToolRuntimeMetadata(tool).capability_scope === AGENTS_API_RUNTIME_LOCAL)
-    .map((tool) => tool.runtime_tool_id))
+  return resolveEffectiveRuntimeToolPolicy(policy).allowedRuntimeToolIds
+}
+
+export function resolveEffectiveRuntimeToolPolicy(policy: SandboxToolPolicySnapshot): EffectiveRuntimeToolPolicy {
+  const tools = policy.tools.map(runtimeToolDescriptor)
+  return {
+    schema: policy.schema,
+    version: policy.version,
+    tools,
+    allowedRuntimeToolIds: stringList(tools.filter((tool) => tool.allowed && tool.visible).map((tool) => tool.runtimeToolId)),
+    visibleRuntimeToolIds: stringList(tools.filter((tool) => tool.visible).map((tool) => tool.runtimeToolId)),
+    parentOnlyRuntimeToolIds: stringList(tools.filter((tool) => tool.parentOnly).map((tool) => tool.runtimeToolId)),
+    hiddenRuntimeToolIds: stringList(tools.filter((tool) => tool.hidden).map((tool) => tool.runtimeToolId)),
+    metadata: policy.metadata,
+  }
+}
+
+export function resolveRuntimeToolAlias(policy: EffectiveRuntimeToolPolicy | SandboxToolPolicySnapshot, value: string): RuntimeToolDescriptor | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const effective = "allowedRuntimeToolIds" in policy ? policy : resolveEffectiveRuntimeToolPolicy(policy)
+  return effective.tools.find((tool) => tool.id === trimmed || tool.runtimeToolId === trimmed || tool.aliases.includes(trimmed))
 }
 
 export function sandboxToolRuntimeMetadata(tool: SandboxToolPolicyTool): Required<Pick<AgentsApiRuntimeToolMetadata, typeof AGENTS_API_RUNTIME_ENVIRONMENT | typeof AGENTS_API_RUNTIME_CAPABILITY_SCOPE>> {
@@ -149,5 +196,36 @@ export function sandboxToolRuntimeMetadata(tool: SandboxToolPolicyTool): Require
   return {
     environment,
     capability_scope: capabilityScope,
+  }
+}
+
+function runtimeToolDescriptor(tool: SandboxToolPolicyTool): RuntimeToolDescriptor {
+  const runtime = sandboxToolRuntimeMetadata(tool)
+  const aliases = stringList([
+    tool.id,
+    tool.runtime_tool_id,
+    ...stringList(tool.aliases),
+    ...stringList(isPlainObject(tool.metadata) ? tool.metadata.aliases : undefined),
+  ])
+  const parentOnly = runtime.environment !== AGENTS_API_RUNTIME_LOCAL || runtime.capability_scope !== AGENTS_API_RUNTIME_LOCAL
+  const hidden = tool.transport_visibility === "hidden"
+  const visible = !parentOnly && !hidden && (tool.transport_visibility === "sandbox" || tool.transport_visibility === "both")
+  const schema = typeof tool.metadata?.schema === "string" ? tool.metadata.schema : undefined
+  const policy = isPlainObject(tool.metadata?.policy) ? tool.metadata.policy : undefined
+
+  return {
+    id: tool.id,
+    runtimeToolId: tool.runtime_tool_id,
+    aliases,
+    allowed: tool.allowed,
+    executionLocation: tool.execution_location,
+    transportVisibility: tool.transport_visibility,
+    visible,
+    parentOnly,
+    hidden,
+    runtime,
+    ...(schema ? { schema } : {}),
+    ...(policy ? { policy } : {}),
+    ...(tool.metadata ? { metadata: tool.metadata } : {}),
   }
 }
