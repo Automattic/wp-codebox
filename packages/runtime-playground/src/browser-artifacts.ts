@@ -114,6 +114,8 @@ export interface BrowserArtifactSummary {
     blockCount?: number
     storesAvailable: boolean
   }
+  editorReadiness?: BrowserEditorReadinessSummary
+  editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
   steps?: number
   assertions?: BrowserAssertionsSummary
@@ -161,6 +163,25 @@ export interface BrowserArtifactSummary {
   }
   scriptResult?: unknown
   viewport: BrowserProbeViewport | null
+}
+
+export interface BrowserEditorReadinessSummary {
+  schema: "wp-codebox/editor-readiness/v1"
+  status: "ready"
+  storesAvailable: true
+  canSave: boolean
+  postId?: number
+  postType?: string
+}
+
+export interface BrowserEditorSaveSummary {
+  schema: "wp-codebox/editor-save/v1"
+  status: "saved"
+  method: "core/editor.savePost"
+  postId?: number
+  postType?: string
+  markerPresent?: boolean
+  contentSha256?: string
 }
 
 export interface BrowserProbeAuthSummary {
