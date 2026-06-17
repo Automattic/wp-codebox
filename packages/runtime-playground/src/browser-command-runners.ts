@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { access, mkdir, readFile, writeFile } from "node:fs/promises"
+import { access, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
@@ -1647,11 +1647,8 @@ export async function runEditorCanvasProbeCommand({
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
   const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(urlArg, preview.effectiveOrigin)
-  const browserDirectory = join(artifactRoot, "files", "browser")
-  await mkdir(browserDirectory, { recursive: true })
-
-  const summaryPath = join(browserDirectory, "editor-canvas-summary.json")
-  const screenshotPath = join(browserDirectory, "editor-canvas-screenshot.png")
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-canvas-probe", operation: "editor-canvas-probe" })
+  const screenshotPath = artifactSession.absolutePath("editor-canvas-screenshot.png")
   const startedAt = now()
   const startedAtMs = Date.now()
   const browser = await launchChromiumBrowser()
@@ -1702,14 +1699,14 @@ export async function runEditorCanvasProbeCommand({
     if (probe.ready && capture.has("screenshot")) {
       try {
         try {
-          await probe.frame.locator(layoutSelector).first().screenshot({ path: screenshotPath, timeout: timeoutMs })
+          await artifactSession.writeGenerated("screenshot", "editor-canvas-screenshot.png", (path) => probe.frame.locator(layoutSelector).first().screenshot({ path, timeout: timeoutMs }).then(() => undefined))
         } catch (error) {
           probe.summary.diagnostics.push({
             code: "screenshot-fallback",
             severity: "warning",
             message: `Frame screenshot was unstable; captured full page fallback instead: ${error instanceof Error ? error.message : String(error)}`,
           })
-          await probe.frame.page().screenshot({ path: screenshotPath, fullPage: true })
+          await artifactSession.writeGenerated("screenshot", "editor-canvas-screenshot.png", (path) => probe.frame.page().screenshot({ path, fullPage: true }).then(() => undefined))
         }
         screenshotSha256 = await fileSha256(screenshotPath)
       } catch (error) {
@@ -1746,7 +1743,7 @@ export async function runEditorCanvasProbeCommand({
       },
     }
 
-    await writeFile(summaryPath, `${JSON.stringify({
+    await artifactSession.writeJson("summary", "editor-canvas-summary.json", {
       schema: "wp-codebox/editor-canvas-probe/v1",
       requestedUrl: targetUrl,
       preview,
@@ -1762,7 +1759,7 @@ export async function runEditorCanvasProbeCommand({
       },
       viewport,
       summary,
-    }, null, 2)}\n`)
+    })
 
     if (!summary.ready) {
       pendingError = new Error(`wordpress.editor-canvas-probe failed: ${summary.diagnostics.map((diagnostic) => diagnostic.code).join(", ") || "not-ready"}`)
@@ -1800,7 +1797,7 @@ export async function runEditorCanvasProbeCommand({
           editorCanvas: summary,
         },
       }
-      await writeFile(summaryPath, `${JSON.stringify({
+      await artifactSession.writeJson("summary", "editor-canvas-summary.json", {
         schema: "wp-codebox/editor-canvas-probe/v1",
         requestedUrl: targetUrl,
         preview,
@@ -1813,7 +1810,7 @@ export async function runEditorCanvasProbeCommand({
         hashes: {},
         viewport,
         summary,
-      }, null, 2)}\n`)
+      })
     }
   } finally {
     await browser.close()
@@ -2530,8 +2527,7 @@ export async function runBrowserScenarioCommand({
 
   const runPlan = browserScenarioRunPlan(scenario, args, url)
   const startedAt = now()
-  const browserDirectory = join(artifactRoot, "files", "browser")
-  await mkdir(browserDirectory, { recursive: true })
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-scenario", operation: "browser-scenario" })
 
   let probeResult: Awaited<ReturnType<typeof runBrowserProbeCommand>> | undefined
   let actionsResult: Awaited<ReturnType<typeof runBrowserActionsCommand>> | undefined
@@ -2565,7 +2561,6 @@ export async function runBrowserScenarioCommand({
   }
 
   const finalUrl = primaryArtifact.summary.finalUrl
-  const scenarioSummaryPath = join(browserDirectory, "scenario-summary.json")
   const scenarioSummary = {
     schema: "wp-codebox/browser-scenario/v1",
     requestedUrl: primaryArtifact.requestedUrl,
@@ -2593,7 +2588,7 @@ export async function runBrowserScenarioCommand({
       auth: primaryArtifact.summary.auth,
     },
   }
-  await writeFile(scenarioSummaryPath, `${JSON.stringify(scenarioSummary, null, 2)}\n`)
+  await artifactSession.writeJson("summary", "scenario-summary.json", scenarioSummary)
 
   const artifact: BrowserArtifact = {
     ...primaryArtifact,
