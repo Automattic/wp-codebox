@@ -12,8 +12,8 @@ const requiredSnippets = [
   "$task_input[\\'ability_tools\\']",
   "add_filter( \\'datamachine_ability_tools\\'",
   "array_merge( $sandbox_tool_ids, $ability_tool_ids )",
-  "\\'ability_tools\\' => $ability_tool_diagnostics",
-  "\\'allowed_tool_ids\\' => $allowed_tool_ids",
+  "'ability_tools' => \\$ability_tool_diagnostics",
+  "'allowed_tool_ids' => \\$allowed_tool_ids",
 ]
 
 for (const snippet of requiredSnippets) {
