@@ -494,6 +494,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         },
       },
       runtimeOverlay: {
+        type: "object",
+        properties: {
+          library: { enum: enumValues(options.runtimeOverlayLibraries, defaultRuntimeOverlayLibraries) },
+        },
         oneOf: [
           {
             type: "object",

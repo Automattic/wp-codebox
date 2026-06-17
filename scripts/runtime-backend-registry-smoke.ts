@@ -69,6 +69,7 @@ const cliProviderSchema = createWorkspaceRecipeJsonSchema({
   runtimeOverlayStrategies: cliPolicy.runtimeOverlayStrategies,
 })
 assert.deepEqual((cliProviderSchema as any).properties.runtime.properties.wordpressInstallMode.enum, ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"])
+assert.deepEqual((cliProviderSchema as any).$defs.runtimeOverlay.properties.library, { enum: ["php-ai-client"] })
 assert.deepEqual((cliProviderSchema as any).$defs.runtimeOverlay.oneOf[0].properties.library, { enum: ["php-ai-client"] })
 
 const customBackendRecipe: WorkspaceRecipe = {
