@@ -11,7 +11,7 @@ import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumB
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
-import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
+import { browserProbeBenchMetrics, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
@@ -2123,24 +2123,14 @@ export async function runBrowserActionsCommand({
   const requestedViewport = runPlan.requestedViewport
   const authRequest = runPlan.authRequest
   const maxDomSnapshotElements = runPlan.maxDomSnapshotElements
-  const browserDirectory = join(artifactRoot, "files", "browser")
-  await mkdir(browserDirectory, { recursive: true })
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.browser-actions", operation: "browser-actions" })
 
   const stepRecords: BrowserStepRecord[] = []
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
   const network: BrowserProbeNetworkRecord[] = []
   const networkTasks: Array<Promise<void>> = []
-  const stepsPath = join(browserDirectory, "steps.jsonl")
-  const consolePath = join(browserDirectory, "console.jsonl")
-  const errorsPath = join(browserDirectory, "errors.jsonl")
-  const htmlPath = join(browserDirectory, "snapshot.html")
-  const networkPath = join(browserDirectory, "network.jsonl")
-  const screenshotPath = join(browserDirectory, "screenshot.png")
-  const domSnapshotPath = join(browserDirectory, "dom-snapshot.json")
-  const summaryPath = join(browserDirectory, "action-summary.json")
-  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
-  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
+  const screenshotPath = artifactSession.absolutePath("screenshot.png")
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, 0)
@@ -2210,7 +2200,10 @@ export async function runBrowserActionsCommand({
         const outcome = await withBrowserCommandLiveness({
           command: "wordpress.browser-actions",
           phase: `step ${index} (${step.kind})`,
-          operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, screenshotPath, browserDirectory),
+          operation: executeBrowserInteractionStep(page, step, preview.effectiveOrigin, stepTimeoutMs, async (fileName, write) => {
+            await artifactSession.writeGenerated("screenshot", fileName, write)
+            return { path: artifactSession.path(fileName), isDefault: fileName === "screenshot.png" }
+          }),
           policy: { wallTimeoutMs: Math.min(browserStepTimeoutMs(step, stepTimeoutMs), livenessRemainingWallTimeMs(startedAtMs, totalTimeoutMs)), idleTimeoutMs: 0 },
         })
         finalUrl = page.url()
@@ -2222,7 +2215,7 @@ export async function runBrowserActionsCommand({
         }
         if (outcome.screenshot && capture.has("dom-snapshot")) {
           domSnapshots.push(await captureBrowserActionDomSnapshot({
-            browserDirectory,
+            artifactSession,
             finalUrl,
             maxElements: maxDomSnapshotElements,
             page,
@@ -2253,7 +2246,7 @@ export async function runBrowserActionsCommand({
     if (capture.has("html")) {
       try {
         const html = await page.content()
-        await writeFile(htmlPath, html)
+        await artifactSession.writeText("html", "snapshot.html", html)
         htmlSha256 = sha256(Buffer.from(html, "utf8"))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
@@ -2266,11 +2259,11 @@ export async function runBrowserActionsCommand({
 
     if (capture.has("screenshot")) {
       try {
-        await page.screenshot({ path: screenshotPath, fullPage: true })
+        await artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
         screenshotSha256 = await fileSha256(screenshotPath)
         if (capture.has("dom-snapshot")) {
           domSnapshots.push(await captureBrowserActionDomSnapshot({
-            outputPath: domSnapshotPath,
+            artifactSession,
             finalUrl,
             maxElements: maxDomSnapshotElements,
             page,
@@ -2291,16 +2284,16 @@ export async function runBrowserActionsCommand({
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("steps")) {
-      await writeFile(stepsPath, jsonLines(stepRecords))
+      await artifactSession.writeJsonLines("steps", "steps.jsonl", stepRecords)
     }
     if (capture.has("console")) {
-      await writeFile(consolePath, jsonLines(consoleMessages))
+      await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
     }
     if (capture.has("errors")) {
-      await writeFile(errorsPath, jsonLines(errors))
+      await artifactSession.writeJsonLines("errors", "errors.jsonl", errors)
     }
     if (capture.has("network")) {
-      await writeFile(networkPath, jsonLines(network))
+      await artifactSession.writeJsonLines("network", "network.jsonl", network)
     }
 
     const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
@@ -2311,7 +2304,7 @@ export async function runBrowserActionsCommand({
       requestedUrl,
     })
     if (redirectDiagnostics) {
-      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+      await artifactSession.writeJson("redirectDiagnostics", "redirect-diagnostics.json", redirectDiagnostics)
     }
     const redirectDiagnosticsSummary = redirectDiagnostics?.summary
 
@@ -2322,7 +2315,7 @@ export async function runBrowserActionsCommand({
       server,
     })
     if (wordpressDiagnostics) {
-      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+      await artifactSession.writeJson("wordpressDiagnostics", "wordpress-diagnostics.json", wordpressDiagnostics)
     }
     const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
 
@@ -2368,7 +2361,7 @@ export async function runBrowserActionsCommand({
         viewport,
       },
     }
-    await writeFile(summaryPath, `${JSON.stringify({
+    await artifactSession.writeJson("summary", "action-summary.json", {
       schema: "wp-codebox/browser-actions/v1",
       requestedUrl,
       preview,
@@ -2394,7 +2387,7 @@ export async function runBrowserActionsCommand({
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
-    }, null, 2)}\n`)
+    })
   }
 
   if (pendingError) {
@@ -2447,20 +2440,18 @@ async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserAct
 }
 
 async function captureBrowserActionDomSnapshot({
-  browserDirectory,
+  artifactSession,
   finalUrl,
   maxElements,
-  outputPath,
   page,
   screenshotRef,
   snapshotRef,
   step,
   viewport,
 }: {
-  browserDirectory?: string
+  artifactSession: BrowserArtifactSession
   finalUrl: string
   maxElements: number
-  outputPath?: string
   page: Page
   screenshotRef: string
   snapshotRef?: string
@@ -2469,7 +2460,7 @@ async function captureBrowserActionDomSnapshot({
 }): Promise<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> {
   const sanitizedName = step?.name ? sanitizeScreenshotName(step.name) : undefined
   const relativeSnapshotRef = snapshotRef ?? `files/browser/dom-snapshot-${sanitizedName || `step-${step?.index ?? 0}`}.json`
-  const snapshotPath = outputPath ?? join(browserDirectory ?? dirname(relativeSnapshotRef), relativeSnapshotRef.replace(/^files\/browser\//, ""))
+  const snapshotFileName = relativeSnapshotRef.replace(/^files\/browser\//, "")
   const snapshot = await captureVisualCompareDomSnapshot(page, maxElements)
   const artifact: VisualCompareDomSnapshotArtifact = {
     schema: "wp-codebox/browser-dom-snapshot/v1",
@@ -2487,7 +2478,7 @@ async function captureBrowserActionDomSnapshot({
     },
     snapshot,
   }
-  await writeFile(snapshotPath, `${JSON.stringify(artifact, null, 2)}\n`)
+  await artifactSession.writeJson("domSnapshots", snapshotFileName, artifact)
   return {
     screenshot: screenshotRef,
     snapshot: relativeSnapshotRef,
@@ -2851,19 +2842,12 @@ export async function runEditorOpenCommand({
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
-  const browserDirectory = join(artifactRoot, "files", "browser")
-  await mkdir(browserDirectory, { recursive: true })
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-open", operation: "editor-open" })
 
   const stepRecords: BrowserStepRecord[] = []
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
-  const stepsPath = join(browserDirectory, "editor-steps.jsonl")
-  const consolePath = join(browserDirectory, "editor-console.jsonl")
-  const errorsPath = join(browserDirectory, "editor-errors.jsonl")
-  const htmlPath = join(browserDirectory, "editor-snapshot.html")
-  const screenshotPath = join(browserDirectory, "editor-screenshot.png")
-  const editorStatePath = join(browserDirectory, "editor-state.json")
-  const summaryPath = join(browserDirectory, "editor-summary.json")
+  const screenshotPath = artifactSession.absolutePath("editor-screenshot.png")
   const startedAt = now()
   const browser = await launchChromiumBrowser()
   let finalUrl = targetUrl
@@ -2923,27 +2907,27 @@ export async function runEditorOpenCommand({
 
     if (capture.has("editor-state")) {
       editorState = await captureEditorState(page, target)
-      await writeFile(editorStatePath, `${JSON.stringify(editorState, null, 2)}\n`)
+      await artifactSession.writeJson("editorState", "editor-state.json", editorState)
     }
     if (capture.has("html")) {
       const html = await page.content()
-      await writeFile(htmlPath, html)
+      await artifactSession.writeText("html", "editor-snapshot.html", html)
       htmlSha256 = sha256(Buffer.from(html, "utf8"))
     }
     if (capture.has("screenshot")) {
-      await page.screenshot({ path: screenshotPath, fullPage: true })
+      await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
       screenshotSha256 = await fileSha256(screenshotPath)
     }
   } finally {
     await browser.close()
     if (capture.has("steps")) {
-      await writeFile(stepsPath, jsonLines(stepRecords))
+      await artifactSession.writeJsonLines("steps", "editor-steps.jsonl", stepRecords)
     }
     if (capture.has("console")) {
-      await writeFile(consolePath, jsonLines(consoleMessages))
+      await artifactSession.writeJsonLines("console", "editor-console.jsonl", consoleMessages)
     }
     if (capture.has("errors")) {
-      await writeFile(errorsPath, jsonLines(errors))
+      await artifactSession.writeJsonLines("errors", "editor-errors.jsonl", errors)
     }
 
     const editorSummary = editorState ? summarizeEditorState(target, editorState) : undefined
@@ -2980,7 +2964,7 @@ export async function runEditorOpenCommand({
         viewport,
       },
     }
-    await writeFile(summaryPath, `${JSON.stringify({
+    await artifactSession.writeJson("summary", "editor-summary.json", {
       schema: "wp-codebox/editor-open/v1",
       target,
       requestedUrl: targetUrl,
@@ -3001,7 +2985,7 @@ export async function runEditorOpenCommand({
       },
       viewport,
       summary: artifact.summary,
-    }, null, 2)}\n`)
+    })
   }
 
   if (pendingError) {
@@ -3061,19 +3045,12 @@ export async function runEditorActionsCommand({
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
-  const browserDirectory = join(artifactRoot, "files", "browser")
-  await mkdir(browserDirectory, { recursive: true })
+  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-actions", operation: "editor-actions" })
 
   const stepRecords: BrowserStepRecord[] = []
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
-  const stepsPath = join(browserDirectory, "editor-action-steps.jsonl")
-  const consolePath = join(browserDirectory, "editor-action-console.jsonl")
-  const errorsPath = join(browserDirectory, "editor-action-errors.jsonl")
-  const htmlPath = join(browserDirectory, "editor-action-snapshot.html")
-  const screenshotPath = join(browserDirectory, "editor-action-screenshot.png")
-  const editorStatePath = join(browserDirectory, "editor-action-state.json")
-  const summaryPath = join(browserDirectory, "editor-action-summary.json")
+  const screenshotPath = artifactSession.absolutePath("editor-action-screenshot.png")
   const startedAt = now()
   const startedAtMs = Date.now()
   const browser = await launchChromiumBrowser()
@@ -3168,27 +3145,27 @@ export async function runEditorActionsCommand({
 
     if (capture.has("editor-state")) {
       editorState = await captureEditorState(page, target)
-      await writeFile(editorStatePath, `${JSON.stringify(editorState, null, 2)}\n`)
+      await artifactSession.writeJson("editorState", "editor-action-state.json", editorState)
     }
     if (capture.has("html")) {
       const html = await page.content()
-      await writeFile(htmlPath, html)
+      await artifactSession.writeText("html", "editor-action-snapshot.html", html)
       htmlSha256 = sha256(Buffer.from(html, "utf8"))
     }
     if (capture.has("screenshot")) {
-      await page.screenshot({ path: screenshotPath, fullPage: true })
+      await artifactSession.writeGenerated("screenshot", "editor-action-screenshot.png", (path) => page.screenshot({ path, fullPage: true }).then(() => undefined))
       screenshotSha256 = await fileSha256(screenshotPath)
     }
   } finally {
     await browser.close()
     if (capture.has("steps")) {
-      await writeFile(stepsPath, jsonLines(stepRecords))
+      await artifactSession.writeJsonLines("steps", "editor-action-steps.jsonl", stepRecords)
     }
     if (capture.has("console")) {
-      await writeFile(consolePath, jsonLines(consoleMessages))
+      await artifactSession.writeJsonLines("console", "editor-action-console.jsonl", consoleMessages)
     }
     if (capture.has("errors")) {
-      await writeFile(errorsPath, jsonLines(errors))
+      await artifactSession.writeJsonLines("errors", "editor-action-errors.jsonl", errors)
     }
 
     const editorSummary = editorState ? summarizeEditorState(target, editorState) : undefined
@@ -3228,7 +3205,7 @@ export async function runEditorActionsCommand({
         viewport,
       },
     }
-    await writeFile(summaryPath, `${JSON.stringify({
+    await artifactSession.writeJson("summary", "editor-action-summary.json", {
       schema: "wp-codebox/editor-actions/v1",
       target,
       actions: actionSteps,
@@ -3252,7 +3229,7 @@ export async function runEditorActionsCommand({
       },
       viewport,
       summary: artifact.summary,
-    }, null, 2)}\n`)
+    })
   }
 
   if (pendingError) {

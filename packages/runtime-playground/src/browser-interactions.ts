@@ -1,4 +1,3 @@
-import { basename, join } from "node:path"
 import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -14,6 +13,13 @@ export interface BrowserStepOutcome {
   screenshotFallback?: { reason: string; mode: "page-screenshot" }
   error?: BrowserProbeErrorRecord
 }
+
+export interface BrowserStepScreenshotWriterResult {
+  path: string
+  isDefault: boolean
+}
+
+export type BrowserStepScreenshotWriter = (fileName: string, write: (path: string) => Promise<void>) => Promise<BrowserStepScreenshotWriterResult>
 
 type BrowserPaintedReadinessSummary = BrowserStepReadiness
 type BrowserPaintedReadinessWait = "painted" | `frame-painted:${string}` | `frame-url-painted:${string}`
@@ -34,8 +40,7 @@ export async function executeBrowserInteractionStep(
   step: BrowserInteractionStep,
   baseUrl: string,
   stepTimeoutMs: number,
-  defaultScreenshotPath: string,
-  browserDirectory: string,
+  writeScreenshot: BrowserStepScreenshotWriter,
 ): Promise<BrowserStepOutcome> {
   const timeout = browserStepTimeoutMs(step, stepTimeoutMs)
 
@@ -126,28 +131,27 @@ export async function executeBrowserInteractionStep(
     }
     case "screenshot": {
       const readiness = isPaintedReadinessWait(step.waitFor) ? await waitForPaintedReadiness(page, step.waitFor, timeout) : undefined
-      const path = typeof step.name === "string" && step.name.length > 0
-        ? join(browserDirectory, `screenshot-${sanitizeScreenshotName(step.name)}.png`)
-        : defaultScreenshotPath
       const frameTarget = await screenshotFrameTarget(page, step, timeout)
       let fallback: { reason: string; mode: "page-screenshot" } | undefined
-      if (frameTarget) {
-        try {
-          await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
-        } catch (error) {
-          fallback = { reason: error instanceof Error ? error.message : String(error), mode: "page-screenshot" }
+      const fileName = typeof step.name === "string" && step.name.length > 0 ? `screenshot-${sanitizeScreenshotName(step.name)}.png` : "screenshot.png"
+      const screenshot = await writeScreenshot(fileName, async (path) => {
+        if (frameTarget) {
+          try {
+            await frameTarget.frame.locator("html").first().screenshot({ path, timeout })
+          } catch (error) {
+            fallback = { reason: error instanceof Error ? error.message : String(error), mode: "page-screenshot" }
+            await page.screenshot({ path, fullPage: true })
+          }
+        } else {
           await page.screenshot({ path, fullPage: true })
         }
-      } else {
-        await page.screenshot({ path, fullPage: true })
-      }
-      const isDefault = path === defaultScreenshotPath
+      })
       return {
         ...(readiness ? { readiness } : {}),
         ...(frameTarget ? { target: { mode: frameTarget.mode as "frame-selector" | "frame-url", ...(frameTarget.selector ? { selector: frameTarget.selector } : {}), ...(frameTarget.urlFragment ? { urlFragment: frameTarget.urlFragment } : {}), ...(frameTarget.frame.url() ? { frameUrl: frameTarget.frame.url() } : {}) } } : {}),
         ...(fallback ? { screenshotFallback: fallback } : {}),
-        screenshot: isDefault ? "files/browser/screenshot.png" : `files/browser/${basename(path)}`,
-        screenshotIsDefault: isDefault,
+        screenshot: screenshot.path,
+        screenshotIsDefault: screenshot.isDefault,
       }
     }
     case "capture":
