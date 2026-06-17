@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
-import { basename, join, resolve } from "node:path"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { join, resolve } from "node:path"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import type { WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 import { resolvePluginEntrypointContract, sanitizePluginSlug } from "./component-contracts.js"
+import { prepareLocalSourceStageSync, preparedSourcePath, preparedSourceRoot } from "./prepared-source-staging.js"
 
 const AGENT_RUNTIME_ENV = { WP_AGENT_RUNTIME: "1" }
 
@@ -253,9 +254,13 @@ function prepareComponentPluginSource(source: string, originalSource: string, sl
   }
 
   if (resolve(copySource) !== resolve(preparedSource)) {
-    rmSyncSafe(preparedSource)
-    mkdirSyncSafe(preparedPluginRoot(artifactsRoot))
-    cpSyncFiltered(copySource, preparedSource)
+    prepareLocalSourceStageSync({
+      source: copySource,
+      sourceRef: originalSource || source,
+      targetRoot: preparedPluginRoot(artifactsRoot),
+      targetName: slug,
+      cleanupRoot: false,
+    })
   } else {
     mkdirSyncSafe(preparedSource)
   }
@@ -280,9 +285,13 @@ function prepareComposerPluginSource(source: string, slug: string, artifactsRoot
   const preparedRoot = preparedPluginRoot(artifactsRoot)
   const preparedSource = preparedPluginSource(artifactsRoot, slug)
   if (resolve(localSource) !== resolve(preparedSource)) {
-    rmSyncSafe(preparedSource)
-    mkdirSyncSafe(preparedRoot)
-    cpSyncFiltered(localSource, preparedSource)
+    prepareLocalSourceStageSync({
+      source: localSource,
+      sourceRef: source,
+      targetRoot: preparedRoot,
+      targetName: slug,
+      cleanupRoot: false,
+    })
   } else {
     mkdirSyncSafe(preparedSource)
   }
@@ -310,11 +319,11 @@ function installComposerDependenciesIfNeeded(source: string, slug: string): stri
 }
 
 function preparedPluginRoot(artifactsRoot: string): string {
-  return resolve(artifactsRoot, "prepared-plugins")
+  return preparedSourceRoot(artifactsRoot, "prepared-plugins")
 }
 
 function preparedPluginSource(artifactsRoot: string, slug: string): string {
-  return join(preparedPluginRoot(artifactsRoot), slug)
+  return preparedSourcePath(artifactsRoot, "prepared-plugins", slug)
 }
 
 function localSourcePath(source: string): string {
@@ -325,22 +334,8 @@ function pathExists(filePath: string): boolean {
   return existsSync(filePath)
 }
 
-function rmSyncSafe(filePath: string): void {
-  rmSync(filePath, { recursive: true, force: true })
-}
-
 function mkdirSyncSafe(filePath: string): void {
   mkdirSync(filePath, { recursive: true })
-}
-
-function cpSyncFiltered(source: string, target: string): void {
-  cpSync(source, target, {
-    recursive: true,
-    filter: (entry: string) => {
-      const base = basename(entry)
-      return base !== ".git" && base !== "node_modules" && base !== "vendor"
-    },
-  })
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): SandboxToolPolicySnapshot {
