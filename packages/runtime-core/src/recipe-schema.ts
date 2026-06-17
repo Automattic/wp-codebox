@@ -34,7 +34,7 @@ export type WorkspaceRecipeRuntimeCollectedArtifact =
   | { kind: "typed"; index: number; artifact: WorkspaceRecipeTypedArtifact }
 
 const defaultRuntimeWordPressInstallModes = ["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"] as const
-const defaultRuntimeOverlayKinds = ["bundled-library"] as const
+const defaultRuntimeOverlayKinds = ["bundled-library", "runtime-overlay-bundle"] as const
 const defaultRuntimeOverlayLibraries = ["php-ai-client"] as const
 const defaultRuntimeOverlayStrategies = ["wordpress-scoped-bundle"] as const
 
@@ -489,15 +489,118 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         },
       },
       runtimeOverlay: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "library", "source", "strategy"],
+            properties: {
+              kind: { enum: enumValues(options.runtimeOverlayKinds, defaultRuntimeOverlayKinds) },
+              library: { enum: enumValues(options.runtimeOverlayLibraries, defaultRuntimeOverlayLibraries) },
+              source: { type: "string" },
+              target: { type: "string", pattern: "^/" },
+              strategy: { enum: enumValues(options.runtimeOverlayStrategies, defaultRuntimeOverlayStrategies) },
+              metadata: { $ref: "#/$defs/metadata" },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "bundle"],
+            properties: {
+              kind: { const: "runtime-overlay-bundle" },
+              bundle: { $ref: "#/$defs/runtimeOverlayBundle" },
+              metadata: { $ref: "#/$defs/metadata" },
+            },
+          },
+        ],
+      },
+      runtimeOverlayBundle: {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "library", "source", "strategy"],
+        required: ["schema", "id"],
+        description: "Generic runtime overlay bundle metadata. Execution semantics stay with runtime backends; unsupported gaps are explicit and fail closed.",
         properties: {
-          kind: { enum: enumValues(options.runtimeOverlayKinds, defaultRuntimeOverlayKinds) },
-          library: { enum: enumValues(options.runtimeOverlayLibraries, defaultRuntimeOverlayLibraries) },
+          schema: { const: "wp-codebox/runtime-overlay-bundle/v1" },
+          id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          description: { type: "string" },
+          files: { type: "array", items: { $ref: "#/$defs/runtimeOverlayBundleFile" } },
+          configPreludes: { type: "array", items: { $ref: "#/$defs/runtimeOverlayBundleConfigPrelude" } },
+          localRoutes: { type: "array", items: { $ref: "#/$defs/runtimeOverlayBundleLocalRoute" } },
+          patches: { type: "array", items: { $ref: "#/$defs/runtimeOverlayBundlePatch" } },
+          capabilities: { $ref: "#/$defs/runtimeOverlayBundleCapabilities" },
+          unsupportedGaps: { type: "array", items: { $ref: "#/$defs/runtimeOverlayBundleUnsupportedGap" } },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeOverlayBundleFile: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path"],
+        anyOf: [{ required: ["source"] }, { required: ["contents"] }],
+        properties: {
+          path: { type: "string", pattern: "^/" },
           source: { type: "string" },
-          target: { type: "string", pattern: "^/" },
-          strategy: { enum: enumValues(options.runtimeOverlayStrategies, defaultRuntimeOverlayStrategies) },
+          contents: { type: "string" },
+          mode: { enum: ["readonly", "readwrite"] },
+          sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeOverlayBundleConfigPrelude: {
+        type: "object",
+        additionalProperties: false,
+        required: ["target"],
+        anyOf: [{ required: ["source"] }, { required: ["contents"] }],
+        properties: {
+          target: { type: "string" },
+          source: { type: "string" },
+          contents: { type: "string" },
+          order: { type: "integer" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeOverlayBundleLocalRoute: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "target", "localOnly"],
+        properties: {
+          path: { type: "string", pattern: "^/" },
+          target: { type: "string" },
+          methods: { type: "array", items: { type: "string" } },
+          localOnly: { const: true },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeOverlayBundlePatch: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "source"],
+        properties: {
+          id: { type: "string" },
+          source: { type: "string" },
+          appliesTo: { type: "string" },
+          sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeOverlayBundleCapabilities: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          provided: { type: "array", items: { type: "string" } },
+          required: { type: "array", items: { type: "string" } },
+          optional: { type: "array", items: { type: "string" } },
+        },
+      },
+      runtimeOverlayBundleUnsupportedGap: {
+        type: "object",
+        additionalProperties: false,
+        required: ["capability", "reason", "failureMode"],
+        properties: {
+          capability: { type: "string" },
+          reason: { type: "string" },
+          failureMode: { const: "fail-closed" },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

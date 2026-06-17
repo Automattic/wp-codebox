@@ -98,6 +98,7 @@ export interface WorkspaceRecipeRuntimeOverlay {
   source: string
   target?: string
   strategy: WorkspaceRecipeRuntimeOverlayStrategy
+  bundle?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
 
