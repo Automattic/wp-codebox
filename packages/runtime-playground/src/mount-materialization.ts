@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MountSpec } from "@automattic/wp-codebox-core"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
 
@@ -14,6 +14,7 @@ export interface HostMountSnapshot {
 export interface VfsMountSnapshot {
   mountIndex: number
   target: string
+  authoritative?: boolean
   files: Array<{
     relativePath: string
     sha256: string
@@ -25,6 +26,18 @@ export interface MountMaterializationResult {
   materialized: number
   deleted: number
   skipped: number
+  phaseResult: MaterializationPhaseResult
+}
+
+function mountMaterializationResult(input: Omit<MountMaterializationResult, "phaseResult">): MountMaterializationResult {
+  return {
+    ...input,
+    phaseResult: materializationPhaseResult({
+      phase: "playground-vfs-mount-materialization",
+      status: input.materialized > 0 || input.deleted > 0 ? "completed" : "skipped",
+      metadata: input,
+    }),
+  }
 }
 
 export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliServer, mounts: MountSpec[]): Promise<MountMaterializationResult> {
@@ -32,7 +45,7 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
     .map((mount, mountIndex) => ({ mount, mountIndex }))
     .filter(({ mount }) => mount.mode === "readwrite" && mount.type !== "file")
   if (writableDirectoryMounts.length === 0) {
-    return { materialized: 0, deleted: 0, skipped: 0 }
+    return mountMaterializationResult({ materialized: 0, deleted: 0, skipped: 0 })
   }
 
   const hostSnapshots: HostMountSnapshot[] = []
@@ -50,23 +63,36 @@ export async function materializePlaygroundMountsFromVfs(server: PlaygroundCliSe
 }
 
 export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: VfsMountSnapshot[]): Promise<MountMaterializationResult> {
-  const result: MountMaterializationResult = { materialized: 0, deleted: 0, skipped: 0 }
+  const result = { materialized: 0, deleted: 0, skipped: 0 }
 
   for (const snapshot of snapshots) {
     const mount = mounts[snapshot.mountIndex]
-    if (!mount || mount.mode !== "readwrite" || mount.type === "file") {
+    if (!mount || mount.mode !== "readwrite" || mount.type === "file" || snapshot.authoritative === false) {
       result.skipped++
       continue
     }
 
-    const present = new Set(snapshot.files.map((file) => file.relativePath))
-    const existing = await hostFileHashes(mount.source)
-
+    const present = new Set<string>()
+    const writableFiles: typeof snapshot.files = []
     for (const file of snapshot.files) {
-      if (!file.contentsBase64) {
+      if (!containedHostPath(mount.source, file.relativePath)) {
+        result.skipped++
         continue
       }
-      const hostPath = join(mount.source, file.relativePath)
+      present.add(file.relativePath)
+      writableFiles.push(file)
+    }
+    const existing = await hostFileHashes(mount.source)
+
+    for (const file of writableFiles) {
+      if (file.contentsBase64 === undefined) {
+        continue
+      }
+      const hostPath = containedHostPath(mount.source, file.relativePath)
+      if (!hostPath) {
+        result.skipped++
+        continue
+      }
       await mkdir(dirname(hostPath), { recursive: true })
       await writeFile(hostPath, Buffer.from(file.contentsBase64, "base64"))
       result.materialized++
@@ -76,12 +102,30 @@ export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: Vfs
       if (present.has(relativePath)) {
         continue
       }
-      await rm(join(mount.source, relativePath), { force: true })
+      const hostPath = containedHostPath(mount.source, relativePath)
+      if (!hostPath) {
+        result.skipped++
+        continue
+      }
+      await rm(hostPath, { force: true })
       result.deleted++
     }
   }
 
-  return result
+  return mountMaterializationResult(result)
+}
+
+function containedHostPath(root: string, relativePath: string): string | undefined {
+  if (!relativePath || isAbsolute(relativePath)) {
+    return undefined
+  }
+  const rootPath = resolve(root)
+  const hostPath = resolve(rootPath, relativePath)
+  const pathWithinRoot = relative(rootPath, hostPath)
+  if (!pathWithinRoot || pathWithinRoot.startsWith("..") || isAbsolute(pathWithinRoot)) {
+    return undefined
+  }
+  return hostPath
 }
 
 async function hostFileHashes(directory: string, relativeDirectory = ""): Promise<Record<string, string>> {
@@ -168,6 +212,7 @@ foreach (($payload['mounts'] ?? array()) as $mount) {
         $mounts[] = array(
             'mountIndex' => (int) ($mount['mountIndex'] ?? -1),
             'target' => $target,
+            'authoritative' => false,
             'files' => array(),
         );
         continue;
@@ -175,6 +220,7 @@ foreach (($payload['mounts'] ?? array()) as $mount) {
     $mounts[] = array(
         'mountIndex' => (int) ($mount['mountIndex'] ?? -1),
         'target' => $target,
+        'authoritative' => true,
         'files' => wp_codebox_vfs_mount_files($target, is_array($mount['files'] ?? null) ? $mount['files'] : array(), $skip),
     );
 }

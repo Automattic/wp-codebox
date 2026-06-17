@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -185,10 +185,69 @@ try {
   assert.doesNotMatch(rawPhp, /wp_json_encode/)
   await writeFile(rawPhpFile, rawPhp)
   const rawPhpResult = await execFileAsync("php", [rawPhpFile])
-  const rawPhpSnapshot = JSON.parse(rawPhpResult.stdout) as { schema?: string; mounts?: Array<{ files?: Array<{ relativePath?: string; contentsBase64?: string }> }> }
+  const rawPhpSnapshot = JSON.parse(rawPhpResult.stdout) as { schema?: string; mounts?: Array<{ authoritative?: boolean; files?: Array<{ relativePath?: string; contentsBase64?: string }> }> }
   assert.equal(rawPhpSnapshot.schema, "wp-codebox/vfs-mount-snapshot/v1")
+  assert.equal(rawPhpSnapshot.mounts?.[0]?.authoritative, true)
   assert.equal(rawPhpSnapshot.mounts?.[0]?.files?.[0]?.relativePath, "changed.txt")
   assert.equal(Buffer.from(rawPhpSnapshot.mounts?.[0]?.files?.[0]?.contentsBase64 ?? "", "base64").toString("utf8"), "changed inside raw php\n")
+
+  const missingRawPhp = vfsMountSnapshotPhp([{
+    mountIndex: 0,
+    target: join(root, "missing-vfs-target"),
+    files: {
+      "remove-me.txt": createHash("sha256").update("delete this\n").digest("hex"),
+    },
+  }])
+  await writeFile(rawPhpFile, missingRawPhp)
+  const missingRawPhpResult = await execFileAsync("php", [rawPhpFile])
+  const missingRawPhpSnapshot = JSON.parse(missingRawPhpResult.stdout) as { mounts?: Array<{ authoritative?: boolean; files?: unknown[] }> }
+  assert.equal(missingRawPhpSnapshot.mounts?.[0]?.authoritative, false)
+  assert.deepEqual(missingRawPhpSnapshot.mounts?.[0]?.files, [])
+
+  const missingTargetMaterialized = await applyVfsMountSnapshots(vfsMounts, [{
+    mountIndex: 0,
+    target: "/workspace/vfs-backed-repo",
+    authoritative: false,
+    files: [],
+  }])
+  assert.equal(missingTargetMaterialized.materialized, 0)
+  assert.equal(missingTargetMaterialized.deleted, 0)
+  assert.equal(missingTargetMaterialized.skipped, 1)
+  assert.equal(await readFile(join(vfsBackedRepo, "remove-me.txt"), "utf8"), "delete this\n")
+
+  const emptyAndUnsafePathMaterialized = await applyVfsMountSnapshots(vfsMounts, [{
+    mountIndex: 0,
+    target: "/workspace/vfs-backed-repo",
+    files: [
+      {
+        relativePath: "empty.txt",
+        sha256: "unused",
+        contentsBase64: "",
+      },
+      {
+        relativePath: "remove-me.txt",
+        sha256: "unused",
+      },
+      {
+        relativePath: "../escaped.txt",
+        sha256: "unused",
+        contentsBase64: Buffer.from("escaped\n").toString("base64"),
+      },
+      {
+        relativePath: "/absolute.txt",
+        sha256: "unused",
+        contentsBase64: Buffer.from("absolute\n").toString("base64"),
+      },
+    ],
+  }])
+  assert.equal(emptyAndUnsafePathMaterialized.materialized, 1)
+  assert.equal(emptyAndUnsafePathMaterialized.deleted, 1)
+  assert.equal(emptyAndUnsafePathMaterialized.skipped, 2)
+  assert.equal(emptyAndUnsafePathMaterialized.phaseResult.schema, "wp-codebox/materialization-phase-result/v1")
+  assert.equal(emptyAndUnsafePathMaterialized.phaseResult.phase, "playground-vfs-mount-materialization")
+  assert.equal(emptyAndUnsafePathMaterialized.phaseResult.status, "completed")
+  assert.equal((await stat(join(vfsBackedRepo, "empty.txt"))).size, 0)
+  await assert.rejects(() => stat(join(root, "escaped.txt")))
 
   const materialized = await applyVfsMountSnapshots(vfsMounts, [{
     mountIndex: 0,
@@ -207,7 +266,7 @@ try {
     ],
   }])
   assert.equal(materialized.materialized, 2)
-  assert.equal(materialized.deleted, 1)
+  assert.equal(materialized.deleted, 2)
 
   const vfsResult = await captureMountDiffs(artifactRoot, filesDirectory, vfsMounts, new ArtifactRedactor())
   const vfsChanged = new Map(vfsResult.changedFiles.files.map((file) => [file.relativePath, file]))
