@@ -30,6 +30,7 @@ export const smokeGroups = {
     description: "Build and core command contract smoke checks.",
     commands: [
       npmScript("build"),
+      tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("command-registry-smoke"),
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),

@@ -1,8 +1,12 @@
-import { resolveRuntimeBackend, type RuntimeBackend, type RuntimeBackendFactoryContext, type RuntimeBackendKind } from "@automattic/wp-codebox-core"
+import { createRuntimeBackendRegistry, type RuntimeBackend, type RuntimeBackendFactoryContext, type RuntimeBackendKind } from "@automattic/wp-codebox-core"
 import { playgroundRuntimeBackendProvider } from "@automattic/wp-codebox-playground"
 
-const cliRuntimeBackendProviders = [playgroundRuntimeBackendProvider]
+const cliRuntimeBackendRegistry = createRuntimeBackendRegistry([playgroundRuntimeBackendProvider])
+
+export function listCliRuntimeBackendKinds(): RuntimeBackendKind[] {
+  return cliRuntimeBackendRegistry.list()
+}
 
 export function resolveCliRuntimeBackend(kind: RuntimeBackendKind, context?: RuntimeBackendFactoryContext): RuntimeBackend {
-  return resolveRuntimeBackend(kind, cliRuntimeBackendProviders, context)
+  return cliRuntimeBackendRegistry.resolve(kind, context)
 }

@@ -2,6 +2,7 @@ export type WorkspaceRecipeJsonSchema = Record<string, unknown>
 
 export interface WorkspaceRecipeJsonSchemaOptions {
   recipeCommandIds?: readonly string[]
+  runtimeBackendKinds?: readonly string[]
 }
 
 export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchema {
@@ -23,7 +24,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         type: "object",
         additionalProperties: false,
         properties: {
-          backend: { const: "wordpress-playground" },
+          backend: runtimeBackendSchema(options.runtimeBackendKinds),
           name: { type: "string" },
           wp: { type: "string" },
           phpVersion: {
@@ -705,4 +706,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
       },
     },
   }
+}
+
+function runtimeBackendSchema(runtimeBackendKinds: readonly string[] | undefined): Record<string, unknown> {
+  return runtimeBackendKinds && runtimeBackendKinds.length > 0
+    ? { enum: [...runtimeBackendKinds] }
+    : { type: "string" }
 }

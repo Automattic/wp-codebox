@@ -415,16 +415,9 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     issues.push({ code, path, message })
   }
 
-  if (recipe.runtime?.backend && recipe.runtime.backend !== "wordpress-playground") {
-    addIssue("unsupported-backend", "$.runtime.backend", `Unsupported recipe backend: ${recipe.runtime.backend}`)
-  }
-
   await validateRecipeDistribution(recipe.distribution, recipeDirectory, addIssue)
 
   if (recipe.runtime?.backendPackage) {
-    if ((recipe.runtime.backend ?? "wordpress-playground") !== "wordpress-playground") {
-      addIssue("unsupported-backend-package", "$.runtime.backendPackage", "Runtime backendPackage is only supported for the wordpress-playground backend")
-    }
     await validateExistingBackendPackageSource(resolve(recipeDirectory, recipe.runtime.backendPackage.source), "$.runtime.backendPackage.source", addIssue)
   }
 

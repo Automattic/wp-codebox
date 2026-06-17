@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { listCliRuntimeBackendKinds } from "../packages/cli/src/runtime-backends.ts"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const execFileAsync = promisify(execFile)
@@ -153,7 +154,7 @@ async function main(): Promise<void> {
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")
   assert(schemaOutput.id === "wp-codebox/workspace-recipe/v1", "Unexpected recipe schema id")
   assert(
-    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({ recipeCommandIds: expectedCommandIds })),
+    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({ recipeCommandIds: expectedCommandIds, runtimeBackendKinds: listCliRuntimeBackendKinds() })),
     "CLI recipe schema must come from the shared runtime-core schema factory"
   )
 

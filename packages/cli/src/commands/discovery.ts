@@ -1,6 +1,7 @@
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipeJsonSchema } from "@automattic/wp-codebox-core"
 import { commandRegistry, recipeCommandDefinitions, type CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { printCommandCatalogHumanOutput, printRecipeSchemaHumanOutput } from "../output.js"
+import { listCliRuntimeBackendKinds } from "../runtime-backends.js"
 
 interface CommandCatalogOutput {
   schema: "wp-codebox/command-catalog/v1"
@@ -64,6 +65,7 @@ function recipeSchemaOutput(): RecipeSchemaOutput {
     id: "wp-codebox/workspace-recipe/v1",
     jsonSchema: createWorkspaceRecipeJsonSchema({
       recipeCommandIds: recipeCommandDefinitions().map((command) => command.id),
+      runtimeBackendKinds: listCliRuntimeBackendKinds(),
     }),
   }
 }
