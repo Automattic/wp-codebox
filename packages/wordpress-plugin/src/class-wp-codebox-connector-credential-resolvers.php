@@ -12,7 +12,18 @@ final class WP_Codebox_Connector_Credential_Resolvers {
 	/** @param array<string,mixed> $resolution Existing inheritance resolution. @param array{connectors:string[],settings:string[]} $request Requested inheritance. @param array<string,mixed> $input Ability input. */
 	public static function resolve( array $resolution, array $request, array $input ): array {
 		$requested = array_values( array_unique( array_filter( array_map( 'strval', $request['connectors'] ?? array() ) ) ) );
-		if ( empty( $requested ) || ! function_exists( 'apply_filters' ) ) {
+		if ( empty( $requested ) ) {
+			return $resolution;
+		}
+
+		foreach ( $requested as $connector_name ) {
+			$connector = self::default_connector( $connector_name, $input );
+			if ( ! empty( $connector ) ) {
+				$resolution['connectors'] = self::replace_connector( is_array( $resolution['connectors'] ?? null ) ? $resolution['connectors'] : array(), $connector_name, $connector );
+			}
+		}
+
+		if ( ! function_exists( 'apply_filters' ) ) {
 			return $resolution;
 		}
 
@@ -44,6 +55,146 @@ final class WP_Codebox_Connector_Credential_Resolvers {
 		}
 
 		return $resolution;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private static function default_connector( string $connector_name, array $input ): array {
+		$provider = sanitize_key( $connector_name );
+		if ( '' === $provider || ! self::provider_registered( $provider ) ) {
+			return array();
+		}
+
+		$connector = array(
+			'name'           => $connector_name,
+			'status'         => 'resolved',
+			'provider'       => $provider,
+			'bridge'         => array(
+				'schema'         => 'wp-codebox/browser-provider-bridge-connector/v1',
+				'authentication' => 'php-ai-client',
+				'baseUrls'       => self::provider_base_urls( $provider, $input ),
+			),
+			'capabilityScope' => array(
+				'browser-connector:request',
+			),
+		);
+
+		$model = trim( (string) ( $input['model'] ?? '' ) );
+		if ( '' !== $model ) {
+			$connector['model'] = $model;
+		}
+
+		return $connector;
+	}
+
+	private static function provider_registered( string $provider ): bool {
+		if ( ! class_exists( '\WordPress\AiClient\AiClient' ) ) {
+			return false;
+		}
+
+		try {
+			$registry = \WordPress\AiClient\AiClient::defaultRegistry();
+			if ( method_exists( $registry, 'hasProvider' ) && $registry->hasProvider( $provider ) ) {
+				return true;
+			}
+
+			return method_exists( $registry, 'getProviderRequestAuthentication' ) && null !== $registry->getProviderRequestAuthentication( $provider );
+		} catch ( Throwable $throwable ) {
+			unset( $throwable );
+			return false;
+		}
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return string[] */
+	private static function provider_base_urls( string $provider, array $input ): array {
+		$candidates = array();
+		$registry   = null;
+
+		try {
+			$registry = class_exists( '\WordPress\AiClient\AiClient' ) ? \WordPress\AiClient\AiClient::defaultRegistry() : null;
+		} catch ( Throwable $throwable ) {
+			unset( $throwable );
+		}
+
+		foreach ( array( 'getProviderBaseUrl', 'getProviderBaseURL', 'getProviderApiBaseUrl', 'getProviderApiBaseURL' ) as $method ) {
+			if ( is_object( $registry ) && method_exists( $registry, $method ) ) {
+				$candidates[] = $registry->{$method}( $provider );
+			}
+		}
+
+		if ( is_object( $registry ) && method_exists( $registry, 'getProviderClassName' ) ) {
+			try {
+				$class_name = $registry->getProviderClassName( $provider );
+				if ( is_string( $class_name ) && class_exists( $class_name ) && method_exists( $class_name, 'baseUrl' ) ) {
+					$base_url = new ReflectionMethod( $class_name, 'baseUrl' );
+					if ( $base_url->isStatic() && 0 === $base_url->getNumberOfRequiredParameters() ) {
+						$base_url->setAccessible( true );
+						$candidates[] = $base_url->invoke( null );
+					}
+				}
+			} catch ( Throwable $throwable ) {
+				unset( $throwable );
+			}
+		}
+
+		$provider_config = null;
+		foreach ( array( 'getProvider', 'provider' ) as $method ) {
+			if ( is_object( $registry ) && method_exists( $registry, $method ) ) {
+				try {
+					$provider_config = $registry->{$method}( $provider );
+					break;
+				} catch ( Throwable $throwable ) {
+					unset( $throwable );
+				}
+			}
+		}
+
+		foreach ( array( 'getBaseUrl', 'getBaseURL', 'getApiBaseUrl', 'getApiBaseURL', 'baseUrl', 'baseURL', 'apiBaseUrl', 'apiBaseURL' ) as $method ) {
+			if ( is_object( $provider_config ) && method_exists( $provider_config, $method ) ) {
+				$candidates[] = $provider_config->{$method}();
+			}
+		}
+
+		foreach ( array( 'base_url', 'baseUrl', 'api_base_url', 'apiBaseUrl' ) as $field ) {
+			if ( is_array( $provider_config ) && isset( $provider_config[ $field ] ) ) {
+				$candidates[] = $provider_config[ $field ];
+			} elseif ( is_object( $provider_config ) && isset( $provider_config->{$field} ) ) {
+				$candidates[] = $provider_config->{$field};
+			}
+		}
+
+		if ( is_array( $input['provider_base_urls'] ?? null ) ) {
+			$candidates = array_merge( $candidates, $input['provider_base_urls'] );
+		}
+
+		/**
+		 * Filters provider base URLs allowed for generic browser provider forwarding.
+		 *
+		 * Products can add provider-specific endpoints without owning request
+		 * forwarding, authentication, or credential transport.
+		 *
+		 * @param array<int,mixed>     $candidates Candidate base URLs.
+		 * @param string              $provider   Provider ID.
+		 * @param array<string,mixed> $input      Ability input.
+		 */
+		if ( function_exists( 'apply_filters' ) ) {
+			$candidates = apply_filters( 'wp_codebox_browser_provider_base_urls', $candidates, $provider, $input );
+		}
+
+		$base_urls = array();
+		foreach ( is_array( $candidates ) ? $candidates : array() as $candidate ) {
+			if ( ! is_scalar( $candidate ) ) {
+				continue;
+			}
+
+			$base_url = trim( (string) $candidate );
+			if ( '' === $base_url || ! in_array( strtolower( (string) wp_parse_url( $base_url, PHP_URL_SCHEME ) ), array( 'http', 'https' ), true ) ) {
+				continue;
+			}
+
+			$base_urls[] = rtrim( $base_url, '/' ) . '/';
+		}
+
+		return array_values( array_unique( $base_urls ) );
 	}
 
 	/** @param array<string,mixed> $resolvers Resolver registry. @param array{connectors:string[],settings:string[]} $request Requested inheritance. @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error|null */
