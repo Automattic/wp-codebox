@@ -103,7 +103,7 @@ export function formatCommandsLog(commands: ExecutionResult[]): string {
 }
 
 function observationManifestFiles(artifactRoot: string, observations: ObservationResult[]): ArtifactManifestFile[] {
-  return observations.flatMap((observation) =>
+  return observations.flatMap((observation) => observation.artifactManifestFiles ??
     (observation.artifactRefs ?? [])
       .filter((ref): ref is RuntimeEpisodeTraceRef & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
       .map((ref) => artifactManifestFile(join(artifactRoot, ref.path), ref.kind, ref.path.endsWith(".json") ? "application/json" : "text/plain")),

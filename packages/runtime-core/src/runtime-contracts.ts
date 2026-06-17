@@ -1,7 +1,7 @@
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
-import type { ArtifactFileDigest, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
@@ -599,6 +599,7 @@ export interface ObservationResult {
   data: unknown
   observedAt: string
   artifactRefs?: RuntimeEpisodeTraceRef[]
+  artifactManifestFiles?: ArtifactManifestFile[]
   digest?: RuntimeEpisodeContentDigest
 }
 
