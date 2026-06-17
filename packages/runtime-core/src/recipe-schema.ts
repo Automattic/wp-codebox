@@ -5,8 +5,13 @@ import type { WorkspaceRecipe, WorkspaceRecipeDeclaredArtifact, WorkspaceRecipeT
 
 export type WorkspaceRecipeJsonSchema = Record<string, unknown>
 
+export interface WorkspaceRecipeCommandJsonSchemaDescriptor {
+  id: string
+}
+
 export interface WorkspaceRecipeJsonSchemaOptions {
   recipeCommandIds?: readonly string[]
+  recipeCommands?: readonly WorkspaceRecipeCommandJsonSchemaDescriptor[]
   runtimeBackendKinds?: readonly string[]
   runtimeWordPressInstallModes?: readonly string[]
   runtimeOverlayKinds?: readonly string[]
@@ -87,8 +92,9 @@ function jsonPointerToJsonPath(pointer: string, error: ErrorObject): string {
 }
 
 export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSchemaOptions = {}): WorkspaceRecipeJsonSchema {
-  const commandSchema = options.recipeCommandIds && options.recipeCommandIds.length > 0
-    ? { anyOf: [{ enum: [...options.recipeCommandIds] }, { type: "string", pattern: "^host/[A-Za-z0-9._/-]+$" }] }
+  const recipeCommandIds = options.recipeCommandIds ?? options.recipeCommands?.map((command) => command.id)
+  const commandSchema = recipeCommandIds && recipeCommandIds.length > 0
+    ? { anyOf: [{ enum: [...recipeCommandIds] }, { type: "string", pattern: "^host/[A-Za-z0-9._/-]+$" }] }
     : { type: "string" }
 
   return {

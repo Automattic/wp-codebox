@@ -1,4 +1,4 @@
-import { BROWSER_PROBE_ACCEPTED_ARGS } from "./browser-probe-contract.js"
+import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -25,9 +25,36 @@ export interface CommandDefinition {
   outputSchema?: CommandOutputSchemaContract
   policyRequirement: string
   requiresPolicyCommands?: readonly string[]
+  validation?: CommandValidationDescriptor
   recipe: boolean
   handler: CommandHandlerBinding
 }
+
+export interface CommandValidationDescriptor {
+  requiredArgs?: readonly CommandRequiredArgDescriptor[]
+  requiredAnyArgs?: readonly CommandRequiredAnyArgDescriptor[]
+  argRules?: readonly CommandArgValidationDescriptor[]
+}
+
+export interface CommandRequiredArgDescriptor {
+  name: string
+  code: string
+  message: string
+}
+
+export interface CommandRequiredAnyArgDescriptor {
+  names: readonly string[]
+  code: string
+  message: string
+}
+
+export type CommandArgValidationDescriptor =
+  | { name: string; kind: "boolean"; code: string; message: string }
+  | { name: string; kind: "duration"; code: string; message: string }
+  | { name: string; kind: "positive-integer"; code: string; message: string }
+  | { name: string; kind: "viewport"; code: string; message: string }
+  | { name: string; kind: "enum"; values: readonly string[]; prefixes?: readonly string[]; code: string; message: string }
+  | { name: string; kind: "comma-list-enum"; values: readonly string[]; code: string; message: string }
 
 const objectEnvelopeSchema = (id: string, extraProperties: Record<string, unknown> = {}): CommandOutputSchemaContract => ({
   id,
@@ -60,6 +87,64 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
   { name: "snapshot-option-names", description: "Comma-separated option_name values or LIKE patterns using * for the options table.", format: "string" },
   { name: "snapshot-post-types", description: "Comma-separated post types used to scope posts and postmeta table exports.", format: "string" },
 ]
+
+const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
+const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
+const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state"] as const
+
+const browserProbeValidation: CommandValidationDescriptor = {
+  requiredArgs: [
+    { name: "url", code: "missing-url", message: "wordpress.browser-probe requires url=<path-or-url>." },
+  ],
+  argRules: [
+    { name: "wait-for", kind: "enum", values: ["domcontentloaded", "load", "networkidle", "duration"], prefixes: ["selector:"], code: "invalid-wait-for", message: "wordpress.browser-probe wait-for must be domcontentloaded, load, networkidle, selector:<selector>, or duration." },
+    { name: "duration", kind: "duration", code: "invalid-duration", message: "wordpress.browser-probe duration must look like 500ms or 2s." },
+    { name: "stall-timeout", kind: "duration", code: "invalid-stall-timeout", message: "wordpress.browser-probe stall-timeout must look like 500ms or 2s." },
+    { name: "fail-fast", kind: "boolean", code: "invalid-fail-fast", message: "wordpress.browser-probe fail-fast must be true or false." },
+    { name: "repeat", kind: "positive-integer", code: "invalid-repeat", message: "wordpress.browser-probe repeat must be a positive integer." },
+    { name: "reset-between", kind: "enum", values: ["none", "reload", "new-page"], code: "invalid-reset-between", message: "wordpress.browser-probe reset-between must be none, reload, or new-page." },
+    { name: "profiles", kind: "comma-list-enum", values: BROWSER_PROBE_CHROMIUM_PROFILE_IDS, code: "invalid-profile", message: "wordpress.browser-probe profile is unsupported" },
+    { name: "profile", kind: "enum", values: BROWSER_PROBE_CHROMIUM_PROFILE_IDS, code: "invalid-profile", message: "wordpress.browser-probe profile is unsupported" },
+    { name: "throttle", kind: "enum", values: ["none", ...BROWSER_PROBE_THROTTLE_PROFILE_IDS], code: "invalid-throttle", message: "wordpress.browser-probe throttle is unsupported" },
+    { name: "browser", kind: "enum", values: BROWSER_PROBE_BROWSER_VALUES, code: "invalid-browser", message: `wordpress.browser-probe browser must be ${BROWSER_PROBE_BROWSER_VALUES.join(" or ")}.` },
+    { name: "viewport", kind: "viewport", code: "invalid-viewport", message: "wordpress.browser-probe viewport must use <width>x<height>, for example 390x844." },
+    { name: "capture", kind: "comma-list-enum", values: BROWSER_PROBE_CAPTURE_VALUES, code: "invalid-capture", message: "wordpress.browser-probe capture does not support" },
+  ],
+}
+
+const browserActionsValidation: CommandValidationDescriptor = {
+  requiredAnyArgs: [
+    { names: ["steps-json", "url"], code: "missing-steps", message: "wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>." },
+  ],
+  argRules: [
+    { name: "step-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-actions step-timeout must look like 500ms or 2s." },
+    { name: "timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-actions timeout must look like 500ms or 2s." },
+    { name: "capture", kind: "comma-list-enum", values: browserActionCaptureValues, code: "invalid-capture", message: "wordpress.browser-actions capture does not support" },
+  ],
+}
+
+const browserScenarioValidation: CommandValidationDescriptor = {
+  requiredAnyArgs: [
+    { names: ["scenario-json", "url"], code: "missing-scenario", message: "wordpress.browser-scenario requires scenario-json=<object> or url=<path-or-url>." },
+  ],
+  argRules: [
+    { name: "step-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-scenario step-timeout must look like 500ms or 2s." },
+    { name: "timeout", kind: "duration", code: "invalid-duration", message: "wordpress.browser-scenario timeout must look like 500ms or 2s." },
+    { name: "capture", kind: "comma-list-enum", values: browserScenarioCaptureValues, code: "invalid-capture", message: "wordpress.browser-scenario capture does not support" },
+  ],
+}
+
+const editorActionsValidation: CommandValidationDescriptor = {
+  requiredArgs: [
+    { name: "steps-json", code: "missing-steps", message: "wordpress.editor-actions requires steps-json=<array>." },
+  ],
+  argRules: [
+    { name: "wait-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.editor-actions wait-timeout must look like 500ms or 2s." },
+    { name: "step-timeout", kind: "duration", code: "invalid-duration", message: "wordpress.editor-actions step-timeout must look like 500ms or 2s." },
+    { name: "timeout", kind: "duration", code: "invalid-duration", message: "wordpress.editor-actions timeout must look like 500ms or 2s." },
+    { name: "capture", kind: "comma-list-enum", values: editorCaptureValues, code: "invalid-capture", message: "wordpress.editor-actions capture does not support" },
+  ],
+}
 
 export const commandRegistry = [
   {
@@ -290,6 +375,7 @@ export const commandRegistry = [
     acceptedArgs: BROWSER_PROBE_ACCEPTED_ARGS,
     outputShape: "JSON summary with requested/effective browser context details plus assertion results and files/browser/console.jsonl, errors.jsonl, network.jsonl, performance.json, memory.json, checkpoints.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
+    validation: browserProbeValidation,
     recipe: true,
     handler: { kind: "playground", method: "runBrowserProbe" },
   },
@@ -342,6 +428,7 @@ export const commandRegistry = [
     ],
     outputShape: "JSON summary plus files/browser/steps.jsonl, action-summary.json (with assertions pass/fail), named screenshots, sidecar DOM/style snapshots, and optional console/errors/network/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-actions. The evaluate step additionally requires wordpress.browser-actions.evaluate.",
+    validation: browserActionsValidation,
     recipe: true,
     handler: { kind: "playground", method: "runBrowserActions" },
   },
@@ -364,6 +451,7 @@ export const commandRegistry = [
     ],
     outputShape: "JSON scenario summary with requested/effective browser metadata and files/browser/scenario-summary.json, preserving lower-level browser-probe and browser-actions summaries when used.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-scenario. Scenarios using evaluate steps additionally require wordpress.browser-actions.evaluate.",
+    validation: browserScenarioValidation,
     recipe: true,
     handler: { kind: "playground", method: "runBrowserScenario" },
   },
@@ -432,6 +520,7 @@ export const commandRegistry = [
     ],
     outputShape: "JSON summary plus files/browser/editor-action-steps.jsonl, editor-action-summary.json, editor-action-state.json, and optional console/errors/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.editor-actions.",
+    validation: editorActionsValidation,
     recipe: true,
     handler: { kind: "playground", method: "runEditorActions" },
   },
@@ -507,6 +596,10 @@ export type PlaygroundRuntimeCommandId = PlaygroundRuntimeCommandDefinition["id"
 
 export function getCommandDefinition(command: string): CommandDefinition | undefined {
   return commandRegistry.find((definition) => definition.id === command)
+}
+
+export function commandValidationDescriptorFor(command: string): CommandValidationDescriptor | undefined {
+  return getCommandDefinition(command)?.validation
 }
 
 export function effectivePolicyCommands(command: string, definitions: readonly CommandDefinition[] = commandRegistry): string[] {

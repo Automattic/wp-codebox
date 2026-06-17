@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
-import { effectivePolicyCommandsFor } from "@automattic/wp-codebox-core/contracts"
+import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -40,7 +40,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   validateWorkspaceRecipeShape(recipe, recipePath)
   assertWorkspaceRecipeJsonSchema(recipe, {
     recipePath,
-    recipeCommandIds: [...supportedRecipeCommands],
+    recipeCommands: cliRecipeCommandDefinitions,
     runtimeBackendKinds: listCliRuntimeBackendKinds(),
     runtimeWordPressInstallModes: cliRuntimeRecipePolicy.wordpressInstallModes,
     runtimeOverlayKinds: supportedRuntimeOverlayKinds,
@@ -1065,6 +1065,8 @@ export function hasExplicitSiteSeedSelectors(scope: NonNullable<WorkspaceRecipeS
 }
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
+  validateRecipeStepDescriptorArgs(step, path, addIssue)
+
   if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit" || step.command === "wordpress.core-phpunit") {
     const code = recipeStepArgValue(step.args ?? [], "code")
     const codeFile = recipeStepArgValue(step.args ?? [], "code-file")
@@ -1110,78 +1112,6 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
   }
 
   if (step.command === "wordpress.browser-probe") {
-    if (!recipeStepArgValue(step.args ?? [], "url")?.trim()) {
-      addIssue("missing-url", `${path}.args`, "wordpress.browser-probe requires url=<path-or-url>.")
-    }
-
-    const waitFor = recipeStepArgValue(step.args ?? [], "wait-for")
-    if (waitFor && !["domcontentloaded", "load", "networkidle", "duration"].includes(waitFor) && !waitFor.startsWith("selector:")) {
-      addIssue("invalid-wait-for", `${path}.args`, "wordpress.browser-probe wait-for must be domcontentloaded, load, networkidle, selector:<selector>, or duration.")
-    }
-
-    const duration = recipeStepArgValue(step.args ?? [], "duration")
-    if (duration && !/^(\d+(?:\.\d+)?)(ms|s)$/.test(duration)) {
-      addIssue("invalid-duration", `${path}.args`, "wordpress.browser-probe duration must look like 500ms or 2s.")
-    }
-
-    const stallTimeout = recipeStepArgValue(step.args ?? [], "stall-timeout")
-    if (stallTimeout && !/^(\d+(?:\.\d+)?)(ms|s)$/.test(stallTimeout)) {
-      addIssue("invalid-stall-timeout", `${path}.args`, "wordpress.browser-probe stall-timeout must look like 500ms or 2s.")
-    }
-
-    const failFast = recipeStepArgValue(step.args ?? [], "fail-fast")
-    if (failFast && !["1", "0", "true", "false", "yes", "no", "on", "off"].includes(failFast.toLowerCase())) {
-      addIssue("invalid-fail-fast", `${path}.args`, "wordpress.browser-probe fail-fast must be true or false.")
-    }
-
-    const repeat = recipeStepArgValue(step.args ?? [], "repeat")
-    if (repeat && !/^[1-9]\d*$/.test(repeat)) {
-      addIssue("invalid-repeat", `${path}.args`, "wordpress.browser-probe repeat must be a positive integer.")
-    }
-
-    const resetBetween = recipeStepArgValue(step.args ?? [], "reset-between")
-    if (resetBetween && !["none", "reload", "new-page"].includes(resetBetween)) {
-      addIssue("invalid-reset-between", `${path}.args`, "wordpress.browser-probe reset-between must be none, reload, or new-page.")
-    }
-
-    const profiles = recipeStepArgValue(step.args ?? [], "profiles")
-    if (profiles) {
-      for (const profile of profiles.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!(BROWSER_PROBE_CHROMIUM_PROFILE_IDS as readonly string[]).includes(profile)) {
-          addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
-        }
-      }
-    }
-
-    const profile = recipeStepArgValue(step.args ?? [], "profile")
-    if (profile && !(BROWSER_PROBE_CHROMIUM_PROFILE_IDS as readonly string[]).includes(profile)) {
-      addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
-    }
-
-    const throttle = recipeStepArgValue(step.args ?? [], "throttle")
-    if (throttle && throttle !== "none" && !(BROWSER_PROBE_THROTTLE_PROFILE_IDS as readonly string[]).includes(throttle)) {
-      addIssue("invalid-throttle", `${path}.args`, `wordpress.browser-probe throttle is unsupported: ${throttle}`)
-    }
-
-    const browser = recipeStepArgValue(step.args ?? [], "browser")
-    if (browser && !(BROWSER_PROBE_BROWSER_VALUES as readonly string[]).includes(browser)) {
-      addIssue("invalid-browser", `${path}.args`, `wordpress.browser-probe browser must be ${BROWSER_PROBE_BROWSER_VALUES.join(" or ")}.`)
-    }
-
-    const viewport = recipeStepArgValue(step.args ?? [], "viewport")
-    if (viewport && !/^\d+x\d+$/i.test(viewport)) {
-      addIssue("invalid-viewport", `${path}.args`, "wordpress.browser-probe viewport must use <width>x<height>, for example 390x844.")
-    }
-
-    const capture = recipeStepArgValue(step.args ?? [], "capture")
-    if (capture) {
-      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!(BROWSER_PROBE_CAPTURE_VALUES as readonly string[]).includes(item)) {
-          addIssue("invalid-capture", `${path}.args`, `wordpress.browser-probe capture does not support: ${item}`)
-        }
-      }
-    }
-
     for (const assertion of (step.args ?? []).filter((arg) => arg.startsWith("assert=")).map((arg) => arg.slice("assert=".length).trim())) {
       const rawNormalized = assertion.startsWith("advisory:") ? assertion.slice("advisory:".length).trim() : assertion
       const frameSeparator = rawNormalized.startsWith("frame:") || rawNormalized.startsWith("frame-url:") ? rawNormalized.indexOf("|") : -1
@@ -1256,10 +1186,6 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
 
   if (step.command === "wordpress.browser-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
-    const url = recipeStepArgValue(step.args ?? [], "url")?.trim()
-    if (!stepsJson && !url) {
-      addIssue("missing-steps", `${path}.args`, "wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>.")
-    }
 
     if (stepsJson && !stepsJson.startsWith("@")) {
       let parsed: unknown
@@ -1276,31 +1202,11 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         }
       }
     }
-
-    for (const name of ["step-timeout", "timeout"] as const) {
-      const value = recipeStepArgValue(step.args ?? [], name)
-      if (value && /^(\d+(?:\.\d+)?)(ms|s)$/.test(value) === false) {
-        addIssue("invalid-duration", `${path}.args`, `wordpress.browser-actions ${name} must look like 500ms or 2s.`)
-      }
-    }
-
-    const capture = recipeStepArgValue(step.args ?? [], "capture")
-    if (capture) {
-      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"].includes(item)) {
-          addIssue("invalid-capture", `${path}.args`, `wordpress.browser-actions capture does not support: ${item}`)
-        }
-      }
-    }
     return
   }
 
   if (step.command === "wordpress.browser-scenario") {
     const scenarioJson = recipeStepArgValue(step.args ?? [], "scenario-json")
-    const url = recipeStepArgValue(step.args ?? [], "url")?.trim()
-    if (!scenarioJson && !url) {
-      addIssue("missing-scenario", `${path}.args`, "wordpress.browser-scenario requires scenario-json=<object> or url=<path-or-url>.")
-    }
 
     if (scenarioJson && !scenarioJson.startsWith("@")) {
       try {
@@ -1336,30 +1242,11 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
         }
       }
     }
-
-    for (const name of ["step-timeout", "timeout"] as const) {
-      const value = recipeStepArgValue(step.args ?? [], name)
-      if (value && /^(\d+(?:\.\d+)?)(ms|s)$/.test(value) === false) {
-        addIssue("invalid-duration", `${path}.args`, `wordpress.browser-scenario ${name} must look like 500ms or 2s.`)
-      }
-    }
-
-    const capture = recipeStepArgValue(step.args ?? [], "capture")
-    if (capture) {
-      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"].includes(item)) {
-          addIssue("invalid-capture", `${path}.args`, `wordpress.browser-scenario capture does not support: ${item}`)
-        }
-      }
-    }
     return
   }
 
   if (step.command === "wordpress.editor-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
-    if (!stepsJson) {
-      addIssue("missing-steps", `${path}.args`, "wordpress.editor-actions requires steps-json=<array>.")
-    }
 
     if (stepsJson && !stepsJson.startsWith("@")) {
       let parsed: unknown
@@ -1371,22 +1258,6 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       }
       if (parsed !== undefined && !Array.isArray(parsed)) {
         addIssue("invalid-steps-json", `${path}.args`, "wordpress.editor-actions steps-json must be a JSON array.")
-      }
-    }
-
-    for (const name of ["wait-timeout", "step-timeout", "timeout"] as const) {
-      const value = recipeStepArgValue(step.args ?? [], name)
-      if (value && /^\d+(?:\.\d+)?(?:ms|s)$/.test(value) === false) {
-        addIssue("invalid-duration", `${path}.args`, `wordpress.editor-actions ${name} must look like 500ms or 2s.`)
-      }
-    }
-
-    const capture = recipeStepArgValue(step.args ?? [], "capture")
-    if (capture) {
-      for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["steps", "console", "errors", "html", "screenshot", "editor-state"].includes(item)) {
-          addIssue("invalid-capture", `${path}.args`, `wordpress.editor-actions capture does not support: ${item}`)
-        }
       }
     }
     return
@@ -1406,6 +1277,85 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
       }
     }
   }
+}
+
+function validateRecipeStepDescriptorArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): void {
+  const descriptor = commandValidationDescriptorFor(step.command)
+  if (!descriptor) {
+    return
+  }
+
+  const args = step.args ?? []
+  for (const requirement of descriptor.requiredArgs ?? []) {
+    if (!recipeStepArgValue(args, requirement.name)?.trim()) {
+      addIssue(requirement.code, `${path}.args`, requirement.message)
+    }
+  }
+
+  for (const requirement of descriptor.requiredAnyArgs ?? []) {
+    if (!requirement.names.some((name) => Boolean(recipeStepArgValue(args, name)?.trim()))) {
+      addIssue(requirement.code, `${path}.args`, requirement.message)
+    }
+  }
+
+  for (const rule of descriptor.argRules ?? []) {
+    validateRecipeStepDescriptorArgRule(args, rule, `${path}.args`, addIssue)
+  }
+}
+
+function validateRecipeStepDescriptorArgRule(args: string[], rule: CommandArgValidationDescriptor, issuePath: string, addIssue: (code: string, path: string, message: string) => void): void {
+  const raw = recipeStepArgValue(args, rule.name)
+  if (!raw) {
+    return
+  }
+
+  if (rule.kind === "boolean") {
+    if (!["1", "0", "true", "false", "yes", "no", "on", "off"].includes(raw.toLowerCase())) {
+      addIssue(rule.code, issuePath, rule.message)
+    }
+    return
+  }
+
+  if (rule.kind === "duration") {
+    if (!/^(\d+(?:\.\d+)?)(ms|s)$/.test(raw)) {
+      addIssue(rule.code, issuePath, rule.message)
+    }
+    return
+  }
+
+  if (rule.kind === "positive-integer") {
+    if (!/^[1-9]\d*$/.test(raw)) {
+      addIssue(rule.code, issuePath, rule.message)
+    }
+    return
+  }
+
+  if (rule.kind === "viewport") {
+    if (!/^\d+x\d+$/i.test(raw)) {
+      addIssue(rule.code, issuePath, rule.message)
+    }
+    return
+  }
+
+  if (rule.kind === "enum") {
+    if (!(rule.values as readonly string[]).includes(raw) && !(rule.prefixes ?? []).some((prefix) => raw.startsWith(prefix))) {
+      addIssue(rule.code, issuePath, descriptorValueMessage(rule, raw))
+    }
+    return
+  }
+
+  for (const value of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
+    if (!(rule.values as readonly string[]).includes(value)) {
+      addIssue(rule.code, issuePath, descriptorValueMessage(rule, value))
+    }
+  }
+}
+
+function descriptorValueMessage(rule: Extract<CommandArgValidationDescriptor, { kind: "enum" | "comma-list-enum" }>, value: string): string {
+  if (rule.message.endsWith(".")) {
+    return rule.message
+  }
+  return `${rule.message}: ${value}`
 }
 
 function validateInlineJsonArg(step: WorkspaceRecipe["workflow"]["steps"][number], name: string, shape: "array" | "object", path: string, addIssue: (code: string, path: string, message: string) => void): unknown {

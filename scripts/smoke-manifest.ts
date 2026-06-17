@@ -58,6 +58,7 @@ export const smokeGroups = {
       tsxSmoke("task-input-contract-smoke"),
       tsxSmoke("status-taxonomy-smoke"),
       npmScript("test:schema-parity"),
+      npmScript("test:recipe-validation-descriptors"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
       tsxSmoke("cli-json-failure-smoke"),
