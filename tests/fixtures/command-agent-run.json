@@ -1,0 +1,47 @@
+{
+  "args": [
+    "command=example.echo-json",
+    "args-json=[\"input=ok\"]",
+    "parse-json=true",
+    "session-id=session-123",
+    "correlation-id=correlation-456",
+    "session-metadata-json={\"recipe\":\"fixture\"}",
+    "auth-required=true",
+    "auth-context-json={\"principal\":\"fixture-user\",\"token\":\"hidden\"}"
+  ],
+  "execution": {
+    "id": "command-1",
+    "command": "example.echo-json",
+    "args": ["input=ok"],
+    "exitCode": 0,
+    "stdout": "{\"ok\":true}\n",
+    "stderr": "",
+    "startedAt": "2026-01-01T00:00:00.000Z",
+    "finishedAt": "2026-01-01T00:00:00.125Z",
+    "result": {
+      "schema": "wp-codebox/runtime-command-result/v1",
+      "status": "ok",
+      "artifactRefs": [
+        {
+          "kind": "command-log",
+          "id": "stdout",
+          "path": "files/command/stdout.txt"
+        }
+      ]
+    }
+  },
+  "runtime": {
+    "id": "runtime-1",
+    "backend": "fixture-runtime",
+    "environment": {
+      "kind": "fixture",
+      "name": "fixture-runtime"
+    },
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "status": "running"
+  },
+  "environment": {
+    "runtimeEnvNames": ["PUBLIC_FLAG", "PUBLIC_FLAG", "bad-name"],
+    "secretEnvNames": ["SECRET_TOKEN"]
+  }
+}

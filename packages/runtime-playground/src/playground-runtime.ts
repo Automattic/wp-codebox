@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -745,6 +745,35 @@ class PlaygroundRuntime implements Runtime {
       runtimeSpec: this.spec,
       server,
       spec,
+    })
+  }
+
+  async runCommandAgent(spec: ExecutionSpec): Promise<RuntimeCommandResultEnvelope> {
+    const request = parseCommandAgentRunRequest(spec.args ?? [])
+    assertRuntimeCommandAllowed(request.command, this.spec.policy)
+    const execution = await this.execute({
+      command: request.command,
+      args: request.args,
+      cwd: spec.cwd,
+      timeoutMs: spec.timeoutMs,
+    })
+    const result = createCommandAgentRunResult({
+      request,
+      execution,
+      runtime: await this.info(),
+      environment: {
+        runtimeEnvNames: Object.keys(this.spec.runtimeEnv ?? {}),
+        secretEnvNames: Object.keys(this.spec.secretEnv ?? {}),
+      },
+    })
+    return createRuntimeCommandResultEnvelope({
+      status: result.exitCode === 0 ? "ok" : "error",
+      stdout: commandAgentRunResultJson(result),
+      stderr: result.stderr,
+      json: result,
+      ...(result.exitCode === 0 ? {} : { error: { code: "command-agent-run-target-failed", message: `Target command failed: ${result.target.command}` } }),
+      diagnostics: result.diagnostics,
+      artifactRefs: execution.result?.artifactRefs,
     })
   }
 

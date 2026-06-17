@@ -72,6 +72,32 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "inspectMountedInputs" },
   },
   {
+    id: "command-agent-run",
+    description: "Run one declared runtime command through a generic command-agent envelope and capture stdout, stderr, exit status, JSON output, metadata, diagnostics, environment names, and artifact refs.",
+    acceptedArgs: [
+      { name: "command", description: "Declared runtime command id to execute. The target command must also be allowed by runtime policy.", required: true, format: "string" },
+      { name: "args-json", description: "Target command arguments as a JSON array of strings.", format: "JSON array" },
+      { name: "parse-json", description: "Parse target stdout as JSON and include it as json in the result envelope.", format: "boolean" },
+      { name: "session-id", description: "Optional caller session id recorded as metadata only.", format: "string" },
+      { name: "correlation-id", description: "Optional caller correlation id recorded as metadata only.", format: "string" },
+      { name: "session-metadata-json", description: "Optional non-secret session metadata object.", format: "JSON object" },
+      { name: "auth-required", description: "When true, auth-context-json must be supplied; auth values are never emitted.", format: "boolean" },
+      { name: "auth-context-json", description: "Optional non-secret auth context object. Only object keys are emitted in results.", format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/command-agent-run/v1 JSON envelope with target command, stdout, stderr, exitCode, status, optional parsed JSON, session/correlation metadata, auth context keys, environment names, diagnostics, and artifact refs.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/command-agent-run/v1", {
+      target: { type: "object" },
+      exitCode: { type: "integer" },
+      stdout: { type: "string" },
+      stderr: { type: "string" },
+      diagnostics: { type: "object" },
+      artifactRefs: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include command-agent-run and the target command.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCommandAgent" },
+  },
+  {
     id: "wordpress.run-php",
     description: "Run PHP against WordPress, bootstrapping wp-load.php unless bootstrap=none is supplied.",
     acceptedArgs: [

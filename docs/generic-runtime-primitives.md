@@ -9,8 +9,10 @@ product or job system.
   `packages/runtime-core/src/browser-session-origin.ts`, and
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
-  `packages/runtime-core/src/runtime-overlay-bundle.ts`.
-- Coverage lives in `tests/generic-primitives.test.ts`.
+  `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
+  `packages/runtime-core/src/command-agent-run.ts`.
+- Coverage lives in `tests/generic-primitives.test.ts` and
+  `tests/command-agent-run.test.ts`.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
 ## Artifact Storage
@@ -118,4 +120,38 @@ wp-codebox target provision --json \
   --workspace-root /workspace \
   --artifact-public-url-root https://artifacts.example.test/run-1 \
   --trusted-origin https://preview.example.test
+```
+
+## Command Agent Runs
+
+`command-agent-run` is a product-neutral runtime command wrapper. It executes one
+declared runtime command and emits a `wp-codebox/command-agent-run/v1` envelope
+with stdout, stderr, exit code, normalized status, optional parsed JSON, session
+metadata, auth context keys, environment variable names, diagnostics, and artifact
+refs.
+
+The wrapper fails closed:
+
+- `command` is required.
+- The target command must already be allowed by runtime policy.
+- `command-agent-run` cannot target itself.
+- `auth-required=true` requires `auth-context-json`.
+- Runtime metadata is required before an envelope can be created.
+
+Environment reporting includes names only. Runtime and secret environment values
+are not included in the envelope.
+
+Example recipe step:
+
+```json
+{
+  "command": "command-agent-run",
+  "args": [
+    "command=inspect-mounted-inputs",
+    "args-json=[]",
+    "parse-json=false",
+    "session-id=example-session",
+    "correlation-id=example-correlation"
+  ]
+}
 ```
