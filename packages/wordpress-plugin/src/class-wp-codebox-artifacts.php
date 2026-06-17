@@ -11,6 +11,8 @@ final class WP_Codebox_Artifacts {
 
 	private const LIST_SCHEMA  = 'wp-codebox/artifact-list/v1';
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
+	private const BROWSER_ARTIFACT_GRANT_SCHEMA = 'wp-codebox/browser-artifact-grant/v1';
+	private const BROWSER_ARTIFACT_REF_SCHEMA = 'wp-codebox/browser-artifact-ref/v1';
 	private const APPLY_PREFLIGHT_SCHEMA = 'wp-codebox/artifact-apply-preflight/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
@@ -250,6 +252,7 @@ final class WP_Codebox_Artifacts {
 			if ( is_wp_error( $bundle ) ) {
 				return $bundle;
 			}
+			$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'existing' );
 
 			return array(
 				'success'        => true,
@@ -258,6 +261,8 @@ final class WP_Codebox_Artifacts {
 				'artifact_id'    => $bundle_id,
 				'content_digest' => $content_digest,
 				'directory'      => $destination,
+				'artifact_ref'   => $artifact_ref,
+				'grant'          => $artifact_ref['grant'] ?? null,
 				'artifact'       => $bundle,
 			);
 		}
@@ -338,6 +343,7 @@ final class WP_Codebox_Artifacts {
 		if ( is_wp_error( $bundle ) ) {
 			return $bundle;
 		}
+		$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'created' );
 
 		return array(
 			'success'        => true,
@@ -346,6 +352,8 @@ final class WP_Codebox_Artifacts {
 			'artifact_id'    => $bundle_id,
 			'content_digest' => $content_digest,
 			'directory'      => $destination,
+			'artifact_ref'   => $artifact_ref,
+			'grant'          => $artifact_ref['grant'] ?? null,
 			'artifact'       => $bundle,
 		);
 	}
@@ -1003,6 +1011,50 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return $caller;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function browser_artifact_grant( array $input, string $session_id, string $directory ): array {
+		$authorization = is_array( $input['authorization'] ?? null ) ? $input['authorization'] : array();
+		$caller        = trim( (string) ( $authorization['caller'] ?? $input['caller_id'] ?? $input['caller'] ?? '' ) );
+		$scope         = trim( (string) ( $authorization['scope'] ?? '' ) );
+		if ( '' === $caller || ( '' !== $scope && 'artifact:write' !== $scope ) ) {
+			return array();
+		}
+
+		$grant = array(
+			'schema'         => self::BROWSER_ARTIFACT_GRANT_SCHEMA,
+			'scope'          => 'artifact:write',
+			'session_id'     => $session_id,
+			'authorization'  => array(
+				'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+				'caller' => $caller,
+				'scope'  => 'artifact:write',
+			),
+			'artifacts_path' => $directory,
+			'expires_at'     => $this->optional_string( $input['grant_expires_at'] ?? $input['expires_at'] ?? null ),
+			'metadata'       => is_array( $input['grant_metadata'] ?? null ) ? $input['grant_metadata'] : null,
+		);
+
+		return $this->strip_null_values( $grant );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function browser_artifact_ref( array $input, string $artifact_id, string $content_digest, string $directory, string $status ): array {
+		$session_id = trim( (string) ( $input['session_id'] ?? ( is_array( $input['session'] ?? null ) ? (string) ( $input['session']['id'] ?? '' ) : '' ) ) );
+		$grant      = '' === $session_id ? array() : $this->browser_artifact_grant( $input, $session_id, $directory );
+
+		$ref = array(
+			'schema'         => self::BROWSER_ARTIFACT_REF_SCHEMA,
+			'artifact_id'    => $artifact_id,
+			'content_digest' => $content_digest,
+			'artifacts_path' => $directory,
+			'status'         => $status,
+			'session_id'     => '' === $session_id ? null : $session_id,
+			'grant'          => empty( $grant ) ? null : $grant,
+		);
+
+		return $this->strip_null_values( $ref );
 	}
 
 	/** @return array<string,mixed> */

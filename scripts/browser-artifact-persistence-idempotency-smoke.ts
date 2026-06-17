@@ -64,6 +64,7 @@ require ${JSON.stringify(classPath)};
 $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'wp-codebox-artifacts-' . bin2hex(random_bytes(8));
 $input = array(
 	'artifacts_path' => $root,
+	'authorization' => array('caller' => 'smoke-caller', 'scope' => 'artifact:write'),
 	'schema_id' => 'smoke/browser-artifact/v1',
 	'root' => 'website',
 	'entrypoint' => 'website/index.html',
@@ -84,12 +85,17 @@ try {
 	smoke_assert('created' === ($created['status'] ?? ''), 'first persistence should return status=created');
 	smoke_assert('' !== (string) ($created['artifact_id'] ?? ''), 'first persistence should return artifact_id');
 	smoke_assert('' !== (string) ($created['content_digest'] ?? ''), 'first persistence should return content_digest');
+	smoke_assert('wp-codebox/browser-artifact-ref/v1' === ($created['artifact_ref']['schema'] ?? ''), 'first persistence should return a normalized artifact_ref');
+	smoke_assert(($created['artifact_id'] ?? '') === ($created['artifact_ref']['artifact_id'] ?? ''), 'artifact_ref should carry the persisted artifact id');
+	smoke_assert('wp-codebox/browser-artifact-grant/v1' === ($created['grant']['schema'] ?? ''), 'first persistence should return a scoped artifact grant');
+	smoke_assert('artifact:write' === ($created['grant']['authorization']['scope'] ?? ''), 'artifact grant should carry artifact write authorization');
 
 	$existing = $artifacts->persist_browser_bundle($input);
 	smoke_assert(!is_wp_error($existing), 'duplicate persistence should not return WP_Error');
 	smoke_assert('existing' === ($existing['status'] ?? ''), 'duplicate persistence should return status=existing');
 	smoke_assert($created['artifact_id'] === $existing['artifact_id'], 'duplicate persistence should return stable artifact_id');
 	smoke_assert($created['content_digest'] === $existing['content_digest'], 'duplicate persistence should return stable content_digest');
+	smoke_assert($created['artifact_ref']['artifact_id'] === $existing['artifact_ref']['artifact_id'], 'duplicate persistence should return stable artifact_ref');
 	smoke_assert(is_array($existing['artifact'] ?? null), 'duplicate persistence should return existing artifact payload');
 } finally {
 	smoke_remove_tree($root);

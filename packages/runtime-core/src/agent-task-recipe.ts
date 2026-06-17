@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
@@ -307,6 +308,7 @@ function installComposerDependenciesIfNeeded(source: string, slug: string): stri
   const result = spawnSync("composer", ["install", "--no-interaction", "--prefer-dist", "--no-progress"], {
     cwd: source,
     encoding: "utf8",
+    env: composerChildEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   })
   if (result.status !== 0) {
@@ -316,6 +318,15 @@ function installComposerDependenciesIfNeeded(source: string, slug: string): stri
     throw new Error(`Composer install for plugin ${slug} did not create vendor/autoload.php.`)
   }
   return source
+}
+
+function composerChildEnv(): NodeJS.ProcessEnv {
+  const home = process.env.HOME || homedir()
+  return {
+    ...process.env,
+    ...(home ? { HOME: home } : {}),
+    COMPOSER_HOME: process.env.COMPOSER_HOME || (home ? join(home, ".composer") : undefined),
+  }
 }
 
 function preparedPluginRoot(artifactsRoot: string): string {
