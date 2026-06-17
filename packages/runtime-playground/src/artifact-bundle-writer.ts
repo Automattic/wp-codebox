@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, join, relative } from "node:path"
 
 import {
   artifactManifestFile,
@@ -8,12 +8,17 @@ import {
   type ArtifactManifestFile,
   type ArtifactViewerMetadata,
 } from "@automattic/wp-codebox-core"
+import type { ArtifactRedactor } from "./artifacts.js"
 
 export interface ManifestedArtifactFileInput {
   path: string
   kind: ArtifactManifestFile["kind"]
   contentType: string
   viewer?: ArtifactViewerMetadata
+}
+
+export interface RedactArtifactFilesOptions {
+  tolerateMissing?: boolean
 }
 
 export class ManifestedArtifactSet {
@@ -42,6 +47,10 @@ export class ArtifactBundleWriter {
     return join(this.directory, path)
   }
 
+  relativePath(path: string): string {
+    return artifactManifestRelativePath(this.directory, path)
+  }
+
   async write(path: string, contents: string | Buffer, manifest: Omit<ManifestedArtifactFileInput, "path">): Promise<void> {
     this.artifacts.add({ path, ...manifest })
     await mkdir(dirname(this.path(path)), { recursive: true })
@@ -49,7 +58,25 @@ export class ArtifactBundleWriter {
   }
 
   async writeJson(path: string, value: unknown, manifest: Omit<ManifestedArtifactFileInput, "path" | "contentType"> & { contentType?: string }): Promise<void> {
-    await this.write(path, `${JSON.stringify(value, null, 2)}\n`, {
+    await this.write(path, artifactJson(value), {
+      ...manifest,
+      contentType: manifest.contentType ?? "application/json",
+    })
+  }
+
+  async writeJsonLines(path: string, records: unknown[], manifest: Omit<ManifestedArtifactFileInput, "path" | "contentType"> & { contentType?: string }): Promise<void> {
+    await this.write(path, artifactJsonLines(records), {
+      ...manifest,
+      contentType: manifest.contentType ?? "application/x-ndjson",
+    })
+  }
+
+  async writeRedacted(path: string, contents: string, redactor: ArtifactRedactor, manifest: Omit<ManifestedArtifactFileInput, "path">): Promise<void> {
+    await this.write(path, redactor.redact(path, contents), manifest)
+  }
+
+  async writeRedactedJson(path: string, value: unknown, redactor: ArtifactRedactor, manifest: Omit<ManifestedArtifactFileInput, "path" | "contentType"> & { contentType?: string }): Promise<void> {
+    await this.writeRedacted(path, artifactJson(value), redactor, {
       ...manifest,
       contentType: manifest.contentType ?? "application/json",
     })
@@ -73,6 +100,37 @@ export class ArtifactBundleWriter {
 
   private async writeManifestJson(manifest: ArtifactManifest): Promise<void> {
     await mkdir(dirname(this.path(this.manifestPath)), { recursive: true })
-    await writeFile(this.path(this.manifestPath), `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeFile(this.path(this.manifestPath), artifactJson(manifest))
+  }
+}
+
+export function artifactJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`
+}
+
+export function artifactJsonLines(records: unknown[]): string {
+  return records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : ""
+}
+
+export function artifactManifestRelativePath(artifactRoot: string, path: string): string {
+  return relative(artifactRoot, path).replace(/\\/g, "/")
+}
+
+export async function writeRedactedArtifactFile(artifactRoot: string, path: string, contents: string, redactor: ArtifactRedactor): Promise<void> {
+  await writeFile(path, redactor.redact(artifactManifestRelativePath(artifactRoot, path), contents))
+}
+
+export async function redactArtifactFiles(artifactRoot: string, paths: string[], redactor: ArtifactRedactor, options: RedactArtifactFilesOptions = {}): Promise<void> {
+  const tolerateMissing = options.tolerateMissing ?? true
+
+  for (const path of paths) {
+    const absolutePath = join(artifactRoot, path)
+    try {
+      await writeRedactedArtifactFile(artifactRoot, absolutePath, await readFile(absolutePath, "utf8"), redactor)
+    } catch (error) {
+      if (!tolerateMissing) {
+        throw error
+      }
+    }
   }
 }

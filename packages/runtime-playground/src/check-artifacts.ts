@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { artifactManifestFile, type ArtifactManifestFile } from "@automattic/wp-codebox-core"
+import { redactArtifactFiles } from "./artifact-bundle-writer.js"
 import type { ArtifactRedactor } from "./artifacts.js"
 import type { normalizePluginCheckOutput, normalizeThemeCheckOutput } from "./commands.js"
 
@@ -97,26 +98,12 @@ export function themeCheckManifestFiles(artifactRoot: string, themeChecks: Theme
 
 export async function redactPluginCheckArtifacts(artifactRoot: string, pluginChecks: PluginCheckArtifact[], redactor: ArtifactRedactor): Promise<void> {
   for (const check of pluginChecks) {
-    for (const path of [check.files.raw, check.files.normalized]) {
-      const absolutePath = join(artifactRoot, path)
-      try {
-        await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
-      } catch {
-        // Plugin Check artifacts are generated before bundle collection; tolerate missing files.
-      }
-    }
+    await redactArtifactFiles(artifactRoot, [check.files.raw, check.files.normalized], redactor)
   }
 }
 
 export async function redactThemeCheckArtifacts(artifactRoot: string, themeChecks: ThemeCheckArtifact[], redactor: ArtifactRedactor): Promise<void> {
   for (const check of themeChecks) {
-    for (const path of [check.files.raw, check.files.normalized]) {
-      const absolutePath = join(artifactRoot, path)
-      try {
-        await writeFile(absolutePath, redactor.redact(path, await readFile(absolutePath, "utf8")))
-      } catch {
-        // Theme Check capture is best-effort; preserve artifact collection if a file vanished.
-      }
-    }
+    await redactArtifactFiles(artifactRoot, [check.files.raw, check.files.normalized], redactor)
   }
 }

@@ -51,6 +51,7 @@ import { buildRuntimeReferenceIndex } from "./runtime-reference-index.js"
 import { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations } from "./replayable-wordpress-site-bundle.js"
 import { runtimeSnapshotPayload, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
+import { artifactJsonLines, writeRedactedArtifactFile } from "./artifact-bundle-writer.js"
 
 export interface ArtifactBundleBuilderSource {
   artifactRoot: string
@@ -718,15 +719,11 @@ function isLocalPreviewHost(hostname: string): boolean {
 }
 
 async function writeJsonLines(path: string, records: unknown[], redactor: ArtifactRedactor, artifactRoot: string): Promise<void> {
-  await writeRedactedArtifact(redactor, path, artifactRoot, records.length > 0 ? `${records.map((record) => artifactJsonLine(record)).join("\n")}\n` : "")
+  await writeRedactedArtifact(redactor, path, artifactRoot, artifactJsonLines(records.map((record) => normalizeJsonValue(record))))
 }
 
 function artifactJson(value: unknown): string {
   return `${JSON.stringify(normalizeJsonValue(value), null, 2)}\n`
-}
-
-function artifactJsonLine(value: unknown): string {
-  return JSON.stringify(normalizeJsonValue(value))
 }
 
 function buildPreviewSessionEvidence({
@@ -1150,5 +1147,5 @@ function stringValue(value: unknown): string | undefined {
 }
 
 async function writeRedactedArtifact(redactor: ArtifactRedactor, path: string, artifactRoot: string, contents: string): Promise<void> {
-  await writeFile(path, redactor.redact(relative(artifactRoot, path), contents))
+  await writeRedactedArtifactFile(artifactRoot, path, contents, redactor)
 }
