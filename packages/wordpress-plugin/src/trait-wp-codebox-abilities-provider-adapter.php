@@ -90,7 +90,7 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
 	private static function browser_provider_request_context( array $input ): array {
-		$authorization = self::browser_session_authorization( $input );
+		$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_CONNECTOR_REQUEST_SCOPE );
 		$context       = array_filter(
 			array(
 				'session_id'         => trim( (string) ( $input['sandbox_session_id'] ?? $input['session_id'] ?? '' ) ),
