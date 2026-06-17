@@ -28,6 +28,7 @@ require_once __DIR__ . '/src/class-wp-codebox-host-recipe-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
+require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
@@ -39,6 +40,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 new WP_Codebox_Abilities();
+WP_Codebox_Browser_Provider_Bridge::register();
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	WP_Codebox_CLI_Command::register();
