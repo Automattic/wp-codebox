@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
 import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
-import type { RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { normalizeRuntimeEnvRecord, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string
@@ -313,9 +313,9 @@ function pluginRuntimeBootstrapPhp(spec: RuntimeCreateSpec): string {
 }
 
 function secretEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(spec.secretEnv ?? {})
+  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.secretEnv ?? {}, { field: "secretEnv" }))
 }
 
 function runtimeEnvPhp(spec: RuntimeCreateSpec): string {
-  return phpEnvAssignments(spec.runtimeEnv ?? {})
+  return phpEnvAssignments(normalizeRuntimeEnvRecord(spec.runtimeEnv ?? {}, { field: "runtimeEnv" }))
 }

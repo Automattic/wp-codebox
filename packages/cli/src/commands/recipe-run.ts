@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactBundleRunRef, artifactFileDigest, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, normalizeRuntimeEnvRecord, refreshArtifactManifestFileSha256s, resolveSecretEnvNames, upsertArtifactManifestFiles, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -126,7 +126,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
   const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
   const runtimeEnv = normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {})
-  const secretEnv = resolveSecretEnv(recipe.inputs?.secretEnv ?? [])
+  const secretEnv = resolveSecretEnvNames(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
   let workspaceMounts: PreparedWorkspaceMount[] = []
   let extraPlugins: PreparedExtraPlugin[] = []
@@ -1102,35 +1102,8 @@ function dedupeBenchmarkArtifactRefs(refs: BenchmarkArtifactRef[]): BenchmarkArt
   return deduped
 }
 
-function resolveSecretEnv(names: string[]): Record<string, string> {
-  const secretEnv: Record<string, string> = {}
-  for (const name of names) {
-    const normalized = name.trim()
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
-      throw new Error(`Invalid --secret-env name: ${name}`)
-    }
-
-    const value = process.env[normalized]
-    if (value) {
-      secretEnv[normalized] = value
-    }
-  }
-
-  return secretEnv
-}
-
 function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, string> {
-  const runtimeEnv: Record<string, string> = {}
-  for (const [name, value] of Object.entries(values)) {
-    const normalized = name.trim()
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized) || typeof value !== "string") {
-      continue
-    }
-
-    runtimeEnv[normalized] = value
-  }
-
-  return runtimeEnv
+  return normalizeRuntimeEnvRecord(values, { field: "inputs.runtimeEnv", invalid: "omit" })
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {

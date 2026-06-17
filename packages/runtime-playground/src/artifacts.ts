@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { promisify } from "node:util"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
-import { artifactFileDigest } from "@automattic/wp-codebox-core"
+import { artifactFileDigest, registerRuntimeSecretRedactions } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type {
   ArtifactDiagnostic,
@@ -175,15 +175,10 @@ export class ArtifactRedactor {
   constructor(secretEnv: Record<string, string> = {}) {
     this.replacements.push(...COMMON_SECRET_PATTERNS)
 
-    for (const [name, value] of Object.entries(secretEnv)) {
-      if (name.length > 0) {
-        this.replacements.push({ kind: "configured-secret-name", literal: name })
-      }
-
-      if (shouldRedactConfiguredSecretValue(value)) {
-        this.replacements.push({ kind: "configured-secret-value", literal: value })
-      }
-    }
+    registerRuntimeSecretRedactions(secretEnv, {
+      registerSecretName: (name) => this.replacements.push({ kind: "configured-secret-name", literal: name }),
+      registerSecretValue: (value) => this.replacements.push({ kind: "configured-secret-value", literal: value }),
+    })
   }
 
   redact(path: string, contents: string): string {
@@ -320,23 +315,6 @@ function redactPattern(contents: string, pattern: RegExp, replacement: string): 
 
   chunks.push(contents.slice(cursor))
   return { contents: chunks.join(""), count }
-}
-
-function shouldRedactConfiguredSecretValue(value: string): boolean {
-  const trimmed = value.trim()
-  if (trimmed.length < 8) {
-    return false
-  }
-
-  if (["true", "false", "null", "undefined"].includes(trimmed.toLowerCase())) {
-    return false
-  }
-
-  if (/^[0-9]+$/.test(trimmed)) {
-    return false
-  }
-
-  return true
 }
 
 function escapeRegExp(value: string): string {
