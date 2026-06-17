@@ -1219,26 +1219,26 @@ final class WP_Codebox_Artifacts {
 			return new WP_Error( 'wp_codebox_artifact_directory_missing', 'Artifact bundle directory is missing.', array( 'status' => 400 ) );
 		}
 
-		if ( ! function_exists( 'exec' ) ) {
-			return $this->artifact_verifier_unavailable( 'Shell execution is not available for WP Codebox artifact verification.' );
-		}
-
 		$bin = trim( (string) ( $input['wp_codebox_bin'] ?? $this->default_bin() ) );
 		if ( '' === $bin || ! preg_match( '#^[A-Za-z0-9_./:@+-]+$#', $bin ) ) {
 			return new WP_Error( 'wp_codebox_bin_invalid', 'wp_codebox_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
 		}
 
-		$command = sprintf(
-			'%s artifacts verify --bundle %s --json',
-			$this->command_prefix( $bin ),
-			escapeshellarg( $directory )
+		$result = WP_Codebox_Managed_Host_Command::run(
+			array(
+				'command'          => $this->artifact_verifier_command( $bin, $directory ),
+				'cwd'              => $directory,
+				'allowed_cwd_roots' => array( $directory ),
+				'timeout_seconds'  => 60,
+				'max_output_bytes' => 262144,
+			)
 		);
+		if ( is_wp_error( $result ) ) {
+			return $this->artifact_verifier_unavailable( $result->get_error_message(), array( 'error' => $result->get_error_data() ) );
+		}
 
-		$output = array();
-		$exit   = 0;
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Required to delegate to the packaged generic artifact verifier.
-		exec( $command . ' 2>&1', $output, $exit );
-		$raw     = implode( "\n", $output );
+		$exit    = (int) $result['exit_code'];
+		$raw     = trim( (string) $result['stdout'] . ( '' !== (string) $result['stderr'] ? "\n" . (string) $result['stderr'] : '' ) );
 		$decoded = json_decode( $raw, true );
 
 		if ( ! is_array( $decoded ) ) {
@@ -1298,12 +1298,13 @@ final class WP_Codebox_Artifacts {
 		return $bin;
 	}
 
-	private function command_prefix( string $bin ): string {
+	/** @return string[] */
+	private function artifact_verifier_command( string $bin, string $directory ): array {
 		if ( str_ends_with( $bin, '.js' ) && is_file( $bin ) ) {
-			return 'node ' . escapeshellarg( $bin );
+			return WP_Codebox_Managed_Host_Command::command( 'node', array( $bin, 'artifacts', 'verify', '--bundle', $directory, '--json' ) );
 		}
 
-		return escapeshellarg( $bin );
+		return WP_Codebox_Managed_Host_Command::command( $bin, array( 'artifacts', 'verify', '--bundle', $directory, '--json' ) );
 	}
 
 	private function bound_output( string $output ): string {

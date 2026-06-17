@@ -2008,17 +2008,15 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return is_string( $resolved ) ? $resolved : '';
 		}
 
-		if ( ! function_exists( 'exec' ) ) {
-			return '';
+		$paths = explode( PATH_SEPARATOR, (string) getenv( 'PATH' ) );
+		foreach ( $paths as $path ) {
+			$candidate = rtrim( $path, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . $command;
+			if ( is_file( $candidate ) && is_executable( $candidate ) ) {
+				return $candidate;
+			}
 		}
 
-		$output = array();
-		$exit   = 1;
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Used for executable preflight only.
-		exec( 'command -v ' . escapeshellarg( $command ) . ' 2>/dev/null', $output, $exit );
-		$resolved = 0 === $exit && ! empty( $output[0] ) ? (string) $output[0] : '';
-
-		return '' !== $resolved && is_executable( $resolved ) ? $resolved : '';
+		return '';
 	}
 
 	/**

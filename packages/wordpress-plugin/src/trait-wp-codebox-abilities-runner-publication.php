@@ -879,52 +879,33 @@ trait WP_Codebox_Abilities_Runner_Publication {
 
 	/** @param array<string,mixed> $input Normalized input. @param array<string,mixed> $command_input Command input. @return array<string,mixed> */
 	private static function run_local_runner_workspace_command( string $command, array $input, array $command_input ): array {
-		if ( ! function_exists( 'proc_open' ) ) {
+		$result = WP_Codebox_Managed_Host_Command::run(
+			array(
+				'command'           => WP_Codebox_Managed_Host_Command::split_command_line( $command ),
+				'cwd'               => (string) $input['workspace_path'],
+				'allowed_cwd_roots' => array( (string) $input['workspace_path'] ),
+				'timeout_seconds'   => max( 1, min( 600, (int) ( $command_input['timeout_seconds'] ?? 120 ) ) ),
+				'env'               => is_array( $command_input['env'] ?? null ) ? $command_input['env'] : array(),
+			)
+		);
+
+		if ( is_wp_error( $result ) ) {
 			return self::runner_workspace_operation_failure(
 				'command',
 				'local_command_unavailable',
-				array( 'code' => 'wp_codebox_runner_workspace_local_command_unavailable', 'message' => 'Local command execution is unavailable in this PHP runtime.' ),
+				array( 'code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data() ),
 				'unavailable',
 				$input
 			);
 		}
 
-		$started = hrtime( true );
-		$env     = is_array( $command_input['env'] ?? null ) ? array_map( 'strval', $command_input['env'] ) : array();
-		$process = proc_open(
-			$command,
-			array(
-				1 => array( 'pipe', 'w' ),
-				2 => array( 'pipe', 'w' ),
-			),
-			$pipes,
-			(string) $input['workspace_path'],
-			array() === $env ? null : $env
-		);
-
-		if ( ! is_resource( $process ) ) {
-			return self::runner_workspace_operation_failure(
-				'command',
-				'local_command_failed',
-				array( 'code' => 'wp_codebox_runner_workspace_local_command_failed', 'message' => 'Failed to start local runner workspace command.' ),
-				'failed',
-				$input
-			);
-		}
-
-		$stdout    = stream_get_contents( $pipes[1] );
-		$stderr    = stream_get_contents( $pipes[2] );
-		fclose( $pipes[1] );
-		fclose( $pipes[2] );
-		$exit_code = proc_close( $process );
-
 		return self::normalize_runner_workspace_command_result(
 			array(
-				'success'    => 0 === $exit_code,
-				'exit_code'  => $exit_code,
-				'stdout'     => is_string( $stdout ) ? trim( $stdout ) : '',
-				'stderr'     => is_string( $stderr ) ? trim( $stderr ) : '',
-				'elapsed_ms' => ( hrtime( true ) - $started ) / 1000000,
+				'success'    => (bool) $result['success'],
+				'exit_code'  => (int) $result['exit_code'],
+				'stdout'     => (string) $result['stdout'],
+				'stderr'     => (string) $result['stderr'],
+				'elapsed_ms' => (float) $result['elapsed_ms'],
 			),
 			$input,
 			$command_input,
