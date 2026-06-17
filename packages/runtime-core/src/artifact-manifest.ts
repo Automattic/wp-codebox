@@ -28,6 +28,9 @@ export interface ArtifactManifestFile {
     | "file"
     | "diagnostics"
     | "test-results"
+    | "tool-call-transcript"
+    | "tool-call-input"
+    | "tool-call-output"
     | (string & {})
   contentType: string
   sha256: ArtifactFileDigest

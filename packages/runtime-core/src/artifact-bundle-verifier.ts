@@ -7,6 +7,7 @@ import { isPlainObject as isRecord } from "./object-utils.js"
 import { RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
 import { TYPED_ARTIFACT_INDEX_SCHEMA } from "./structured-artifacts.js"
+import { TOOL_CALL_TRANSCRIPT_SCHEMA } from "./tool-call-artifacts.js"
 import type { RuntimeReferenceManifest, RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef, RuntimeReferenceManifestSnapshotRef, RuntimeReplayReferenceIndex, RuntimeReplayReferenceIndexActionRef, RuntimeReplayReferenceIndexObservationRef } from "./runtime-reference.js"
 import type { RuntimeEpisodeContentDigest, RuntimeEpisodeTraceRef } from "./index.js"
 
@@ -165,6 +166,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyRuntimeReferenceManifestArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyRuntimeReplayReferenceIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyTypedArtifactIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
+  await verifyToolCallTranscriptArtifacts(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
 }
@@ -870,6 +872,71 @@ async function verifyTypedArtifactIndexArtifacts(directory: string, manifest: Ar
       }
       validateTypedArtifactPayloadSchema(artifact, fieldPath, file.path, violations)
     }
+  }
+}
+
+async function verifyToolCallTranscriptArtifacts(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  for (const file of manifest.files.filter((entry) => entry.kind === "tool-call-transcript")) {
+    let transcript: unknown
+    try {
+      transcript = JSON.parse(await readFile(join(directory, file.path), "utf8"))
+    } catch (error) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: `Unable to read tool-call transcript artifact: ${errorMessage(error)}` })
+      continue
+    }
+
+    if (!isRecord(transcript) || transcript.schema !== TOOL_CALL_TRANSCRIPT_SCHEMA || !Array.isArray(transcript.tool_calls)) {
+      violations.push({ code: "malformed-reference", path: file.path, file: file.path, message: "Tool-call transcript must include schema wp-codebox/tool-call-transcript/v1 and a tool_calls array." })
+      continue
+    }
+    if (!isRecord(transcript.redaction) || typeof transcript.redaction.policy !== "string") {
+      violations.push({ code: "malformed-reference", path: `${file.path}:redaction`, file: file.path, message: "Tool-call transcript must include redaction.policy." })
+    }
+
+    for (const [index, toolCall] of transcript.tool_calls.entries()) {
+      const fieldPath = `${file.path}:tool_calls[${index}]`
+      if (!isRecord(toolCall) || typeof toolCall.call_id !== "string" || typeof toolCall.tool_name !== "string" || typeof toolCall.tool_type !== "string" || typeof toolCall.phase !== "string" || typeof toolCall.status !== "string") {
+        violations.push({ code: "malformed-reference", path: fieldPath, file: file.path, message: "Tool-call entries must include call_id, tool_name, tool_type, phase, and status." })
+        continue
+      }
+      if (!isRecord(toolCall.redaction) || typeof toolCall.redaction.policy !== "string") {
+        violations.push({ code: "malformed-reference", path: `${fieldPath}.redaction`, file: file.path, message: "Tool-call entries must include redaction.policy." })
+      }
+      await verifyToolCallArtifactRefs(directory, toolCall.input_artifacts, `${fieldPath}.input_artifacts`, manifestFiles, violations)
+      await verifyToolCallArtifactRefs(directory, toolCall.output_artifacts, `${fieldPath}.output_artifacts`, manifestFiles, violations)
+    }
+  }
+}
+
+async function verifyToolCallArtifactRefs(directory: string, value: unknown, fieldPath: string, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  if (value === undefined) {
+    return
+  }
+  if (!Array.isArray(value)) {
+    violations.push({ code: "malformed-reference", path: fieldPath, message: "Tool-call artifact refs must be arrays." })
+    return
+  }
+  for (const [index, ref] of value.entries()) {
+    const refPath = `${fieldPath}[${index}]`
+    if (!isRecord(ref) || typeof ref.path !== "string") {
+      violations.push({ code: "malformed-reference", path: refPath, message: "Tool-call artifact refs must include path." })
+      continue
+    }
+    validateArtifactReference(ref.path, `${refPath}.path`, manifestFiles, violations)
+    if (isArtifactFileDigestShape(ref.sha256)) {
+      await verifyToolCallArtifactFileDigest(directory, ref.path, ref.sha256.value, `${refPath}.sha256`, violations)
+    }
+  }
+}
+
+async function verifyToolCallArtifactFileDigest(directory: string, path: string, expectedSha256: string, fieldPath: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  try {
+    const actualSha256 = artifactFileDigest(await readFile(join(directory, path))).value
+    if (actualSha256 !== expectedSha256) {
+      violations.push({ code: "file-hash-mismatch", path: fieldPath, file: path, message: `Tool-call artifact digest mismatch for ${path}: expected ${expectedSha256}, got ${actualSha256}` })
+    }
+  } catch (error) {
+    violations.push({ code: "missing-file", path: fieldPath, file: path, message: `Unable to read tool-call artifact file: ${errorMessage(error)}` })
   }
 }
 

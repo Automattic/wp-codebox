@@ -150,11 +150,18 @@ The stable artifact bundle is the directory selected by `artifacts_path` or a te
 - `files/agent-result.json`: `wp-codebox/agent-result/v1`.
 - `files/agent-task-result.json`: `wp-codebox/agent-task-result/v1` when the sandbox runtime emits semantic task outputs.
 - `files/transcript.json`: `wp-codebox/agent-transcript/v1`.
+- `files/runtime-evidence/tool-calls/transcript.json`: optional `wp-codebox/tool-call-transcript/v1` evidence for generic tool or command execution.
 - `files/runtime-reference-manifest.json`: stable runtime reference index.
 
 Bundle ids are content-addressed over the exact bytes of `files/changed-files.json` and `files/patch.diff`. Orchestrators should verify bundles with `wp-codebox artifacts verify` before promotion or apply-back when a bundle crosses a trust boundary.
 
 Apply-back is outside `agent-task-run`. External orchestrators may publish, open PRs, or stage review through their own policy after reading the artifact bundle. WP Codebox's reviewed apply-back path remains `apply-approved-artifact` or `stage-artifact-apply` for WordPress-hosted product flows.
+
+### Tool-Call Transcript Artifacts
+
+Generic command runners and host tool registries should write tool-call evidence as a product-neutral `tool-call-transcript` manifest entry. The transcript schema is `wp-codebox/tool-call-transcript/v1` and each `tool_calls[]` record carries `call_id`, `tool_name`, `tool_type`, `phase`, `status`, optional `started_at` and `finished_at`, optional `input_artifacts` and `output_artifacts`, optional input/output SHA-256 digests, and explicit redaction metadata. Input/output artifacts should use manifest kinds `tool-call-input` and `tool-call-output` when persisted as separate bounded files.
+
+The artifact verifier checks that transcript artifact refs are listed in `manifest.json`, stay within the bundle, and match their declared SHA-256 digests when present. This lets a generic command runner branch merge by materializing its command/tool transcript into `files/runtime-evidence/tool-calls/transcript.json` and appending the referenced input/output artifacts through the existing runtime-evidence manifest update path.
 
 ## Runner Workspace Publication
 

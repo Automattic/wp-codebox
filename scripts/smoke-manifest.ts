@@ -90,6 +90,7 @@ export const smokeGroups = {
       tsxSmoke("artifact-reference-normalization-smoke"),
       tsxSmoke("artifact-diagnostics-normalizer-smoke"),
       tsxSmoke("typed-artifacts-smoke"),
+      tsxSmoke("tool-call-artifacts-smoke"),
       tsxSmoke("artifact-browser-error-collection-smoke"),
       tsxSmoke("browser-artifact-persistence-idempotency-smoke"),
       tsxSmoke("executable-browser-dto-smoke"),
