@@ -6,7 +6,7 @@ import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
-import type { WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
+import type { WorkspaceRecipe, WorkspaceRecipeComponentManifest, WorkspaceRecipeComponentManifestEntry, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 import { resolvePluginEntrypointContract, sanitizePluginSlug } from "./component-contracts.js"
 import { prepareLocalSourceStageSync, preparedSourcePath, preparedSourceRoot } from "./prepared-source-staging.js"
 
@@ -67,7 +67,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const runtimeMounts = runtimeStateMounts(input)
   const agentBundleStagedFiles = stagedAgentBundleSources(input.agent_bundles)
   const stagedFiles = [...(Array.isArray(input.stagedFiles) ? input.stagedFiles : []), ...agentBundleStagedFiles]
-  const providerPlugins = stringList(input.provider_plugin_paths)
+  const providerPlugins: WorkspaceRecipeExtraPlugin[] = stringList(input.provider_plugin_paths)
     .map((plugin) => {
       const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
       const preparedSource = prepareComposerPluginSource(plugin, slug, artifacts)
@@ -76,6 +76,12 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     })
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
+  const componentPluginEntries = componentPlugins(input.component_contracts, artifacts)
+  const extraPlugins = [
+    ...componentPluginEntries,
+    ...providerPlugins,
+  ].filter(Boolean)
+  const componentManifest = componentManifestForPlugins(componentPluginEntries, providerPlugins)
   const workflowArgs = [
     `task=${taskInput.goal}`,
     `agent=${stringValue(input.agent) || "wp-codebox-sandbox"}`,
@@ -118,10 +124,8 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
       dependency_overlays: Array.isArray(input.dependency_overlays) ? input.dependency_overlays : undefined,
-      extra_plugins: [
-        ...componentPlugins(input.component_contracts, artifacts),
-        ...providerPlugins,
-      ].filter(Boolean),
+      extra_plugins: extraPlugins,
+      component_manifest: componentManifest,
       runtimeEnv: { ...runtimeEnv(input), ...AGENT_RUNTIME_ENV },
       secretEnv: stringList(input.secret_env),
       stagedFiles: stagedFiles.length > 0 ? stagedFiles : undefined,
@@ -132,6 +136,40 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
       after: Array.isArray(input.verify_steps) && input.verify_steps.length > 0 ? input.verify_steps : undefined,
     }),
   }) as WorkspaceRecipe
+}
+
+function componentManifestForPlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {
+  return {
+    schema: "wp-codebox/component-manifest/v1",
+    components: componentPlugins.map(componentManifestEntry),
+    providers: providerPlugins.map(componentManifestEntry),
+  }
+}
+
+function componentManifestEntry(plugin: WorkspaceRecipeExtraPlugin): WorkspaceRecipeComponentManifestEntry {
+  const metadata = plugin.metadata && typeof plugin.metadata === "object" && !Array.isArray(plugin.metadata) ? plugin.metadata : {}
+  const contract = metadata.componentContract && typeof metadata.componentContract === "object" && !Array.isArray(metadata.componentContract)
+    ? metadata.componentContract as Record<string, unknown>
+    : {}
+  const pluginFile = stringValue(plugin.pluginFile)
+  return stripUndefined({
+    slug: stringValue(plugin.slug),
+    source: stringValue(plugin.source),
+    mountedPath: componentMountedPath(stringValue(plugin.slug), plugin.loadAs === "mu-plugin" ? "mu-plugin" : "plugin"),
+    entrypoint: pluginFile,
+    pluginFile,
+    loadAs: plugin.loadAs,
+    activate: plugin.activate,
+    contractIndex: typeof contract.index === "number" ? contract.index : undefined,
+    requestedPath: stringValue(contract.requestedPath) || undefined,
+    provenance: Object.keys(metadata).length > 0 ? metadata : undefined,
+  })
+}
+
+function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): string {
+  return loadAs === "mu-plugin"
+    ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}`
+    : `/wordpress/wp-content/plugins/${slug}`
 }
 
 function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"]): WorkspaceRecipeStagedFile[] {
@@ -206,7 +244,7 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
   return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
 }
 
-function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; pluginFile: string; activate: boolean; loadAs: string; metadata: Record<string, unknown> }> {
+function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): WorkspaceRecipeExtraPlugin[] {
   if (!Array.isArray(contracts)) return []
   return contracts.flatMap((contract, index) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
@@ -220,12 +258,13 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
       pluginFile: stringValue(contract.pluginFile),
       loadAs: stringValue(contract.loadAs) === "plugin" ? "plugin" : "mu-plugin",
     })
+    const loadAs = stringValue(contract.loadAs) === "plugin" ? "plugin" : "mu-plugin"
     return [{
       source: preparedSource,
       slug,
       pluginFile: entrypoint.pluginFile,
       activate: Boolean(contract.activate),
-      loadAs: stringValue(contract.loadAs) || "mu-plugin",
+      loadAs,
       metadata: stripUndefined({
         componentContract: {
           index,
@@ -235,7 +274,7 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
           preparedPath: preparedSource,
           pluginFile: entrypoint.pluginFile,
           pluginEntrypointFallback: entrypoint.fallback,
-          loadAs: stringValue(contract.loadAs) || "mu-plugin",
+          loadAs,
           activate: Boolean(contract.activate),
         },
       }),

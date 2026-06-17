@@ -376,6 +376,11 @@ function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role
         throw new RuntimeException('wordpress.bench received an empty ' . $role . ' plugin slug. ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'empty plugin slug'));
     }
 
+    $manifest_file = wp_codebox_bench_manifest_plugin_file_for_slug($plugin_slug, $role);
+    if ($manifest_file !== null) {
+        return $manifest_file;
+    }
+
     $plugin_dir = WP_PLUGIN_DIR . '/' . $plugin_slug;
     if (!is_dir($plugin_dir)) {
         throw new RuntimeException('wordpress.bench could not find ' . $role . ' plugin directory for slug "' . $plugin_slug . '". ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'missing plugin directory'));
@@ -401,6 +406,43 @@ function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role
     }
 
     throw new RuntimeException('wordpress.bench could not locate a readable plugin header for ' . $role . ' slug "' . $plugin_slug . '". ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'missing readable plugin header', $checked_files));
+}
+
+function wp_codebox_bench_manifest_plugin_file_for_slug(string $plugin_slug, string $role): ?string {
+    $manifest = $GLOBALS['wp_codebox_component_manifest'] ?? null;
+    if (!is_array($manifest)) {
+        $json = defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON') ? WP_CODEBOX_COMPONENT_MANIFEST_JSON : '';
+        $decoded = is_string($json) && $json !== '' ? json_decode($json, true) : null;
+        $manifest = is_array($decoded) ? $decoded : null;
+    }
+    if (!is_array($manifest)) {
+        return null;
+    }
+
+    foreach (array('components', 'providers') as $section) {
+        foreach (is_array($manifest[$section] ?? null) ? $manifest[$section] : array() as $entry) {
+            if (!is_array($entry) || (string) ($entry['slug'] ?? '') !== $plugin_slug) {
+                continue;
+            }
+
+            $entrypoint = trim(str_replace('\\\\', '/', (string) ($entry['entrypoint'] ?? $entry['pluginFile'] ?? '')));
+            if ($entrypoint === '' || str_starts_with($entrypoint, '/') || str_contains($entrypoint, '..') || !str_ends_with($entrypoint, '.php')) {
+                throw new RuntimeException('wordpress.bench manifest contains unsafe ' . $role . ' entrypoint for slug "' . $plugin_slug . '". ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'unsafe manifest entrypoint'));
+            }
+            if (!str_starts_with($entrypoint, $plugin_slug . '/')) {
+                throw new RuntimeException('wordpress.bench manifest entrypoint for ' . $role . ' slug "' . $plugin_slug . '" must be relative to the mounted plugin slug. ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'manifest entrypoint slug mismatch'));
+            }
+
+            $absolute = WP_PLUGIN_DIR . '/' . $entrypoint;
+            if (!is_file($absolute) || !is_readable($absolute)) {
+                throw new RuntimeException('wordpress.bench manifest entrypoint for ' . $role . ' slug "' . $plugin_slug . '" is not readable. ' . wp_codebox_bench_plugin_slug_diagnostic($plugin_slug, $role, 'manifest entrypoint missing', array($absolute)));
+            }
+
+            return $entrypoint;
+        }
+    }
+
+    return null;
 }
 
 function wp_codebox_bench_plugin_slug_diagnostic(string $plugin_slug, string $role, string $error, array $checked_files = array()): string {

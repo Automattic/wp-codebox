@@ -162,13 +162,28 @@ final class WP_Codebox_Host_Recipe_Builder {
 			array(
 				'slug'          => (string) ( $plugin['slug'] ?? '' ),
 				'source'        => (string) ( $plugin['source'] ?? '' ),
+				'mountedPath'   => self::component_manifest_mounted_path( $plugin ),
+				'entrypoint'    => (string) ( $plugin['pluginFile'] ?? '' ),
 				'pluginFile'    => (string) ( $plugin['pluginFile'] ?? '' ),
 				'loadAs'        => (string) ( $plugin['loadAs'] ?? '' ),
 				'activate'      => isset( $plugin['activate'] ) ? (bool) $plugin['activate'] : null,
 				'contractIndex' => isset( $contract['index'] ) ? (int) $contract['index'] : null,
 				'requestedPath' => (string) ( $contract['requestedPath'] ?? '' ),
+				'provenance'    => ! empty( $metadata ) ? $metadata : null,
 			),
 			static fn( mixed $value ): bool => null !== $value && '' !== $value
 		);
+	}
+
+	/** @param array<string,mixed> $plugin Prepared plugin entry. */
+	private static function component_manifest_mounted_path( array $plugin ): string {
+		$slug = (string) ( $plugin['slug'] ?? '' );
+		if ( '' === $slug ) {
+			return '';
+		}
+
+		return 'mu-plugin' === (string) ( $plugin['loadAs'] ?? '' )
+			? '/wordpress/wp-content/mu-plugins/wp-codebox-runtime/' . $slug
+			: '/wordpress/wp-content/plugins/' . $slug;
 	}
 }
