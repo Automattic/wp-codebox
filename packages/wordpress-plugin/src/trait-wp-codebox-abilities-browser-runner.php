@@ -1312,7 +1312,8 @@ foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'too
 		continue;
 	}
 	$tool_id = trim( (string) ( $tool_policy_entry[\'id\'] ?? \'\' ) );
-	$tool_name = wp_codebox_browser_runtime_tool_name( $tool_id );
+	$runtime_tool_id = trim( (string) ( $tool_policy_entry[\'runtime_tool_id\'] ?? \'\' ) );
+	$tool_name = wp_codebox_browser_runtime_tool_name( \'\' !== $runtime_tool_id ? $runtime_tool_id : $tool_id );
 	if ( \'\' !== $tool_name ) {
 		$sandbox_tool_ids[] = $tool_name;
 	}

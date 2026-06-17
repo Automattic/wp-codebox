@@ -35,6 +35,14 @@ final class WP_Codebox_Agent_Task {
 			}
 		}
 
+		if ( ! empty( $task_input['allowed_tools'] ) ) {
+			$policy = ( new WP_Codebox_Sandbox_Tool_Policy_Normalizer() )->normalize_for_task_input( $task_input );
+			if ( is_wp_error( $policy ) ) {
+				return $policy;
+			}
+			$task_input['sandbox_tool_policy'] = $policy;
+		}
+
 		return $task_input;
 	}
 
