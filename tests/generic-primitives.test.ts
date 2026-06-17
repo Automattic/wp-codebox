@@ -14,6 +14,9 @@ import {
   artifactStoragePublicUrl,
   browserArtifactGrant,
   browserArtifactRef,
+  browserCallbackCapability,
+  browserCallbackResultEnvelope,
+  browserCallbackSignature,
   captureArtifactFile,
   browserArtifactPersistenceProjection,
   composerManagedHostCommandConfig,
@@ -36,6 +39,7 @@ import {
   trustedBrowserSessionOrigin,
   trustedBrowserSessionOrigins,
   validateEvidenceArtifactEnvelope,
+  verifyBrowserCallbackSignature,
   writeArtifactPart,
   validateWorkspaceRecipeJsonSchema,
 } from "../packages/runtime-core/src/index.js"
@@ -132,6 +136,33 @@ assert.deepEqual(browserArtifactRef({ artifact_id: "artifact-bundle-sha256-abc",
 })
 assert.throws(() => browserArtifactGrant({ caller: "", sessionId: "session-123" }), /caller/)
 assert.throws(() => browserArtifactRef({ content_digest: "abc" }), /artifact_id/)
+
+const callbackCapability = browserCallbackCapability({
+  capability: "persist-browser-artifact",
+  ability: "wp-codebox/persist-browser-artifact",
+  caller: "studio-web",
+  scope: "artifact:write",
+  allowedOrigins: ["https://playground.wordpress.net/editor", "https://playground.wordpress.net/"]
+})
+assert.deepEqual(callbackCapability, {
+  schema: "wp-codebox/browser-callback-capability/v1",
+  capability: "persist-browser-artifact",
+  ability: "wp-codebox/persist-browser-artifact",
+  authorization: {
+    schema: "wp-codebox/trusted-orchestrator-authorization/v1",
+    caller: "studio-web",
+    scope: "artifact:write",
+  },
+  allowedOrigins: ["https://playground.wordpress.net"],
+  signatureHeader: "x-wp-codebox-callback-signature",
+  timestampHeader: "x-wp-codebox-callback-timestamp",
+  maxAgeSeconds: 300,
+})
+const callbackBody = JSON.stringify({ files: [{ path: "website/index.html", content: "ok" }] })
+const callbackSignature = browserCallbackSignature(callbackBody, "secret", "2026-01-02T03:04:05.000Z")
+assert.equal(callbackSignature, "sha256=f1ed25e24ee4803ddd73238fcfa6eb965af2b96efc03ca61fb35a96b4e59453a")
+assert.equal(verifyBrowserCallbackSignature({ body: callbackBody, secret: "secret", timestamp: "2026-01-02T03:04:05.000Z", signature: callbackSignature }), true)
+assert.equal(verifyBrowserCallbackSignature({ body: callbackBody, secret: "secret", timestamp: "2026-01-02T03:04:05.000Z", signature: callbackSignature.replace(/.$/, "0") }), false)
 
 assert.deepEqual(reviewerSafeArtifactRef({ path: "/files//browser/screenshot.png", kind: "browser-screenshot", digest: "abc", publicUrl: "https://artifacts.example.test/run-1/files/browser/screenshot.png#local" }), {
   path: "files/browser/screenshot.png",
@@ -296,6 +327,13 @@ assert.deepEqual(projection.artifactRefs, [
     id: "materialization-1",
   },
 ])
+const callbackEnvelope = browserCallbackResultEnvelope({
+  capability: "persist-browser-artifact",
+  ability: "wp-codebox/persist-browser-artifact",
+  result: materializationEnvelope.result,
+})
+assert.equal(callbackEnvelope.schema, "wp-codebox/browser-callback-result/v1")
+assert.deepEqual(callbackEnvelope.artifactRefs, projection.artifactRefs)
 assert.throws(() => normalizeMaterializationResultEnvelope({ success: true, response: { success: false, error: { message: "fixture failure" } } }), /fixture failure/)
 
 const artifactRoot = mkdtempSync(resolve(tmpdir(), "wp-codebox-artifact-part-"))

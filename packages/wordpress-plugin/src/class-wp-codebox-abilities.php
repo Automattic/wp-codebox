@@ -14,6 +14,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-inheritance.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-provider-adapter.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-runner-publication.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-artifacts.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-browser-callbacks.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runner.php';
@@ -38,6 +39,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Provider_Adapter;
 	use WP_Codebox_Abilities_Runner_Publication;
 	use WP_Codebox_Abilities_Browser_Artifacts;
+	use WP_Codebox_Abilities_Browser_Callbacks;
 	use WP_Codebox_Abilities_Browser_Runtime;
 	use WP_Codebox_Abilities_Browser_Blueprint;
 	use WP_Codebox_Abilities_Browser_Runner;
@@ -58,6 +60,8 @@ final class WP_Codebox_Abilities {
 		$this->register_agents_api_executor_adapters();
 		$this->register();
 		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
+		add_filter( 'rest_pre_dispatch', array( self::class, 'rest_handle_browser_callback_cors_preflight' ), 10, 3 );
+		add_filter( 'rest_pre_serve_request', array( self::class, 'rest_send_browser_callback_cors_headers' ), 10, 4 );
 		self::$registered = true;
 	}
 
@@ -69,6 +73,22 @@ final class WP_Codebox_Abilities {
 				'methods'             => 'POST',
 				'callback'            => array( self::class, 'rest_browser_provider_request' ),
 				'permission_callback' => static fn(): bool => current_user_can( 'manage_options' ),
+			)
+		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-callback/(?P<capability>[A-Za-z0-9][A-Za-z0-9_-]*)',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_browser_callback' ),
+				'permission_callback' => '__return_true',
+				'args'                => array(
+					'capability' => array(
+						'type'              => 'string',
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_key',
+					),
+				),
 			)
 		);
 	}
