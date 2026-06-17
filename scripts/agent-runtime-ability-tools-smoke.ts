@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs"
 
-const source = readFileSync("packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-runner.php", "utf8")
+const source = [
+  "packages/wordpress-plugin/src/class-wp-codebox-browser-runner-template.php",
+  "packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-runner.php",
+]
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n")
 
 const requiredSnippets = [
   "function wp_codebox_browser_runtime_ability_tool_declarations",
