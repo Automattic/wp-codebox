@@ -244,6 +244,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       cwd: stagedSource,
       env: composerManagedHostEnv(),
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: "prepare Composer autoload for recipe extra plugin",
     })
@@ -446,6 +447,7 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
       cwd: hydratedSource,
       env: composerManagedHostEnv(),
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: `hydrate Composer-backed ${label}`,
     })
