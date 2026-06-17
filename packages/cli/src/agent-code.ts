@@ -538,7 +538,7 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
+export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string; pluginFile?: string; loadAs?: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
@@ -569,17 +569,7 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
         if ('' === $slug) {
             continue;
         }
-        $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
-        $matched = null;
-        foreach ($candidates as $candidate) {
-            if (wp_codebox_plugin_entry_path($candidate)) {
-                $matched = $candidate;
-                break;
-            }
-        }
-        if (null === $matched) {
-            $matched = wp_codebox_provider_plugin_entry_by_header($slug);
-        }
+        $matched = wp_codebox_resolve_provider_plugin_entry($plugin, $slug);
         if (null !== $matched) {
             $entries[] = $matched;
         }
@@ -618,6 +608,22 @@ function wp_codebox_provider_plugin_file_diagnostics(array $provider_plugins): a
         );
     }
     return $diagnostics;
+}
+
+function wp_codebox_resolve_provider_plugin_entry(array $plugin, string $slug): ?string {
+    $explicit = isset($plugin['pluginFile']) ? ltrim((string) $plugin['pluginFile'], '/') : '';
+    if ('' !== $explicit && wp_codebox_plugin_entry_path($explicit)) {
+        return $explicit;
+    }
+
+    $candidates = array($slug . '/' . $slug . '.php', $slug . '/plugin.php');
+    foreach ($candidates as $candidate) {
+        if (wp_codebox_plugin_entry_path($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return wp_codebox_provider_plugin_entry_by_header($slug);
 }
 
 function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
@@ -740,7 +746,7 @@ function phpStringLiteral(value: string): string {
   return `<<<'${marker}'\n${value}\n${marker}`
 }
 
-export function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string }>): string {
+export function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string; pluginFile?: string; loadAs?: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
@@ -771,17 +777,7 @@ function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
         if ('' === $slug) {
             continue;
         }
-        $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
-        $matched = null;
-        foreach ($candidates as $candidate) {
-            if (wp_codebox_plugin_entry_path($candidate)) {
-                $matched = $candidate;
-                break;
-            }
-        }
-        if (null === $matched) {
-            $matched = wp_codebox_provider_plugin_entry_by_header($slug);
-        }
+        $matched = wp_codebox_resolve_provider_plugin_entry($plugin, $slug);
         if (null !== $matched) {
             $entries[] = $matched;
         }
@@ -820,6 +816,22 @@ function wp_codebox_provider_plugin_file_diagnostics(array $provider_plugins): a
         );
     }
     return $diagnostics;
+}
+
+function wp_codebox_resolve_provider_plugin_entry(array $plugin, string $slug): ?string {
+    $explicit = isset($plugin['pluginFile']) ? ltrim((string) $plugin['pluginFile'], '/') : '';
+    if ('' !== $explicit && wp_codebox_plugin_entry_path($explicit)) {
+        return $explicit;
+    }
+
+    $candidates = array($slug . '/' . $slug . '.php', $slug . '/plugin.php');
+    foreach ($candidates as $candidate) {
+        if (wp_codebox_plugin_entry_path($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return wp_codebox_provider_plugin_entry_by_header($slug);
 }
 
 function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {

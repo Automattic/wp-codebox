@@ -38,8 +38,10 @@ try {
   assert.match(String(runtime?.source), /prepared-plugins\/runtime-component$/)
   assert.equal(domain?.metadata?.componentContract?.requestedPath, domainPlugin)
   assert.equal(domain?.metadata?.componentContract?.preparedPath, domain?.source)
+  assert.equal(domain?.metadata?.componentContract?.pluginFile, "domain-component/domain-component.php")
   assert.equal(runtime?.metadata?.componentContract?.requestedPath, runtimePlugin)
   assert.equal(runtime?.metadata?.componentContract?.preparedPath, runtime?.source)
+  assert.equal(runtime?.metadata?.componentContract?.pluginFile, "runtime-component/runtime-component.php")
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")

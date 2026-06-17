@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
 
 export interface PreparedWorkspaceMount {
@@ -1228,61 +1229,10 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
   const source = recipeSource(plugin.source, plugin.sha256)
   if (source.type === "local") {
     const pluginSource = resolve(recipeDirectory, plugin.source)
-    for (const candidate of [`${slug}/${slug}.php`, `${slug}/plugin.php`]) {
-      try {
-        const result = await stat(join(pluginSource, candidate.slice(slug.length + 1)))
-        if (result.isFile()) {
-          return candidate
-        }
-      } catch {
-        // Try the next common plugin entrypoint.
-      }
-    }
-
-    // The conventional entrypoints (`<slug>.php`, `plugin.php`) do not exist.
-    // This is common when the source directory was renamed (e.g. a Lab
-    // workspace synced under a uniquified `<slug>-<hash>-<uuid>` directory), so
-    // the entry filename no longer matches the directory name. Fall back to the
-    // single top-level `*.php` file that declares a WordPress plugin header.
-    const headerEntry = await findPluginEntryFileByHeader(pluginSource)
-    if (headerEntry) {
-      return `${slug}/${headerEntry}`
-    }
+    return resolvePluginEntrypointContract({ source: pluginSource, slug, loadAs: plugin.loadAs }).pluginFile
   }
 
   return `${slug}/${slug}.php`
-}
-
-/**
- * Locate a plugin's entry file by scanning top-level `*.php` files for a
- * WordPress `Plugin Name:` header. Returns the entry filename (relative to the
- * plugin source directory) or undefined when none is found.
- */
-async function findPluginEntryFileByHeader(pluginSource: string): Promise<string | undefined> {
-  let entries: string[]
-  try {
-    entries = (await readdir(pluginSource, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".php"))
-      .map((entry) => entry.name)
-      .sort()
-  } catch {
-    return undefined
-  }
-
-  for (const name of entries) {
-    try {
-      // Plugin headers live in the file's opening comment block; reading the
-      // first 8 KiB is enough and avoids loading large files.
-      const handle = await readFile(join(pluginSource, name), "utf8")
-      if (/^[\s\S]{0,8192}?Plugin Name:\s*\S/m.test(handle)) {
-        return name
-      }
-    } catch {
-      // Unreadable file; try the next candidate.
-    }
-  }
-
-  return undefined
 }
 
 export function activeExtraPluginFiles(extraPlugins: BootActivePluginCandidate[]): string[] {

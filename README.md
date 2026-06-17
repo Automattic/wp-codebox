@@ -831,7 +831,7 @@ Dry-run output uses `wp-codebox/recipe-run-dry-run/v1` and includes resolved mou
 
 `inputs.extra_plugins` accepts existing local plugin directory paths and external HTTPS zip sources. Local paths keep the existing behavior: they are resolved relative to the recipe file and mounted read-only under `/wordpress/wp-content/plugins/<slug>`.
 
-Set `loadAs` to `mu-plugin` for runtime substrate that should load as must-use infrastructure instead of appearing as a normal user-managed plugin. WP Codebox mounts those plugins under `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and writes a `wp-codebox-runtime-loader.php` setup loader. Use this for sandbox/runtime plumbing such as Agents API, Data Machine, Data Machine Code, and AI provider bridges. Leave user-visible site plugins as the default `plugin` load mode.
+Set `loadAs` to `mu-plugin` for runtime substrate that should load as must-use infrastructure instead of appearing as a normal user-managed plugin. WP Codebox mounts those plugins under `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/<slug>` and writes a `wp-codebox-runtime-loader.php` setup loader. Use this for sandbox/runtime plumbing such as Agents API, Data Machine, Data Machine Code, and AI provider bridges. Leave user-visible site plugins as the default `plugin` load mode. Components and extra plugins may provide an explicit `pluginFile`; when omitted, WP Codebox resolves `<slug>/<slug>.php`, `<slug>/plugin.php`, then a top-level PHP file with a WordPress plugin header.
 
 Browser Playground callers can provide sandbox-owned MU plugin source through `runtime.mu_plugins` on `wp-codebox/create-browser-playground-session`. Those files are written into `/wordpress/wp-content/mu-plugins/` before the generated runner invokes sandbox-local work. Pair that with `browser_runner.invocation` to call a generic sandbox extension point:
 
@@ -1274,7 +1274,7 @@ Product callers can opt into public preview wiring through `preview_port`, `prev
 
 Callers can gate success on post-agent verification through `verify_steps`: an array of recipe steps (for example `{ "command": "wordpress.phpunit", "args": ["plugin-slug=example"] }` or `{ "command": "wordpress.run-php", "args": ["code-file=..."] }`) that run as recipe `workflow.after` steps after the agent finishes editing, against the booted runtime. A non-zero exit from any verify step fails the whole run, so the agent cannot report success unless its checks pass. Runs without `verify_steps` are unaffected.
 
-Each component contract declares `slug`, `path` or `source`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
+Each component contract declares `slug`, `path` or `source`, optional explicit `pluginFile`, optional `activate`, optional `loadAs`, and optional `readiness_probe` metadata.
 
 The CLI binary can come from ability input, the `wp_codebox_bin` option, or the `wp_codebox_bin` filter. Source-checkout snapshots that do not include generated `dist/` files should point at `bin/wp-codebox-source.mjs`; it builds WP Codebox when needed before delegating to the compiled CLI.
 
@@ -1296,9 +1296,9 @@ Generic caller-owned `request.json` payloads may use this shape:
   "model": "gpt-5.5",
   "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
   "component_contracts": [
-    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "loadAs": "mu-plugin" },
-    { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "loadAs": "mu-plugin" },
-    { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "loadAs": "mu-plugin" }
+    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "pluginFile": "agents-api/agents-api.php", "loadAs": "mu-plugin" },
+    { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "pluginFile": "caller-runtime/caller-runtime.php", "loadAs": "mu-plugin" },
+    { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "pluginFile": "caller-runtime-tools/caller-runtime-tools.php", "loadAs": "mu-plugin" }
   ],
   "secret_env": ["OPENAI_API_KEY"],
   "mounts": [

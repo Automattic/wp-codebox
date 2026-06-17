@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
-import { basename, resolve } from "node:path"
+import { resolve } from "node:path"
 import { normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { AgentBundleSpec } from "./agent-code.js"
@@ -8,10 +9,11 @@ import type { PreparedWorkspaceMount } from "./recipe-sources.js"
 import { defaultPolicy } from "./recipe-validation.js"
 
 export interface AgentRuntimeProbeOptions {
-  agentsApiPath: string
-  dataMachinePath: string
-  dataMachineCodePath: string
+  agentsApiPath?: string
+  dataMachinePath?: string
+  dataMachineCodePath?: string
   providerPluginPaths: string[]
+  components: AgentRuntimeComponent[]
   mounts: AgentRuntimeMount[]
   wpVersion?: string
   artifactsDirectory?: string
@@ -65,23 +67,42 @@ export type AgentRuntimeMount = {
   metadata?: Record<string, unknown>
 }
 
+export type AgentRuntimeComponent = {
+  source: string
+  slug: string
+  pluginFile: string
+  loadAs: ComponentLoadMode
+  kind: "component" | "provider-plugin"
+}
+
 const secretEnvPolicy: RuntimePolicy = {
   ...defaultPolicy,
   secrets: "connector-scoped",
 }
 
 export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRuntimeMount[] {
+  const components = agentRuntimeComponents(options)
   return [
-    componentMount(options.agentsApiPath, "/wordpress/wp-content/plugins/agents-api", "agents-api"),
-    componentMount(options.dataMachinePath, "/wordpress/wp-content/plugins/data-machine", "data-machine"),
-    componentMount(options.dataMachineCodePath, "/wordpress/wp-content/plugins/data-machine-code", "data-machine-code"),
+    ...components.map((component) => ({
+      source: component.source,
+      target: pluginTarget(component.slug, component.loadAs),
+      mode: "readonly" as const,
+      metadata: {
+        kind: component.kind,
+        slug: component.slug,
+        pluginFile: component.pluginFile,
+        loadAs: component.loadAs,
+      },
+    })),
     ...providerPluginMounts(options).map((plugin) => ({
       source: plugin.source,
-      target: `/wordpress/wp-content/plugins/${plugin.slug}`,
+      target: pluginTarget(plugin.slug, plugin.loadAs),
       mode: "readonly" as const,
       metadata: {
         kind: "provider-plugin",
         slug: plugin.slug,
+        pluginFile: plugin.pluginFile,
+        loadAs: plugin.loadAs,
       },
     })),
     ...options.mounts,
@@ -92,7 +113,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   if (step.command === "wp-codebox.agent-runtime-probe") {
     return {
       command: "wordpress.run-php",
-      args: [`code=${agentRuntimeProbeCode(providerPluginSlugs(step.args ?? []).map((slug) => ({ source: "", slug })))}`],
+      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []))}`],
     }
   }
 
@@ -127,7 +148,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     return {
       command: "wordpress.run-php",
       args: [
-        `code=${agentSandboxRunCode(task, body, providerPluginSlugs(args).map((slug) => ({ source: "", slug })))}`,
+        `code=${agentSandboxRunCode(task, body, providerPluginContracts(args))}`,
         "wp-cli-bridge=1",
       ],
     }
@@ -171,7 +192,7 @@ export function agentSandboxRunMetadata(options: AgentSandboxRunOptions, runtime
 }
 
 export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount, extraOptions: string[] = []): AgentRuntimeProbeOptions {
-  const options: Partial<AgentRuntimeProbeOptions> = { json: false, mounts: [] }
+  const options: Partial<AgentRuntimeProbeOptions> = { json: false, mounts: [], components: [] }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -201,6 +222,9 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
       case "--provider-plugin":
         options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
         break
+      case "--component":
+        options.components = [...(options.components ?? []), parseComponentOption(value, "component")]
+        break
       case "--mount":
         options.mounts = [...(options.mounts ?? []), parseMount(value)]
         break
@@ -221,18 +245,20 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
     }
   }
 
-  for (const [key, option] of [
-    ["--agents-api", options.agentsApiPath],
-    ["--data-machine", options.dataMachinePath],
-    ["--data-machine-code", options.dataMachineCodePath],
+  const componentSlugs = new Set((options.components ?? []).map((component) => component.slug))
+  for (const [key, option, slug] of [
+    ["--agents-api", options.agentsApiPath, "agents-api"],
+    ["--data-machine", options.dataMachinePath, "data-machine"],
+    ["--data-machine-code", options.dataMachineCodePath, "data-machine-code"],
   ] as const) {
-    if (!option) {
-      throw new Error(`Missing required option: ${key}`)
+    if (!option && !componentSlugs.has(slug)) {
+      throw new Error(`Missing required option: ${key} or --component ${slug}=<path>`)
     }
   }
 
   options.providerPluginPaths = options.providerPluginPaths ?? []
   options.mounts = options.mounts ?? []
+  options.components = options.components ?? []
 
   return options as AgentRuntimeProbeOptions
 }
@@ -471,16 +497,18 @@ function parseSandboxToolPolicy(args: string[]): SandboxToolPolicySnapshot | und
   return normalizeSandboxToolPolicySnapshot(JSON.parse(raw))
 }
 
-function componentMount(source: string, target: string, slug: string): AgentRuntimeMount {
-  return {
-    source: resolve(source),
-    target,
-    mode: "readonly",
-    metadata: {
-      kind: "component",
-      slug,
-    },
+function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntimeComponent[] {
+  const compatibility = [
+    options.agentsApiPath ? componentFromPath(options.agentsApiPath, "agents-api", undefined, "mu-plugin", "component") : undefined,
+    options.dataMachinePath ? componentFromPath(options.dataMachinePath, "data-machine", undefined, "mu-plugin", "component") : undefined,
+    options.dataMachineCodePath ? componentFromPath(options.dataMachineCodePath, "data-machine-code", undefined, "mu-plugin", "component") : undefined,
+  ].filter((component): component is AgentRuntimeComponent => Boolean(component))
+
+  const bySlug = new Map<string, AgentRuntimeComponent>()
+  for (const component of [...compatibility, ...options.components]) {
+    bySlug.set(component.slug, component)
   }
+  return [...bySlug.values()]
 }
 
 function argValue(args: string[], name: string): string | undefined {
@@ -493,11 +521,61 @@ function providerPluginSlugs(args: string[]): string[] {
   return csv.split(",").map((slug) => slug.trim()).filter(Boolean)
 }
 
-function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source: string; slug: string }> {
+function providerPluginMounts(options: AgentRuntimeProbeOptions): AgentRuntimeComponent[] {
   return options.providerPluginPaths.map((pluginPath) => {
-    const source = resolve(pluginPath)
-    return { source, slug: basename(source) }
+    return componentFromPath(pluginPath, undefined, undefined, "plugin", "provider-plugin")
   })
+}
+
+function componentFromPath(sourcePath: string, slug: string | undefined, pluginFile: string | undefined, loadAs: ComponentLoadMode, kind: AgentRuntimeComponent["kind"]): AgentRuntimeComponent {
+  const source = resolve(sourcePath)
+  const entrypoint = resolvePluginEntrypointContract({ source, slug, pluginFile, loadAs })
+  return { source, slug: entrypoint.slug, pluginFile: entrypoint.pluginFile, loadAs: entrypoint.loadAs, kind }
+}
+
+function parseComponentOption(raw: string, kind: AgentRuntimeComponent["kind"]): AgentRuntimeComponent {
+  const parts = raw.split(",").map((part) => part.trim()).filter(Boolean)
+  const fields = new Map<string, string>()
+  let source = ""
+  for (const part of parts) {
+    const equals = part.indexOf("=")
+    if (equals === -1) {
+      source = source || part
+      continue
+    }
+    fields.set(part.slice(0, equals), part.slice(equals + 1))
+  }
+  source = fields.get("source") || fields.get("path") || source
+  let slug = fields.get("slug")
+  if (!source && fields.size === 1) {
+    const [entry] = fields.entries()
+    if (entry) {
+      slug = entry[0]
+      source = entry[1]
+    }
+  }
+  if (!source) {
+    throw new Error("--component requires a source path")
+  }
+  return componentFromPath(source, slug, fields.get("pluginFile"), fields.get("loadAs") === "plugin" ? "plugin" : "mu-plugin", kind)
+}
+
+function providerPluginContracts(args: string[]): Array<{ slug: string; pluginFile?: string; loadAs?: ComponentLoadMode }> {
+  const explicit = argValue(args, "provider-plugin-contracts-json")
+  if (explicit) {
+    const parsed = JSON.parse(explicit)
+    if (!Array.isArray(parsed)) {
+      throw new Error("provider-plugin-contracts-json must be a JSON array")
+    }
+    return parsed
+      .filter((plugin) => plugin && typeof plugin === "object" && !Array.isArray(plugin))
+      .map((plugin) => plugin as { slug: string; pluginFile?: string; loadAs?: ComponentLoadMode })
+  }
+  return providerPluginSlugs(args).map((slug) => ({ slug }))
+}
+
+function pluginTarget(slug: string, loadAs: ComponentLoadMode): string {
+  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
 }
 
 function parseTaskList(raw: string): string[] {

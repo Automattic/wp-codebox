@@ -6,6 +6,7 @@ import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import type { WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
+import { resolvePluginEntrypointContract, sanitizePluginSlug } from "./component-contracts.js"
 
 const AGENT_RUNTIME_ENV = { WP_AGENT_RUNTIME: "1" }
 
@@ -67,9 +68,12 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const providerPlugins = stringList(input.provider_plugin_paths)
     .map((plugin) => {
       const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
-      return { source: prepareComposerPluginSource(plugin, slug, artifacts), slug, activate: true }
+      const preparedSource = prepareComposerPluginSource(plugin, slug, artifacts)
+      const entrypoint = resolvePluginEntrypointContract({ source: preparedSource, slug })
+      return { source: preparedSource, slug, pluginFile: entrypoint.pluginFile, activate: true, loadAs: "plugin" }
     })
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
+  const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
   const workflowArgs = [
     `task=${taskInput.goal}`,
     `agent=${stringValue(input.agent) || "wp-codebox-sandbox"}`,
@@ -77,6 +81,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     `provider=${stringValue(input.provider)}`,
     `model=${stringValue(input.model)}`,
     `provider-plugin-slugs=${providerSlugs}`,
+    `provider-plugin-contracts-json=${JSON.stringify(providerContracts)}`,
     `sandbox-tool-policy-json=${JSON.stringify(sandboxToolPolicy(input, taskInput))}`,
   ]
   if (stringValue(input.session_id)) {
@@ -199,7 +204,7 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
   return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
 }
 
-function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; activate: boolean; loadAs: string; metadata: Record<string, unknown> }> {
+function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): Array<{ source: string; slug: string; pluginFile: string; activate: boolean; loadAs: string; metadata: Record<string, unknown> }> {
   if (!Array.isArray(contracts)) return []
   return contracts.flatMap((contract, index) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
@@ -207,9 +212,16 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
     const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
     if (!slug || !source) return []
     const preparedSource = prepareComponentPluginSource(source, originalSource, slug, artifactsRoot)
+    const entrypoint = resolvePluginEntrypointContract({
+      source: preparedSource,
+      slug,
+      pluginFile: stringValue(contract.pluginFile),
+      loadAs: stringValue(contract.loadAs) === "plugin" ? "plugin" : "mu-plugin",
+    })
     return [{
       source: preparedSource,
       slug,
+      pluginFile: entrypoint.pluginFile,
       activate: Boolean(contract.activate),
       loadAs: stringValue(contract.loadAs) || "mu-plugin",
       metadata: stripUndefined({
@@ -219,6 +231,8 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
           requestedPath: source,
           originalPath: originalSource || undefined,
           preparedPath: preparedSource,
+          pluginFile: entrypoint.pluginFile,
+          pluginEntrypointFallback: entrypoint.fallback,
           loadAs: stringValue(contract.loadAs) || "mu-plugin",
           activate: Boolean(contract.activate),
         },
@@ -344,7 +358,7 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): Sand
 
 function slugFromPath(source: string): string {
   const base = source.replace(/\/$/, "").split("/").pop() || "provider"
-  return base.replace(/[^A-Za-z0-9_-]/g, "-")
+  return sanitizePluginSlug(base)
 }
 
 function slugFromComposerPackage(source: string): string {

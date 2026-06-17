@@ -29,9 +29,9 @@ Direct `wp-codebox agent-sandbox-run` remains an operator/debug command. Product
   "model": "gpt-5.5",
   "provider_plugin_paths": ["/srv/runtime/ai-provider-for-openai"],
   "component_contracts": [
-    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "loadAs": "mu-plugin" },
-    { "slug": "data-machine", "path": "/srv/runtime/data-machine", "loadAs": "mu-plugin" },
-    { "slug": "data-machine-code", "path": "/srv/runtime/data-machine-code", "loadAs": "mu-plugin" }
+    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "pluginFile": "agents-api/agents-api.php", "loadAs": "mu-plugin" },
+    { "slug": "data-machine", "path": "/srv/runtime/data-machine", "pluginFile": "data-machine/data-machine.php", "loadAs": "mu-plugin" },
+    { "slug": "data-machine-code", "path": "/srv/runtime/data-machine-code", "pluginFile": "data-machine-code/data-machine-code.php", "loadAs": "mu-plugin" }
   ],
   "runtime_stack_mounts": [
     { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
@@ -189,7 +189,7 @@ WP Codebox cleanup covers temporary recipe files, prepared plugin copies, depend
 Provider stacks are declared through generic primitives:
 
 - `provider_plugin_paths`: prepared provider plugin checkouts. WP Codebox mounts them as WordPress plugins and derives stable slugs from Composer package names when available, avoiding branch/worktree directory names as plugin identities.
-- `component_contracts`: runtime components such as Agents API, Data Machine, Data Machine Code, or orchestrator-owned tool bridges. `loadAs: "mu-plugin"` is the expected load mode for runtime substrate.
+- `component_contracts`: runtime components such as Agents API, Data Machine, Data Machine Code, provider bridges, or orchestrator-owned tool bridges. Each component accepts `path`/`source`, `slug`, optional explicit `pluginFile`, optional `loadAs`, and optional `activate`. `loadAs: "mu-plugin"` is the expected load mode for runtime substrate. When `pluginFile` is omitted, WP Codebox resolves `<slug>/<slug>.php`, `<slug>/plugin.php`, then a single top-level PHP file with a WordPress plugin header.
 - `runtime_stack_mounts`: readonly runtime files or configuration mounted into the sandbox filesystem.
 - `runtime_overlays`: scoped library/runtime replacements such as `kind: "bundled-library"`, `library: "php-ai-client"`, and `strategy: "wordpress-scoped-bundle"`.
 - `secret_env`: names of environment variables to expose to the sandbox. Values remain outside the JSON contract.
