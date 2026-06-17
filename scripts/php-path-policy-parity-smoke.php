@@ -49,6 +49,26 @@ function assert_error( mixed $actual, string $label ): void {
 	}
 }
 
+function old_clean_host_path( string $path ): string {
+	return rtrim( trim( $path ), DIRECTORY_SEPARATOR );
+}
+
+function old_clean_browser_runtime_source_path( string $path ): string {
+	$path = trim( $path );
+	if ( '' === $path ) {
+		return '';
+	}
+
+	$real = realpath( $path );
+	return false !== $real ? $real : rtrim( $path, '/\\' );
+}
+
+function old_normalize_absolute_browser_path( string $path ): string {
+	$path = '/' . ltrim( trim( $path ), '/' );
+	$path = rtrim( $path, '/' );
+	return '' === $path ? '/' : $path;
+}
+
 assert_same( 'files/output.json', WP_Codebox_Path_Policy::normalize_artifact_relative_path( '/files//output.json' ), 'artifact leading slash and slash collapse' );
 assert_same( 'files/windows/path.json', WP_Codebox_Path_Policy::normalize_artifact_relative_path( 'files\\windows/path.json' ), 'artifact backslash normalization' );
 assert_error( WP_Codebox_Path_Policy::normalize_artifact_relative_path( './files/output.json' ), 'artifact current-directory segment' );
@@ -62,5 +82,42 @@ assert_same( '/', WP_Codebox_Path_Policy::normalize_sandbox_mount_target( '///' 
 assert_error( WP_Codebox_Path_Policy::normalize_sandbox_mount_target( 'wordpress/wp-content/plugins/plugin' ), 'mount relative target' );
 assert_error( WP_Codebox_Path_Policy::normalize_sandbox_mount_target( '/wordpress/./plugins/plugin' ), 'mount current-directory segment' );
 assert_error( WP_Codebox_Path_Policy::normalize_sandbox_mount_target( '/wordpress/../escape' ), 'mount parent-directory segment' );
+
+$host_path_cases = array(
+	'',
+	'   ',
+	' /tmp/wp-codebox/ ',
+	"/tmp/wp-codebox//",
+	'C:\\tmp\\wp-codebox\\',
+);
+foreach ( $host_path_cases as $case ) {
+	assert_same( old_clean_host_path( $case ), WP_Codebox_Path_Policy::clean_host_path( $case ), 'host path cleaner parity for ' . var_export( $case, true ) );
+}
+
+$existing_path = __DIR__;
+$browser_source_path_cases = array(
+	'',
+	'   ',
+	' /tmp/wp-codebox/ ',
+	"/tmp/wp-codebox//",
+	'C:\\tmp\\wp-codebox\\',
+	$existing_path,
+	$existing_path . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . basename( $existing_path ),
+);
+foreach ( $browser_source_path_cases as $case ) {
+	assert_same( old_clean_browser_runtime_source_path( $case ), WP_Codebox_Path_Policy::clean_browser_runtime_source_path( $case ), 'browser source path cleaner parity for ' . var_export( $case, true ) );
+}
+
+$absolute_browser_path_cases = array(
+	'',
+	'   ',
+	'wp-content/uploads',
+	'/wp-content/uploads/',
+	'//wp-content//uploads//',
+	' /preview/path/ ',
+);
+foreach ( $absolute_browser_path_cases as $case ) {
+	assert_same( old_normalize_absolute_browser_path( $case ), WP_Codebox_Path_Policy::normalize_absolute_browser_path( $case ), 'absolute browser path parity for ' . var_export( $case, true ) );
+}
 
 fwrite( STDOUT, "PHP path policy parity smoke passed\n" );

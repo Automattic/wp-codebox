@@ -716,9 +716,7 @@ private static function browser_preview_url( array $artifacts, array $playground
 }
 
 private static function normalize_absolute_browser_path( string $path ): string {
-	$path = '/' . ltrim( trim( $path ), '/' );
-	$path = rtrim( $path, '/' );
-	return '' === $path ? '/' : $path;
+	return WP_Codebox_Path_Policy::normalize_absolute_browser_path( $path );
 }
 
 private static function join_browser_path( string $base, string $path ): string {

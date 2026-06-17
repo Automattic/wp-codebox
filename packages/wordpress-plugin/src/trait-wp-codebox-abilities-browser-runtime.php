@@ -752,13 +752,7 @@ private static function browser_configured_component_contracts(): array {
 }
 
 private static function browser_clean_path( string $path ): string {
-	$path = trim( $path );
-	if ( '' === $path ) {
-		return '';
-	}
-
-	$real = realpath( $path );
-	return false !== $real ? $real : rtrim( $path, '/\\' );
+	return WP_Codebox_Path_Policy::clean_browser_runtime_source_path( $path );
 }
 
 /** @return array{url:string,fetch_url:string,path:string,sha256:string}|WP_Error */
