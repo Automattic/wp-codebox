@@ -55,6 +55,16 @@ throw new RuntimeException('explicit pluginFile resolution must not read plugin 
   ], (value) => JSON.parse(value))
   assert.deepEqual(sandboxOptions.components.map((component) => component.slug), ["agents-api", "data-machine", "data-machine-code"])
 
+  const portableOptions = parseAgentRuntimeProbeOptions([
+    "--component", `custom-runtime=${explicitSource}`,
+  ], (value) => JSON.parse(value))
+  assert.deepEqual(portableOptions.components.map((component) => component.slug), ["custom-runtime"])
+
+  const compatibilityOptions = parseAgentRuntimeProbeOptions([
+    "--agents-api", explicitSource,
+  ], (value) => JSON.parse(value))
+  assert.deepEqual(compatibilityOptions.components.map((component) => component.slug), ["agents-api"])
+
   const explicitFile = readFileSync(join(explicitSource, "custom-entry.php"), "utf8")
   assert.match(explicitFile, /must not read plugin contents/)
 

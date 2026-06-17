@@ -1004,15 +1004,17 @@ See [`docs/benchmark-contract.md`](docs/benchmark-contract.md) for the generic b
 
 ### `agent-runtime-probe`
 
-Boot a sandbox with Agents API, Data Machine, and Data Machine Code mounted, then verify the stack loads.
+Boot a sandbox with caller-supplied runtime components mounted, then verify the stack loads.
 
 ```bash
 npm run wp-codebox -- agent-runtime-probe \
-  --agents-api ../agents-api \
-  --data-machine ../data-machine \
-  --data-machine-code ../data-machine-code \
+  --component agents-api=../agents-api \
+  --component data-machine=../data-machine \
+  --component data-machine-code=../data-machine-code \
   --json
 ```
+
+Use `--component <slug>=<path>` for each runtime component your sandbox needs. The legacy `--agents-api`, `--data-machine`, and `--data-machine-code` flags remain accepted as compatibility aliases, but new automation should use `--component` so WP Codebox core stays portable across agent stacks.
 
 ### `agent-sandbox-run`
 
@@ -1020,9 +1022,9 @@ Run one natural-language task through a sandboxed agent stack.
 
 ```bash
 npm run wp-codebox -- agent-sandbox-run \
-  --agents-api ../agents-api \
-  --data-machine ../data-machine \
-  --data-machine-code ../data-machine-code \
+  --component agents-api=../agents-api \
+  --component data-machine=../data-machine \
+  --component data-machine-code=../data-machine-code \
   --agent sandbox-agent \
   --task "Add a Dry Rub filter to the wing locations map" \
   --provider openai \
@@ -1033,6 +1035,7 @@ npm run wp-codebox -- agent-sandbox-run \
 Useful options:
 
 - `--provider-plugin <path>`: mount an AI provider plugin. Repeatable.
+- `--component <slug>=<path>`: mount a runtime component as an MU plugin. Repeatable. Use `path[,slug=<slug>,pluginFile=<slug/file.php>,loadAs=plugin|mu-plugin]` for explicit entrypoint metadata.
 - `--secret-env <NAME>`: expose a parent process environment variable by name, such as `--secret-env GITHUB_TOKEN`. Repeatable. Values are read from the process environment and are not accepted in JSON payloads.
 - `--mount <host:vfs[:mode]>`: mount extra task inputs.
 - `--session-id <id>`: continue an existing sandbox conversation session.
@@ -1046,9 +1049,9 @@ Run several task descriptions, one isolated sandbox per task, with bounded concu
 
 ```bash
 npm run wp-codebox -- agent-sandbox-batch \
-  --agents-api ../agents-api \
-  --data-machine ../data-machine \
-  --data-machine-code ../data-machine-code \
+  --component agents-api=../agents-api \
+  --component data-machine=../data-machine \
+  --component data-machine-code=../data-machine-code \
   --task "Fix issue A" \
   --task "Investigate issue B" \
   --concurrency 2 \
