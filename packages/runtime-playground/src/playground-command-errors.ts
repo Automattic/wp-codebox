@@ -1,3 +1,5 @@
+import { isSensitiveKey } from "@automattic/wp-codebox-core"
+
 export interface PlaygroundRunResponse {
   bytes?: unknown
   cause?: unknown
@@ -305,7 +307,7 @@ function diagnosticHeaders(value: unknown): string | undefined {
   const lines: string[] = []
   for (const [rawName, rawValue] of Object.entries(value as Record<string, unknown>)) {
     const name = rawName.toLowerCase()
-    if (/cookie|authorization|token|secret|key/.test(name)) {
+    if (isSensitiveKey(name, { extraPattern: /\bkey\b/i })) {
       continue
     }
     if (!["content-type", "server", "x-powered-by"].includes(name) && !name.startsWith("x-wp-") && !name.startsWith("x-playground-")) {

@@ -4,6 +4,7 @@ import { artifactFileDigest } from "./artifact-manifest.js"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult, type ArtifactBundleVerificationViolation } from "./artifact-bundle-verifier.js"
 import type { ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
+import { containsSecretLikeValue, isRedactedValue, isSensitiveKey } from "./redaction.js"
 
 export type TransferProofViolationCode =
   | "artifact-bundle-invalid"
@@ -121,6 +122,7 @@ export interface TransferProbeDiagnosticsResult {
 type JsonPath = Array<string | number>
 
 const REQUIRED_TRANSFER_KINDS = new Set(["preview-evidence", "preview-session-evidence", "runtime-reference-manifest", "runtime-replay-index", "diagnostics", "log", "review"])
+const TRANSFER_PROOF_SECRET_KEY_PATTERN = /(?:secret|token|password|credential|private[_-]?key|api[_-]?key|authorization)/i
 const REVIEWER_EVIDENCE_KINDS = new Set([
   "transfer-proof-bundle",
   "review",
@@ -415,7 +417,7 @@ function unsafeReviewerEvidenceFindings(text: string, file: string, options: Req
 function walkReviewerEvidence(value: unknown, path: JsonPath, file: string, findings: TransferProofViolation[], options: Required<TransferProofVerificationOptions>): void {
   if (typeof value === "string") {
     scanReviewerEvidenceString(value, path, file, findings, options)
-    if (isSecretKeyPath(path) && !isRedactedSecretValue(value)) {
+    if (isSecretKeyPath(path) && !isRedactedValue(value)) {
       findings.push(unsafeFinding(file, path, "secret-shaped value", "Reviewer-facing evidence includes a secret-shaped field value."))
     }
     return
@@ -491,19 +493,12 @@ function unsafeLocalPath(value: string): boolean {
 }
 
 function secretShapedValue(value: string): boolean {
-  if (isRedactedSecretValue(value)) {
-    return false
-  }
-  return /\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/.test(value)
+  return containsSecretLikeValue(value)
 }
 
 function isSecretKeyPath(path: JsonPath): boolean {
   const last = String(path.at(-1) ?? "")
-  return /(?:secret|token|password|credential|private[_-]?key|api[_-]?key|authorization)/i.test(last)
-}
-
-function isRedactedSecretValue(value: string): boolean {
-  return /^\[?redacted\]?$/i.test(value) || value === "" || value === "***"
+  return isSensitiveKey(last, { pattern: TRANSFER_PROOF_SECRET_KEY_PATTERN })
 }
 
 async function readBrowserProbeSummaries(directory: string, manifest?: ArtifactManifest): Promise<Array<Record<string, unknown>>> {
