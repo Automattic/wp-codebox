@@ -75,8 +75,19 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			);
 		}
 
+		$success           = $strict_remediation_outcome ? (bool) ( $outcome['success'] ?? false ) : true;
+		$legacy_status     = $success ? 'completed' : 'failed';
+		$agent_task_result = is_array( $decoded['agentTaskResult'] ?? null ) ? $decoded['agentTaskResult'] : array();
+		$agent_task_status = WP_Codebox_Status_Taxonomy::agent_task_status(
+			array(
+				'status'      => $agent_task_result['status'] ?? $legacy_status,
+				'success'     => $success,
+				'exit_status' => $exit_code,
+			)
+		);
+
 		$response = array(
-			'success'             => $strict_remediation_outcome ? (bool) ( $outcome['success'] ?? false ) : true,
+			'success'             => $success,
 			'schema'              => self::SCHEMA,
 			'session'             => $adapters['sandbox_session']( $session_id, 'completed', $input, $decoded, $artifacts ),
 			'task'                => $task,
@@ -86,7 +97,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			'artifacts'           => $artifacts,
 			'exit_code'           => $exit_code,
 			'agent_result'        => is_array( $decoded['agentResult'] ?? null ) ? $decoded['agentResult'] : array(),
-			'agent_task_result'   => is_array( $decoded['agentTaskResult'] ?? null ) ? $decoded['agentTaskResult'] : array(),
+			'agent_task_result'   => $agent_task_result,
 			'completion_outcome'  => $adapters['completion_outcome']( $decoded ),
 			'run'                 => $decoded,
 		);
@@ -95,7 +106,13 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			$response['outcome'] = $outcome;
 		}
 
-		$response['status']        = true === ( $response['success'] ?? false ) ? 'completed' : 'failed';
+		$response['status']        = $legacy_status;
+		$response['statuses']      = array(
+			'command'    => WP_Codebox_Status_Taxonomy::command_envelope_status( array( 'status' => $legacy_status, 'success' => $success, 'exit_status' => $exit_code ) ),
+			'phase'      => WP_Codebox_Status_Taxonomy::phase_recipe_status( array( 'status' => $legacy_status, 'success' => $success, 'exit_status' => $exit_code ) ),
+			'agent_task' => $agent_task_status,
+		);
+		$response['agent_task_status'] = $agent_task_status;
 		$response['diagnostics']   = $adapters['run_diagnostics']( $decoded, $exit_code, $outcome );
 		$response['evidence_refs'] = $adapters['evidence_refs']( $response['session'], $decoded );
 		$response['run_metadata']  = $adapters['run_metadata']( $session_id, $input, $wp_version, $decoded );

@@ -1,0 +1,20 @@
+{
+  "profiles": {
+    "audit_metadata": {
+      "redact": ["authorization", "key", "value", "secret", "session_token", "password", "credential_id", "private_key", "api_key"],
+      "preserve": ["display_name", "model", "provider", "status"]
+    },
+    "provider_proxy": {
+      "redact": ["authorization", "key", "value", "secret", "session_token", "password", "credential_id", "private_key", "api_key"],
+      "preserve": ["display_name", "model", "provider", "status"]
+    },
+    "browser_event": {
+      "redact": ["authorization", "secret", "token", "password", "credential", "private_key", "api_key", "cookie"],
+      "preserve": ["display_name", "model", "provider", "status", "value"]
+    },
+    "public_session_dto": {
+      "redact": ["secret", "token", "password", "private_key", "api_key", "credential"],
+      "preserve": ["display_name", "model", "provider", "status", "secret_env", "secretEnv", "secret_env_names", "authorization", "value"]
+    }
+  }
+}

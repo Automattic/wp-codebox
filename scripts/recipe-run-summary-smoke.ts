@@ -7,16 +7,38 @@ const success = normalizeRecipeRunSummary({
     id: "bundle-ok",
     directory: "/tmp/codebox/bundle-ok",
     runtimeLogPath: "/tmp/codebox/bundle-ok/logs/runtime.log",
+    commandsPath: "/tmp/codebox/bundle-ok/commands.jsonl",
     commandsLogPath: "/tmp/codebox/bundle-ok/logs/commands.log",
     changedFilesPath: "/tmp/codebox/bundle-ok/files/changed-files.json",
     patchPath: "/tmp/codebox/bundle-ok/files/patch.diff",
+    preview: {
+      status: "available",
+      lifecycle: "held-after-run",
+      source: "public-url-override",
+      createdAt: "2026-06-17T00:00:00.000Z",
+      expiresAt: "2026-06-17T00:05:00.000Z",
+      holdSeconds: 300,
+      reviewerAccess: {
+        schema: "wp-codebox/preview-reviewer-access/v1",
+        status: "ready",
+        outcome: "public",
+        mode: "direct-url",
+        reviewerSafe: true,
+        openUrl: "https://example.com/preview",
+        targetUrl: "https://example.com/preview",
+      },
+    },
   },
+  executions: [{ command: "wordpress.wp-cli", exitCode: 0, stdout: "first\nsecond\n", stderr: "", durationMs: 12, recipePhase: "run_workloads", recipeStepIndex: 0 }],
   run: { runId: "run-ok", status: "succeeded" },
   phaseEvidence: [{ name: "runtime_startup", status: "completed" }],
 })
 assertEqual(success.status, "succeeded", "success normalizes to succeeded")
-assertEqual(success.refs.startup_logs.length, 2, "startup logs are grouped")
+assertEqual(success.refs.startup_logs.length, 3, "startup logs are grouped")
 assertEqual(success.refs.changed_files[0]?.path, "/tmp/codebox/bundle-ok/files/changed-files.json", "changed files path is grouped")
+assertEqual(success.refs.logs.some((ref) => ref.path === "/tmp/codebox/bundle-ok/commands.jsonl"), true, "commands jsonl is grouped")
+assertEqual(success.commands[0]?.stdout_tail, "first\nsecond\n", "command stdout tail is exposed")
+assertEqual(success.preview?.reviewer_access?.openUrl, "https://example.com/preview", "preview reviewer access is exposed")
 assertEqual(success.metadata.run_id, "run-ok", "run metadata is exposed")
 
 const startupFailure = normalizeRecipeRunSummary({

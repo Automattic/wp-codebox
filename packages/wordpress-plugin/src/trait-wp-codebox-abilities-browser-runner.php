@@ -293,7 +293,7 @@ if ( is_bool( $value ) || is_int( $value ) || is_float( $value ) || null === $va
 }
 
 $text = is_scalar( $value ) ? (string) $value : "";
-if ( preg_match( "/authorization|secret|token|password|credential|private_key|api_key|cookie/i", $key ) ) {
+if ( wp_codebox_browser_redaction_key_should_redact( "browser_event", $key ) ) {
 	return "[redacted]";
 }
 if ( preg_match( "/content|message|prompt|response|body|data|argument|output|input/i", $key ) ) {
@@ -304,6 +304,29 @@ if ( strlen( $text ) > 160 ) {
 }
 
 return $text;
+}
+
+function wp_codebox_browser_redaction_key_should_redact( string $profile_name, string $key ): bool {
+$profiles = array(
+	"browser_event" => array(
+		"exact_keys" => array( "authorization" ),
+		"sensitive_key_tokens" => array( "secret", "token", "password", "credential", "private_key", "api_key", "cookie" ),
+	),
+);
+$profile = $profiles[ $profile_name ] ?? null;
+if ( ! is_array( $profile ) ) {
+	return false;
+}
+$normalized_key = strtolower( $key );
+if ( in_array( $normalized_key, $profile["exact_keys"], true ) ) {
+	return true;
+}
+foreach ( $profile["sensitive_key_tokens"] as $token ) {
+	if ( str_contains( $normalized_key, $token ) ) {
+		return true;
+	}
+}
+return false;
 }
 
 function wp_codebox_browser_sanitize_event_value( $value, string $key = "" ) {

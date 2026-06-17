@@ -1,0 +1,63 @@
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+
+const root = new URL("../", import.meta.url)
+const rootPath = root.pathname.replace(/'/g, "'\\''")
+
+const php = spawnSync("php", ["-r", `
+define('ABSPATH', '${rootPath}');
+class WP_Error {
+	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
+}
+function is_wp_error( $value ) { return $value instanceof WP_Error; }
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
+require '${rootPath}packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
+
+$task_input = WP_Codebox_Browser_Task_Builder::normalize_task_input( array(
+	'goal' => 'Build a generic browser task.',
+	'target' => array( 'kind' => 'site', 'ref' => 'demo' ),
+	'allowed_tools' => array( 'filesystem_write', 'filesystem_write', '' ),
+	'expected_artifacts' => array( 'patch', 'preview' ),
+	'context' => array( 'caller' => 'test' ),
+	'agent_bundles' => array(
+		array( 'source' => '/tmp/agent-bundle.zip', 'on_conflict' => 'skip' ),
+	),
+) );
+
+$payload = WP_Codebox_Browser_Task_Builder::task_payload(
+	array(
+		'agent' => 'custom-agent',
+		'mode' => 'sandbox',
+		'secret_env' => array( 'OPENAI_API_KEY', 'OPENAI_API_KEY', 'bad-name' ),
+	),
+	$task_input,
+	'session-123',
+	array( array( 'path' => '/tmp/result.json', 'name' => 'result' ) ),
+	array(
+		'connectors' => array( array( 'provider' => 'provider-from-inheritance', 'model' => 'model-from-inheritance' ) ),
+		'settings' => array(),
+	)
+);
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload ), JSON_UNESCAPED_SLASHES );
+`], {
+  cwd: root.pathname,
+  encoding: "utf8",
+})
+
+assert.equal(php.status, 0, php.stderr)
+const result = JSON.parse(php.stdout)
+
+assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
+assert.deepEqual(result.task_input.allowed_tools, ["filesystem_write"])
+assert.equal(result.payload.schema, "wp-codebox/browser-agent-task-payload/v1")
+assert.equal(result.payload.message, "Build a generic browser task.")
+assert.equal(result.payload.session_id, "session-123")
+assert.equal(result.payload.provider, "provider-from-inheritance")
+assert.equal(result.payload.model, "model-from-inheritance")
+assert.deepEqual(result.payload.secret_env, ["OPENAI_API_KEY"])
+assert.deepEqual(result.payload.task_input.context, { caller: "test" })
+assert.deepEqual(result.payload.agent_bundles, [{ source: "/tmp/agent-bundle.zip", on_conflict: "skip" }])
+
+console.log("browser task builder ok")

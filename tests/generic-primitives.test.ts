@@ -10,6 +10,8 @@ import {
   safeArtifactRelativePath,
   artifactStoragePath,
   artifactStoragePublicUrl,
+  browserArtifactGrant,
+  browserArtifactRef,
   captureArtifactFile,
   materializationPhaseResult,
   materializationRunArtifactRefs,
@@ -52,6 +54,36 @@ assert.deepEqual(trustedBrowserSessionOrigin("http://localhost:8881/path?x=1"), 
 })
 assert.throws(() => trustedBrowserSessionOrigin("http://example.test"), /https/)
 assert.equal(trustedBrowserSessionOrigins(["https://example.test/a", "https://example.test/b"]).length, 1)
+
+const artifactGrant = browserArtifactGrant({
+  caller: "studio-web",
+  sessionId: "session-123",
+  expiresAt: new Date("2026-01-02T03:04:05.000Z"),
+  artifactsPath: "/tmp/wp-codebox/artifacts",
+})
+assert.deepEqual(artifactGrant, {
+  schema: "wp-codebox/browser-artifact-grant/v1",
+  scope: "artifact:write",
+  session_id: "session-123",
+  authorization: {
+    schema: "wp-codebox/trusted-orchestrator-authorization/v1",
+    caller: "studio-web",
+    scope: "artifact:write",
+  },
+  expires_at: "2026-01-02T03:04:05.000Z",
+  artifacts_path: "/tmp/wp-codebox/artifacts",
+})
+assert.deepEqual(browserArtifactRef({ artifact_id: "artifact-bundle-sha256-abc", content_digest: "abc", directory: "/tmp/wp-codebox/artifacts/artifact-bundle-sha256-abc", status: "created", session_id: "session-123", grant: artifactGrant }), {
+  schema: "wp-codebox/browser-artifact-ref/v1",
+  artifact_id: "artifact-bundle-sha256-abc",
+  content_digest: "abc",
+  artifacts_path: "/tmp/wp-codebox/artifacts/artifact-bundle-sha256-abc",
+  status: "created",
+  session_id: "session-123",
+  grant: artifactGrant,
+})
+assert.throws(() => browserArtifactGrant({ caller: "", sessionId: "session-123" }), /caller/)
+assert.throws(() => browserArtifactRef({ content_digest: "abc" }), /artifact_id/)
 
 assert.deepEqual(normalizeRecipeMounts([{ source: "/host/plugin", target: "//wordpress//wp-content/plugins/plugin" }]), [{ source: "/host/plugin", target: "/wordpress/wp-content/plugins/plugin", mode: "readwrite" }])
 assert.throws(() => normalizeSharedMounts([{ source: "/host/plugin", target: "wordpress/wp-content/plugins/plugin" }]), /absolute target/)

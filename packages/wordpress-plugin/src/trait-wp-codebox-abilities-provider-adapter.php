@@ -134,35 +134,6 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 	}
 
 	private static function redact_provider_metadata( mixed $value ): mixed {
-		if ( ! is_array( $value ) ) {
-			return $value;
-		}
-
-		$redacted = array();
-		foreach ( $value as $key => $item ) {
-			$normalized_key = strtolower( (string) $key );
-			if ( self::is_sensitive_provider_metadata_key( $normalized_key ) ) {
-				$redacted[ $key ] = '[redacted]';
-				continue;
-			}
-
-			$redacted[ $key ] = self::redact_provider_metadata( $item );
-		}
-
-		return $redacted;
-	}
-
-	private static function is_sensitive_provider_metadata_key( string $key ): bool {
-		if ( in_array( $key, array( 'authorization', 'key', 'value' ), true ) ) {
-			return true;
-		}
-
-		foreach ( array( 'secret', 'token', 'password', 'credential', 'private_key', 'api_key' ) as $needle ) {
-			if ( str_contains( $key, $needle ) ) {
-				return true;
-			}
-		}
-
-		return false;
+		return WP_Codebox_Redaction_Policy::redact_array( 'provider_proxy', $value );
 	}
 }

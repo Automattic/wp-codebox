@@ -11,6 +11,8 @@ final class WP_Codebox_Artifacts {
 
 	private const LIST_SCHEMA  = 'wp-codebox/artifact-list/v1';
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
+	private const BROWSER_ARTIFACT_GRANT_SCHEMA = 'wp-codebox/browser-artifact-grant/v1';
+	private const BROWSER_ARTIFACT_REF_SCHEMA = 'wp-codebox/browser-artifact-ref/v1';
 	private const APPLY_PREFLIGHT_SCHEMA = 'wp-codebox/artifact-apply-preflight/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
@@ -209,8 +211,13 @@ final class WP_Codebox_Artifacts {
 		$manifest_files = array();
 
 		foreach ( $files as $file ) {
-			$artifact_path = 'files/browser/' . $file['path'];
-			$target_path   = $tmp . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $artifact_path );
+			$artifact_path = WP_Codebox_Path_Policy::normalize_artifact_relative_path( 'files/browser/' . $file['path'], 'Browser artifact file', 'wp_codebox_browser_artifact_path_invalid' );
+			if ( is_wp_error( $artifact_path ) ) {
+				$this->remove_directory( $tmp );
+				return $artifact_path;
+			}
+
+			$target_path   = $this->resolve_artifact_file( $tmp, $artifact_path );
 			$target_dir    = dirname( $target_path );
 			if ( ! is_dir( $target_dir ) && ! $this->mkdir_p( $target_dir ) ) {
 				$this->remove_directory( $tmp );
@@ -250,6 +257,7 @@ final class WP_Codebox_Artifacts {
 			if ( is_wp_error( $bundle ) ) {
 				return $bundle;
 			}
+			$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'existing' );
 
 			return array(
 				'success'        => true,
@@ -258,6 +266,8 @@ final class WP_Codebox_Artifacts {
 				'artifact_id'    => $bundle_id,
 				'content_digest' => $content_digest,
 				'directory'      => $destination,
+				'artifact_ref'   => $artifact_ref,
+				'grant'          => $artifact_ref['grant'] ?? null,
 				'artifact'       => $bundle,
 			);
 		}
@@ -338,6 +348,7 @@ final class WP_Codebox_Artifacts {
 		if ( is_wp_error( $bundle ) ) {
 			return $bundle;
 		}
+		$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'created' );
 
 		return array(
 			'success'        => true,
@@ -346,6 +357,8 @@ final class WP_Codebox_Artifacts {
 			'artifact_id'    => $bundle_id,
 			'content_digest' => $content_digest,
 			'directory'      => $destination,
+			'artifact_ref'   => $artifact_ref,
+			'grant'          => $artifact_ref['grant'] ?? null,
 			'artifact'       => $bundle,
 		);
 	}
@@ -891,7 +904,7 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function normalize_browser_bundle_root( string $root ): string|WP_Error {
-		$root = rtrim( trim( str_replace( '\\', '/', $root ) ), '/' );
+		$root = trim( str_replace( '\\', '/', $root ) );
 		if ( '' === $root ) {
 			return '';
 		}
@@ -919,22 +932,17 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function validate_browser_bundle_file_path( string $path, int $index ): string|WP_Error {
-		if ( '' === $path || str_starts_with( $path, '/' ) || ! preg_match( '#^[A-Za-z0-9_./-]+$#', $path ) ) {
-			return new WP_Error( 'wp_codebox_browser_artifact_path_invalid', 'Browser artifact file paths must be safe relative paths.', array( 'status' => 400, 'index' => $index, 'path' => $path ) );
+		$normalized = WP_Codebox_Path_Policy::normalize_artifact_relative_path( $path, 'Browser artifact file path', 'wp_codebox_browser_artifact_path_invalid', array( 'index' => $index ) );
+		if ( is_wp_error( $normalized ) ) {
+			return $normalized;
 		}
 
-		foreach ( explode( '/', $path ) as $segment ) {
-			if ( '' === $segment || '.' === $segment || '..' === $segment ) {
-				return new WP_Error( 'wp_codebox_browser_artifact_path_invalid', 'Browser artifact file paths must not contain empty, current-directory, or parent-directory segments.', array( 'status' => 400, 'index' => $index, 'path' => $path, 'segment' => $segment ) );
-			}
-		}
-
-		$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+		$extension = strtolower( pathinfo( $normalized, PATHINFO_EXTENSION ) );
 		if ( in_array( $extension, array( 'php', 'phtml', 'phar', 'cgi', 'pl', 'py', 'rb', 'asp', 'aspx', 'jsp' ), true ) ) {
-			return new WP_Error( 'wp_codebox_browser_artifact_extension_blocked', 'Browser artifact files must not use executable server-side extensions.', array( 'status' => 400, 'index' => $index, 'path' => $path, 'extension' => $extension ) );
+			return new WP_Error( 'wp_codebox_browser_artifact_extension_blocked', 'Browser artifact files must not use executable server-side extensions.', array( 'status' => 400, 'index' => $index, 'path' => $normalized, 'extension' => $extension ) );
 		}
 
-		return $path;
+		return $normalized;
 	}
 
 	private function browser_bundle_mime_type( string $path ): string {
@@ -1003,6 +1011,50 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return $caller;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function browser_artifact_grant( array $input, string $session_id, string $directory ): array {
+		$authorization = is_array( $input['authorization'] ?? null ) ? $input['authorization'] : array();
+		$caller        = trim( (string) ( $authorization['caller'] ?? $input['caller_id'] ?? $input['caller'] ?? '' ) );
+		$scope         = trim( (string) ( $authorization['scope'] ?? '' ) );
+		if ( '' === $caller || ( '' !== $scope && 'artifact:write' !== $scope ) ) {
+			return array();
+		}
+
+		$grant = array(
+			'schema'         => self::BROWSER_ARTIFACT_GRANT_SCHEMA,
+			'scope'          => 'artifact:write',
+			'session_id'     => $session_id,
+			'authorization'  => array(
+				'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
+				'caller' => $caller,
+				'scope'  => 'artifact:write',
+			),
+			'artifacts_path' => $directory,
+			'expires_at'     => $this->optional_string( $input['grant_expires_at'] ?? $input['expires_at'] ?? null ),
+			'metadata'       => is_array( $input['grant_metadata'] ?? null ) ? $input['grant_metadata'] : null,
+		);
+
+		return $this->strip_null_values( $grant );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function browser_artifact_ref( array $input, string $artifact_id, string $content_digest, string $directory, string $status ): array {
+		$session_id = trim( (string) ( $input['session_id'] ?? ( is_array( $input['session'] ?? null ) ? (string) ( $input['session']['id'] ?? '' ) : '' ) ) );
+		$grant      = '' === $session_id ? array() : $this->browser_artifact_grant( $input, $session_id, $directory );
+
+		$ref = array(
+			'schema'         => self::BROWSER_ARTIFACT_REF_SCHEMA,
+			'artifact_id'    => $artifact_id,
+			'content_digest' => $content_digest,
+			'artifacts_path' => $directory,
+			'status'         => $status,
+			'session_id'     => '' === $session_id ? null : $session_id,
+			'grant'          => empty( $grant ) ? null : $grant,
+		);
+
+		return $this->strip_null_values( $ref );
 	}
 
 	/** @return array<string,mixed> */
@@ -1217,26 +1269,26 @@ final class WP_Codebox_Artifacts {
 			return new WP_Error( 'wp_codebox_artifact_directory_missing', 'Artifact bundle directory is missing.', array( 'status' => 400 ) );
 		}
 
-		if ( ! function_exists( 'exec' ) ) {
-			return $this->artifact_verifier_unavailable( 'Shell execution is not available for WP Codebox artifact verification.' );
-		}
-
 		$bin = trim( (string) ( $input['wp_codebox_bin'] ?? $this->default_bin() ) );
 		if ( '' === $bin || ! preg_match( '#^[A-Za-z0-9_./:@+-]+$#', $bin ) ) {
 			return new WP_Error( 'wp_codebox_bin_invalid', 'wp_codebox_bin must be a command name or path without shell metacharacters.', array( 'status' => 400 ) );
 		}
 
-		$command = sprintf(
-			'%s artifacts verify --bundle %s --json',
-			$this->command_prefix( $bin ),
-			escapeshellarg( $directory )
+		$result = WP_Codebox_Managed_Host_Command::run(
+			array(
+				'command'          => $this->artifact_verifier_command( $bin, $directory ),
+				'cwd'              => $directory,
+				'allowed_cwd_roots' => array( $directory ),
+				'timeout_seconds'  => 60,
+				'max_output_bytes' => 262144,
+			)
 		);
+		if ( is_wp_error( $result ) ) {
+			return $this->artifact_verifier_unavailable( $result->get_error_message(), array( 'error' => $result->get_error_data() ) );
+		}
 
-		$output = array();
-		$exit   = 0;
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec -- Required to delegate to the packaged generic artifact verifier.
-		exec( $command . ' 2>&1', $output, $exit );
-		$raw     = implode( "\n", $output );
+		$exit    = (int) $result['exit_code'];
+		$raw     = trim( (string) $result['stdout'] . ( '' !== (string) $result['stderr'] ? "\n" . (string) $result['stderr'] : '' ) );
 		$decoded = json_decode( $raw, true );
 
 		if ( ! is_array( $decoded ) ) {
@@ -1296,12 +1348,13 @@ final class WP_Codebox_Artifacts {
 		return $bin;
 	}
 
-	private function command_prefix( string $bin ): string {
+	/** @return string[] */
+	private function artifact_verifier_command( string $bin, string $directory ): array {
 		if ( str_ends_with( $bin, '.js' ) && is_file( $bin ) ) {
-			return 'node ' . escapeshellarg( $bin );
+			return WP_Codebox_Managed_Host_Command::command( 'node', array( $bin, 'artifacts', 'verify', '--bundle', $directory, '--json' ) );
 		}
 
-		return escapeshellarg( $bin );
+		return WP_Codebox_Managed_Host_Command::command( $bin, array( 'artifacts', 'verify', '--bundle', $directory, '--json' ) );
 	}
 
 	private function bound_output( string $output ): string {
@@ -1313,7 +1366,12 @@ final class WP_Codebox_Artifacts {
 	}
 
 	private function resolve_artifact_file( string $directory, string $relative_path ): string {
-		$path = $directory . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
+		$relative_path = WP_Codebox_Path_Policy::normalize_artifact_relative_path( $relative_path );
+		if ( is_wp_error( $relative_path ) ) {
+			return '';
+		}
+
+		$path = rtrim( $directory, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
 		$real = realpath( $path );
 
 		return false !== $real ? $real : $path;

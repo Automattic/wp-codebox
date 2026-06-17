@@ -12,8 +12,10 @@ export interface EditorOpenTarget {
 
 export type EditorActionStep =
   | { kind: "open"; timeout?: string }
+  | { kind: "waitForReady"; timeout?: string }
   | { kind: "insertBlock"; name?: string; attributes?: Record<string, unknown>; content?: string; select?: boolean; timeout?: string }
   | { kind: "selectBlock"; clientId?: string; index?: number; timeout?: string }
+  | { kind: "savePost"; marker?: string; content?: string; timeout?: string }
   | { kind: "inspectState"; timeout?: string }
 
 const DEFAULT_EDITOR_WAIT_SELECTOR = ".edit-post-visual-editor, .editor-styles-wrapper, .block-editor, .interface-interface-skeleton"
@@ -101,6 +103,9 @@ function normalizeEditorActionStep(step: unknown, index: number): EditorActionSt
       ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
     }
   }
+  if (input.kind === "waitForReady") {
+    return { kind: "waitForReady", ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}) }
+  }
   if (input.kind === "selectBlock") {
     if (input.clientId !== undefined && typeof input.clientId !== "string") {
       throw new Error(`wordpress.editor-actions steps-json[${index}].clientId must be a string`)
@@ -112,6 +117,20 @@ function normalizeEditorActionStep(step: unknown, index: number): EditorActionSt
       kind: "selectBlock",
       ...(typeof input.clientId === "string" ? { clientId: input.clientId } : {}),
       ...(Number.isInteger(input.index) && (input.index as number) >= 0 ? { index: input.index as number } : {}),
+      ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
+    }
+  }
+  if (input.kind === "savePost") {
+    if (input.marker !== undefined && typeof input.marker !== "string") {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].marker must be a string`)
+    }
+    if (input.content !== undefined && typeof input.content !== "string") {
+      throw new Error(`wordpress.editor-actions steps-json[${index}].content must be a string`)
+    }
+    return {
+      kind: "savePost",
+      ...(typeof input.marker === "string" && input.marker.length > 0 ? { marker: input.marker } : {}),
+      ...(typeof input.content === "string" ? { content: input.content } : {}),
       ...(typeof input.timeout === "string" ? { timeout: input.timeout } : {}),
     }
   }

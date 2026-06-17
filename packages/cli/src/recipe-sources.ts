@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
@@ -242,8 +242,9 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       command: "composer",
       args: ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
       cwd: stagedSource,
-      inheritedEnv: ["HOME", "COMPOSER_HOME"],
+      env: composerManagedHostEnv(),
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: "prepare Composer autoload for recipe extra plugin",
     })
@@ -444,7 +445,9 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
       command: composer,
       args: ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"],
       cwd: hydratedSource,
+      env: composerManagedHostEnv(),
       allowedCwdRoots: [stagingRoot],
+      inheritedEnv: ["HOME", "COMPOSER_HOME"],
       maxOutputBytes: 1024 * 1024 * 10,
       label: `hydrate Composer-backed ${label}`,
     })
@@ -478,10 +481,18 @@ async function pathIsFile(path: string): Promise<boolean> {
 
 async function resolveComposerCommand(): Promise<string> {
   try {
-    await executeManagedHostCommand({ command: "composer", args: ["--version"], cwd: process.cwd(), allowedCwdRoots: [process.cwd()], timeoutMs: 10_000, maxOutputBytes: 64 * 1024, label: "detect Composer" })
+    await executeManagedHostCommand({ command: "composer", args: ["--version"], cwd: process.cwd(), env: composerManagedHostEnv(), allowedCwdRoots: [process.cwd()], timeoutMs: 10_000, maxOutputBytes: 64 * 1024, label: "detect Composer" })
     return "composer"
   } catch {
     return ""
+  }
+}
+
+function composerManagedHostEnv(): Record<string, string> {
+  const home = process.env.HOME || homedir()
+  return {
+    ...(home ? { HOME: home } : {}),
+    ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
   }
 }
 

@@ -10,7 +10,7 @@ defined( 'ABSPATH' ) || exit;
 trait WP_Codebox_Abilities_Inheritance {
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 private static function normalize_task_input( array $input ): array|WP_Error {
-	return WP_Codebox_Agent_Task::normalize_input( $input, fn( array $tools, array $task_input ): WP_Error|null => ( new WP_Codebox_Agent_Sandbox_Runner() )->validate_allowed_tools( $tools, $task_input ), true );
+	return WP_Codebox_Browser_Task_Builder::normalize_task_input( $input, fn( array $tools, array $task_input ): WP_Error|null => ( new WP_Codebox_Agent_Sandbox_Runner() )->validate_allowed_tools( $tools, $task_input ) );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array{connectors:string[],settings:string[]} */
@@ -40,25 +40,20 @@ private static function browser_input_with_inheritance( array $input, array $inh
 
 /** @param array<string,mixed> $input Ability input. @param array<string,mixed> $task_input Normalized task input. @param array<int,array<string,mixed>> $artifacts Browser artifact specs. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
 private static function browser_task_payload( array $input, array $task_input, string $session_id, array $artifacts, array $inheritance ): array {
-	return array_filter(
+	return WP_Codebox_Browser_Task_Builder::task_payload(
+		$input,
+		$task_input,
+		$session_id,
+		$artifacts,
+		$inheritance,
 		array(
-			'schema'      => 'wp-codebox/browser-agent-task-payload/v1',
-			'agent'       => self::browser_agent_slug( $input ),
-			'mode'        => self::browser_mode( $input ),
-			'provider'    => self::browser_provider( $input, $inheritance ),
-			'model'       => self::browser_model( $input, $inheritance ),
-			'message'     => (string) $task_input['goal'],
-			'session_id'  => $session_id,
-			'task_input'  => $task_input,
-			'agent_bundles' => self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
-			'inheritance' => $inheritance,
-			'secret_env'  => self::browser_secret_env_names( $input ),
-			'artifacts'   => array(
-				'schema' => 'wp-codebox/browser-artifacts/v1',
-				'files'  => $artifacts,
-			),
-		),
-		static fn( mixed $value ): bool => '' !== $value && array() !== $value
+			'agent'         => static fn( array $input ): string => self::browser_agent_slug( $input ),
+			'mode'          => static fn( array $input ): string => self::browser_mode( $input ),
+			'provider'      => static fn( array $input, array $task_input, array $inheritance ): string => self::browser_provider( $input, $inheritance ),
+			'model'         => static fn( array $input, array $task_input, array $inheritance ): string => self::browser_model( $input, $inheritance ),
+			'agent_bundles' => static fn( array $input ): array => self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
+			'secret_env'    => static fn( array $input ): array => self::browser_secret_env_names( $input ),
+		)
 	);
 }
 

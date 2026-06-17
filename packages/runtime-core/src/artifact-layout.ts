@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 
-import { artifactManifestFile, refreshArtifactManifestFileSha256s, type ArtifactManifest, type ArtifactManifestFile, type ArtifactViewerMetadata } from "./artifact-manifest.js"
+import { artifactManifestFile, refreshArtifactManifestFileSha256s, type ArtifactManifest, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactViewerMetadata } from "./artifact-manifest.js"
 import { resolveArtifactPath, safeArtifactRelativePath } from "./artifact-paths.js"
 
 export interface ManifestedArtifactFileInput {
@@ -9,13 +9,19 @@ export interface ManifestedArtifactFileInput {
   kind: ArtifactManifestFile["kind"]
   contentType: string
   viewer?: ArtifactViewerMetadata
+  redaction?: ArtifactManifestFileOptions["redaction"]
+  provenance?: ArtifactManifestFileOptions["provenance"]
 }
 
 export class ManifestedArtifactSet {
   private readonly entries = new Map<string, ArtifactManifestFile>()
 
   add(input: ManifestedArtifactFileInput): ArtifactManifestFile {
-    const entry = artifactManifestFile(input.path, input.kind, input.contentType, undefined, input.viewer)
+    const entry = artifactManifestFile(input.path, input.kind, input.contentType, undefined, {
+      viewer: input.viewer,
+      redaction: input.redaction,
+      provenance: input.provenance,
+    })
     this.entries.set(input.path, entry)
     return entry
   }
