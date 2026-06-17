@@ -1,9 +1,8 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
-import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
-import { listCliRuntimeBackendKinds } from "./runtime-backends.js"
+import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
 export interface RecipeValidationIssue {
   code: string
@@ -21,11 +20,12 @@ export const defaultPolicy: RuntimePolicy = {
   approvals: "never",
 }
 
-const supportedRecipeCommands = new Set(recipeCommandDefinitions().map((command) => command.id))
+const cliRuntimeRecipePolicy = cliRuntimeBackendRecipePolicy()
+const supportedRecipeCommands = new Set(listCliRecipeCommandIds())
 const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
-const supportedRuntimeOverlayKinds = ["bundled-library"] as const
-const supportedRuntimeOverlayLibraries = ["php-ai-client"] as const
-const supportedRuntimeOverlayStrategies = ["wordpress-scoped-bundle"] as const
+const supportedRuntimeOverlayKinds = cliRuntimeRecipePolicy.runtimeOverlayKinds
+const supportedRuntimeOverlayLibraries = cliRuntimeRecipePolicy.runtimeOverlayLibraries
+const supportedRuntimeOverlayStrategies = cliRuntimeRecipePolicy.runtimeOverlayStrategies
 
 export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
   return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -35,7 +35,15 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
   const recipe = parseWorkspaceRecipeJson(raw)
   normalizeWorkspaceRecipeCompatibility(recipe)
   validateWorkspaceRecipeShape(recipe, recipePath)
-  assertWorkspaceRecipeJsonSchema(recipe, { recipePath, recipeCommandIds: [...supportedRecipeCommands], runtimeBackendKinds: listCliRuntimeBackendKinds() })
+  assertWorkspaceRecipeJsonSchema(recipe, {
+    recipePath,
+    recipeCommandIds: [...supportedRecipeCommands],
+    runtimeBackendKinds: listCliRuntimeBackendKinds(),
+    runtimeWordPressInstallModes: cliRuntimeRecipePolicy.wordpressInstallModes,
+    runtimeOverlayKinds: supportedRuntimeOverlayKinds,
+    runtimeOverlayLibraries: supportedRuntimeOverlayLibraries,
+    runtimeOverlayStrategies: supportedRuntimeOverlayStrategies,
+  })
 
   return recipe
 }
@@ -293,7 +301,7 @@ function validateRecipeRuntimeWordPressInstallMode(mode: NonNullable<WorkspaceRe
     return
   }
 
-  if (!["install-from-existing-files", "install-from-existing-files-if-needed", "do-not-attempt-installing"].includes(mode)) {
+  if (!(cliRuntimeRecipePolicy.wordpressInstallModes as readonly string[]).includes(mode)) {
     throw new Error(`Recipe runtime wordpressInstallMode is unsupported: ${recipePath}`)
   }
 }

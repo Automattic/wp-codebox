@@ -1,6 +1,6 @@
 import type { ArtifactBundle, ExecutionResult, RuntimeInfo } from "@automattic/wp-codebox-core"
 import type { ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
-import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
+import { listCliRecipeCommandDefinitions } from "./runtime-backends.js"
 
 interface CliError {
   name: string
@@ -286,7 +286,7 @@ export function printRecipeSchemaHumanOutput(output: RecipeSchemaOutputLike): vo
 }
 
 export function printHelp(): void {
-  const recipeCommandIds = recipeCommandDefinitions().map((command) => command.id)
+  const recipeCommandIds = listCliRecipeCommandDefinitions().map((command) => command.id)
 
   console.log(`Usage:
   wp-codebox commands [--json]
