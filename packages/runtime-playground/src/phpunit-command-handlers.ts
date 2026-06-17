@@ -1,3 +1,5 @@
+import { phpEnvAssignmentFunction, phpWpConfigDefineAppenderFunction } from "./php-snippets.js"
+
 export interface PhpunitRunCodeOptions {
   pluginSlug: string
   cwd: string
@@ -309,6 +311,10 @@ function pg_log($msg) {
     file_put_contents($result_file, $msg . "\n", FILE_APPEND);
 }
 
+${phpEnvAssignmentFunction("pg_apply_env", "json_encode", "pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));")}
+
+${phpWpConfigDefineAppenderFunction("pg_append_wp_config_defines", "pg_log('NOTICE: skipping invalid wp_config_defines key: ' . var_export($name, true));")}
+
 function pg_diagnostic_context(): string {
     global $current_stage;
     $hook = function_exists('current_filter') ? current_filter() : null;
@@ -522,16 +528,7 @@ function pg_run_boot_stage(array $cfg = []): ?string {
         $table_prefix = isset($cfg['table_prefix']) && is_string($cfg['table_prefix']) && $cfg['table_prefix'] !== '' ? $cfg['table_prefix'] : 'wptests_';
         $config_path = '/tmp/wp-tests-config.php';
         $config = "<?php\n";
-        if (!empty($extra_defines) && is_array($extra_defines)) {
-            $config .= "\n// Recipe-declared wp-config defines.\n";
-            foreach ($extra_defines as $name => $value) {
-                if (!is_string($name) || !preg_match('/^[A-Z_][A-Z0-9_]*$/i', $name)) {
-                    pg_log('NOTICE: skipping invalid wp_config_defines key: ' . var_export($name, true));
-                    continue;
-                }
-                $config .= sprintf("if (!defined('%s')) { define('%s', %s); }\n", $name, $name, var_export($value, true));
-            }
-        }
+        pg_append_wp_config_defines($config, $extra_defines);
         $config .= '$table_prefix = ' . var_export($table_prefix, true) . ";\n";
         $config .= <<<'CONFIG'
 define('DB_NAME', ':memory:');
@@ -821,17 +818,7 @@ try {
     exit(1);
 }
 
-if (is_array($bench_env)) {
-    foreach ($bench_env as $name => $value) {
-        if (is_string($name) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
-            $string_value = is_scalar($value) ? (string) $value : json_encode($value);
-            putenv($name . '=' . $string_value);
-            $_ENV[$name] = $string_value;
-        } else {
-            pg_log('NOTICE: skipping invalid bench_env key: ' . var_export($name, true));
-        }
-    }
-}
+pg_apply_env($bench_env);
 
 if (!is_array($wp_config_defines)) {
     $wp_config_defines = array();
@@ -1089,6 +1076,8 @@ function core_pg_log($msg) {
     file_put_contents($result_file, $msg . "\n", FILE_APPEND);
 }
 
+${phpWpConfigDefineAppenderFunction("core_pg_append_wp_config_defines", undefined, false)}
+
 function core_pg_stage_begin($stage) {
     global $current_stage;
     $current_stage = $stage;
@@ -1186,11 +1175,7 @@ function core_pg_write_tests_config(string $core_root, array $extra_defines): st
     }
 
     $config = "<?php\n";
-    foreach ($extra_defines as $name => $value) {
-        if (is_string($name) && preg_match('/^[A-Z_][A-Z0-9_]*$/i', $name)) {
-            $config .= sprintf("if (!defined('%s')) { define('%s', %s); }\n", $name, $name, var_export($value, true));
-        }
-    }
+    core_pg_append_wp_config_defines($config, $extra_defines);
     $config .= "\n";
     $config .= "define('DB_NAME', ':memory:');\n";
     $config .= "define('DB_USER', 'root');\n";
