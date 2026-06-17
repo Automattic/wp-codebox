@@ -1,6 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import type { MountSpec } from "@automattic/wp-codebox-core"
+import { basename, dirname, join } from "node:path"
+import { captureArtifactFile, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { extractPhpunitFailureMessage } from "./playground-command-errors.js"
 
@@ -19,8 +18,15 @@ export async function persistPhpunitResult(server: PlaygroundCliServer, vfsPath:
 
   try {
     const contents = await server.playground.readFileAsText(vfsPath)
-    await mkdir(dirname(hostPath), { recursive: true })
-    await writeFile(hostPath, contents)
+    await captureArtifactFile({
+      root: dirname(hostPath),
+      path: basename(hostPath),
+      kind: "test-results",
+      contentType: "text/plain; charset=utf-8",
+      contents,
+      redaction: { policy: "applied", sensitive: true, reason: "PHPUnit failure diagnostics are redacted before artifact capture." },
+      provenance: { source: "wordpress-playground", operation: "persist-phpunit-result", id: vfsPath },
+    })
   } catch {
     // The structured result is best-effort; preserve the command outcome if copying fails.
   }
@@ -65,8 +71,15 @@ export async function persistVfsDiagnosticFileToHost(server: PlaygroundCliServer
 
   try {
     const contents = await server.playground.readFileAsText(sourceVfsPath)
-    await mkdir(dirname(hostPath), { recursive: true })
-    await writeFile(hostPath, contents)
+    await captureArtifactFile({
+      root: dirname(hostPath),
+      path: basename(hostPath),
+      kind: "diagnostics",
+      contentType: "text/plain; charset=utf-8",
+      contents,
+      redaction: { policy: "applied", sensitive: true, reason: "Failure diagnostics are redacted before host capture." },
+      provenance: { source: "wordpress-playground", operation: "persist-vfs-diagnostic", id: sourceVfsPath, metadata: { hostVfsPath } },
+    })
   } catch {
     // The structured result is best-effort; preserve the command failure if copying fails.
   }

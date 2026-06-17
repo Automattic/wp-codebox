@@ -574,15 +574,7 @@ private static function host_agent_task_input_properties( array $task_input_sche
 	);
 
 	if ( ! empty( $options['task_fields'] ) ) {
-		$properties = array(
-			'goal'                => $task_input_schema['properties']['goal'],
-			'target'              => $task_input_schema['properties']['target'],
-			'allowed_tools'       => $task_input_schema['properties']['allowed_tools'],
-			'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
-			'expected_artifacts'  => $task_input_schema['properties']['expected_artifacts'],
-			'policy'              => $task_input_schema['properties']['policy'],
-			'context'             => $task_input_schema['properties']['context'],
-		) + $properties;
+		$properties = self::task_input_alias_properties( $task_input_schema ) + $properties;
 	}
 
 	if ( ! empty( $options['site_seeds'] ) ) {
@@ -647,14 +639,7 @@ private static function component_contracts_schema( string $description = '' ): 
  * @return array<string,mixed>
  */
 private static function browser_task_input_properties( array $task_input_schema, array $inherit_schema, array $session_input, bool $detailed = false ): array {
-	return array(
-		'goal'                    => $task_input_schema['properties']['goal'],
-		'target'                  => $task_input_schema['properties']['target'],
-		'allowed_tools'           => $task_input_schema['properties']['allowed_tools'],
-		'sandbox_tool_policy'     => $task_input_schema['properties']['sandbox_tool_policy'],
-		'expected_artifacts'      => $task_input_schema['properties']['expected_artifacts'],
-		'policy'                  => $task_input_schema['properties']['policy'],
-		'context'                 => $task_input_schema['properties']['context'],
+	return self::task_input_alias_properties( $task_input_schema ) + array(
 		'agent'                   => self::string_property_schema( $detailed ? 'Sandbox agent slug to invoke through agents/chat inside the browser Playground.' : '' ),
 		'provider'                => self::string_property_schema( $detailed ? 'AI provider id to seed into the browser Playground agent invocation.' : '' ),
 		'model'                   => self::string_property_schema( $detailed ? 'AI model id to seed into the browser Playground agent invocation.' : '' ),
@@ -674,6 +659,16 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),
 		'artifact_files'          => $detailed ? self::artifact_files_input_schema() : array( 'type' => 'array' ),
 	);
+}
+
+/** @return array<string,mixed> */
+private static function task_input_alias_properties( array $task_input_schema ): array {
+	$properties = array();
+	foreach ( WP_Codebox_Task_Input_Contract::ABILITY_ALIAS_FIELDS as $field ) {
+		$properties[ $field ] = $task_input_schema['properties'][ $field ];
+	}
+
+	return $properties;
 }
 
 /** @return array<string,mixed> */

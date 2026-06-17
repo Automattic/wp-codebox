@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { promisify } from "node:util"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
-import { resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
+import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
 import { evaluateSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
@@ -112,7 +110,6 @@ export interface ParsedRecipeSource {
   wporgSlug?: string
 }
 
-const execFileAsync = promisify(execFile)
 const PHP_SCOPER_VERSION = "0.18.17"
 const PHP_SCOPER_URL = `https://github.com/humbug/php-scoper/releases/download/${PHP_SCOPER_VERSION}/php-scoper.phar`
 
@@ -241,9 +238,13 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   const stagedSource = join(stagingRoot, slug)
   await cp(prepared.source, stagedSource, { recursive: true })
   try {
-    await execFileAsync("composer", ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"], {
+    await executeManagedHostCommand({
+      command: "composer",
+      args: ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
       cwd: stagedSource,
-      maxBuffer: 1024 * 1024 * 10,
+      allowedCwdRoots: [stagingRoot],
+      maxOutputBytes: 1024 * 1024 * 10,
+      label: "prepare Composer autoload for recipe extra plugin",
     })
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
@@ -438,7 +439,14 @@ async function prepareComposerBackedSource(source: string, stagingRoot: string, 
   const hydratedSource = staged.source
 
   try {
-    await execFileAsync(composer, ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"])
+    await executeManagedHostCommand({
+      command: composer,
+      args: ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"],
+      cwd: hydratedSource,
+      allowedCwdRoots: [stagingRoot],
+      maxOutputBytes: 1024 * 1024 * 10,
+      label: `hydrate Composer-backed ${label}`,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Composer-backed ${label} dependency hydration failed for ${source}. Run composer install in that checkout or inspect Composer output. ${message}`)
@@ -469,7 +477,7 @@ async function pathIsFile(path: string): Promise<boolean> {
 
 async function resolveComposerCommand(): Promise<string> {
   try {
-    await execFileAsync("composer", ["--version"])
+    await executeManagedHostCommand({ command: "composer", args: ["--version"], cwd: process.cwd(), allowedCwdRoots: [process.cwd()], timeoutMs: 10_000, maxOutputBytes: 64 * 1024, label: "detect Composer" })
     return "composer"
   } catch {
     return ""
@@ -494,7 +502,14 @@ async function scopePhpAiClientSource(source: string, stagingRoot: string): Prom
   const configPath = join(stagingRoot, "scoper.inc.php")
   const scopedRoot = join(stagingRoot, "scoped")
   await writeFile(configPath, phpAiClientScoperConfig())
-  await execFileAsync("php", [scoperPath, "add-prefix", "--working-dir", source, "--config", configPath, "--output-dir", scopedRoot, "--force", "--no-interaction"])
+  await executeManagedHostCommand({
+    command: "php",
+    args: [scoperPath, "add-prefix", "--working-dir", source, "--config", configPath, "--output-dir", scopedRoot, "--force", "--no-interaction"],
+    cwd: stagingRoot,
+    allowedCwdRoots: [stagingRoot, source],
+    maxOutputBytes: 1024 * 1024 * 10,
+    label: "scope PHP source",
+  })
   return scopedRoot
 }
 
@@ -505,7 +520,7 @@ async function resolvePhpScoper(stagingRoot: string): Promise<string> {
   }
 
   const scoperPath = join(stagingRoot, "php-scoper.phar")
-  await execFileAsync("curl", ["-fsSL", PHP_SCOPER_URL, "-o", scoperPath])
+  await executeManagedHostCommand({ command: "curl", args: ["-fsSL", PHP_SCOPER_URL, "-o", scoperPath], cwd: stagingRoot, allowedCwdRoots: [stagingRoot], maxOutputBytes: 1024 * 1024, label: "download php-scoper" })
   return scoperPath
 }
 
@@ -876,7 +891,7 @@ async function ensureStandaloneGitPrimary(directory: string): Promise<void> {
     // No Git metadata was copied; initialize a sandbox-local primary below.
   }
 
-  await execFileAsync("git", ["init", "--quiet"], { cwd: directory })
+  await executeManagedHostCommand({ command: "git", args: ["init", "--quiet"], cwd: directory, allowedCwdRoots: [directory], label: "initialize standalone workspace git repository" })
 }
 
 export function defaultWorkspaceTarget(workspace: WorkspaceRecipeWorkspace, slug: string): string {

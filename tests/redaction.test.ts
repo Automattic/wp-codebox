@@ -26,6 +26,7 @@ for (const [value, expected] of redactedValueCases) {
 
 assert.equal(containsSecretLikeValue("token sk-abcdefghijklmnopqrstuvwxyz"), true)
 assert.equal(containsSecretLikeValue("token [redacted]"), false)
+assert.equal(redactString("token sk-abcdefghijklmnopqrstuvwxyz"), "token [redacted]")
 
 assert.deepEqual(
   redactJsonValue({ token: "abc", nested: { api_key: "def", visible: "ok" }, list: [{ password: "secret" }] }, { redactStrings: false }),

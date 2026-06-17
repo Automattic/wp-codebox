@@ -1,12 +1,9 @@
-import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readdir, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { promisify } from "node:util"
+import { dirname, join } from "node:path"
+import { executeManagedHostCommand } from "@automattic/wp-codebox-core"
 import { allowedDownloadHosts, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles } from "./source-policy.js"
-
-const execFileAsync = promisify(execFile)
 
 export interface ZipSourceReference {
   type: string
@@ -31,7 +28,7 @@ export async function prepareZipSource<TSource extends ZipSourceReference>(sourc
   await mkdir(extractDirectory, { recursive: true })
   const digest = await downloadZipSource(source, zipPath, redirectSource)
   await assertSafeZipEntries(zipPath)
-  await execFileAsync("unzip", ["-q", zipPath, "-d", extractDirectory])
+  await executeManagedHostCommand({ command: "unzip", args: ["-q", zipPath, "-d", extractDirectory], cwd: root, allowedCwdRoots: [root], label: "extract recipe source zip" })
   await assertExtractedSourceBounds(extractDirectory)
 
   return { root, zipPath, extractDirectory, digest }
@@ -69,7 +66,8 @@ async function downloadZipSource<TSource extends ZipSourceReference>(source: TSo
 }
 
 async function assertSafeZipEntries(zipPath: string): Promise<void> {
-  const { stdout } = await execFileAsync("unzip", ["-Z1", zipPath])
+  const root = dirname(zipPath)
+  const { stdout } = await executeManagedHostCommand({ command: "unzip", args: ["-Z1", zipPath], cwd: root, allowedCwdRoots: [root], label: "list recipe source zip" })
   const entries = stdout.split(/\r?\n/).filter(Boolean)
   if (entries.length > maxExtractedFiles()) {
     throw new Error(`Recipe source zip contains too many entries: ${entries.length}`)

@@ -17,6 +17,7 @@ export interface RedactStringOptions extends SensitiveKeyOptions {
 
 const SENSITIVE_KEY_PATTERN = /(?:secret|token|credential|password|pass|api[_-]?key|private[_-]?key|authorization|auth|cookie|bearer|nonce|session|state|code|login)/i
 const SECRET_LIKE_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/
+const SECRET_LIKE_VALUE_GLOBAL_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/g
 
 export function isSensitiveKey(key: string, options: SensitiveKeyOptions = {}): boolean {
   return (options.pattern ?? SENSITIVE_KEY_PATTERN).test(key) || Boolean(options.extraPattern?.test(key))
@@ -49,6 +50,7 @@ export function redactJsonValue(value: unknown, options: RedactJsonOptions = {},
 export function redactString(value: string, options: RedactStringOptions = {}): string {
   return value
     .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => redactUrl(match, options))
+    .replace(SECRET_LIKE_VALUE_GLOBAL_PATTERN, REDACTED_VALUE)
     .replace(/([?&][^=&#\s"'<>]+)=([^&#\s"'<>]+)/g, options.redactQueryAssignments ? `$1=${REDACTED_VALUE}` : "$&")
     .replace(/((?:[A-Za-z0-9_-]*)(?:access[_-]?token|auth|bearer|code|cookie|credential|key|login|nonce|pass|password|secret|session|state|token)(?:[A-Za-z0-9_-]*)(?:["'\s:=]+))[^&#\s"'<>]+/gi, `$1${REDACTED_VALUE}`)
 }

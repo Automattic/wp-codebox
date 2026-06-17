@@ -305,16 +305,10 @@ final class WP_Codebox_Abilities {
 									'properties' => array(
 										'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/agent-fanout-worker/v1' ),
 										'id'                 => array( 'type' => 'string' ),
-										'goal'               => $task_input_schema['properties']['goal'],
 										'task'               => array( 'type' => 'string' ),
 										'agent'              => array( 'type' => 'string' ),
-										'context'            => $task_input_schema['properties']['context'],
-										'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
-										'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
-										'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
-										'policy'             => $task_input_schema['properties']['policy'],
 										'timeout_seconds'    => array( 'type' => 'integer' ),
-									),
+									) + self::task_input_alias_properties( $task_input_schema ),
 								),
 							),
 							'concurrency'           => array(
@@ -366,11 +360,7 @@ final class WP_Codebox_Abilities {
 						'properties' => array(
 							'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/host-delegation-request/v1' ),
 							'request_id'         => array( 'type' => 'string' ),
-							'goal'               => $task_input_schema['properties']['goal'],
 							'task'               => array( 'type' => 'string' ),
-							'target'             => $task_input_schema['properties']['target'],
-							'context'            => $task_input_schema['properties']['context'],
-							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
 							'execution'          => array(
 								'type'        => 'object',
 								'description' => 'Product-neutral host execution preferences or requirements. WP Codebox preserves this for the host provider without interpreting product policy.',
@@ -378,7 +368,7 @@ final class WP_Codebox_Abilities {
 							'orchestrator'       => $session_input['orchestrator'],
 							'sandbox_session_id' => $session_input['sandbox_session_id'],
 							'metadata'           => array( 'type' => 'object' ),
-						),
+						) + self::task_input_alias_properties( $task_input_schema ),
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
