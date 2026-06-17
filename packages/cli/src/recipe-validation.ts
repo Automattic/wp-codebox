@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertWorkspaceRecipeJsonSchema, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -1048,25 +1048,25 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const profiles = recipeStepArgValue(step.args ?? [], "profiles")
     if (profiles) {
       for (const profile of profiles.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit", "low-end-mobile-slow-4g"].includes(profile)) {
+        if (!(BROWSER_PROBE_CHROMIUM_PROFILE_IDS as readonly string[]).includes(profile)) {
           addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
         }
       }
     }
 
     const profile = recipeStepArgValue(step.args ?? [], "profile")
-    if (profile && !["desktop-chrome", "mobile-chrome", "desktop-webkit", "mobile-webkit", "low-end-mobile-slow-4g"].includes(profile)) {
+    if (profile && !(BROWSER_PROBE_CHROMIUM_PROFILE_IDS as readonly string[]).includes(profile)) {
       addIssue("invalid-profile", `${path}.args`, `wordpress.browser-probe profile is unsupported: ${profile}`)
     }
 
     const throttle = recipeStepArgValue(step.args ?? [], "throttle")
-    if (throttle && !["none", "low-end-mobile-slow-4g"].includes(throttle)) {
+    if (throttle && throttle !== "none" && !(BROWSER_PROBE_THROTTLE_PROFILE_IDS as readonly string[]).includes(throttle)) {
       addIssue("invalid-throttle", `${path}.args`, `wordpress.browser-probe throttle is unsupported: ${throttle}`)
     }
 
     const browser = recipeStepArgValue(step.args ?? [], "browser")
-    if (browser && !["chromium", "webkit"].includes(browser)) {
-      addIssue("invalid-browser", `${path}.args`, "wordpress.browser-probe browser must be chromium or webkit.")
+    if (browser && !(BROWSER_PROBE_BROWSER_VALUES as readonly string[]).includes(browser)) {
+      addIssue("invalid-browser", `${path}.args`, `wordpress.browser-probe browser must be ${BROWSER_PROBE_BROWSER_VALUES.join(" or ")}.`)
     }
 
     const viewport = recipeStepArgValue(step.args ?? [], "viewport")
@@ -1077,7 +1077,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["console", "errors", "html", "network", "performance", "memory", "screenshot"].includes(item)) {
+        if (!(BROWSER_PROBE_CAPTURE_VALUES as readonly string[]).includes(item)) {
           addIssue("invalid-capture", `${path}.args`, `wordpress.browser-probe capture does not support: ${item}`)
         }
       }

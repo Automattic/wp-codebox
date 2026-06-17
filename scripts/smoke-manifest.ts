@@ -33,6 +33,7 @@ export const smokeGroups = {
       tsxSmoke("runtime-backend-registry-smoke"),
       tsxSmoke("backend-package-adapter-registry-smoke"),
       tsxSmoke("command-registry-smoke"),
+      tsxSmoke("browser-probe-contract-smoke"),
       tsxSmoke("command-codecs-smoke"),
       tsxSmoke("command-args-smoke"),
       tsxSmoke("host-tool-registry-smoke"),

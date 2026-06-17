@@ -1,3 +1,5 @@
+import { BROWSER_PROBE_ACCEPTED_ARGS } from "./browser-probe-contract.js"
+
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
   | { kind: "recipe-alias"; command: string }
@@ -258,21 +260,7 @@ export const commandRegistry = [
   {
     id: "wordpress.browser-probe",
     description: "Open the live Playground preview in Playwright and capture generic browser replay/audit evidence artifacts.",
-    acceptedArgs: [
-      { name: "url", description: "Preview path or absolute URL to visit.", required: true, format: "path or URL" },
-      { name: "wait-for", description: "Navigation wait condition.", format: "domcontentloaded|load|networkidle|selector:<selector>|duration" },
-      { name: "duration", description: "Extra capture duration, or wait time when wait-for=duration.", format: "duration, e.g. 2s or 500ms" },
-      { name: "device", description: "Optional built-in Playwright device profile to use for the browser context.", format: "Playwright device name, e.g. iPhone 13" },
-      { name: "locale", description: "Optional browser context locale.", format: "BCP 47 locale, e.g. en-US" },
-      { name: "auth", description: "Optional in-memory browser authentication mode. Use wordpress-admin to bootstrap WordPress admin cookies from PHP without writing token-bearing storage-state artifacts.", format: "wordpress-admin" },
-      { name: "auth-user-id", description: "WordPress user ID used with auth=wordpress-admin; defaults to 1.", format: "positive integer" },
-      { name: "pre-page-script", description: "Optional JavaScript installed before navigation so page scripts can observe mocked browser/payment capabilities.", format: "JavaScript source" },
-      { name: "script", description: "Optional page-side JavaScript to evaluate after navigation and before final capture.", format: "JavaScript function body" },
-      { name: "assert", description: "Repeatable DOM/browser assertion. Supports advisory:<assertion>, exists:<selector>, not-exists:<selector>, visible:<selector>, hidden:<selector>, count:<selector><op><number>, text:<selector> contains <text>, attr:<selector>[name][=value], no-console-errors, no-page-errors, and no-errors.", repeatable: true, format: "browser assertion" },
-      { name: "capture", description: "Comma-separated artifacts to capture.", format: "console,errors,html,network,performance,memory,screenshot" },
-      { name: "repeat", description: "Optional repeated probe iterations for leak-oriented recipes.", format: "positive integer" },
-      { name: "reset-between", description: "Requested reset mode between repeated probe iterations.", format: "none|reload|new-page" },
-    ],
+    acceptedArgs: BROWSER_PROBE_ACCEPTED_ARGS,
     outputShape: "JSON summary with requested/effective browser context details plus assertion results and files/browser/console.jsonl, errors.jsonl, network.jsonl, performance.json, memory.json, checkpoints.jsonl, snapshot.html, summary.json, and screenshot.png when captured.",
     policyRequirement: "Runtime policy commands must include wordpress.browser-probe.",
     recipe: true,

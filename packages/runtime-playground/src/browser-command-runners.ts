@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, validateBrowserInteractionScript, type BrowserInteractionStep, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -12,7 +12,7 @@ import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowse
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
-import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
+import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
@@ -29,12 +29,6 @@ const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
 const VISUAL_EXPLANATION_STYLE_PROPERTIES = ["display", "position", "box-sizing", "width", "height", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "color", "background-color", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "opacity", "transform", "visibility"] as const
 const VISUAL_EXPLANATION_ATTRIBUTE_NAMES = ["id", "class", "role", "aria-label", "title", "href", "src", "type", "name"] as const
-
-interface BrowserProbeProfileDefinition {
-  id: string
-  browser: "chromium" | "webkit"
-  args: string[]
-}
 
 interface BrowserProbeRunPlan {
   url: string
@@ -200,34 +194,6 @@ interface VisualCompareBaselineDelta {
   }
 }
 
-const BROWSER_PROBE_PROFILES: Record<string, BrowserProbeProfileDefinition> = {
-  "desktop-chrome": {
-    id: "desktop-chrome",
-    browser: "chromium",
-    args: ["browser=chromium", "viewport=1280x720"],
-  },
-  "mobile-chrome": {
-    id: "mobile-chrome",
-    browser: "chromium",
-    args: ["browser=chromium", "device=Pixel 5"],
-  },
-  "low-end-mobile-slow-4g": {
-    id: "low-end-mobile-slow-4g",
-    browser: "chromium",
-    args: ["browser=chromium", "device=Pixel 5", "throttle=low-end-mobile-slow-4g"],
-  },
-  "desktop-webkit": {
-    id: "desktop-webkit",
-    browser: "webkit",
-    args: ["browser=webkit", "viewport=1280x720"],
-  },
-  "mobile-webkit": {
-    id: "mobile-webkit",
-    browser: "webkit",
-    args: ["browser=webkit", "device=iPhone 13"],
-  },
-}
-
 interface BrowserProbeThrottleProfileDefinition {
   id: string
   cpuSlowdownRate: number
@@ -293,9 +259,6 @@ export async function runBrowserProbeCommand({
     const profileId = argValue(spec.args ?? [], "profile")?.trim()
     if (profileId) {
       const profile = browserProbeProfile(profileId)
-      if (profile.browser !== "chromium") {
-        throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
-      }
       return runSingleBrowserProbeCommand({
         abortSignal,
         artifactRoot,
@@ -313,12 +276,6 @@ export async function runBrowserProbeCommand({
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
-  for (const profile of profiles) {
-    if (profile.browser !== "chromium") {
-      throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
-    }
-  }
-
   const artifacts: BrowserProbeArtifact[] = []
   const outputs: unknown[] = []
   for (const profile of profiles) {
@@ -446,8 +403,8 @@ async function runSingleBrowserProbeCommand({
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
   const { devices } = await import("playwright")
-  if (requestedContext.browser && requestedContext.browser !== "chromium") {
-    throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; use browser=chromium or a Chromium profile.`)
+  if (requestedContext.browser && !(BROWSER_PROBE_BROWSER_VALUES as readonly string[]).includes(requestedContext.browser)) {
+    throw new Error(`wordpress.browser-probe browser=${requestedContext.browser} is unsupported by this runner; supported browsers: ${BROWSER_PROBE_BROWSER_VALUES.join(", ")}.`)
   }
   const deviceProfile = requestedContext.device ? devices[requestedContext.device] : undefined
   if (requestedContext.device && !deviceProfile) {
@@ -885,9 +842,9 @@ function browserProbeProfileIds(args: string[]): string[] {
 }
 
 function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
-  const profile = BROWSER_PROBE_PROFILES[profileId]
+  const profile = BROWSER_PROBE_PROFILES[profileId as keyof typeof BROWSER_PROBE_PROFILES]
   if (!profile) {
-    throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_PROFILES).join(", ")}`)
+    throw new Error(`wordpress.browser-probe unknown profile: ${profileId}. Supported profiles: ${BROWSER_PROBE_CHROMIUM_PROFILE_IDS.join(", ")}`)
   }
   return profile
 }
@@ -942,7 +899,7 @@ function browserProbeThrottleProfile(args: string[]): BrowserProbeThrottleProfil
 
   const profile = BROWSER_PROBE_THROTTLE_PROFILES[profileId]
   if (!profile) {
-    throw new Error(`wordpress.browser-probe unknown throttle profile: ${profileId}. Supported profiles: ${Object.keys(BROWSER_PROBE_THROTTLE_PROFILES).join(", ")}`)
+    throw new Error(`wordpress.browser-probe unknown throttle profile: ${profileId}. Supported profiles: ${BROWSER_PROBE_THROTTLE_PROFILE_IDS.join(", ")}`)
   }
   return profile
 }
