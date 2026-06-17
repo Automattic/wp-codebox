@@ -753,6 +753,7 @@ export interface ArtifactPreview {
 export interface ArtifactPreviewReviewerAccess {
   schema: "wp-codebox/preview-reviewer-access/v1"
   status: "ready" | "blocked" | "unavailable"
+  outcome: "public" | "local" | "bootstrap" | "blocked" | "auth-required"
   mode: "direct-url" | "auth-bootstrap" | "none"
   reviewerSafe: boolean
   openUrl?: string
