@@ -1,9 +1,13 @@
-import { mkdir, stat, writeFile } from "node:fs/promises"
+import { stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import {
+  ARTIFACT_MANIFEST_PATH,
+  RUNTIME_SNAPSHOT_ARTIFACT_PATH,
+  artifactJson,
   artifactManifestFile,
   calculateArtifactContentDigest,
-  refreshArtifactManifestFileSha256s,
+  writeArtifactJson,
+  writeArtifactManifestJson,
   type ArtifactManifest,
   type RuntimeInfo,
 } from "@automattic/wp-codebox-core"
@@ -78,7 +82,7 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
   const createdAt = options.createdAt ?? new Date().toISOString()
   const directory = options.directory
   const writer = new ArtifactBundleWriter(directory)
-  const snapshotPath = "files/runtime-snapshot.json"
+  const snapshotPath = RUNTIME_SNAPSHOT_ARTIFACT_PATH
   const blueprintPath = "blueprint.after.json"
   const playgroundBundlePath = "blueprint.zip"
   const notesPath = "blueprint.after-notes.json"
@@ -96,8 +100,8 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
   await writer.writeJson(snapshotPath, snapshot, { kind: "runtime-snapshot" })
   await writer.writeJson(notesPath, notes, { kind: "blueprint-after-notes" })
   await writer.writeGenerated(playgroundBundlePath, { kind: "playground-blueprint-bundle", contentType: "application/zip" }, (path) => writePlaygroundBlueprintBundle(path, [
-    { path: "blueprint.json", data: `${JSON.stringify(blueprint, null, 2)}\n` },
-    { path: "files/runtime-snapshot.json", data: `${JSON.stringify(snapshot, null, 2)}\n` },
+    { path: "blueprint.json", data: artifactJson(blueprint) },
+    { path: RUNTIME_SNAPSHOT_ARTIFACT_PATH, data: artifactJson(snapshot) },
   ]))
 
   const contentInputs = [blueprintPath, playgroundBundlePath, snapshotPath, notesPath]
@@ -148,7 +152,7 @@ export async function writeReplayExportPackage(snapshot: RuntimeSnapshotArtifact
       blueprintBytes: blueprintStats.size,
     },
     artifacts: {
-      manifest: "manifest.json",
+      manifest: ARTIFACT_MANIFEST_PATH,
       blueprint: blueprintPath,
       playgroundBundle: playgroundBundlePath,
       snapshot: snapshotPath,
@@ -165,14 +169,13 @@ export async function writeReplayableWordPressSiteBundle(
   const createdAt = options.createdAt ?? new Date().toISOString()
   const directory = options.directory
   const filesDirectory = join(directory, "files")
-  await mkdir(filesDirectory, { recursive: true })
 
   const blueprint = buildReplayableWordPressSiteBlueprint(snapshot, options)
   const limitations = buildReplayableWordPressSiteLimitations(snapshot, options)
 
-  await writeJson(join(directory, "blueprint.json"), blueprint)
-  await writeJson(join(filesDirectory, "runtime-snapshot.json"), snapshot)
-  await writeJson(join(filesDirectory, "replay-limitations.json"), limitations)
+  await writeArtifactJson(join(directory, "blueprint.json"), blueprint)
+  await writeArtifactJson(join(filesDirectory, "runtime-snapshot.json"), snapshot)
+  await writeArtifactJson(join(filesDirectory, "replay-limitations.json"), limitations)
 
   const contentInputs = ["blueprint.json", "files/runtime-snapshot.json", "files/replay-limitations.json"]
   const contentDigest = await calculateArtifactContentDigest(directory, contentInputs)
@@ -189,7 +192,7 @@ export async function writeReplayableWordPressSiteBundle(
     createdAt,
     runtime: runtimeInfoForReplayableWordPressSite(snapshot, id, createdAt, blueprint),
     files: [
-      artifactManifestFile("manifest.json", "manifest", "application/json"),
+      artifactManifestFile(ARTIFACT_MANIFEST_PATH, "manifest", "application/json"),
       artifactManifestFile("blueprint.json", "playground-blueprint", "application/json"),
       artifactManifestFile("files/runtime-snapshot.json", "runtime-snapshot", "application/json"),
       artifactManifestFile("files/replay-limitations.json", "replay-limitations", "application/json"),
@@ -203,15 +206,12 @@ export async function writeReplayableWordPressSiteBundle(
     },
   }
 
-  await refreshArtifactManifestFileSha256s(directory, manifest)
-  await writeJson(join(directory, "manifest.json"), manifest)
-  await refreshArtifactManifestFileSha256s(directory, manifest)
-  await writeJson(join(directory, "manifest.json"), manifest)
+  await writeArtifactManifestJson(directory, ARTIFACT_MANIFEST_PATH, manifest)
 
   return {
     id,
     directory,
-    manifestPath: join(directory, "manifest.json"),
+    manifestPath: join(directory, ARTIFACT_MANIFEST_PATH),
     blueprintPath: join(directory, "blueprint.json"),
     snapshotPath: join(filesDirectory, "runtime-snapshot.json"),
     limitationsPath: join(filesDirectory, "replay-limitations.json"),
@@ -322,10 +322,6 @@ function runtimeInfoForReplayableWordPressSite(
 
 function playgroundBlueprintPhpVersion(version: string): string {
   return version.replace(/^(\d+\.\d+)\.\d+$/, "$1")
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 async function writePlaygroundBlueprintBundle(path: string, entries: Array<{ path: string; data: string }>): Promise<void> {

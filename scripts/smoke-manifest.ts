@@ -60,6 +60,7 @@ export const smokeGroups = {
     description: "Artifact contract and normalization smoke checks.",
     commands: [
       tsxSmoke("artifact-bundle-verifier-smoke"),
+      tsxSmoke("artifact-layout-writer-smoke"),
       tsxSmoke("artifact-apply-adapter-smoke"),
       tsxSmoke("transfer-proof-smoke"),
       tsxSmoke("artifact-redaction-smoke"),
