@@ -178,6 +178,22 @@ export interface WorkspaceRecipeStagedFile {
   target: string
 }
 
+export interface WorkspaceRecipeSourcePackageArtifact {
+  name?: string
+  path?: string
+  required?: boolean
+}
+
+export interface WorkspaceRecipeSourcePackage {
+  name: string
+  source: string
+  target: string
+  allow?: string[]
+  deny?: string[]
+  artifact?: boolean | WorkspaceRecipeSourcePackageArtifact
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
@@ -391,6 +407,7 @@ export interface WorkspaceRecipe {
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
+    sourcePackages?: WorkspaceRecipeSourcePackage[]
     agent_bundles?: WorkspaceRecipeAgentBundle[]
     inherit?: WorkspaceRecipeInheritanceRequest
     inheritance?: WorkspaceRecipeInheritanceResolution

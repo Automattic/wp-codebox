@@ -18,7 +18,11 @@ import {
   evidenceArtifactEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
+  compileRecipeTemplate,
+  normalizeReviewerSafePath,
+  normalizeWorkspaceRelativeTarget,
   reviewerSafeArtifactRef,
+  sourcePackagePathAllowed,
   normalizeArtifactPartPath,
   normalizeRecipeMounts,
   normalizeSharedMounts,
@@ -47,12 +51,29 @@ assert.equal(artifactStoragePublicUrl(storage, "files/output.json"), "https://ex
 assert.equal(safeArtifactRelativePath("/files//output.json"), "files/output.json")
 assert.equal(resolveArtifactPath(storage.root, "files/output.json").relativePath, "files/output.json")
 assert.equal(artifactManifestRelativePath(storage.root, resolve(storage.root, "files/output.json")), "files/output.json")
+assert.equal(normalizeReviewerSafePath("/packages//plugin"), "packages/plugin")
+assert.equal(normalizeWorkspaceRelativeTarget("packages/plugin"), "/workspace/packages/plugin")
+assert.equal(normalizeWorkspaceRelativeTarget("/workspace/packages/plugin"), "/workspace/packages/plugin")
+assert.equal(sourcePackagePathAllowed("src/index.php", ["src*"], ["src/secrets*"]), true)
+assert.equal(sourcePackagePathAllowed("src/secrets/key.php", ["src*"], ["src/secrets*"]), false)
+assert.equal(sourcePackagePathAllowed("src", ["src/index.php"], []), true)
 
 assert.throws(() => runtimeArtifactStorageDescriptor({ root: "./artifacts", pathPrefix: "../escape" }), /parent-directory/)
 assert.throws(() => runtimeArtifactStorageDescriptor({ root: "./artifacts", publicUrlRoot: "file:///tmp/artifacts" }), /http/)
 assert.throws(() => safeArtifactRelativePath("files/../secret.txt"), /parent-directory/)
 assert.throws(() => resolveArtifactPath(storage.root, "../secret.txt"), /parent-directory/)
 assert.throws(() => artifactManifestRelativePath(storage.root, resolve(storage.root, "../secret.txt")), /inside the artifact root/)
+assert.throws(() => normalizeReviewerSafePath("../secret"), /parent-directory/)
+assert.deepEqual(compileRecipeTemplate({ sourcePackages: [{ name: "", source: "./fixture", target: "fixtures/plugin" }] }).blockers.map((blocker) => blocker.code), ["invalid-source-package-name"])
+
+const template = compileRecipeTemplate({
+  sourcePackages: [{ name: "fixture", source: "./fixture", target: "fixtures/plugin", allow: ["src*"], artifact: true }],
+})
+assert.deepEqual(template.blockers, [])
+assert.deepEqual(template.sourcePackages[0]?.stagedFile, { source: "./fixture", target: "/workspace/fixtures/plugin" })
+assert.equal(template.recipe.inputs?.sourcePackages?.[0]?.target, "fixtures/plugin")
+assert.equal(template.recipe.artifacts?.paths?.[0]?.name, "source-package-fixture")
+assert.equal(template.recipe.artifacts?.paths?.[0]?.path, "/workspace/fixtures/plugin/.wp-codebox-source-package.json")
 
 assert.deepEqual(trustedBrowserSessionOrigin("http://localhost:8881/path?x=1"), {
   schema: "wp-codebox/trusted-browser-session-origin/v1",

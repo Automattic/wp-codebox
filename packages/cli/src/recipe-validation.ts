@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -223,6 +223,11 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     throw new Error(`Recipe stagedFiles must be an array: ${recipePath}`)
   }
 
+  const sourcePackages = recipe.inputs?.sourcePackages ?? []
+  if (!Array.isArray(sourcePackages)) {
+    throw new Error(`Recipe sourcePackages must be an array: ${recipePath}`)
+  }
+
   for (const stagedFile of stagedFiles) {
     if (!stagedFile || typeof stagedFile !== "object") {
       throw new Error(`Recipe stagedFiles entries must be objects: ${recipePath}`)
@@ -234,6 +239,15 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
 
     if (!stagedFile.target || typeof stagedFile.target !== "string") {
       throw new Error(`Recipe stagedFiles entries must include target: ${recipePath}`)
+    }
+  }
+
+  for (const [index, sourcePackage] of sourcePackages.entries()) {
+    if (!sourcePackage || typeof sourcePackage !== "object") {
+      throw new Error(`Recipe sourcePackages entries must be objects: ${recipePath}`)
+    }
+    for (const blocker of validateSourcePackage(sourcePackage, `$.inputs.sourcePackages[${index}]`)) {
+      throw new Error(`${blocker.message}: ${recipePath}`)
     }
   }
 
@@ -583,6 +597,14 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     const path = `$.inputs.stagedFiles[${index}]`
     await validateExistingFileOrDirectory(resolve(recipeDirectory, stagedFile.source), `${path}.source`, addIssue)
     validateAbsoluteSandboxPath(stagedFile.target, `${path}.target`, addIssue)
+  }
+
+  for (const [index, sourcePackage] of (recipe.inputs?.sourcePackages ?? []).entries()) {
+    const path = `$.inputs.sourcePackages[${index}]`
+    await validateExistingDirectory(resolve(recipeDirectory, sourcePackage.source), `${path}.source`, addIssue)
+    for (const blocker of validateSourcePackage(sourcePackage, path)) {
+      addIssue(blocker.code, blocker.path, blocker.message)
+    }
   }
 
   for (const [index, artifact] of (recipe.artifacts?.paths ?? []).entries()) {

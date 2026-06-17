@@ -73,6 +73,7 @@
     "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
+    "test:recipe-source-packages": "tsx tests/recipe-source-packages.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
     "check": "npm run smoke -- --group=check"

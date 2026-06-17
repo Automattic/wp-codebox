@@ -1,8 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type RecipeTemplateInput, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
-  recipeType: "phpunit" | "bench"
+  recipeType: "phpunit" | "bench" | "template"
   optionsPath: string
   outputPath?: string
 }
@@ -50,7 +50,7 @@ interface WordPressBenchBuilderOptions {
 
 export async function runRecipeBuildCommand(args: string[]): Promise<number> {
   const options = parseRecipeBuildOptions(args)
-  const builderOptions = JSON.parse(await readFile(options.optionsPath, "utf8")) as WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions
+  const builderOptions = JSON.parse(await readFile(options.optionsPath, "utf8")) as WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput
   const recipe = buildRecipe(options.recipeType, builderOptions)
   const json = `${JSON.stringify(recipe, null, 2)}\n`
 
@@ -63,55 +63,66 @@ export async function runRecipeBuildCommand(args: string[]): Promise<number> {
   return 0
 }
 
-function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions): WorkspaceRecipe {
+function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput): WorkspaceRecipe {
   switch (recipeType) {
-    case "phpunit":
+    case "phpunit": {
+      const phpunitOptions = options as WordPressPhpunitBuilderOptions
       return buildWordPressPhpunitRecipe({
-        blueprint: options.blueprint,
-        wordpressVersion: stringOrUndefined(options.wordpressVersion),
-        mounts: Array.isArray(options.mounts) ? options.mounts : [],
-        pluginSource: stringOrUndefined((options as WordPressPhpunitBuilderOptions).pluginSource),
-        pluginSlug: requiredString(options.pluginSlug, "pluginSlug"),
-        cwd: stringOrUndefined((options as WordPressPhpunitBuilderOptions).cwd),
-        selectedTestFile: stringOrUndefined((options as WordPressPhpunitBuilderOptions).selectedTestFile),
-        changedTestFiles: Array.isArray((options as WordPressPhpunitBuilderOptions).changedTestFiles) ? (options as WordPressPhpunitBuilderOptions).changedTestFiles : [],
-        env: plainObject(options.env),
-        wpConfigDefines: plainObject(options.wpConfigDefines),
-        autoloadFile: stringOrUndefined((options as WordPressPhpunitBuilderOptions).autoloadFile),
-        testsDir: stringOrUndefined((options as WordPressPhpunitBuilderOptions).testsDir),
-        dependencyMounts: Array.isArray((options as WordPressPhpunitBuilderOptions).dependencyMounts) ? (options as WordPressPhpunitBuilderOptions).dependencyMounts : [],
-        bootstrapFiles: Array.isArray((options as WordPressPhpunitBuilderOptions).bootstrapFiles) ? (options as WordPressPhpunitBuilderOptions).bootstrapFiles : [],
-        phpunitArgs: Array.isArray((options as WordPressPhpunitBuilderOptions).phpunitArgs) ? (options as WordPressPhpunitBuilderOptions).phpunitArgs : [],
-        bootstrapMode: stringOrUndefined((options as WordPressPhpunitBuilderOptions).bootstrapMode),
-        projectBootstrap: stringOrUndefined((options as WordPressPhpunitBuilderOptions).projectBootstrap),
-        multisite: Boolean((options as WordPressPhpunitBuilderOptions).multisite),
-        prepareSteps: Array.isArray((options as WordPressPhpunitBuilderOptions).prepareSteps) ? (options as WordPressPhpunitBuilderOptions).prepareSteps : [],
+        blueprint: phpunitOptions.blueprint,
+        wordpressVersion: stringOrUndefined(phpunitOptions.wordpressVersion),
+        mounts: Array.isArray(phpunitOptions.mounts) ? phpunitOptions.mounts : [],
+        pluginSource: stringOrUndefined(phpunitOptions.pluginSource),
+        pluginSlug: requiredString(phpunitOptions.pluginSlug, "pluginSlug"),
+        cwd: stringOrUndefined(phpunitOptions.cwd),
+        selectedTestFile: stringOrUndefined(phpunitOptions.selectedTestFile),
+        changedTestFiles: Array.isArray(phpunitOptions.changedTestFiles) ? phpunitOptions.changedTestFiles : [],
+        env: plainObject(phpunitOptions.env),
+        wpConfigDefines: plainObject(phpunitOptions.wpConfigDefines),
+        autoloadFile: stringOrUndefined(phpunitOptions.autoloadFile),
+        testsDir: stringOrUndefined(phpunitOptions.testsDir),
+        dependencyMounts: Array.isArray(phpunitOptions.dependencyMounts) ? phpunitOptions.dependencyMounts : [],
+        bootstrapFiles: Array.isArray(phpunitOptions.bootstrapFiles) ? phpunitOptions.bootstrapFiles : [],
+        phpunitArgs: Array.isArray(phpunitOptions.phpunitArgs) ? phpunitOptions.phpunitArgs : [],
+        bootstrapMode: stringOrUndefined(phpunitOptions.bootstrapMode),
+        projectBootstrap: stringOrUndefined(phpunitOptions.projectBootstrap),
+        multisite: Boolean(phpunitOptions.multisite),
+        prepareSteps: Array.isArray(phpunitOptions.prepareSteps) ? phpunitOptions.prepareSteps : [],
       })
-    case "bench":
+    }
+    case "bench": {
+      const benchOptions = options as WordPressBenchBuilderOptions
       return buildWordPressBenchRecipe({
-        blueprint: options.blueprint,
-        wordpressVersion: stringOrUndefined(options.wordpressVersion),
-        mounts: Array.isArray(options.mounts) ? options.mounts : [],
-        extra_plugins: Array.isArray((options as WordPressBenchBuilderOptions).extra_plugins) ? (options as WordPressBenchBuilderOptions).extra_plugins : [],
-        componentId: stringOrUndefined((options as WordPressBenchBuilderOptions).componentId),
-        pluginSlug: requiredString(options.pluginSlug, "pluginSlug"),
-        iterations: integerOrUndefined((options as WordPressBenchBuilderOptions).iterations),
-        warmupIterations: integerOrUndefined((options as WordPressBenchBuilderOptions).warmupIterations),
-        dependencySlugs: Array.isArray((options as WordPressBenchBuilderOptions).dependencySlugs) ? (options as WordPressBenchBuilderOptions).dependencySlugs : [],
-        env: plainObject(options.env),
-        wpConfigDefines: plainObject(options.wpConfigDefines),
-        bootstrapFiles: Array.isArray((options as WordPressBenchBuilderOptions).bootstrapFiles) ? (options as WordPressBenchBuilderOptions).bootstrapFiles : [],
-        workloads: Array.isArray((options as WordPressBenchBuilderOptions).workloads) ? (options as WordPressBenchBuilderOptions).workloads : [],
-        scenarioIds: Array.isArray((options as WordPressBenchBuilderOptions).scenarioIds) ? (options as WordPressBenchBuilderOptions).scenarioIds : [],
-        lifecycle: plainObject((options as WordPressBenchBuilderOptions).lifecycle),
-        resetPolicy: plainObject((options as WordPressBenchBuilderOptions).resetPolicy),
+        blueprint: benchOptions.blueprint,
+        wordpressVersion: stringOrUndefined(benchOptions.wordpressVersion),
+        mounts: Array.isArray(benchOptions.mounts) ? benchOptions.mounts : [],
+        extra_plugins: Array.isArray(benchOptions.extra_plugins) ? benchOptions.extra_plugins : [],
+        componentId: stringOrUndefined(benchOptions.componentId),
+        pluginSlug: requiredString(benchOptions.pluginSlug, "pluginSlug"),
+        iterations: integerOrUndefined(benchOptions.iterations),
+        warmupIterations: integerOrUndefined(benchOptions.warmupIterations),
+        dependencySlugs: Array.isArray(benchOptions.dependencySlugs) ? benchOptions.dependencySlugs : [],
+        env: plainObject(benchOptions.env),
+        wpConfigDefines: plainObject(benchOptions.wpConfigDefines),
+        bootstrapFiles: Array.isArray(benchOptions.bootstrapFiles) ? benchOptions.bootstrapFiles : [],
+        workloads: Array.isArray(benchOptions.workloads) ? benchOptions.workloads : [],
+        scenarioIds: Array.isArray(benchOptions.scenarioIds) ? benchOptions.scenarioIds : [],
+        lifecycle: plainObject(benchOptions.lifecycle),
+        resetPolicy: plainObject(benchOptions.resetPolicy),
       })
+    }
+    case "template": {
+      const compiled = compileRecipeTemplate(options as RecipeTemplateInput)
+      if (compiled.blockers.length > 0) {
+        throw new Error(`Recipe template has blockers: ${compiled.blockers.map((blocker) => `${blocker.path} ${blocker.message}`).join("; ")}`)
+      }
+      return compiled.recipe
+    }
   }
 }
 
 function parseRecipeBuildOptions(args: string[]): RecipeBuildOptions {
   const recipeType = args.shift()
-  if (recipeType !== "phpunit" && recipeType !== "bench") {
+  if (recipeType !== "phpunit" && recipeType !== "bench" && recipeType !== "template") {
     throw new Error(`Unknown recipe build type: ${recipeType ?? ""}`)
   }
 

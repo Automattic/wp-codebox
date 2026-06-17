@@ -176,6 +176,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Local recipe-owned files or directories copied into absolute sandbox paths before workflow steps execute.",
             items: { $ref: "#/$defs/stagedFile" },
           },
+          sourcePackages: {
+            type: "array",
+            description: "Local source packages materialized below the sandbox workspace with safe allow/deny filters and provenance metadata.",
+            items: { $ref: "#/$defs/sourcePackage" },
+          },
           agent_bundles: {
             type: "array",
             description: "Runtime agent bundles to import into the sandbox before invoking the selected runtime agent.",
@@ -731,6 +736,33 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         properties: {
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
+        },
+      },
+      sourcePackage: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "source", "target"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          source: { type: "string" },
+          target: { type: "string" },
+          allow: { type: "array", items: { type: "string" } },
+          deny: { type: "array", items: { type: "string" } },
+          artifact: {
+            oneOf: [
+              { type: "boolean" },
+              {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  name: { type: "string" },
+                  path: { type: "string", pattern: "^/" },
+                  required: { type: "boolean" },
+                },
+              },
+            ],
+          },
+          metadata: { type: "object" },
         },
       },
       step: {

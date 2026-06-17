@@ -2,9 +2,10 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
+import { compileSourcePackage, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
-import { collectPreparedSourceCleanupPaths, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
+import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
 import { evaluateSourcePolicy, sourcePolicySnapshot, type SourcePolicyIssue } from "./source-policy.js"
 import { prepareZipSource } from "./zip-source.js"
@@ -79,6 +80,17 @@ export interface PreparedStagedFile {
   cleanupPaths: string[]
   provenance: RecipeStagedFileProvenance
   metadata: Record<string, unknown>
+}
+
+export interface SourcePackageProvenance {
+  schema: "wp-codebox/source-package-provenance/v1"
+  name: string
+  source: RecipeStagedFileProvenance
+  target: string
+  allow: string[]
+  deny: string[]
+  digest: { sha256: string }
+  materializedAt: string
 }
 
 export interface PreparedRuntimeOverlay {
@@ -347,7 +359,75 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
     })
   }
 
+  for (const [index, sourcePackage] of (recipe.inputs?.sourcePackages ?? []).entries()) {
+    stagedFiles.push(await prepareRecipeSourcePackage(sourcePackage, recipeDirectory, index))
+  }
+
   return stagedFiles
+}
+
+async function prepareRecipeSourcePackage(sourcePackage: WorkspaceRecipeSourcePackage, recipeDirectory: string, index: number): Promise<PreparedStagedFile> {
+  const compiled = compileSourcePackage(sourcePackage)
+  const originalSource = resolve(recipeDirectory, sourcePackage.source)
+  const sourceStat = await stat(originalSource)
+  if (!sourceStat.isDirectory()) {
+    throw new Error(`Recipe sourcePackages entries must point to directories: ${sourcePackage.source}`)
+  }
+
+  const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-source-package-"))
+  const stagedSource = join(stagingRoot, compiled.name)
+  await copySourcePackageDirectory(originalSource, stagedSource, sourcePackage.allow ?? [], sourcePackage.deny ?? [])
+  const digest = await directoryContentDigest(stagedSource)
+  const provenance = localPreparedSourceProvenance(sourcePackage.source, recipeDirectory)
+  const provenancePayload: SourcePackageProvenance = {
+    schema: "wp-codebox/source-package-provenance/v1",
+    name: compiled.name,
+    source: provenance,
+    target: compiled.stagedFile.target,
+    allow: sourcePackage.allow ?? [],
+    deny: sourcePackage.deny ?? [],
+    digest: { sha256: digest },
+    materializedAt: new Date().toISOString(),
+  }
+  await writeFile(join(stagedSource, ".wp-codebox-source-package.json"), `${JSON.stringify(provenancePayload, null, 2)}\n`)
+
+  return {
+    source: stagedSource,
+    originalSource,
+    sourceRef: sourcePackage.source,
+    target: compiled.stagedFile.target,
+    type: "directory",
+    cleanupPaths: [stagingRoot],
+    provenance,
+    metadata: {
+      kind: "source-package",
+      index,
+      name: compiled.name,
+      target: compiled.stagedFile.target,
+      source: provenance,
+      filters: { allow: sourcePackage.allow ?? [], deny: sourcePackage.deny ?? [] },
+      digest: { sha256: digest },
+      provenanceFile: ".wp-codebox-source-package.json",
+      ...(sourcePackage.metadata ? { userMetadata: sourcePackage.metadata } : {}),
+    },
+  }
+}
+
+async function copySourcePackageDirectory(sourceRoot: string, targetRoot: string, allow: string[], deny: string[]): Promise<void> {
+  const excludedNames = new Set(DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES)
+  await cp(sourceRoot, targetRoot, {
+    recursive: true,
+    filter: (entry) => {
+      const relativePath = relative(sourceRoot, entry).replace(/\\/g, "/")
+      if (!relativePath) {
+        return true
+      }
+      if (excludedNames.has(basename(entry))) {
+        return false
+      }
+      return sourcePackagePathAllowed(relativePath, allow, deny)
+    },
+  })
 }
 
 export async function prepareRecipeRuntimeOverlays(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {

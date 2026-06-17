@@ -74,6 +74,7 @@ top-level fields:
 - `fixtureDatabases`
 - `siteSeeds`
 - `stagedFiles`
+- `sourcePackages`
 - `agent_bundles`
 - `inherit`
 - `inheritance`
@@ -122,6 +123,47 @@ Supported `loadAs` values:
 
 External HTTPS zip downloads are gated by `WP_CODEBOX_ALLOW_NETWORK_DOWNLOADS=1`.
 Local paths are resolved relative to the recipe file.
+
+## Source Packages
+
+`inputs.sourcePackages` materializes local recipe source directories below the
+sandbox workspace. It is directory-only; use `inputs.stagedFiles` for single-file
+staging. Each package declares a stable `name`, local `source`,
+workspace-relative `target`, optional `allow`/`deny` path filters, and optional
+provenance artifact registration.
+
+```json
+{
+  "inputs": {
+    "sourcePackages": [
+      {
+        "name": "fixture-plugin",
+        "source": "./fixtures/plugin",
+        "target": "packages/fixture-plugin",
+        "allow": ["src*", "composer.json"],
+        "deny": ["src/secrets*"],
+        "artifact": true
+      }
+    ]
+  }
+}
+```
+
+Targets are normalized under `/workspace` when they are not already absolute
+workspace paths. Materialization uses WP Codebox prepared-source exclusions,
+applies `deny` before `allow`, hashes the copied package, and writes
+`.wp-codebox-source-package.json` into the staged package root with source,
+filter, target, digest, and timestamp provenance. Validation emits blockers for
+unsafe names, paths, and filters before runtime setup.
+
+`recipe build template` compiles declarative source package input into generated
+artifact declarations while preserving `inputs.sourcePackages`, so callers use
+the same validation and run path as hand-written recipes without duplicate
+mounts.
+
+```bash
+npm run wp-codebox -- recipe build template --options ./template-options.json --output ./recipe.json
+```
 
 ## Workflow Steps
 
