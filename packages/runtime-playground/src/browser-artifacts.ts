@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { artifactManifestFile, type ArtifactManifestFile, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
+import { artifactManifestFile, type ArtifactManifestFile, type ArtifactManifestFileOptions, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
 import type { Request } from "playwright"
 
 export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
@@ -865,6 +865,12 @@ interface BrowserArtifactFileManifestEntry {
   redact: boolean
 }
 
+export interface BrowserArtifactFileManifestMetadata {
+  kind: string
+  contentType: string
+  redaction?: ArtifactManifestFileOptions["redaction"]
+}
+
 const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, BrowserArtifactFileManifestEntry> = {
   actions: { kind: "browser-actions", contentType: "application/x-ndjson", redact: true },
   editorState: { kind: "browser-editor-state", contentType: "application/json", redact: true },
@@ -888,6 +894,15 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
   wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
+}
+
+export function browserArtifactFileManifest(key: keyof BrowserArtifactFiles): BrowserArtifactFileManifestMetadata {
+  const entry = BROWSER_ARTIFACT_FILE_MANIFEST[key]
+  return {
+    kind: entry.kind,
+    contentType: entry.contentType,
+    ...(entry.redact ? { redaction: { policy: "required", sensitive: true, reason: "Browser artifacts can include page content, URLs, user data, headers, or runtime diagnostics." } } : { redaction: { policy: "none", sensitive: false } }),
+  }
 }
 
 function browserArtifactFileEntries(probe: BrowserArtifact): Array<{ path: string; manifest: BrowserArtifactFileManifestEntry }> {

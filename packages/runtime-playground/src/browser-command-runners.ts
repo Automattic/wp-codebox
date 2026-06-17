@@ -5,6 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROW
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
+import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
@@ -379,27 +380,14 @@ async function runSingleBrowserProbeCommand({
   const routeTracker = createBrowserPreviewRouteTracker()
   const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(runPlan.url, preview.effectiveOrigin)
-  const browserDirectory = join(artifactRoot, browserFilesDirectory)
-  await mkdir(browserDirectory, { recursive: true })
+  const artifactSession = new BrowserArtifactSession(artifactRoot, browserFilesDirectory, { source: command, operation: "browser-probe" })
 
   const consoleMessages: Record<string, unknown>[] = []
   const errors: BrowserProbeErrorRecord[] = []
   const network: BrowserProbeNetworkRecord[] = []
   const networkTasks: Array<Promise<void>> = []
   const checkpoints: BrowserProbeCheckpointRecord[] = []
-  const consolePath = join(browserDirectory, "console.jsonl")
-  const checkpointsPath = join(browserDirectory, "checkpoints.jsonl")
-  const errorsPath = join(browserDirectory, "errors.jsonl")
-  const htmlPath = join(browserDirectory, "snapshot.html")
-  const memoryPath = join(browserDirectory, "memory.json")
-  const lifecyclePath = join(browserDirectory, "lifecycle.json")
-  const networkPath = join(browserDirectory, "network.jsonl")
-  const performancePath = join(browserDirectory, "performance.json")
-  const reviewPath = join(browserDirectory, "review.json")
-  const screenshotPath = join(browserDirectory, "screenshot.png")
-  const summaryPath = join(browserDirectory, "summary.json")
-  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
-  const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
+  const screenshotPath = artifactSession.absolutePath("screenshot.png")
   const startedAt = now()
   const startedAtMs = Date.now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
@@ -605,7 +593,7 @@ async function runSingleBrowserProbeCommand({
       if (capture.has("html")) {
         try {
           const html = await page.content()
-          await writeFile(htmlPath, html)
+          await artifactSession.writeText("html", "snapshot.html", html)
           htmlSha256 = sha256(Buffer.from(html, "utf8"))
         } catch (error) {
           errors.push(serializeBrowserError("probe-error", error))
@@ -614,7 +602,8 @@ async function runSingleBrowserProbeCommand({
 
       if (capture.has("screenshot")) {
         try {
-          await page.screenshot({ path: screenshotPath, fullPage: true })
+          const activePage = page
+          await artifactSession.writeGenerated("screenshot", "screenshot.png", (path) => activePage.screenshot({ path, fullPage: true }).then(() => undefined))
           screenshotSha256 = await fileSha256(screenshotPath)
         } catch (error) {
           errors.push(serializeBrowserError("probe-error", error))
@@ -624,25 +613,25 @@ async function runSingleBrowserProbeCommand({
     await settleBrowserNetworkTasks(networkTasks, livenessPolicy.networkSettleTimeoutMs)
     await browser.close()
     if (capture.has("console") || capturesConsoleForAssertions) {
-      await writeFile(consolePath, jsonLines(consoleMessages))
+      await artifactSession.writeJsonLines("console", "console.jsonl", consoleMessages)
     }
     if (capture.has("errors") || capturesErrorsForAssertions) {
-      await writeFile(errorsPath, jsonLines(errors))
+      await artifactSession.writeJsonLines("errors", "errors.jsonl", errors)
     }
     if (capture.has("network") || capturesNetworkForAssertions) {
-      await writeFile(networkPath, jsonLines(network))
+      await artifactSession.writeJsonLines("network", "network.jsonl", network)
     }
     if (checkpoints.length > 0) {
-      await writeFile(checkpointsPath, jsonLines(checkpoints))
+      await artifactSession.writeJsonLines("checkpoints", "checkpoints.jsonl", checkpoints)
     }
     if (memoryArtifact) {
-      await writeFile(memoryPath, `${JSON.stringify(memoryArtifact, null, 2)}\n`)
+      await artifactSession.writeJson("memory", "memory.json", memoryArtifact)
     }
     if (lifecycleArtifact) {
-      await writeFile(lifecyclePath, `${JSON.stringify(lifecycleArtifact, null, 2)}\n`)
+      await artifactSession.writeJson("lifecycle", "lifecycle.json", lifecycleArtifact)
     }
     if (performanceArtifact) {
-      await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
+      await artifactSession.writeJson("performance", "performance.json", performanceArtifact)
     }
 
     const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
@@ -653,7 +642,7 @@ async function runSingleBrowserProbeCommand({
       requestedUrl: targetUrl,
     })
     if (redirectDiagnostics) {
-      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+      await artifactSession.writeJson("redirectDiagnostics", "redirect-diagnostics.json", redirectDiagnostics)
     }
     const redirectDiagnosticsSummary = redirectDiagnostics?.summary
 
@@ -664,7 +653,7 @@ async function runSingleBrowserProbeCommand({
       server,
     })
     if (wordpressDiagnostics) {
-      await writeFile(wordpressDiagnosticsPath, `${JSON.stringify(wordpressDiagnostics, null, 2)}\n`)
+      await artifactSession.writeJson("wordpressDiagnostics", "wordpress-diagnostics.json", wordpressDiagnostics)
     }
     const wordpressDiagnosticsSummary = wordpressDiagnostics?.summary
 
@@ -712,7 +701,7 @@ async function runSingleBrowserProbeCommand({
       redirectDiagnostics: redirectDiagnosticsSummary,
       wordpressDiagnostics: wordpressDiagnosticsSummary,
     })
-    await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
+    await artifactSession.writeJson("review", "review.json", review)
 
     artifact = {
       artifactType: "probe",
@@ -765,7 +754,7 @@ async function runSingleBrowserProbeCommand({
         viewport,
       },
     }
-    await writeFile(summaryPath, `${JSON.stringify({
+    await artifactSession.writeJson("summary", "summary.json", {
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
       preview,
@@ -796,7 +785,7 @@ async function runSingleBrowserProbeCommand({
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
-    }, null, 2)}\n`)
+    })
   }
 
   abortSignal?.removeEventListener("abort", abortHandler)
