@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto"
 import { access, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
 import type { ExecutionSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { errorMessage, now, sha256 } from "@automattic/wp-codebox-core/internals"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
@@ -842,10 +842,6 @@ function visualCompareMatrixOptions(args: string[]): Record<string, unknown> {
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 interface VisualComparePairSummary {
   status: string
   source: Record<string, unknown>
@@ -1591,16 +1587,8 @@ function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
   return diff.data[offset] > 0 || diff.data[offset + 1] > 0 || diff.data[offset + 2] > 0
 }
 
-function now(): string {
-  return new Date().toISOString()
-}
-
 async function fileSha256(path: string): Promise<string> {
   return sha256(await readFile(path))
-}
-
-function sha256(contents: Buffer): string {
-  return createHash("sha256").update(contents).digest("hex")
 }
 
 function numberArg(args: string[], name: string, fallback: number): number {

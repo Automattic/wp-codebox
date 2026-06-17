@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto"
 import { access, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, redactString, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -3738,16 +3738,8 @@ class BrowserStorageStateImportError extends Error {
   }
 }
 
-function now(): string {
-  return new Date().toISOString()
-}
-
 async function fileSha256(path: string): Promise<string> {
   return sha256(await readFile(path))
-}
-
-function sha256(contents: Buffer): string {
-  return createHash("sha256").update(contents).digest("hex")
 }
 
 type BrowserProbeProgressSource = "navigation" | "network" | "console" | "pageerror" | "checkpoint" | "script" | "duration" | "probe-error"

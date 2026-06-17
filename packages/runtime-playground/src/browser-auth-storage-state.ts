@@ -1,3 +1,5 @@
+import { isPlainObject as isRecord } from "@automattic/wp-codebox-core/internals"
+
 export interface WordPressFixtureUserSpec {
   userId?: number
   username?: string
@@ -148,10 +150,6 @@ function normalizeBrowserStorageStateOrigin(origin: unknown): BrowserAuthStorage
       return { name: String(item.name ?? ""), value: String(item.value ?? "") }
     }),
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 export function wordpressFixtureUserStorageStatePhpCode({

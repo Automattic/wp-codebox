@@ -22,25 +22,6 @@ final class WP_Codebox_Host_Tool_Policy_Validator {
 
 	/** @param array<string,mixed> $task_input Normalized task input. */
 	public function validate_task_tools( array $task_input ): WP_Error|null {
-		return $this->normalizer->validate_task_tools( $this->string_list( $task_input['allowed_tools'] ?? array() ), $task_input );
-	}
-
-	/** @return string[] */
-	private function string_list( mixed $values ): array {
-		if ( ! is_array( $values ) ) {
-			return array();
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					array_map(
-						static fn( $value ): string => trim( (string) $value ),
-						$values
-					),
-					static fn( string $value ): bool => '' !== $value
-				)
-			)
-		);
+		return $this->normalizer->validate_task_tools( WP_Codebox_Agent_Task::string_list( $task_input['allowed_tools'] ?? array() ), $task_input );
 	}
 }

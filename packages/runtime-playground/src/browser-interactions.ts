@@ -1,4 +1,5 @@
 import type { BrowserInteractionStep } from "@automattic/wp-codebox-core"
+import { now } from "@automattic/wp-codebox-core/internals"
 import type { Frame, Page } from "playwright"
 import { browserActionLoadState, browserDeepEqual, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserProbeErrorRecord, BrowserStepAssertion, BrowserStepReadiness, BrowserStepRecord } from "./browser-artifacts.js"
@@ -29,10 +30,6 @@ interface BrowserPaintedReadinessTarget {
   frame: Page | Frame
   selector?: string
   urlFragment?: string
-}
-
-function now(): string {
-  return new Date().toISOString()
 }
 
 export async function executeBrowserInteractionStep(

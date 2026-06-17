@@ -1,4 +1,7 @@
 import { isSensitiveKey } from "@automattic/wp-codebox-core"
+import { errorMessage, parseJsonObject } from "@automattic/wp-codebox-core/internals"
+
+export { errorMessage }
 
 export interface PlaygroundRunResponse {
   bytes?: unknown
@@ -47,10 +50,6 @@ export function assertPlaygroundResponseOk(command: string, response: Playground
   if (typeof response.exitCode === "number" && response.exitCode !== 0) {
     throw new PlaygroundCommandError(command, response)
   }
-}
-
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /**
@@ -409,14 +408,6 @@ function decodeByteMapText(text: string): string | undefined {
   }
 
   return new TextDecoder().decode(Uint8Array.from(bytes)).trim()
-}
-
-function parseJsonObject(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return undefined
-  }
 }
 
 function findByteMap(value: unknown, seen = new Set<unknown>()): number[] | undefined {

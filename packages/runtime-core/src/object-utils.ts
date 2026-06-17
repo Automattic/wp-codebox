@@ -4,6 +4,42 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+export function objectValue(value: unknown): Record<string, unknown> {
+  return isPlainObject(value) ? value : {}
+}
+
+export function optionalObjectValue(value: unknown): Record<string, unknown> | undefined {
+  return isPlainObject(value) ? value : undefined
+}
+
+export function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+export function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export function parseJsonObject(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+export function now(): string {
+  return new Date().toISOString()
+}
+
+export function sha256(contents: string | Buffer): string {
+  return createHash("sha256").update(contents).digest("hex")
+}
+
 export function stableJson(value: unknown): string {
   return stableJsonValue(value, new WeakSet(), 0)
 }

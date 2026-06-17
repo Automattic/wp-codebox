@@ -1177,21 +1177,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @return string[] */
 	private function string_list( mixed $values ): array {
-		if ( ! is_array( $values ) ) {
-			return array();
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					array_map(
-						static fn( $value ): string => trim( (string) $value ),
-						$values
-					),
-					static fn( string $value ): bool => '' !== $value
-				)
-			)
-		);
+		return WP_Codebox_Agent_Task::string_list( $values );
 	}
 
 	/** @return string[] */

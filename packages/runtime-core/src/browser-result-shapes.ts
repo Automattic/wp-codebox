@@ -1,3 +1,5 @@
+import { isPlainObject as isRecord, stringValue } from "./object-utils.js"
+
 export const BROWSER_RESULT_SCHEMA_VERSION = 1 as const
 
 const VALID_TRACE_ENVELOPE_STATUSES = new Set(["pass", "fail", "error", "skip", "unknown"])
@@ -381,10 +383,6 @@ function roundNumber(value: number): number {
   return Math.round(value * 1000) / 1000
 }
 
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
-
 function normalizePhaseName(name: unknown, options: BrowserResultShapeOptions): string {
   if (options.normalizePhaseName) {
     return options.normalizePhaseName(name)
@@ -394,10 +392,6 @@ function normalizePhaseName(name: unknown, options: BrowserResultShapeOptions): 
 
 function comparePhaseMarks(a: BrowserPhaseMark, b: BrowserPhaseMark): number {
   return a.start_time_ms - b.start_time_ms || a.name.localeCompare(b.name)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function stripUndefined<T extends object>(value: T): T {

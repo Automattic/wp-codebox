@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { access, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { redactString, type ArtifactManifest } from "@automattic/wp-codebox-core"
+import { isPlainObject as isRecord, now } from "@automattic/wp-codebox-core/internals"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
   BrowserArtifact,
@@ -25,14 +26,6 @@ export interface BrowserArtifactMetricsResult {
   hasBrowserMetrics: boolean
   metrics: Record<string, number>
   artifacts: Record<string, { path: string; kind: "json" | "jsonl" }>
-}
-
-function now(): string {
-  return new Date().toISOString()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 export function browserProbeMemorySummary(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbeMemorySummary {

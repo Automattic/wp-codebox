@@ -1,3 +1,5 @@
+import { stringValue } from "./object-utils.js"
+
 export type CommandEnvelopeStatus = "completed" | "failed" | "timed_out" | "cancelled" | "running" | "queued" | (string & {})
 export type PhaseRecipeStatus = "succeeded" | "failed" | "partial" | "blocked" | "skipped" | "running" | (string & {})
 export type AgentTaskStatus = "succeeded" | "failed" | "no_op" | "timeout" | "provider_error" | "unable_to_remediate" | (string & {})
@@ -69,8 +71,4 @@ export function agentTaskStatusFailed(status: unknown): boolean {
 
 function numericExitStatus(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
 }

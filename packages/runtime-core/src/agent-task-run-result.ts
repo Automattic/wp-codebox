@@ -1,4 +1,4 @@
-import { isPlainObject, stripUndefined } from "./object-utils.js"
+import { isPlainObject, numberValue, objectValue, stringValue, stripUndefined } from "./object-utils.js"
 import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
 import { normalizeAgentTaskStatus } from "./status-taxonomy.js"
 
@@ -269,10 +269,6 @@ function artifactPath(root: string, relativePath: string): string {
   return `${root.replace(/\/$/, "")}/${relativePath.replace(/^\//, "")}`
 }
 
-function objectValue(value: unknown): Record<string, unknown> {
-  return isPlainObject(value) ? value : {}
-}
-
 function firstObject(...values: unknown[]): Record<string, unknown> {
   for (const value of values) {
     if (isPlainObject(value) && Object.keys(value).length > 0) return value
@@ -282,12 +278,4 @@ function firstObject(...values: unknown[]): Record<string, unknown> {
 
 function arrayObjects(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.filter(isPlainObject) : []
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }

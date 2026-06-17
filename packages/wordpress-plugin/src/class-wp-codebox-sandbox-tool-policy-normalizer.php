@@ -27,7 +27,7 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 	public function normalize_for_task_input( array $input ): array|WP_Error {
 		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array();
 		if ( empty( $policy ) ) {
-			$policy = $this->from_allowed_tools( $this->string_list( $input['allowed_tools'] ?? array() ), $input );
+			$policy = $this->from_allowed_tools( WP_Codebox_Agent_Task::string_list( $input['allowed_tools'] ?? array() ), $input );
 		}
 		if ( empty( $policy ) && function_exists( 'apply_filters' ) ) {
 			$policy = apply_filters( 'wp_codebox_resolved_sandbox_tool_policy', $policy, $input );
@@ -57,7 +57,7 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		}
 
 		$denied = array();
-		foreach ( $this->string_list( $tools ) as $tool ) {
+		foreach ( WP_Codebox_Agent_Task::string_list( $tools ) as $tool ) {
 			$descriptor = $this->descriptor_resolver->resolve_runtime_tool_alias( $policy, $tool );
 			$reason     = $this->descriptor_resolver->denial_reason( $descriptor );
 			if ( null !== $reason ) {
@@ -88,7 +88,7 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 	/** @param string[] $allowed_tools @param array<string,mixed> $context @return array<string,mixed> */
 	public function from_allowed_tools( array $allowed_tools, array $context = array() ): array {
 		$policy_tools = array();
-		foreach ( $this->string_list( $allowed_tools ) as $tool_id ) {
+		foreach ( WP_Codebox_Agent_Task::string_list( $allowed_tools ) as $tool_id ) {
 			$tool = $this->tool_policy_entry( $tool_id, $context );
 			if ( ! empty( $tool ) ) {
 				$policy_tools[] = $tool;
@@ -203,25 +203,6 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 
 	private function provider_safe_runtime_tool_id( string $tool_id ): string {
 		return trim( preg_replace( '/[^A-Za-z0-9_]+/', '_', $tool_id ) ?? '', '_' );
-	}
-
-	/** @return string[] */
-	private function string_list( mixed $values ): array {
-		if ( ! is_array( $values ) ) {
-			return array();
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					array_map(
-						static fn( $value ): string => trim( (string) $value ),
-						$values
-					),
-					static fn( string $value ): bool => '' !== $value
-				)
-			)
-		);
 	}
 
 }

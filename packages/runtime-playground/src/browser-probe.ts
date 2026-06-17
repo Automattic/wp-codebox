@@ -1,5 +1,6 @@
 import type { Frame, Page } from "playwright"
 import { BROWSER_PROBE_CAPTURE_VALUES } from "@automattic/wp-codebox-core"
+import { now } from "@automattic/wp-codebox-core/internals"
 import type {
   BrowserProbeCheckpointRecord,
   BrowserProbeErrorRecord,
@@ -206,10 +207,6 @@ export const BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT = `
   }
 })();
 `
-
-function now(): string {
-  return new Date().toISOString()
-}
 
 export async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number, navigationTimeoutMs = 30_000): Promise<void> {
   if (["domcontentloaded", "load", "networkidle"].includes(waitFor)) {

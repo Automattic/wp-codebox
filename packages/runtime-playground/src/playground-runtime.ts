@@ -1,8 +1,9 @@
-import { createHash, randomBytes } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import { mkdir, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
@@ -46,10 +47,6 @@ import type {
   RuntimeCommandResultEnvelope,
   Snapshot,
 } from "@automattic/wp-codebox-core"
-function now(): string {
-  return new Date().toISOString()
-}
-
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -1109,10 +1106,6 @@ export const playgroundRuntimeBackendProvider: RuntimeBackendProvider = {
   createBackend(context = {}) {
     return createPlaygroundRuntimeBackend({ cliModule: context.cliModule as PlaygroundCliModule | undefined })
   },
-}
-
-function sha256(contents: Buffer): string {
-  return createHash("sha256").update(contents).digest("hex")
 }
 
 function stringArg(args: string[], name: string): string | undefined {
