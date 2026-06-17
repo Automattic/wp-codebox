@@ -16,6 +16,7 @@ import {
   browserArtifactRef,
   captureArtifactFile,
   evidenceArtifactEnvelope,
+  fixtureImportDeterministicIdPlan,
   materializationPhaseResult,
   materializationRunArtifactRefs,
   reviewerSafeArtifactRef,
@@ -253,6 +254,37 @@ const sensitiveCapture = await captureArtifactFile({
 })
 assert.equal(sensitiveCapture.status, "sensitive")
 assert.equal(sensitiveCapture.reason, "secret-like-value")
+
+const deterministicPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  format: "json",
+  deterministicIds: { strategy: "platform-identifiers", onUnsupported: "block" },
+  scopes: { posts: { postTypes: ["page"] } },
+}, { posts: [{ id: 42, slug: "home" }] })
+assert.equal(deterministicPlan?.schema, "wp-codebox/fixture-import-deterministic-ids/v1")
+assert.equal(deterministicPlan?.status, "blocked")
+assert.deepEqual(deterministicPlan?.unsupported, [{ scope: "posts", index: 0, field: "id", reason: "Numeric primary-key assignment is not supported by WordPress insert APIs." }])
+assert.deepEqual(deterministicPlan?.supportedIdentifiers.posts, ["slug", "post_name"])
+
+const semanticPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  deterministicIds: { strategy: "platform-identifiers", onUnsupported: "block" },
+  scopes: { posts: { slugs: ["home"] } },
+}, { posts: [{ slug: "home" }] })
+assert.equal(semanticPlan?.status, "supported")
+
+const numericPlan = fixtureImportDeterministicIdPlan({
+  type: "fixture",
+  name: "content",
+  source: "fixtures/content.json",
+  deterministicIds: { strategy: "numeric", onUnsupported: "warn" },
+  scopes: { posts: { slugs: ["home"] } },
+})
+assert.equal(numericPlan?.status, "best_effort")
 
 const benchRunner = benchRunCode({
   componentId: "component",

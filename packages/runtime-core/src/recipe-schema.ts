@@ -693,6 +693,8 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
           source: { type: "string", description: "Fixture file path. Not allowed for parent_site dry-run declarations." },
           format: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          deterministicIds: { $ref: "#/$defs/siteSeedDeterministicIds" },
+          bootstrap: { $ref: "#/$defs/siteSeedBootstrap" },
           scopes: {
             type: "object",
             additionalProperties: false,
@@ -704,6 +706,58 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
               media: { $ref: "#/$defs/siteSeedScope" },
               activePlugins: { type: "boolean" },
               activeTheme: { type: "boolean" },
+            },
+          },
+        },
+      },
+      siteSeedDeterministicIds: {
+        type: "object",
+        additionalProperties: false,
+        required: ["strategy", "onUnsupported"],
+        properties: {
+          strategy: { enum: ["platform-identifiers", "numeric"] },
+          onUnsupported: { enum: ["block", "warn"] },
+        },
+      },
+      siteSeedBootstrap: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          multisite: {
+            type: "object",
+            additionalProperties: false,
+            required: ["enabled"],
+            properties: {
+              enabled: { type: "boolean" },
+              install: { enum: ["subdomain", "subdirectory"] },
+              sites: {
+                type: "array",
+                maxItems: 25,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["domain"],
+                  properties: {
+                    domain: { type: "string", minLength: 1 },
+                    path: { type: "string", pattern: "^/" },
+                    title: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          domains: {
+            type: "array",
+            maxItems: 25,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["domain"],
+              properties: {
+                domain: { type: "string", minLength: 1 },
+                path: { type: "string", pattern: "^/" },
+                primary: { type: "boolean" },
+              },
             },
           },
         },

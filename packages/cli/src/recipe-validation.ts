@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -945,7 +945,30 @@ async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeD
 
   if (siteSeed.type === "fixture") {
     await validateExistingFile(resolve(recipeDirectory, siteSeed.source ?? ""), `${path}.source`, addIssue)
+    if (siteSeed.format === undefined || siteSeed.format === "json") {
+      try {
+        const rawSeed = JSON.parse(await readFile(resolve(recipeDirectory, siteSeed.source ?? ""), "utf8"))
+        assertFixtureImportDeterministicIdsSupported(siteSeed, rawSeed)
+      } catch (error) {
+        if (siteSeed.deterministicIds?.onUnsupported === "block") {
+          addIssue("unsupported-deterministic-site-seed-ids", `${path}.deterministicIds`, error instanceof Error ? error.message : String(error))
+        }
+      }
+    } else if (siteSeed.deterministicIds?.strategy === "numeric" && siteSeed.deterministicIds.onUnsupported === "block") {
+      addIssue("unsupported-deterministic-site-seed-ids", `${path}.deterministicIds`, "Numeric deterministic IDs require importer-specific support; no generic platform API can guarantee primary keys.")
+    }
   }
+
+  if (siteSeed.deterministicIds) {
+    if (!["platform-identifiers", "numeric"].includes(siteSeed.deterministicIds.strategy)) {
+      addIssue("invalid-deterministic-site-seed-strategy", `${path}.deterministicIds.strategy`, "Deterministic ID strategy must be platform-identifiers or numeric.")
+    }
+    if (!["block", "warn"].includes(siteSeed.deterministicIds.onUnsupported)) {
+      addIssue("invalid-deterministic-site-seed-policy", `${path}.deterministicIds.onUnsupported`, "Unsupported deterministic ID policy must be block or warn.")
+    }
+  }
+
+  validateSiteSeedBootstrap(siteSeed, path, addIssue)
 
   if (siteSeed.type === "parent_site" && siteSeed.source) {
     addIssue("invalid-site-seed-source", `${path}.source`, "Parent-site seed declarations must not name a source file until explicit parent export support lands.")
@@ -967,6 +990,29 @@ async function validateRecipeSiteSeed(siteSeed: WorkspaceRecipeSiteSeed, recipeD
     }
 
     validateSiteSeedScopeBounds(scope as NonNullable<WorkspaceRecipeSiteSeed["scopes"]["posts"]>, `${path}.scopes.${scopeName}`, scopeName, siteSeed.type, addIssue)
+  }
+}
+
+function validateSiteSeedBootstrap(siteSeed: WorkspaceRecipeSiteSeed, path: string, addIssue: (code: string, path: string, message: string) => void): void {
+  const bootstrap = siteSeed.bootstrap
+  if (!bootstrap) {
+    return
+  }
+
+  if (bootstrap.multisite?.enabled && siteSeed.type === "fixture") {
+    addIssue("unsupported-site-seed-multisite-bootstrap", `${path}.bootstrap.multisite`, "Multisite bootstrap is a reusable declaration only until the runtime exposes a platform setup primitive.")
+  }
+
+  for (const [index, site] of (bootstrap.multisite?.sites ?? []).entries()) {
+    if (!site.domain || typeof site.domain !== "string") {
+      addIssue("invalid-site-seed-bootstrap-domain", `${path}.bootstrap.multisite.sites[${index}].domain`, "Bootstrap sites require a domain.")
+    }
+  }
+
+  for (const [index, domain] of (bootstrap.domains ?? []).entries()) {
+    if (!domain.domain || typeof domain.domain !== "string") {
+      addIssue("invalid-site-seed-bootstrap-domain", `${path}.bootstrap.domains[${index}].domain`, "Bootstrap domains require a domain.")
+    }
   }
 }
 
