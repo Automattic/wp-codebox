@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { createWorkspaceRecipeJsonSchema, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { commandRegistry, recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import Ajv2020 from "ajv/dist/2020.js"
 
 const execFileAsync = promisify(execFile)
@@ -28,61 +29,9 @@ interface RecipeSchemaOutput {
   jsonSchema: Record<string, unknown>
 }
 
-// Recipe-eligible commands (recipe: true) feed the recipe JSON schema factory.
-const expectedCommandIds = [
-  "inspect-mounted-inputs",
-  "wordpress.run-php",
-  "wordpress.wp-cli",
-  "wordpress.capture-state-bundle",
-  "wordpress.export-replay-package",
-  "wordpress.ability",
-  "wordpress.rest-request",
-  "wordpress.bench",
-  "wordpress.phpunit",
-  "wordpress.plugin-check",
-  "wordpress.core-phpunit",
-  "wordpress.theme-check",
-  "wordpress.browser-probe",
-  "wordpress.capture-html",
-  "wordpress.editor-canvas-probe",
-  "wordpress.browser-actions",
-  "wordpress.browser-scenario",
-  "wordpress.visual-compare",
-  "wordpress.editor-open",
-  "wordpress.editor-actions",
-  "wp-codebox.agent-runtime-probe",
-  "wp-codebox.agent-sandbox-run",
-  "wp-codebox.agent-fanout",
-]
-
-// Full command catalog (every registered command, including policy-only capabilities
-// such as wordpress.browser-actions.evaluate which is not a recipe step).
-const expectedCatalogCommandIds = [
-  "inspect-mounted-inputs",
-  "wordpress.run-php",
-  "wordpress.wp-cli",
-  "wordpress.capture-state-bundle",
-  "wordpress.export-replay-package",
-  "wordpress.ability",
-  "wordpress.rest-request",
-  "wordpress.bench",
-  "wordpress.phpunit",
-  "wordpress.plugin-check",
-  "wordpress.core-phpunit",
-  "wordpress.theme-check",
-  "wordpress.browser-probe",
-  "wordpress.capture-html",
-  "wordpress.editor-canvas-probe",
-  "wordpress.browser-actions",
-  "wordpress.browser-scenario",
-  "wordpress.visual-compare",
-  "wordpress.editor-open",
-  "wordpress.editor-actions",
-  "wordpress.browser-actions.evaluate",
-  "wp-codebox.agent-runtime-probe",
-  "wp-codebox.agent-sandbox-run",
-  "wp-codebox.agent-fanout",
-]
+// Registry metadata is the source of truth for discovery and recipe help.
+const expectedCommandIds = recipeCommandDefinitions().map((command) => command.id)
+const expectedCatalogCommandIds = commandRegistry.map((command) => command.id)
 
 const representativeRecipes = [
   {
@@ -123,6 +72,11 @@ async function cliJson<T>(args: string[]): Promise<T> {
   return JSON.parse(stdout) as T
 }
 
+async function cliText(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], { cwd: repoRoot })
+  return stdout
+}
+
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message)
@@ -148,6 +102,13 @@ async function main(): Promise<void> {
 
   const pluginCheck = catalog.commands.find((command) => command.id === "wordpress.plugin-check")
   assert(pluginCheck?.acceptedArgs.some((arg) => arg.name === "plugin-slug" && arg.required), "wordpress.plugin-check must document required plugin-slug arg")
+
+  const help = await cliText(["--help"])
+  const recipeHelp = help.slice(help.indexOf("Recipe commands:"))
+  assert(recipeHelp.startsWith("Recipe commands:"), "Help output must include generated recipe command section")
+  for (const commandId of expectedCommandIds) {
+    assert(recipeHelp.includes(`  ${commandId}\n`) || recipeHelp.includes(`  ${commandId}`), `Help output is missing recipe command: ${commandId}`)
+  }
 
   const schemaOutput = await cliJson<RecipeSchemaOutput>(["schema", "recipe", "--json"])
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")
