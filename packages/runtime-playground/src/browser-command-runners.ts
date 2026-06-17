@@ -6,7 +6,7 @@ import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
@@ -3079,6 +3079,8 @@ export async function runEditorActionsCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let editorReadiness: BrowserEditorReadinessSummary | undefined
+  let editorSave: BrowserEditorSaveSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -3138,12 +3140,21 @@ export async function runEditorActionsCommand({
       const actionStartedAt = now()
       const actionStartedAtMs = Date.now()
       try {
-        const state = await executeEditorActionStep(page, step, stepTimeoutMs)
-        if (state) {
-          editorState = { schema: "wp-codebox/editor-state/v1", capturedAt: now(), target, ...state }
+        const result = await executeEditorActionStep(page, step, stepTimeoutMs)
+        if (result?.state) {
+          editorState = { schema: "wp-codebox/editor-state/v1", capturedAt: now(), target, ...result.state }
+        }
+        if (result?.readiness) {
+          editorReadiness = result.readiness
+        }
+        if (result?.save) {
+          editorSave = result.save
         }
         finalUrl = page.url()
-        stepRecords.push(browserStepRecord(index + 2, { kind: step.kind } as never, "ok", actionStartedAt, actionStartedAtMs, finalUrl, {}))
+        stepRecords.push(browserStepRecord(index + 2, { kind: step.kind } as never, "ok", actionStartedAt, actionStartedAtMs, finalUrl, {
+          ...(result?.readiness ? { editorReadiness: result.readiness } : {}),
+          ...(result?.save ? { editorSave: result.save } : {}),
+        } as never))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
@@ -3207,6 +3218,8 @@ export async function runEditorActionsCommand({
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(editorSummary ? { editor: editorSummary } : {}),
+        ...(editorReadiness ? { editorReadiness } : {}),
+        ...(editorSave ? { editorSave } : {}),
         viewport,
       },
     }
@@ -4871,10 +4884,18 @@ function visualCompareDiffPixel(diff: PNG, x: number, y: number): boolean {
   return diff.data[offset] > 0 || diff.data[offset + 1] > 0 || diff.data[offset + 2] > 0
 }
 
-async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number): Promise<Omit<EditorStateSnapshot, "schema" | "capturedAt" | "target"> | undefined> {
+interface EditorActionStepResult {
+  state?: Omit<EditorStateSnapshot, "schema" | "capturedAt" | "target">
+  readiness?: BrowserEditorReadinessSummary
+  save?: BrowserEditorSaveSummary
+}
+
+async function executeEditorActionStep(page: import("playwright").Page, step: EditorActionStep, timeoutMs: number): Promise<EditorActionStepResult | undefined> {
   switch (step.kind) {
     case "open":
       return undefined
+    case "waitForReady":
+      return { readiness: await waitForEditorReadiness(page, stepTimeoutMs(step, timeoutMs)) }
     case "insertBlock": {
       const beforeCount = await editorBlockCount(page)
       await page.evaluate((input) => {
@@ -4926,7 +4947,7 @@ async function executeEditorActionStep(page: import("playwright").Page, step: Ed
       return undefined
     }
     case "inspectState":
-      return page.evaluate(() => {
+      return { state: await page.evaluate(() => {
         const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data
         const select = wpData?.select
         if (!select) {
@@ -4952,7 +4973,112 @@ async function executeEditorActionStep(page: import("playwright").Page, step: Ed
             attributes: typeof block.attributes === "object" && block.attributes ? block.attributes as Record<string, unknown> : undefined,
           })),
         }
-      })
+      }) }
+    case "savePost":
+      return { save: await saveEditorPost(page, step, stepTimeoutMs(step, timeoutMs)) }
+  }
+}
+
+async function waitForEditorReadiness(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorReadinessSummary> {
+  return page.waitForFunction(() => {
+    const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown>; dispatch?: (store: string) => Record<string, unknown> } } }).wp?.data
+    const select = wpData?.select
+    const dispatch = wpData?.dispatch
+    if (typeof select !== "function" || typeof dispatch !== "function") {
+      return false
+    }
+    const editor = select("core/editor")
+    const blockEditor = select("core/block-editor")
+    const editorDispatch = dispatch("core/editor")
+    if (!editor || !blockEditor || !editorDispatch) {
+      return false
+    }
+    return {
+      schema: "wp-codebox/editor-readiness/v1",
+      status: "ready",
+      storesAvailable: true,
+      canSave: typeof editorDispatch.savePost === "function",
+      postId: typeof editor.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
+      postType: typeof editor.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
+    }
+  }, undefined, { timeout: timeoutMs }).then(async (handle) => {
+    const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
+    if (!readiness) {
+      throw new Error("wp-codebox-editor-readiness-timeout: WordPress editor data stores did not become available")
+    }
+    return readiness
+  })
+}
+
+async function saveEditorPost(page: import("playwright").Page, step: Extract<EditorActionStep, { kind: "savePost" }>, timeoutMs: number): Promise<BrowserEditorSaveSummary> {
+  const save = await page.evaluate(async (input) => {
+    const win = window as unknown as {
+      wp?: {
+        blocks?: { createBlock?: (name: string, attributes?: Record<string, unknown>) => unknown }
+        data?: { select?: (store: string) => Record<string, unknown>; dispatch?: (store: string) => Record<string, unknown>; subscribe?: (listener: () => void) => () => void }
+      }
+    }
+    const wpData = win.wp?.data
+    const select = wpData?.select
+    const dispatch = wpData?.dispatch
+    if (typeof select !== "function" || typeof dispatch !== "function") {
+      throw new Error("wp-codebox-editor-readiness-unavailable: WordPress editor data APIs are unavailable")
+    }
+    const editor = select("core/editor")
+    const blockEditor = dispatch("core/block-editor")
+    const editorDispatch = dispatch("core/editor")
+    if (typeof editorDispatch?.savePost !== "function") {
+      throw new Error("wp-codebox-editor-save-unsupported: core/editor savePost is unavailable")
+    }
+    if (input.marker || input.content) {
+      const createBlock = win.wp?.blocks?.createBlock
+      if (typeof createBlock !== "function" || typeof blockEditor?.insertBlocks !== "function") {
+        throw new Error("wp-codebox-editor-save-unsupported: block insertion APIs are unavailable")
+      }
+      blockEditor.insertBlocks([createBlock("core/paragraph", { content: input.content ?? input.marker })])
+    }
+    await Promise.resolve(editorDispatch.savePost())
+    const deadline = Date.now() + input.timeoutMs
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        const isSaving = typeof editor.isSavingPost === "function" ? Boolean(editor.isSavingPost()) : false
+        const didSucceed = typeof editor.didPostSaveRequestSucceed === "function" ? Boolean(editor.didPostSaveRequestSucceed()) : undefined
+        const didFail = typeof editor.didPostSaveRequestFail === "function" ? Boolean(editor.didPostSaveRequestFail()) : false
+        if (!isSaving && didSucceed !== false) {
+          cleanup()
+          resolve()
+        } else if (didFail) {
+          cleanup()
+          reject(new Error("wp-codebox-editor-save-failed: core/editor savePost reported a failed request"))
+        } else if (Date.now() > deadline) {
+          cleanup()
+          reject(new Error("wp-codebox-editor-save-timeout: timed out waiting for core/editor savePost to settle"))
+        }
+      }
+      const unsubscribe = typeof wpData?.subscribe === "function" ? wpData.subscribe(done) : undefined
+      const interval = window.setInterval(done, 250)
+      const cleanup = () => {
+        window.clearInterval(interval)
+        if (unsubscribe) unsubscribe()
+      }
+      done()
+    })
+    const editedContent = typeof editor.getEditedPostContent === "function" ? String(editor.getEditedPostContent() ?? "") : ""
+    return {
+      schema: "wp-codebox/editor-save/v1",
+      status: "saved",
+      method: "core/editor.savePost",
+      postId: typeof editor.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
+      postType: typeof editor.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
+      markerPresent: input.marker ? editedContent.includes(input.marker) : undefined,
+      content: editedContent,
+    }
+  }, { marker: step.marker, content: step.content, timeoutMs })
+
+  const { content, ...summary } = save as BrowserEditorSaveSummary & { content?: string }
+  return {
+    ...summary,
+    ...(typeof content === "string" && content.length > 0 ? { contentSha256: sha256(Buffer.from(content, "utf8")) } : {}),
   }
 }
 

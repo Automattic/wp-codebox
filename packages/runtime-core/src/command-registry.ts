@@ -395,7 +395,7 @@ export const commandRegistry = [
       { name: "post-id", description: "Existing post ID to open in the post editor.", format: "positive integer" },
       { name: "post-type", description: "Post type for post-new or post-id targets; defaults to post.", format: "post type slug" },
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
-      { name: "steps-json", description: "Ordered editor action script: open, insertBlock, selectBlock, and inspectState.", required: true, format: "JSON array (inline or @<path>)" },
+      { name: "steps-json", description: "Ordered editor action script: open, waitForReady, insertBlock, selectBlock, savePost, and inspectState. savePost uses Gutenberg core/editor.savePost and reports typed editorSave diagnostics.", required: true, format: "JSON array (inline or @<path>)" },
       { name: "wait-selector", description: "Selector that marks the editor as ready; defaults to the block editor shell.", format: "CSS selector" },
       { name: "wait-timeout", description: "Timeout for navigation and editor-ready waits.", format: "duration, e.g. 15s or 500ms" },
       { name: "step-timeout", description: "Per-action timeout applied to each editor action step.", format: "duration, e.g. 15s or 500ms" },
