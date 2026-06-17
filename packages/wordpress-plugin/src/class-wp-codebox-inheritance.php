@@ -39,6 +39,10 @@ final class WP_Codebox_Inheritance {
 		);
 
 		if ( function_exists( 'apply_filters' ) && ( ! empty( $request['connectors'] ) || ! empty( $request['settings'] ) ) ) {
+			if ( class_exists( 'WP_Codebox_Connector_Credential_Resolvers' ) ) {
+				$resolution = WP_Codebox_Connector_Credential_Resolvers::resolve( $resolution, $request, $input );
+			}
+
 			$filtered = apply_filters( 'wp_codebox_resolve_inheritance', $resolution, $request, $input );
 			if ( is_array( $filtered ) ) {
 				$resolution = $filtered;
