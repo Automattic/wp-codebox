@@ -47,6 +47,7 @@ require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
+require_once __DIR__ . '/src/class-wp-codebox-patch-approval-filter.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
 require_once __DIR__ . '/src/class-wp-codebox-pending-artifact-apply.php';
 require_once __DIR__ . '/src/class-wp-codebox-preview-options.php';
