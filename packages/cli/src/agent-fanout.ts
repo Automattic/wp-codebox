@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { commandArgValue, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
+import { commandArgValue, countRunPlanChildResults, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
 import { agentTaskStatusSucceeded, aggregateFanoutOutputs, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
@@ -161,12 +161,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
   await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status })
 
-  const counts = {
-    total: workerResults.length,
-    completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length,
-    failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length,
-    cancelled: 0,
-  }
+  const counts = countRunPlanChildResults(workerResults.map((worker) => ({ ...worker, success: agentTaskStatusSucceeded(worker.status) })))
   const success = aggregate.status === "succeeded"
   const result: AgentFanoutExecutionResult = {
     schema: FANOUT_RESULT_SCHEMA,

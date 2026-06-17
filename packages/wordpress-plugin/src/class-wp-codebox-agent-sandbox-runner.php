@@ -14,6 +14,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const FANOUT_PLAN_SCHEMA = 'wp-codebox/agent-fanout-plan/v1';
 	private const FANOUT_EVENT_SCHEMA = 'wp-codebox/agent-fanout-event/v1';
 	private const FANOUT_SCHEMA = 'wp-codebox/agent-fanout-result/v1';
+	private const FANOUT_AGGREGATE_SCHEMA = 'wp-codebox/agent-fanout-aggregate/v1';
+	private const FANOUT_ARTIFACTS_SCHEMA = 'wp-codebox/agent-fanout-artifacts/v1';
 	private const DEFAULT_WORDPRESS_VERSION = 'latest';
 	private const FANOUT_MAX_CONCURRENCY = 8;
 	private const SESSION_SCHEMA = WP_Codebox_Agent_Task::SESSION_SCHEMA;
@@ -91,38 +93,21 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$parent_session_id = $this->sandbox_session_id( $input );
-		$base_artifacts    = $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) );
-		$fanout_path       = $base_artifacts . DIRECTORY_SEPARATOR . 'fanout';
-		$workers_path      = $fanout_path . DIRECTORY_SEPARATOR . 'workers';
-		$aggregate_path    = $fanout_path . DIRECTORY_SEPARATOR . 'aggregate';
-		foreach ( array( $workers_path, $aggregate_path . DIRECTORY_SEPARATOR . 'artifacts' ) as $path ) {
+		$paths = $this->run_plan_paths( $this->clean_path( (string) ( $input['artifacts_path'] ?? $this->default_artifacts_path() ) ) );
+		foreach ( array( $paths['workers'], $paths['aggregate_artifacts'] ) as $path ) {
 			if ( ! $this->ensure_directory( $path ) ) {
 				return new WP_Error( 'wp_codebox_fanout_artifacts_unwritable', 'Could not create fanout artifact directories.', array( 'status' => 500, 'path' => $path ) );
 			}
 		}
 
-		$plan = array(
-			'schema'      => self::FANOUT_PLAN_SCHEMA,
-			'session_id'  => $parent_session_id,
-			'concurrency' => $concurrency,
-			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
-			'workers'     => array_map(
-				static fn( array $worker ): array => array(
-					'id'                 => (string) $worker['id'],
-					'agent'              => (string) ( $worker['agent'] ?? $input['agent'] ?? '' ),
-					'goal'               => (string) ( $worker['goal'] ?? '' ),
-					'artifact_namespace' => (string) $worker['id'],
-				),
-				$workers
-			),
-		);
-		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'plan.json', $plan );
-		$this->append_fanout_event( $fanout_path, array( 'event' => 'fanout.started', 'total' => count( $workers ), 'concurrency' => $concurrency ) );
+		$plan = $this->run_plan( self::FANOUT_PLAN_SCHEMA, $parent_session_id, $concurrency, $input, $workers );
+		$this->write_json_file( $paths['plan'], $plan );
+		$this->append_fanout_event( $paths['root'], array( 'event' => 'fanout.started', 'total' => count( $workers ), 'concurrency' => $concurrency ) );
 
 		$prepared_workers = array();
 		foreach ( $workers as $index => $worker ) {
 			$worker_id      = (string) $worker['id'];
-			$worker_path    = $workers_path . DIRECTORY_SEPARATOR . $worker_id;
+			$worker_path    = $paths['workers'] . DIRECTORY_SEPARATOR . $worker_id;
 			$worker_input   = $this->fanout_worker_input( $input, $worker, $parent_session_id, $worker_path );
 			$worker_prepare = $this->prepare_agent_task_run( $worker_input );
 			if ( is_wp_error( $worker_prepare ) ) {
@@ -146,50 +131,34 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		$started_at = microtime( true );
-		$runs       = $this->execute_prepared_fanout_workers( $prepared_workers, $concurrency, $fanout_path );
+		$runs       = $this->execute_prepared_fanout_workers( $prepared_workers, $concurrency, $paths['root'] );
 		$ended_at   = microtime( true );
 		ksort( $runs );
 		$runs = array_values( $runs );
 
-		$completed = count( array_filter( $runs, static fn( array $run ): bool => true === ( $run['success'] ?? false ) ) );
-		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
-		$failed    = count( $runs ) - $completed - $cancelled;
-		$success   = 0 === $failed && 0 === $cancelled;
-		$this->append_fanout_event( $fanout_path, array( 'event' => 'aggregation.started', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
+		$counts = $this->run_plan_result_counts( $runs );
+		$success = $this->run_plan_succeeded( $counts );
+		$status  = $success ? 'completed' : 'failed';
+		$this->append_fanout_event( $paths['root'], array( 'event' => 'aggregation.started', 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'cancelled' => $counts['cancelled'] ) );
 
-		$result = array(
-			'success'     => $success,
-			'schema'      => self::FANOUT_SCHEMA,
-			'execution'   => 'bounded-concurrent-isolated-sandboxes',
-			'session'     => $this->fanout_parent_session( $parent_session_id, $success ? 'completed' : 'failed', $input, $fanout_path, $runs ),
-			'concurrency' => $concurrency,
-			'total'       => count( $runs ),
-			'completed'   => $completed,
-			'failed'      => $failed,
-			'cancelled'   => $cancelled,
-			'timings'     => array(
-				'started_at'   => gmdate( 'c', (int) $started_at ),
-				'ended_at'     => gmdate( 'c', (int) $ended_at ),
-				'duration_ms'  => (int) round( ( $ended_at - $started_at ) * 1000 ),
-			),
-			'artifacts'   => array(
-				'schema'          => 'wp-codebox/agent-fanout-artifacts/v1',
-				'path'            => $fanout_path,
-				'plan'            => 'plan.json',
-				'events'          => 'events.jsonl',
-				'workers_path'    => 'workers',
-				'aggregate_path'  => 'aggregate',
-				'result'          => 'result.json',
-			),
-			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
-			'runs'        => $runs,
-			'failures'    => array_values( array_filter( $runs, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) ),
+		$result = $this->run_plan_result(
+			self::FANOUT_SCHEMA,
+			'bounded-concurrent-isolated-sandboxes',
+			$parent_session_id,
+			$status,
+			$input,
+			$paths,
+			$counts,
+			$started_at,
+			$ended_at,
+			$plan,
+			$runs
 		);
 
-		$this->write_json_file( $aggregate_path . DIRECTORY_SEPARATOR . 'result.json', array( 'schema' => 'wp-codebox/agent-fanout-aggregate/v1', 'status' => $success ? 'completed' : 'failed', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
-		$this->append_fanout_event( $fanout_path, array( 'event' => 'aggregation.completed', 'status' => $success ? 'completed' : 'failed' ) );
-		$this->write_json_file( $fanout_path . DIRECTORY_SEPARATOR . 'result.json', $result );
-		$this->append_fanout_event( $fanout_path, array( 'event' => $success ? 'fanout.completed' : 'fanout.failed', 'status' => $success ? 'completed' : 'failed', 'completed' => $completed, 'failed' => $failed, 'cancelled' => $cancelled ) );
+		$this->write_json_file( $paths['aggregate_result'], $this->run_plan_aggregate_result( self::FANOUT_AGGREGATE_SCHEMA, $status, $counts ) );
+		$this->append_fanout_event( $paths['root'], array( 'event' => 'aggregation.completed', 'status' => $status ) );
+		$this->write_json_file( $paths['result'], $result );
+		$this->append_fanout_event( $paths['root'], array( 'event' => $success ? 'fanout.completed' : 'fanout.failed', 'status' => $status, 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'cancelled' => $counts['cancelled'] ) );
 
 		return $result;
 	}
@@ -390,6 +359,117 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'paths'       => $paths,
 			'artifacts'   => $artifacts,
 			'runs'        => $runs,
+		);
+	}
+
+	/** @return array<string,string> */
+	private function run_plan_paths( string $base_artifacts ): array {
+		$root      = $base_artifacts . DIRECTORY_SEPARATOR . 'fanout';
+		$workers   = $root . DIRECTORY_SEPARATOR . 'workers';
+		$aggregate = $root . DIRECTORY_SEPARATOR . 'aggregate';
+
+		return array(
+			'root'                => $root,
+			'workers'             => $workers,
+			'aggregate'           => $aggregate,
+			'aggregate_artifacts' => $aggregate . DIRECTORY_SEPARATOR . 'artifacts',
+			'plan'                => $root . DIRECTORY_SEPARATOR . 'plan.json',
+			'events'              => $root . DIRECTORY_SEPARATOR . 'events.jsonl',
+			'result'              => $root . DIRECTORY_SEPARATOR . 'result.json',
+			'aggregate_result'    => $aggregate . DIRECTORY_SEPARATOR . 'result.json',
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $workers Workers. @return array<string,mixed> */
+	private function run_plan( string $schema, string $session_id, int $concurrency, array $input, array $workers ): array {
+		return array(
+			'schema'       => $schema,
+			'session_id'   => $session_id,
+			'concurrency'  => $concurrency,
+			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			'workers'      => array_map(
+				static fn( array $worker ): array => array(
+					'id'                 => (string) $worker['id'],
+					'agent'              => (string) ( $worker['agent'] ?? $input['agent'] ?? '' ),
+					'goal'               => (string) ( $worker['goal'] ?? '' ),
+					'artifact_namespace' => (string) $worker['id'],
+				),
+				$workers
+			),
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $runs Child run results. @return array{total:int,completed:int,failed:int,cancelled:int} */
+	private function run_plan_result_counts( array $runs ): array {
+		$completed = count( array_filter( $runs, static fn( array $run ): bool => true === ( $run['success'] ?? false ) ) );
+		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
+		$failed    = count( $runs ) - $completed - $cancelled;
+
+		return array(
+			'total'     => count( $runs ),
+			'completed' => $completed,
+			'failed'    => $failed,
+			'cancelled' => $cancelled,
+		);
+	}
+
+	/** @param array{failed:int,cancelled:int} $counts Run-plan result counts. */
+	private function run_plan_succeeded( array $counts ): bool {
+		return 0 === $counts['failed'] && 0 === $counts['cancelled'];
+	}
+
+	/** @param array<string,string> $paths Run-plan artifact paths. @return array<string,mixed> */
+	private function run_plan_artifacts( string $schema, array $paths ): array {
+		return array(
+			'schema'         => $schema,
+			'path'           => $paths['root'],
+			'plan'           => 'plan.json',
+			'events'         => 'events.jsonl',
+			'workers_path'   => 'workers',
+			'aggregate_path' => 'aggregate',
+			'result'         => 'result.json',
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $runs Child run results. @return array<int,array<string,mixed>> */
+	private function run_plan_failures( array $runs ): array {
+		return array_values( array_filter( $runs, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<string,string> $paths Run-plan artifact paths. @param array{total:int,completed:int,failed:int,cancelled:int} $counts Counts. @param array<string,mixed> $plan Plan. @param array<int,array<string,mixed>> $runs Child run results. @return array<string,mixed> */
+	private function run_plan_result( string $schema, string $execution, string $session_id, string $status, array $input, array $paths, array $counts, float $started_at, float $ended_at, array $plan, array $runs ): array {
+		$success = $this->run_plan_succeeded( $counts );
+
+		return array(
+			'success'     => $success,
+			'schema'      => $schema,
+			'execution'   => $execution,
+			'session'     => $this->run_plan_parent_session( $session_id, $status, $input, $paths, $runs ),
+			'concurrency' => (int) $plan['concurrency'],
+			'total'       => $counts['total'],
+			'completed'   => $counts['completed'],
+			'failed'      => $counts['failed'],
+			'cancelled'   => $counts['cancelled'],
+			'timings'     => array(
+				'started_at'  => gmdate( 'c', (int) $started_at ),
+				'ended_at'    => gmdate( 'c', (int) $ended_at ),
+				'duration_ms' => (int) round( ( $ended_at - $started_at ) * 1000 ),
+			),
+			'artifacts'   => $this->run_plan_artifacts( self::FANOUT_ARTIFACTS_SCHEMA, $paths ),
+			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
+			'runs'        => $runs,
+			'failures'    => $this->run_plan_failures( $runs ),
+		);
+	}
+
+	/** @param array{completed:int,failed:int,cancelled:int} $counts Counts. @return array<string,mixed> */
+	private function run_plan_aggregate_result( string $schema, string $status, array $counts ): array {
+		return array(
+			'schema'    => $schema,
+			'status'    => $status,
+			'completed' => $counts['completed'],
+			'failed'    => $counts['failed'],
+			'cancelled' => $counts['cancelled'],
 		);
 	}
 
@@ -645,8 +725,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 	}
 
-	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $runs Worker runs. */
-	private function fanout_parent_session( string $session_id, string $status, array $input, string $fanout_path, array $runs ): array {
+	/** @param array<string,mixed> $input Ability input. @param array<string,string> $paths Run-plan artifact paths. @param array<int,array<string,mixed>> $runs Child runs. */
+	private function run_plan_parent_session( string $session_id, string $status, array $input, array $paths, array $runs ): array {
 		$children = array_map(
 			static fn( array $run ): array => array_filter(
 				array(
@@ -665,7 +745,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$status,
 			$input,
 			array(
-				'path'      => $fanout_path,
+				'path'      => $paths['root'],
 				'plan'      => 'plan.json',
 				'events'    => 'events.jsonl',
 				'result'    => 'result.json',
@@ -688,8 +768,13 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $event Event data. */
 	private function append_fanout_event( string $fanout_path, array $event ): void {
-		$event = array_merge( array( 'schema' => self::FANOUT_EVENT_SCHEMA, 'time' => gmdate( 'c' ) ), $event );
-		WP_Codebox_Json::append_jsonl( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', $event, JSON_UNESCAPED_SLASHES );
+		$this->append_run_plan_event( $fanout_path . DIRECTORY_SEPARATOR . 'events.jsonl', self::FANOUT_EVENT_SCHEMA, $event );
+	}
+
+	/** @param array<string,mixed> $event Event data. */
+	private function append_run_plan_event( string $events_path, string $schema, array $event ): void {
+		$event = array_merge( array( 'schema' => $schema, 'time' => gmdate( 'c' ) ), $event );
+		WP_Codebox_Json::append_jsonl( $events_path, $event, JSON_UNESCAPED_SLASHES );
 	}
 
 	/**
