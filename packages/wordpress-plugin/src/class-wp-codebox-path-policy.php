@@ -9,6 +9,26 @@ defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Path_Policy {
 
+	public static function clean_host_path( string $path ): string {
+		return rtrim( trim( $path ), DIRECTORY_SEPARATOR );
+	}
+
+	public static function clean_browser_runtime_source_path( string $path ): string {
+		$path = trim( $path );
+		if ( '' === $path ) {
+			return '';
+		}
+
+		$real = realpath( $path );
+		return false !== $real ? $real : rtrim( $path, '/\\' );
+	}
+
+	public static function normalize_absolute_browser_path( string $path ): string {
+		$path = '/' . ltrim( trim( $path ), '/' );
+		$path = rtrim( $path, '/' );
+		return '' === $path ? '/' : $path;
+	}
+
 	/** @param array<string,mixed> $data Additional error data. */
 	public static function normalize_sandbox_mount_target( string $target, string $label = 'Sandbox mount', string $error_code = 'wp_codebox_mount_target_invalid', array $data = array() ): string|WP_Error {
 		$normalized = preg_replace( '#/+#', '/', trim( str_replace( '\\', '/', $target ) ) );

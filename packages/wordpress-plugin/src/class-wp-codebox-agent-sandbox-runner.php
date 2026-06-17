@@ -1776,7 +1776,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	private function clean_path( string $path ): string {
-		return rtrim( trim( $path ), DIRECTORY_SEPARATOR );
+		return WP_Codebox_Path_Policy::clean_host_path( $path );
 	}
 
 	private function preview_hold_seconds( array $input ): int {
