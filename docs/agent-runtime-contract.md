@@ -176,6 +176,18 @@ Runner workspace publication is a separate exported contract in runtime-core:
 
 External orchestrators own the backend that turns a sandbox result into a durable workspace, branch, commit, PR, package, or other publication target. WP Codebox defines the request/result shapes so callers can exchange workspace identity, changed paths, commit/PR metadata, evidence context, and backend failure information without encoding placement policy in the sandbox runtime.
 
+## Provider Runtime Invocation Names
+
+Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:
+
+- `wp-codebox.runner-workspace.capture` / `wp-codebox/runner-workspace-capture` for runner workspace status and diff capture.
+- `wp-codebox.runner-workspace.command` / `wp-codebox/runner-workspace-command` for bounded runner workspace commands.
+- `wp-codebox.runner-workspace.publish` / `wp-codebox/runner-workspace-publish` for branch, commit, PR, or equivalent publication handoff.
+- `wp-codebox.tool-call-transcript.record` / `wp-codebox/record-tool-call-transcript` for product-neutral tool-call transcript evidence.
+- `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
+
+These names are identifiers and contract anchors, not a queue or policy implementation. The corresponding result schemas remain the existing runner workspace, tool-call transcript, and evidence artifact envelope contracts. External orchestrators still own backend placement, authorization, retries, retention, and publication policy.
+
 ## Heartbeat And Cleanup Metadata
 
 Recipe execution writes run registry records with schema `wp-codebox/run-registry-entry/v1`. The lifecycle block uses `wp-codebox/run-lifecycle/v1` and carries:

@@ -60,6 +60,7 @@ export const smokeGroups = {
       npmScript("test:schema-parity"),
       npmScript("test:recipe-validation-descriptors"),
       npmScript("test:runtime-preset-registry"),
+      npmScript("test:provider-runtime-contracts"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
       tsxSmoke("cli-json-failure-smoke"),
