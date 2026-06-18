@@ -28,6 +28,10 @@
     "./agent-task-recipe": {
       "types": "./dist/agent-task-recipe.d.ts",
       "import": "./dist/agent-task-recipe.js"
+    },
+    "./runtime-presets": {
+      "types": "./dist/runtime-preset-registry.d.ts",
+      "import": "./dist/runtime-preset-registry.js"
     }
   },
   "files": [

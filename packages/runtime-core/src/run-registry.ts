@@ -28,11 +28,18 @@ export interface RuntimeRunLifecycle {
   phase: RuntimeRunLifecyclePhase
   terminal: boolean
   cancellable: boolean
+  cancelRequested: boolean
+  cancellation?: RuntimeRunCancellationState
   successful: boolean
   failed: boolean
   cancelled: boolean
   outcome?: RuntimeRunLifecycleOutcome
   cleanup: RuntimeRunCleanupState
+}
+
+export interface RuntimeRunCancellationState {
+  requestedAt: string
+  reason?: string
 }
 
 export interface RuntimeRunArtifactRef {
@@ -106,6 +113,21 @@ export interface RuntimeRunRegistryUpdate {
   now?: Date
 }
 
+export interface RuntimeRunCancellationRequestOptions {
+  reason?: string
+  now?: Date
+}
+
+export interface RuntimeRunCancellationRequestResult {
+  schema: "wp-codebox/run-cancellation-request/v1"
+  runId: string
+  status: RuntimeRunStatus
+  cancellationRequested: boolean
+  alreadyRequested: boolean
+  terminal: boolean
+  record: RuntimeRunRecord
+}
+
 export interface RuntimeRunCleanupUpdate {
   status: RuntimeRunCleanupStatus
   error?: RuntimeRunRecord["error"]
@@ -161,10 +183,11 @@ export class RuntimeRunRegistry {
     const now = (update.now ?? new Date()).toISOString()
     const status = transitionRuntimeRunStatus(current.status, update.status)
     const cleanup = update.cleanup ? updateRuntimeRunCleanup(current.lifecycle?.cleanup, update.cleanup, now) : current.lifecycle?.cleanup ?? initialRuntimeRunCleanup()
+    const cancellation = current.lifecycle?.cancellation
     const next: RuntimeRunRecord = {
       ...current,
       status,
-      lifecycle: buildRuntimeRunLifecycle(status, cleanup),
+      lifecycle: buildRuntimeRunLifecycle(status, cleanup, cancellation),
       ...(update.runtime ? { runtime: update.runtime } : {}),
       ...(update.preview ? { preview: update.preview } : {}),
       ...(update.metadata ? { metadata: sanitizeRunMetadata({ ...(current.metadata ?? {}), ...update.metadata }) } : {}),
@@ -177,6 +200,44 @@ export class RuntimeRunRegistry {
     }
     await this.write(next)
     return next
+  }
+
+  async requestCancellation(runId: string, options: RuntimeRunCancellationRequestOptions = {}): Promise<RuntimeRunCancellationRequestResult> {
+    const current = await this.read(runId)
+    const terminal = isTerminalRuntimeRunStatus(current.status)
+    const existingCancellation = current.lifecycle?.cancellation
+    if (terminal || existingCancellation) {
+      return {
+        schema: "wp-codebox/run-cancellation-request/v1",
+        runId: current.runId,
+        status: current.status,
+        cancellationRequested: Boolean(existingCancellation),
+        alreadyRequested: Boolean(existingCancellation),
+        terminal,
+        record: current,
+      }
+    }
+
+    const now = (options.now ?? new Date()).toISOString()
+    const cancellation = stripUndefined({
+      requestedAt: now,
+      reason: options.reason,
+    }) as RuntimeRunCancellationState
+    const next: RuntimeRunRecord = {
+      ...current,
+      lifecycle: buildRuntimeRunLifecycle(current.status, current.lifecycle?.cleanup ?? initialRuntimeRunCleanup(), cancellation),
+      updatedAt: now,
+    }
+    await this.write(next)
+    return {
+      schema: "wp-codebox/run-cancellation-request/v1",
+      runId: next.runId,
+      status: next.status,
+      cancellationRequested: true,
+      alreadyRequested: false,
+      terminal: false,
+      record: next,
+    }
   }
 
   async heartbeat(runId: string, now = new Date()): Promise<RuntimeRunRecord> {
@@ -197,7 +258,7 @@ export class RuntimeRunRegistry {
   }
 }
 
-export function buildRuntimeRunLifecycle(status: RuntimeRunStatus, cleanup: RuntimeRunCleanupState = initialRuntimeRunCleanup()): RuntimeRunLifecycle {
+export function buildRuntimeRunLifecycle(status: RuntimeRunStatus, cleanup: RuntimeRunCleanupState = initialRuntimeRunCleanup(), cancellation?: RuntimeRunCancellationState): RuntimeRunLifecycle {
   const terminal = isTerminalRuntimeRunStatus(status)
   return {
     schema: "wp-codebox/run-lifecycle/v1",
@@ -205,6 +266,8 @@ export function buildRuntimeRunLifecycle(status: RuntimeRunStatus, cleanup: Runt
     phase: runtimeRunLifecyclePhase(status),
     terminal,
     cancellable: !terminal,
+    cancelRequested: Boolean(cancellation),
+    ...(cancellation ? { cancellation } : {}),
     successful: status === "succeeded",
     failed: status === "failed" || status === "timed_out",
     cancelled: status === "cancelled",
