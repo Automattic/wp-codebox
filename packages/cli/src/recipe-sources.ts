@@ -435,6 +435,9 @@ export async function prepareRecipeRuntimeOverlays(recipe: WorkspaceRecipe, reci
     if (!descriptor) {
       throw new Error(`Unsupported runtime overlay: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
     }
+    if (!descriptor.prepare) {
+      throw new Error(`Runtime overlay descriptor has no CLI preparer: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
+    }
 
     const prepared = await descriptor.prepare(overlay, recipeDirectory, index)
     overlays.push(prepared)

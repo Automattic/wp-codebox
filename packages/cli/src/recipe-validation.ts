@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path"
 import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
-import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
+import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
 export interface RecipeValidationIssue {
@@ -26,9 +26,7 @@ const cliRuntimeRecipePolicy = cliRuntimeBackendRecipePolicy()
 const cliRecipeCommandDefinitions = cliRuntimeRecipePolicy.recipeCommands
 const supportedRecipeCommands = new Set(listCliRecipeCommandIds())
 const hostRecipeCommandPattern = /^host\/[A-Za-z0-9._/-]+$/
-const supportedRuntimeOverlayKinds = uniqueRuntimeOverlayDescriptorValues("kind")
-const supportedRuntimeOverlayLibraries = uniqueRuntimeOverlayDescriptorValues("library")
-const supportedRuntimeOverlayStrategies = uniqueRuntimeOverlayDescriptorValues("strategy")
+loadConfiguredRuntimeOverlayDescriptors()
 
 export async function loadWorkspaceRecipe(recipePath: string): Promise<WorkspaceRecipe> {
   return parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
@@ -43,9 +41,9 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
     recipeCommands: cliRecipeCommandDefinitions,
     runtimeBackendKinds: listCliRuntimeBackendKinds(),
     runtimeWordPressInstallModes: cliRuntimeRecipePolicy.wordpressInstallModes,
-    runtimeOverlayKinds: supportedRuntimeOverlayKinds,
-    runtimeOverlayLibraries: supportedRuntimeOverlayLibraries,
-    runtimeOverlayStrategies: supportedRuntimeOverlayStrategies,
+    runtimeOverlayKinds: uniqueRuntimeOverlayDescriptorValues("kind"),
+    runtimeOverlayLibraries: uniqueRuntimeOverlayDescriptorValues("library"),
+    runtimeOverlayStrategies: uniqueRuntimeOverlayDescriptorValues("strategy"),
   })
 
   return recipe
@@ -413,7 +411,7 @@ function validateRecipeRuntimeOverlays(overlays: WorkspaceRecipeRuntimeOverlay[]
 }
 
 function runtimeOverlayValidationMessage(path: string, field: string, problem: string, recipePath: string): string {
-  return `Recipe runtime overlay is unsupported at ${path}; field ${field} ${problem}; accepted canonical kind values: ${supportedRuntimeOverlayKinds.join(", ")}; recipe: ${recipePath}`
+  return `Recipe runtime overlay is unsupported at ${path}; field ${field} ${problem}; accepted canonical kind values: ${uniqueRuntimeOverlayDescriptorValues("kind").join(", ")}; recipe: ${recipePath}`
 }
 
 function uniqueRuntimeOverlayDescriptorValues(field: "kind" | "library" | "strategy"): string[] {
