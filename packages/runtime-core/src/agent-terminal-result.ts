@@ -40,6 +40,11 @@ export function normalizeAgentTerminalResult(raw: unknown, options: AgentTermina
     return buildTerminalResult(canonical, "canonical")
   }
 
+  const nestedCanonical = legacyTerminalResultRecord(record)
+  if (nestedCanonical && canonicalTerminalResultRecord(nestedCanonical)) {
+    return buildTerminalResult(nestedCanonical, "canonical")
+  }
+
   if (!options.compatMode) return undefined
 
   const legacy = legacyTerminalResult(record)

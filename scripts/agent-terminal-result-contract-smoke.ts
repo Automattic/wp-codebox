@@ -45,7 +45,7 @@ const legacy = normalizeAgentTerminalResult({
   has_pending_tools: true,
   current_turn: 20,
   max_turns: 20,
-})
+}, { compatMode: true })
 assert.equal(legacy?.source, "legacy-fallback")
 assert.equal(legacy?.status, "max_turns")
 assert.equal(legacy?.success, false)

@@ -266,8 +266,9 @@ export const commandRegistry = [
     acceptedArgs: [
       { name: "name", description: "Ability name to execute.", required: true, format: "string" },
       { name: "input", description: "Ability input payload.", format: "JSON object" },
+      { name: "expected-result-schema", description: "Optional schema id (or JSON schema with $id/const) the ability result envelope must report.", format: "JSON string or object" },
     ],
-    outputShape: "JSON object with command, name, input, and result fields.",
+    outputShape: "JSON object with command, name, input, and result fields. When expected-result-schema is supplied, returns wp-codebox/generic-ability-runtime-run-result/v1 with resultEnvelope/evidenceEnvelope fields and fails on schema mismatch.",
     policyRequirement: "Runtime policy commands must include wordpress.ability.",
     recipe: true,
     handler: { kind: "playground", method: "runAbility" },

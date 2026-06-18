@@ -5,6 +5,7 @@ import {
   abilityInputFromArgs,
   abilityResponseToCommandEnvelope,
   abilityPhpCode,
+  expectedAbilityResultSchemaFromArgs,
   argValue,
   benchRunCode,
   booleanArg,
@@ -296,9 +297,10 @@ export async function runAbilityCommand({
   }
 
   const input = abilityInputFromArgs(spec.args ?? [])
+  const expectedResultSchema = expectedAbilityResultSchemaFromArgs(spec.args ?? [])
   const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode(name, input)) })
   assertPlaygroundResponseOk("wordpress.ability", response)
-  return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input)
+  return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input, expectedResultSchema)
 }
 
 export async function runRestRequestCommand({

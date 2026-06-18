@@ -4,6 +4,7 @@ import { withTempDir } from "../scripts/test-kit.js"
 import { RuntimeRunRegistry, transitionRuntimeRunStatus } from "../packages/runtime-core/src/index.js"
 
 assert.equal(transitionRuntimeRunStatus("queued", "running"), "running")
+assert.equal(transitionRuntimeRunStatus("queued", "collecting_artifacts"), "collecting_artifacts")
 assert.equal(transitionRuntimeRunStatus("succeeded", "succeeded"), "succeeded")
 assert.throws(() => transitionRuntimeRunStatus("queued", "succeeded"), /Invalid runtime run status transition/)
 assert.throws(() => transitionRuntimeRunStatus("failed", "running"), /terminal runtime run status/)

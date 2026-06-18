@@ -136,7 +136,7 @@ function canonicalWorkloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOpt
   const record = objectValue(parsed)
   if (!record) return undefined
 
-  return parseAgentRuntimeWorkloadEnvelope(record, options)
+  return parseAgentRuntimeWorkloadEnvelope(record, options) ?? workloadFromExplicitEnvelopeField(record, options)
 }
 
 function workloadFromRawCompat(raw: unknown, options: AgentRuntimeWorkloadOptions, diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {

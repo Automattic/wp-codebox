@@ -112,7 +112,7 @@ export interface RuntimeRunCleanupUpdate {
 }
 
 const runtimeRunStatusTransitions: Record<RuntimeRunStatus, readonly RuntimeRunStatus[]> = {
-  queued: ["booting", "running", "cancelled", "failed", "timed_out"],
+  queued: ["booting", "running", "collecting_artifacts", "cancelled", "failed", "timed_out"],
   booting: ["running", "collecting_artifacts", "cancelled", "failed", "timed_out"],
   running: ["collecting_artifacts", "succeeded", "cancelled", "failed", "timed_out"],
   collecting_artifacts: ["succeeded", "cancelled", "failed", "timed_out"],

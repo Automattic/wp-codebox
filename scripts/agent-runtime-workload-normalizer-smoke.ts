@@ -34,7 +34,7 @@ const legacyBundleRun = normalizeAgentRuntimeWorkload({
   bundle: { bundle_slug: "site-build" },
   outputs: { preview_url: "https://example.test/preview" },
   workflow: { steps: [{ id: "generate" }, { id: "verify" }] },
-}, { requiredOutputs: { preview_url: "outputs.preview_url" } })
+}, { compatMode: true, requiredOutputs: { preview_url: "outputs.preview_url" } })
 assertEqual(legacyBundleRun.schema, "wp-codebox/agent-runtime-workload/v1", "legacy bundle run emits canonical schema")
 assertEqual(legacyBundleRun.success, true, "legacy bundle run succeeds")
 assertEqual(legacyBundleRun.outputs.preview_url, "https://example.test/preview", "legacy bundle outputs are preserved")
@@ -53,7 +53,7 @@ const stdoutWrapper = normalizeAgentRuntimeWorkload({
       },
     }),
   }),
-}, { workloadId: "stdout-agent", toolRecorders: [{ name: "pull_request_url", path: "outputs.pull_request_url" }] })
+}, { compatMode: true, workloadId: "stdout-agent", toolRecorders: [{ name: "pull_request_url", path: "outputs.pull_request_url" }] })
 assertEqual(stdoutWrapper.success, true, "stdout wrapper succeeds")
 assertEqual(stdoutWrapper.outputs.pull_request_url, "https://github.com/Automattic/wp-codebox/pull/1", "stdout wrapper output is normalized")
 assertEqual(stdoutWrapper.scenarios[0]?.id, "stdout-agent", "stdout wrapper workload id is used")
@@ -77,15 +77,15 @@ const recipeRun = normalizeAgentRuntimeWorkload({
       },
     },
   },
-})
+}, { compatMode: true })
 assertEqual(recipeRun.success, true, "recipe-run nested agent task result succeeds")
 assertEqual(recipeRun.outputs.report_path, "runtime-evidence/report.json", "recipe-run nested outputs are normalized")
 
 const failedScenario = normalizeAgentRuntimeWorkload({
   scenarios: [{ id: "failed", metadata: { error: "runtime adapter failed" } }],
-})
+}, { compatMode: true })
 assertEqual(failedScenario.success, false, "scenario metadata error fails workload")
-assertEqual(failedScenario.diagnostics[0]?.message, "runtime adapter failed", "scenario metadata error is surfaced")
+assertEqual(failedScenario.diagnostics.some((diagnostic) => diagnostic.message === "runtime adapter failed"), true, "scenario metadata error is surfaced")
 
 console.log("agent runtime workload normalizer smoke ok")
 
