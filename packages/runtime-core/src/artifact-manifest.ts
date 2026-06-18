@@ -129,6 +129,13 @@ export async function calculateArtifactContentDigest(directory: string, inputs: 
   return hash.digest("hex")
 }
 
+export function calculateArtifactManifestFileListDigest(files: ArtifactManifestFile[]): string {
+  return createHash("sha256")
+    .update("wp-codebox/artifact-manifest-file-list/v1\n")
+    .update(stableJson(files.map(({ path, kind, contentType, redaction, provenance, viewer }) => stripUndefined({ path, kind, contentType, redaction, provenance, viewer }))))
+    .digest("hex")
+}
+
 export async function calculateArtifactManifestFileSha256(directory: string, manifest: ArtifactManifest, file: ArtifactManifestFile, manifestFileName = "manifest.json"): Promise<string> {
   if (file.path === manifestFileName) {
     return calculateArtifactManifestSelfSha256(manifest, manifestFileName)

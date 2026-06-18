@@ -1,7 +1,7 @@
 import { lstat, readdir, readFile, realpath } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
 import { Ajv2020 } from "ajv/dist/2020.js"
-import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
+import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileListDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
 import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import { RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
@@ -517,6 +517,9 @@ function artifactPathViolation(path: string, fieldPath: string): ArtifactBundleV
 
 async function verifyContentDigest(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
   for (const [index, input] of manifest.contentDigest.inputs.entries()) {
+    if (input === "manifest.files") {
+      continue
+    }
     const pathViolation = artifactPathViolation(input, `manifest.contentDigest.inputs[${index}]`)
     if (pathViolation) {
       violations.push(pathViolation)
@@ -534,7 +537,9 @@ async function verifyContentDigest(directory: string, manifest: ArtifactManifest
   }
 
   try {
-    const value = await calculateArtifactContentDigest(directory, manifest.contentDigest.inputs)
+    const value = manifest.contentDigest.inputs.length === 1 && manifest.contentDigest.inputs[0] === "manifest.files"
+      ? calculateArtifactManifestFileListDigest(manifest.files)
+      : await calculateArtifactContentDigest(directory, manifest.contentDigest.inputs)
     if (value !== manifest.contentDigest.value) {
       violations.push({
         code: "digest-mismatch",
