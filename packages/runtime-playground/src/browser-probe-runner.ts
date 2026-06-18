@@ -1,7 +1,7 @@
 import { BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport } from "./browser-artifacts.js"
+import type { BrowserArtifactFiles, BrowserProbeArtifact, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
@@ -11,7 +11,7 @@ import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT,
 import { argValue, commaListArg, durationArg, strictBooleanArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
+import { browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { BrowserProbeSessionResultBuilder, browserProbeCaptureSelection } from "./browser-probe-session-result-builder.js"
 
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
@@ -34,6 +34,32 @@ export interface BrowserProbeRunPlan {
   wallTimeoutMs: number
   lifecycleSelectors: string[]
   assertions: ReturnType<typeof browserProbeAssertionsFromArgs>
+  diagnosticProviders?: BrowserProbeDiagnosticProvider[]
+}
+
+export interface BrowserProbeDiagnosticProvider {
+  id: string
+  setup(input: BrowserProbeDiagnosticSetupInput): Promise<unknown>
+  collect(input: BrowserProbeDiagnosticCollectInput): Promise<BrowserProbeCollectedDiagnostic | undefined>
+}
+
+export interface BrowserProbeDiagnosticSetupInput {
+  command: string
+  runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  server: PlaygroundCliServer
+}
+
+export interface BrowserProbeDiagnosticCollectInput extends BrowserProbeDiagnosticSetupInput {
+  artifactPath: string
+  network: BrowserProbeNetworkRecord[]
+  setupResult: unknown
+}
+
+export interface BrowserProbeCollectedDiagnostic {
+  key: keyof BrowserArtifactFiles
+  fileName: string
+  artifact: unknown
+  summary: unknown
 }
 
 interface BrowserProbeThrottleProfileDefinition {
@@ -70,6 +96,7 @@ export async function runBrowserProbeCommand({
   server,
   spec,
   onProgress,
+  diagnosticProviders,
 }: {
   abortSignal?: AbortSignal
   artifactRoot: string
@@ -80,9 +107,10 @@ export async function runBrowserProbeCommand({
   server: PlaygroundCliServer
   spec: ExecutionSpec
   onProgress?: (event: BrowserCommandProgressEvent) => void
+  diagnosticProviders?: BrowserProbeDiagnosticProvider[]
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   if (plan) {
-    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress, diagnosticProviders })
   }
 
   const profileIds = browserProbeProfileIds(spec.args ?? [])
@@ -101,9 +129,10 @@ export async function runBrowserProbeCommand({
         browserFilesDirectory: "files/browser",
         profileId: profile.id,
         onProgress,
+        diagnosticProviders,
       })
     }
-    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress, diagnosticProviders })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
@@ -124,6 +153,7 @@ export async function runBrowserProbeCommand({
       browserFilesDirectory: `files/browser/${profile.id}`,
       profileId: profile.id,
       onProgress,
+      diagnosticProviders,
     })
     artifacts.push(result.artifact)
     outputs.push(JSON.parse(result.output))
@@ -157,6 +187,7 @@ export async function runSingleBrowserProbeCommand({
   browserFilesDirectory,
   profileId,
   onProgress,
+  diagnosticProviders,
 }: {
   abortSignal?: AbortSignal
   artifactRoot: string
@@ -169,6 +200,7 @@ export async function runSingleBrowserProbeCommand({
   browserFilesDirectory: string
   profileId?: string
   onProgress?: (event: BrowserCommandProgressEvent) => void
+  diagnosticProviders?: BrowserProbeDiagnosticProvider[]
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
   const runPlan = plan ?? await browserProbeRunPlanFromArgs(args, profileId, artifactRoot)
@@ -202,6 +234,7 @@ export async function runSingleBrowserProbeCommand({
   const livenessPolicy = browserCommandLivenessPolicy({ wallTimeoutMs, idleTimeoutMs: stallTimeoutMs })
   const lifecycleSelectors = runPlan.lifecycleSelectors
   const assertions = runPlan.assertions
+  const activeDiagnosticProviders = runPlan.diagnosticProviders ?? diagnosticProviders ?? []
   const captureSelection = browserProbeCaptureSelection(capture, assertions)
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
@@ -247,7 +280,7 @@ export async function runSingleBrowserProbeCommand({
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
   let output: string | undefined
-  let wordpressDiagnosticsReady = false
+  const diagnosticSetupResults = new Map<string, unknown>()
   const abortHandler = () => {
     pendingError = pendingError ?? new Error("Browser command aborted during runtime cleanup")
     void page?.close().catch(() => undefined)
@@ -312,7 +345,9 @@ export async function runSingleBrowserProbeCommand({
     if (prePageScript) {
       await page.addInitScript(prePageScript)
     }
-    wordpressDiagnosticsReady = await installBrowserWordPressDiagnostics(runPlaygroundCommand, server)
+    for (const provider of activeDiagnosticProviders) {
+      diagnosticSetupResults.set(provider.id, await provider.setup({ command, runPlaygroundCommand, server }))
+    }
     viewport = await browserProbeViewport(page)
     contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
     capabilityDiagnostics = await browserProbeCapabilityDiagnostics(page, viewport)
@@ -478,15 +513,22 @@ export async function runSingleBrowserProbeCommand({
     if (redirectDiagnostics) {
       await artifactSession.writeJson("redirectDiagnostics", "redirect-diagnostics.json", redirectDiagnostics)
     }
-    const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
-      artifactPath: `${browserFilesDirectory}/wordpress-diagnostics.json`,
-      network,
-      ready: wordpressDiagnosticsReady,
-      server,
-    })
-    if (wordpressDiagnostics) {
-      await artifactSession.writeJson("wordpressDiagnostics", "wordpress-diagnostics.json", wordpressDiagnostics)
+    const diagnostics: BrowserProbeCollectedDiagnostic[] = []
+    for (const provider of activeDiagnosticProviders) {
+      const diagnostic = await provider.collect({
+        artifactPath: `${browserFilesDirectory}/${provider.id}-diagnostics.json`,
+        command,
+        network,
+        runPlaygroundCommand,
+        server,
+        setupResult: diagnosticSetupResults.get(provider.id),
+      })
+      if (diagnostic) {
+        diagnostics.push(diagnostic)
+        await artifactSession.writeJson(diagnostic.key, diagnostic.fileName, diagnostic.artifact)
+      }
     }
+    const wordpressDiagnostics = diagnostics.find((diagnostic): diagnostic is BrowserProbeCollectedDiagnostic & { key: "wordpressDiagnostics"; summary: BrowserWordPressDiagnosticsSummary } => diagnostic.key === "wordpressDiagnostics")
     const result = new BrowserProbeSessionResultBuilder().compose({
       assertions: assertionResults,
       authSummary,

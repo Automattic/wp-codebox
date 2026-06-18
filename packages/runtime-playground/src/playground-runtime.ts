@@ -7,7 +7,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
+import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
@@ -618,7 +618,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
     try {
-      result = await runBrowserProbeCommand({ abortSignal: this.activeExecutionSignal, artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
+      result = await runBrowserProbeCommand({ abortSignal: this.activeExecutionSignal, artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }), diagnosticProviders: [browserWordPressDiagnosticProvider()] })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
