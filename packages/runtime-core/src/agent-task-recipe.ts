@@ -94,11 +94,11 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
   const componentPluginEntries = componentPlugins(input.component_contracts, artifacts)
   const callerExtraPlugins = agentTaskExtraPlugins(input)
-  const extraPlugins = [
+  const extraPlugins = dedupeExtraPlugins([
     ...componentPluginEntries,
     ...providerPlugins,
     ...callerExtraPlugins,
-  ].filter(Boolean)
+  ].filter(Boolean))
   const componentManifest = componentManifestForRuntimePlugins(componentPluginEntries, providerPlugins)
   const workflowArgs = [
     `task=${taskInput.goal}`,
@@ -318,6 +318,18 @@ function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPl
     ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
   ]
+}
+
+function dedupeExtraPlugins(plugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {
+  const seen = new Set<string>()
+  const deduped: WorkspaceRecipeExtraPlugin[] = []
+  for (const plugin of plugins) {
+    const key = `${stringValue(plugin.slug) || slugFromPath(stringValue(plugin.source))}:${plugin.loadAs === "plugin" ? "plugin" : "mu-plugin"}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(plugin)
+  }
+  return deduped
 }
 
 function normalizeAgentTaskExtraPlugins(value: unknown): WorkspaceRecipeExtraPlugin[] {

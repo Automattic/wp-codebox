@@ -126,6 +126,11 @@ try {
       metadata: { source: "agent-task-input" },
     }],
     extraPlugins: [{
+      source: providerSource,
+      slug: "test-provider",
+      loadAs: "plugin",
+      activate: true,
+    }, {
       source: helperSource,
       slug: "agent-runtime-helper",
       loadAs: "plugin",
@@ -135,6 +140,7 @@ try {
   }, normalizeTaskInput({ goal: "Verify extra plugin propagation" }), "latest")
   const extraPlugins = recipe.inputs?.extra_plugins ?? []
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
+  assert.equal(extraPlugins.filter((plugin) => plugin.slug === "test-provider" && plugin.loadAs === "plugin").length, 1)
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
     source: bridgeSource,
     slug: "agent-runtime-tool-bridge",
