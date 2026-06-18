@@ -28,6 +28,7 @@ export interface BrowserProbeRunPlan {
   script?: string
   authRequest?: { userId: number }
   storageStateImport?: BrowserStorageStateImport
+  routeHostDrain: "required" | "advisory"
   failFast: boolean
   stallTimeoutMs: number
   wallTimeoutMs: number
@@ -399,7 +400,7 @@ export async function runSingleBrowserProbeCommand({
       await drainBrowserPreviewRouteTracker(routeTracker)
     } catch (error) {
       const routeError = error instanceof Error ? error : new Error(String(error))
-      if (!pendingError) {
+      if (!pendingError && runPlan.routeHostDrain === "required") {
         pendingError = routeError
         progress.fail("probe-error", routeError)
       }
@@ -600,12 +601,21 @@ async function browserProbeRunPlanFromArgs(args: string[], profileId: string | u
     script: argValue(args, "script"),
     authRequest: browserAuthRequest(args),
     storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-probe", artifactRoot),
+    routeHostDrain: routeHostDrainMode(args),
     failFast: strictBooleanArg(args, "fail-fast", false),
     stallTimeoutMs: durationArg(args, "stall-timeout", 0),
     wallTimeoutMs: durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs),
     lifecycleSelectors: commaListArg(args, "observe"),
     assertions: browserProbeAssertionsFromArgs(args),
   }
+}
+
+function routeHostDrainMode(args: string[]): "required" | "advisory" {
+  const raw = argValue(args, "route-host-drain")?.trim() || "required"
+  if (raw === "required" || raw === "advisory") {
+    return raw
+  }
+  throw new Error(`wordpress.browser-probe route-host-drain supports required or advisory: ${raw}`)
 }
 
 function browserProbeProfileArgs(args: string[], profile: BrowserProbeProfileDefinition): string[] {
