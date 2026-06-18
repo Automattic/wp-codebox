@@ -82,6 +82,15 @@ try {
   assert.equal(timedOut.lifecycle.outcome, "timed_out")
   assert.equal(timedOut.lifecycle.cancellable, false)
 
+  const cancellable = await registry.create({ runId: "run_cancel", status: "running" })
+  const { stdout: cancelStdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "runs", "cancel", "--registry", registryDirectory, "--run-id", cancellable.runId, "--reason", "smoke requested", "--json"], { cwd: root })
+  const cancellation = JSON.parse(cancelStdout)
+  assert.equal(cancellation.schema, "wp-codebox/run-cancellation-request/v1")
+  assert.equal(cancellation.cancellationRequested, true)
+  assert.equal(cancellation.alreadyRequested, false)
+  assert.equal(cancellation.record.lifecycle.cancelRequested, true)
+  assert.equal(cancellation.record.lifecycle.cancellation.reason, "smoke requested")
+
   const { stdout: artifactsStdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "runs", "artifacts", "--registry", registryDirectory, "--run-id", run.runId, "--json"], { cwd: root })
   const artifacts = JSON.parse(artifactsStdout)
   assert.equal(artifacts.schema, "wp-codebox/run-artifacts/v1")

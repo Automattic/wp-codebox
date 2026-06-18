@@ -118,6 +118,9 @@ export function createRecipeInterruptionController(): RecipeInterruptionControll
         rejectInterrupted = undefined
       }
     },
+    requestCancellation() {
+      interrupt("SIGTERM", "run-cancellation-request")
+    },
     throwIfInterrupted() {
       if (metadata) {
         throw new RecipeInterruptedError(metadata.signal, metadata.reason, metadata.receivedAt)
@@ -184,6 +187,9 @@ function recipeInterruptionMessage(metadata: Pick<RecipeInterruptionMetadata, "s
   }
   if (metadata.reason === "stdio-closed") {
     return "Recipe run interrupted after stdio closed"
+  }
+  if (metadata.reason === "run-cancellation-request") {
+    return "Recipe run interrupted by cancellation request"
   }
   return `Recipe run interrupted by ${metadata.signal}`
 }

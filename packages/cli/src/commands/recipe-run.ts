@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, resolveSecretEnvNames, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -130,6 +130,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const phaseExecutor = new RecipeRunPhaseExecutor({ context, timeoutMs: options.timeoutMs, interruption, destroyActiveRuntime })
   const phaseTracker = phaseExecutor.tracker
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs?: number): Promise<T> => phaseExecutor.operation(operation, promiseOrFactory, timeoutMs)
+  const cancellationWatcher = interruption ? watchRunCancellationRequests(runRegistry, runRecord.runId, interruption) : undefined
 
   try {
     const preparedRuntimeSetup = await prepareRecipeRuntimeSetup(recipe, recipeDirectory, plan.runtime.backend)
@@ -448,6 +449,40 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       },
     })
+  } finally {
+    cancellationWatcher?.dispose()
+  }
+}
+
+function watchRunCancellationRequests(runRegistry: RuntimeRunRegistry, runId: string, interruption: RecipeInterruptionController): { dispose(): void } {
+  let disposed = false
+  let checking = false
+  const check = async (): Promise<void> => {
+    if (disposed || checking || interruption.metadata) {
+      return
+    }
+    checking = true
+    try {
+      const record = await runRegistry.read(runId)
+      if (record.lifecycle.cancelRequested && !record.lifecycle.terminal) {
+        interruption.requestCancellation()
+      }
+    } catch {
+      // Cancellation polling must not replace the primary recipe-run failure.
+    } finally {
+      checking = false
+    }
+  }
+  const timer = setInterval(() => {
+    void check()
+  }, 1_000)
+  timer.unref()
+  void check()
+  return {
+    dispose() {
+      disposed = true
+      clearInterval(timer)
+    },
   }
 }
 

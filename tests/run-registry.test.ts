@@ -41,3 +41,42 @@ await withTempDir("wp-codebox-run-registry-", async (directory) => {
   assert.equal(retry.lifecycle.cleanup.status, "running")
   assert.equal(retry.lifecycle.cleanup.attempts, 1)
 })
+
+await withTempDir("wp-codebox-run-registry-cancel-", async (directory) => {
+  const registry = new RuntimeRunRegistry(directory)
+  const run = await registry.create({ runId: "cancel-active", status: "running", now: new Date("2026-01-02T03:04:05.000Z") })
+
+  assert.equal(run.lifecycle.cancellable, true)
+  assert.equal(run.lifecycle.cancelRequested, false)
+
+  const requested = await registry.requestCancellation(run.runId, {
+    reason: "caller stopped",
+    now: new Date("2026-01-02T03:04:06.000Z"),
+  })
+  assert.equal(requested.schema, "wp-codebox/run-cancellation-request/v1")
+  assert.equal(requested.cancellationRequested, true)
+  assert.equal(requested.alreadyRequested, false)
+  assert.equal(requested.terminal, false)
+  assert.equal(requested.record.status, "running")
+  assert.equal(requested.record.lifecycle.cancelRequested, true)
+  assert.deepEqual(requested.record.lifecycle.cancellation, {
+    requestedAt: "2026-01-02T03:04:06.000Z",
+    reason: "caller stopped",
+  })
+
+  const repeated = await registry.requestCancellation(run.runId, {
+    reason: "ignored duplicate",
+    now: new Date("2026-01-02T03:04:07.000Z"),
+  })
+  assert.equal(repeated.cancellationRequested, true)
+  assert.equal(repeated.alreadyRequested, true)
+  assert.deepEqual(repeated.record.lifecycle.cancellation, requested.record.lifecycle.cancellation)
+
+  const cancelled = await registry.update(run.runId, {
+    status: "cancelled",
+    now: new Date("2026-01-02T03:04:08.000Z"),
+  })
+  assert.equal(cancelled.lifecycle.terminal, true)
+  assert.equal(cancelled.lifecycle.cancelled, true)
+  assert.equal(cancelled.lifecycle.outcome, "cancelled")
+})

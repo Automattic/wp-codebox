@@ -420,9 +420,12 @@ WP Codebox boots Playground lazily on the first command, captures artifacts afte
 
 Recipe runs also write a registry entry under the run registry directory
 (`artifacts/runs` by default, or `--run-registry <dir>`). Poll it with
-`wp-codebox runs status --registry <dir> --run-id <id> --json`. The returned
-record keeps the existing flat `status` field and adds `lifecycle`, a concise
-machine contract for orchestrators:
+`wp-codebox runs status --registry <dir> --run-id <id> --json`, inspect
+artifacts with `wp-codebox runs artifacts --registry <dir> --run-id <id>
+--json`, and request cancellation with `wp-codebox runs cancel --registry <dir>
+--run-id <id> --reason <text> --json`. The returned record keeps the existing
+flat `status` field and adds `lifecycle`, a concise machine contract for
+orchestrators:
 
 ```json
 {
@@ -432,6 +435,7 @@ machine contract for orchestrators:
     "phase": "terminal",
     "terminal": true,
     "cancellable": false,
+    "cancelRequested": false,
     "successful": true,
     "failed": false,
     "cancelled": false,
@@ -447,6 +451,9 @@ machine contract for orchestrators:
 Orchestrators should use `lifecycle.terminal`, `lifecycle.outcome`, and
 `lifecycle.cleanup.status` instead of scraping human logs. Timeout and signal
 interruptions settle as `timed_out` and `cancelled` outcomes respectively.
+Cancellation requests are idempotent: repeated `runs cancel` calls preserve the
+first `lifecycle.cancellation.requestedAt`/`reason`, and active recipe runs
+observe the request through the registry before settling as `cancelled`.
 
 ## Runtime Evidence
 

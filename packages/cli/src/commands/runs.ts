@@ -6,6 +6,10 @@ interface RunLookupOptions {
   json: boolean
 }
 
+interface RunCancelOptions extends RunLookupOptions {
+  reason?: string
+}
+
 export async function runRunsStatusCommand(args: string[]): Promise<number> {
   const options = parseRunLookupOptions(args)
   const record = await new RuntimeRunRegistry(options.registryDirectory).read(options.runId)
@@ -37,6 +41,22 @@ export async function runRunsArtifactsCommand(args: string[]): Promise<number> {
   }
 
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
+
+export async function runRunsCancelCommand(args: string[]): Promise<number> {
+  const options = parseRunCancelOptions(args)
+  const result = await new RuntimeRunRegistry(options.registryDirectory).requestCancellation(options.runId, { reason: options.reason })
+  if (!options.json) {
+    console.log(`WP Codebox run cancellation: ${result.runId}`)
+    console.log(`Status: ${result.status}`)
+    console.log(`Cancellation requested: ${result.cancellationRequested ? "yes" : "no"}`)
+    console.log(`Already requested: ${result.alreadyRequested ? "yes" : "no"}`)
+    console.log(`Terminal: ${result.terminal ? "yes" : "no"}`)
+    return 0
+  }
+
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   return 0
 }
 
@@ -80,6 +100,63 @@ function parseRunLookupOptions(args: string[]): RunLookupOptions {
   }
 
   return options as RunLookupOptions
+}
+
+function parseRunCancelOptions(args: string[]): RunCancelOptions {
+  const options = parseRunLookupOptionsWithExtra(args, (name, value, parsed) => {
+    if (name === "--reason") {
+      parsed.reason = value
+      return true
+    }
+
+    return false
+  })
+
+  return options as RunCancelOptions
+}
+
+function parseRunLookupOptionsWithExtra(args: string[], extra: (name: string, value: string, options: Partial<RunCancelOptions>) => boolean): Partial<RunCancelOptions> {
+  const options: Partial<RunCancelOptions> = { json: false }
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--registry":
+      case "--run-registry":
+        options.registryDirectory = value
+        break
+      case "--run-id":
+        options.runId = value
+        break
+      default:
+        if (!extra(name, value, options)) {
+          throw new Error(`Unknown option: ${name}`)
+        }
+    }
+  }
+
+  if (!options.registryDirectory) {
+    throw new Error("Missing required option: --registry")
+  }
+
+  if (!options.runId) {
+    throw new Error("Missing required option: --run-id")
+  }
+
+  return options
 }
 
 function printRunStatusHumanOutput(record: RuntimeRunRecord): void {
