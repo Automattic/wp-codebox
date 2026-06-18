@@ -23,10 +23,15 @@ export interface AgentTerminalResult {
     max?: number
   }
   evidence_refs: Array<Record<string, unknown>>
+  diagnostics?: Array<Record<string, unknown>>
   raw?: Record<string, unknown>
 }
 
-export function normalizeAgentTerminalResult(raw: unknown): AgentTerminalResult | undefined {
+export interface AgentTerminalResultOptions {
+  compatMode?: boolean
+}
+
+export function normalizeAgentTerminalResult(raw: unknown, options: AgentTerminalResultOptions = {}): AgentTerminalResult | undefined {
   const record = objectValue(raw)
   if (Object.keys(record).length === 0) return undefined
 
@@ -35,7 +40,10 @@ export function normalizeAgentTerminalResult(raw: unknown): AgentTerminalResult 
     return buildTerminalResult(canonical, "canonical")
   }
 
-  return legacyTerminalResult(record)
+  if (!options.compatMode) return undefined
+
+  const legacy = legacyTerminalResult(record)
+  return legacy ? withCompatibilityDiagnostic(legacy, "agent-terminal-result-legacy-shape") : undefined
 }
 
 function canonicalTerminalResultRecord(record: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -43,6 +51,10 @@ function canonicalTerminalResultRecord(record: Record<string, unknown>): Record<
     return record
   }
 
+  return undefined
+}
+
+function legacyTerminalResultRecord(record: Record<string, unknown>): Record<string, unknown> | undefined {
   for (const candidate of [record.terminal_result, record.terminalResult]) {
     const value = objectValue(candidate)
     if (Object.keys(value).length > 0) return value
@@ -90,6 +102,9 @@ function buildTerminalResult(record: Record<string, unknown>, source: AgentTermi
 }
 
 function legacyTerminalResult(record: Record<string, unknown>): AgentTerminalResult | undefined {
+  const nested = legacyTerminalResultRecord(record)
+  if (nested) return buildTerminalResult(nested, "legacy-fallback")
+
   const runtime = objectValue(record.agent_runtime)
   const runtimeResult = runtime.success === true ? objectValue(runtime.result) : {}
   const candidates = [runtimeResult, record].filter((candidate) => Object.keys(candidate).length > 0)
@@ -116,6 +131,20 @@ function legacyTerminalResult(record: Record<string, unknown>): AgentTerminalRes
   }
 
   return undefined
+}
+
+function withCompatibilityDiagnostic(result: AgentTerminalResult, adapter: string): AgentTerminalResult {
+  return {
+    ...result,
+    diagnostics: [
+      ...(result.diagnostics ?? []),
+      {
+        class: "wp-codebox.normalizer.compat_mode_used",
+        message: "Agent terminal result was parsed using explicit normalizer compatibility mode.",
+        data: { adapter },
+      },
+    ],
+  }
 }
 
 function normalizeStatus(status: string, record: Record<string, unknown>, pendingTools?: AgentTerminalResult["pending_tools"], maxTurns?: AgentTerminalResult["max_turns"]): AgentTerminalStatus {

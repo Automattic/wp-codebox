@@ -786,7 +786,7 @@ export function buildAgentTaskSingleResult(transcript: AgentSandboxTranscript): 
   const rawResult = runtime.result
   const resultRecord = isRecord(rawResult) ? rawResult : undefined
   const success = runtime.success === true
-  const terminalResult = normalizeAgentTerminalResult(runtime)
+  const terminalResult = normalizeAgentTerminalResult(runtime, { compatMode: true })
   return {
     schema: "wp-codebox/agent-task-result/v1",
     success,
@@ -1032,10 +1032,10 @@ function latestAgentTerminalResult(transcript: AgentSandboxTranscript): AgentTer
 
 function agentTerminalResultFromRecord(record: Record<string, unknown> | undefined): AgentTerminalResult | undefined {
   if (!record) return undefined
-  const direct = normalizeAgentTerminalResult(record)
+  const direct = normalizeAgentTerminalResult(record, { compatMode: true })
   if (direct) return direct
   const output = typeof record.output === "string" ? decodeJsonFragment(record.output) : undefined
-  return normalizeAgentTerminalResult(output)
+  return normalizeAgentTerminalResult(output, { compatMode: true })
 }
 
 function isIncompleteAgentResult(result: Record<string, unknown>): boolean {

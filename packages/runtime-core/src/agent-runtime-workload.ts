@@ -101,15 +101,19 @@ export interface AgentRuntimeWorkloadOptions {
   requiredOutputs?: Record<string, string> | string[]
   toolRecorders?: unknown
   workloadId?: string
+  compatMode?: boolean
 }
 
 type WorkloadDraft = Omit<AgentRuntimeWorkload, "schema" | "success"> & { success?: boolean }
 
 export function normalizeAgentRuntimeWorkload(raw: unknown, options: AgentRuntimeWorkloadOptions = {}): AgentRuntimeWorkload {
-  const workload = workloadFromRaw(raw, options) ?? emptyWorkload(options)
+  const canonicalWorkload = canonicalWorkloadFromRaw(raw, options)
+  const compatMode = options.compatMode === true
+  const compatibilityDiagnostics: AgentRuntimeWorkloadDiagnostic[] = []
+  const workload = canonicalWorkload ?? (compatMode ? workloadFromRawCompat(raw, options, compatibilityDiagnostics) : undefined) ?? emptyWorkload(options)
   const toolRecorderOutputs = outputsFromToolRecorders(workload, options.toolRecorders)
   const outputs = { ...workload.outputs, ...toolRecorderOutputs }
-  const diagnostics = [...workload.diagnostics, ...diagnosticsFromWorkload({ ...workload, outputs }, options)]
+  const diagnostics = [...workload.diagnostics, ...compatibilityDiagnostics, ...diagnosticsFromWorkload({ ...workload, outputs }, options)]
   const success = workload.success !== false && diagnostics.every((diagnostic) => !isFailureDiagnostic(diagnostic))
 
   return {
@@ -127,7 +131,15 @@ export function normalizeAgentRuntimeWorkload(raw: unknown, options: AgentRuntim
   }
 }
 
-function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+function canonicalWorkloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+  const parsed = parseJsonEnvelope(raw)
+  const record = objectValue(parsed)
+  if (!record) return undefined
+
+  return parseAgentRuntimeWorkloadEnvelope(record, options)
+}
+
+function workloadFromRawCompat(raw: unknown, options: AgentRuntimeWorkloadOptions, diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {
   const parsed = parseJsonEnvelope(raw)
   const record = objectValue(parsed)
   if (!record) return undefined
@@ -136,12 +148,12 @@ function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): Wo
   if (canonical) return canonical
 
   const explicitEnvelope = workloadFromExplicitEnvelopeField(record, options)
-  if (explicitEnvelope) return explicitEnvelope
+  if (explicitEnvelope) return withCompatibilityDiagnostic(explicitEnvelope, diagnostics, "runtime-workload-explicit-envelope")
 
   const stdout = stringValue(record.stdout)
   if (stdout) {
-    const stdoutWorkload = workloadFromRaw(stdout, options)
-    if (hasSemanticWorkload(stdoutWorkload)) return stdoutWorkload
+    const stdoutWorkload = workloadFromRawCompat(stdout, options, diagnostics)
+    if (stdoutWorkload && hasSemanticWorkload(stdoutWorkload)) return withCompatibilityDiagnostic(stdoutWorkload, diagnostics, "runtime-workload-stdout-json")
   }
 
   const direct = objectValue(record.agent_runtime)?.result ?? record.result ?? record
@@ -150,29 +162,29 @@ function workloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): Wo
   if (!candidateRecord) return undefined
 
   const canonicalCandidate = parseAgentRuntimeWorkloadEnvelope(candidateRecord, options)
-  if (canonicalCandidate) return canonicalCandidate
+  if (canonicalCandidate) return withCompatibilityDiagnostic(canonicalCandidate, diagnostics, "runtime-workload-nested-canonical")
 
-  if (isLegacyAgentBundleRun(candidateRecord)) return workloadFromLegacyAgentBundleRun(candidateRecord, options)
-  if (Array.isArray(candidateRecord.scenarios)) return workloadFromScenarioWorkload(candidateRecord, options)
-  if (isSingleResultWorkload(candidateRecord)) return workloadFromSingleResult(candidateRecord, options)
+  if (isLegacyAgentBundleRun(candidateRecord)) return withCompatibilityDiagnostic(workloadFromLegacyAgentBundleRun(candidateRecord, options), diagnostics, "runtime-workload-agent-bundle-run")
+  if (Array.isArray(candidateRecord.scenarios)) return withCompatibilityDiagnostic(workloadFromScenarioWorkload(candidateRecord, options), diagnostics, "runtime-workload-scenario-shape")
+  if (isSingleResultWorkload(candidateRecord)) return withCompatibilityDiagnostic(workloadFromSingleResult(candidateRecord, options), diagnostics, "runtime-workload-single-result-shape")
 
   const recipeRun = objectValue(candidateRecord.run)
   const agentTaskResult = objectValue(candidateRecord.agentTaskResult) ?? objectValue(recipeRun?.agentTaskResult) ?? objectValue(candidateRecord.agent_task_result)
   const nestedRuntime = objectValue(agentTaskResult?.raw)?.agent_runtime
   const nestedRuntimeRecord = objectValue(nestedRuntime)
-  if (nestedRuntimeRecord?.result) return workloadFromRaw({ agent_runtime: nestedRuntimeRecord }, options)
+  if (nestedRuntimeRecord?.result) return workloadFromRawCompat({ agent_runtime: nestedRuntimeRecord }, options, diagnostics)
 
-  const executionWorkload = workloadFromExecutions(candidateRecord, options)
-  if (executionWorkload) return executionWorkload
+  const executionWorkload = workloadFromExecutions(candidateRecord, options, diagnostics)
+  if (executionWorkload) return withCompatibilityDiagnostic(executionWorkload, diagnostics, "runtime-workload-execution-stdout")
 
   if (candidateRecord.metadata || candidateRecord.metrics) {
-    return {
+    return withCompatibilityDiagnostic({
       outputs: {},
       scenarios: [scenarioFromRecord(candidateRecord, options)],
       diagnostics: diagnosticsFromRaw(candidateRecord.diagnostics),
       artifacts: artifactsFromRaw(candidateRecord.artifacts),
       metadata: objectValue(candidateRecord.metadata) ?? {},
-    }
+    }, diagnostics, "runtime-workload-metadata-shape")
   }
 
   return undefined
@@ -211,15 +223,26 @@ function workloadFromExplicitEnvelopeField(record: Record<string, unknown>, opti
   return undefined
 }
 
-function workloadFromExecutions(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+function workloadFromExecutions(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions, diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {
   const executions = arrayObjects(record.executions).length > 0 ? arrayObjects(record.executions) : arrayObjects(objectValue(record.run)?.executions)
   for (const execution of executions) {
     const stdout = stringValue(execution.stdout)
     if (!stdout) continue
-    const workload = workloadFromRaw(stdout, options)
+    const workload = workloadFromRawCompat(stdout, options, diagnostics)
     if (hasSemanticWorkload(workload)) return workload
   }
   return undefined
+}
+
+function withCompatibilityDiagnostic(workload: WorkloadDraft, diagnostics: AgentRuntimeWorkloadDiagnostic[], adapter: string): WorkloadDraft {
+  if (!diagnostics.some((diagnostic) => diagnostic.data?.adapter === adapter)) {
+    diagnostics.push({
+      class: "wp-codebox.normalizer.compat_mode_used",
+      message: "Agent runtime workload was parsed using explicit normalizer compatibility mode.",
+      data: { adapter },
+    })
+  }
+  return workload
 }
 
 function workloadFromScenarioWorkload(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions): WorkloadDraft {

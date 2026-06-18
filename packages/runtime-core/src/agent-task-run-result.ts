@@ -53,22 +53,21 @@ export interface AgentTaskRunResultSummary {
 
 export interface AgentTaskRunResultOptions {
   exitStatus?: number
+  compatMode?: boolean
 }
 
 export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunResultOptions = {}): AgentTaskRunResultSummary {
   const result = objectValue(raw)
   const exitStatus = options.exitStatus ?? 0
-  const agentResult = agentResultRecord(result)
-  const completionOutcome = completionOutcomeRecord(result)
+  const compatMode = options.compatMode === true
+  const compatibilityDiagnostics: Array<Record<string, unknown>> = []
+  const agentResult = agentResultRecord(result, compatMode, compatibilityDiagnostics)
+  const completionOutcome = completionOutcomeRecord(result, compatMode, compatibilityDiagnostics)
   const runMetadata = objectValue(result.run_metadata)
   const patch = objectValue(agentResult.patch)
-  const terminalResult = normalizeAgentTerminalResult(result.terminal_result)
-    ?? normalizeAgentTerminalResult(result.terminalResult)
-    ?? normalizeAgentTerminalResult(agentResult.terminal_result)
-    ?? normalizeAgentTerminalResult(agentResult.terminalResult)
-    ?? normalizeAgentTerminalResult(objectValue(agentResult.raw).agent_runtime)
+  const terminalResult = terminalResultRecord(result, agentResult, compatMode, compatibilityDiagnostics)
   const status = normalizeStatus(result, agentResult, exitStatus, terminalResult)
-  const artifacts = normalizeArtifacts(result, agentResult, completionOutcome)
+  const artifacts = normalizeArtifacts(result, agentResult, completionOutcome, compatMode, compatibilityDiagnostics)
   const noOp = noOpMetadata(result, agentResult)
   const failureClassification = stringValue(result.failure_classification) || terminalResult?.failure_classification || failureClassificationForStatus(status)
 
@@ -86,12 +85,12 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log"),
       runtimes: artifacts.filter((artifact) => artifact.kind === "codebox-runtime"),
     },
-    diagnostics: arrayObjects(result.diagnostics),
+    diagnostics: [...arrayObjects(result.diagnostics), ...compatibilityDiagnostics, ...(terminalResult?.diagnostics ?? [])],
     metadata: stripUndefined({
-      run_id: stringValue(runRecord(result).runId) || stringValue(runMetadata.run_id),
-      run_status: stringValue(runRecord(result).status) || stringValue(runMetadata.run_status),
-      runtime_id: stringValue(runtimeRecord(result).id) || stringValue(runMetadata.runtime_id),
-      runtime_status: stringValue(runtimeRecord(result).status) || stringValue(runMetadata.runtime_status),
+      run_id: stringValue(runRecord(result, compatMode, compatibilityDiagnostics).runId) || stringValue(runMetadata.run_id),
+      run_status: stringValue(runRecord(result, compatMode, compatibilityDiagnostics).status) || stringValue(runMetadata.run_status),
+      runtime_id: stringValue(runtimeRecord(result, compatMode, compatibilityDiagnostics).id) || stringValue(runMetadata.runtime_id),
+      runtime_status: stringValue(runtimeRecord(result, compatMode, compatibilityDiagnostics).status) || stringValue(runMetadata.runtime_status),
       changed_files_count: noOp.changed_files_count,
       patch_bytes: noOp.patch_bytes,
       patch_sha256: stringValue(patch.sha256),
@@ -128,13 +127,13 @@ function normalizeStatus(result: Record<string, unknown>, agentResult: Record<st
   })
 }
 
-function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record<string, unknown>, completionOutcome: Record<string, unknown>): AgentTaskRunArtifactRef[] {
+function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record<string, unknown>, completionOutcome: Record<string, unknown>, compatMode: boolean, diagnostics: Array<Record<string, unknown>>): AgentTaskRunArtifactRef[] {
   const artifacts: AgentTaskRunArtifactRef[] = []
   for (const artifact of arrayObjects(result.artifacts)) {
     appendUniqueArtifact(artifacts, artifactFromResultArtifact(artifact))
   }
 
-  for (const ref of arrayObjects(runRecord(result).artifactRefs)) {
+  for (const ref of arrayObjects(runRecord(result, compatMode, diagnostics).artifactRefs)) {
     const digest = objectValue(ref.digest)
     appendUniqueArtifact(artifacts, stripUndefined({
       id: stringValue(ref.id) || stringValue(digest.value),
@@ -156,8 +155,8 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
     kind: "codebox-artifact-bundle",
     path: bundleDirectory,
     metadata: stripUndefined({
-      runtime_id: stringValue(runtimeRecord(result).id),
-      runtime_status: stringValue(runtimeRecord(result).status),
+      runtime_id: stringValue(runtimeRecord(result, compatMode, diagnostics).id),
+      runtime_status: stringValue(runtimeRecord(result, compatMode, diagnostics).status),
     }),
   }))
 
@@ -170,7 +169,7 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   const commandsLogPath = stringValue(objectValue(result.artifacts).commandsLogPath)
   appendUniqueArtifact(artifacts, stripUndefined({ id: commandsLogPath ? "codebox-command-log" : "", kind: "codebox-command-log", path: commandsLogPath }))
 
-  const runtime = runtimeRecord(result)
+  const runtime = runtimeRecord(result, compatMode, diagnostics)
   appendUniqueArtifact(artifacts, stripUndefined({
     id: stringValue(runtime.id),
     kind: "codebox-runtime",
@@ -215,32 +214,51 @@ function noOpMetadata(result: Record<string, unknown>, agentResult: Record<strin
   return stripUndefined({ detected, reason, changed_files_count: changedFilesCount, patch_bytes: patchBytes })
 }
 
-function agentResultRecord(result: Record<string, unknown>): Record<string, unknown> {
+function agentResultRecord(result: Record<string, unknown>, compatMode: boolean, diagnostics: Array<Record<string, unknown>>): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(
-    objectValue(result.run).agentResult,
-    result.agentResult,
-    result.agent_result,
-    result.agent_task_result,
-    metadataRecipeRun.agentResult,
-    metadataRecipeRun.agent_task_result,
-    objectValue(metadataRecipeRun.run).agentResult,
-  )
+  const canonical = firstObject(objectValue(result.run).agentResult, result.agentResult)
+  if (Object.keys(canonical).length > 0 || !compatMode) return canonical
+
+  return firstCompatObject(diagnostics, "agent-result-legacy-shape", result.agent_result, result.agent_task_result, metadataRecipeRun.agentResult, metadataRecipeRun.agent_task_result, objectValue(metadataRecipeRun.run).agentResult)
 }
 
-function completionOutcomeRecord(result: Record<string, unknown>): Record<string, unknown> {
+function completionOutcomeRecord(result: Record<string, unknown>, compatMode: boolean, diagnostics: Array<Record<string, unknown>>): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(result.completionOutcome, result.completion_outcome, metadataRecipeRun.completionOutcome, metadataRecipeRun.completion_outcome)
+  const canonical = firstObject(result.completionOutcome)
+  if (Object.keys(canonical).length > 0 || !compatMode) return canonical
+
+  return firstCompatObject(diagnostics, "completion-outcome-legacy-shape", result.completion_outcome, metadataRecipeRun.completionOutcome, metadataRecipeRun.completion_outcome)
 }
 
-function runRecord(result: Record<string, unknown>): Record<string, unknown> {
+function runRecord(result: Record<string, unknown>, compatMode = false, diagnostics: Array<Record<string, unknown>> = []): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(result.run, metadataRecipeRun.run)
+  const canonical = firstObject(result.run)
+  if (Object.keys(canonical).length > 0 || !compatMode) return canonical
+
+  return firstCompatObject(diagnostics, "run-record-legacy-shape", metadataRecipeRun.run)
 }
 
-function runtimeRecord(result: Record<string, unknown>): Record<string, unknown> {
+function runtimeRecord(result: Record<string, unknown>, compatMode = false, diagnostics: Array<Record<string, unknown>> = []): Record<string, unknown> {
   const metadataRecipeRun = objectValue(objectValue(result.metadata).recipe_run)
-  return firstObject(runRecord(result).runtime, objectValue(metadataRecipeRun.run).runtime)
+  const canonical = firstObject(runRecord(result, compatMode, diagnostics).runtime)
+  if (Object.keys(canonical).length > 0 || !compatMode) return canonical
+
+  return firstCompatObject(diagnostics, "runtime-record-legacy-shape", objectValue(metadataRecipeRun.run).runtime)
+}
+
+function terminalResultRecord(result: Record<string, unknown>, agentResult: Record<string, unknown>, compatMode: boolean, diagnostics: Array<Record<string, unknown>>): AgentTerminalResult | undefined {
+  const canonical = normalizeAgentTerminalResult(result.terminal_result)
+  if (canonical || !compatMode) return canonical
+
+  const candidates = [result.terminalResult, agentResult.terminal_result, agentResult.terminalResult, objectValue(agentResult.raw).agent_runtime]
+  for (const candidate of candidates) {
+    const terminalResult = normalizeAgentTerminalResult(candidate, { compatMode: true })
+    if (terminalResult) {
+      pushCompatibilityDiagnostic(diagnostics, "terminal-result-legacy-shape")
+      return terminalResult
+    }
+  }
+  return undefined
 }
 
 function failureClassificationForStatus(status: AgentTaskRunStatus): AgentTaskRunFailureClassification | "" {
@@ -274,6 +292,25 @@ function firstObject(...values: unknown[]): Record<string, unknown> {
     if (isPlainObject(value) && Object.keys(value).length > 0) return value
   }
   return {}
+}
+
+function firstCompatObject(diagnostics: Array<Record<string, unknown>>, adapter: string, ...values: unknown[]): Record<string, unknown> {
+  const value = firstObject(...values)
+  if (Object.keys(value).length > 0) pushCompatibilityDiagnostic(diagnostics, adapter)
+  return value
+}
+
+function pushCompatibilityDiagnostic(diagnostics: Array<Record<string, unknown>>, adapter: string): void {
+  if (diagnostics.some((diagnostic) => objectValue(diagnostic.data).adapter === adapter)) return
+  diagnostics.push(compatibilityDiagnostic(adapter))
+}
+
+function compatibilityDiagnostic(adapter: string): Record<string, unknown> {
+  return {
+    class: "wp-codebox.normalizer.compat_mode_used",
+    message: "Agent task run result was parsed using explicit normalizer compatibility mode.",
+    data: { adapter },
+  }
 }
 
 function arrayObjects(value: unknown): Array<Record<string, unknown>> {
