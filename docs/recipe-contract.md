@@ -440,11 +440,24 @@ over an in-process import:
 ```bash
 wp-codebox recipe build phpunit --options ./phpunit-options.json --output ./phpunit.recipe.json
 wp-codebox recipe build bench --options ./bench-options.json --output ./bench.recipe.json
+wp-codebox recipe build generic-ability-runtime-run --options ./ability-runtime-options.json --output ./ability-runtime.recipe.json
 ```
 
-Both builders return `wp-codebox/workspace-recipe/v1` recipes. The generated
+All builders return `wp-codebox/workspace-recipe/v1` recipes. The generated
 recipes should still be validated with `wp-codebox recipe validate` or
 `wp-codebox recipe-run --dry-run` before execution in CI.
+
+`generic-ability-runtime-run` is the stable preset for callers that need to run a
+WordPress Ability in a disposable runtime with generic component/provider
+contracts. The options JSON maps to `buildGenericAbilityRuntimeRunRecipe` and
+accepts `abilityId`, optional `abilityInput`, `components`, `providerPlugins`,
+`providerPluginPaths`, `runtimeOverlays`, `runtimeEnv`, `secretEnv`,
+`toolPolicy`, `expectedResultSchema`, `mounts`, `runtimeStackMounts`,
+`stagedFiles`, and `verifySteps`. The generated workflow invokes
+`wordpress.ability` with runtime invocation metadata and, when
+`expectedResultSchema` is supplied, `recipe-run --json` records the canonical
+`wp-codebox/generic-ability-runtime-run-result/v1` command output with the
+ability result and discovered `evidenceEnvelope`.
 
 For monorepos such as WooCommerce, set `pluginSource` to the directory that
 should appear as `wp-content/plugins/<plugin-slug>` and set `cwd` to the same
