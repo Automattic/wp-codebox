@@ -62,6 +62,7 @@ export const BROWSER_PROBE_ACCEPTED_ARGS: BrowserProbeAcceptedArg[] = [
   { name: "stall-timeout", description: "Idle timeout for browser command progress.", format: "duration, e.g. 5s or 500ms" },
   { name: "timeout", description: "Total wall timeout for browser navigation and probe work.", format: "duration, e.g. 30s or 1500ms" },
   { name: "route-host", description: "Preview host alias routed to the local Playground preview.", repeatable: true, format: "hostname" },
+  { name: "route-host-drain", description: "Whether pending routed requests must drain before the command succeeds. Use advisory for pages with long-lived routed requests that should be recorded but not fail evidence capture.", format: "required|advisory" },
   { name: "allow-host", description: "External host allowed by the browser preview network policy.", repeatable: true, format: "hostname" },
   { name: "block-host", description: "External host blocked by the browser preview network policy.", repeatable: true, format: "hostname" },
   { name: "record-external", description: "Record external network requests as policy evidence.", format: "boolean" },
