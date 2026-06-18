@@ -25,6 +25,32 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 		$session_input               = $context['session_input'];
 
 		return array(
+			'wp-codebox/hydrate-browser-blueprint-ref'      => array(
+				'label'               => 'Hydrate Browser Blueprint Ref',
+				'description'         => 'Resolve a product-safe prepared browser blueprint ref into an executable WordPress Playground blueprint without requiring consumers to store blueprint files.',
+				'category'            => 'wp-codebox',
+				'input_schema'        => array(
+					'type'       => 'object',
+					'properties' => array(
+						'ref'        => array( 'type' => 'string' ),
+						'cache_key'  => array( 'type' => 'string' ),
+						'input_hash' => array( 'type' => 'string' ),
+					),
+				),
+				'output_schema'       => array(
+					'type'       => 'object',
+					'properties' => array(
+						'success'       => array( 'type' => 'boolean' ),
+						'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/browser-blueprint-hydration/v1' ),
+						'blueprint_ref' => array( 'type' => 'object' ),
+						'blueprint'     => array( 'type' => 'object' ),
+						'provenance'    => array( 'type' => 'object' ),
+					),
+				),
+				'execute_callback'    => array( WP_Codebox_Abilities::class, 'hydrate_browser_blueprint_ref' ),
+				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
+				'meta'                => array( 'show_in_rest' => true ),
+			),
 			'wp-codebox/create-browser-playground-session'    => array(
 				'label'               => 'Create Browser Playground Session',
 				'description'         => 'Prepare a WP Codebox browser-executed WordPress Playground session without requiring the host to run the WP Codebox CLI or Node.',

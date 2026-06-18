@@ -11,6 +11,8 @@ class WP_Error {
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
 function sanitize_key( $value ) { return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $value ) ); }
+$GLOBALS['wp_codebox_test_transients'] = array();
+function get_transient( $key ) { return $GLOBALS['wp_codebox_test_transients'][ $key ] ?? false; }
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php`)};
@@ -33,6 +35,17 @@ $task_input = WP_Codebox_Browser_Task_Builder::normalize_task_input( array(
 $local_task = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	'goal' => 'Build a local browser task.',
 	'sandbox_session_id' => 'session-123',
+	'provider_plugin_paths' => array( '/existing/provider' ),
+	'runtime_env' => array( 'EXISTING' => '1' ),
+	'runtime_profile' => array(
+		'id' => 'profile-1',
+		'plugins' => array( array( 'slug' => 'profile-plugin', 'url' => 'https://example.test/profile-plugin.zip', 'package' => 'browser' ) ),
+		'provider_plugins' => array( array( 'slug' => 'profile-provider', 'path' => '/profile/provider' ) ),
+		'extra_plugins' => array( array( 'slug' => 'browser-extra', 'url' => 'https://example.test/browser-extra.zip', 'package' => 'browser' ) ),
+		'component_contracts' => array( array( 'slug' => 'profile-component', 'required' => true ) ),
+		'runtime_overlays' => array( array( 'slug' => 'profile-overlay' ) ),
+		'env' => array( 'PROFILE_ENV' => '1', 'EXISTING' => 'profile-default' ),
+	),
 	'placement' => array(
 		'required_capabilities' => array( 'artifact.website-bundle' ),
 	),
@@ -153,12 +166,21 @@ $product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto(
 		'preview_public_url' => 'https://preview.example.test',
 		'site_url' => 'https://site.example.test',
 		'preview_url' => '/?preview=1',
-		'prepared_runtime' => array( 'cache_key' => 'runtime-cache-key', 'blueprint' => array( 'must' => 'not leak' ) ),
+		'prepared_runtime' => array( 'cache_key' => 'runtime-cache-key', 'input_hash' => str_repeat( 'a', 64 ), 'status' => 'hit', 'blueprint' => array( 'must' => 'not leak' ) ),
 	),
 	'artifacts' => array( 'preview_url' => '/?preview=1' ),
 ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session ), JSON_UNESCAPED_SLASHES );
+$blueprint_ref = WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => 'runtime-cache-key', 'input_hash' => str_repeat( 'b', 64 ), 'status' => 'hit' ) );
+$GLOBALS['wp_codebox_test_transients']['wp_codebox_browser_prepared_runtime_' . substr( hash( 'sha256', 'runtime-cache-key:' . str_repeat( 'b', 64 ) ), 0, 24 )] = array(
+	'schema' => 'wp-codebox/browser-prepared-runtime-artifact/v1',
+	'cache_key' => 'runtime-cache-key',
+	'input_hash' => str_repeat( 'b', 64 ),
+	'blueprint' => array( 'steps' => array( array( 'step' => 'login' ) ) ),
+);
+$hydrated_blueprint = WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( array( 'ref' => $blueprint_ref['ref'] ) );
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -184,6 +206,14 @@ assert.equal(result.local_task.target.kind, "browser-playground")
 assert.equal(result.local_task.target.ref, "session-123")
 assert.equal(result.local_task.context.execution, "wp-codebox-browser-playground")
 assert.equal(result.local_task.context.caller, "test")
+assert.equal(result.local_task.runtime_profile.schema, "wp-codebox/runtime-profile/v1")
+assert.equal(result.local_task.runtime.plugins[0].slug, "profile-plugin")
+assert.equal(result.local_task.runtime.plugins[1].slug, "profile-provider")
+assert.equal(result.local_task.browser_plugins[0].slug, "browser-extra")
+assert.equal(result.local_task.component_contracts[0].slug, "profile-component")
+assert.equal(result.local_task.runtime_overlays[0].slug, "profile-overlay")
+assert.deepEqual(result.local_task.provider_plugin_paths, ["/profile/provider", "/existing/provider"])
+assert.deepEqual(result.local_task.runtime_env, { PROFILE_ENV: "1", EXISTING: "1" })
 assert.deepEqual(result.local_task.placement.allowed_targets, ["browser"])
 assert.deepEqual(result.local_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
 assert.equal(result.local_task.browser_runner.invocation.name, "agents/chat")
@@ -212,11 +242,18 @@ assert.equal(result.fanout_request.workers[0].id, "planner-worker")
 assert.equal(result.product_session.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.product_session.session_id, "session-123")
 assert.equal(result.product_session.preview_boot.schema, "wp-codebox/browser-preview-boot-config/v1")
-assert.equal(result.product_session.preview_boot.blueprint_ref, "runtime-cache-key")
+assert.equal(result.product_session.preview_boot.blueprint_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.equal(result.product_session.preview_boot.blueprint_ref_dto.schema, "wp-codebox/browser-blueprint-ref/v1")
+assert.equal(result.product_session.preview_boot.blueprint_ref_dto.ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
 assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
 assert.equal(result.product_session.preview_boot.preview.local_url, "/?preview=1")
 assert.equal(JSON.stringify(result.product_session).includes("must-not-leak"), false)
 assert.equal(JSON.stringify(result.product_session).includes('"blueprint":'), false)
+assert.equal(result.blueprint_ref.schema, "wp-codebox/browser-blueprint-ref/v1")
+assert.equal(result.blueprint_ref.ref, `prepared:runtime-cache-key:${"b".repeat(64)}`)
+assert.equal(result.hydrated_blueprint.schema, "wp-codebox/browser-blueprint-hydration/v1")
+assert.equal(result.hydrated_blueprint.blueprint.steps[0].step, "login")
 
 console.log("browser task builder ok")

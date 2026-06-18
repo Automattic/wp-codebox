@@ -92,6 +92,15 @@ final class WP_Codebox_Abilities {
 				),
 			)
 		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-blueprint-ref',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( self::class, 'rest_browser_blueprint_ref' ),
+				'permission_callback' => static fn(): bool => current_user_can( 'manage_options' ),
+			)
+		);
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
@@ -102,6 +111,17 @@ final class WP_Codebox_Abilities {
 		}
 
 		return self::execute_browser_provider_request( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_browser_blueprint_ref( WP_REST_Request $request ): array|WP_Error {
+		return self::hydrate_browser_blueprint_ref(
+			array(
+				'ref'        => (string) $request->get_param( 'ref' ),
+				'cache_key'  => (string) $request->get_param( 'cache_key' ),
+				'input_hash' => (string) $request->get_param( 'input_hash' ),
+			)
+		);
 	}
 
 	/**

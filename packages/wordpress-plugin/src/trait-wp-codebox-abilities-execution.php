@@ -141,6 +141,11 @@ public static function create_browser_playground_session( array $input ): array|
 	);
 }
 
+/** @param array<string,mixed> $input Blueprint ref input. @return array<string,mixed>|WP_Error */
+public static function hydrate_browser_blueprint_ref( array $input ): array|WP_Error {
+	return WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( $input );
+}
+
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
 	$session = self::create_browser_playground_session( $input );
