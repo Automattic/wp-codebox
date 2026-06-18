@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
+import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.js"
 import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA } from "../packages/runtime-core/src/index.js"
+import { buildGenericAbilityRuntimeRunRecipe as buildGenericAbilityRuntimeRunRecipeFromStableSubpath } from "../packages/runtime-core/src/recipe-builders.js"
 import { abilityResponseToCommandEnvelope, expectedAbilityResultSchemaFromArgs } from "../packages/runtime-playground/src/commands.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
@@ -47,6 +49,28 @@ await withTempDir("wp-codebox-generic-ability-runtime-run-", async (root) => {
   assert.equal(input.runtime_invocation.ability_id, "example/runtime-run")
   assert.equal(input.runtime_invocation.expected_result_schema, "example/result/v1")
   assert.equal(input.runtime_invocation.component_manifest.components[0].slug, "example-component")
+
+  const cliOptionsPath = join(root, "generic-ability-runtime-options.json")
+  const cliRecipePath = join(root, "generic-ability-runtime.recipe.json")
+  await writeFile(cliOptionsPath, JSON.stringify({
+    abilityId: "example/runtime-run",
+    abilityInput: { prompt: "collect evidence" },
+    expectedResultSchema: "example/result/v1",
+    components: [{ source: component, activate: true }],
+    providerPlugins: [{ source: provider, slug: "example-provider" }],
+    runtimeOverlays: [{ kind: "wordpress-plugin", library: "example-runtime", source: provider, strategy: "copy" }],
+    toolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+  }))
+
+  assert.equal(await runRecipeBuildCommand(["generic-ability-runtime-run", "--options", cliOptionsPath, "--output", cliRecipePath]), 0)
+  const cliRecipe = JSON.parse(await readFile(cliRecipePath, "utf8"))
+  assert.equal(cliRecipe.workflow.steps[0].command, "wordpress.ability")
+  assert.ok(cliRecipe.workflow.steps[0].args.includes("name=example/runtime-run"))
+  assert.equal(cliRecipe.inputs.extra_plugins.length, 2)
+  assert.equal(cliRecipe.runtime.overlays[0].library, "example-runtime")
+
+  const stableSubpathRecipe = buildGenericAbilityRuntimeRunRecipeFromStableSubpath({ abilityId: "example/runtime-run" })
+  assert.equal(stableSubpathRecipe.workflow.steps[0].command, "wordpress.ability")
 })
 
 assert.equal(expectedAbilityResultSchemaFromArgs(["expected-result-schema=\"example/result/v1\""]), "example/result/v1")

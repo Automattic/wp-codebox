@@ -1,5 +1,6 @@
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
+export { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, type GenericAbilityRuntimeComponentContract, type GenericAbilityRuntimeProviderPluginContract, type GenericAbilityRuntimeRunOptions } from "./generic-ability-runtime-run.js"
 import { normalizeSharedMounts } from "./mount-primitives.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
