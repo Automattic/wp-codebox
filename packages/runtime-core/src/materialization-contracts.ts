@@ -168,7 +168,7 @@ export function materializationResultEnvelope(input: {
   }
 }
 
-export function normalizeMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): CompletedMaterializationResultEnvelope {
+export function normalizeMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): MaterializationResultEnvelope {
   const materializationRecord = asRecord(materialization)
   const raw = asRecord(materializationRecord?.response) ?? materializationRecord
   const report = raw?.schema === MATERIALIZATION_RESULT_SCHEMA || typeof raw?.schema === "string"
@@ -176,14 +176,14 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
     : undefined
   const response = asRecord(report?.response) ?? raw
   if (response?.success !== true) {
-    return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
+    return materializationResultEnvelope({
       task: stringValue(response?.task) || stringValue(report?.task),
       status: "failed",
       report: report ?? null,
       response,
       error: errorObject(response) ?? errorObject(report) ?? fallbackMessage,
       codeboxMaterialization: materialization,
-    }))
+    })
   }
 
   const canonicalResult = firstRecord(
@@ -195,7 +195,7 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
     response.response,
   )
   if (canonicalResult?.success === false) {
-    return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
+    return materializationResultEnvelope({
       task: stringValue(response.task) || stringValue(report?.task),
       status: "failed",
       result: canonicalResult,
@@ -203,7 +203,7 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
       response,
       error: errorObject(canonicalResult) ?? fallbackMessage,
       codeboxMaterialization: materialization,
-    }))
+    })
   }
 
   return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({

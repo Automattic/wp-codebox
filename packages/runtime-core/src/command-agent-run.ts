@@ -48,6 +48,11 @@ export interface CommandAgentRunDiagnostics {
     stderrBytes: number
     parsedJson: boolean
   }
+  error?: {
+    code: string
+    message: string
+    failureClassification: "timeout" | "non_zero_exit" | "invalid_json" | "runtime" | (string & {})
+  }
 }
 
 export interface CommandAgentRunResult {
@@ -118,7 +123,11 @@ export function createCommandAgentRunResult(input: CreateCommandAgentRunResultIn
   const stdout = input.execution.stdout ?? ""
   const stderr = input.execution.stderr ?? ""
   const exitCode = input.execution.exitCode
-  const json = input.request.parseJson ? parseCommandAgentRunJson(stdout) : undefined
+  const jsonResult = input.request.parseJson ? parseCommandAgentRunJson(stdout) : undefined
+  const json = jsonResult?.json
+  const executionRecord = input.execution.result && typeof input.execution.result === "object" && !Array.isArray(input.execution.result) ? input.execution.result as unknown as Record<string, unknown> : {}
+  const timedOut = executionRecord.timedOut === true || executionRecord.timed_out === true
+  const failure = commandAgentRunFailure(exitCode, timedOut, jsonResult?.error)
   const authContext = input.request.auth?.context ?? {}
   const diagnostics: CommandAgentRunDiagnostics = {
     command: input.request.command,
@@ -134,12 +143,13 @@ export function createCommandAgentRunResult(input: CreateCommandAgentRunResultIn
       stderrBytes: Buffer.byteLength(stderr),
       parsedJson: json !== undefined,
     },
+    ...(failure ? { error: failure } : {}),
   }
 
   return {
     schema: COMMAND_AGENT_RUN_SCHEMA,
     command: "command-agent-run",
-    status: normalizeCommandEnvelopeStatus({ success: exitCode === 0, exitStatus: exitCode }),
+    status: normalizeCommandEnvelopeStatus({ success: !failure, exitStatus: exitCode, timeout: timedOut }),
     target: {
       command: input.request.command,
       args: input.request.args,
@@ -183,17 +193,30 @@ function normalizeCommandAgentRunSession(session: CommandAgentRunSession): Comma
   }
 }
 
-function parseCommandAgentRunJson(stdout: string): unknown {
+function parseCommandAgentRunJson(stdout: string): { json?: unknown; error?: string } {
   const trimmed = stdout.trim()
   if (!trimmed) {
-    throw new Error("command-agent-run parse-json=true requires JSON stdout")
+    return { error: "command-agent-run parse-json=true requires JSON stdout" }
   }
   try {
-    return JSON.parse(trimmed)
+    return { json: JSON.parse(trimmed) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`command-agent-run stdout must be valid JSON: ${message}`)
+    return { error: `command-agent-run stdout must be valid JSON: ${message}` }
   }
+}
+
+function commandAgentRunFailure(exitCode: number, timedOut: boolean, invalidJsonMessage?: string): CommandAgentRunDiagnostics["error"] | undefined {
+  if (timedOut) {
+    return { code: "command-agent-run-timeout", message: "Target command timed out.", failureClassification: "timeout" }
+  }
+  if (exitCode !== 0) {
+    return { code: "command-agent-run-non-zero-exit", message: `Target command exited with status ${exitCode}.`, failureClassification: "non_zero_exit" }
+  }
+  if (invalidJsonMessage) {
+    return { code: "command-agent-run-invalid-json", message: invalidJsonMessage, failureClassification: "invalid_json" }
+  }
+  return undefined
 }
 
 function normalizeEnvNames(names: readonly string[]): string[] {

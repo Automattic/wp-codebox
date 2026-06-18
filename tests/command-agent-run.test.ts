@@ -31,6 +31,31 @@ assert.equal(result.diagnostics.durationMs, 125)
 assert.deepEqual(result.artifactRefs, [{ kind: "command-log", id: "stdout", path: "files/command/stdout.txt" }])
 assert.equal(JSON.parse(commandAgentRunResultJson(result)).schema, COMMAND_AGENT_RUN_SCHEMA)
 
+const invalidJsonResult = createCommandAgentRunResult({
+  request,
+  execution: { ...fixture.execution, stdout: "not-json", exitCode: 0 } as ExecutionResult,
+  runtime: fixture.runtime as RuntimeInfo,
+})
+assert.equal(invalidJsonResult.status, "failed")
+assert.equal(invalidJsonResult.diagnostics.error?.code, "command-agent-run-invalid-json")
+assert.equal(invalidJsonResult.json, undefined)
+
+const nonZeroResult = createCommandAgentRunResult({
+  request: { ...request, parseJson: false },
+  execution: { ...fixture.execution, exitCode: 2, stderr: "failed" } as ExecutionResult,
+  runtime: fixture.runtime as RuntimeInfo,
+})
+assert.equal(nonZeroResult.status, "failed")
+assert.equal(nonZeroResult.diagnostics.error?.failureClassification, "non_zero_exit")
+
+const timeoutResult = createCommandAgentRunResult({
+  request: { ...request, parseJson: false },
+  execution: { ...fixture.execution, exitCode: 124, result: { timedOut: true } } as ExecutionResult,
+  runtime: fixture.runtime as RuntimeInfo,
+})
+assert.equal(timeoutResult.status, "timed_out")
+assert.equal(timeoutResult.diagnostics.error?.failureClassification, "timeout")
+
 assert.throws(() => parseCommandAgentRunRequest([]), /requires command/)
 assert.throws(() => parseCommandAgentRunRequest(["command=command-agent-run"]), /cannot target itself/)
 assert.throws(() => parseCommandAgentRunRequest(["command=example", "auth-required=true"]), /requires auth-context-json/)

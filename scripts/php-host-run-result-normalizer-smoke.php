@@ -1,0 +1,84 @@
+<?php
+
+declare(strict_types=1);
+
+define( 'ABSPATH', __DIR__ );
+
+require_once dirname( __DIR__ ) . '/packages/wordpress-plugin/src/class-wp-codebox-status-taxonomy.php';
+require_once dirname( __DIR__ ) . '/packages/wordpress-plugin/src/class-wp-codebox-host-run-result-normalizer.php';
+
+final class WP_Error {
+	private string $code;
+	private string $message;
+	private mixed $data;
+
+	public function __construct( string $code, string $message, mixed $data = null ) {
+		$this->code    = $code;
+		$this->message = $message;
+		$this->data    = $data;
+	}
+
+	public function get_error_code(): string {
+		return $this->code;
+	}
+
+	public function get_error_message(): string {
+		return $this->message;
+	}
+
+	public function get_error_data(): mixed {
+		return $this->data;
+	}
+}
+
+function is_wp_error( mixed $value ): bool {
+	return $value instanceof WP_Error;
+}
+
+function smoke_assert( bool $condition, string $message ): void {
+	if ( ! $condition ) {
+		fwrite( STDERR, $message . PHP_EOL );
+		exit( 1 );
+	}
+}
+
+$normalizer = new WP_Codebox_Host_Run_Result_Normalizer();
+$prepared   = array(
+	'input'       => array( 'goal' => 'Test task' ),
+	'task_input'  => array( 'goal' => 'Test task' ),
+	'task'        => 'Test task',
+	'session_id'  => 'session-1',
+	'paths'       => array(),
+	'artifacts'   => '/tmp/wp-codebox-artifacts',
+	'wp_version'  => 'latest',
+	'recipe_file' => '',
+);
+$adapters   = array(
+	'bound_output'               => static fn( string $output ): string => $output,
+	'decode_json_output'         => static fn( string $output ): array|WP_Error => json_decode( $output, true ) ?: new WP_Error( 'json_invalid', 'Invalid JSON' ),
+	'strict_remediation_outcome' => static fn( array $task_input ): bool => false,
+	'remediation_outcome'        => static fn( array $run, int $exit_code, string $output ): array => array( 'success' => 0 === $exit_code ),
+	'sandbox_session'            => static fn( string $session_id, string $status, array $input, array $run, string $artifacts ): array => array( 'id' => $session_id, 'status' => $status, 'artifacts' => $artifacts ),
+	'completion_outcome'         => static fn( array $run ): array => array(),
+	'run_diagnostics'            => static fn( array $run, int $exit_code, ?array $outcome ): array => array(),
+	'evidence_refs'              => static fn( array $session, array $run ): array => array(),
+	'run_metadata'               => static fn( string $session_id, array $input, string $wp_version, array $run ): array => array( 'session_id' => $session_id, 'wp' => $wp_version ),
+);
+
+$timeout = $normalizer->normalize( $prepared, array( 'exit_code' => 124, 'output' => '', 'timed_out' => true, 'timeout_seconds' => 1 ), $adapters );
+smoke_assert( is_array( $timeout ) && ! is_wp_error( $timeout ), 'timeout returns result envelope' );
+smoke_assert( false === $timeout['success'], 'timeout envelope is unsuccessful' );
+smoke_assert( 'timeout' === $timeout['agent_task_status'], 'timeout maps to agent task timeout' );
+smoke_assert( 'wp_codebox_run_timeout' === $timeout['error']['code'], 'timeout error code is preserved' );
+
+$invalid_json = $normalizer->normalize( $prepared, array( 'exit_code' => 0, 'output' => 'not-json' ), $adapters );
+smoke_assert( is_array( $invalid_json ) && ! is_wp_error( $invalid_json ), 'invalid JSON returns result envelope' );
+smoke_assert( 'wp_codebox_json_invalid' === $invalid_json['error']['code'], 'invalid JSON error code is preserved' );
+smoke_assert( 'invalid_json' === $invalid_json['error']['failure_classification'], 'invalid JSON classification is preserved' );
+
+$non_zero = $normalizer->normalize( $prepared, array( 'exit_code' => 2, 'output' => '{"agentResult":{}}' ), $adapters );
+smoke_assert( is_array( $non_zero ) && ! is_wp_error( $non_zero ), 'non-zero exit returns result envelope' );
+smoke_assert( 'wp_codebox_run_failed' === $non_zero['error']['code'], 'non-zero error code is preserved' );
+smoke_assert( 'non_zero_exit' === $non_zero['error']['failure_classification'], 'non-zero classification is preserved' );
+
+echo "host run result normalizer smoke passed\n";

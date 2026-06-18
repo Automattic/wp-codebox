@@ -82,6 +82,7 @@
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
+    "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
