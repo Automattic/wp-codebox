@@ -111,6 +111,17 @@ export interface RuntimeRunCleanupUpdate {
   error?: RuntimeRunRecord["error"]
 }
 
+const runtimeRunStatusTransitions: Record<RuntimeRunStatus, readonly RuntimeRunStatus[]> = {
+  queued: ["booting", "running", "cancelled", "failed", "timed_out"],
+  booting: ["running", "collecting_artifacts", "cancelled", "failed", "timed_out"],
+  running: ["collecting_artifacts", "succeeded", "cancelled", "failed", "timed_out"],
+  collecting_artifacts: ["succeeded", "cancelled", "failed", "timed_out"],
+  succeeded: [],
+  failed: [],
+  timed_out: [],
+  cancelled: [],
+}
+
 export class RuntimeRunRegistry {
   readonly directory: string
 
@@ -148,7 +159,7 @@ export class RuntimeRunRegistry {
   async update(runId: string, update: RuntimeRunRegistryUpdate): Promise<RuntimeRunRecord> {
     const current = await this.read(runId)
     const now = (update.now ?? new Date()).toISOString()
-    const status = update.status ?? current.status
+    const status = transitionRuntimeRunStatus(current.status, update.status)
     const cleanup = update.cleanup ? updateRuntimeRunCleanup(current.lifecycle?.cleanup, update.cleanup, now) : current.lifecycle?.cleanup ?? initialRuntimeRunCleanup()
     const next: RuntimeRunRecord = {
       ...current,
@@ -200,6 +211,22 @@ export function buildRuntimeRunLifecycle(status: RuntimeRunStatus, cleanup: Runt
     ...(terminal ? { outcome: status as RuntimeRunLifecycleOutcome } : {}),
     cleanup,
   }
+}
+
+export function transitionRuntimeRunStatus(current: RuntimeRunStatus, next = current): RuntimeRunStatus {
+  if (current === next) {
+    return current
+  }
+
+  if (isTerminalRuntimeRunStatus(current)) {
+    throw new Error(`Cannot transition terminal runtime run status from ${current} to ${next}`)
+  }
+
+  if (!runtimeRunStatusTransitions[current].includes(next)) {
+    throw new Error(`Invalid runtime run status transition from ${current} to ${next}`)
+  }
+
+  return next
 }
 
 function initialRuntimeRunCleanup(): RuntimeRunCleanupState {

@@ -63,6 +63,7 @@
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
     "test:runtime-recipe-resolver": "tsx tests/runtime-recipe-resolver.test.ts",
+    "test:run-registry": "tsx tests/run-registry.test.ts",
     "test:runtime-php-snippets": "tsx tests/runtime-php-snippets.test.ts",
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
