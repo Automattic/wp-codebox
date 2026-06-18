@@ -70,6 +70,7 @@
     "test:artifact-path-primitives": "tsx tests/artifact-path-primitives.test.ts",
     "test:browser-callback-materialization-contracts": "tsx tests/browser-callback-materialization-contracts.test.ts",
     "test:source-package-compiler-primitives": "tsx tests/source-package-compiler-primitives.test.ts",
+    "test:source-root-preparation": "tsx tests/source-root-preparation.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
     "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior",
     "test:browser-artifact-session": "tsx tests/browser-artifact-session.test.ts",
