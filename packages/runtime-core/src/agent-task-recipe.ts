@@ -35,6 +35,8 @@ export interface AgentTaskRunInput {
   mounts?: NonNullable<WorkspaceRecipe["inputs"]>["mounts"]
   workspaces?: NonNullable<WorkspaceRecipe["inputs"]>["workspaces"]
   dependency_overlays?: NonNullable<WorkspaceRecipe["inputs"]>["dependency_overlays"]
+  extra_plugins?: WorkspaceRecipeExtraPlugin[]
+  extraPlugins?: WorkspaceRecipeExtraPlugin[]
   runtime_stack_mounts?: WorkspaceRecipeMount[]
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
@@ -89,9 +91,11 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
   const componentPluginEntries = componentPlugins(input.component_contracts, artifacts)
+  const callerExtraPlugins = agentTaskExtraPlugins(input)
   const extraPlugins = [
     ...componentPluginEntries,
     ...providerPlugins,
+    ...callerExtraPlugins,
   ].filter(Boolean)
   const componentManifest = componentManifestForRuntimePlugins(componentPluginEntries, providerPlugins)
   const workflowArgs = [
@@ -304,6 +308,32 @@ function runtimeStateMounts(input: AgentTaskRunInput): WorkspaceRecipeMount[] {
 function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
   if (!Array.isArray(value)) return []
   return value.filter((entry): entry is WorkspaceRecipeMount => Boolean(objectValue(entry)))
+}
+
+function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPlugin[] {
+  return [
+    ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
+    ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
+  ]
+}
+
+function normalizeAgentTaskExtraPlugins(value: unknown): WorkspaceRecipeExtraPlugin[] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry) => {
+    if (!isPlainObject(entry)) return []
+    const source = stringValue(entry.source)
+    if (!source) return []
+    return [stripUndefined({
+      source,
+      slug: stringValue(entry.slug) || undefined,
+      pluginFile: stringValue(entry.pluginFile) || undefined,
+      activate: typeof entry.activate === "boolean" ? entry.activate : undefined,
+      sha256: stringValue(entry.sha256) || undefined,
+      loadAs: entry.loadAs === "plugin" || entry.loadAs === "mu-plugin" ? entry.loadAs : undefined,
+      metadata: isPlainObject(entry.metadata) ? entry.metadata : undefined,
+    }) as WorkspaceRecipeExtraPlugin]
+  })
 }
 
 function componentPlugins(contracts: Array<Record<string, unknown>> | undefined, artifactsRoot: string): WorkspaceRecipeExtraPlugin[] {

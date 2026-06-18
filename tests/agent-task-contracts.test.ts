@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
-import { normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult } from "../packages/runtime-core/src/index.js"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
@@ -94,5 +97,54 @@ const agentRecipePolicy = recipePolicy({
 assert.equal(agentRecipePolicy.commands.includes("wordpress.run-php"), true)
 assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
+
+const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
+try {
+  const providerSource = join(agentRecipeTemp, "test-provider")
+  mkdirSync(providerSource)
+  writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
+  const artifactsPath = join(agentRecipeTemp, "artifacts")
+  mkdirSync(artifactsPath)
+
+  const recipe = buildAgentTaskRecipe({
+    goal: "Verify extra plugin propagation",
+    artifacts_path: artifactsPath,
+    provider_plugin_paths: [providerSource],
+    extra_plugins: [{
+      source: "/workspace/runtime-tools/agent-runtime-tool-bridge",
+      slug: "agent-runtime-tool-bridge",
+      loadAs: "mu-plugin",
+      activate: false,
+      pluginFile: "agent-runtime-tool-bridge/agent-runtime-tool-bridge.php",
+      metadata: { source: "agent-task-input" },
+    }],
+    extraPlugins: [{
+      source: "/workspace/runtime-tools/agent-runtime-helper",
+      slug: "agent-runtime-helper",
+      loadAs: "plugin",
+      activate: true,
+      pluginFile: "agent-runtime-helper/agent-runtime-helper.php",
+    }],
+  }, normalizeTaskInput({ goal: "Verify extra plugin propagation" }), "latest")
+  const extraPlugins = recipe.inputs?.extra_plugins ?? []
+  assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
+  assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
+    source: "/workspace/runtime-tools/agent-runtime-tool-bridge",
+    slug: "agent-runtime-tool-bridge",
+    pluginFile: "agent-runtime-tool-bridge/agent-runtime-tool-bridge.php",
+    activate: false,
+    loadAs: "mu-plugin",
+    metadata: { source: "agent-task-input" },
+  })
+  assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-helper"), {
+    source: "/workspace/runtime-tools/agent-runtime-helper",
+    slug: "agent-runtime-helper",
+    pluginFile: "agent-runtime-helper/agent-runtime-helper.php",
+    activate: true,
+    loadAs: "plugin",
+  })
+} finally {
+  rmSync(agentRecipeTemp, { recursive: true, force: true })
+}
 
 console.log("agent task contracts passed")
