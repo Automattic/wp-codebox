@@ -210,6 +210,7 @@ export const commandRegistry = [
     id: "wordpress.export-browser-storage-state",
     description: "Export reusable Playwright browser storageState JSON for a generic WordPress fixture user and record reviewer-safe metadata.",
     acceptedArgs: [
+      { name: "storage-state", description: "Optional Playwright storageState JSON, wp-codebox storage-state envelope, or @<path> to JSON to materialize as a reusable artifact. When omitted, WP Codebox exports a WordPress fixture-user storage state.", format: "JSON object or @path" },
       { name: "browser-urls", description: "Comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies. Defaults to the runtime preview URL.", format: "comma-separated URLs" },
       { name: "user-json", description: "Optional fixture user object with userId, username, email, role, displayName, or password fields.", format: "JSON object" },
       { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/browser-storage-state.", format: "relative path" },

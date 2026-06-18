@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto"
-import { mkdir, realpath, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -804,23 +804,10 @@ class PlaygroundRuntime implements Runtime {
 
   async runExportBrowserStorageState(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
-    const browserUrls = stringListArg(spec.args ?? [], "browser-urls") ?? [this.spec.preview?.publicUrl ?? server.serverUrl]
-    const user = jsonObjectStringArg(spec.args ?? [], "user-json") as WordPressFixtureUserSpec
     const outputDirectory = storageStateOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
-    const code = wordpressFixtureUserStorageStatePhpCode({ browserUrls, user })
-    const response = await this.runPlaygroundCommand("wordpress.export-browser-storage-state", server, {
-      code: bootstrapPhpCode(this.spec, code, spec.args ?? []),
-    })
-    assertPlaygroundResponseOk("wordpress.export-browser-storage-state", response)
-
-    let payload: unknown
-    try {
-      payload = JSON.parse(response.text)
-    } catch (error) {
-      throw new Error(`wordpress.export-browser-storage-state returned invalid JSON: ${errorMessage(error)}`)
-    }
-
-    const normalized = normalizeBrowserStorageStatePayload(payload, "inline")
+    const providedStorageState = await storageStatePayloadFromArgs(spec.args ?? [])
+    const payload = providedStorageState?.payload ?? await this.exportWordPressFixtureUserStorageState(spec, server)
+    const normalized = normalizeBrowserStorageStatePayload(payload, providedStorageState?.source ?? "inline")
     if (normalized.summary.status !== "ready") {
       throw new Error(`wordpress.export-browser-storage-state returned unsupported storage state: ${JSON.stringify(normalized.summary.diagnostics)}`)
     }
@@ -866,6 +853,22 @@ class PlaygroundRuntime implements Runtime {
         { kind: "browser-storage-state-summary", path: summaryArtifactPath, digest: summaryDigest },
       ],
     }, null, 2)}\n`
+  }
+
+  private async exportWordPressFixtureUserStorageState(spec: ExecutionSpec, server: PlaygroundCliServer): Promise<unknown> {
+    const browserUrls = stringListArg(spec.args ?? [], "browser-urls") ?? [this.spec.preview?.publicUrl ?? server.serverUrl]
+    const user = jsonObjectStringArg(spec.args ?? [], "user-json") as WordPressFixtureUserSpec
+    const code = wordpressFixtureUserStorageStatePhpCode({ browserUrls, user })
+    const response = await this.runPlaygroundCommand("wordpress.export-browser-storage-state", server, {
+      code: bootstrapPhpCode(this.spec, code, spec.args ?? []),
+    })
+    assertPlaygroundResponseOk("wordpress.export-browser-storage-state", response)
+
+    try {
+      return JSON.parse(response.text)
+    } catch (error) {
+      throw new Error(`wordpress.export-browser-storage-state returned invalid JSON: ${errorMessage(error)}`)
+    }
   }
 
   async runCaptureStateBundle(spec: ExecutionSpec): Promise<string> {
@@ -1241,6 +1244,21 @@ function jsonObjectStringArg(args: string[], name: string): Record<string, unkno
     throw new Error(`${name} must be a JSON object`)
   }
   return parsed as Record<string, unknown>
+}
+
+async function storageStatePayloadFromArgs(args: string[]): Promise<{ payload: unknown; source: "inline" | "file" } | undefined> {
+  const raw = stringArg(args, "storage-state")
+  if (!raw) {
+    return undefined
+  }
+
+  const source = raw.startsWith("@") ? "file" : "inline"
+  const text = source === "file" ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  try {
+    return { payload: JSON.parse(text), source }
+  } catch (error) {
+    throw new Error(`wordpress.export-browser-storage-state storage-state must be valid JSON: ${errorMessage(error)}`)
+  }
 }
 
 function storageStateOutputDirectory(artifactRoot: string, requested: string | undefined): string {

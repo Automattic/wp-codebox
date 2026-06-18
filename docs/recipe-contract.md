@@ -298,6 +298,12 @@ Recipes can export that state as an artifact with the generic command:
 }
 ```
 
+The command also accepts caller-produced state with `storage-state=<json>` or
+`storage-state=@./state.json`. That value may be a raw Playwright
+`storageState` object or the `wp-codebox/browser-auth-storage-state/v1` envelope
+shown above, so product-specific PHP bootstrap code can stay outside WP Codebox
+and hand the resulting generic browser state to the exporter.
+
 The command returns `wp-codebox/browser-storage-state-export/v1` with
 `artifacts.storageState` and `artifacts.summary`. The storage-state artifact is
 the token-bearing Playwright JSON and is marked `redactionRequired` in

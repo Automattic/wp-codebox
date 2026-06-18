@@ -55,6 +55,7 @@ assert.ok(exportCommand, "storage-state export command is registered")
 assert.equal(exportCommand?.outputSchema?.id, "wp-codebox/browser-storage-state-export/v1")
 assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "browser-urls"), "export command accepts browser URLs")
 assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "user-json"), "export command accepts a fixture user")
+assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "storage-state"), "export command accepts caller-provided storage state")
 assert.doesNotMatch(JSON.stringify(exportCommand), /wpcom|dolly|blog_id|site_id/i)
 
 console.log("fixture auth storage state ok")
