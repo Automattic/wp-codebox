@@ -207,6 +207,23 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runWpCli" },
   },
   {
+    id: "wordpress.export-browser-storage-state",
+    description: "Export reusable Playwright browser storageState JSON for a generic WordPress fixture user and record reviewer-safe metadata.",
+    acceptedArgs: [
+      { name: "browser-urls", description: "Comma-separated browser origins or URLs whose hosts should receive WordPress auth cookies. Defaults to the runtime preview URL.", format: "comma-separated URLs" },
+      { name: "user-json", description: "Optional fixture user object with userId, username, email, role, displayName, or password fields.", format: "JSON object" },
+      { name: "output-dir", description: "Optional artifact directory relative to the runtime artifact root; defaults to files/browser-storage-state.", format: "relative path" },
+    ],
+    outputShape: "wp-codebox/browser-storage-state-export/v1 JSON with storageState and summary artifact refs plus redacted schema/kind, user, cookie host counts, origin count, and diagnostics.",
+    outputSchema: artifactSummarySchema("wp-codebox/browser-storage-state-export/v1", {
+      storageState: { type: "string" },
+      summary: { type: "string" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.export-browser-storage-state.",
+    recipe: true,
+    handler: { kind: "playground", method: "runExportBrowserStorageState" },
+  },
+  {
     id: "wordpress.capture-state-bundle",
     description: "Capture the current WordPress runtime state as a portable state bundle source for replayable Playground artifacts.",
     acceptedArgs: [

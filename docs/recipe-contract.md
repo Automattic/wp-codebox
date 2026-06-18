@@ -286,9 +286,25 @@ The emitted PHP returns `wp-codebox/browser-auth-storage-state/v1`:
 }
 ```
 
-Callers own when to run the PHP and where to persist the returned storage-state
-JSON. Product policy, production identifiers, and cross-site account mapping stay
-outside WP Codebox.
+Recipes can export that state as an artifact with the generic command:
+
+```json
+{
+  "command": "wordpress.export-browser-storage-state",
+  "args": [
+    "browser-urls=http://127.0.0.1:9400,https://preview.example.test",
+    "user-json={\"username\":\"fixture-admin\",\"role\":\"administrator\"}"
+  ]
+}
+```
+
+The command returns `wp-codebox/browser-storage-state-export/v1` with
+`artifacts.storageState` and `artifacts.summary`. The storage-state artifact is
+the token-bearing Playwright JSON and is marked `redactionRequired` in
+`artifactRefs`; the summary artifact and command output contain only
+reviewer-safe metadata: schema/kind, user id/name/email/role/created flag,
+cookie counts by host, origin count, and diagnostics. Product policy,
+production identifiers, and cross-site account mapping stay outside WP Codebox.
 
 `wordpress.browser-probe` and `wordpress.browser-actions` can import a reusable
 storage state with `storage-state=<json>` or `storage-state=@./state.json`. The
