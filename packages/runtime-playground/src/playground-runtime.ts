@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto"
-import { mkdir, realpath, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
+import { normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type WordPressFixtureUserSpec } from "./browser-auth-storage-state.js"
 import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runBrowserScenarioCommand, runEditorActionsCommand, runEditorCanvasProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand, runVisualCompareCommand, wordpressAdminAuthCookiePhpCode } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
@@ -801,6 +802,75 @@ class PlaygroundRuntime implements Runtime {
     return cleanWpCliOutput(response.text)
   }
 
+  async runExportBrowserStorageState(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const outputDirectory = storageStateOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
+    const providedStorageState = await storageStatePayloadFromArgs(spec.args ?? [])
+    const payload = providedStorageState?.payload ?? await this.exportWordPressFixtureUserStorageState(spec, server)
+    const normalized = normalizeBrowserStorageStatePayload(payload, providedStorageState?.source ?? "inline")
+    if (normalized.summary.status !== "ready") {
+      throw new Error(`wordpress.export-browser-storage-state returned unsupported storage state: ${JSON.stringify(normalized.summary.diagnostics)}`)
+    }
+
+    const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {}
+    const exportedUser = envelope.user && typeof envelope.user === "object" && !Array.isArray(envelope.user) ? envelope.user as Record<string, unknown> : undefined
+    const storageStatePath = join(outputDirectory, "storage-state.json")
+    const summaryPath = join(outputDirectory, "summary.json")
+    const storageStateArtifactPath = artifactRelativePath(this.artifactRoot, storageStatePath)
+    const summaryArtifactPath = artifactRelativePath(this.artifactRoot, summaryPath)
+    const storageStateJson = `${JSON.stringify(normalized.storageState, null, 2)}\n`
+    const summary = {
+      schema: "wp-codebox/browser-storage-state-export-summary/v1",
+      status: "exported",
+      storageState: normalized.summary,
+      ...(exportedUser ? { user: storageStateUserSummary(exportedUser) } : {}),
+      artifacts: {
+        storageState: storageStateArtifactPath,
+        summary: summaryArtifactPath,
+      },
+    }
+    const summaryJson = `${JSON.stringify(summary, null, 2)}\n`
+
+    await mkdir(outputDirectory, { recursive: true })
+    await writeFile(storageStatePath, storageStateJson)
+    await writeFile(summaryPath, summaryJson)
+
+    const storageStateDigest = { algorithm: "sha256" as const, value: sha256(Buffer.from(storageStateJson, "utf8")) }
+    const summaryDigest = { algorithm: "sha256" as const, value: sha256(Buffer.from(summaryJson, "utf8")) }
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/browser-storage-state-export/v1",
+      status: "exported",
+      command: "wordpress.export-browser-storage-state",
+      storageState: normalized.summary,
+      ...(exportedUser ? { user: storageStateUserSummary(exportedUser) } : {}),
+      artifacts: {
+        storageState: storageStateArtifactPath,
+        summary: summaryArtifactPath,
+      },
+      artifactRefs: [
+        { kind: "browser-storage-state", path: storageStateArtifactPath, digest: storageStateDigest, redactionRequired: true },
+        { kind: "browser-storage-state-summary", path: summaryArtifactPath, digest: summaryDigest },
+      ],
+    }, null, 2)}\n`
+  }
+
+  private async exportWordPressFixtureUserStorageState(spec: ExecutionSpec, server: PlaygroundCliServer): Promise<unknown> {
+    const browserUrls = stringListArg(spec.args ?? [], "browser-urls") ?? [this.spec.preview?.publicUrl ?? server.serverUrl]
+    const user = jsonObjectStringArg(spec.args ?? [], "user-json") as WordPressFixtureUserSpec
+    const code = wordpressFixtureUserStorageStatePhpCode({ browserUrls, user })
+    const response = await this.runPlaygroundCommand("wordpress.export-browser-storage-state", server, {
+      code: bootstrapPhpCode(this.spec, code, spec.args ?? []),
+    })
+    assertPlaygroundResponseOk("wordpress.export-browser-storage-state", response)
+
+    try {
+      return JSON.parse(response.text)
+    } catch (error) {
+      throw new Error(`wordpress.export-browser-storage-state returned invalid JSON: ${errorMessage(error)}`)
+    }
+  }
+
   async runCaptureStateBundle(spec: ExecutionSpec): Promise<string> {
     const label = stringArg(spec.args ?? [], "label")
     const snapshotOptions = snapshotOptionsFromArgs(spec.args ?? [])
@@ -1161,6 +1231,57 @@ function stringListArg(args: string[], name: string): string[] | undefined {
 
   const values = value.split(",").map((item) => item.trim()).filter((item) => item.length > 0)
   return values.length > 0 ? values : undefined
+}
+
+function jsonObjectStringArg(args: string[], name: string): Record<string, unknown> {
+  const value = stringArg(args, name)
+  if (!value) {
+    return {}
+  }
+
+  const parsed = JSON.parse(value) as unknown
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON object`)
+  }
+  return parsed as Record<string, unknown>
+}
+
+async function storageStatePayloadFromArgs(args: string[]): Promise<{ payload: unknown; source: "inline" | "file" } | undefined> {
+  const raw = stringArg(args, "storage-state")
+  if (!raw) {
+    return undefined
+  }
+
+  const source = raw.startsWith("@") ? "file" : "inline"
+  const text = source === "file" ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  try {
+    return { payload: JSON.parse(text), source }
+  } catch (error) {
+    throw new Error(`wordpress.export-browser-storage-state storage-state must be valid JSON: ${errorMessage(error)}`)
+  }
+}
+
+function storageStateOutputDirectory(artifactRoot: string, requested: string | undefined): string {
+  const relativePath = requested?.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "files/browser-storage-state"
+  if (relativePath.length === 0 || relativePath.includes("..")) {
+    throw new Error("wordpress.export-browser-storage-state output-dir must be a relative path inside the runtime artifact root")
+  }
+
+  return join(artifactRoot, relativePath)
+}
+
+function artifactRelativePath(artifactRoot: string, absolutePath: string): string {
+  return absolutePath.replace(artifactRoot, "").replace(/^\/+/, "")
+}
+
+function storageStateUserSummary(user: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: typeof user.id === "number" ? user.id : undefined,
+    username: typeof user.username === "string" ? user.username : undefined,
+    email: typeof user.email === "string" ? user.email : undefined,
+    role: typeof user.role === "string" ? user.role : undefined,
+    created: typeof user.created === "boolean" ? user.created : undefined,
+  }
 }
 
 function snapshotOptionsFromArgs(args: string[]): RuntimeSnapshotExportOptions {

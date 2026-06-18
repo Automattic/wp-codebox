@@ -9,6 +9,7 @@ interface PlaygroundCommandRuntime {
   runCommandAgent(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runPhp(spec: ExecutionSpec): Promise<string>
   runWpCli(spec: ExecutionSpec): Promise<string>
+  runExportBrowserStorageState(spec: ExecutionSpec): Promise<string>
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
