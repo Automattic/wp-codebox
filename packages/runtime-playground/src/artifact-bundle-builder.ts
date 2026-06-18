@@ -13,6 +13,7 @@ import {
   artifactManifestFile,
   artifactManifestRelativePath,
   artifactManifestFileWithSha256,
+  calculateArtifactManifestFileListDigest,
   calculateArtifactManifestFileSha256,
   refreshArtifactManifestFileSha256s,
   runtimeReferenceManifestArtifactFiles,
@@ -158,73 +159,13 @@ export class ArtifactBundleBuilder {
     const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact(CHANGED_FILES_ARTIFACT_PATH, `${JSON.stringify(changedFiles, null, 2)}\n`)
     const redactedPatch = redactor.redact("files/patch.diff", patch)
-    const contentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
-    const bundleId = `artifact-bundle-sha256-${contentDigest}`
-    const contentDigestMetadata = {
-      algorithm: "sha256",
-      inputs: ["files/changed-files.json", "files/patch.diff"],
-      value: contentDigest,
-    }
+    const patchContentDigest = artifactContentDigest(changedFilesJson, redactedPatch)
     const provenance = buildArtifactProvenance({
       runtime,
       context: source.spec.metadata ?? {},
       mounts: source.mounts,
     })
-    const artifactBundleRef: RuntimeEpisodeTraceRef = {
-      kind: "artifact-bundle",
-      id: bundleId,
-      digest: { algorithm: "sha256", value: contentDigest },
-      path: "manifest.json",
-    }
-    const previewEvidence = buildPreviewEvidence({
-      createdAt,
-      runtime,
-      preview,
-      durablePreview: durablePreview?.preview,
-      events: source.events,
-      packages: provenance.packages,
-      artifactBundleRef,
-    })
     const previewSessionEvidenceRelativePath = relative(source.artifactRoot, previewSessionEvidencePath)
-    const previewSessionEvidence = buildPreviewSessionEvidence({
-      artifactId: bundleId,
-      createdAt,
-      runtime,
-      preview,
-      durablePreview: durablePreview?.preview,
-      contentDigest,
-      packages: provenance.packages,
-      browser,
-      paths: {
-        manifest: relative(source.artifactRoot, manifestPath),
-        review: relative(source.artifactRoot, reviewPath),
-        runtimeEvents: relative(source.artifactRoot, eventsPath),
-        runtimeLog: relative(source.artifactRoot, runtimeLogPath),
-        runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
-        runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
-        durablePreview: durablePreview?.preview.manifest.path,
-        browserSummary: browser ? browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" : undefined,
-      },
-    })
-    const previewSessionEvidenceJson = `${JSON.stringify(previewSessionEvidence, null, 2)}\n`
-    const previewSessionEvidenceRef: ArtifactEvidenceRef = {
-      path: previewSessionEvidenceRelativePath,
-      kind: "preview-session-evidence",
-      contentType: "application/json",
-      sha256: artifactFileDigest(previewSessionEvidenceJson),
-    }
-    const metadata: Record<string, unknown> = {
-      id: bundleId,
-      contentDigest: contentDigestMetadata,
-      createdAt,
-      runtime,
-      provenance,
-      mounts: source.mounts,
-      policy: source.spec.policy,
-      context: source.spec.metadata ?? {},
-      spec,
-    }
-    source.recordArtifactsCollected(bundleId, createdAt, spec)
     const diagnostics = buildArtifactDiagnostics(source.observations)
     diagnostics.diagnostics.push(...mountDiffDiagnostics)
     diagnostics.summary.total = diagnostics.diagnostics.length
@@ -234,28 +175,13 @@ export class ArtifactBundleBuilder {
     diagnostics.summary.info = diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "info").length
     diagnostics.status = diagnostics.summary.total > 0 ? "reported" : "clean"
     const testResults = buildTestResults()
-    const review = buildArtifactReview({
-      artifactId: bundleId,
-      createdAt,
-      provenance,
-      changedFiles,
-      patch: redactedPatch,
-      contentDigest,
-      runtimeCreatedAt: source.runtimeCreatedAt,
-      mounts: source.mounts,
-      preview,
-      previewEvidencePath: "files/preview-evidence.json",
-      previewSessionEvidencePath: previewSessionEvidenceRelativePath,
-      browser,
-      diagnosticsPath: "files/diagnostics.json",
-    })
     const workspacePatch = buildWorkspacePatchArtifact({
       createdAt,
       provenance,
       mounts: source.mounts,
       mountDiffs,
       changedFiles,
-      contentDigest,
+      contentDigest: patchContentDigest,
     })
     const artifactFiles = {
       workspacePatch: relative(source.artifactRoot, workspacePatchPath),
@@ -276,7 +202,6 @@ export class ArtifactBundleBuilder {
       ...(source.pluginCheckArtifactPaths().length > 0 ? { pluginChecks: source.pluginCheckArtifactPaths() } : {}),
       ...(source.themeCheckArtifactPaths().length > 0 ? { themeChecks: source.themeCheckArtifactPaths() } : {}),
     }
-    metadata.artifacts = artifactFiles
     const partialBlueprintAfter = buildBlueprintAfter({
       environment: source.spec.environment,
       capturedMounts,
@@ -342,6 +267,88 @@ export class ArtifactBundleBuilder {
       ),
     ]
 
+    const normalizedManifestFiles = manifestFiles.map((file) => ({
+      ...file,
+      path: artifactManifestRelativePath(source.artifactRoot, file.path),
+    }))
+    const contentDigest = calculateArtifactManifestFileListDigest(normalizedManifestFiles)
+    const bundleId = `artifact-bundle-sha256-${contentDigest}`
+    const contentDigestMetadata = {
+      algorithm: "sha256" as const,
+      inputs: ["manifest.files"],
+      value: contentDigest,
+    }
+    const artifactBundleRef: RuntimeEpisodeTraceRef = {
+      kind: "artifact-bundle",
+      id: bundleId,
+      digest: { algorithm: "sha256", value: contentDigest },
+      path: "manifest.json",
+    }
+    const previewEvidence = buildPreviewEvidence({
+      createdAt,
+      runtime,
+      preview,
+      durablePreview: durablePreview?.preview,
+      events: source.events,
+      packages: provenance.packages,
+      artifactBundleRef,
+    })
+    const previewSessionEvidence = buildPreviewSessionEvidence({
+      artifactId: bundleId,
+      createdAt,
+      runtime,
+      preview,
+      durablePreview: durablePreview?.preview,
+      contentDigest,
+      packages: provenance.packages,
+      browser,
+      paths: {
+        manifest: relative(source.artifactRoot, manifestPath),
+        review: relative(source.artifactRoot, reviewPath),
+        runtimeEvents: relative(source.artifactRoot, eventsPath),
+        runtimeLog: relative(source.artifactRoot, runtimeLogPath),
+        runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
+        runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
+        durablePreview: durablePreview?.preview.manifest.path,
+        browserSummary: browser ? browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" : undefined,
+      },
+    })
+    const previewSessionEvidenceJson = `${JSON.stringify(previewSessionEvidence, null, 2)}\n`
+    const previewSessionEvidenceRef: ArtifactEvidenceRef = {
+      path: previewSessionEvidenceRelativePath,
+      kind: "preview-session-evidence",
+      contentType: "application/json",
+      sha256: artifactFileDigest(previewSessionEvidenceJson),
+    }
+    const metadata: Record<string, unknown> = {
+      id: bundleId,
+      contentDigest: contentDigestMetadata,
+      createdAt,
+      runtime,
+      provenance,
+      mounts: source.mounts,
+      policy: source.spec.policy,
+      context: source.spec.metadata ?? {},
+      spec,
+      artifacts: artifactFiles,
+    }
+    source.recordArtifactsCollected(bundleId, createdAt, spec)
+    const review = buildArtifactReview({
+      artifactId: bundleId,
+      createdAt,
+      provenance,
+      changedFiles,
+      patch: redactedPatch,
+      contentDigest,
+      runtimeCreatedAt: source.runtimeCreatedAt,
+      mounts: source.mounts,
+      preview,
+      previewEvidencePath: "files/preview-evidence.json",
+      previewSessionEvidencePath: previewSessionEvidenceRelativePath,
+      browser,
+      diagnosticsPath: "files/diagnostics.json",
+    })
+
     metadata.preview = preview
     if (durablePreview) {
       metadata.durablePreview = durablePreview.preview
@@ -384,15 +391,12 @@ export class ArtifactBundleBuilder {
       id: bundleId,
       contentDigest: {
         algorithm: "sha256",
-        inputs: [CHANGED_FILES_ARTIFACT_PATH, "files/patch.diff"],
+        inputs: ["manifest.files"],
         value: contentDigest,
       },
       createdAt,
       runtime,
-      files: manifestFiles.map((file) => ({
-        ...file,
-        path: artifactManifestRelativePath(source.artifactRoot, file.path),
-      })),
+      files: normalizedManifestFiles,
     }
     await refreshArtifactManifestFileSha256s(source.artifactRoot, manifest)
     const runtimeReferenceIndex = await buildRuntimeReferenceIndex({

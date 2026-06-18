@@ -7,6 +7,7 @@ import {
   browserCallbackCapability,
   browserCallbackResultEnvelope,
   browserCallbackSignature,
+  materializationResultEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
   normalizeMaterializationResultEnvelope,
@@ -153,6 +154,28 @@ assert.deepEqual(materializationRunArtifactRefs([phase]), [
     digest: { algorithm: "sha256", value: "abc" },
   },
 ])
+
+const failedMaterializationEnvelope = materializationResultEnvelope({
+  task: "package-runtime-replay",
+  status: "failed",
+  phases: [materializationPhaseResult({
+    phase: "snapshot-validation",
+    status: "failed",
+    error: { name: "Error", message: "invalid snapshot", code: "invalid-snapshot" },
+  })],
+  projections: [{ kind: "browser-artifacts", schema: "wp-codebox/browser-artifact-persistence-projection/v1", artifacts: [] }],
+})
+assert.equal(failedMaterializationEnvelope.schema, "wp-codebox/materialization-result/v1")
+assert.equal(failedMaterializationEnvelope.status, "failed")
+assert.equal(failedMaterializationEnvelope.success, false)
+assert.equal(failedMaterializationEnvelope.error.message, "invalid snapshot")
+assert.deepEqual(failedMaterializationEnvelope.diagnostics, [{
+  code: "invalid-snapshot",
+  message: "invalid snapshot",
+  severity: "error",
+  phase: "snapshot-validation",
+}])
+assert.equal(failedMaterializationEnvelope.projections?.[0]?.kind, "browser-artifacts")
 
 const materializationEnvelope = normalizeMaterializationResultEnvelope({
   success: true,

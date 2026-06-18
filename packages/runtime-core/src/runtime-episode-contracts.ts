@@ -440,6 +440,10 @@ function collectForbiddenRuntimeEpisodeTraceFields(
     return
   }
 
+  if (isRuntimeEpisodeFreeformPayloadPath(path)) {
+    return
+  }
+
   if (Array.isArray(value)) {
     value.forEach((item, index) => collectForbiddenRuntimeEpisodeTraceFields(item, `${path}[${index}]`, issues))
     return
@@ -452,6 +456,10 @@ function collectForbiddenRuntimeEpisodeTraceFields(
     }
     collectForbiddenRuntimeEpisodeTraceFields(child, childPath, issues)
   }
+}
+
+function isRuntimeEpisodeFreeformPayloadPath(path: string): boolean {
+  return path === "$.artifacts" || path.endsWith(".data") || path.endsWith(".metadata")
 }
 
 function nonEmptyString(value: unknown): value is string {

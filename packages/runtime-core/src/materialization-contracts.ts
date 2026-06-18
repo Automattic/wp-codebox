@@ -25,15 +25,61 @@ export interface MaterializationPhaseResult {
   }
 }
 
-export interface MaterializationResultEnvelope {
-  schema: typeof MATERIALIZATION_RESULT_SCHEMA
-  success: true
-  task: string
-  result: Record<string, unknown>
-  report: Record<string, unknown> | null
-  response: Record<string, unknown>
-  codeboxMaterialization: unknown
+export type MaterializationResultStatus = "completed" | "failed" | "skipped"
+
+export interface MaterializationDiagnostic {
+  code: string
+  message: string
+  severity?: "info" | "warning" | "error"
+  phase?: string
+  metadata?: Record<string, unknown>
 }
+
+export interface MaterializationProjection {
+  kind: string
+  schema?: string
+  [key: string]: unknown
+}
+
+export interface MaterializationResultEnvelopeBase {
+  schema: typeof MATERIALIZATION_RESULT_SCHEMA
+  status: MaterializationResultStatus
+  success: boolean
+  task?: string
+  phases: MaterializationPhaseResult[]
+  artifactRefs: MaterializationArtifactRef[]
+  diagnostics: MaterializationDiagnostic[]
+  projections?: MaterializationProjection[]
+  metadata?: Record<string, unknown>
+  result?: Record<string, unknown>
+  report: Record<string, unknown> | null
+  response?: Record<string, unknown>
+  codeboxMaterialization?: unknown
+}
+
+export interface CompletedMaterializationResultEnvelope extends MaterializationResultEnvelopeBase {
+  status: "completed"
+  success: true
+  result: Record<string, unknown>
+}
+
+export interface FailedMaterializationResultEnvelope extends MaterializationResultEnvelopeBase {
+  status: "failed"
+  success: false
+  error: {
+    name: string
+    message: string
+    code?: string
+  }
+}
+
+export interface SkippedMaterializationResultEnvelope extends MaterializationResultEnvelopeBase {
+  status: "skipped"
+  success: false
+  reason?: string
+}
+
+export type MaterializationResultEnvelope = CompletedMaterializationResultEnvelope | FailedMaterializationResultEnvelope | SkippedMaterializationResultEnvelope
 
 export interface BrowserArtifactProjectionInput {
   artifact?: Record<string, unknown> | null
@@ -61,7 +107,68 @@ export function materializationPhaseResult(input: Omit<MaterializationPhaseResul
   })
 }
 
-export function normalizeMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): MaterializationResultEnvelope {
+export function materializationResultEnvelope(input: {
+  task?: string
+  status?: MaterializationResultStatus
+  phases?: MaterializationPhaseResult[]
+  artifactRefs?: MaterializationArtifactRef[]
+  diagnostics?: MaterializationDiagnostic[]
+  projections?: MaterializationProjection[]
+  metadata?: Record<string, unknown>
+  result?: Record<string, unknown>
+  report?: Record<string, unknown> | null
+  response?: Record<string, unknown>
+  error?: { name?: string; message?: string; code?: string } | Error | string
+  reason?: string
+  codeboxMaterialization?: unknown
+}): MaterializationResultEnvelope {
+  const phases = input.phases ?? []
+  const status = input.status ?? (input.error || phases.some((phase) => phase.status === "failed") ? "failed" : "completed")
+  const artifactRefs = [...(input.artifactRefs ?? []), ...phases.flatMap((phase) => phase.artifactRefs)]
+  const diagnostics = input.diagnostics ?? phases.flatMap(phaseDiagnostics)
+  const base = stripUndefined({
+    schema: MATERIALIZATION_RESULT_SCHEMA,
+    status,
+    success: status === "completed",
+    task: input.task,
+    phases,
+    artifactRefs,
+    diagnostics,
+    projections: input.projections,
+    metadata: input.metadata,
+    result: input.result,
+    report: input.report ?? null,
+    response: input.response,
+    codeboxMaterialization: input.codeboxMaterialization,
+  })
+
+  if (status === "failed") {
+    return stripUndefined({
+      ...base,
+      status,
+      success: false as const,
+      error: normalizeError(input.error, diagnostics[0]?.message ?? "Materialization failed."),
+    })
+  }
+
+  if (status === "skipped") {
+    return stripUndefined({
+      ...base,
+      status,
+      success: false as const,
+      reason: input.reason,
+    })
+  }
+
+  return {
+    ...base,
+    status,
+    success: true as const,
+    result: input.result ?? {},
+  }
+}
+
+export function normalizeMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): CompletedMaterializationResultEnvelope {
   const materializationRecord = asRecord(materialization)
   const raw = asRecord(materializationRecord?.response) ?? materializationRecord
   const report = raw?.schema === MATERIALIZATION_RESULT_SCHEMA || typeof raw?.schema === "string"
@@ -69,7 +176,14 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
     : undefined
   const response = asRecord(report?.response) ?? raw
   if (response?.success !== true) {
-    throw new Error(errorMessage(response) ?? errorMessage(report) ?? fallbackMessage)
+    return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
+      task: stringValue(response?.task) || stringValue(report?.task),
+      status: "failed",
+      report: report ?? null,
+      response,
+      error: errorObject(response) ?? errorObject(report) ?? fallbackMessage,
+      codeboxMaterialization: materialization,
+    }))
   }
 
   const canonicalResult = firstRecord(
@@ -81,18 +195,31 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
     response.response,
   )
   if (canonicalResult?.success === false) {
-    throw new Error(errorMessage(canonicalResult) ?? fallbackMessage)
+    return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
+      task: stringValue(response.task) || stringValue(report?.task),
+      status: "failed",
+      result: canonicalResult,
+      report: report ?? null,
+      response,
+      error: errorObject(canonicalResult) ?? fallbackMessage,
+      codeboxMaterialization: materialization,
+    }))
   }
 
-  return {
-    schema: MATERIALIZATION_RESULT_SCHEMA,
-    success: true,
+  return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
     task: stringValue(response.task) || stringValue(report?.task),
     result: canonicalResult ?? response,
     report: report ?? null,
     response,
     codeboxMaterialization: materialization,
+  }))
+}
+
+export function requireCompletedMaterializationResultEnvelope(envelope: MaterializationResultEnvelope): CompletedMaterializationResultEnvelope {
+  if (envelope.status !== "completed") {
+    throw new Error(envelope.status === "failed" ? envelope.error.message : envelope.reason ?? "Materialization did not complete.")
   }
+  return envelope
 }
 
 export function browserArtifactPersistenceProjection(input: BrowserArtifactProjectionInput | MaterializationResultEnvelope | unknown): BrowserArtifactPersistenceProjection {
@@ -190,6 +317,38 @@ function normalizeDigest(input: unknown): MaterializationArtifactRef["digest"] |
   return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest) ?? normalizeDigest(input.contentDigest)
 }
 
+function phaseDiagnostics(phase: MaterializationPhaseResult): MaterializationDiagnostic[] {
+  if (phase.status !== "failed" || !phase.error) {
+    return []
+  }
+  return [{
+    code: phase.error.code ?? "materialization-phase-failed",
+    message: phase.error.message,
+    severity: "error",
+    phase: phase.phase,
+  }]
+}
+
+function normalizeError(input: { name?: string; message?: string; code?: string } | Error | string | undefined, fallbackMessage: string): FailedMaterializationResultEnvelope["error"] {
+  if (input instanceof Error) {
+    return stripUndefined({ name: input.name || "Error", message: input.message || fallbackMessage, code: "code" in input && typeof input.code === "string" ? input.code : undefined })
+  }
+  if (typeof input === "string") {
+    return { name: "Error", message: input || fallbackMessage }
+  }
+  return stripUndefined({
+    name: stringValue(input?.name) || "Error",
+    message: stringValue(input?.message) || fallbackMessage,
+    code: stringValue(input?.code) || undefined,
+  })
+}
+
+function errorObject(value: Record<string, unknown> | undefined): FailedMaterializationResultEnvelope["error"] | undefined {
+  const error = asRecord(value?.error)
+  const message = stringValue(error?.message) || stringValue(value?.message)
+  return message ? normalizeError({ name: stringValue(error?.name) || "Error", message, code: stringValue(error?.code) || undefined }, message) : undefined
+}
+
 function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {
   return values.find(isRecord)
 }
@@ -204,9 +363,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : ""
-}
-
-function errorMessage(value: Record<string, unknown> | undefined): string | undefined {
-  const error = asRecord(value?.error)
-  return stringValue(error?.message) || stringValue(value?.message) || undefined
 }
