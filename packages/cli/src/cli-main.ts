@@ -28,7 +28,7 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exi
       settled = true
       process.off("beforeExit", handleBeforeExit)
       process.exitCode = code
-      exit(code)
+      exitAfterOutputDrains(code, exit)
     },
     (error) => {
       settled = true
@@ -40,7 +40,27 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exi
         writeStderr(`${serialized.message}\n`)
       }
       process.exitCode = 1
-      exit(1)
+      exitAfterOutputDrains(1, exit)
     },
   )
+}
+
+function exitAfterOutputDrains(code: number, exit: CliExit): void {
+  const streams = [process.stdout, process.stderr].filter((stream) => stream.writableNeedDrain)
+  if (streams.length === 0) {
+    exit(code)
+    return
+  }
+
+  let pending = streams.length
+  const finish = () => {
+    pending -= 1
+    if (pending === 0) {
+      exit(code)
+    }
+  }
+
+  for (const stream of streams) {
+    stream.once("drain", finish)
+  }
 }
