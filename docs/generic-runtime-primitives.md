@@ -10,6 +10,7 @@ product or job system.
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
   `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
+  `packages/runtime-core/src/provider-runtime-contracts.ts`, and
   `packages/runtime-core/src/command-agent-run.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts` and
   `tests/command-agent-run.test.ts`.
@@ -162,3 +163,20 @@ Example recipe step:
   ]
 }
 ```
+
+## Provider Runtime Invocation Contract
+
+`buildGenericAbilityRuntimeRunRecipe()` includes
+`runtime_invocation.provider_runtime_contract` in the ability input. The contract
+is the generic runtime-provider handshake introduced by PR #1205: workspace
+capture, workspace command execution, workspace publication, tool-call transcript
+recording, artifact handoff, and runtime evidence result schemas.
+
+WP Codebox owns the names and schemas. Callers own policy: repository selection,
+authorization, retries, retention, publication approval, and how resulting refs
+are attached to their job records.
+
+The contract intentionally uses `wp-codebox.runner-workspace.*`,
+`wp-codebox.tool-call-transcript.record`, and `wp-codebox.artifact-handoff`
+names. Downstream product names and orchestration policy stay outside the
+runtime invocation payload.

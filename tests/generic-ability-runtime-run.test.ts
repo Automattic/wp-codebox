@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.js"
-import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA } from "../packages/runtime-core/src/index.js"
+import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA } from "../packages/runtime-core/src/index.js"
 import { buildGenericAbilityRuntimeRunRecipe as buildGenericAbilityRuntimeRunRecipeFromStableSubpath } from "../packages/runtime-core/src/recipe-builders.js"
 import { abilityResponseToCommandEnvelope, expectedAbilityResultSchemaFromArgs } from "../packages/runtime-playground/src/commands.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -48,7 +48,19 @@ await withTempDir("wp-codebox-generic-ability-runtime-run-", async (root) => {
   assert.equal(input.runtime_invocation.schema, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA)
   assert.equal(input.runtime_invocation.ability_id, "example/runtime-run")
   assert.equal(input.runtime_invocation.expected_result_schema, "example/result/v1")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.schema, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
+  assert.equal(input.runtime_invocation.provider_runtime_contract.tasks.workspaceCapture, "wp-codebox.runner-workspace.capture")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.tasks.workspacePublish, "wp-codebox.runner-workspace.publish")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.tasks.toolCallTranscriptRecord, "wp-codebox.tool-call-transcript.record")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.tasks.artifactHandoff, "wp-codebox.artifact-handoff")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.result_schemas.workspace_capture, "wp-codebox/runner-workspace-capture-result/v1")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.result_schemas.workspace_command, "wp-codebox/runner-workspace-command-result/v1")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.result_schemas.workspace_publication, "wp-codebox/runner-workspace-publication-result/v1")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.result_schemas.tool_call_transcript, "wp-codebox/tool-call-transcript/v1")
+  assert.equal(input.runtime_invocation.provider_runtime_contract.result_schemas.evidence_artifact_envelope, "wp-codebox/evidence-artifact-envelope/v1")
   assert.equal(input.runtime_invocation.component_manifest.components[0].slug, "example-component")
+  assert.doesNotMatch(JSON.stringify(input.runtime_invocation), /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 
   const cliOptionsPath = join(root, "generic-ability-runtime-options.json")
   const cliRecipePath = join(root, "generic-ability-runtime.recipe.json")

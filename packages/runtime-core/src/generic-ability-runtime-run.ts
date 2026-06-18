@@ -1,6 +1,7 @@
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import { commandArg, commandJsonArg } from "./command-codecs.js"
 import { resolvePluginEntrypointContract, sanitizePluginSlug, type ComponentLoadMode } from "./component-contracts.js"
+import { providerRuntimeInvocationContract } from "./provider-runtime-contracts.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 import { componentManifestForRuntimePlugins, runtimeDependencyPlanContract } from "./agent-task-recipe.js"
@@ -59,6 +60,7 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
       schema: GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA,
       ability_id: abilityId,
       expected_result_schema: expectedResultSchema,
+      provider_runtime_contract: providerRuntimeInvocationContract(),
       component_manifest: componentManifest,
       dependency_plan: runtimeDependencyPlanContract({
         provider_plugin_paths: options.providerPluginPaths,
