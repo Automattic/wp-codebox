@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
-import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
 import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
@@ -187,6 +187,72 @@ export async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDir
   }
 
   return mounts
+}
+
+export async function prepareRecipeWorkspacePreloads(recipe: WorkspaceRecipe): Promise<PreparedWorkspaceMount[]> {
+  const preloads = recipe.inputs?.workspace_preloads ?? []
+  const mounts: PreparedWorkspaceMount[] = []
+  for (const [preloadIndex, preload] of preloads.entries()) {
+    for (const [repositoryIndex, repository] of preload.payload.repositories.entries()) {
+      mounts.push(await prepareWorkspacePreloadRepository(preload, repository, preloadIndex, repositoryIndex))
+    }
+  }
+
+  return mounts
+}
+
+async function prepareWorkspacePreloadRepository(preload: WorkspaceRecipeWorkspacePreload, repository: WorkspaceRecipeWorkspacePreloadRepository, preloadIndex: number, repositoryIndex: number): Promise<PreparedWorkspaceMount> {
+  if (!/^[a-z0-9-]+$/.test(repository.name)) {
+    throw new Error(`Workspace preload repository name must be a slug: ${repository.name}`)
+  }
+  if (!workspacePreloadRepositoryUrlAllowed(repository.url)) {
+    throw new Error(`Workspace preload repository url must be an HTTPS or SSH Git URL: ${repository.url}`)
+  }
+
+  const root = await mkdtemp(join(tmpdir(), `wp-codebox-workspace-preload-${repository.name}-`))
+  const source = join(root, repository.name)
+  try {
+    await executeManagedHostCommand({ command: "git", args: ["clone", "--quiet", repository.url, source], cwd: root, allowedCwdRoots: [root], label: "clone workspace preload repository" })
+    if (repository.ref) {
+      await executeManagedHostCommand({ command: "git", args: ["checkout", "--quiet", repository.ref], cwd: source, allowedCwdRoots: [root], label: "checkout workspace preload repository ref" })
+    }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
+
+  return {
+    source,
+    target: `${SANDBOX_WORKSPACE_ROOT}/${repository.name}`,
+    mode: "readwrite",
+    cleanupPaths: [root],
+    metadata: {
+      kind: "workspace-preload",
+      sourceMode: "repo-backed",
+      mountRole: "workspace-preload",
+      workspaceRef: repository.name,
+      repo: repository.url,
+      gitRef: repository.ref,
+      preload: {
+        type: preload.type,
+        slug: preload.slug,
+        source: preload.source,
+        schema: preload.payload.schema,
+        provenance: preload.provenance,
+      },
+      artifactRef: {
+        type: preload.type,
+        slug: preload.slug,
+        source: preload.source,
+        preloadIndex,
+        repositoryIndex,
+      },
+    },
+  }
+}
+
+function workspacePreloadRepositoryUrlAllowed(url: string): boolean {
+  return url.startsWith("https://") || /^git@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+\.git$/.test(url)
 }
 
 async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Promise<void> {

@@ -65,6 +65,7 @@ top-level fields:
 
 - `mounts`
 - `workspaces`
+- `workspace_preloads`
 - `extra_plugins`
 - `component_manifest`
 - `dependency_overlays`
@@ -84,6 +85,10 @@ old docs/example drift and is not part of `wp-codebox/workspace-recipe/v1`.
 
 Use `inputs.agent_bundles`, not `inputs.agentBundles`, for runtime agent bundle
 imports.
+
+Use `inputs.workspace_preloads` for generic `agent-runtime/workspace-preload`
+artifact contracts. WP Codebox materializes declared repositories as sandbox
+workspace mounts; callers own the policy that decides which artifacts to pass.
 
 ## Extra Plugins
 

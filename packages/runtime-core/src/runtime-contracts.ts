@@ -389,6 +389,24 @@ export interface WorkspaceRecipeWorkspace {
   seed: WorkspaceRecipeWorkspaceSeed
 }
 
+export interface WorkspaceRecipeWorkspacePreloadRepository {
+  name: string
+  url: string
+  ref?: string
+}
+
+export interface WorkspaceRecipeWorkspacePreload {
+  type: "agent-runtime/workspace-preload"
+  slug?: string
+  source?: string
+  payload: {
+    schema: "agent-runtime/workspace-preload/v1"
+    repositories: WorkspaceRecipeWorkspacePreloadRepository[]
+    meta?: Record<string, unknown>
+  }
+  provenance?: Record<string, unknown>
+}
+
 export interface SandboxWorkspaceMountRef {
   target: string
   mode: "readonly" | "readwrite"
@@ -428,6 +446,7 @@ export interface WorkspaceRecipe {
   }
   inputs?: {
     workspaces?: WorkspaceRecipeWorkspace[]
+    workspace_preloads?: WorkspaceRecipeWorkspacePreload[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     component_manifest?: WorkspaceRecipeComponentManifest

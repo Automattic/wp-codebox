@@ -147,6 +147,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/workspace" },
           },
+          workspace_preloads: {
+            type: "array",
+            description: "Generic runtime workspace preload artifact contracts materialized into sandbox workspace mounts.",
+            items: { $ref: "#/$defs/workspacePreload" },
+          },
           extra_plugins: {
             type: "array",
             items: { $ref: "#/$defs/extraPlugin" },
@@ -640,6 +645,47 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string" },
           source: { type: "string" },
           excludePaths: { type: "array", items: { type: "string" } },
+        },
+      },
+      workspacePreload: {
+        type: "object",
+        additionalProperties: false,
+        required: ["type", "payload"],
+        properties: {
+          type: { const: "agent-runtime/workspace-preload" },
+          slug: { type: "string" },
+          source: { type: "string" },
+          payload: {
+            type: "object",
+            additionalProperties: false,
+            required: ["schema", "repositories"],
+            properties: {
+              schema: { const: "agent-runtime/workspace-preload/v1" },
+              repositories: {
+                type: "array",
+                minItems: 1,
+                items: { $ref: "#/$defs/workspacePreloadRepository" },
+              },
+              meta: { $ref: "#/$defs/metadata" },
+            },
+          },
+          provenance: { $ref: "#/$defs/metadata" },
+        },
+      },
+      workspacePreloadRepository: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "url"],
+        properties: {
+          name: { type: "string", pattern: "^[a-z0-9-]+$" },
+          url: {
+            type: "string",
+            anyOf: [
+              { pattern: "^https://" },
+              { pattern: "^git@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+\\.git$" },
+            ],
+          },
+          ref: { type: "string" },
         },
       },
       extraPlugin: {
