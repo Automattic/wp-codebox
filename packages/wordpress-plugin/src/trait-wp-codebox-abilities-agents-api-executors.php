@@ -17,6 +17,7 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 		}
 
 		add_filter( 'agents_api_executor_targets', array( self::class, 'register_agents_api_executor_targets' ) );
+		add_filter( 'wp_agent_execution_targets', array( self::class, 'register_agents_api_executor_targets' ) );
 		add_filter( 'wp_agent_executor_targets', array( self::class, 'register_agents_api_executor_targets' ) );
 		add_filter( 'agents_api_execute_task', array( self::class, 'execute_agents_api_task' ), 10, 3 );
 		add_filter( 'wp_agent_task_handler', array( self::class, 'execute_agents_api_task' ), 10, 2 );

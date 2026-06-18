@@ -91,6 +91,7 @@
     "test:primitive-contract-parity": "tsx tests/primitive-contract-parity.test.ts",
     "test:php-primitive-contract-parity": "php scripts/php-primitive-contract-parity-smoke.php",
     "test:php-run-plan-contract": "php scripts/php-run-plan-contract-smoke.php",
+    "test:php-agents-api-execution-targets": "php scripts/php-agents-api-execution-targets-smoke.php",
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
