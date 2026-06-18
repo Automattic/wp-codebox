@@ -37,6 +37,13 @@ only for loopback hosts.
 references produced while converting runtime output into durable artifacts. These
 refs can be folded into run records as `materialization:<kind>` artifact refs.
 
+`wp-codebox/materialization-result/v1` is the generic materialization envelope.
+It records `status` (`completed`, `failed`, or `skipped`), ordered `phases`,
+artifact refs, diagnostics, and optional caller projections. Product-specific
+views such as browser artifact persistence or WordPress replay packages belong in
+`projections[]`; the core envelope stays caller-neutral and represents failures
+without requiring callers to recover information from thrown errors.
+
 ## Evidence Artifact Envelopes
 
 `wp-codebox/evidence-artifact-envelope/v1` is a caller-neutral envelope for

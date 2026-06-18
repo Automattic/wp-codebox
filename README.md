@@ -1105,7 +1105,7 @@ wp-codebox materialize-replay-package \
   --json
 ```
 
-The materializer writes `blueprint.after.json`, `blueprint.zip`, `files/runtime-snapshot.json`, `blueprint.after-notes.json`, and `manifest.json`. The generated notes and manifest record source metadata, including the resolved input snapshot path, optional `--snapshot-ref`, and the `wp-codebox materialize-replay-package` command.
+The materializer writes `blueprint.after.json`, `blueprint.zip`, `files/runtime-snapshot.json`, `blueprint.after-notes.json`, and `manifest.json`. With `--json`, stdout is a generic `wp-codebox/materialization-result/v1` envelope; the replay-package-specific `wp-codebox/wordpress-replay-export/v1` data is carried as a projection. The generated notes and manifest record source metadata, including the resolved input snapshot path, optional `--snapshot-ref`, and the `wp-codebox materialize-replay-package` command.
 
 Replay packages use a bundled resource for `files/runtime-snapshot.json` so the blueprint and snapshot travel together as one local artifact directory. `blueprint.after.json` is the local/package validation artifact. Public WordPress Playground viewer links must use `blueprint.zip`, because Playground resolves bundled resources from a bundle archive with a root `blueprint.json` entry; a plain JSON URL cannot resolve `files/runtime-snapshot.json`. The manifest therefore records `replayableWordPressSite.publicViewerArtifactPath: "blueprint.zip"`. Use URL resources only when the snapshot is already hosted at a stable, browser-fetchable URL; this avoids shipping the snapshot beside the blueprint, but replay then depends on network access, CORS, URL lifetime, and the full snapshot download at restore time.
 

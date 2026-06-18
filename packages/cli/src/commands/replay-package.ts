@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { materializationPhaseResult, materializationResultEnvelope, type MaterializationArtifactRef, type MaterializationResultEnvelope } from "@automattic/wp-codebox-core"
 import { writeReplayExportPackage, type ReplayExportPackage, type RuntimeSnapshotArtifact } from "@automattic/wp-codebox-playground"
 import { captureStdout } from "../output.js"
 
@@ -23,10 +24,10 @@ export async function runMaterializeReplayPackageCommand(args: string[]): Promis
     return 0
   }
 
-  const { result, logs } = await captureStdout(execute)
+  const { result, logs } = await captureStdout(() => materializeReplayPackageEnvelope(options))
   const output = logs.length > 0 ? { ...result, logs } : result
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-  return 0
+  return result.status === "completed" ? 0 : 1
 }
 
 async function materializeReplayPackage(options: MaterializeReplayPackageOptions): Promise<ReplayExportPackage> {
@@ -49,6 +50,46 @@ async function materializeReplayPackage(options: MaterializeReplayPackageOptions
       materializerCommand: "wp-codebox materialize-replay-package",
     },
   })
+}
+
+async function materializeReplayPackageEnvelope(options: MaterializeReplayPackageOptions): Promise<MaterializationResultEnvelope> {
+  const startedAtMs = Date.now()
+  try {
+    const result = await materializeReplayPackage(options)
+    const phase = materializationPhaseResult({
+      phase: "wordpress-replay-package-materialization",
+      status: "completed",
+      artifactRefs: replayPackageArtifactRefs(result),
+      metadata: result.metrics,
+    })
+
+    return materializationResultEnvelope({
+      task: "materialize-replay-package",
+      phases: [phase],
+      result: result as unknown as Record<string, unknown>,
+      projections: [{ kind: "wordpress-replay-package", schema: "wp-codebox/wordpress-replay-export/v1", package: result }],
+      metadata: { durationMs: Date.now() - startedAtMs },
+    })
+  } catch (error) {
+    const serialized = serializeMaterializationError(error)
+    return materializationResultEnvelope({
+      task: "materialize-replay-package",
+      status: "failed",
+      phases: [materializationPhaseResult({
+        phase: "wordpress-replay-package-materialization",
+        status: "failed",
+        error: serialized,
+      })],
+      diagnostics: [{
+        code: serialized.code ?? "replay-package-materialization-failed",
+        message: serialized.message,
+        severity: "error",
+        phase: "wordpress-replay-package-materialization",
+      }],
+      error: serialized,
+      metadata: { durationMs: Date.now() - startedAtMs },
+    })
+  }
 }
 
 function parseMaterializeReplayPackageOptions(args: string[]): MaterializeReplayPackageOptions {
@@ -111,6 +152,27 @@ function printMaterializeReplayPackageHumanOutput(output: ReplayExportPackage): 
   console.log(`Snapshot: ${output.artifacts.snapshot}`)
   console.log(`Notes: ${output.artifacts.notes}`)
   console.log(`Manifest: ${output.artifacts.manifest}`)
+}
+
+function replayPackageArtifactRefs(result: ReplayExportPackage): MaterializationArtifactRef[] {
+  return [
+    { kind: "replay-package-manifest", path: result.artifacts.manifest, digest: result.manifest.contentDigest },
+    { kind: "replay-package-blueprint", path: result.artifacts.blueprint },
+    { kind: "replay-package-bundle", path: result.artifacts.playgroundBundle },
+    { kind: "runtime-snapshot", path: result.artifacts.snapshot },
+    { kind: "replay-package-notes", path: result.artifacts.notes },
+  ]
+}
+
+function serializeMaterializationError(error: unknown): { name: string; message: string; code?: string } {
+  if (error instanceof Error) {
+    return {
+      name: error.name || "Error",
+      message: error.message,
+      ...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+    }
+  }
+  return { name: "Error", message: String(error) }
 }
 
 function isRuntimeSnapshotArtifact(value: unknown): value is RuntimeSnapshotArtifact {

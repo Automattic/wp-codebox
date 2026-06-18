@@ -69,6 +69,7 @@
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
     "test:artifact-path-primitives": "tsx tests/artifact-path-primitives.test.ts",
     "test:browser-callback-materialization-contracts": "tsx tests/browser-callback-materialization-contracts.test.ts",
+    "test:materialize-replay-package-command": "tsx tests/materialize-replay-package-command.test.ts",
     "test:source-package-compiler-primitives": "tsx tests/source-package-compiler-primitives.test.ts",
     "test:source-root-preparation": "tsx tests/source-root-preparation.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
