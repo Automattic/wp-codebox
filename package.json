@@ -77,6 +77,7 @@
     "test:materialize-replay-package-command": "tsx tests/materialize-replay-package-command.test.ts",
     "test:source-package-compiler-primitives": "tsx tests/source-package-compiler-primitives.test.ts",
     "test:source-root-preparation": "tsx tests/source-root-preparation.test.ts",
+    "test:workspace-preload-artifacts": "tsx tests/workspace-preload-artifacts.test.ts",
     "test:bench-command-step-behavior": "tsx tests/bench-command-step-behavior.test.ts",
     "test:generic-primitives": "npm run test:artifact-path-primitives && npm run test:browser-callback-materialization-contracts && npm run test:source-package-compiler-primitives && npm run test:bench-command-step-behavior && npm run test:generic-ability-runtime-run",
     "test:browser-artifact-session": "tsx tests/browser-artifact-session.test.ts",

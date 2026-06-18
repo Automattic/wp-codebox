@@ -7,6 +7,7 @@ import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import type { WorkspaceRecipe, WorkspaceRecipeComponentManifest, WorkspaceRecipeComponentManifestEntry, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStagedFile } from "./runtime-contracts.js"
 import { resolvePluginEntrypointContract, sanitizePluginSlug } from "./component-contracts.js"
 import { prepareRecipeSourcePackageSync } from "./recipe-source-packages.js"
+import { workspacePreloadsFromTaskInputs } from "./workspace-preload-artifacts.js"
 
 const AGENT_RUNTIME_ENV = { WP_AGENT_RUNTIME: "1" }
 
@@ -43,6 +44,7 @@ export interface AgentTaskRunInput {
   stagedFiles?: WorkspaceRecipeStagedFile[]
   runtime_task?: Record<string, unknown>
   agent_bundle?: Record<string, unknown>
+  workspace_preloads?: unknown
   sandbox_tool_policy?: SandboxToolPolicySnapshot
   structured_artifacts?: StructuredArtifactPayload[]
   max_turns?: number | string
@@ -139,6 +141,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     inputs: stripUndefined({
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
+      workspace_preloads: workspacePreloadsFromTaskInputs({ ...input, structured_artifacts: taskInput.structured_artifacts }),
       dependency_overlays: Array.isArray(input.dependency_overlays) ? input.dependency_overlays : undefined,
       extra_plugins: extraPlugins,
       component_manifest: componentManifest,
