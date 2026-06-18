@@ -1,4 +1,5 @@
 import { isPlainObject } from "./object-utils.js"
+import { artifactFileDigest, type ArtifactFileDigest } from "./artifact-manifest.js"
 
 export const STRUCTURED_ARTIFACT_SCHEMA = "wp-codebox/structured-artifact/v1" as const
 export const STRUCTURED_ARTIFACT_INDEX_SCHEMA = "wp-codebox/structured-artifacts-index/v1" as const
@@ -59,6 +60,83 @@ export interface TypedArtifactIndex {
   artifacts: TypedArtifactRef[]
 }
 
+export interface MaterializedStructuredArtifactRef extends Omit<StructuredArtifactPayload, "payload"> {
+  payload?: unknown
+  artifact?: {
+    path: string
+    kind: string
+    contentType: string
+    sha256: string
+  }
+}
+
+export interface StructuredArtifactMaterializationInput<TArtifact extends StructuredArtifactPayload = StructuredArtifactPayload> {
+  artifacts: TArtifact[]
+  artifactPathPrefix: string
+  artifactKind: string
+  indexKind: string
+  indexSchema: typeof STRUCTURED_ARTIFACT_INDEX_SCHEMA | typeof TYPED_ARTIFACT_INDEX_SCHEMA
+  contentType?: string | ((artifact: TArtifact, index: number) => string)
+  contents?: (artifact: TArtifact, index: number) => string | Buffer
+  extension?: (contentType: string, artifact: TArtifact, index: number) => string
+}
+
+export interface StructuredArtifactMaterializedFile<TArtifact extends StructuredArtifactPayload = StructuredArtifactPayload> {
+  path: string
+  kind: string
+  contentType: string
+  contents: string | Buffer
+  sha256: ArtifactFileDigest
+  artifact?: TArtifact
+}
+
+export interface StructuredArtifactMaterializationResult<TRef extends MaterializedStructuredArtifactRef = MaterializedStructuredArtifactRef> {
+  refs: TRef[]
+  index: StructuredArtifactIndex | TypedArtifactIndex
+  files: StructuredArtifactMaterializedFile[]
+}
+
+export function materializeStructuredArtifactFiles<TArtifact extends StructuredArtifactPayload, TRef extends MaterializedStructuredArtifactRef = MaterializedStructuredArtifactRef>(input: StructuredArtifactMaterializationInput<TArtifact>): StructuredArtifactMaterializationResult<TRef> {
+  const artifactPathPrefix = normalizeArtifactPathPrefix(input.artifactPathPrefix)
+  const refs: MaterializedStructuredArtifactRef[] = []
+  const files: StructuredArtifactMaterializedFile[] = []
+
+  for (const [index, artifact] of input.artifacts.entries()) {
+    const contents = input.contents ? input.contents(artifact, index) : `${JSON.stringify(artifact, null, 2)}\n`
+    const contentType = typeof input.contentType === "function" ? input.contentType(artifact, index) : input.contentType ?? "application/json"
+    const extension = input.extension ? input.extension(contentType, artifact, index) : structuredArtifactExtension(contentType)
+    const path = `${artifactPathPrefix}/${safeStructuredArtifactName(artifact.name)}-${index + 1}${extension}`
+    const sha256 = artifactFileDigest(contents)
+    const ref: MaterializedStructuredArtifactRef = stripUndefined({
+      ...artifact,
+      artifact: {
+        path,
+        kind: input.artifactKind,
+        contentType,
+        sha256: sha256.value,
+      },
+    }) as MaterializedStructuredArtifactRef
+    refs.push(ref)
+    files.push({ path, kind: input.artifactKind, contentType, contents, sha256, artifact })
+  }
+
+  const index: StructuredArtifactIndex | TypedArtifactIndex = {
+    schema: input.indexSchema,
+    direction: "output",
+    artifacts: refs as never,
+  }
+  const indexContents = `${JSON.stringify(index, null, 2)}\n`
+  files.push({
+    path: `${artifactPathPrefix}/index.json`,
+    kind: input.indexKind,
+    contentType: "application/json",
+    contents: indexContents,
+    sha256: artifactFileDigest(indexContents),
+  })
+
+  return { refs: refs as TRef[], index, files }
+}
+
 export function normalizeStructuredArtifacts(value: unknown, direction: StructuredArtifactDirection): StructuredArtifactPayload[] {
   const entries = Array.isArray(value) ? value : []
   return entries.flatMap((entry): StructuredArtifactPayload[] => {
@@ -96,4 +174,22 @@ function structuredPayloadSchema(value: unknown): string | Record<string, unknow
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function safeStructuredArtifactName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
+}
+
+function structuredArtifactExtension(contentType: string): string {
+  if (contentType === "application/json") return ".json"
+  if (contentType.startsWith("text/")) return ".txt"
+  return ".bin"
+}
+
+function normalizeArtifactPathPrefix(prefix: string): string {
+  return prefix.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")
+}
+
+function stripUndefined<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T
 }

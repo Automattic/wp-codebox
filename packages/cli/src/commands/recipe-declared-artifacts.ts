@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type TypedArtifactIndex, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, materializeStructuredArtifactFiles, redactJsonValue, workspaceRecipeRuntimeCollectedArtifacts, type ArtifactBundle, type Runtime, type StructuredArtifactPayload, type TypedArtifactRef, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeTypedArtifact } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { appendRecipeRuntimeEvidenceFiles } from "../recipe-evidence.js"
 import { serializeRecipeRunError, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError } from "./recipe-run-output.js"
@@ -106,8 +106,7 @@ async function collectRecipeTypedArtifact(runtime: Runtime, artifact: WorkspaceR
 }
 
 export async function materializeTypedRecipeDeclaredArtifacts(artifacts: ArtifactBundle, declaredArtifacts: RecipeRunDeclaredArtifact[]): Promise<void> {
-  const refs: TypedArtifactRef[] = []
-  const files = []
+  const inputs: Array<{ artifact: RecipeRunDeclaredArtifact; ref: StructuredArtifactPayload; contents: Buffer; contentType: string }> = []
   for (const artifact of declaredArtifacts) {
     const typedArtifact = recipeRunTypedArtifactDeclaration(artifact)
     const contents = declaredArtifactContents.get(artifact)
@@ -115,9 +114,7 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
       continue
     }
 
-    const filename = `typed-artifacts/${safeTypedArtifactName(typedArtifact.name)}-${artifact.index + 1}${typedArtifactExtension(typedArtifact.contentType)}`
-    const sha256 = artifactFileDigest(contents).value
-    const ref: TypedArtifactRef = stripUndefined({
+    const ref: StructuredArtifactPayload = stripUndefined({
       schema: STRUCTURED_ARTIFACT_SCHEMA,
       name: typedArtifact.name,
       type: typedArtifact.type,
@@ -125,32 +122,38 @@ export async function materializeTypedRecipeDeclaredArtifacts(artifacts: Artifac
       payload: artifact.parsedJson,
       metadata: artifact.metadata ?? {},
       provenance: {
-        direction: "output",
+        direction: "output" as const,
         source: artifact.path,
       },
-      artifact: {
-        path: `files/runtime-evidence/${filename}`,
-        kind: "typed-artifact",
-        contentType: typedArtifact.contentType,
-        sha256,
-      },
-    }) as TypedArtifactRef
-    refs.push(ref)
-    artifact.materialized = ref
-    delete (artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
-    files.push({ filename, kind: "typed-artifact", contentType: typedArtifact.contentType, contents, maxBytes: DECLARED_ARTIFACT_CAPTURE_MAX_BYTES })
+    })
+    inputs.push({ artifact, ref, contents, contentType: typedArtifact.contentType })
   }
 
-  if (refs.length === 0) {
+  if (inputs.length === 0) {
     return
   }
 
-  const index: TypedArtifactIndex = {
-    schema: TYPED_ARTIFACT_INDEX_SCHEMA,
-    direction: "output",
-    artifacts: refs,
+  const materialized = materializeStructuredArtifactFiles<StructuredArtifactPayload, TypedArtifactRef>({
+    artifacts: inputs.map((input) => input.ref),
+    artifactPathPrefix: "files/runtime-evidence/typed-artifacts",
+    artifactKind: "typed-artifact",
+    indexKind: "typed-artifacts-index",
+    indexSchema: TYPED_ARTIFACT_INDEX_SCHEMA,
+    contentType: (_artifact, index) => inputs[index].contentType,
+    contents: (_artifact, index) => inputs[index].contents,
+  })
+  for (const [index, ref] of materialized.refs.entries()) {
+    inputs[index].artifact.materialized = ref
+    delete (inputs[index].artifact as RecipeRunDeclaredArtifact & { typedArtifact?: unknown }).typedArtifact
   }
-  files.push({ filename: "typed-artifacts/index.json", kind: "typed-artifacts-index", contentType: "application/json", contents: `${JSON.stringify(index, null, 2)}\n` })
+
+  const files = materialized.files.map((file) => ({
+    filename: file.path.replace(/^files\/runtime-evidence\//, ""),
+    kind: file.kind,
+    contentType: file.contentType,
+    contents: file.contents,
+    maxBytes: DECLARED_ARTIFACT_CAPTURE_MAX_BYTES,
+  }))
   await appendRecipeRuntimeEvidenceFiles(artifacts, files)
 }
 
@@ -173,16 +176,6 @@ function recipeRunTypedArtifactDeclaration(artifact: RecipeRunDeclaredArtifact):
 
 function typedArtifactContentType(artifact: WorkspaceRecipeTypedArtifact): string {
   return artifact.parseJson === true ? "application/json" : "application/octet-stream"
-}
-
-function typedArtifactExtension(contentType: string): string {
-  if (contentType === "application/json") return ".json"
-  if (contentType.startsWith("text/")) return ".txt"
-  return ".bin"
-}
-
-function safeTypedArtifactName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
 }
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {

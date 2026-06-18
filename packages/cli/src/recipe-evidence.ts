@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactIndex, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 
@@ -813,36 +813,29 @@ async function writeAgentTaskStructuredArtifacts(artifacts: ArtifactBundle, agen
   }
 
   const structuredDirectory = join(dirname(artifacts.reviewPath), "structured-artifacts")
-  await mkdir(structuredDirectory, { recursive: true })
-  const refs: StructuredArtifactRef[] = []
+  const materialized = materializeStructuredArtifactFiles<StructuredArtifactRef, StructuredArtifactRef>({
+    artifacts: outputCandidates,
+    artifactPathPrefix: relative(artifacts.directory, structuredDirectory),
+    artifactKind: "structured-artifact",
+    indexKind: "structured-artifacts-index",
+    indexSchema: STRUCTURED_ARTIFACT_INDEX_SCHEMA,
+  })
   const files: RecipeArtifactEvidenceFile[] = []
 
-  for (const [index, artifact] of outputCandidates.entries()) {
-    const path = join(structuredDirectory, `${safeStructuredArtifactName(artifact.name)}-${index + 1}.json`)
-    const file = await writeRecipeEvidenceJson(artifacts.directory, path, artifact, `structured-artifact:${artifact.name}`)
-    const ref: StructuredArtifactRef = {
-      ...artifact,
-      artifact: {
-        path: file.path,
-        kind: "structured-artifact",
-        contentType: "application/json",
-        sha256: file.sha256,
-      },
-    }
-    refs.push(ref)
-    files.push(file)
+  await mkdir(structuredDirectory, { recursive: true })
+  for (const file of materialized.files) {
+    await writeFile(join(artifacts.directory, file.path), file.contents)
+    files.push({
+      path: file.path,
+      sha256: file.sha256.value,
+      kind: file.artifact ? `structured-artifact:${file.artifact.name}` : file.kind,
+      contentType: file.contentType,
+    })
   }
-
-  const index: StructuredArtifactIndex = {
-    schema: STRUCTURED_ARTIFACT_INDEX_SCHEMA,
-    direction: "output",
-    artifacts: refs,
-  }
-  files.push(await writeRecipeEvidenceJson(artifacts.directory, join(structuredDirectory, "index.json"), index, "structured-artifacts-index"))
-  agentTaskResult.structured_artifacts = refs
+  agentTaskResult.structured_artifacts = materialized.refs
   agentTaskResult.outputs = {
     ...agentTaskResult.outputs,
-    structured_artifacts: refs,
+    structured_artifacts: materialized.refs,
   }
   return files
 }
@@ -860,10 +853,6 @@ function structuredArtifactOutputCandidates(agentTaskResult: AgentTaskSingleResu
           ? rawResult.structuredArtifacts
           : []
   return normalizeStructuredArtifacts(value, "output")
-}
-
-function safeStructuredArtifactName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
 }
 
 function latestAgentRuntime(transcript: AgentSandboxTranscript): Record<string, unknown> | undefined {
