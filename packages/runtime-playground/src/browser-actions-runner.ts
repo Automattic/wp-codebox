@@ -61,7 +61,7 @@ export async function runBrowserActionsCommand({
   onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
-  const runPlan = plan ?? await browserActionsRunPlanFromArgs(args)
+  const runPlan = plan ?? await browserActionsRunPlanFromArgs(args, artifactRoot)
   const steps = [...runPlan.steps]
   const initialUrl = runPlan.initialUrl
   if (steps.length === 0 && !initialUrl) {
@@ -396,7 +396,7 @@ export async function runBrowserActionsCommand({
   }
 }
 
-async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserActionsRunPlan> {
+async function browserActionsRunPlanFromArgs(args: string[], artifactRoot: string): Promise<BrowserActionsRunPlan> {
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("steps")
@@ -416,7 +416,7 @@ async function browserActionsRunPlanFromArgs(args: string[]): Promise<BrowserAct
     networkSettleTimeoutMs: durationArg(args, "network-settle-timeout", browserCommandLivenessPolicy().networkSettleTimeoutMs),
     requestedViewport: viewportArg(args, "viewport"),
     authRequest: browserAuthRequest(args),
-    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions"),
+    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-actions", artifactRoot),
     maxDomSnapshotElements: positiveIntegerArg(args, "max-dom-snapshot-elements", 160),
   }
 }

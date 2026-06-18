@@ -713,14 +713,14 @@ function positiveIntegerArg(args: string[], name: string, fallback: number): num
   return parsed
 }
 
-export async function browserStorageStateImportFromArgs(args: string[], command: string): Promise<BrowserStorageStateImport | undefined> {
+export async function browserStorageStateImportFromArgs(args: string[], command: string, artifactRoot?: string): Promise<BrowserStorageStateImport | undefined> {
   const raw = argValue(args, "storage-state")?.trim()
   if (!raw) {
     return undefined
   }
 
   const source = raw.startsWith("@") ? "file" : "inline"
-  const text = source === "file" ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
+  const text = source === "file" ? await readStorageStateFile(raw.slice(1), artifactRoot) : raw
   let payload: unknown
   try {
     payload = JSON.parse(text)
@@ -740,6 +740,18 @@ export async function browserStorageStateImportFromArgs(args: string[], command:
     throw new BrowserStorageStateImportError(`${command} storage-state is unsupported`, normalized.summary)
   }
   return normalized
+}
+
+async function readStorageStateFile(pathValue: string, artifactRoot?: string): Promise<string> {
+  const primaryPath = resolveCommandPath(pathValue)
+  try {
+    return await readFile(primaryPath, "utf8")
+  } catch (error) {
+    if (!artifactRoot) {
+      throw error
+    }
+    return readFile(resolveCommandPath(pathValue, artifactRoot), "utf8")
+  }
 }
 
 export function browserStorageStateAuthSummary(summary: BrowserStorageStateImportSummary): BrowserProbeAuthSummary {

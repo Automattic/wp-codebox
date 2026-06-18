@@ -170,7 +170,7 @@ export async function runSingleBrowserProbeCommand({
   onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
   const args = spec.args ?? []
-  const runPlan = plan ?? await browserProbeRunPlanFromArgs(args, profileId)
+  const runPlan = plan ?? await browserProbeRunPlanFromArgs(args, profileId, artifactRoot)
   if (!runPlan.url) {
     throw new Error("wordpress.browser-probe requires url=<path-or-url>")
   }
@@ -577,7 +577,7 @@ function browserProbeProfile(profileId: string): BrowserProbeProfileDefinition {
   return profile
 }
 
-async function browserProbeRunPlanFromArgs(args: string[], profileId?: string): Promise<BrowserProbeRunPlan> {
+async function browserProbeRunPlanFromArgs(args: string[], profileId: string | undefined, artifactRoot: string): Promise<BrowserProbeRunPlan> {
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("console")
@@ -599,7 +599,7 @@ async function browserProbeRunPlanFromArgs(args: string[], profileId?: string): 
     prePageScript: argValue(args, "pre-page-script"),
     script: argValue(args, "script"),
     authRequest: browserAuthRequest(args),
-    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-probe"),
+    storageStateImport: await browserStorageStateImportFromArgs(args, "wordpress.browser-probe", artifactRoot),
     failFast: strictBooleanArg(args, "fail-fast", false),
     stallTimeoutMs: durationArg(args, "stall-timeout", 0),
     wallTimeoutMs: durationArg(args, "timeout", browserCommandLivenessPolicy().wallTimeoutMs),

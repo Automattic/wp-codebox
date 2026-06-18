@@ -1,6 +1,10 @@
 import assert from "node:assert/strict"
+import { mkdir, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { commandRegistry } from "../packages/runtime-core/src/command-registry.js"
 import { browserStorageStateFromWordPressAuthCookies, normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode } from "../packages/runtime-playground/src/browser-auth-storage-state.js"
+import { browserStorageStateImportFromArgs } from "../packages/runtime-playground/src/browser-probe-support.js"
 
 const state = browserStorageStateFromWordPressAuthCookies([
   { name: "wordpress_logged_in", value: "token", domain: "localhost", path: "/", expires: 1_800_000_000, httpOnly: true },
@@ -57,5 +61,15 @@ assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "browser-urls")
 assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "user-json"), "export command accepts a fixture user")
 assert.ok(exportCommand?.acceptedArgs.some((arg) => arg.name === "storage-state"), "export command accepts caller-provided storage state")
 assert.doesNotMatch(JSON.stringify(exportCommand), /wpcom|dolly|blog_id|site_id/i)
+
+const artifactRoot = join(tmpdir(), `wp-codebox-storage-state-${process.pid}`)
+const artifactStatePath = join(artifactRoot, "files/browser-storage-state/storage-state.json")
+await mkdir(join(artifactRoot, "files/browser-storage-state"), { recursive: true })
+await writeFile(artifactStatePath, `${JSON.stringify(imported.storageState)}\n`, "utf8")
+const importedFromArtifactRef = await browserStorageStateImportFromArgs([
+  "storage-state=@files/browser-storage-state/storage-state.json",
+], "wordpress.browser-probe", artifactRoot)
+assert.equal(importedFromArtifactRef?.summary.status, "ready")
+assert.equal(importedFromArtifactRef?.summary.cookieCount, 1)
 
 console.log("fixture auth storage state ok")
