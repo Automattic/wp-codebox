@@ -470,11 +470,11 @@ private static function compact_browser_materializer_contract_dto( array $contra
 			'error'            => is_array( $contract['error'] ?? null ) ? self::compact_browser_dto_value( $contract['error'] ) : array(),
 			'session_id'       => (string) ( $contract['session_id'] ?? '' ),
 			'authorization'    => is_array( $contract['authorization'] ?? null ) ? self::compact_browser_dto_value( $contract['authorization'] ) : array(),
-			'task_input'       => is_array( $contract['task_input'] ?? null ) ? self::compact_browser_dto_value( $contract['task_input'] ) : array(),
-			'task_payload'     => is_array( $contract['task_payload'] ?? null ) ? self::compact_browser_dto_value( $contract['task_payload'] ) : array(),
+			'task'             => is_array( $contract['task_input'] ?? null ) ? (string) ( $contract['task_input']['goal'] ?? '' ) : '',
 			'executable'       => self::browser_executable_materializer_contract_dto( $contract ),
 			'materialization'  => is_array( $contract['materialization'] ?? null ) ? self::compact_browser_dto_value( $contract['materialization'] ) : array(),
 			'recipe'           => is_array( $contract['recipe'] ?? null ) ? self::compact_browser_recipe_dto( $contract['recipe'] ) : array(),
+			'preview_boot'     => WP_Codebox_Browser_Task_Builder::browser_preview_boot_config( $contract ),
 			'playground'       => is_array( $contract['playground'] ?? null ) ? self::compact_browser_playground_dto( $contract['playground'] ) : array(),
 			'artifacts'        => is_array( $contract['artifacts'] ?? null ) ? self::compact_browser_dto_value( $contract['artifacts'] ) : array(),
 			'provenance'       => is_array( $contract['provenance'] ?? null ) ? self::compact_browser_dto_value( $contract['provenance'] ) : array(),
@@ -541,32 +541,7 @@ private static function compact_browser_executable_task_input( array $task_input
 
 /** @param array<string,mixed> $session Browser session envelope. @return array<string,mixed> */
 private static function compact_browser_session_dto( array $session ): array {
-	return array_filter(
-		array(
-			'success'          => (bool) ( $session['success'] ?? false ),
-			'schema'           => (string) ( $session['schema'] ?? 'wp-codebox/browser-playground-session/v1' ),
-			'dto_schema'       => 'wp-codebox/browser-session-product-dto/v1',
-			'execution'        => (string) ( $session['execution'] ?? '' ),
-			'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),
-			'permission_model' => (string) ( $session['permission_model'] ?? '' ),
-			'status'           => (string) ( $session['status'] ?? '' ),
-			'error'            => is_array( $session['error'] ?? null ) ? self::compact_browser_dto_value( $session['error'] ) : array(),
-			'session'          => is_array( $session['session'] ?? null ) ? self::compact_browser_dto_value( $session['session'] ) : array(),
-			'task'             => (string) ( $session['task'] ?? '' ),
-			'task_input'       => is_array( $session['task_input'] ?? null ) ? self::compact_browser_dto_value( $session['task_input'] ) : array(),
-			'task_payload'     => is_array( $session['task_payload'] ?? null ) ? self::compact_browser_dto_value( $session['task_payload'] ) : array(),
-			'agent'            => (string) ( $session['agent'] ?? '' ),
-			'provider'         => (string) ( $session['provider'] ?? '' ),
-			'model'            => (string) ( $session['model'] ?? '' ),
-			'inheritance'      => is_array( $session['inheritance'] ?? null ) ? self::compact_browser_dto_value( $session['inheritance'] ) : array(),
-			'materialization'  => is_array( $session['materialization'] ?? null ) ? self::compact_browser_dto_value( $session['materialization'] ) : array(),
-			'playground'       => is_array( $session['playground'] ?? null ) ? self::compact_browser_playground_dto( $session['playground'] ) : array(),
-			'recipe'           => is_array( $session['recipe'] ?? null ) ? self::compact_browser_recipe_dto( $session['recipe'] ) : array(),
-			'signals'          => is_array( $session['signals'] ?? null ) ? self::compact_browser_dto_value( $session['signals'] ) : array(),
-			'artifacts'        => is_array( $session['artifacts'] ?? null ) ? self::compact_browser_dto_value( $session['artifacts'] ) : array(),
-		),
-		static fn( mixed $value ): bool => array() !== $value && '' !== $value
-	);
+	return WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
 }
 
 /** @param array<string,mixed> $playground Playground contract. @return array<string,mixed> */

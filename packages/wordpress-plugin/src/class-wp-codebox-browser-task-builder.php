@@ -268,6 +268,235 @@ final class WP_Codebox_Browser_Task_Builder {
 		);
 	}
 
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	public static function product_browser_session_dto( array $session ): array {
+		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+		$task_input       = is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array();
+		$signals          = is_array( $session['signals'] ?? null ) ? $session['signals'] : array();
+
+		$dto = array_filter(
+			array(
+				'schema'           => 'wp-codebox/browser-session-product-dto/v1',
+				'source_schema'    => (string) ( $session['schema'] ?? '' ),
+				'success'          => (bool) ( $session['success'] ?? false ),
+				'status'           => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
+				'execution'        => (string) ( $session['execution'] ?? '' ),
+				'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),
+				'permission_model' => (string) ( $session['permission_model'] ?? '' ),
+				'session_id'       => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'task'             => (string) ( $session['task'] ?? $task_input['goal'] ?? '' ),
+				'target'           => is_array( $task_input['target'] ?? null ) ? self::compact_public_value( $task_input['target'] ) : array(),
+				'agent'            => (string) ( $session['agent'] ?? '' ),
+				'provider'         => (string) ( $session['provider'] ?? '' ),
+				'model'            => (string) ( $session['model'] ?? '' ),
+				'preview_boot'     => self::browser_preview_boot_config( $session ),
+				'signals'          => self::compact_public_value( $signals ),
+				'artifacts'        => is_array( $session['artifacts'] ?? null ) ? self::compact_public_value( $session['artifacts'] ) : array(),
+				'error'            => is_array( $session['error'] ?? null ) ? self::compact_public_value( $session['error'] ) : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+
+		/**
+		 * Filters the product-safe browser session DTO.
+		 *
+		 * Raw task payload, blueprint content, runtime source packages, and secret-like
+		 * values are intentionally omitted before this filter runs.
+		 *
+		 * @param array<string,mixed> $dto     Product-safe browser session DTO.
+		 * @param array<string,mixed> $session Source browser session contract.
+		 */
+		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_session_product_dto', $dto, $session ) : $dto;
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	public static function browser_session_product_dto( array $session ): array {
+		return self::product_browser_session_dto( $session );
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	public static function safe_browser_session_dto( array $session ): array {
+		return self::product_browser_session_dto( $session );
+	}
+
+	/** @param array<string,mixed> $profile Runtime profile input. @return array<string,mixed> */
+	public static function runtime_profile( array $profile ): array {
+		$dependencies_input = is_array( $profile['dependencies'] ?? null ) ? $profile['dependencies'] : array();
+		$profile           = array_merge( $dependencies_input, $profile );
+
+		$dependencies = static function ( mixed $items, string $kind ): array {
+			if ( ! is_array( $items ) ) {
+				return array();
+			}
+
+			$normalized = array();
+			foreach ( $items as $item ) {
+				if ( is_string( $item ) ) {
+					$item = array( 'slug' => $item );
+				}
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$slug = trim( (string) ( $item['slug'] ?? $item['name'] ?? '' ) );
+				if ( '' === $slug ) {
+					continue;
+				}
+				$item['kind'] = trim( (string) ( $item['kind'] ?? $kind ) );
+				$item['slug'] = $slug;
+				$normalized[] = array_filter( $item, static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value );
+			}
+
+			return $normalized;
+		};
+
+		$runtime_profile = array_filter(
+			array(
+				'schema'       => 'wp-codebox/runtime-profile/v1',
+				'id'           => trim( (string) ( $profile['id'] ?? '' ) ),
+				'component_contracts' => self::object_list( $profile['component_contracts'] ?? array() ),
+				'extra_plugins'       => self::object_list( $profile['extra_plugins'] ?? array() ),
+				'provider_plugins'    => self::object_list( $profile['provider_plugins'] ?? array() ),
+				'components'   => $dependencies( $profile['components'] ?? array(), 'component' ),
+				'plugins'      => $dependencies( $profile['plugins'] ?? array(), 'plugin' ),
+				'mu_plugins'   => $dependencies( $profile['mu_plugins'] ?? array(), 'mu_plugin' ),
+				'themes'       => $dependencies( $profile['themes'] ?? array(), 'theme' ),
+				'overlays'     => $dependencies( $profile['overlays'] ?? $profile['runtime_overlays'] ?? array(), 'overlay' ),
+				'runtime_overlays'     => self::object_list( $profile['runtime_overlays'] ?? array() ),
+				'runtime_state_mounts' => self::object_list( $profile['runtime_state_mounts'] ?? array() ),
+				'runtime_config_mounts' => self::object_list( $profile['runtime_config_mounts'] ?? array() ),
+				'bootstrap'    => is_array( $profile['bootstrap'] ?? null ) ? $profile['bootstrap'] : array(),
+				'env'          => is_array( $profile['env'] ?? null ) ? self::string_map( $profile['env'] ) : array(),
+				'readiness'    => is_array( $profile['readiness'] ?? null ) ? self::compact_public_value( $profile['readiness'] ) : array(),
+				'provenance'   => is_array( $profile['provenance'] ?? null ) ? self::compact_public_value( $profile['provenance'] ) : array(),
+				'metadata'     => is_array( $profile['metadata'] ?? null ) ? self::compact_public_value( $profile['metadata'] ) : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+
+		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runtime_profile', $runtime_profile, $profile ) : $runtime_profile;
+	}
+
+	/** @param array<string,mixed> $input Browser session or preview input. @return array<string,mixed> */
+	public static function preview_boot_config( array $input ): array {
+		return self::browser_preview_boot_config( $input );
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	public static function browser_preview_boot_config( array $session ): array {
+		$playground             = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+		$prepared_runtime       = is_array( $playground['prepared_runtime'] ?? null ) ? $playground['prepared_runtime'] : array();
+		$site_blueprint_artifact = is_array( $session['site_blueprint_artifact'] ?? null ) ? $session['site_blueprint_artifact'] : array();
+		$session_envelope       = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+		$blueprint_ref          = (string) ( $prepared_runtime['cache_key'] ?? $prepared_runtime['input_hash'] ?? $site_blueprint_artifact['ref'] ?? $site_blueprint_artifact['id'] ?? '' );
+
+		$config = array_filter(
+			array(
+				'schema'            => 'wp-codebox/browser-preview-boot-config/v1',
+				'session_id'        => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'scope'             => (string) ( $playground['scope'] ?? '' ),
+				'client_module_url' => (string) ( $playground['client_module_url'] ?? '' ),
+				'remote_url'        => (string) ( $playground['remote_url'] ?? '' ),
+				'cors_proxy_url'    => (string) ( $playground['cors_proxy_url'] ?? '' ),
+				'blueprint_ref'     => '' !== $blueprint_ref ? $blueprint_ref : 'inline-session-blueprint',
+				'preview'           => self::preview_lease_from_session( $session ),
+				'artifacts'         => array_filter(
+					array(
+						'base_path'   => (string) ( $playground['artifact_base_path'] ?? '' ),
+						'base_url'    => (string) ( $playground['artifact_base_url'] ?? '' ),
+						'preview_url' => (string) ( $playground['preview_url'] ?? '' ),
+					),
+					static fn( string $value ): bool => '' !== $value
+				),
+				'provenance'        => is_array( $playground['provenance'] ?? null ) ? self::compact_public_value( $playground['provenance'] ) : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+
+		/**
+		 * Filters the product-safe browser preview boot config.
+		 *
+		 * @param array<string,mixed> $config  Browser preview boot config.
+		 * @param array<string,mixed> $session Source browser session contract.
+		 */
+		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_preview_boot_config', $config, $session ) : $config;
+	}
+
+	/** @param array<string,mixed> $session Browser session or preview input. @return array<string,mixed> */
+	public static function preview_lease( array $session ): array {
+		return self::preview_lease_from_session( $session );
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	private static function preview_lease_from_session( array $session ): array {
+		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+		$lease      = is_array( $playground['lease'] ?? null ) ? $playground['lease'] : ( is_array( $session['preview_lease'] ?? null ) ? $session['preview_lease'] : array() );
+		$alignment  = is_array( $playground['alignment'] ?? null ) ? $playground['alignment'] : array( 'status' => 'unknown' );
+
+		return array_filter(
+			array(
+				'schema'             => 'wp-codebox/preview-lease/v1',
+				'preview_public_url' => (string) ( $playground['preview_public_url'] ?? $session['preview_public_url'] ?? '' ),
+				'site_url'           => (string) ( $playground['site_url'] ?? $playground['remote_url'] ?? '' ),
+				'local_url'          => (string) ( $playground['local_url'] ?? $playground['preview_url'] ?? '' ),
+				'lease'              => self::compact_public_value( $lease ),
+				'alignment'          => self::compact_public_value( $alignment ),
+				'provenance'         => is_array( $playground['provenance'] ?? null ) ? self::compact_public_value( $playground['provenance'] ) : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+	}
+
+	private static function compact_public_value( mixed $value, string $key = '' ): mixed {
+		if ( in_array( $key, array( 'task_payload', 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'blueprint', 'fallback_blueprint', 'runtime', 'plugins' ), true ) ) {
+			return null;
+		}
+		if ( class_exists( 'WP_Codebox_Redaction_Policy' ) && WP_Codebox_Redaction_Policy::key_should_redact( 'public_session_dto', $key ) ) {
+			return '[redacted]';
+		}
+		if ( ! is_array( $value ) ) {
+			return $value;
+		}
+
+		$compact = array();
+		foreach ( $value as $child_key => $child_value ) {
+			$child_compact = self::compact_public_value( $child_value, is_string( $child_key ) ? $child_key : '' );
+			if ( null !== $child_compact && array() !== $child_compact && '' !== $child_compact ) {
+				$compact[ $child_key ] = $child_compact;
+			}
+		}
+
+		return $compact;
+	}
+
+	/** @param array<mixed> $value Values to normalize. @return array<string,string> */
+	private static function string_map( array $value ): array {
+		$map = array();
+		foreach ( $value as $key => $entry ) {
+			$key = trim( (string) $key );
+			if ( '' !== $key && is_scalar( $entry ) ) {
+				$map[ $key ] = (string) $entry;
+			}
+		}
+
+		return $map;
+	}
+
+	/** @param mixed $value Values to normalize. @return array<int,array<string,mixed>> */
+	private static function object_list( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$list = array();
+		foreach ( $value as $entry ) {
+			if ( is_array( $entry ) ) {
+				$list[] = $entry;
+			}
+		}
+
+		return $list;
+	}
+
 	/** @param array<string,mixed> $input Ability or caller input. */
 	private static function agent_slug( array $input ): string {
 		$agent = trim( (string) ( $input['agent'] ?? '' ) );
@@ -436,5 +665,33 @@ final class WP_Codebox_Browser_Task_Builder {
 		}
 
 		return $items;
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_browser_session_product_dto' ) ) {
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	function wp_codebox_browser_session_product_dto( array $session ): array {
+		return WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_browser_preview_boot_config' ) ) {
+	/** @param array<string,mixed> $input Browser session or preview input. @return array<string,mixed> */
+	function wp_codebox_browser_preview_boot_config( array $input ): array {
+		return WP_Codebox_Browser_Task_Builder::preview_boot_config( $input );
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_browser_preview_lease_dto' ) ) {
+	/** @param array<string,mixed> $input Browser session or preview input. @return array<string,mixed> */
+	function wp_codebox_browser_preview_lease_dto( array $input ): array {
+		return WP_Codebox_Browser_Task_Builder::preview_lease( $input );
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_runtime_profile' ) ) {
+	/** @param array<string,mixed> $profile Runtime profile input. @return array<string,mixed> */
+	function wp_codebox_runtime_profile( array $profile ): array {
+		return WP_Codebox_Browser_Task_Builder::runtime_profile( $profile );
 	}
 }

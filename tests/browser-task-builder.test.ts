@@ -133,7 +133,32 @@ $fanout_request = WP_Codebox_Browser_Task_Builder::fanout_request( array(
 	'orchestrator' => array( 'id' => 'demo-orchestrator' ),
 ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request ), JSON_UNESCAPED_SLASHES );
+$product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( array(
+	'success' => true,
+	'schema' => 'wp-codebox/browser-playground-session/v1',
+	'execution' => 'browser-playground',
+	'execution_scope' => 'disposable-playground',
+	'permission_model' => 'runtime-principal',
+	'session' => array( 'id' => 'session-123' ),
+	'task' => 'Build product-safe output.',
+	'task_input' => array( 'goal' => 'Build product-safe output.', 'target' => array( 'kind' => 'site', 'ref' => 'demo' ) ),
+	'task_payload' => array( 'secret' => 'must-not-leak' ),
+	'agent' => 'custom-agent',
+	'provider' => 'test-provider',
+	'model' => 'test-model',
+	'playground' => array(
+		'client_module_url' => 'https://example.test/client.js',
+		'remote_url' => 'https://playground.wordpress.net/remote.html',
+		'scope' => 'session-123',
+		'preview_public_url' => 'https://preview.example.test',
+		'site_url' => 'https://site.example.test',
+		'preview_url' => '/?preview=1',
+		'prepared_runtime' => array( 'cache_key' => 'runtime-cache-key', 'blueprint' => array( 'must' => 'not leak' ) ),
+	),
+	'artifacts' => array( 'preview_url' => '/?preview=1' ),
+) );
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -184,5 +209,14 @@ assert.equal(result.fanout_request.schema, "wp-codebox/agent-fanout-request/v1")
 assert.equal(result.fanout_request.concurrency, 2)
 assert.equal(result.fanout_request.workers[0].schema, "wp-codebox/agent-fanout-worker/v1")
 assert.equal(result.fanout_request.workers[0].id, "planner-worker")
+assert.equal(result.product_session.schema, "wp-codebox/browser-session-product-dto/v1")
+assert.equal(result.product_session.session_id, "session-123")
+assert.equal(result.product_session.preview_boot.schema, "wp-codebox/browser-preview-boot-config/v1")
+assert.equal(result.product_session.preview_boot.blueprint_ref, "runtime-cache-key")
+assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
+assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
+assert.equal(result.product_session.preview_boot.preview.local_url, "/?preview=1")
+assert.equal(JSON.stringify(result.product_session).includes("must-not-leak"), false)
+assert.equal(JSON.stringify(result.product_session).includes('"blueprint":'), false)
 
 console.log("browser task builder ok")
