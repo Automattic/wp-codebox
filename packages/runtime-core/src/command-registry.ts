@@ -603,7 +603,7 @@ export const commandRegistry = [
       workers: { type: "array" },
       aggregate: { type: "object" },
     }),
-    policyRequirement: "Host-side recipe helper; it writes generic Codebox artifact envelopes and does not expose product or Data Machine internals.",
+    policyRequirement: "Host-side recipe helper; it writes generic Codebox artifact envelopes and does not expose caller-specific internals.",
     recipe: true,
     handler: { kind: "recipe-alias", command: "wp-codebox.agent-fanout" },
   },
