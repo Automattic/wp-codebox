@@ -5,6 +5,7 @@ import { join } from "node:path"
 
 const dir = mkdtempSync(join(tmpdir(), "wp-codebox-executable-browser-dto-"))
 const smokePhp = join(dir, "smoke.php")
+const browserTaskBuilderPath = new URL("../packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php", import.meta.url).pathname
 const traitPath = new URL("../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php", import.meta.url).pathname
 
 writeFileSync(smokePhp, `<?php
@@ -22,6 +23,7 @@ function smoke_assert(bool $condition, string $message): void {
 	}
 }
 
+require ${JSON.stringify(browserTaskBuilderPath)};
 require ${JSON.stringify(traitPath)};
 
 class Smoke_Browser_DTO {
