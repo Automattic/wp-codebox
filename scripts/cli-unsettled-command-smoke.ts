@@ -30,4 +30,37 @@ try {
   process.exitCode = originalExitCode
 }
 
+const exits: number[] = []
+process.exitCode = undefined
+runCliEntrypoint(["doctor"], async () => 7, (code) => {
+  exits.push(code)
+  return undefined as never
+})
+await new Promise((resolve) => setImmediate(resolve))
+assert.deepEqual(exits, [7])
+assert.equal(process.exitCode, 7)
+
+const rejectedExits: number[] = []
+stderr = ""
+process.exitCode = undefined
+;(process.stderr.write as typeof process.stderr.write) = ((chunk: unknown, ..._args: unknown[]) => {
+  stderr += String(chunk)
+  return true
+}) as typeof process.stderr.write
+try {
+  runCliEntrypoint(["doctor"], async () => {
+    throw new Error("boom")
+  }, (code) => {
+    rejectedExits.push(code)
+    return undefined as never
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(rejectedExits, [1])
+  assert.equal(process.exitCode, 1)
+  assert.match(stderr, /boom/)
+} finally {
+  process.stderr.write = originalStderrWrite
+  process.exitCode = originalExitCode
+}
+
 console.log("cli-unsettled-command-smoke: ok")

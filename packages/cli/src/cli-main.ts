@@ -2,10 +2,11 @@ import { runCli } from "./cli-entry.js"
 import { serializeError, wantsJsonOutput, writeJsonFailure } from "./output.js"
 
 export type CliRunner = (args: string[]) => Promise<number>
+export type CliExit = (code: number) => never
 
 const UNSETTLED_COMMAND_MESSAGE = "WP Codebox CLI command did not settle before the Node.js event loop drained."
 
-export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): void {
+export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exit: CliExit = process.exit): void {
   let settled = false
   const writeStderr = process.stderr.write.bind(process.stderr)
   const handleBeforeExit = () => {
@@ -27,6 +28,7 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): vo
       settled = true
       process.off("beforeExit", handleBeforeExit)
       process.exitCode = code
+      exit(code)
     },
     (error) => {
       settled = true
@@ -38,6 +40,7 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): vo
         writeStderr(`${serialized.message}\n`)
       }
       process.exitCode = 1
+      exit(1)
     },
   )
 }
