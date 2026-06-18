@@ -32,7 +32,6 @@ final class WP_Codebox_Abilities {
 	private const BROWSER_ARTIFACT_WRITE_SCOPE = 'artifact:write';
 
 	private static bool $registered = false;
-	private static bool $rest_registered = false;
 
 	use WP_Codebox_Abilities_Schemas;
 	use WP_Codebox_Abilities_Execution;
@@ -50,8 +49,6 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Utils;
 
 	public function __construct() {
-		self::register_rest_hooks();
-
 		if ( ! class_exists( 'WP_Ability' ) ) {
 			return;
 		}
@@ -63,18 +60,10 @@ final class WP_Codebox_Abilities {
 		$this->register_category();
 		$this->register_agents_api_executor_adapters();
 		$this->register();
-		self::$registered = true;
-	}
-
-	private static function register_rest_hooks(): void {
-		if ( self::$rest_registered ) {
-			return;
-		}
-
 		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
 		add_filter( 'rest_pre_dispatch', array( self::class, 'rest_handle_browser_callback_cors_preflight' ), 10, 3 );
 		add_filter( 'rest_pre_serve_request', array( self::class, 'rest_send_browser_callback_cors_headers' ), 10, 4 );
-		self::$rest_registered = true;
+		self::$registered = true;
 	}
 
 	public static function register_rest_routes(): void {
