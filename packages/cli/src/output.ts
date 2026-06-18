@@ -311,6 +311,7 @@ export function printHelp(): void {
   wp-codebox artifacts bench-compare --baseline-bundle <dir> --candidate-bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
+  wp-codebox runs cancel --registry <dir> --run-id <id> [--reason <text>] [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]

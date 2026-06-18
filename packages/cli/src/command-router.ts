@@ -37,6 +37,7 @@ const cliCommandRoutes = {
   runs: {
     status: "runsStatus",
     artifacts: "runsArtifacts",
+    cancel: "runsCancel",
   },
   target: {
     provision: "targetProvision",

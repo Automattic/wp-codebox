@@ -262,7 +262,7 @@ export interface RecipeRunDeclaredArtifact {
 }
 
 export type RecipeInterruptionSignal = "SIGINT" | "SIGTERM" | "SIGHUP"
-export type RecipeInterruptionReason = "signal" | "parent-disconnect" | "stdio-closed"
+export type RecipeInterruptionReason = "signal" | "parent-disconnect" | "stdio-closed" | "run-cancellation-request"
 
 export interface RecipeInterruptionMetadata {
   signal: RecipeInterruptionSignal
@@ -276,6 +276,7 @@ export interface RecipeInterruptionController {
   install(): void
   dispose(): void
   interruptible<T>(promise: Promise<T>): Promise<T>
+  requestCancellation(): void
   throwIfInterrupted(): void
   propagateIfInterrupted(): void
   clear(): void
