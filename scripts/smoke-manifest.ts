@@ -134,6 +134,7 @@ export const smokeGroups = {
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
+      phpSmoke("php-agents-api-execution-targets-smoke"),
       phpSmoke("php-run-plan-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
       tsxSmoke("codex-agent-recipe-smoke"),
