@@ -46,7 +46,7 @@ export async function runCleanupCommand(args: string[]): Promise<number> {
 
 function parseDoctorOptions(args: string[], cleanup: boolean): DoctorOptions {
   let json = false
-  let staleAfterSeconds = Number.parseInt(process.env.WP_CODEBOX_STALE_AFTER_SECONDS ?? process.env.HOMEBOY_WP_CODEBOX_STALE_AFTER_SECONDS ?? "3600", 10)
+  let staleAfterSeconds = Number.parseInt(process.env.WP_CODEBOX_STALE_AFTER_SECONDS ?? "3600", 10)
   const archiveRoots = archiveRootsFromEnv()
 
   for (let index = 0; index < args.length; index++) {
@@ -227,7 +227,7 @@ function printDoctorOutput(output: DoctorOutput, json: boolean): void {
 }
 
 function archiveRootsFromEnv(): string[] {
-  return (process.env.WP_CODEBOX_ARCHIVE_ROOTS ?? process.env.HOMEBOY_WP_CODEBOX_ARCHIVE_ROOTS ?? "").split(":").map((root) => root.trim()).filter(Boolean)
+  return (process.env.WP_CODEBOX_ARCHIVE_ROOTS ?? "").split(":").map((root) => root.trim()).filter(Boolean)
 }
 
 function defaultArchiveRoots(): string[] {

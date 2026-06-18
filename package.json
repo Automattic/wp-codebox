@@ -108,7 +108,8 @@
     "test:recipe-source-packages": "tsx tests/recipe-source-packages.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
-    "check": "npm run smoke -- --group=check"
+    "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
+    "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },
   "workspaces": [
     "packages/*"

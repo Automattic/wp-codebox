@@ -33,8 +33,8 @@ ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
 ${recipeActivePluginBootstrapPhp(spec)}
-${wpCliBridge ? `putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
-putenv(${JSON.stringify(`HOMEBOY_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
+${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
+putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${phpBody(code)}`
 }
