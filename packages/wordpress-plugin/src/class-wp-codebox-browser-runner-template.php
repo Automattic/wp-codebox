@@ -990,6 +990,40 @@ return array(
 );
 }
 
+function wp_codebox_browser_runtime_resolve_ability_tools( array $payload, array $resolution ): array {
+$tools = is_array( $resolution[\'tools\'] ?? null ) ? $resolution[\'tools\'] : array();
+if ( function_exists( \'apply_filters\' ) ) {
+	$filtered = apply_filters( \'wp_codebox_browser_runtime_ability_tools\', $tools, $payload, $resolution );
+	if ( is_array( $filtered ) ) {
+		$tools = $filtered;
+	}
+}
+
+return $tools;
+}
+
+function wp_codebox_browser_runtime_ability_tools_for_mode( array $ability_tools, $mode ): array {
+$mode = is_array( $mode ) ? array_values( array_map( \'strval\', $mode ) ) : array( (string) $mode );
+$filtered = array();
+foreach ( $ability_tools as $name => $tool ) {
+	if ( ! is_array( $tool ) ) {
+		continue;
+	}
+	$modes = is_array( $tool[\'modes\'] ?? null ) ? array_values( array_map( \'strval\', $tool[\'modes\'] ) ) : array();
+	if ( empty( $modes ) || array_intersect( $mode, $modes ) ) {
+		$filtered[ (string) $name ] = $tool;
+	}
+}
+
+return $filtered;
+}
+
+function wp_codebox_browser_runtime_merge_ability_tools( array $tools, $mode ): array {
+global $wp_codebox_browser_runtime_ability_tools;
+$ability_tools = is_array( $wp_codebox_browser_runtime_ability_tools ?? null ) ? $wp_codebox_browser_runtime_ability_tools : array();
+return array_merge( $tools, wp_codebox_browser_runtime_ability_tools_for_mode( $ability_tools, $mode ) );
+}
+
 function wp_codebox_browser_runtime_ability_tool_diagnostics( array $ability_tools ): array {
 $registered = array();
 $missing = array();
@@ -1056,6 +1090,11 @@ $tool_def = is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] 
 return $handler->handle_tool_call( $parameters, $tool_def );
 }
 
+add_filter( \'agents_api_resolved_tools\', function ( array $tools, $mode, array $context ) {
+	unset( $context );
+	return wp_codebox_browser_runtime_merge_ability_tools( $tools, $mode );
+}, 20, 3 );
+
 add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode, array $args ) {
 	global $wp_codebox_browser_artifact_environment;
 	$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
@@ -1078,7 +1117,7 @@ add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode,
 		\'access_level\' => \'public\',
 		\'modes\'        => is_array( $mode ) ? $mode : array( (string) $mode ),
 	);
-	return $tools;
+	return wp_codebox_browser_runtime_merge_ability_tools( $tools, $mode );
 }, 20, 3 );
 ';
 	}

@@ -254,10 +254,7 @@ if ( is_array( $raw_payload ) ) {
 $wp_codebox_browser_artifact_environment = wp_codebox_browser_artifact_environment( $payload );
 $provider_proxy_diagnostics = wp_codebox_browser_install_provider_proxy( $payload );
 $ability_tool_resolution = wp_codebox_browser_runtime_ability_tool_declarations( $payload );
-$wp_codebox_browser_runtime_ability_tools = is_array( $ability_tool_resolution[\'tools\'] ?? null ) ? $ability_tool_resolution[\'tools\'] : array();
-add_filter( \'datamachine_ability_tools\', function ( array $tools ) use ( &$wp_codebox_browser_runtime_ability_tools ): array {
-	return array_merge( $tools, $wp_codebox_browser_runtime_ability_tools );
-}, 20, 1 );
+$wp_codebox_browser_runtime_ability_tools = wp_codebox_browser_runtime_resolve_ability_tools( $payload, $ability_tool_resolution );
 $ability_tool_diagnostics = wp_codebox_browser_runtime_ability_tool_diagnostics( $wp_codebox_browser_runtime_ability_tools );
 
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );

@@ -9,8 +9,10 @@ const source = [
 
 const requiredSnippets = [
   "function wp_codebox_browser_runtime_ability_tool_declarations",
+  "function wp_codebox_browser_runtime_resolve_ability_tools",
+  "add_filter( \\'agents_api_resolved_tools\\'",
+  "apply_filters( \\'wp_codebox_browser_runtime_ability_tools\\'",
   "$task_input[\\'ability_tools\\']",
-  "add_filter( \\'datamachine_ability_tools\\'",
   "array_merge( $sandbox_tool_ids, $ability_tool_ids )",
   "'ability_tools' => \\$ability_tool_diagnostics",
   "'allowed_tool_ids' => \\$allowed_tool_ids",
@@ -20,6 +22,10 @@ for (const snippet of requiredSnippets) {
   if (!source.includes(snippet)) {
     throw new Error(`Missing ability_tools runtime bridge snippet: ${snippet}`)
   }
+}
+
+if (source.includes("datamachine_ability_tools")) {
+  throw new Error("Browser runner must not hard-code Data Machine runtime tool hooks")
 }
 
 const preludeStart = source.indexOf("function wp_codebox_browser_runtime_ability_tool_declarations")
