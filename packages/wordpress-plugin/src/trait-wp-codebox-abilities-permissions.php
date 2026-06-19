@@ -122,8 +122,8 @@ private static function trusted_orchestrator_authorization( array $input, string
 	 * Filters trusted browser-session callers.
 	 *
 	 * Return either a map of caller ids to scopes, or a list of grant arrays:
-	 * [ 'studio-web' => [ 'browser-session:create' ] ]
-	 * [ [ 'caller' => 'studio-web', 'scopes' => [ 'browser-session:create' ] ] ]
+	 * [ 'browser-client' => [ 'browser-session:create' ] ]
+	 * [ [ 'caller' => 'browser-client', 'scopes' => [ 'browser-session:create' ] ] ]
 	 *
 	 * @param array<int|string,mixed> $trusted_callers Trusted caller grants.
 	 * @param array<string,mixed>     $authorization   Explicit caller authorization payload.

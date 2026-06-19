@@ -184,6 +184,7 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 	$session_id     = (string) ( $session['session']['id'] ?? '' );
 	$preview_id     = (string) ( $contained_site['preview_id'] ?? $input['preview_id'] ?? '' );
 	$scope          = (string) ( $preview_boot['scope'] ?? $contained_site['preview']['scope'] ?? '' );
+	$resolution     = is_array( $status['resolution'] ?? null ) ? $status['resolution'] : array();
 
 	$opened_site = array_filter(
 		array_merge(
@@ -194,6 +195,7 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 				'preview_id'       => $preview_id,
 				'session_id'       => $session_id,
 				'status'           => (string) ( $status['status'] ?? 'miss' ),
+				'resolution'       => $resolution,
 				'persistence'      => 'browser-contained',
 				'source_digest'    => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
 				'prepared_runtime' => is_array( $status['prepared_runtime'] ?? null ) ? $status['prepared_runtime'] : array(),
@@ -213,6 +215,7 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 			'schema'        => 'wp-codebox/browser-contained-site-open/v1',
 			'site_id'       => $site_id,
 			'status'        => (string) ( $status['status'] ?? 'miss' ),
+			'resolution'    => $resolution,
 			'contained_site' => $opened_site,
 			'source_digest' => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
 			'prepared_runtime' => is_array( $status['prepared_runtime'] ?? null ) ? $status['prepared_runtime'] : array(),
@@ -982,6 +985,7 @@ private static function blocked_browser_playground_session( string $session_id, 
 private static function browser_contained_site_envelope( array $input, string $session_id, array $playground, array $runtime, array $prepared_runtime, string $status ): array {
 	$source_digest = self::browser_contained_site_source_digest( $input, $playground, $runtime, $prepared_runtime );
 	$caller_id     = self::browser_contained_site_caller_id( $input );
+	$artifact_meta = self::browser_contained_site_artifact_meta( $input );
 	$cache_key     = self::safe_key( (string) ( $prepared_runtime['cache_key'] ?? '' ) );
 	if ( '' === $cache_key ) {
 		$cache_key = 'site-' . substr( hash( 'sha256', $caller_id . ':' . $source_digest ), 0, 16 );
@@ -998,6 +1002,8 @@ private static function browser_contained_site_envelope( array $input, string $s
 			'caller_id'     => $caller_id,
 			'status'        => $status,
 			'persistence'   => 'browser-contained',
+			'artifact_seed' => (string) ( $artifact_meta['seed'] ?? '' ),
+			'artifact_revision' => (string) ( $artifact_meta['revision'] ?? '' ),
 			'recovery'      => array(
 				'ability' => 'wp-codebox/get-browser-contained-site-status',
 				'input'   => array(
@@ -1032,10 +1038,24 @@ private static function browser_contained_site_envelope( array $input, string $s
 	);
 }
 
+/** @return array{seed?:string,revision?:string} */
+private static function browser_contained_site_artifact_meta( array $input ): array {
+	$artifact = is_array( $input['site_blueprint_artifact'] ?? null ) ? $input['site_blueprint_artifact'] : array();
+
+	return array_filter(
+		array(
+			'seed'     => (string) ( $input['artifact_seed'] ?? $artifact['seed'] ?? $artifact['id'] ?? $artifact['ref'] ?? '' ),
+			'revision' => (string) ( $input['artifact_revision'] ?? $input['revision'] ?? $artifact['revision'] ?? $artifact['version'] ?? '' ),
+		),
+		static fn( string $value ): bool => '' !== $value
+	);
+}
+
 /** @return array<string,mixed> */
 private static function browser_contained_site_status_envelope( string $cache_key, string $input_hash, array $lookup ): array {
 	$artifact = is_array( $lookup['artifact'] ?? null ) ? $lookup['artifact'] : array();
-	$status   = 'hit' === (string) ( $lookup['status'] ?? '' ) ? 'recoverable' : (string) ( $lookup['status'] ?? 'miss' );
+	$status   = self::browser_contained_site_status_from_lookup( $lookup );
+	$resolution = self::browser_contained_site_resolution( $status, $lookup );
 
 	return array_filter(
 		array(
@@ -1043,6 +1063,7 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 			'schema'        => 'wp-codebox/browser-contained-site-status/v1',
 			'site_id'       => $cache_key,
 			'status'        => $status,
+			'resolution'    => $resolution,
 			'source_digest' => array(
 				'algorithm' => 'sha256',
 				'value'     => $input_hash,
@@ -1052,6 +1073,7 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 					'cache_key'  => $cache_key,
 					'input_hash' => $input_hash,
 					'status'     => (string) ( $lookup['status'] ?? '' ),
+					'reason'     => (string) ( $resolution['reason'] ?? '' ),
 					'created_at' => (string) ( $artifact['created_at'] ?? '' ),
 				),
 				static fn( string $value ): bool => '' !== $value
@@ -1059,6 +1081,48 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 			'blueprint_ref' => 'recoverable' === $status ? WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'recoverable' ) ) : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return string */
+private static function browser_contained_site_status_from_lookup( array $lookup ): string {
+	$lookup_status = (string) ( $lookup['status'] ?? 'miss' );
+	if ( 'hit' === $lookup_status ) {
+		return 'recoverable';
+	}
+
+	if ( ! empty( $lookup['invalidation'] ) ) {
+		return 'incompatible';
+	}
+
+	return '' !== $lookup_status ? $lookup_status : 'miss';
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_resolution( string $status, array $lookup ): array {
+	$invalidation = is_array( $lookup['invalidation'] ?? null ) ? $lookup['invalidation'] : array();
+	$reason       = (string) ( $invalidation['reason'] ?? '' );
+	if ( '' === $reason ) {
+		$reason = match ( $status ) {
+			'recoverable'   => 'prepared-runtime-cache-hit',
+			'incompatible'  => 'prepared-runtime-incompatible',
+			'disabled'      => 'prepared-runtime-cache-disabled',
+			default         => 'prepared-runtime-not-found-or-expired',
+		};
+	}
+
+	return array_filter(
+		array(
+			'schema'       => 'wp-codebox/browser-contained-site-resolution/v1',
+			'outcome'      => $status,
+			'reason'       => $reason,
+			'reused'       => 'recoverable' === $status,
+			'created'      => false,
+			'expired'      => 'miss' === $status ? null : false,
+			'miss'         => 'miss' === $status,
+			'incompatible' => 'incompatible' === $status,
+		),
+		static fn( mixed $value ): bool => null !== $value && array() !== $value && '' !== $value
 	);
 }
 
@@ -1124,8 +1188,12 @@ private static function browser_contained_site_public_input( array $contained_si
 			'persistence'      => true,
 			'recovery'         => true,
 			'source_digest'    => true,
+			'artifact_seed'    => true,
+			'artifact_revision' => true,
 			'preview'          => true,
 			'prepared_runtime' => true,
+			'resolution'       => true,
+			'blueprint_ref'    => true,
 		)
 	);
 }

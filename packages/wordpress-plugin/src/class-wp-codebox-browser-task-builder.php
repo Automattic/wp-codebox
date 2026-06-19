@@ -437,7 +437,7 @@ final class WP_Codebox_Browser_Task_Builder {
 		);
 	}
 
-	/** @param array<string,mixed> $input Prepared runtime, full session, or Studio executable ref request. @return array<string,mixed> */
+	/** @param array<string,mixed> $input Prepared runtime, full session, or executable ref request. @return array<string,mixed> */
 	public static function executable_blueprint_ref( array $input ): array {
 		$session = is_array( $input['session'] ?? null ) ? $input['session'] : $input;
 		$primary = is_array( $session['primary'] ?? null ) ? $session['primary'] : $session;
