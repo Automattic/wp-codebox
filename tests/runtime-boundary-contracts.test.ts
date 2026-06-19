@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { BROWSER_CONTAINED_SITE_STATUS_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteStatus, previewLease, previewLeaseStatus, runtimeProfile } from "../packages/runtime-core/src/index.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, previewLease, previewLeaseStatus, runtimeProfile } from "../packages/runtime-core/src/index.js"
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
@@ -38,14 +38,39 @@ const containedSiteStatus = browserContainedSiteStatus({
   schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
   success: true,
   site_id: "site-1",
-  status: "recoverable",
+  status: "recoverable_prepared_runtime",
   source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+  resolution: { prepared_runtime_recoverable: true, live: false, current: false, materialized: false },
 })
 assert.equal(containedSiteStatus.schema, "wp-codebox/browser-contained-site-status/v1")
 assert.equal(containedSiteStatus.success, true)
+assert.equal(containedSiteStatus.status, "recoverable_prepared_runtime")
+assert.equal(containedSiteStatus.resolution?.live, false)
+
+const containedSiteOpen = browserContainedSiteOpenEnvelope({
+  schema: BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+  success: true,
+  site_id: "site-1",
+  status: "recoverable_prepared_runtime",
+  resolution: { prepared_runtime_recoverable: true, live: false, current: false, materialized: false },
+  contained_site: {
+    schema: "wp-codebox/browser-contained-site/v1",
+    site_id: "site-1",
+    status: "recoverable_prepared_runtime",
+    source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+  },
+  preview_session: {
+    schema: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
+    success: true,
+    status: "recoverable_prepared_runtime",
+    session_id: "session-1",
+  },
+})
+assert.equal(containedSiteOpen.schema, "wp-codebox/browser-contained-site-open/v1")
+assert.equal(containedSiteOpen.preview_session?.status, "recoverable_prepared_runtime")
 
 assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [{ kind: "component" }] }), /slug/)
 assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /preview_public_url/)
-assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable", source_digest: { value: "bad" } }), /source_digest/)
+assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable_prepared_runtime", source_digest: { value: "bad" } }), /source_digest/)
 
 console.log("runtime boundary contracts ok")

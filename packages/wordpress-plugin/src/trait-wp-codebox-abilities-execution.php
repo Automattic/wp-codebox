@@ -208,6 +208,8 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
+	$session['contained_site'] = $opened_site;
+	$preview_session          = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
 
 	return array_filter(
 		array(
@@ -222,6 +224,7 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 			'blueprint_ref' => $blueprint_ref,
 			'preview_boot'  => $preview_boot,
 			'preview_lease' => $preview_lease,
+			'preview_session' => $preview_session,
 			'session'       => self::browser_contained_site_session_identity( $session_id, $preview_id, $scope ),
 			'recovery'      => self::browser_contained_site_open_recovery( $site_id, (string) ( $status['source_digest']['value'] ?? '' ) ),
 		),
@@ -1059,7 +1062,7 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 
 	return array_filter(
 		array(
-			'success'       => 'recoverable' === $status,
+			'success'       => 'recoverable_prepared_runtime' === $status,
 			'schema'        => 'wp-codebox/browser-contained-site-status/v1',
 			'site_id'       => $cache_key,
 			'status'        => $status,
@@ -1078,7 +1081,7 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 				),
 				static fn( string $value ): bool => '' !== $value
 			),
-			'blueprint_ref' => 'recoverable' === $status ? WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'recoverable' ) ) : array(),
+			'blueprint_ref' => 'recoverable_prepared_runtime' === $status ? WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'recoverable_prepared_runtime' ) ) : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
@@ -1088,7 +1091,7 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 private static function browser_contained_site_status_from_lookup( array $lookup ): string {
 	$lookup_status = (string) ( $lookup['status'] ?? 'miss' );
 	if ( 'hit' === $lookup_status ) {
-		return 'recoverable';
+		return 'recoverable_prepared_runtime';
 	}
 
 	if ( ! empty( $lookup['invalidation'] ) ) {
@@ -1104,7 +1107,7 @@ private static function browser_contained_site_resolution( string $status, array
 	$reason       = (string) ( $invalidation['reason'] ?? '' );
 	if ( '' === $reason ) {
 		$reason = match ( $status ) {
-			'recoverable'   => 'prepared-runtime-cache-hit',
+			'recoverable_prepared_runtime' => 'prepared-runtime-cache-hit',
 			'incompatible'  => 'prepared-runtime-incompatible',
 			'disabled'      => 'prepared-runtime-cache-disabled',
 			default         => 'prepared-runtime-not-found-or-expired',
@@ -1116,7 +1119,12 @@ private static function browser_contained_site_resolution( string $status, array
 			'schema'       => 'wp-codebox/browser-contained-site-resolution/v1',
 			'outcome'      => $status,
 			'reason'       => $reason,
-			'reused'       => 'recoverable' === $status,
+			'recoverable'  => 'recoverable_prepared_runtime' === $status,
+			'prepared_runtime_recoverable' => 'recoverable_prepared_runtime' === $status,
+			'live'         => in_array( $status, array( 'current', 'live' ), true ),
+			'current'      => 'current' === $status,
+			'materialized' => in_array( $status, array( 'current', 'live', 'materialized' ), true ),
+			'reused'       => false,
 			'created'      => false,
 			'expired'      => 'miss' === $status ? null : false,
 			'miss'         => 'miss' === $status,
@@ -1167,6 +1175,9 @@ private static function browser_contained_site_open_session( array $input, array
 	return array(
 		'success'        => true === ( $status['success'] ?? false ),
 		'schema'         => 'wp-codebox/browser-contained-site-open-session/v1',
+		'status'         => (string) ( $status['status'] ?? '' ),
+		'execution'      => 'browser-contained-site-open',
+		'execution_scope' => 'browser-contained-site',
 		'session'        => array_filter( array( 'id' => $session_id ), static fn( string $value ): bool => '' !== $value ),
 		'session_id'     => $session_id,
 		'playground'     => $playground,
