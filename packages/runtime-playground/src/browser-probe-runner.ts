@@ -11,7 +11,7 @@ import { BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT,
 import { argValue, commaListArg, durationArg, strictBooleanArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
+import { browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, createBrowserProbeProgressTracker, fileSha256, installWordPressAdminAuthCookies, now, sha256, withBrowserProbeLiveness, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserProbeScriptCheckpoint, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { BrowserProbeSessionResultBuilder, browserProbeCaptureSelection } from "./browser-probe-session-result-builder.js"
 
 const BROWSER_PROBE_PROFILE_OVERRIDES = new Set(["browser", "device", "locale", "permissions", "throttle", "timezone", "user-agent", "viewport"])
@@ -488,6 +488,7 @@ export async function runSingleBrowserProbeCommand({
     }
     if (captureSelection.network) {
       await artifactSession.writeJsonLines("network", "network.jsonl", network)
+      await artifactSession.writeJson("requestCoverage", "request-coverage.json", browserRequestCoverageArtifact(network, startedAt))
       await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
     if (checkpoints.length > 0) {
