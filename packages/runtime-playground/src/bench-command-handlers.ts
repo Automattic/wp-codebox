@@ -381,6 +381,14 @@ function wp_codebox_bench_run_rest_request_step(array $step): array {
     if (isset($step['metadata']) && is_array($step['metadata']) && isset($step['metadata']['route_matrix_index']) && is_numeric($step['metadata']['route_matrix_index'])) {
         $record['route_matrix_index'] = (int) $step['metadata']['route_matrix_index'];
     }
+    if (isset($step['metadata']) && is_array($step['metadata']) && isset($step['metadata']['rest_request_case_index']) && is_numeric($step['metadata']['rest_request_case_index'])) {
+        $record['rest_request_case_index'] = (int) $step['metadata']['rest_request_case_index'];
+    }
+    if (isset($step['case_id']) && is_scalar($step['case_id'])) {
+        $record['case_id'] = (string) $step['case_id'];
+    } elseif (isset($step['caseId']) && is_scalar($step['caseId'])) {
+        $record['case_id'] = (string) $step['caseId'];
+    }
     if (!empty($step['capture-response'])) {
         $record['response'] = wp_codebox_bench_redacted_response_summary(rest_get_server()->response_to_data($response, false));
     }
@@ -715,6 +723,10 @@ if (did_action('rest_api_init')) {
 function wp_codebox_bench_workload_run_steps(array $workload): array {
     $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array();
     $route_matrix = isset($workload['route_matrix']) && is_array($workload['route_matrix']) ? $workload['route_matrix'] : array();
+    $rest_request_cases = isset($workload['rest_request_cases']) && is_array($workload['rest_request_cases']) ? $workload['rest_request_cases'] : array();
+    if (empty($rest_request_cases) && isset($workload['request_cases']) && is_array($workload['request_cases'])) {
+        $rest_request_cases = $workload['request_cases'];
+    }
 
     foreach ($route_matrix as $index => $route) {
         if (!is_array($route)) {
@@ -728,6 +740,28 @@ function wp_codebox_bench_workload_run_steps(array $workload): array {
             $step['metadata'] = array();
         }
         $step['metadata'] = array_merge(array('route_matrix_index' => $index), $step['metadata']);
+        $steps[] = $step;
+    }
+
+    foreach ($rest_request_cases as $index => $request_case) {
+        if (!is_array($request_case)) {
+            continue;
+        }
+        $step = array_merge($request_case, array('type' => 'rest-request'));
+        if (!isset($step['path']) && isset($request_case['route'])) {
+            $step['path'] = $request_case['route'];
+        }
+        if (!isset($step['metric-prefix'])) {
+            $case_id = isset($request_case['id']) && is_string($request_case['id']) ? $request_case['id'] : (isset($request_case['case_id']) && is_string($request_case['case_id']) ? $request_case['case_id'] : 'case_' . $index);
+            $step['metric-prefix'] = 'rest_' . preg_replace('/[^A-Za-z0-9_]+/', '_', $case_id);
+        }
+        if (!isset($step['metadata']) || !is_array($step['metadata'])) {
+            $step['metadata'] = array();
+        }
+        $step['metadata'] = array_merge(array('rest_request_case_index' => $index), $step['metadata']);
+        if (!isset($step['case_id']) && isset($request_case['id']) && is_scalar($request_case['id'])) {
+            $step['case_id'] = (string) $request_case['id'];
+        }
         $steps[] = $step;
     }
 

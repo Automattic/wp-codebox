@@ -83,3 +83,33 @@ assert.deepEqual(routeMatrixSteps[0].metadata, { route_matrix_index: 0 })
 assert.equal(routeMatrixSteps[1].route, "/wc/v3/orders")
 assert.deepEqual(routeMatrixSteps[1].metadata, { route_matrix_index: 1 })
 assert.match(phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_request_step"), /'route_matrix_index'\] = \(int\) \$step\['metadata'\]\['route_matrix_index'\]/)
+
+const generatedCaseSteps = await withTempDir("wp-codebox-bench-rest-cases-", async (directory) => {
+  const phpTestFile = join(directory, "rest-cases.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${commandStepHelpers}
+$steps = wp_codebox_bench_workload_run_steps(array(
+    'id' => 'generated-rest-cases',
+    'rest_request_cases' => array(
+        array('id' => 'posts-page-1', 'method' => 'GET', 'route' => '/wp/v2/posts', 'params' => array('page' => 1)),
+        array('case_id' => 'cart-context-view', 'method' => 'GET', 'path' => '/wc/store/v1/cart', 'params' => array('context' => 'view')),
+    ),
+));
+echo json_encode($steps, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<Array<{ type: string; path?: string; route?: string; case_id?: string; method: string; "metric-prefix": string; metadata: { rest_request_case_index: number } }>>(phpTestFile)
+})
+assert.equal(generatedCaseSteps.length, 2)
+assert.equal(generatedCaseSteps[0].type, "rest-request")
+assert.equal(generatedCaseSteps[0].path, "/wp/v2/posts")
+assert.equal(generatedCaseSteps[0].case_id, "posts-page-1")
+assert.equal(generatedCaseSteps[0]["metric-prefix"], "rest_posts_page_1")
+assert.deepEqual(generatedCaseSteps[0].metadata, { rest_request_case_index: 0 })
+assert.equal(generatedCaseSteps[1].path, "/wc/store/v1/cart")
+assert.equal(generatedCaseSteps[1].case_id, "cart-context-view")
+assert.deepEqual(generatedCaseSteps[1].metadata, { rest_request_case_index: 1 })
+assert.match(phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_request_step"), /'rest_request_case_index'\] = \(int\) \$step\['metadata'\]\['rest_request_case_index'\]/)
+assert.match(phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_request_step"), /\$record\['case_id'\] = \(string\) \$step\['case_id'\]/)
