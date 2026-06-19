@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises"
 import { resolve } from "node:path"
-import { artifactBundleRunRef, normalizeRecipeRunSummary, type ArtifactBundle, type RuntimeInfo, type RuntimeRunRecord, type RuntimeRunRegistry } from "@automattic/wp-codebox-core"
+import { artifactBundleRunRef, normalizeRecipeRunSummary, runtimeRunResultFromRecipeSummary, type ArtifactBundle, type RuntimeInfo, type RuntimeRunRecord, type RuntimeRunRegistry } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "../output.js"
 import { finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput } from "../recipe-evidence.js"
@@ -127,7 +127,7 @@ export function completedRecipeOutputFields(args: {
 }
 
 export async function finalizeRecipeValidationFailure(args: RecipeRunFinalizerBase & { failure: RunOutput["error"]; componentContracts?: RecipeRunComponentContract[]; validation: RecipeRunOutput["validation"] }): Promise<RecipeRunOutput> {
-  const runRecord = await args.runRegistry.update(args.runRecord.runId, {
+  let runRecord = await args.runRegistry.update(args.runRecord.runId, {
     status: "failed",
     metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs: args.startedAtMs, status: "failed", failure: args.failure }) },
     error: args.failure,
@@ -142,13 +142,15 @@ export async function finalizeRecipeValidationFailure(args: RecipeRunFinalizerBa
     run: runRecord,
     error: args.failure,
   })
+  runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
+  output.run = runRecord
   await args.artifactPointer.update({ command: "recipe.validate", commandStatus: "failed", failure: args.failure, result: output.result })
   return output
 }
 
 export async function finalizeCompletedRecipeRun(args: FinalizeCompletedRecipeRunOptions): Promise<RecipeRunOutput> {
   const status = args.success ? "succeeded" : "failed"
-  const runRecord = await args.runRegistry.update(args.runRecord.runId, {
+  let runRecord = await args.runRegistry.update(args.runRecord.runId, {
     status,
     runtime: args.runtime,
     preview: args.artifacts.preview,
@@ -169,13 +171,15 @@ export async function finalizeCompletedRecipeRun(args: FinalizeCompletedRecipeRu
     run: runRecord,
     error: args.failure,
   }) as RecipeRunOutput)
+  runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
+  output.run = runRecord
   await args.artifactPointer.update({ commandStatus: args.success ? "completed" : "failed", runtime: args.runtime, artifacts: args.artifacts, failure: args.failure, phases: args.phaseEvidence, browserEvidence: args.browserEvidence, result: output.result })
   return output
 }
 
 export async function finalizeRecoveredRecipeFailure(args: FinalizeRecoveredRecipeFailureOptions): Promise<RecipeRunOutput> {
   const status = recipeRunFailureStatus(args.originalError, args.interruption)
-  const runRecord = await args.runRegistry.update(args.runRecord.runId, {
+  let runRecord = await args.runRegistry.update(args.runRecord.runId, {
     status,
     ...(args.runtime ? { runtime: args.runtime } : {}),
     ...(args.artifacts ? { preview: args.artifacts.preview, artifactRefs: artifactBundleRunRef(args.artifacts) } : {}),
@@ -193,6 +197,8 @@ export async function finalizeRecoveredRecipeFailure(args: FinalizeRecoveredReci
     ...(args.interruption?.metadata ? { interruption: args.interruption.metadata } : {}),
     error: args.serializedError,
   }) as RecipeRunOutput)
+  runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
+  output.run = runRecord
   await args.artifactPointer.update({ commandStatus: "failed", ...(args.runtime ? { runtime: args.runtime } : {}), ...(args.artifacts ? { artifacts: args.artifacts } : {}), failure: args.serializedError, phases: args.phaseEvidence, browserEvidence: args.browserEvidence, diagnosticArtifacts: args.diagnosticArtifacts, result: output.result })
   return output
 }
