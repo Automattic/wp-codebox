@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { parseWorkspaceRecipeJson, validateWorkspaceRecipeShape } from "../packages/cli/src/recipe-validation.js"
+import { prepareRecipeRuntimeOverlays } from "../packages/cli/src/recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor } from "../packages/cli/src/runtime-overlay-registry.js"
 import { discoverRuntimeOverlayDescriptorManifests, runtimeOverlayDescriptorManifest } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
@@ -31,12 +32,21 @@ await withTempDir("wp-codebox-runtime-overlay-descriptors-", async (root) => {
   loadConfiguredRuntimeOverlayDescriptors(descriptorDirectory)
   assert.ok(registeredRuntimeOverlayDescriptors().some((descriptor) => descriptor.library === "example-provider"))
 
+  await mkdir(join(root, "overlays", "example"), { recursive: true })
+  await writeFile(join(root, "overlays", "example", "runtime.php"), "<?php\n")
+
   const recipe = parseWorkspaceRecipeJson(JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { overlays: [{ kind: "provider-runtime", library: "example-provider", strategy: "provider-owned-bundle", source: "overlays/example" }] },
     workflow: { steps: [{ command: "noop" }] },
   }))
   validateWorkspaceRecipeShape(recipe, join(root, "recipe.json"))
+  const [prepared] = await prepareRecipeRuntimeOverlays(recipe, root)
+  assert.equal(prepared.source, join(root, "overlays", "example"))
+  assert.equal(prepared.target, "/wordpress/wp-content/mu-plugins/example-provider-runtime")
+  assert.equal(prepared.mode, "readonly")
+  assert.equal(prepared.metadata.preparedPathKind, "local")
+  assert.equal(typeof (prepared.metadata.digest as { sha256?: unknown }).sha256, "string")
 
   await writeFile(join(descriptorDirectory, "wp-codebox-runtime-overlays.json"), JSON.stringify({
     schema: "wp-codebox/runtime-overlay-descriptors/v1",

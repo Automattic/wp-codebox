@@ -501,15 +501,43 @@ export async function prepareRecipeRuntimeOverlays(recipe: WorkspaceRecipe, reci
     if (!descriptor) {
       throw new Error(`Unsupported runtime overlay: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
     }
-    if (!descriptor.prepare) {
-      throw new Error(`Runtime overlay descriptor has no CLI preparer: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
-    }
 
-    const prepared = await descriptor.prepare(overlay, recipeDirectory, index)
+    const prepared = descriptor.prepare
+      ? await descriptor.prepare(overlay, recipeDirectory, index)
+      : await prepareDeclaredRuntimeOverlayPack(overlay, recipeDirectory, index, descriptor.defaultTarget)
     overlays.push(prepared)
   }
 
   return overlays
+}
+
+async function prepareDeclaredRuntimeOverlayPack(overlay: WorkspaceRecipeRuntimeOverlay, recipeDirectory: string, index: number, defaultTarget: string): Promise<PreparedRuntimeOverlay> {
+  const source = resolve(recipeDirectory, overlay.source)
+  await validateExistingDirectoryForOverlay(source, overlay.source)
+  const target = overlay.target ?? defaultTarget
+  const digest = await directoryContentDigest(source)
+
+  return {
+    source,
+    target,
+    type: "directory",
+    mode: "readonly",
+    cleanupPaths: [],
+    metadata: {
+      kind: "runtime-overlay",
+      index,
+      overlayKind: overlay.kind,
+      library: overlay.library,
+      strategy: overlay.strategy,
+      source: overlay.source,
+      target,
+      preparedPath: source,
+      preparedPathKind: "local",
+      digest: { sha256: digest },
+      ...(overlay.bundle ? { bundle: overlay.bundle } : {}),
+      ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
+    },
+  }
 }
 
 async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay, recipeDirectory: string, index: number): Promise<PreparedRuntimeOverlay> {
