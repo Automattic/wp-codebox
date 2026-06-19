@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { commandArgValue, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
@@ -475,7 +476,24 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
   for (const component of options.components) {
     bySlug.set(component.slug, component)
   }
+  for (const component of options.components) {
+    if (bySlug.has("agents-api")) {
+      break
+    }
+    const agentsApiPath = agentsApiPathFromRuntimeComponent(component)
+    if (agentsApiPath) {
+      const agentsApi = componentFromPath(agentsApiPath, "agents-api", undefined, "mu-plugin", "component")
+      bySlug.set(agentsApi.slug, agentsApi)
+    }
+  }
   return [...bySlug.values()]
+}
+
+function agentsApiPathFromRuntimeComponent(component: AgentRuntimeComponent): string {
+  return [
+    join(component.source, "vendor", "wordpress", "agents-api"),
+    join(component.source, "vendor", "automattic", "agents-api"),
+  ].find((candidate) => existsSync(join(candidate, "agents-api.php"))) ?? ""
 }
 
 function providerPluginSlugs(args: string[]): string[] {
