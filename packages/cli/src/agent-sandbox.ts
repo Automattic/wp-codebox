@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { commandArgValue, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
@@ -486,7 +486,42 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
       bySlug.set(agentsApi.slug, agentsApi)
     }
   }
+  if (!bySlug.has("agents-api")) {
+    const agentsApiPath = defaultAgentsApiPath()
+    if (agentsApiPath) {
+      const agentsApi = componentFromPath(agentsApiPath, "agents-api", undefined, "mu-plugin", "component")
+      bySlug.set(agentsApi.slug, agentsApi)
+    }
+  }
   return [...bySlug.values()]
+}
+
+function defaultAgentsApiPath(): string {
+  const explicit = [process.env.WP_CODEBOX_AGENTS_API_PATH, process.env.AGENTS_API_PATH]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => resolve(value))
+    .find(isAgentsApiPluginRoot)
+
+  if (explicit) {
+    return explicit
+  }
+
+  const candidates: string[] = []
+  let current = resolve(process.cwd())
+  for (let depth = 0; depth < 6; depth++) {
+    candidates.push(join(current, "agents-api"), join(dirname(current), "agents-api"))
+    const parent = dirname(current)
+    if (parent === current) {
+      break
+    }
+    current = parent
+  }
+
+  return candidates.find(isAgentsApiPluginRoot) ?? ""
+}
+
+function isAgentsApiPluginRoot(candidate: string): boolean {
+  return existsSync(join(candidate, "agents-api.php"))
 }
 
 function agentsApiPathFromRuntimeComponent(component: AgentRuntimeComponent): string {
