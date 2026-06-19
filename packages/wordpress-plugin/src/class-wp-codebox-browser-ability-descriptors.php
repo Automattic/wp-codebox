@@ -122,7 +122,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/get-browser-contained-site-status'    => array(
 				'label'               => 'Get Browser Contained Site Status',
-				'description'         => 'Resolve a durable browser-contained site handle into recoverable prepared-runtime status without creating a new Playground session.',
+				'description'         => 'Resolve a durable browser-contained site handle into explicit prepared-runtime recoverability or live/current/materialized availability without creating a new Playground session.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -184,6 +184,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 						'blueprint_ref' => array( 'type' => 'object' ),
 						'preview_boot'  => array( 'type' => 'object' ),
 						'preview_lease' => array( 'type' => 'object' ),
+						'preview_session' => array( 'type' => 'object' ),
 						'session'       => array( 'type' => 'object' ),
 						'recovery'      => array( 'type' => 'object' ),
 					),

@@ -1,6 +1,7 @@
 export const RUNTIME_PROFILE_SCHEMA = "wp-codebox/runtime-profile/v1" as const
 export const PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
 export const BROWSER_CONTAINED_SITE_STATUS_SCHEMA = "wp-codebox/browser-contained-site-status/v1" as const
+export const BROWSER_CONTAINED_SITE_OPEN_SCHEMA = "wp-codebox/browser-contained-site-open/v1" as const
 export const BROWSER_SESSION_PRODUCT_DTO_SCHEMA = "wp-codebox/browser-session-product-dto/v1" as const
 export const BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA = "wp-codebox/browser-preview-boot-config/v1" as const
 
@@ -87,16 +88,38 @@ export interface PreviewLease {
 }
 
 export type PreviewLeaseLifecycleStatus = "active" | "expired" | "released" | "unknown"
+export type BrowserContainedSiteLifecycleStatus = "recoverable_prepared_runtime" | "current" | "live" | "materialized" | "miss" | "expired" | "blocked" | "disabled" | "incompatible" | "unknown" | (string & {})
+
+export interface BrowserContainedSiteIdentity {
+  schema: "wp-codebox/browser-contained-site/v1"
+  site_id: string
+  preview_id?: string
+  session_id?: string
+  status?: BrowserContainedSiteLifecycleStatus
+  source_digest?: {
+    algorithm: "sha256" | (string & {})
+    value: string
+  }
+  resolution?: Record<string, unknown>
+  prepared_runtime?: Record<string, unknown>
+  blueprint_ref?: Record<string, unknown>
+  preview_boot?: BrowserPreviewBootConfig
+  preview_lease?: PreviewLease
+  session?: Record<string, unknown>
+  recovery?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
 
 export interface BrowserContainedSiteStatus {
   schema: typeof BROWSER_CONTAINED_SITE_STATUS_SCHEMA
   success: boolean
   site_id: string
-  status: "recoverable" | "miss" | "expired" | "blocked" | "unknown" | (string & {})
+  status: BrowserContainedSiteLifecycleStatus
   source_digest: {
     algorithm: "sha256" | (string & {})
     value: string
   }
+  resolution?: Record<string, unknown>
   prepared_runtime?: Record<string, unknown>
   blueprint_ref?: Record<string, unknown>
   metadata?: Record<string, unknown>
@@ -136,6 +159,26 @@ export interface BrowserSessionProductDto {
   signals?: Record<string, unknown>
   artifacts?: Record<string, unknown>
   error?: Record<string, unknown>
+}
+
+export interface BrowserContainedSiteOpenEnvelope {
+  schema: typeof BROWSER_CONTAINED_SITE_OPEN_SCHEMA
+  success: boolean
+  site_id: string
+  status: BrowserContainedSiteLifecycleStatus
+  resolution?: Record<string, unknown>
+  contained_site?: BrowserContainedSiteIdentity
+  source_digest?: {
+    algorithm: "sha256" | (string & {})
+    value: string
+  }
+  prepared_runtime?: Record<string, unknown>
+  blueprint_ref?: Record<string, unknown>
+  preview_boot?: BrowserPreviewBootConfig
+  preview_lease?: PreviewLease
+  preview_session?: BrowserSessionProductDto
+  session?: Record<string, unknown>
+  recovery?: Record<string, unknown>
 }
 
 export function runtimeProfile(input: unknown): RuntimeProfile {
@@ -218,9 +261,106 @@ export function browserContainedSiteStatus(input: unknown): BrowserContainedSite
       algorithm: optionalString(digest.algorithm, "source_digest.algorithm") ?? "sha256",
       value: digestValue,
     },
+    resolution: normalizeOptionalObject(value.resolution, "resolution"),
     prepared_runtime: normalizeOptionalObject(value.prepared_runtime, "prepared_runtime"),
     blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "blueprint_ref"),
     metadata: normalizeOptionalObject(value.metadata, "metadata"),
+  }
+}
+
+export function browserContainedSiteOpenEnvelope(input: unknown): BrowserContainedSiteOpenEnvelope {
+  const value = requireObject(input, "Browser contained site open envelope") as Partial<BrowserContainedSiteOpenEnvelope>
+  if (value.schema !== BROWSER_CONTAINED_SITE_OPEN_SCHEMA) throw new Error(`Browser contained site open schema must be ${BROWSER_CONTAINED_SITE_OPEN_SCHEMA}.`)
+  return {
+    schema: BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+    success: value.success === true,
+    site_id: requiredIdentifier(value.site_id, "site_id"),
+    status: requiredIdentifier(value.status, "status") as BrowserContainedSiteLifecycleStatus,
+    resolution: normalizeOptionalObject(value.resolution, "resolution"),
+    contained_site: value.contained_site === undefined ? undefined : normalizeContainedSiteIdentity(value.contained_site),
+    source_digest: value.source_digest === undefined ? undefined : normalizeSourceDigest(value.source_digest),
+    prepared_runtime: normalizeOptionalObject(value.prepared_runtime, "prepared_runtime"),
+    blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "blueprint_ref"),
+    preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
+    preview_lease: value.preview_lease === undefined ? undefined : previewLease(value.preview_lease),
+    preview_session: value.preview_session === undefined ? undefined : normalizeBrowserSessionProductDto(value.preview_session),
+    session: normalizeOptionalObject(value.session, "session"),
+    recovery: normalizeOptionalObject(value.recovery, "recovery"),
+  }
+}
+
+function normalizeContainedSiteIdentity(input: unknown): BrowserContainedSiteIdentity {
+  const value = requireObject(input, "Browser contained site identity") as Partial<BrowserContainedSiteIdentity>
+  if (value.schema !== "wp-codebox/browser-contained-site/v1") throw new Error("Browser contained site identity schema must be wp-codebox/browser-contained-site/v1.")
+  return {
+    schema: "wp-codebox/browser-contained-site/v1",
+    site_id: requiredIdentifier(value.site_id, "contained_site.site_id"),
+    preview_id: optionalString(value.preview_id, "contained_site.preview_id"),
+    session_id: optionalString(value.session_id, "contained_site.session_id"),
+    status: optionalString(value.status, "contained_site.status") as BrowserContainedSiteLifecycleStatus | undefined,
+    source_digest: value.source_digest === undefined ? undefined : normalizeSourceDigest(value.source_digest),
+    resolution: normalizeOptionalObject(value.resolution, "contained_site.resolution"),
+    prepared_runtime: normalizeOptionalObject(value.prepared_runtime, "contained_site.prepared_runtime"),
+    blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "contained_site.blueprint_ref"),
+    preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
+    preview_lease: value.preview_lease === undefined ? undefined : previewLease(value.preview_lease),
+    session: normalizeOptionalObject(value.session, "contained_site.session"),
+    recovery: normalizeOptionalObject(value.recovery, "contained_site.recovery"),
+    metadata: normalizeOptionalObject(value.metadata, "contained_site.metadata"),
+  }
+}
+
+function normalizeSourceDigest(input: unknown): { algorithm: "sha256" | (string & {}); value: string } {
+  const digest = requireObject(input, "source_digest") as { algorithm?: unknown; value?: unknown }
+  const digestValue = optionalString(digest.value, "source_digest.value")
+  if (!digestValue || !/^[a-f0-9]{64}$/.test(digestValue)) throw new Error("source_digest.value must be a 64-character sha256 digest.")
+  return {
+    algorithm: optionalString(digest.algorithm, "source_digest.algorithm") ?? "sha256",
+    value: digestValue,
+  }
+}
+
+function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
+  const value = requireObject(input, "Browser preview boot config") as Partial<BrowserPreviewBootConfig>
+  if (value.schema !== BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA) throw new Error(`Browser preview boot config schema must be ${BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA}.`)
+  return {
+    schema: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
+    session_id: optionalString(value.session_id, "preview_boot.session_id"),
+    scope: optionalString(value.scope, "preview_boot.scope"),
+    client_module_url: optionalString(value.client_module_url, "preview_boot.client_module_url"),
+    remote_url: optionalString(value.remote_url, "preview_boot.remote_url"),
+    cors_proxy_url: optionalString(value.cors_proxy_url, "preview_boot.cors_proxy_url"),
+    blueprint_ref: optionalString(value.blueprint_ref, "preview_boot.blueprint_ref"),
+    blueprint_ref_dto: normalizeOptionalObject(value.blueprint_ref_dto, "preview_boot.blueprint_ref_dto"),
+    preview: value.preview === undefined ? undefined : previewLease(value.preview),
+    contained_site: normalizeOptionalObject(value.contained_site, "preview_boot.contained_site"),
+    artifacts: normalizeOptionalObject(value.artifacts, "preview_boot.artifacts"),
+    provenance: normalizeOptionalObject(value.provenance, "preview_boot.provenance"),
+  }
+}
+
+function normalizeBrowserSessionProductDto(input: unknown): BrowserSessionProductDto {
+  const value = requireObject(input, "Browser session product DTO") as Partial<BrowserSessionProductDto>
+  if (value.schema !== BROWSER_SESSION_PRODUCT_DTO_SCHEMA) throw new Error(`Browser session product DTO schema must be ${BROWSER_SESSION_PRODUCT_DTO_SCHEMA}.`)
+  return {
+    schema: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
+    source_schema: optionalString(value.source_schema, "preview_session.source_schema"),
+    success: value.success === true,
+    status: optionalString(value.status, "preview_session.status"),
+    execution: optionalString(value.execution, "preview_session.execution"),
+    execution_scope: optionalString(value.execution_scope, "preview_session.execution_scope"),
+    permission_model: optionalString(value.permission_model, "preview_session.permission_model"),
+    session_id: optionalString(value.session_id, "preview_session.session_id"),
+    contained_site: normalizeOptionalObject(value.contained_site, "preview_session.contained_site"),
+    task: optionalString(value.task, "preview_session.task"),
+    target: normalizeOptionalObject(value.target, "preview_session.target"),
+    agent: optionalString(value.agent, "preview_session.agent"),
+    provider: optionalString(value.provider, "preview_session.provider"),
+    model: optionalString(value.model, "preview_session.model"),
+    preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
+    signals: normalizeOptionalObject(value.signals, "preview_session.signals"),
+    artifacts: normalizeOptionalObject(value.artifacts, "preview_session.artifacts"),
+    error: normalizeOptionalObject(value.error, "preview_session.error"),
   }
 }
 
