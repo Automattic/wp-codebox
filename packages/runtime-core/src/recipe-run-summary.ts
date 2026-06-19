@@ -79,7 +79,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
     artifacts,
     refs: {
       startup_logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log" || artifact.kind === "codebox-command-events" || artifact.kind === "codebox-event-log" || artifact.kind === "codebox-runtime-metadata"),
-      probe_json: artifacts.filter((artifact) => artifact.kind === "browser-summary" || artifact.kind === "recipe-probe-results"),
+      probe_json: artifacts.filter((artifact) => artifact.kind === "browser-summary" || artifact.kind === "recipe-probe-results" || artifact.kind === "distribution-startup-probe-results"),
       screenshots: artifacts.filter((artifact) => artifact.kind === "browser-screenshot" || artifact.kind === "screenshot"),
       side_effects: artifacts.filter((artifact) => artifact.kind === "recipe-side-effects" || artifact.kind === "runtime-side-effects" || artifact.kind === "codebox-observations"),
       declared_artifacts: artifacts.filter((artifact) => artifact.kind === "recipe-declared-artifact" || artifact.kind === "recipe-declared-artifact-results"),
@@ -162,6 +162,14 @@ function normalizeRecipeRunArtifacts(result: Record<string, unknown>, agentTaskA
     appendUniqueArtifact(artifacts, stripUndefined({
       id: stringValue(probe.name) || `recipe-probe-${numberValue(probe.index) ?? artifacts.length + 1}`,
       kind: "recipe-probe-result",
+      metadata: probe,
+    }))
+  }
+
+  for (const probe of arrayObjects(result.distributionStartupProbes)) {
+    appendUniqueArtifact(artifacts, stripUndefined({
+      id: stringValue(probe.name) || `distribution-startup-probe-${numberValue(probe.index) ?? artifacts.length + 1}`,
+      kind: "distribution-startup-probe-result",
       metadata: probe,
     }))
   }

@@ -49,6 +49,7 @@ export interface RecipeRunOutput {
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
+  distributionStartupProbes?: RecipeRunDistributionStartupProbe[]
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
   phaseEvidence?: RecipePhaseEvidence[]
@@ -149,7 +150,7 @@ export interface RecipeDiagnosticArtifactRef {
   sha256?: string
 }
 
-export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_workloads" | "run_probes" | "collect_artifacts"
+export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
 
 export interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"
@@ -240,6 +241,21 @@ export interface RecipeRunProbe {
   stderr: string
   parsedJson?: unknown
   allowFailure: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface RecipeRunDistributionStartupProbe {
+  schema: "wp-codebox/distribution-startup-probe-result/v1"
+  index: number
+  name: string
+  type: "http" | "browser" | "wp-cli" | "php"
+  status: "passed" | "failed" | "skipped"
+  command?: string
+  args?: string[]
+  exitCode?: number
+  stdout?: string
+  stderr?: string
+  reason?: string
   metadata?: Record<string, unknown>
 }
 

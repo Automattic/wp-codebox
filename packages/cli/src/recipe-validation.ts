@@ -762,9 +762,15 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     ...(recipe.inputs?.pluginRuntime?.setup ?? []),
     ...(recipe.inputs?.pluginRuntime?.healthProbes ?? []).map(pluginRuntimeHealthProbeStep),
   ].map((step) => step.command)
+  const distributionStartupProbeCommands = (recipe.distribution?.startupProbes ?? []).flatMap((probe) => {
+    if (probe.type === "wp-cli") return ["wordpress.wp-cli"]
+    if (probe.type === "php") return ["wordpress.run-php"]
+    return []
+  })
   const commands = [
     ...effectivePolicyCommandsFor(recipeWorkflowSteps(recipe).map(({ step }) => step.command), cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor(pluginRuntimeCommands, cliRecipeCommandDefinitions),
+    ...effectivePolicyCommandsFor(distributionStartupProbeCommands, cliRecipeCommandDefinitions),
     ...effectivePolicyCommandsFor((recipe.probes ?? []).map((probe) => probe.step.command), cliRecipeCommandDefinitions),
   ]
   if (recipeWorkflowSteps(recipe).some(({ step }) => step.command === "wordpress.bench" && recipeBenchStepUsesWpCli(step))) {

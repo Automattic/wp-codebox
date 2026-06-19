@@ -1,11 +1,11 @@
-import { type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
+import { type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { artifactManifestFilesByPath } from "./recipe-run-benchmark-artifacts.js"
 import { serializeRecipeRunError } from "./recipe-run-output.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunOptions, RecipeRunProbe } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe } from "./recipe-run-types.js"
 
 export function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string): RecipeExecutionResult {
   return {
@@ -177,6 +177,46 @@ export async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: 
   return results
 }
 
+export async function runDistributionStartupProbes(recipe: WorkspaceRecipe, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunDistributionStartupProbe[]> {
+  const results: RecipeRunDistributionStartupProbe[] = []
+  for (const [index, probe] of (recipe.distribution?.startupProbes ?? []).entries()) {
+    if (probe.type === "http" || probe.type === "browser") {
+      results.push(stripUndefined({
+        schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
+        index,
+        name: probe.name,
+        type: probe.type,
+        status: "skipped" as const,
+        reason: "Distribution startup probe type is planned but not executable by this runtime primitive.",
+        metadata: probe.metadata,
+      }))
+      continue
+    }
+
+    const execution = await executeDistributionStartupProbe(runtime, probe, index)
+    executions.push(execution)
+    results.push(stripUndefined({
+      schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
+      index,
+      name: probe.name,
+      type: probe.type,
+      status: execution.exitCode === 0 ? "passed" as const : "failed" as const,
+      command: execution.command,
+      args: execution.args,
+      exitCode: execution.exitCode,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      metadata: probe.metadata,
+    }))
+  }
+  return results
+}
+
+export function distributionStartupProbeFailure(probes: RecipeRunDistributionStartupProbe[]): Error | undefined {
+  const failed = probes.find((probe) => probe.status === "failed")
+  return failed ? new Error(`Distribution startup probe "${failed.name}" failed with exit code ${failed.exitCode ?? "unknown"}.`) : undefined
+}
+
 async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe, recipeDirectory: string, index: number): Promise<RecipeExecutionResult> {
   try {
     const execution = await runtime.execute(await recipeExecutionSpec(probe.step, recipeDirectory))
@@ -184,6 +224,19 @@ async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe,
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe probe "${probe.name}" failed before producing a result: ${message}`, { cause: error })
+  }
+}
+
+async function executeDistributionStartupProbe(runtime: Runtime, probe: WorkspaceRecipeDistributionStartupProbe, index: number): Promise<RecipeExecutionResult> {
+  const spec = probe.type === "wp-cli"
+    ? { command: "wordpress.wp-cli", args: [`command=${probe.command ?? ""}`] }
+    : { command: "wordpress.run-php", args: [`code=${probe.code ?? ""}`] }
+  try {
+    const execution = await runtime.execute(spec)
+    return withRecipeExecutionPhase(execution, "setup", index, `distribution.startupProbe:${probe.name}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Distribution startup probe "${probe.name}" failed before producing a result: ${message}`, { cause: error })
   }
 }
 

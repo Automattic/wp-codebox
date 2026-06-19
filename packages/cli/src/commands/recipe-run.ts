@@ -23,8 +23,8 @@ import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRu
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
-import { executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import { distributionStartupProbeFailure, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -111,6 +111,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let fixtureDatabases: RecipeRunFixtureDatabase[] = []
+  let distributionStartupProbes: RecipeRunDistributionStartupProbe[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
   let advisoryFailures: RecipeAdvisoryFailure[] = []
@@ -225,6 +226,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     const sandboxWorkspace = sandboxWorkspaceContract(workspaceMounts, recipe.inputs?.mounts ?? [])
     const workflowSteps = recipeWorkflowSteps(recipe)
+    distributionStartupProbes = await phaseTracker.run("run_distribution_startup_probes", phaseDistributionStartupProbeData(recipe), async () => await awaitRecipe("distribution.startup-probes.run", runDistributionStartupProbes(recipe, runtime!, executions)))
+    const startupProbeFailure = distributionStartupProbeFailure(distributionStartupProbes)
+    if (startupProbeFailure) {
+      throw startupProbeFailure
+    }
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
         const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
@@ -258,7 +264,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       browserEvidence = await recipeBrowserEvidence(artifacts, executions)
       await artifactPointer.update({ runtime: await runtime!.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
-      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
+      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionStartupProbes, probes, declaredArtifacts))
       if (declaredArtifactFailure) {
         throw declaredArtifactFailure
       }
@@ -282,7 +288,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await artifactPointer.update({ runtime: await runtime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
       declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, runtime)
       await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
-      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
+      await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, distributionStartupProbes, probes, declaredArtifacts))
       evidence = await finalizeRecipeArtifactEvidence(artifacts, recipe, workspaceMounts, stagedFiles, effectivePolicy, secretEnv)
       const previewAgentEvidence = await finalizeAgentSandboxEvidence(artifacts, executions)
       Object.assign(evidence, previewAgentEvidence)
@@ -322,7 +328,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
+        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
       })
     }
 
@@ -341,7 +347,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
+      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
     })
   } catch (error) {
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
@@ -355,6 +361,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       overlays,
       executions,
       fixtureDatabases,
+      distributionStartupProbes,
       probes,
       declaredArtifacts,
       phaseEvidence: phaseTracker.list(),
@@ -385,7 +392,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           }
           await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
           const evidenceFiles = await appendRecipeRuntimeEvidence(artifacts, [
-            ...recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts),
+            ...recipeRuntimeEvidenceFiles(fixtureDatabases, distributionStartupProbes, probes, declaredArtifacts),
             failureDiagnostics,
           ])
           diagnosticArtifacts = evidenceFiles
@@ -441,6 +448,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions, error),
         stagedFiles: stagedFiles.map(recipeRunStagedFile),
         fixtureDatabases,
+        distributionStartupProbes,
         probes,
         declaredArtifacts,
         phaseEvidence: phaseTracker.list(),
@@ -687,6 +695,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
   overlays: PreparedRuntimeOverlay[]
   executions: RecipeExecutionResult[]
   fixtureDatabases: RecipeRunFixtureDatabase[]
+  distributionStartupProbes: RecipeRunDistributionStartupProbe[]
   probes: RecipeRunProbe[]
   declaredArtifacts: RecipeRunDeclaredArtifact[]
   phaseEvidence: RecipePhaseEvidence[]
@@ -716,6 +725,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
       preparedRuntimeOverlays: args.overlays.map((overlay) => ({ target: overlay.target, type: overlay.type, mode: overlay.mode, metadata: overlay.metadata })),
       executions: args.executions,
       fixtureDatabases: args.fixtureDatabases,
+      distributionStartupProbes: args.distributionStartupProbes,
       probes: args.probes,
       declaredArtifacts: args.declaredArtifacts,
       phaseEvidence: args.phaseEvidence,
@@ -817,6 +827,19 @@ function phaseFixtureDatabaseData(recipe: WorkspaceRecipe): Record<string, unkno
       format: fixture.format ?? "sql",
       resetStrategy: fixture.reset?.strategy ?? "truncate-tables",
       resetTables: fixture.reset?.tables ?? [],
+    })),
+  }
+}
+
+function phaseDistributionStartupProbeData(recipe: WorkspaceRecipe): Record<string, unknown> {
+  const probes = recipe.distribution?.startupProbes ?? []
+  return {
+    count: probes.length,
+    probes: probes.map((probe, index) => ({
+      index,
+      name: probe.name,
+      type: probe.type,
+      executable: probe.type === "wp-cli" || probe.type === "php",
     })),
   }
 }

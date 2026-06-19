@@ -114,6 +114,7 @@
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:recipe-source-packages": "tsx tests/recipe-source-packages.test.ts",
+    "test:distribution-startup-probes": "tsx tests/distribution-startup-probes.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
