@@ -3,7 +3,7 @@ import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, STRUCTURED_ARTIFACT_SCHEMA, TYPED_
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { appendRecipeRuntimeEvidenceFiles } from "../recipe-evidence.js"
 import { serializeRecipeRunError, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError } from "./recipe-run-output.js"
-import type { RecipeRunDeclaredArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunProbe } from "./recipe-run-types.js"
+import type { RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunProbe } from "./recipe-run-types.js"
 
 const DECLARED_ARTIFACT_CAPTURE_MAX_BYTES = DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES
 const declaredArtifactContents = new WeakMap<RecipeRunDeclaredArtifact, Buffer>()
@@ -208,9 +208,10 @@ export function recipeDeclaredArtifactFailure(declaredArtifacts: RecipeRunDeclar
   return declaredArtifacts.some((artifact) => artifact.required && artifact.status !== "collected") ? new RecipeDeclaredArtifactFailureError(declaredArtifacts) : undefined
 }
 
-export function recipeRuntimeEvidenceFiles(fixtureDatabases: RecipeRunFixtureDatabase[], distributionStartupProbes: RecipeRunDistributionStartupProbe[], probes: RecipeRunProbe[], declaredArtifacts: RecipeRunDeclaredArtifact[]): Array<{ filename: string; kind: string; value: unknown }> {
+export function recipeRuntimeEvidenceFiles(fixtureDatabases: RecipeRunFixtureDatabase[], distributionSetupArtifacts: RecipeRunDistributionSetupArtifact[], distributionStartupProbes: RecipeRunDistributionStartupProbe[], probes: RecipeRunProbe[], declaredArtifacts: RecipeRunDeclaredArtifact[]): Array<{ filename: string; kind: string; value: unknown }> {
   return [
     ...(fixtureDatabases.length > 0 ? [{ filename: "fixture-databases.json", kind: "fixture-database-results", value: { schema: "wp-codebox/fixture-database-results/v1", fixtures: fixtureDatabases } }] : []),
+    ...(distributionSetupArtifacts.length > 0 ? [{ filename: "distribution-setup-artifacts.json", kind: "distribution-setup-artifact-results", value: { schema: "wp-codebox/distribution-setup-artifact-results/v1", artifacts: distributionSetupArtifacts } }] : []),
     ...(distributionStartupProbes.length > 0 ? [{ filename: "distribution-startup-probes.json", kind: "distribution-startup-probe-results", value: { schema: "wp-codebox/distribution-startup-probe-results/v1", passed: !distributionStartupProbeFailure(distributionStartupProbes), probes: distributionStartupProbes } }] : []),
     ...(probes.length > 0 ? [{ filename: "recipe-probes.json", kind: "recipe-probe-results", value: { schema: "wp-codebox/recipe-probe-results/v1", passed: !recipeProbeFailure(probes), probes } }] : []),
     ...(declaredArtifacts.length > 0 ? [{ filename: "recipe-declared-artifacts.json", kind: "recipe-declared-artifact-results", value: { schema: "wp-codebox/recipe-declared-artifact-results/v1", passed: !recipeDeclaredArtifactFailure(declaredArtifacts), artifacts: declaredArtifacts } }] : []),

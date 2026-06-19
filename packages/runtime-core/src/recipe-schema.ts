@@ -328,6 +328,11 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/distributionRouteAlias" },
           },
+          setupArtifacts: {
+            type: "array",
+            description: "Recipe-local setup artifacts applied inside the local sandbox before distribution startup probes.",
+            items: { $ref: "#/$defs/distributionSetupArtifact" },
+          },
           startupProbes: {
             type: "array",
             items: { $ref: "#/$defs/distributionStartupProbe" },
@@ -406,6 +411,17 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           command: { type: "string" },
           code: { type: "string" },
           expectStatus: { type: "integer", minimum: 100, maximum: 599 },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      distributionSetupArtifact: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "type", "source"],
+        properties: {
+          name: { type: "string" },
+          type: { enum: ["sql"] },
+          source: { type: "string" },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },

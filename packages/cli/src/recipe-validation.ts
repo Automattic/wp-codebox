@@ -103,7 +103,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
     if (!recipe.distribution.wordpress.root || typeof recipe.distribution.wordpress.root !== "string") {
       throw new Error(`Recipe distribution wordpress requires root: ${recipePath}`)
     }
-    for (const field of ["sourceMounts", "serviceFakes", "routeAliases", "startupProbes", "artifacts"] as const) {
+    for (const field of ["sourceMounts", "serviceFakes", "routeAliases", "setupArtifacts", "startupProbes", "artifacts"] as const) {
       if (recipe.distribution[field] !== undefined && !Array.isArray(recipe.distribution[field])) {
         throw new Error(`Recipe distribution ${field} must be an array: ${recipePath}`)
       }
@@ -683,6 +683,17 @@ async function validateRecipeDistribution(distribution: WorkspaceRecipeDistribut
     validateDistributionStartupProbe(probe, `$.distribution.startupProbes[${index}]`, addIssue)
   }
 
+  for (const [index, artifact] of (distribution.setupArtifacts ?? []).entries()) {
+    const path = `$.distribution.setupArtifacts[${index}]`
+    if (!/^[a-z0-9][a-z0-9_.-]*$/i.test(artifact.name)) {
+      addIssue("invalid-distribution-setup-artifact-name", `${path}.name`, `Distribution setup artifact names must be stable identifiers: ${artifact.name}`)
+    }
+    if (artifact.type !== "sql") {
+      addIssue("invalid-distribution-setup-artifact-type", `${path}.type`, "Distribution setup artifacts currently support sql only.")
+    }
+    await validateExistingFile(resolve(recipeDirectory, artifact.source), `${path}.source`, addIssue)
+  }
+
   for (const [index, artifact] of (distribution.artifacts ?? []).entries()) {
     if (!artifact.path || !isRelativeArtifactPath(artifact.path)) {
       addIssue("invalid-distribution-artifact", `$.distribution.artifacts[${index}].path`, "Distribution artifact paths must be relative artifact paths.")
@@ -785,6 +796,9 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
     commands.unshift("wordpress.run-php")
   }
   if ((recipe.inputs?.fixtureDatabases ?? []).length > 0 || workspaceRecipeRuntimeCollectedArtifacts(recipe).length > 0) {
+    commands.unshift("wordpress.run-php")
+  }
+  if ((recipe.distribution?.setupArtifacts ?? []).length > 0) {
     commands.unshift("wordpress.run-php")
   }
   // Auto-grant the evaluate capability when a browser-actions step opts into the

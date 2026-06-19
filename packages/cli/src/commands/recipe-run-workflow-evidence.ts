@@ -1,11 +1,14 @@
-import { type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
+import { resolve } from "node:path"
+import { type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { artifactManifestFilesByPath } from "./recipe-run-benchmark-artifacts.js"
 import { serializeRecipeRunError } from "./recipe-run-output.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe } from "./recipe-run-types.js"
 
 export function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string): RecipeExecutionResult {
   return {
@@ -208,6 +211,50 @@ export async function runDistributionStartupProbes(recipe: WorkspaceRecipe, runt
   return results
 }
 
+export async function runDistributionSetupArtifacts(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunDistributionSetupArtifact[]> {
+  const results: RecipeRunDistributionSetupArtifact[] = []
+  for (const [index, artifact] of (recipe.distribution?.setupArtifacts ?? []).entries()) {
+    const source = resolve(recipeDirectory, artifact.source)
+    const sql = await readFile(source, "utf8")
+    const execution = await executeDistributionSetupArtifact(runtime, artifact, sql, index)
+    executions.push(execution)
+    const applied = parseDistributionSetupArtifactResult(execution.stdout)
+    results.push(stripUndefined({
+      schema: "wp-codebox/distribution-setup-artifact-result/v1" as const,
+      index,
+      name: artifact.name,
+      type: artifact.type,
+      source,
+      action: "applied" as const,
+      command: execution.command,
+      args: execution.args,
+      exitCode: execution.exitCode,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      identity: {
+        name: artifact.name,
+        sourceSha256: createHash("sha256").update(sql).digest("hex"),
+      },
+      counts: applied.counts,
+      metadata: artifact.metadata,
+    }))
+  }
+  return results
+}
+
+async function executeDistributionSetupArtifact(runtime: Runtime, artifact: WorkspaceRecipeDistributionSetupArtifact, sql: string, index: number): Promise<RecipeExecutionResult> {
+  try {
+    const execution = await runtime.execute({
+      command: "wordpress.run-php",
+      args: [`code=${distributionSetupSqlArtifactCode(artifact, sql)}`],
+    })
+    return withRecipeExecutionPhase(execution, "setup", index, `distribution.setupArtifact:${artifact.name}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Distribution setup artifact "${artifact.name}" failed before producing a result: ${message}`, { cause: error })
+  }
+}
+
 export function distributionStartupProbeFailure(probes: RecipeRunDistributionStartupProbe[]): Error | undefined {
   const failed = probes.find((probe) => probe.status === "failed")
   return failed ? new Error(`Distribution startup probe "${failed.name}" failed with exit code ${failed.exitCode ?? "unknown"}.`) : undefined
@@ -245,6 +292,40 @@ function distributionStartupProbeExecutionSpec(probe: WorkspaceRecipeDistributio
     return { command: "wordpress.http-request", args: [`url=${probe.url ?? ""}`, probe.expectStatus === undefined ? undefined : `expect-status=${probe.expectStatus}`].filter((arg): arg is string => Boolean(arg)) }
   }
   return { command: "wordpress.browser-probe", args: [`url=${probe.url ?? ""}`] }
+}
+
+function parseDistributionSetupArtifactResult(stdout: string): { counts: Record<string, number> } {
+  const parsed = JSON.parse(stdout.trim() || "{}") as { counts?: Record<string, unknown> }
+  const counts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(parsed.counts ?? {})) {
+    if (typeof value === "number") {
+      counts[key] = value
+    }
+  }
+  return { counts }
+}
+
+function distributionSetupSqlArtifactCode(artifact: WorkspaceRecipeDistributionSetupArtifact, sql: string): string {
+  const encodedName = JSON.stringify(artifact.name)
+  const encodedSql = JSON.stringify(sql)
+  return `
+global $wpdb;
+$artifact_name = ${encodedName};
+$sql = ${encodedSql};
+$counts = array('statements' => 0);
+$statements = preg_split('/;\s*(?:\r?\n|$)/', $sql);
+foreach ($statements as $statement) {
+    $statement = trim($statement);
+    if ('' === $statement || str_starts_with($statement, '--')) {
+        continue;
+    }
+    $result = $wpdb->query($statement);
+    if (false === $result) {
+        throw new RuntimeException('Distribution setup artifact failed for ' . $artifact_name . ': ' . $wpdb->last_error);
+    }
+    $counts['statements']++;
+}
+echo wp_json_encode(array('counts' => $counts));`
 }
 
 function distributionStartupHttpProbeSkipped(probe: WorkspaceRecipeDistributionStartupProbe, index: number): RecipeRunDistributionStartupProbe {

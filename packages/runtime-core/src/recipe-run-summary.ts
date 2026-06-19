@@ -174,6 +174,15 @@ function normalizeRecipeRunArtifacts(result: Record<string, unknown>, agentTaskA
     }))
   }
 
+  for (const artifact of arrayObjects(result.distributionSetupArtifacts)) {
+    appendUniqueArtifact(artifacts, stripUndefined({
+      id: stringValue(artifact.name) || `distribution-setup-artifact-${numberValue(artifact.index) ?? artifacts.length + 1}`,
+      kind: "distribution-setup-artifact-result",
+      path: stringValue(artifact.source),
+      metadata: artifact,
+    }))
+  }
+
   for (const artifact of arrayObjects(result.declaredArtifacts)) {
     appendUniqueArtifact(artifacts, stripUndefined({
       id: stringValue(artifact.name) || stringValue(artifact.path),

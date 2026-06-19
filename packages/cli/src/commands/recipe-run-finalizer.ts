@@ -42,6 +42,7 @@ interface RecipeRunCommonOutputFields {
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
+  distributionSetupArtifacts?: RecipeRunOutput["distributionSetupArtifacts"]
   distributionStartupProbes?: RecipeRunOutput["distributionStartupProbes"]
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
@@ -98,6 +99,7 @@ export function completedRecipeOutputFields(args: {
   stagedFiles: RecipeRunStagedFile[]
   fixtureDatabases: RecipeRunFixtureDatabase[]
   siteSeeds: RecipeRunOutput["siteSeeds"]
+  distributionSetupArtifacts: NonNullable<RecipeRunOutput["distributionSetupArtifacts"]>
   distributionStartupProbes: NonNullable<RecipeRunOutput["distributionStartupProbes"]>
   probes: RecipeRunProbe[]
   declaredArtifacts: RecipeRunDeclaredArtifact[]
@@ -113,6 +115,7 @@ export function completedRecipeOutputFields(args: {
     stagedFiles: args.stagedFiles,
     fixtureDatabases: args.fixtureDatabases,
     siteSeeds: args.siteSeeds,
+    ...(args.distributionSetupArtifacts.length > 0 ? { distributionSetupArtifacts: args.distributionSetupArtifacts } : {}),
     ...(args.distributionStartupProbes.length > 0 ? { distributionStartupProbes: args.distributionStartupProbes } : {}),
     probes: args.probes,
     declaredArtifacts: args.declaredArtifacts,

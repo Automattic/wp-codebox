@@ -139,6 +139,13 @@ export interface WorkspaceRecipeDistributionStartupProbe {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeDistributionSetupArtifact {
+  name: string
+  type: "sql"
+  source: string
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeDistributionArtifact {
   path: string
   kind?: "logs" | "probe-results" | "fake-side-effects" | "runtime" | (string & {})
@@ -159,6 +166,7 @@ export interface WorkspaceRecipeDistribution {
   constants?: Record<string, string | number | boolean | null>
   serviceFakes?: WorkspaceRecipeDistributionServiceFake[]
   routeAliases?: WorkspaceRecipeDistributionRouteAlias[]
+  setupArtifacts?: WorkspaceRecipeDistributionSetupArtifact[]
   startupProbes?: WorkspaceRecipeDistributionStartupProbe[]
   artifacts?: WorkspaceRecipeDistributionArtifact[]
   safety?: WorkspaceRecipeDistributionSafety

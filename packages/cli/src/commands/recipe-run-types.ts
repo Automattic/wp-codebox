@@ -49,6 +49,7 @@ export interface RecipeRunOutput {
   stagedFiles?: RecipeRunStagedFile[]
   fixtureDatabases?: RecipeRunFixtureDatabase[]
   siteSeeds?: RecipeRunSiteSeed[]
+  distributionSetupArtifacts?: RecipeRunDistributionSetupArtifact[]
   distributionStartupProbes?: RecipeRunDistributionStartupProbe[]
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
@@ -150,7 +151,7 @@ export interface RecipeDiagnosticArtifactRef {
   sha256?: string
 }
 
-export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
+export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
 
 export interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"
@@ -223,6 +224,26 @@ export interface RecipeRunFixtureDatabase {
   identity: {
     name: string
     version: string
+    sourceSha256: string
+  }
+  counts?: Record<string, number>
+  metadata?: Record<string, unknown>
+}
+
+export interface RecipeRunDistributionSetupArtifact {
+  schema: "wp-codebox/distribution-setup-artifact-result/v1"
+  index: number
+  name: string
+  type: "sql"
+  source: string
+  action: "applied"
+  command: string
+  args: string[]
+  exitCode: number
+  stdout: string
+  stderr: string
+  identity: {
+    name: string
     sourceSha256: string
   }
   counts?: Record<string, number>

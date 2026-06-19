@@ -87,6 +87,7 @@ interface RecipeDryRunDistribution {
   constants: Record<string, string | number | boolean | null>
   serviceFakes: RecipeDryRunDistributionServiceFake[]
   routeAliases: NonNullable<WorkspaceRecipeDistribution["routeAliases"]>
+  setupArtifacts: Array<NonNullable<WorkspaceRecipeDistribution["setupArtifacts"]>[number] & { source: string; planned: "local-artifact" }>
   startupProbes: RecipeDryRunDistributionStartupProbe[]
   artifacts: NonNullable<WorkspaceRecipeDistribution["artifacts"]>
   safety: {
@@ -515,6 +516,11 @@ async function recipeDryRunDistribution(distribution: WorkspaceRecipeDistributio
       ...(fake.metadata ? { metadata: fake.metadata } : {}),
     })),
     routeAliases: distribution.routeAliases ?? [],
+    setupArtifacts: (distribution.setupArtifacts ?? []).map((artifact) => ({
+      ...artifact,
+      source: resolve(recipeDirectory, artifact.source),
+      planned: "local-artifact" as const,
+    })),
     startupProbes: (distribution.startupProbes ?? []).map(distributionStartupProbePlan),
     artifacts: distribution.artifacts ?? [],
     safety: {
