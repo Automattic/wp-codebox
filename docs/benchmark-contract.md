@@ -58,22 +58,26 @@ entry maps directly to a `rest-request` workload step and supports `method`,
 present, WP Codebox derives a `rest_<id>` prefix and then applies the normal
 metric-prefix sanitization.
 
+`capture-response` captures response metadata for benchmark evidence. WP Codebox
+records the UTF-8 byte length and a bounded JSON shape summary rather than the
+response body.
+
 ```json
 {
   "id": "rest-catalog",
   "source": "config",
   "route_matrix": [
     {
-      "id": "products-list",
+      "id": "items-list",
       "method": "GET",
-      "path": "/wc/v3/products",
+      "path": "/example/v1/items",
       "params": { "per_page": 10 },
       "capture-response": true
     },
     {
-      "id": "orders-list",
+      "id": "item-detail",
       "method": "GET",
-      "route": "/wc/v3/orders"
+      "route": "/example/v1/items/123"
     }
   ],
   "artifacts": {
@@ -92,6 +96,16 @@ persist, and how route-level metrics are scored. WP Codebox only executes the
 requests, records numeric timing/status metrics, carries declared scenario
 artifacts, and exposes the results through the normal benchmark summary and
 artifact extraction commands.
+
+When artifact collection is enabled, WP Codebox also materializes a bounded
+scenario artifact for route-matrix workloads at
+`files/bench/<component-id>/<scenario-id>-route-matrix-summary.json`. The artifact
+uses `wp-codebox/benchmark-route-matrix-summary/v1` and records one entry per
+route step with generic fields: route index/id, method, path/route,
+status, duration, and a redacted response summary. Captured response bodies are
+not persisted in this artifact; they are replaced with UTF-8 byte counts and a
+bounded JSON shape summary. The scenario receives a typed
+`benchmark-route-matrix-summary` artifact reference named `route-matrix-summary`.
 
 ## Result Shape
 

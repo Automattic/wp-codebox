@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { artifactManifestFile, createBenchResultsJsonSchema, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { Ajv2020 } from "ajv/dist/2020.js"
@@ -23,6 +23,28 @@ interface BenchmarkArtifactOutput {
 type BenchScenarioWithArtifactRefs = BenchResults["scenarios"][number] & {
   artifactRefs?: BenchmarkArtifactRef[]
   samples?: Array<{ artifacts?: unknown }>
+}
+
+interface RouteMatrixSummaryArtifact {
+  schema: "wp-codebox/benchmark-route-matrix-summary/v1"
+  componentId: string
+  scenarioId: string
+  routes: RouteMatrixStepSummary[]
+}
+
+interface RouteMatrixStepSummary {
+  index?: number
+  id?: string
+  method?: string
+  path?: string
+  route?: string
+  status?: number
+  duration_ms?: number
+  response?: {
+    redacted: true
+    bytes: number
+    shape: unknown
+  }
 }
 
 const benchResultsAjv = new Ajv2020({ strict: false })
@@ -136,7 +158,8 @@ function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][num
 }
 
 export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<void> {
-  const scenarios = benchResultsList.flatMap((result) => result.scenarios.map((scenario) => ({
+  const materializedBenchResultsList = await materializeRouteMatrixSummaryArtifacts(artifacts, benchResultsList)
+  const scenarios = materializedBenchResultsList.flatMap((result) => result.scenarios.map((scenario) => ({
     componentId: result.component_id,
     scenarioId: String(scenario.id ?? ""),
     source: typeof scenario.source === "string" ? scenario.source : undefined,
@@ -149,7 +172,7 @@ export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, 
       directory: artifacts.directory,
       contentDigest: artifacts.contentDigest,
     },
-    results: benchResultsList,
+    results: materializedBenchResultsList,
     scenarios,
   }
   const relativePath = "files/bench-results.json"
@@ -158,6 +181,163 @@ export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, 
   upsertArtifactManifestFiles(manifest, [artifactManifestFile(relativePath, "benchmark-results", "application/json")])
   await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+async function materializeRouteMatrixSummaryArtifacts(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<BenchResults[]> {
+  const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
+  const writes: Array<{ resultIndex: number; scenarioIndex: number; path: string; summary: RouteMatrixSummaryArtifact }> = []
+
+  benchResultsList.forEach((result, resultIndex) => {
+    const routeMatrixScenarioIds = routeMatrixWorkloadScenarioIds(result)
+    result.scenarios.forEach((scenario, scenarioIndex) => {
+      if (!routeMatrixScenarioIds.has(String(scenario.id ?? ""))) {
+        return
+      }
+      const routes = routeMatrixStepSummaries((scenario as BenchScenarioWithArtifactRefs).steps)
+      if (routes.length === 0) {
+        return
+      }
+      const scenarioId = String(scenario.id ?? "")
+      writes.push({
+        resultIndex,
+        scenarioIndex,
+        path: `files/bench/${safeArtifactSegment(result.component_id)}/${safeArtifactSegment(scenarioId)}-route-matrix-summary.json`,
+        summary: {
+          schema: "wp-codebox/benchmark-route-matrix-summary/v1",
+          componentId: result.component_id,
+          scenarioId,
+          routes,
+        },
+      })
+    })
+  })
+
+  if (writes.length === 0) {
+    return benchResultsList
+  }
+
+  await mkdir(join(artifacts.directory, "files", "bench"), { recursive: true })
+  for (const write of writes) {
+    const absolutePath = join(artifacts.directory, write.path)
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, `${JSON.stringify(write.summary, null, 2)}\n`)
+  }
+
+  upsertArtifactManifestFiles(manifest, writes.map((write) => artifactManifestFile(write.path, "benchmark-route-matrix-summary", "application/json", undefined, {
+    redaction: {
+      policy: "applied",
+      sensitive: false,
+      reason: "Route-matrix response bodies are replaced with bounded shape and byte metadata.",
+    },
+    provenance: {
+      source: "wordpress.bench",
+      operation: "materialize-route-matrix-summary",
+    },
+  })))
+  await refreshArtifactManifestFileSha256s(artifacts.directory, manifest)
+  await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  const manifestFiles = new Map((manifest.files ?? []).map((file) => [file.path, file]))
+
+  return benchResultsList.map((result, resultIndex) => ({
+    ...result,
+    scenarios: result.scenarios.map((scenario, scenarioIndex) => {
+      const write = writes.find((candidate) => candidate.resultIndex === resultIndex && candidate.scenarioIndex === scenarioIndex)
+      if (!write) {
+        return scenario
+      }
+      const ref = benchmarkArtifactRef(write.path, { source: "scenario-artifact", name: "route-matrix-summary", kind: "benchmark-route-matrix-summary", contentType: "application/json" }, manifestFiles)
+      const existingRefs = Array.isArray((scenario as BenchScenarioWithArtifactRefs).artifactRefs) ? (scenario as BenchScenarioWithArtifactRefs).artifactRefs ?? [] : []
+      return stripUndefined({
+        ...scenario,
+        steps: redactRouteMatrixStepResponses((scenario as BenchScenarioWithArtifactRefs).steps),
+        artifacts: {
+          ...(scenario.artifacts ?? {}),
+          "route-matrix-summary": ref,
+        },
+        artifactRefs: dedupeBenchmarkArtifactRefs([...existingRefs, ref]),
+      }) as BenchResults["scenarios"][number]
+    }),
+  }))
+}
+
+function redactRouteMatrixStepResponses(steps: unknown): unknown {
+  if (!Array.isArray(steps)) {
+    return steps
+  }
+  return steps.map((step) => {
+    if (!isRecord(step) || step.type !== "rest-request" || typeof step.route_matrix_index !== "number" || !Object.hasOwn(step, "response")) {
+      return step
+    }
+    return {
+      ...step,
+      response: redactedResponseSummary(step.response),
+    }
+  })
+}
+
+function routeMatrixWorkloadScenarioIds(result: BenchResults): Set<string> {
+  const workloads = isRecord(result.provenance.definition) && Array.isArray(result.provenance.definition.workloads) ? result.provenance.definition.workloads : []
+  return new Set(workloads
+    .filter((workload) => isRecord(workload) && Array.isArray(workload.route_matrix) && workload.route_matrix.length > 0 && typeof workload.id === "string" && workload.id.length > 0)
+    .map((workload) => String(workload.id)))
+}
+
+function routeMatrixStepSummaries(steps: unknown): RouteMatrixStepSummary[] {
+  if (!Array.isArray(steps)) {
+    return []
+  }
+  return steps
+    .filter((step): step is Record<string, unknown> => isRecord(step) && step.type === "rest-request" && typeof step.route_matrix_index === "number")
+    .map((step) => stripUndefined({
+      index: typeof step.route_matrix_index === "number" ? step.route_matrix_index : undefined,
+      id: typeof step.route_id === "string" ? step.route_id : undefined,
+      method: typeof step.method === "string" ? step.method : undefined,
+      path: typeof step.path === "string" ? step.path : undefined,
+      route: typeof step.route === "string" ? step.route : undefined,
+      status: typeof step.status === "number" ? step.status : undefined,
+      duration_ms: isRecord(step.timing) && typeof step.timing.duration_ms === "number" ? step.timing.duration_ms : undefined,
+      ...(Object.hasOwn(step, "response") ? { response: redactedResponseSummary(step.response) } : {}),
+    })) as RouteMatrixStepSummary[]
+}
+
+function redactedResponseSummary(response: unknown): RouteMatrixStepSummary["response"] {
+  if (isRecord(response) && response.redacted === true && typeof response.bytes === "number" && Object.hasOwn(response, "shape")) {
+    return response as RouteMatrixStepSummary["response"]
+  }
+  const serialized = JSON.stringify(response) ?? "null"
+  return {
+    redacted: true,
+    bytes: Buffer.byteLength(serialized, "utf8"),
+    shape: responseShape(response),
+  }
+}
+
+function responseShape(value: unknown, depth = 0): unknown {
+  if (value === null) {
+    return "null"
+  }
+  if (Array.isArray(value)) {
+    return { type: "array", length: value.length, items: value.length > 0 && depth < 3 ? responseShape(value[0], depth + 1) : undefined }
+  }
+  if (isRecord(value)) {
+    if (depth >= 3) {
+      return { type: "object", keys: Object.keys(value).sort() }
+    }
+    return {
+      type: "object",
+      keys: Object.fromEntries(Object.keys(value).sort().slice(0, 50).map((key) => [key, responseShape(value[key], depth + 1)])),
+    }
+  }
+  return typeof value
+}
+
+function safeArtifactSegment(value: string): string {
+  const safe = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+  return safe.length > 0 ? safe : "unknown"
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
 export async function artifactManifestFilesByPath(artifacts: ArtifactBundle): Promise<Map<string, ArtifactManifestFile>> {

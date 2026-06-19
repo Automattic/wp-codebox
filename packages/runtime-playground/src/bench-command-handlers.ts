@@ -234,6 +234,49 @@ function wp_codebox_bench_metric_prefix(array $step, string $fallback): string {
     return $prefix !== '' ? $prefix : $fallback;
 }
 
+function wp_codebox_bench_response_shape($value, int $depth = 0) {
+    if ($value === null) {
+        return 'null';
+    }
+    if (is_array($value)) {
+        if (array_is_list($value)) {
+            return array(
+                'type' => 'array',
+                'length' => count($value),
+                'items' => count($value) > 0 && $depth < 3 ? wp_codebox_bench_response_shape($value[0], $depth + 1) : null,
+            );
+        }
+        if ($depth >= 3) {
+            $keys = array_keys($value);
+            sort($keys, SORT_STRING);
+            return array('type' => 'object', 'keys' => $keys);
+        }
+        $keys = array_keys($value);
+        sort($keys, SORT_STRING);
+        $shape = array();
+        foreach (array_slice($keys, 0, 50) as $key) {
+            $shape[$key] = wp_codebox_bench_response_shape($value[$key], $depth + 1);
+        }
+        return array('type' => 'object', 'keys' => $shape);
+    }
+    if (is_bool($value)) {
+        return 'boolean';
+    }
+    if (is_int($value) || is_float($value)) {
+        return 'number';
+    }
+    return is_string($value) ? 'string' : gettype($value);
+}
+
+function wp_codebox_bench_redacted_response_summary($response): array {
+    $serialized = wp_json_encode($response, JSON_UNESCAPED_SLASHES);
+    return array(
+        'redacted' => true,
+        'bytes' => is_string($serialized) ? strlen($serialized) : 0,
+        'shape' => wp_codebox_bench_response_shape($response),
+    );
+}
+
 function wp_codebox_bench_command_step_record(array $step, string $type, float $duration_ms): array {
     $record = array(
         'schema' => 'wp-codebox/bench-command-step/v1',
@@ -332,8 +375,14 @@ function wp_codebox_bench_run_rest_request_step(array $step): array {
     $status = method_exists($response, 'get_status') ? (int) $response->get_status() : 0;
     $prefix = wp_codebox_bench_metric_prefix($step, 'rest');
     $record = array('method' => $method, 'path' => $path, 'route' => $route, 'status' => $status);
+    if (isset($step['id']) && is_scalar($step['id'])) {
+        $record['route_id'] = (string) $step['id'];
+    }
+    if (isset($step['metadata']) && is_array($step['metadata']) && isset($step['metadata']['route_matrix_index']) && is_numeric($step['metadata']['route_matrix_index'])) {
+        $record['route_matrix_index'] = (int) $step['metadata']['route_matrix_index'];
+    }
     if (!empty($step['capture-response'])) {
-        $record['response'] = rest_get_server()->response_to_data($response, false);
+        $record['response'] = wp_codebox_bench_redacted_response_summary(rest_get_server()->response_to_data($response, false));
     }
 
     return wp_codebox_bench_command_step_payload($execution, $prefix, array($prefix . '_status' => $status), $record);
