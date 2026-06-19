@@ -123,13 +123,20 @@ export interface BenchmarkDefinitionRestRouteMatrixEntry {
   metadata?: Record<string, unknown>
 }
 
+export interface BenchmarkDefinitionRestRequestCaseEntry extends BenchmarkDefinitionRestRouteMatrixEntry {
+  case_id?: string
+  caseId?: string
+}
+
 export interface BenchmarkDefinitionWorkload {
   id: string
   source?: BenchmarkScenarioSource
   file?: string
-  run?: BenchmarkDefinitionWorkloadStep[]
-  route_matrix?: BenchmarkDefinitionRestRouteMatrixEntry[]
-  artifacts?: Record<string, BenchmarkArtifactRef>
+	run?: BenchmarkDefinitionWorkloadStep[]
+	route_matrix?: BenchmarkDefinitionRestRouteMatrixEntry[]
+	rest_request_cases?: BenchmarkDefinitionRestRequestCaseEntry[]
+	request_cases?: BenchmarkDefinitionRestRequestCaseEntry[]
+	artifacts?: Record<string, BenchmarkArtifactRef>
   metadata?: Record<string, unknown>
 }
 
@@ -335,13 +342,15 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         id: { type: "string", minLength: 1 },
         source: { type: "string" },
         file: { type: "string" },
-        run: { type: "array", items: { $ref: "#/$defs/workloadStep" } },
-        route_matrix: { type: "array", items: { $ref: "#/$defs/restRouteMatrixEntry" } },
-        artifacts: { $ref: "#/$defs/artifactMap" },
+		run: { type: "array", items: { $ref: "#/$defs/workloadStep" } },
+		route_matrix: { type: "array", items: { $ref: "#/$defs/restRouteMatrixEntry" } },
+		rest_request_cases: { type: "array", items: { $ref: "#/$defs/restRequestCaseEntry" } },
+		request_cases: { type: "array", items: { $ref: "#/$defs/restRequestCaseEntry" } },
+		artifacts: { $ref: "#/$defs/artifactMap" },
         metadata: { type: "object", additionalProperties: true },
       },
     },
-    restRouteMatrixEntry: {
+	restRouteMatrixEntry: {
       type: "object",
       additionalProperties: false,
       properties: {
@@ -357,8 +366,28 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         "metric-prefix": { type: "string", minLength: 1 },
         metadata: { type: "object", additionalProperties: true },
       },
-      anyOf: [{ required: ["path"] }, { required: ["route"] }],
-    },
+		anyOf: [{ required: ["path"] }, { required: ["route"] }],
+	},
+	restRequestCaseEntry: {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			id: { type: "string", minLength: 1 },
+			case_id: { type: "string", minLength: 1 },
+			caseId: { type: "string", minLength: 1 },
+			method: { type: "string", minLength: 1 },
+			path: { type: "string", minLength: 1 },
+			route: { type: "string", minLength: 1 },
+			params: { type: "object", additionalProperties: true },
+			headers: { type: "object", additionalProperties: true },
+			body: true,
+			"body-json": true,
+			"capture-response": { type: "boolean" },
+			"metric-prefix": { type: "string", minLength: 1 },
+			metadata: { type: "object", additionalProperties: true },
+		},
+		anyOf: [{ required: ["path"] }, { required: ["route"] }],
+	},
     workloadStep: {
       type: "object",
       additionalProperties: true,
