@@ -66,6 +66,7 @@ export interface BrowserArtifactFiles {
   lifecycle?: string
   memory?: string
   network?: string
+  requestCoverage?: string
   waterfall?: string
   performance?: string
   review?: string
@@ -971,6 +972,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   lifecycle: { kind: "browser-lifecycle", contentType: "application/json", redact: true },
   memory: { kind: "browser-memory", contentType: "application/json", redact: true },
   network: { kind: "browser-network", contentType: "application/x-ndjson", redact: true },
+  requestCoverage: { kind: "browser-request-coverage", contentType: "application/json", redact: true },
   waterfall: { kind: "browser-waterfall", contentType: "application/json", redact: true },
   performance: { kind: "browser-performance", contentType: "application/json", redact: true },
   review: { kind: "browser-review", contentType: "application/json", redact: true },

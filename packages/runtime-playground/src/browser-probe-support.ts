@@ -29,6 +29,80 @@ export interface BrowserProbeScriptCheckpoint {
   timestamp: string
 }
 
+export interface BrowserRequestCoverageArtifact {
+  schema: "wp-codebox/browser-request-coverage/v1"
+  version: 1
+  capturedAt: string
+  startedAt: string
+  totals: {
+    requests: number
+    responses: number
+    failures: number
+    hosts: number
+    resourceTypes: number
+    methods: number
+    transferSizeBytes: number
+    responseBodySizeBytes: number
+  }
+  byHost: Record<string, BrowserProbeNetworkCountSummary>
+  byResourceType: Record<string, BrowserProbeNetworkCountSummary>
+  byMethod: Record<string, BrowserProbeNetworkCountSummary>
+  requests: Array<{
+    type: BrowserProbeNetworkRecord["type"]
+    method: string
+    url: string
+    host: string
+    resourceType?: string
+    status?: number
+    ok?: boolean
+    transferSize?: number
+    responseBodySize?: number
+    timestamp: string
+  }>
+}
+
+export function browserRequestCoverageArtifact(network: BrowserProbeNetworkRecord[], startedAt: string): BrowserRequestCoverageArtifact {
+  const byHost: Record<string, BrowserProbeNetworkCountSummary> = {}
+  const byResourceType: Record<string, BrowserProbeNetworkCountSummary> = {}
+  const byMethod: Record<string, BrowserProbeNetworkCountSummary> = {}
+  for (const record of network) {
+    addBrowserProbeNetworkCount(byHost, requestHost(record.url) || "unknown", record)
+    addBrowserProbeNetworkCount(byResourceType, record.resourceType || "unknown", record)
+    addBrowserProbeNetworkCount(byMethod, record.method || "GET", record)
+  }
+  return {
+    schema: "wp-codebox/browser-request-coverage/v1",
+    version: 1,
+    capturedAt: now(),
+    startedAt,
+    totals: {
+      requests: network.length,
+      responses: network.filter((record) => record.type === "response").length,
+      failures: network.filter((record) => record.type === "requestfailed").length,
+      hosts: Object.keys(byHost).length,
+      resourceTypes: Object.keys(byResourceType).length,
+      methods: Object.keys(byMethod).length,
+      transferSizeBytes: network.reduce((total, record) => total + finiteNumber(record.transferSize, 0), 0),
+      responseBodySizeBytes: network.reduce((total, record) => total + finiteNumber(record.responseBodySize, 0), 0),
+    },
+    byHost: sortBrowserProbeNetworkCounts(byHost),
+    byResourceType: sortBrowserProbeNetworkCounts(byResourceType),
+    byMethod: sortBrowserProbeNetworkCounts(byMethod),
+    requests: network.map((record) => ({
+      type: record.type,
+      method: record.method,
+      url: redactBrowserArtifactUrl(record.url),
+      host: requestHost(record.url) || "unknown",
+      resourceType: record.resourceType,
+      status: record.status,
+      ok: record.ok,
+      transferSize: record.transferSize,
+      responseBodySize: record.responseBodySize,
+      timestamp: record.timestamp,
+    })),
+  }
+}
+
 export function browserProbeWaterfallArtifact(network: BrowserProbeNetworkRecord[], startedAt: string): BrowserProbeWaterfallArtifact {
   return {
     schema: "wp-codebox/browser-waterfall/v1",

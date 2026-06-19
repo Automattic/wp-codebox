@@ -13,7 +13,7 @@ import { serializeBrowserError } from "./browser-metrics.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { runBrowserProbeCommand, type BrowserProbeRunPlan } from "./browser-probe-runner.js"
-import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
+import { browserActionTargetUrls, browserAuthRequest, browserProbeWaterfallArtifact, browserRedirectDiagnosticsArtifact, browserRequestCoverageArtifact, browserStorageStateAuthSummary, browserStorageStateImportFromArgs, browserWordPressDiagnosticsArtifact, createBrowserProbeProgressTracker, fileSha256, installBrowserWordPressDiagnostics, installWordPressAdminAuthCookies, livenessRemainingWallTimeMs, normalizeBrowserProbeScriptCheckpoint, type BrowserCommandProgressEvent, type BrowserStorageStateImport } from "./browser-probe-support.js"
 import { positiveIntegerArg } from "./command-args.js"
 import { argValue, commaListArg, durationArg, viewportArg } from "./commands.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -273,6 +273,7 @@ export async function runBrowserActionsCommand({
     }
     if (capture.has("network")) {
       await artifactSession.writeJsonLines("network", "network.jsonl", network)
+      await artifactSession.writeJson("requestCoverage", "request-coverage.json", browserRequestCoverageArtifact(network, startedAt))
       await artifactSession.writeJson("waterfall", "waterfall.json", browserProbeWaterfallArtifact(network, startedAt))
     }
 
@@ -312,9 +313,10 @@ export async function runBrowserActionsCommand({
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
         ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
-        ...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
-        ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
-        ...(capture.has("network") ? { waterfall: "files/browser/waterfall.json" } : {}),
+		...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
+		...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+		...(capture.has("network") ? { requestCoverage: "files/browser/request-coverage.json" } : {}),
+		...(capture.has("network") ? { waterfall: "files/browser/waterfall.json" } : {}),
         ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
