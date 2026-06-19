@@ -332,7 +332,7 @@ public static function open_or_create_browser_contained_site( array $input ): ar
 		}
 	}
 
-	if ( 'reload-required' === $action && empty( $input['fallback_create'] ) ) {
+	if ( empty( $input['fallback_create'] ) ) {
 		return array_filter(
 			array(
 				'success'         => false,
