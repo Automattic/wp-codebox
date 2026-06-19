@@ -1,5 +1,8 @@
 export const RUNTIME_PROFILE_SCHEMA = "wp-codebox/runtime-profile/v1" as const
 export const PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
+export const BROWSER_CONTAINED_SITE_STATUS_SCHEMA = "wp-codebox/browser-contained-site-status/v1" as const
+export const BROWSER_SESSION_PRODUCT_DTO_SCHEMA = "wp-codebox/browser-session-product-dto/v1" as const
+export const BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA = "wp-codebox/browser-preview-boot-config/v1" as const
 
 export type RuntimeProfileDependencyKind = "component" | "plugin" | "mu_plugin" | "theme" | "bootstrap" | "overlay" | (string & {})
 export type RuntimeProfileReadinessStatus = "ready" | "pending" | "blocked" | "missing" | "unknown" | (string & {})
@@ -83,6 +86,58 @@ export interface PreviewLease {
   metadata?: Record<string, unknown>
 }
 
+export type PreviewLeaseLifecycleStatus = "active" | "expired" | "released" | "unknown"
+
+export interface BrowserContainedSiteStatus {
+  schema: typeof BROWSER_CONTAINED_SITE_STATUS_SCHEMA
+  success: boolean
+  site_id: string
+  status: "recoverable" | "miss" | "expired" | "blocked" | "unknown" | (string & {})
+  source_digest: {
+    algorithm: "sha256" | (string & {})
+    value: string
+  }
+  prepared_runtime?: Record<string, unknown>
+  blueprint_ref?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export interface BrowserPreviewBootConfig {
+  schema: typeof BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA
+  session_id?: string
+  scope?: string
+  client_module_url?: string
+  remote_url?: string
+  cors_proxy_url?: string
+  blueprint_ref?: string
+  blueprint_ref_dto?: Record<string, unknown>
+  preview?: PreviewLease
+  contained_site?: Record<string, unknown>
+  artifacts?: Record<string, unknown>
+  provenance?: Record<string, unknown>
+}
+
+export interface BrowserSessionProductDto {
+  schema: typeof BROWSER_SESSION_PRODUCT_DTO_SCHEMA
+  source_schema?: string
+  success: boolean
+  status?: string
+  execution?: string
+  execution_scope?: string
+  permission_model?: string
+  session_id?: string
+  contained_site?: Record<string, unknown>
+  task?: string
+  target?: Record<string, unknown>
+  agent?: string
+  provider?: string
+  model?: string
+  preview_boot?: BrowserPreviewBootConfig
+  signals?: Record<string, unknown>
+  artifacts?: Record<string, unknown>
+  error?: Record<string, unknown>
+}
+
 export function runtimeProfile(input: unknown): RuntimeProfile {
   const value = requireObject(input, "Runtime profile") as Partial<RuntimeProfile>
   if (value.schema !== RUNTIME_PROFILE_SCHEMA) throw new Error(`Runtime profile schema must be ${RUNTIME_PROFILE_SCHEMA}.`)
@@ -125,6 +180,48 @@ export function previewLease(input: unknown): PreviewLease {
     throw new Error("Preview lease must include preview_public_url, site_url, or local_url.")
   }
   return lease
+}
+
+export function previewLeaseStatus(input: PreviewLease | unknown, now = new Date()): PreviewLeaseLifecycleStatus {
+  const lease = isPreviewLease(input) ? input : previewLease(input)
+  const declaredStatus = typeof lease.lease?.status === "string" ? lease.lease.status : ""
+  if (declaredStatus === "released") return "released"
+
+  const expiresAt = lease.lease?.expires_at
+  if (typeof expiresAt === "string" && expiresAt.trim() !== "") {
+    const expires = Date.parse(expiresAt)
+    if (!Number.isNaN(expires) && expires <= now.getTime()) return "expired"
+  }
+
+  if (declaredStatus === "active" || lease.preview_public_url || lease.site_url || lease.local_url) return "active"
+  if (declaredStatus === "expired") return "expired"
+  return "unknown"
+}
+
+export function isPreviewLease(input: unknown): input is PreviewLease {
+  return Boolean(input && typeof input === "object" && !Array.isArray(input) && (input as { schema?: unknown }).schema === PREVIEW_LEASE_SCHEMA)
+}
+
+export function browserContainedSiteStatus(input: unknown): BrowserContainedSiteStatus {
+  const value = requireObject(input, "Browser contained site status") as Partial<BrowserContainedSiteStatus>
+  if (value.schema !== BROWSER_CONTAINED_SITE_STATUS_SCHEMA) throw new Error(`Browser contained site status schema must be ${BROWSER_CONTAINED_SITE_STATUS_SCHEMA}.`)
+  const digest = requireObject(value.source_digest, "Browser contained site status source_digest") as { algorithm?: unknown; value?: unknown }
+  const digestValue = optionalString(digest.value, "source_digest.value")
+  if (!digestValue || !/^[a-f0-9]{64}$/.test(digestValue)) throw new Error("source_digest.value must be a 64-character sha256 digest.")
+
+  return {
+    schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
+    success: value.success === true,
+    site_id: requiredIdentifier(value.site_id, "site_id"),
+    status: requiredIdentifier(value.status, "status") as BrowserContainedSiteStatus["status"],
+    source_digest: {
+      algorithm: optionalString(digest.algorithm, "source_digest.algorithm") ?? "sha256",
+      value: digestValue,
+    },
+    prepared_runtime: normalizeOptionalObject(value.prepared_runtime, "prepared_runtime"),
+    blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "blueprint_ref"),
+    metadata: normalizeOptionalObject(value.metadata, "metadata"),
+  }
 }
 
 function normalizeDependencies(value: unknown, label: string, optional = false): RuntimeProfileDependency[] | undefined {

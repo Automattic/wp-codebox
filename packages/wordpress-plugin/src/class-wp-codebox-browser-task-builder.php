@@ -634,8 +634,43 @@ final class WP_Codebox_Browser_Task_Builder {
 		return self::preview_lease_from_session( $session );
 	}
 
+	/** @param array<string,mixed> $session Browser session or preview input. */
+	public static function preview_lease_status( array $session ): string {
+		$lease = self::preview_lease_from_session( $session );
+		$status = (string) ( $lease['lease']['status'] ?? '' );
+		if ( 'released' === $status ) {
+			return 'released';
+		}
+
+		$expires_at = (string) ( $lease['lease']['expires_at'] ?? '' );
+		if ( '' !== $expires_at ) {
+			$expires = strtotime( $expires_at );
+			if ( false !== $expires && $expires <= time() ) {
+				return 'expired';
+			}
+		}
+
+		if ( 'active' === $status || ! empty( $lease['preview_public_url'] ) || ! empty( $lease['site_url'] ) || ! empty( $lease['local_url'] ) ) {
+			return 'active';
+		}
+
+		return 'expired' === $status ? 'expired' : 'unknown';
+	}
+
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
 	private static function preview_lease_from_session( array $session ): array {
+		if ( 'wp-codebox/preview-lease/v1' === (string) ( $session['schema'] ?? '' ) ) {
+			return self::compact_public_value( $session );
+		}
+
+		if ( is_array( $session['preview_boot']['preview'] ?? null ) ) {
+			return self::compact_public_value( $session['preview_boot']['preview'] );
+		}
+
+		if ( is_array( $session['preview'] ?? null ) && 'wp-codebox/preview-lease/v1' === (string) ( $session['preview']['schema'] ?? '' ) ) {
+			return self::compact_public_value( $session['preview'] );
+		}
+
 		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
 		$lease      = is_array( $playground['lease'] ?? null ) ? $playground['lease'] : ( is_array( $session['preview_lease'] ?? null ) ? $session['preview_lease'] : array() );
 		$alignment  = is_array( $playground['alignment'] ?? null ) ? $playground['alignment'] : array( 'status' => 'unknown' );
@@ -924,6 +959,13 @@ if ( ! function_exists( 'wp_codebox_browser_preview_lease_dto' ) ) {
 	/** @param array<string,mixed> $input Browser session or preview input. @return array<string,mixed> */
 	function wp_codebox_browser_preview_lease_dto( array $input ): array {
 		return WP_Codebox_Browser_Task_Builder::preview_lease( $input );
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_browser_preview_lease_status' ) ) {
+	/** @param array<string,mixed> $input Browser session or preview input. */
+	function wp_codebox_browser_preview_lease_status( array $input ): string {
+		return WP_Codebox_Browser_Task_Builder::preview_lease_status( $input );
 	}
 }
 

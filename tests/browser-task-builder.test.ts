@@ -178,6 +178,7 @@ $product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto(
 	),
 	'artifacts' => array( 'preview_url' => '/?preview=1' ),
 ) );
+$preview_lease_status = WP_Codebox_Browser_Task_Builder::preview_lease_status( $product_session );
 
 $blueprint_ref = WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => 'runtime-cache-key', 'input_hash' => str_repeat( 'b', 64 ), 'status' => 'hit' ) );
 $GLOBALS['wp_codebox_test_transients']['wp_codebox_browser_prepared_runtime_' . substr( hash( 'sha256', 'runtime-cache-key:' . str_repeat( 'b', 64 ) ), 0, 24 )] = array(
@@ -217,7 +218,7 @@ $recipe_dto = WP_Codebox_Browser_Task_Builder::browser_recipe_dto( array(
 	),
 ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint, 'recipe_dto' => $recipe_dto ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'preview_lease_status' => $preview_lease_status, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint, 'recipe_dto' => $recipe_dto ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -289,6 +290,7 @@ assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydrator_abil
 assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
 assert.equal(result.product_session.preview_boot.preview.local_url, "/?preview=1")
+assert.equal(result.preview_lease_status, "active")
 assert.equal(JSON.stringify(result.product_session).includes("must-not-leak"), false)
 assert.equal(JSON.stringify(result.product_session).includes('"blueprint":'), false)
 assert.equal(result.blueprint_ref.schema, "wp-codebox/browser-blueprint-ref/v1")

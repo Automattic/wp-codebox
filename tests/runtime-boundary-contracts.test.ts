@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, previewLease, runtimeProfile } from "../packages/runtime-core/src/index.js"
+import { BROWSER_CONTAINED_SITE_STATUS_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteStatus, previewLease, previewLeaseStatus, runtimeProfile } from "../packages/runtime-core/src/index.js"
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
@@ -31,8 +31,21 @@ const lease = previewLease({
 
 assert.equal(lease.schema, "wp-codebox/preview-lease/v1")
 assert.equal(lease.alignment?.status, "aligned")
+assert.equal(previewLeaseStatus(lease), "active")
+assert.equal(previewLeaseStatus({ schema: PREVIEW_LEASE_SCHEMA, local_url: "http://127.0.0.1:8881", lease: { status: "active", expires_at: "2020-01-01T00:00:00.000Z" } }), "expired")
+
+const containedSiteStatus = browserContainedSiteStatus({
+  schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
+  success: true,
+  site_id: "site-1",
+  status: "recoverable",
+  source_digest: { algorithm: "sha256", value: "a".repeat(64) },
+})
+assert.equal(containedSiteStatus.schema, "wp-codebox/browser-contained-site-status/v1")
+assert.equal(containedSiteStatus.success, true)
 
 assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [{ kind: "component" }] }), /slug/)
 assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /preview_public_url/)
+assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable", source_digest: { value: "bad" } }), /source_digest/)
 
 console.log("runtime boundary contracts ok")
