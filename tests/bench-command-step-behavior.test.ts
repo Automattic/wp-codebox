@@ -30,6 +30,7 @@ const commandStepHelpers = [
   "wp_codebox_bench_command_step_record",
   "wp_codebox_bench_run_command_step",
   "wp_codebox_bench_command_step_payload",
+  "wp_codebox_bench_workload_run_steps",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
 const commandStepPayload = await withTempDir("wp-codebox-bench-step-", async (directory) => {
@@ -54,3 +55,30 @@ assert.equal(typeof commandStepPayload.steps[0].timing.duration_ms, "number")
 assert.equal(typeof commandStepPayload.metrics.ability_duration_ms, "number")
 assert.equal(commandStepPayload.metrics.custom_count, 2)
 assert.deepEqual(commandStepPayload.metadata, { called: "example/run" })
+
+const routeMatrixSteps = await withTempDir("wp-codebox-bench-route-matrix-", async (directory) => {
+  const phpTestFile = join(directory, "route-matrix.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${commandStepHelpers}
+$steps = wp_codebox_bench_workload_run_steps(array(
+    'id' => 'rest-catalog',
+    'route_matrix' => array(
+        array('id' => 'products-list', 'method' => 'GET', 'path' => '/wc/v3/products', 'params' => array('per_page' => 10)),
+        array('method' => 'GET', 'route' => '/wc/v3/orders'),
+    ),
+    'artifacts' => array('route-summary' => array('path' => 'bench/rest-route-summary.json', 'kind' => 'json')),
+));
+echo json_encode($steps, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<Array<{ type: string; path?: string; route?: string; method: string; "metric-prefix"?: string; metadata: { route_matrix_index: number } }>>(phpTestFile)
+})
+assert.equal(routeMatrixSteps.length, 2)
+assert.equal(routeMatrixSteps[0].type, "rest-request")
+assert.equal(routeMatrixSteps[0].path, "/wc/v3/products")
+assert.equal(routeMatrixSteps[0]["metric-prefix"], "rest_products-list")
+assert.deepEqual(routeMatrixSteps[0].metadata, { route_matrix_index: 0 })
+assert.equal(routeMatrixSteps[1].route, "/wc/v3/orders")
+assert.deepEqual(routeMatrixSteps[1].metadata, { route_matrix_index: 1 })
