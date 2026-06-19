@@ -60,13 +60,18 @@ assert.deepEqual(restCaseDefinition.anyOf, [{ required: ["path"] }, { required: 
 
 await withTempDir("wp-codebox-route-matrix-artifacts-", async (directory) => {
   await mkdir(join(directory, "files"), { recursive: true })
+  await mkdir(join(directory, "files", "browser"), { recursive: true })
+  await writeFile(join(directory, "files", "browser", "request-coverage.json"), JSON.stringify({
+    schema: "wp-codebox/browser-request-coverage/v1",
+    totals: { requests: 2 },
+  }))
   const manifestPath = join(directory, "manifest.json")
   await writeFile(manifestPath, JSON.stringify({
     id: "artifact-bundle",
     contentDigest: { algorithm: "sha256", inputs: [], value: "0".repeat(64) },
     createdAt: "2026-01-01T00:00:00.000Z",
     runtime: { id: "runtime", backend: "test" },
-    files: [],
+    files: [{ path: "files/browser/request-coverage.json", kind: "browser-request-coverage", contentType: "application/json" }],
   }))
   const result: BenchResults = {
     schema: "wp-codebox/bench-results/v1",
@@ -79,6 +84,23 @@ await withTempDir("wp-codebox-route-matrix-artifacts-", async (directory) => {
       iterations: 1,
       metrics: {},
       diagnostics: [],
+      artifacts: {
+        "db-inventory": {
+          schema: "wp-codebox/wordpress-db-inventory/v1",
+          tables: [{ name: "wp_posts", rowCount: 2, columns: [{ name: "ID", type: "bigint" }], indexes: [{ name: "PRIMARY", column: "ID", unique: true }] }],
+          totals: { tableCount: 1, rowCount: 2, columnCount: 1, indexCount: 1, totalBytes: 512 },
+        },
+        "external-http-guardrail": {
+          schema: "wp-codebox/wordpress-external-http-guardrail/v1",
+          summary: { event_count: 2, allowed_count: 1, blocked_count: 1, hosts: [{ host: "example.test", count: 2 }] },
+          events: [],
+        },
+        "rest-db-query-profile": {
+          schema: "wp-codebox/wordpress-rest-db-query-profile/v1",
+          summary: { case_count: 1, query_count: 1, total_time_ms: 2.5, sample_limit: 1, query_length_limit: 500 },
+          cases: [{ case_id: "items-search", method: "GET", path: "/example/v1/items", summary: { query_count: 1, total_time_ms: 2.5, operations: [{ operation: "SELECT", count: 1, time_ms: 2.5 }] }, samples: [{ sql: "SELECT * FROM wp_posts WHERE post_title = '?'", time_ms: 2.5, caller: "wpdb->get_results" }] }],
+        },
+      },
       steps: [{
         schema: "wp-codebox/bench-command-step/v1",
         type: "rest-request",
@@ -123,9 +145,42 @@ await withTempDir("wp-codebox-route-matrix-artifacts-", async (directory) => {
   assert.deepEqual(caseSummary.cases[0].response?.shape, { type: "object", keys: { id: "number", secret: "string" } })
   assert.doesNotMatch(JSON.stringify(caseSummary), /also not persisted/)
 
+  const dbInventory = JSON.parse(await readFile(join(directory, "files", "bench", "generic-api", "rest-catalog-db-inventory.json"), "utf8")) as { schema: string; inventory: { totals: { tableCount: number } } }
+  assert.equal(dbInventory.schema, "wp-codebox/benchmark-db-inventory/v1")
+  assert.equal(dbInventory.inventory.totals.tableCount, 1)
+
+  const externalHttpGuardrail = JSON.parse(await readFile(join(directory, "files", "bench", "generic-api", "rest-catalog-external-http-guardrail.json"), "utf8")) as { schema: string; guardrail: { summary: { blocked_count: number } } }
+  assert.equal(externalHttpGuardrail.schema, "wp-codebox/benchmark-external-http-guardrail/v1")
+  assert.equal(externalHttpGuardrail.guardrail.summary.blocked_count, 1)
+
+  const restDbQueryProfile = JSON.parse(await readFile(join(directory, "files", "bench", "generic-api", "rest-catalog-rest-db-query-profile.json"), "utf8")) as { schema: string; profile: { summary: { query_count: number } } }
+  assert.equal(restDbQueryProfile.schema, "wp-codebox/benchmark-rest-db-query-profile/v1")
+  assert.equal(restDbQueryProfile.profile.summary.query_count, 1)
+
   const benchArtifacts = JSON.parse(await readFile(join(directory, "files", "bench-results.json"), "utf8")) as { scenarios: Array<{ artifactRefs: Array<{ kind: string; name: string; path: string; contentType?: string; sha256?: string; source?: string }> }> }
   assert.doesNotMatch(JSON.stringify(benchArtifacts), /not persisted/)
   assert.deepEqual(benchArtifacts.scenarios[0].artifactRefs.map((ref) => ({ ...ref, sha256: "sha" })), [{
+    path: "files/bench/generic-api/rest-catalog-db-inventory.json",
+    kind: "benchmark-db-inventory",
+    contentType: "application/json",
+    sha256: "sha",
+    source: "scenario-artifact",
+    name: "db-inventory",
+  }, {
+    path: "files/bench/generic-api/rest-catalog-external-http-guardrail.json",
+    kind: "benchmark-external-http-guardrail",
+    contentType: "application/json",
+    sha256: "sha",
+    source: "scenario-artifact",
+    name: "external-http-guardrail",
+  }, {
+    path: "files/bench/generic-api/rest-catalog-rest-db-query-profile.json",
+    kind: "benchmark-rest-db-query-profile",
+    contentType: "application/json",
+    sha256: "sha",
+    source: "scenario-artifact",
+    name: "rest-db-query-profile",
+  }, {
     path: "files/bench/generic-api/rest-catalog-route-matrix-summary.json",
     kind: "benchmark-route-matrix-summary",
     contentType: "application/json",
@@ -139,6 +194,12 @@ await withTempDir("wp-codebox-route-matrix-artifacts-", async (directory) => {
     sha256: "sha",
     source: "scenario-artifact",
     name: "rest-request-case-summary",
+  }, {
+    path: "files/browser/request-coverage.json",
+    kind: "browser-request-coverage",
+    contentType: "application/json",
+    sha256: "sha",
+    source: "browser-artifact",
   }])
 })
 

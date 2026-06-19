@@ -39,6 +39,27 @@ interface RestRequestCaseSummaryArtifact {
   cases: RestRequestCaseStepSummary[]
 }
 
+interface DbInventoryBenchmarkArtifact {
+  schema: "wp-codebox/benchmark-db-inventory/v1"
+  componentId: string
+  scenarioId: string
+  inventory: unknown
+}
+
+interface ExternalHttpGuardrailBenchmarkArtifact {
+  schema: "wp-codebox/benchmark-external-http-guardrail/v1"
+  componentId: string
+  scenarioId: string
+  guardrail: unknown
+}
+
+interface RestDbQueryProfileBenchmarkArtifact {
+  schema: "wp-codebox/benchmark-rest-db-query-profile/v1"
+  componentId: string
+  scenarioId: string
+  profile: unknown
+}
+
 interface RouteMatrixStepSummary {
   index?: number
   id?: string
@@ -157,7 +178,7 @@ function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][num
     ...scenarioArtifactRefs(scenario.artifacts, manifestFiles, "scenario-artifact"),
     ...sampleArtifactRefs((scenario as BenchScenarioWithArtifactRefs).samples, manifestFiles),
     ...metricArtifactRefs(scenario.metrics, manifestFiles),
-    ...browserArtifactRefs(scenario.metrics, manifestFiles),
+    ...browserArtifactRefs(manifestFiles),
   ]
   const existingRefs = Array.isArray((scenario as BenchScenarioWithArtifactRefs).artifactRefs) ? (scenario as BenchScenarioWithArtifactRefs).artifactRefs ?? [] : []
   const dedupedRefs = dedupeBenchmarkArtifactRefs([...existingRefs, ...artifactRefs])
@@ -169,8 +190,13 @@ function enrichBenchScenarioArtifactRefs(scenario: BenchResults["scenarios"][num
 }
 
 export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<void> {
-  const materializedBenchResultsList = await materializeRouteMatrixSummaryArtifacts(artifacts, benchResultsList)
-  const scenarios = materializedBenchResultsList.flatMap((result) => result.scenarios.map((scenario) => ({
+  const materializedBenchResultsList = await materializeBenchmarkSummaryArtifacts(artifacts, benchResultsList)
+  const manifestFiles = await artifactManifestFilesByPath(artifacts)
+  const enrichedBenchResultsList = materializedBenchResultsList.map((result) => ({
+    ...result,
+    scenarios: result.scenarios.map((scenario) => enrichBenchScenarioArtifactRefs(scenario, manifestFiles)),
+  }))
+  const scenarios = enrichedBenchResultsList.flatMap((result) => result.scenarios.map((scenario) => ({
     componentId: result.component_id,
     scenarioId: String(scenario.id ?? ""),
     source: typeof scenario.source === "string" ? scenario.source : undefined,
@@ -183,7 +209,7 @@ export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, 
       directory: artifacts.directory,
       contentDigest: artifacts.contentDigest,
     },
-    results: materializedBenchResultsList,
+    results: enrichedBenchResultsList,
     scenarios,
   }
   const relativePath = "files/bench-results.json"
@@ -194,13 +220,67 @@ export async function writeBenchmarkArtifactEvidence(artifacts: ArtifactBundle, 
   await writeFile(artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-async function materializeRouteMatrixSummaryArtifacts(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<BenchResults[]> {
+async function materializeBenchmarkSummaryArtifacts(artifacts: ArtifactBundle, benchResultsList: BenchResults[]): Promise<BenchResults[]> {
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8")) as ArtifactManifest
-  const writes: Array<{ resultIndex: number; scenarioIndex: number; path: string; artifactName: string; kind: string; operation: string; summary: RouteMatrixSummaryArtifact | RestRequestCaseSummaryArtifact }> = []
+  const writes: Array<{ resultIndex: number; scenarioIndex: number; path: string; artifactName: string; kind: string; operation: string; summary: RouteMatrixSummaryArtifact | RestRequestCaseSummaryArtifact | DbInventoryBenchmarkArtifact | ExternalHttpGuardrailBenchmarkArtifact | RestDbQueryProfileBenchmarkArtifact }> = []
 
   benchResultsList.forEach((result, resultIndex) => {
     const routeMatrixScenarioIds = routeMatrixWorkloadScenarioIds(result)
     result.scenarios.forEach((scenario, scenarioIndex) => {
+      const dbInventory = isRecord(scenario.artifacts) && isRecord(scenario.artifacts["db-inventory"]) && scenario.artifacts["db-inventory"].schema === "wp-codebox/wordpress-db-inventory/v1" ? scenario.artifacts["db-inventory"] : undefined
+      if (dbInventory) {
+        const scenarioId = String(scenario.id ?? "")
+        writes.push({
+          resultIndex,
+          scenarioIndex,
+          path: `files/bench/${safeArtifactSegment(result.component_id)}/${safeArtifactSegment(scenarioId)}-db-inventory.json`,
+          artifactName: "db-inventory",
+          kind: "benchmark-db-inventory",
+          operation: "materialize-db-inventory",
+          summary: {
+            schema: "wp-codebox/benchmark-db-inventory/v1",
+            componentId: result.component_id,
+            scenarioId,
+            inventory: dbInventory,
+          },
+        })
+      }
+      const externalHttpGuardrail = isRecord(scenario.artifacts) && isRecord(scenario.artifacts["external-http-guardrail"]) && scenario.artifacts["external-http-guardrail"].schema === "wp-codebox/wordpress-external-http-guardrail/v1" ? scenario.artifacts["external-http-guardrail"] : undefined
+      if (externalHttpGuardrail) {
+        const scenarioId = String(scenario.id ?? "")
+        writes.push({
+          resultIndex,
+          scenarioIndex,
+          path: `files/bench/${safeArtifactSegment(result.component_id)}/${safeArtifactSegment(scenarioId)}-external-http-guardrail.json`,
+          artifactName: "external-http-guardrail",
+          kind: "benchmark-external-http-guardrail",
+          operation: "materialize-external-http-guardrail",
+          summary: {
+            schema: "wp-codebox/benchmark-external-http-guardrail/v1",
+            componentId: result.component_id,
+            scenarioId,
+            guardrail: externalHttpGuardrail,
+          },
+        })
+      }
+      const restDbQueryProfile = isRecord(scenario.artifacts) && isRecord(scenario.artifacts["rest-db-query-profile"]) && scenario.artifacts["rest-db-query-profile"].schema === "wp-codebox/wordpress-rest-db-query-profile/v1" ? scenario.artifacts["rest-db-query-profile"] : undefined
+      if (restDbQueryProfile) {
+        const scenarioId = String(scenario.id ?? "")
+        writes.push({
+          resultIndex,
+          scenarioIndex,
+          path: `files/bench/${safeArtifactSegment(result.component_id)}/${safeArtifactSegment(scenarioId)}-rest-db-query-profile.json`,
+          artifactName: "rest-db-query-profile",
+          kind: "benchmark-rest-db-query-profile",
+          operation: "materialize-rest-db-query-profile",
+          summary: {
+            schema: "wp-codebox/benchmark-rest-db-query-profile/v1",
+            componentId: result.component_id,
+            scenarioId,
+            profile: restDbQueryProfile,
+          },
+        })
+      }
       if (!routeMatrixScenarioIds.has(String(scenario.id ?? ""))) {
         return
       }
@@ -286,12 +366,13 @@ async function materializeRouteMatrixSummaryArtifacts(artifacts: ArtifactBundle,
       }
       const refs = scenarioWrites.map((write) => benchmarkArtifactRef(write.path, { source: "scenario-artifact", name: write.artifactName, kind: write.kind, contentType: "application/json" }, manifestFiles))
       const existingRefs = Array.isArray((scenario as BenchScenarioWithArtifactRefs).artifactRefs) ? (scenario as BenchScenarioWithArtifactRefs).artifactRefs ?? [] : []
+      const materializedArtifacts = Object.fromEntries(scenarioWrites.map((write, index) => [write.artifactName, refs[index]]))
       return stripUndefined({
         ...scenario,
         steps: redactRestStepResponses((scenario as BenchScenarioWithArtifactRefs).steps),
         artifacts: {
           ...(scenario.artifacts ?? {}),
-          ...Object.fromEntries(scenarioWrites.map((write, index) => [write.artifactName, refs[index]])),
+          ...materializedArtifacts,
         },
         artifactRefs: dedupeBenchmarkArtifactRefs([...existingRefs, ...refs]),
       }) as BenchResults["scenarios"][number]
@@ -459,11 +540,7 @@ function metricArtifactRefs(metrics: BenchResults["scenarios"][number]["metrics"
   return Object.keys(metrics).sort().map((metric) => benchmarkArtifactRef("files/bench-results.json", { source: "metric-source", metric, kind: "benchmark-results", contentType: "application/json" }, manifestFiles))
 }
 
-function browserArtifactRefs(metrics: BenchResults["scenarios"][number]["metrics"], manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
-  if (!metrics || !Object.keys(metrics).some((metric) => metric.startsWith("browser_"))) {
-    return []
-  }
-
+function browserArtifactRefs(manifestFiles: Map<string, ArtifactManifestFile>): BenchmarkArtifactRef[] {
   return [...manifestFiles.values()]
     .filter((file) => file.path.startsWith("files/browser/"))
     .map((file) => benchmarkArtifactRef(file.path, { source: "browser-artifact", kind: file.kind, contentType: file.contentType }, manifestFiles))

@@ -101,10 +101,17 @@ export interface BenchResults {
 
 export interface BenchmarkDefinitionWorkloadStep {
   type: "php" | "wp-cli" | "rest-request" | "ability" | (string & {})
+  action?: "install" | "collect" | "reset" | (string & {})
   code?: string
   file?: string
   command?: string
   parse?: "json" | (string & {})
+  allowlistDomains?: string[]
+  blockNetwork?: boolean
+  redactUrls?: boolean
+  blockResponse?: { code?: number; message?: string; body?: string }
+  sampleLimit?: number
+  queryLengthLimit?: number
   metadata?: Record<string, unknown>
   [key: string]: unknown
 }
@@ -398,6 +405,21 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         file: { type: "string" },
         command: { type: "string" },
         parse: { type: "string" },
+        action: { type: "string" },
+        allowlistDomains: { type: "array", items: { type: "string", minLength: 1 } },
+        blockNetwork: { type: "boolean" },
+        redactUrls: { type: "boolean" },
+        blockResponse: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            code: { type: "integer", minimum: 100, maximum: 599 },
+            message: { type: "string" },
+            body: { type: "string" },
+          },
+        },
+        sampleLimit: { type: "integer", minimum: 0 },
+        queryLengthLimit: { type: "integer", minimum: 80 },
         metadata: { type: "object", additionalProperties: true },
       },
     },
