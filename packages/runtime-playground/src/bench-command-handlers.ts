@@ -414,6 +414,87 @@ function wp_codebox_bench_run_ability_step(array $step): array {
     return wp_codebox_bench_command_step_payload($execution, wp_codebox_bench_metric_prefix($step, 'ability'), array(), array('name' => $ability_name));
 }
 
+function wp_codebox_bench_run_db_inventory_step(array $step): array {
+    global $wpdb;
+
+    if (!is_object($wpdb)) {
+        throw new RuntimeException('wordpress.bench db-inventory requires wpdb.');
+    }
+
+    $prefix = wp_codebox_bench_metric_prefix($step, 'db_inventory');
+    $include_columns = !array_key_exists('include-columns', $step) || !empty($step['include-columns']);
+    $include_indexes = !array_key_exists('include-indexes', $step) || !empty($step['include-indexes']);
+    $tables = array();
+    $table_status = $wpdb->get_results('SHOW TABLE STATUS', ARRAY_A);
+
+    foreach (is_array($table_status) ? $table_status : array() as $table) {
+        $name = isset($table['Name']) ? (string) $table['Name'] : '';
+        if ($name === '') {
+            continue;
+        }
+        $record = array(
+            'name' => $name,
+            'engine' => isset($table['Engine']) ? (string) $table['Engine'] : '',
+            'rowCount' => isset($table['Rows']) ? (int) $table['Rows'] : 0,
+            'dataBytes' => isset($table['Data_length']) ? (int) $table['Data_length'] : 0,
+            'indexBytes' => isset($table['Index_length']) ? (int) $table['Index_length'] : 0,
+        );
+        $record['totalBytes'] = $record['dataBytes'] + $record['indexBytes'];
+
+        if ($include_columns) {
+            $columns = $wpdb->get_results('SHOW FULL COLUMNS FROM \`' . str_replace('\`', '\`\`', $name) . '\`', ARRAY_A);
+            $record['columns'] = array_map(static fn($column) => array(
+                'name' => isset($column['Field']) ? (string) $column['Field'] : '',
+                'type' => isset($column['Type']) ? (string) $column['Type'] : '',
+                'nullable' => isset($column['Null']) ? $column['Null'] === 'YES' : null,
+                'key' => isset($column['Key']) ? (string) $column['Key'] : '',
+                'default' => $column['Default'] ?? null,
+                'extra' => isset($column['Extra']) ? (string) $column['Extra'] : '',
+            ), is_array($columns) ? $columns : array());
+        }
+
+        if ($include_indexes) {
+            $indexes = $wpdb->get_results('SHOW INDEX FROM \`' . str_replace('\`', '\`\`', $name) . '\`', ARRAY_A);
+            $record['indexes'] = array_map(static fn($index) => array(
+                'name' => isset($index['Key_name']) ? (string) $index['Key_name'] : '',
+                'column' => isset($index['Column_name']) ? (string) $index['Column_name'] : '',
+                'unique' => isset($index['Non_unique']) ? (int) $index['Non_unique'] === 0 : false,
+                'sequence' => isset($index['Seq_in_index']) ? (int) $index['Seq_in_index'] : 0,
+            ), is_array($indexes) ? $indexes : array());
+        }
+
+        $tables[] = $record;
+    }
+
+    usort($tables, static fn($left, $right) => strcmp($left['name'], $right['name']));
+    $column_count = array_sum(array_map(static fn($table) => isset($table['columns']) && is_array($table['columns']) ? count($table['columns']) : 0, $tables));
+    $index_count = array_sum(array_map(static fn($table) => isset($table['indexes']) && is_array($table['indexes']) ? count($table['indexes']) : 0, $tables));
+    $row_count = array_sum(array_map(static fn($table) => (int) ($table['rowCount'] ?? 0), $tables));
+    $total_bytes = array_sum(array_map(static fn($table) => (int) ($table['totalBytes'] ?? 0), $tables));
+    $inventory = array(
+        'schema' => 'wp-codebox/wordpress-db-inventory/v1',
+        'tables' => $tables,
+        'totals' => array(
+            'tableCount' => count($tables),
+            'rowCount' => $row_count,
+            'columnCount' => $column_count,
+            'indexCount' => $index_count,
+            'totalBytes' => $total_bytes,
+        ),
+    );
+
+    $execution = wp_codebox_bench_run_command_step($step, 'db-inventory', static fn(array $_step) => $inventory);
+    $payload = wp_codebox_bench_command_step_payload($execution, $prefix, array(
+        $prefix . '_tables_count' => count($tables),
+        $prefix . '_rows_count' => $row_count,
+        $prefix . '_columns_count' => $column_count,
+        $prefix . '_indexes_count' => $index_count,
+        $prefix . '_bytes' => $total_bytes,
+    ), array('tables' => count($tables), 'columns' => $column_count, 'indexes' => $index_count));
+    $payload['artifacts']['db-inventory'] = $inventory;
+    return $payload;
+}
+
 function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): array {
     global $wp_filter;
     $snapshot = array();
@@ -801,9 +882,11 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
             $result = wp_codebox_bench_run_ability_step($step);
         } elseif ($type === 'wp-cli') {
             $result = wp_codebox_bench_run_wp_cli_step($step);
-        } elseif ($type === 'rest-request' || $type === 'rest') {
-            $result = wp_codebox_bench_run_rest_request_step($step);
-        } else {
+		} elseif ($type === 'rest-request' || $type === 'rest') {
+			$result = wp_codebox_bench_run_rest_request_step($step);
+		} elseif ($type === 'db-inventory') {
+			$result = wp_codebox_bench_run_db_inventory_step($step);
+		} else {
             throw new RuntimeException('Unsupported bench workload step type: ' . $type);
         }
         if (is_array($result)) {
