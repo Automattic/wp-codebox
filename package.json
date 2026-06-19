@@ -71,6 +71,8 @@
     "test:runtime-episode-contracts": "tsx tests/runtime-episode-contracts.test.ts",
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",
+    "test:run-plan-executor": "tsx tests/run-plan-executor.test.ts",
+    "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:runtime-php-snippets": "tsx tests/runtime-php-snippets.test.ts",
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
