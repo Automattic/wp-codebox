@@ -663,8 +663,30 @@ if (did_action('rest_api_init')) {
     do_action('rest_api_init', rest_get_server());
 }
 
+function wp_codebox_bench_workload_run_steps(array $workload): array {
+    $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array();
+    $route_matrix = isset($workload['route_matrix']) && is_array($workload['route_matrix']) ? $workload['route_matrix'] : array();
+
+    foreach ($route_matrix as $index => $route) {
+        if (!is_array($route)) {
+            continue;
+        }
+        $step = array_merge($route, array('type' => 'rest-request'));
+        if (!isset($step['metric-prefix']) && isset($route['id']) && is_string($route['id'])) {
+            $step['metric-prefix'] = 'rest_' . $route['id'];
+        }
+        if (!isset($step['metadata']) || !is_array($step['metadata'])) {
+            $step['metadata'] = array();
+        }
+        $step['metadata'] = array_merge(array('route_matrix_index' => $index), $step['metadata']);
+        $steps[] = $step;
+    }
+
+    return !empty($steps) ? $steps : array($workload);
+}
+
 function wp_codebox_bench_run_configured_workload(array $workload, string $plugin_path) {
-    $steps = isset($workload['run']) && is_array($workload['run']) ? $workload['run'] : array($workload);
+    $steps = wp_codebox_bench_workload_run_steps($workload);
     $payload = array('metrics' => array(), 'metadata' => array(), 'artifacts' => array(), 'steps' => array(), 'diagnostics' => array());
     if (isset($workload['metadata']) && is_array($workload['metadata'])) {
         $payload['metadata'] = array_merge($payload['metadata'], $workload['metadata']);

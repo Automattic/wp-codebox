@@ -45,7 +45,53 @@ The command contract is intentionally broad enough for future workload types:
 - **PHP:** direct workload callables and inline configured workload steps.
 - **WP-CLI:** configured workload steps that execute in the same sandbox.
 - **Ability:** future ability-backed workload steps should still return generic numeric metrics and metadata.
+- **REST:** configured `rest-request` steps call `rest_do_request()` in-process. A configured workload may declare `route_matrix` as a compact list of REST routes; WP Codebox expands each route into the existing `rest-request` step type.
 - **Browser:** `wordpress.browser-probe` captures generic browser performance and memory artifacts. When a recipe runs browser probes before `wordpress.bench`, selected numeric `browser_*` metrics are promoted into each benchmark scenario while raw browser artifacts remain in the bundle.
+
+## REST Route Matrices
+
+Route-matrix workloads are for API profiling suites that want one benchmark
+scenario to cover a bounded set of REST routes without writing PHP glue. Each
+entry maps directly to a `rest-request` workload step and supports `method`,
+`path` or `route`, `params`, `headers`, `body`, `body-json`, `capture-response`,
+`metric-prefix`, and `metadata`. When `metric-prefix` is omitted and `id` is
+present, WP Codebox derives a `rest_<id>` prefix and then applies the normal
+metric-prefix sanitization.
+
+```json
+{
+  "id": "rest-catalog",
+  "source": "config",
+  "route_matrix": [
+    {
+      "id": "products-list",
+      "method": "GET",
+      "path": "/wc/v3/products",
+      "params": { "per_page": 10 },
+      "capture-response": true
+    },
+    {
+      "id": "orders-list",
+      "method": "GET",
+      "route": "/wc/v3/orders"
+    }
+  ],
+  "artifacts": {
+    "route-summary": {
+      "path": "bench/rest-route-summary.json",
+      "kind": "json",
+      "source": "scenario-artifact"
+    }
+  }
+}
+```
+
+The route-matrix contract is generic: callers decide which routes represent a
+product suite, how fixtures are installed, whether captured responses are safe to
+persist, and how route-level metrics are scored. WP Codebox only executes the
+requests, records numeric timing/status metrics, carries declared scenario
+artifacts, and exposes the results through the normal benchmark summary and
+artifact extraction commands.
 
 ## Result Shape
 

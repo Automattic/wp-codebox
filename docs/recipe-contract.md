@@ -192,6 +192,29 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+## REST Benchmark Workloads
+
+Recipes can pass REST profiling workloads to `wordpress.bench` with
+`workloads-json`. A workload may use `route_matrix` to declare a bounded set of
+REST requests; the runtime expands each route into the existing `rest-request`
+step and returns normal benchmark scenarios/artifacts.
+
+```json
+{
+  "command": "wordpress.bench",
+  "args": [
+    "plugin-slug=woocommerce",
+    "iterations=3",
+    "warmup-iterations=1",
+    "workloads-json=[{\"id\":\"rest-catalog\",\"source\":\"config\",\"route_matrix\":[{\"id\":\"products-list\",\"method\":\"GET\",\"path\":\"/wc/v3/products\",\"params\":{\"per_page\":10}}],\"artifacts\":{\"route-summary\":{\"path\":\"bench/rest-route-summary.json\",\"kind\":\"json\",\"source\":\"scenario-artifact\"}}}]"
+  ]
+}
+```
+
+Use site seeds, fixture databases, or staged files for product-specific data
+setup. Use `artifacts` on the workload for declared per-scenario outputs that
+downstream lab tooling should extract from `benchResults` or an artifact bundle.
+
 ## Fixture Imports And Bootstrap Declarations
 
 `inputs.siteSeeds` is the generic fixture import primitive. JSON fixture seeds

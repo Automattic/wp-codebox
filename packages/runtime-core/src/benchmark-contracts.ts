@@ -109,11 +109,26 @@ export interface BenchmarkDefinitionWorkloadStep {
   [key: string]: unknown
 }
 
+export interface BenchmarkDefinitionRestRouteMatrixEntry {
+  id?: string
+  method?: string
+  path?: string
+  route?: string
+  params?: Record<string, unknown>
+  headers?: Record<string, unknown>
+  body?: unknown
+  "body-json"?: unknown
+  "capture-response"?: boolean
+  "metric-prefix"?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface BenchmarkDefinitionWorkload {
   id: string
   source?: BenchmarkScenarioSource
   file?: string
   run?: BenchmarkDefinitionWorkloadStep[]
+  route_matrix?: BenchmarkDefinitionRestRouteMatrixEntry[]
   artifacts?: Record<string, BenchmarkArtifactRef>
   metadata?: Record<string, unknown>
 }
@@ -321,9 +336,28 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         source: { type: "string" },
         file: { type: "string" },
         run: { type: "array", items: { $ref: "#/$defs/workloadStep" } },
+        route_matrix: { type: "array", items: { $ref: "#/$defs/restRouteMatrixEntry" } },
         artifacts: { $ref: "#/$defs/artifactMap" },
         metadata: { type: "object", additionalProperties: true },
       },
+    },
+    restRouteMatrixEntry: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        id: { type: "string", minLength: 1 },
+        method: { type: "string", minLength: 1 },
+        path: { type: "string", minLength: 1 },
+        route: { type: "string", minLength: 1 },
+        params: { type: "object", additionalProperties: true },
+        headers: { type: "object", additionalProperties: true },
+        body: true,
+        "body-json": true,
+        "capture-response": { type: "boolean" },
+        "metric-prefix": { type: "string", minLength: 1 },
+        metadata: { type: "object", additionalProperties: true },
+      },
+      anyOf: [{ required: ["path"] }, { required: ["route"] }],
     },
     workloadStep: {
       type: "object",
