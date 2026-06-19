@@ -36,12 +36,12 @@ transport, task input, status, diagnostics, and evidence refs.
 {
   "goal": "Run the provider-owned bundle task.",
   "agent_bundles": [
-    { "source": "/path/to/site-generator-agent.json", "slug": "site-generator", "on_conflict": "upgrade" }
+    { "source": "/path/to/sample-agent.json", "slug": "sample-agent", "on_conflict": "upgrade" }
   ],
   "runtime_task": {
     "ability": "runtime/run-agent-bundle",
     "input": {
-      "source": "/wordpress/wp-content/wp-codebox-inputs/site-generator-agent.json",
+      "source": "/wordpress/wp-content/wp-codebox-inputs/sample-agent.json",
       "flow": "static-site-manual-flow",
       "wait_for_completion": true
     }

@@ -77,6 +77,38 @@ export interface RunPlanResultCounts {
   cancelled: number
 }
 
+export interface RunPlanWorkerExecution<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract> {
+  descriptor: RunPlanWorkerDescriptor<TWorker>
+  index: number
+}
+
+export interface RunPlanWorkerResult<TOutput = unknown> extends RunPlanChildResult {
+  workerId: string
+  output?: TOutput
+  error?: { code: string; message: string }
+  [key: string]: unknown
+}
+
+export type RunPlanWorkerResultLike = { workerId: string; success?: boolean; status?: string }
+
+export interface RunPlanWorkerAdapter<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike = RunPlanWorkerResult> {
+  run(execution: RunPlanWorkerExecution<TWorker>): Promise<TResult>
+}
+
+export interface RunPlanExecutorOptions<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike = RunPlanWorkerResult> extends RunPlanNormalizationOptions {
+  adapter: RunPlanWorkerAdapter<TWorker, TResult>
+  onWorkerStarted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, index: number) => Promise<void> | void
+  onWorkerCompleted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
+  onWorkerFailed?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
+}
+
+export interface RunPlanExecutorResult<TResult extends RunPlanWorkerResultLike = RunPlanWorkerResult> {
+  success: boolean
+  concurrency: number
+  counts: RunPlanResultCounts
+  workers: TResult[]
+}
+
 export function countRunPlanChildResults(results: RunPlanChildResult[]): RunPlanResultCounts {
   const completed = results.filter((result) => result.success === true).length
   const cancelled = results.filter((result) => result.status === "cancelled").length
@@ -91,6 +123,29 @@ export function countRunPlanChildResults(results: RunPlanChildResult[]): RunPlan
 
 export function runPlanSucceeded(counts: Pick<RunPlanResultCounts, "failed" | "cancelled">): boolean {
   return counts.failed === 0 && counts.cancelled === 0
+}
+
+export async function executeRunPlan<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(plan: Pick<RunPlanContract, "workers" | "concurrency">, options: RunPlanExecutorOptions<TWorker, TResult>): Promise<RunPlanExecutorResult<TResult>> {
+  const workers = normalizeRunPlanWorkerDescriptors(plan.workers as TWorker[], options)
+  const concurrency = normalizeRunPlanConcurrency(plan.concurrency, options)
+  const results = await runBoundedConcurrent(workers, concurrency, async (descriptor, index) => {
+    await options.onWorkerStarted?.(descriptor, index)
+    const result = await options.adapter.run({ descriptor, index })
+    if (result.success === true) {
+      await options.onWorkerCompleted?.(descriptor, result, index)
+    } else {
+      await options.onWorkerFailed?.(descriptor, result, index)
+    }
+    return result
+  })
+  const counts = countRunPlanChildResults(results)
+
+  return {
+    success: runPlanSucceeded(counts),
+    concurrency,
+    counts,
+    workers: results,
+  }
 }
 
 export function normalizeRunPlanConcurrency(value: unknown, options: Pick<RunPlanNormalizationOptions, "defaultConcurrency" | "maxConcurrency" | "concurrencyMode"> = {}): number {

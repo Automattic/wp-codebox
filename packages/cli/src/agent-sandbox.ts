@@ -210,12 +210,6 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
       case "--agents-api":
         options.components = [...(options.components ?? []), componentFromPath(value, "agents-api", undefined, "mu-plugin", "component")]
         break
-      case "--data-machine":
-        options.components = [...(options.components ?? []), componentFromPath(value, "data-machine", undefined, "mu-plugin", "component")]
-        break
-      case "--data-machine-code":
-        options.components = [...(options.components ?? []), componentFromPath(value, "data-machine-code", undefined, "mu-plugin", "component")]
-        break
       case "--provider-plugin":
         options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
         break

@@ -29,6 +29,13 @@ unless this index says otherwise.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
   shape without making benchmark scoring a core runtime concern.
 
+## Example Consumer Integration Notes
+
+- [Example consumer boundary contracts](./example-consumer-boundary-contracts.md)
+  documents runtime profile, preview lease, and browser session handoff seams for
+  host adapters. Named products in that note are examples only; the runtime
+  contracts remain caller-neutral.
+
 ## Audits And Historical Plans
 
 - [Browser runtime dependency audit](./browser-runtime-dependency-audit.md) is a

@@ -29,11 +29,18 @@ export async function runRunsArtifactsCommand(args: string[]): Promise<number> {
     schema: "wp-codebox/run-artifacts/v1",
     runId: record.runId,
     status: record.status,
+    result: record.result,
+    resultArtifacts: record.result?.artifacts ?? [],
+    resultRefs: record.result?.refs,
     artifactRefs: record.artifactRefs,
   }
   if (!options.json) {
     console.log(`WP Codebox run artifacts: ${record.runId}`)
     console.log(`Status: ${record.status}`)
+    if (record.result) {
+      console.log(`Result: ${record.result.status} (${record.result.success ? "succeeded" : "failed"})`)
+      console.log(`Result artifacts: ${record.result.artifacts.length}`)
+    }
     for (const artifact of record.artifactRefs) {
       console.log(`${artifact.kind}: ${artifact.directory ?? artifact.path ?? artifact.id ?? "unknown"}`)
     }
@@ -166,6 +173,9 @@ function printRunStatusHumanOutput(record: RuntimeRunRecord): void {
   console.log(`Cancellable: ${record.lifecycle.cancellable ? "yes" : "no"}`)
   console.log(`Cleanup: ${record.lifecycle.cleanup.status} (${record.lifecycle.cleanup.attempts} attempts)`)
   console.log(`Heartbeat: ${record.heartbeatAt}`)
+  if (record.result) {
+    console.log(`Result: ${record.result.status} (${record.result.success ? "succeeded" : "failed"})`)
+  }
   console.log(`Artifacts: ${record.artifactRefs.length}`)
   if (record.preview?.reviewerAccess?.openUrl) {
     console.log(`Preview: ${record.preview.reviewerAccess.openUrl} (${record.preview.reviewerAccess.status}, ${record.preview.reviewerAccess.mode})`)

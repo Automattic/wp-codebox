@@ -28,8 +28,8 @@
       ],
       "agent_bundles": [
         {
-          "source": "/tmp/site-generator-agent.json",
-          "slug": "site-generator",
+          "source": "/tmp/sample-agent.json",
+          "slug": "sample-agent",
           "on_conflict": "upgrade",
           "owner_id": 1,
           "import_principal": {
@@ -92,8 +92,8 @@
       ],
       "agent_bundles": [
         {
-          "source": "/tmp/site-generator-agent.json",
-          "slug": "site-generator",
+          "source": "/tmp/sample-agent.json",
+          "slug": "sample-agent",
           "on_conflict": "upgrade",
           "owner_id": 1,
           "import_principal": {

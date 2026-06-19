@@ -1015,13 +1015,12 @@ Boot a sandbox with caller-supplied runtime components mounted, then verify the 
 
 ```bash
 npm run wp-codebox -- agent-runtime-probe \
-  --component agents-api=../agents-api \
-  --component data-machine=../data-machine \
-  --component data-machine-code=../data-machine-code \
+  --component agent-runtime=../agent-runtime \
+  --component runtime-tools=../runtime-tools \
   --json
 ```
 
-Use `--component <slug>=<path>` for each runtime component your sandbox needs. The legacy `--agents-api`, `--data-machine`, and `--data-machine-code` flags remain accepted as compatibility aliases, but new automation should use `--component` so WP Codebox core stays portable across agent stacks.
+Use `--component <slug>=<path>` for each runtime component your sandbox needs. This is the neutral replacement for component-specific aliases; new automation should use `--component` so WP Codebox core stays portable across agent stacks.
 
 ### `agent-sandbox-run`
 
@@ -1029,9 +1028,8 @@ Run one natural-language task through a sandboxed agent stack.
 
 ```bash
 npm run wp-codebox -- agent-sandbox-run \
-  --component agents-api=../agents-api \
-  --component data-machine=../data-machine \
-  --component data-machine-code=../data-machine-code \
+  --component agent-runtime=../agent-runtime \
+  --component runtime-tools=../runtime-tools \
   --agent sandbox-agent \
   --task "Add a Dry Rub filter to the wing locations map" \
   --provider example-ai \
@@ -1056,9 +1054,8 @@ Run several task descriptions, one isolated sandbox per task, with bounded concu
 
 ```bash
 npm run wp-codebox -- agent-sandbox-batch \
-  --component agents-api=../agents-api \
-  --component data-machine=../data-machine \
-  --component data-machine-code=../data-machine-code \
+  --component agent-runtime=../agent-runtime \
+  --component runtime-tools=../runtime-tools \
   --task "Fix issue A" \
   --task "Investigate issue B" \
   --concurrency 2 \

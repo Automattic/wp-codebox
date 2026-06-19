@@ -3,11 +3,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 
 import type { ArtifactBundle, ArtifactPreview, RuntimeInfo } from "./runtime-contracts.js"
+import type { RecipeRunSummary } from "./recipe-run-summary.js"
 import { normalizeArtifactDigest } from "./artifact-references.js"
 import { stripUndefined } from "./object-utils.js"
 import { redactJsonValue } from "./redaction.js"
 
 export type RuntimeRunStatus = "queued" | "booting" | "running" | "collecting_artifacts" | "succeeded" | "failed" | "timed_out" | "cancelled"
+export const RUNTIME_RUN_RESULT_SCHEMA = "wp-codebox/runtime-run-result/v1" as const
 
 export type RuntimeRunLifecyclePhase = "pending" | "active" | "finalizing" | "terminal"
 export type RuntimeRunLifecycleOutcome = "succeeded" | "failed" | "timed_out" | "cancelled"
@@ -66,6 +68,17 @@ export interface RuntimeRunReplay {
   ref?: string
 }
 
+export interface RuntimeRunResult {
+  schema: typeof RUNTIME_RUN_RESULT_SCHEMA
+  kind: "recipe-run" | (string & {})
+  success: boolean
+  status: string
+  summary?: RecipeRunSummary
+  artifacts: RecipeRunSummary["artifacts"]
+  refs?: RecipeRunSummary["refs"]
+  metadata: Record<string, unknown>
+}
+
 export interface RuntimeRunRecord {
   schema: "wp-codebox/run-registry-entry/v1"
   runId: string
@@ -77,6 +90,7 @@ export interface RuntimeRunRecord {
   runtime?: RuntimeInfo
   preview?: ArtifactPreview
   metadata?: Record<string, unknown>
+  result?: RuntimeRunResult
   artifactRefs: RuntimeRunArtifactRef[]
   retention?: RuntimeRunRetention
   replay?: RuntimeRunReplay
@@ -93,6 +107,7 @@ export interface RuntimeRunRegistryCreateOptions {
   runtime?: RuntimeInfo
   preview?: ArtifactPreview
   metadata?: Record<string, unknown>
+  result?: RuntimeRunResult
   retention?: RuntimeRunRetention
   replay?: RuntimeRunReplay
   artifactRefs?: RuntimeRunArtifactRef[]
@@ -104,6 +119,7 @@ export interface RuntimeRunRegistryUpdate {
   runtime?: RuntimeInfo
   preview?: ArtifactPreview
   metadata?: Record<string, unknown>
+  result?: RuntimeRunResult
   retention?: RuntimeRunRetention
   replay?: RuntimeRunReplay
   artifactRefs?: RuntimeRunArtifactRef[]
@@ -166,6 +182,7 @@ export class RuntimeRunRegistry {
         runtime: options.runtime,
         preview: options.preview,
         metadata: sanitizeRunMetadata(options.metadata),
+        result: options.result,
         retention: options.retention,
         replay: options.replay,
       }),
@@ -191,6 +208,7 @@ export class RuntimeRunRegistry {
       ...(update.runtime ? { runtime: update.runtime } : {}),
       ...(update.preview ? { preview: update.preview } : {}),
       ...(update.metadata ? { metadata: sanitizeRunMetadata({ ...(current.metadata ?? {}), ...update.metadata }) } : {}),
+      ...(update.result ? { result: update.result } : {}),
       ...(update.retention ? { retention: update.retention } : {}),
       ...(update.replay ? { replay: update.replay } : {}),
       ...(update.artifactRefs ? { artifactRefs: update.artifactRefs } : {}),
@@ -356,6 +374,19 @@ export function artifactBundleRunRef(bundle: ArtifactBundle | undefined): Runtim
       digest: normalizeArtifactDigest(bundle.previewSessionEvidenceRef.sha256),
     })] : []),
   ]
+}
+
+export function runtimeRunResultFromRecipeSummary(summary: RecipeRunSummary): RuntimeRunResult {
+  return {
+    schema: RUNTIME_RUN_RESULT_SCHEMA,
+    kind: "recipe-run",
+    success: summary.success,
+    status: summary.status,
+    summary,
+    artifacts: summary.artifacts,
+    refs: summary.refs,
+    metadata: summary.metadata,
+  }
 }
 
 export function defaultRunRegistryDirectory(artifactsDirectory: string | undefined, cwd = process.cwd()): string {

@@ -11,6 +11,12 @@ class WP_Error {
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function sanitize_key( $value ) { return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $value ) ); }
 function wp_create_nonce( $action = -1 ) { return 'test-rest-nonce'; }
+function apply_filters( $tag, $value, ...$args ) {
+	if ( 'wp_codebox_browser_preview_boot_config' === $tag && ! empty( $GLOBALS['wp_codebox_test_strip_preview_boot_ref'] ) && is_array( $value ) ) {
+		unset( $value['blueprint_ref_dto'] );
+	}
+	return $value;
+}
 
 $GLOBALS['wp_codebox_test_transients'] = array();
 function get_transient( $key ) { return $GLOBALS['wp_codebox_test_transients'][ $key ] ?? false; }
@@ -85,8 +91,17 @@ $open_miss = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_cont
 	'site_id' => $cache_key,
 	'input_hash' => str_repeat( 'd', 64 ),
 ) );
+$GLOBALS['wp_codebox_test_strip_preview_boot_ref'] = true;
+$open_unbootable = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_contained_site( array(
+	'contained_site' => array(
+		'schema' => 'wp-codebox/browser-contained-site/v1',
+		'site_id' => $cache_key,
+		'source_digest' => array( 'algorithm' => 'sha256', 'value' => $input_hash ),
+		'recovery' => array( 'input' => array( 'cache_key' => $cache_key, 'input_hash' => $input_hash ) ),
+	),
+) );
 
-echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_unbootable' => $open_unbootable ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.hit.schema, "wp-codebox/browser-contained-site-status/v1")
@@ -132,6 +147,8 @@ assert.equal(result.open_hit.blueprint_ref.hydrator_ability, "wp-codebox/hydrate
 assert.equal(result.open_hit.blueprint_ref.hydration_endpoint.includes("/wp-codebox/v1/browser-blueprint-ref"), true)
 assert.equal(result.open_hit.preview_boot.schema, "wp-codebox/browser-preview-boot-config/v1")
 assert.equal(result.open_hit.preview_boot.blueprint_ref, `prepared:browser-site-proof:${"c".repeat(64)}`)
+assert.equal(result.open_hit.preview_boot.blueprint_ref_dto.ref, `prepared:browser-site-proof:${"c".repeat(64)}`)
+assert.equal(result.open_hit.preview_boot.blueprint_ref_dto.hydration_endpoint.includes("/wp-codebox/v1/browser-blueprint-ref"), true)
 assert.equal(result.open_hit.preview_boot.preview.preview_public_url, "https://preview.example.test")
 assert.equal(result.open_hit.preview_lease.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.open_hit.preview_lease.lease.status, "active")
@@ -149,5 +166,13 @@ assert.equal(result.open_miss.success, false)
 assert.equal(result.open_miss.status, "miss")
 assert.equal(result.open_miss.resolution.miss, true)
 assert.equal(result.open_miss.blueprint_ref, undefined)
+assert.equal(result.open_unbootable.success, false)
+assert.equal(result.open_unbootable.status, "unusable")
+assert.equal(result.open_unbootable.resolution.outcome, "unusable")
+assert.equal(result.open_unbootable.resolution.reused, false)
+assert.equal(result.open_unbootable.resolution.reason, "preview-boot-blueprint-ref-dto-missing")
+assert.equal(result.open_unbootable.contained_site.status, "unusable")
+assert.equal(result.open_unbootable.preview_boot.blueprint_ref, `prepared:browser-site-proof:${"c".repeat(64)}`)
+assert.equal(result.open_unbootable.preview_boot.blueprint_ref_dto, undefined)
 
 console.log("browser contained site status ok")

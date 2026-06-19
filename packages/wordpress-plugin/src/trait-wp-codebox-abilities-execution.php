@@ -180,11 +180,19 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 	$preview_boot   = WP_Codebox_Browser_Task_Builder::preview_boot_config( $session );
 	$preview_lease  = WP_Codebox_Browser_Task_Builder::preview_lease( $session );
 	$blueprint_ref  = is_array( $status['blueprint_ref'] ?? null ) ? $status['blueprint_ref'] : array();
+	$boot_contract  = true === ( $status['success'] ?? false ) ? WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract( $preview_boot, $blueprint_ref ) : array( 'valid' => false, 'reason' => '' );
 	$site_id        = (string) ( $status['site_id'] ?? $contained_site['site_id'] ?? $input['site_id'] ?? '' );
 	$session_id     = (string) ( $session['session']['id'] ?? '' );
 	$preview_id     = (string) ( $contained_site['preview_id'] ?? $input['preview_id'] ?? '' );
 	$scope          = (string) ( $preview_boot['scope'] ?? $contained_site['preview']['scope'] ?? '' );
 	$resolution     = is_array( $status['resolution'] ?? null ) ? $status['resolution'] : array();
+	$open_status    = (string) ( $status['status'] ?? 'miss' );
+	$open_success   = true === ( $status['success'] ?? false );
+	if ( $open_success && true !== ( $boot_contract['valid'] ?? false ) ) {
+		$open_success = false;
+		$open_status  = 'unusable';
+		$resolution   = self::browser_contained_site_resolution( $open_status, array( 'invalidation' => array( 'reason' => (string) ( $boot_contract['reason'] ?? 'preview-boot-contract-unusable' ) ) ) );
+	}
 
 	$opened_site = array_filter(
 		array_merge(
@@ -194,7 +202,7 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 				'site_id'          => $site_id,
 				'preview_id'       => $preview_id,
 				'session_id'       => $session_id,
-				'status'           => (string) ( $status['status'] ?? 'miss' ),
+				'status'           => $open_status,
 				'resolution'       => $resolution,
 				'persistence'      => 'browser-contained',
 				'source_digest'    => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
@@ -213,10 +221,10 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 
 	return array_filter(
 		array(
-			'success'       => true === ( $status['success'] ?? false ),
+			'success'       => $open_success,
 			'schema'        => 'wp-codebox/browser-contained-site-open/v1',
 			'site_id'       => $site_id,
-			'status'        => (string) ( $status['status'] ?? 'miss' ),
+			'status'        => $open_status,
 			'resolution'    => $resolution,
 			'contained_site' => $opened_site,
 			'source_digest' => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),

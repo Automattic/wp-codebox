@@ -4,8 +4,8 @@ require_once dirname(__DIR__, 2) . '/packages/wordpress-plugin/src/class-wp-code
 
 $plugins = array(
     'agents-api/agents-api.php',
-    'data-machine/data-machine.php',
-    'data-machine-code/data-machine-code.php',
+    'runtime-engine/runtime-engine.php',
+    'runtime-tools/runtime-tools.php',
 );
 
 $activation_results = array();
@@ -31,10 +31,8 @@ echo json_encode(
         'signals' => array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_chat_ability_available' => (new WP_Codebox_Agent_Runtime_Invoker())->is_agents_api_ready(),
-            'data_machine_version' => defined('DATAMACHINE_VERSION') ? DATAMACHINE_VERSION : null,
-            'data_machine_permission_helper' => class_exists('DataMachine\\Abilities\\PermissionHelper'),
-            'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
-            'data_machine_code_workspace' => class_exists('DataMachineCode\\Workspace\\Workspace'),
+            'runtime_engine_active' => is_plugin_active('runtime-engine/runtime-engine.php'),
+            'runtime_tools_active' => is_plugin_active('runtime-tools/runtime-tools.php'),
         ),
     ),
     JSON_PRETTY_PRINT

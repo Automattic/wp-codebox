@@ -8,6 +8,8 @@ const productionExtensions = new Set([".cjs", ".js", ".json", ".jsx", ".mjs", ".
 const forbiddenTerms = [
   /datamachine/i,
   /data machine/i,
+  /data-machine/i,
+  /data-machine-code/i,
   /homeboy/i,
   /\bwpsg\b/i,
   /wp-site-generator/i,

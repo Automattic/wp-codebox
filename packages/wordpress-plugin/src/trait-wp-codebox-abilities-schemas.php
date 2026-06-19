@@ -446,7 +446,7 @@ private static function browser_contained_site_schema(): array {
 			'preview_id'    => array( 'type' => 'string' ),
 			'session_id'    => array( 'type' => 'string' ),
 			'caller_id'     => array( 'type' => 'string' ),
-			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable_prepared_runtime', 'current', 'live', 'materialized', 'miss', 'disabled', 'incompatible' ) ),
+			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable_prepared_runtime', 'current', 'live', 'materialized', 'miss', 'disabled', 'incompatible', 'unusable' ) ),
 			'resolution'    => array( 'type' => 'object' ),
 			'persistence'   => array( 'type' => 'string', 'enum' => array( 'browser-contained' ) ),
 			'artifact_seed' => array( 'type' => 'string' ),
