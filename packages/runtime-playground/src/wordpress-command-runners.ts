@@ -22,6 +22,8 @@ import {
   phpunitRunCode,
   PLUGIN_PHPUNIT_RESULT_FILE,
   positiveIntegerArg,
+  httpRequestInputFromArgs,
+  runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
   themeCheckRunCode,
@@ -318,6 +320,16 @@ export async function runRestRequestCommand({
   const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-request", response)
   return response.text
+}
+
+export async function runHttpRequestCommand({
+  baseUrl,
+  spec,
+}: {
+  baseUrl: string
+  spec: ExecutionSpec
+}): Promise<string> {
+  return runHttpRequest(httpRequestInputFromArgs(spec.args ?? []), baseUrl)
 }
 
 export async function runBenchCommand({
