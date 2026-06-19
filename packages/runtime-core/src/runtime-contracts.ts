@@ -3,6 +3,7 @@ import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactSpec, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
+import type { BackendNeutralRuntimeProvenance, RuntimeWordPressAssetSpec, RuntimeWordPressEnvironmentSpec, RuntimeWordPressInstallModeContract, RuntimeWordPressProvenance } from "./runtime-neutral-contracts.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -14,22 +15,11 @@ export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 
 export type SandboxWorkspaceMode = "repo-backed" | "site-backed"
 
-export interface EnvironmentSpec {
-  kind: string
-  name?: string
-  blueprint?: unknown
-  version?: string
-  phpVersion?: string
-  assets?: RuntimeAssetSpec
-  wordpressInstallMode?: RuntimeWordPressInstallMode
-}
+export interface EnvironmentSpec extends RuntimeWordPressEnvironmentSpec {}
 
-export type RuntimeWordPressInstallMode = "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
+export type RuntimeWordPressInstallMode = RuntimeWordPressInstallModeContract
 
-export interface RuntimeAssetSpec {
-  wordpressDirectory?: string
-  wordpressZip?: string
-}
+export interface RuntimeAssetSpec extends RuntimeWordPressAssetSpec {}
 
 export interface RuntimeCreateSpec {
   backend: RuntimeBackendKind
@@ -709,12 +699,7 @@ export interface ArtifactProvenance {
   task?: Record<string, unknown>
   workspace?: SandboxWorkspaceContract
   packages?: ArtifactPackageProvenance
-  runtime: {
-    backend: RuntimeBackendKind
-    version?: string
-    wordpressVersion?: string
-    backendPackage?: Record<string, unknown>
-  }
+  runtime: RuntimeWordPressProvenance
   agent?: Record<string, unknown>
   mounts: Array<{
     type: MountSpec["type"]
@@ -739,6 +724,10 @@ export interface ArtifactPackageProvenance {
     phpVersion?: string
     nodeVersion?: string
   }
+}
+
+export interface BackendNeutralArtifactProvenance extends Omit<ArtifactProvenance, "runtime"> {
+  runtime: BackendNeutralRuntimeProvenance
 }
 
 export interface ArtifactPackageIdentity {
