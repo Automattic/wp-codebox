@@ -396,6 +396,149 @@ function wp_codebox_bench_run_rest_request_step(array $step): array {
     return wp_codebox_bench_command_step_payload($execution, $prefix, array($prefix . '_status' => $status), $record);
 }
 
+function wp_codebox_bench_redact_sql_query(string $sql, int $limit = 500): string {
+    $redacted = preg_replace("/'(?:''|[^'])*'/", "'?'", $sql);
+    $redacted = preg_replace('/\\b\\d+(?:\\.\\d+)?\\b/', '?', is_string($redacted) ? $redacted : $sql);
+    $redacted = preg_replace('/\\s+/', ' ', is_string($redacted) ? $redacted : $sql);
+    $redacted = trim((string) $redacted);
+    return strlen($redacted) > $limit ? substr($redacted, 0, $limit) . '...' : $redacted;
+}
+
+function wp_codebox_bench_rest_db_query_profile_summary(array $queries): array {
+    $total_time = 0.0;
+    $by_operation = array();
+    foreach ($queries as $query) {
+        $sql = isset($query[0]) ? (string) $query[0] : '';
+        $duration = isset($query[1]) && is_numeric($query[1]) ? (float) $query[1] : 0.0;
+        $total_time += $duration;
+        $operation = strtoupper(strtok(ltrim($sql), " \t\n\r") ?: 'UNKNOWN');
+        if (!isset($by_operation[$operation])) {
+            $by_operation[$operation] = array('operation' => $operation, 'count' => 0, 'time_ms' => 0.0);
+        }
+        ++$by_operation[$operation]['count'];
+        $by_operation[$operation]['time_ms'] += $duration * 1000;
+    }
+    $operations = array_values($by_operation);
+    usort($operations, static fn(array $left, array $right): int => ($right['count'] <=> $left['count']) ?: strcmp($left['operation'], $right['operation']));
+    return array('query_count' => count($queries), 'total_time_ms' => $total_time * 1000, 'operations' => $operations);
+}
+
+function wp_codebox_bench_rest_db_query_profile_case_step(array $request_case, int $index): array {
+    $step = array_merge($request_case, array('type' => 'rest-request'));
+    if (!isset($step['path']) && isset($request_case['route'])) {
+        $step['path'] = $request_case['route'];
+    }
+    if (!isset($step['metadata']) || !is_array($step['metadata'])) {
+        $step['metadata'] = array();
+    }
+    $step['metadata'] = array_merge(array('rest_request_case_index' => $index), $step['metadata']);
+    if (!isset($step['case_id']) && isset($request_case['id']) && is_scalar($request_case['id'])) {
+        $step['case_id'] = (string) $request_case['id'];
+    }
+    if (!isset($step['metric-prefix'])) {
+        $case_id = isset($step['case_id']) && is_string($step['case_id']) ? $step['case_id'] : 'case_' . $index;
+        $step['metric-prefix'] = 'rest_profile_' . preg_replace('/[^A-Za-z0-9_]+/', '_', $case_id);
+    }
+    return $step;
+}
+
+function wp_codebox_bench_run_rest_db_query_profiler_step(array $step): array {
+    global $wpdb;
+
+    if (!is_object($wpdb)) {
+        throw new RuntimeException('wordpress.bench rest-db-query-profiler requires wpdb.');
+    }
+    if (!class_exists('WP_REST_Request') || !function_exists('rest_do_request')) {
+        throw new RuntimeException('The WordPress REST API is not available in this runtime.');
+    }
+    if (!defined('SAVEQUERIES')) {
+        define('SAVEQUERIES', true);
+    }
+
+    $prefix = wp_codebox_bench_metric_prefix($step, 'rest_db_query_profile');
+    $sample_limit = isset($step['sampleLimit']) && is_numeric($step['sampleLimit']) ? max(0, (int) $step['sampleLimit']) : 50;
+    $query_length_limit = isset($step['queryLengthLimit']) && is_numeric($step['queryLengthLimit']) ? max(80, (int) $step['queryLengthLimit']) : 500;
+    $request_cases = isset($step['rest_request_cases']) && is_array($step['rest_request_cases']) ? $step['rest_request_cases'] : array();
+    if (empty($request_cases) && isset($step['request_cases']) && is_array($step['request_cases'])) {
+        $request_cases = $step['request_cases'];
+    }
+    if (empty($request_cases)) {
+        $request_cases = array($step);
+    }
+
+    $previous_save_queries = property_exists($wpdb, 'save_queries') ? $wpdb->save_queries : null;
+    $wpdb->save_queries = true;
+    $case_profiles = array();
+    $steps = array();
+    $total_queries = 0;
+    $total_time_ms = 0.0;
+    $profile_started = hrtime(true);
+
+    try {
+        foreach ($request_cases as $index => $request_case) {
+            if (!is_array($request_case)) {
+                continue;
+            }
+            $case_step = wp_codebox_bench_rest_db_query_profile_case_step($request_case, $index);
+            $before = is_array($wpdb->queries ?? null) ? count($wpdb->queries) : 0;
+            $payload = wp_codebox_bench_run_rest_request_step($case_step);
+            $after_queries = is_array($wpdb->queries ?? null) ? array_slice($wpdb->queries, $before) : array();
+            $summary = wp_codebox_bench_rest_db_query_profile_summary($after_queries);
+            $samples = array();
+            foreach (array_slice($after_queries, 0, $sample_limit) as $query) {
+                $samples[] = array(
+                    'sql' => wp_codebox_bench_redact_sql_query(isset($query[0]) ? (string) $query[0] : '', $query_length_limit),
+                    'time_ms' => isset($query[1]) && is_numeric($query[1]) ? (float) $query[1] * 1000 : 0.0,
+                    'caller' => isset($query[2]) ? wp_codebox_bench_redact_sql_query((string) $query[2], $query_length_limit) : '',
+                );
+            }
+            $case_id = isset($case_step['case_id']) ? (string) $case_step['case_id'] : 'case-' . $index;
+            $case_profiles[] = array(
+                'case_id' => $case_id,
+                'method' => isset($case_step['method']) ? strtoupper((string) $case_step['method']) : 'GET',
+                'path' => isset($case_step['path']) ? (string) $case_step['path'] : (isset($case_step['route']) ? (string) $case_step['route'] : ''),
+                'summary' => $summary,
+                'samples' => $samples,
+            );
+            $total_queries += (int) $summary['query_count'];
+            $total_time_ms += (float) $summary['total_time_ms'];
+            if (isset($payload['steps']) && is_array($payload['steps'])) {
+                $steps = array_merge($steps, $payload['steps']);
+            }
+        }
+    } finally {
+        if ($previous_save_queries !== null) {
+            $wpdb->save_queries = $previous_save_queries;
+        }
+    }
+
+    $artifact = array(
+        'schema' => 'wp-codebox/wordpress-rest-db-query-profile/v1',
+        'summary' => array(
+            'case_count' => count($case_profiles),
+            'query_count' => $total_queries,
+            'total_time_ms' => $total_time_ms,
+            'sample_limit' => $sample_limit,
+            'query_length_limit' => $query_length_limit,
+        ),
+        'cases' => $case_profiles,
+    );
+    $duration_ms = (hrtime(true) - $profile_started) / 1000000;
+    $execution = array(
+        'result' => $artifact,
+        'duration_ms' => $duration_ms,
+        'record' => wp_codebox_bench_command_step_record($step, 'rest-db-query-profiler', $duration_ms),
+    );
+    $payload = wp_codebox_bench_command_step_payload($execution, $prefix, array(
+        $prefix . '_cases_count' => count($case_profiles),
+        $prefix . '_queries_count' => $total_queries,
+        $prefix . '_query_time_ms' => $total_time_ms,
+    ), array('cases' => count($case_profiles), 'queries' => $total_queries));
+    $payload['artifacts']['rest-db-query-profile'] = $artifact;
+    $payload['steps'] = array_merge($payload['steps'], $steps);
+    return $payload;
+}
+
 function wp_codebox_bench_run_ability_step(array $step): array {
     if (!function_exists('wp_get_ability')) {
         throw new RuntimeException('The WordPress Abilities API is not available in this runtime.');
@@ -493,6 +636,204 @@ function wp_codebox_bench_run_db_inventory_step(array $step): array {
     ), array('tables' => count($tables), 'columns' => $column_count, 'indexes' => $index_count));
     $payload['artifacts']['db-inventory'] = $inventory;
     return $payload;
+}
+
+function wp_codebox_bench_external_http_guardrail_state(): array {
+    if (!isset($GLOBALS['wp_codebox_external_http_guardrail']) || !is_array($GLOBALS['wp_codebox_external_http_guardrail'])) {
+        $GLOBALS['wp_codebox_external_http_guardrail'] = array(
+            'installed' => false,
+            'events' => array(),
+            'policy' => array(
+                'allowlistDomains' => array(),
+                'blockNetwork' => false,
+                'redactUrls' => true,
+                'blockResponse' => array('code' => 599, 'message' => 'External HTTP blocked by WP Codebox guardrail', 'body' => ''),
+            ),
+        );
+    }
+    return $GLOBALS['wp_codebox_external_http_guardrail'];
+}
+
+function wp_codebox_bench_normalize_external_http_guardrail_policy(array $step): array {
+    $allowlist = array();
+    foreach (is_array($step['allowlistDomains'] ?? null) ? $step['allowlistDomains'] : array() as $domain) {
+        if (is_string($domain) && trim($domain) !== '') {
+            $allowlist[] = strtolower(trim($domain, " \t\n\r\0\x0B."));
+        }
+    }
+    $allowlist = array_values(array_unique($allowlist));
+    $block_response = is_array($step['blockResponse'] ?? null) ? $step['blockResponse'] : array();
+    $code = isset($block_response['code']) && is_numeric($block_response['code']) ? (int) $block_response['code'] : 599;
+    if ($code < 100 || $code > 599) {
+        $code = 599;
+    }
+    return array(
+        'allowlistDomains' => $allowlist,
+        'blockNetwork' => array_key_exists('blockNetwork', $step) ? (bool) $step['blockNetwork'] : !empty($allowlist),
+        'redactUrls' => !array_key_exists('redactUrls', $step) || (bool) $step['redactUrls'],
+        'blockResponse' => array(
+            'code' => $code,
+            'message' => isset($block_response['message']) && is_string($block_response['message']) ? $block_response['message'] : 'External HTTP blocked by WP Codebox guardrail',
+            'body' => isset($block_response['body']) && is_string($block_response['body']) ? $block_response['body'] : '',
+        ),
+    );
+}
+
+function wp_codebox_bench_external_http_guardrail_redact_url(string $url): string {
+    $parts = wp_parse_url($url);
+    if (!is_array($parts) || empty($parts['host'])) {
+        return preg_replace('/([?&][^=&#]+)=([^&#]*)/', '$1=redacted', preg_replace('/#.*/', '', $url));
+    }
+    $redacted = ($parts['scheme'] ?? 'http') . '://';
+    if (!empty($parts['user'])) {
+        $redacted .= 'redacted@';
+    }
+    $redacted .= $parts['host'];
+    if (!empty($parts['port'])) {
+        $redacted .= ':' . $parts['port'];
+    }
+    $redacted .= $parts['path'] ?? '';
+    if (!empty($parts['query'])) {
+        $redacted .= '?redacted=1';
+    }
+    return $redacted;
+}
+
+function wp_codebox_bench_external_http_guardrail_host_allowed(string $host, array $allowlist): bool {
+    $host = strtolower(trim($host, '.'));
+    if ($host === '') {
+        return false;
+    }
+    foreach ($allowlist as $domain) {
+        $domain = strtolower(trim((string) $domain, '.'));
+        if ($domain !== '' && ($host === $domain || str_ends_with($host, '.' . $domain))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function wp_codebox_bench_external_http_guardrail_summary(array $events, int $sample_limit = 20): array {
+    $hosts = array();
+    $allowed_count = 0;
+    $blocked_count = 0;
+    foreach ($events as $event) {
+        $host = isset($event['data']['host']) ? (string) $event['data']['host'] : 'unknown';
+        if (!isset($hosts[$host])) {
+            $hosts[$host] = array('host' => $host, 'count' => 0, 'allowed' => 0, 'blocked' => 0);
+        }
+        ++$hosts[$host]['count'];
+        if (!empty($event['data']['blocked']) || ($event['event'] ?? '') === 'http.blocked') {
+            ++$hosts[$host]['blocked'];
+            ++$blocked_count;
+        } else {
+            ++$hosts[$host]['allowed'];
+            ++$allowed_count;
+        }
+    }
+    $host_values = array_values($hosts);
+    usort($host_values, static fn(array $left, array $right): int => ($right['count'] <=> $left['count']) ?: strcmp($left['host'], $right['host']));
+    return array(
+        'event_count' => count($events),
+        'allowed_count' => $allowed_count,
+        'blocked_count' => $blocked_count,
+        'hosts' => $host_values,
+        'samples' => array_slice($events, 0, max(0, $sample_limit)),
+    );
+}
+
+function wp_codebox_bench_install_external_http_guardrail(array $policy): void {
+    $state = wp_codebox_bench_external_http_guardrail_state();
+    $state['policy'] = $policy;
+    $state['events'] = array();
+    $GLOBALS['wp_codebox_external_http_guardrail'] = $state;
+    if (!empty($state['installed'])) {
+        return;
+    }
+    $GLOBALS['wp_codebox_external_http_guardrail']['installed'] = true;
+    add_filter('pre_http_request', static function ($preempt, $parsed_args, $url) {
+        $state = wp_codebox_bench_external_http_guardrail_state();
+        $policy = is_array($state['policy'] ?? null) ? $state['policy'] : array();
+        $host = strtolower((string) wp_parse_url((string) $url, PHP_URL_HOST));
+        $allowed = wp_codebox_bench_external_http_guardrail_host_allowed($host, is_array($policy['allowlistDomains'] ?? null) ? $policy['allowlistDomains'] : array());
+        $blocked = !empty($policy['blockNetwork']) && !$allowed;
+        $event_url = !array_key_exists('redactUrls', $policy) || !empty($policy['redactUrls']) ? wp_codebox_bench_external_http_guardrail_redact_url((string) $url) : (string) $url;
+        $GLOBALS['wp_codebox_external_http_guardrail']['events'][] = array(
+            'schema' => 'wp-codebox/wordpress-external-http-guardrail-event/v1',
+            'event' => $blocked ? 'http.blocked' : 'http.allowed',
+            'timestamp' => gmdate('c'),
+            'data' => array(
+                'id' => substr(hash('sha256', (string) $url), 0, 16),
+                'url' => $event_url,
+                'host' => $host,
+                'method' => $parsed_args['method'] ?? 'GET',
+                'allowed' => $allowed,
+                'blocked' => $blocked,
+            ),
+        );
+        if (!$blocked) {
+            return $preempt;
+        }
+        $block_response = is_array($policy['blockResponse'] ?? null) ? $policy['blockResponse'] : array();
+        return array(
+            'headers' => array(),
+            'body' => (string) ($block_response['body'] ?? ''),
+            'response' => array(
+                'code' => (int) ($block_response['code'] ?? 599),
+                'message' => (string) ($block_response['message'] ?? 'External HTTP blocked by WP Codebox guardrail'),
+            ),
+            'cookies' => array(),
+            'filename' => null,
+        );
+    }, 10, 3);
+}
+
+function wp_codebox_bench_run_external_http_guardrail_step(array $step): array {
+    $action = isset($step['action']) && is_string($step['action']) ? $step['action'] : 'collect';
+    $prefix = wp_codebox_bench_metric_prefix($step, 'external_http_guardrail');
+    if ($action === 'install') {
+        $policy = wp_codebox_bench_normalize_external_http_guardrail_policy($step);
+        $execution = wp_codebox_bench_run_command_step($step, 'external-http-guardrail', static function () use ($policy): array {
+            wp_codebox_bench_install_external_http_guardrail($policy);
+            return array('metadata' => array('external_http_guardrail_policy' => $policy));
+        });
+        return wp_codebox_bench_command_step_payload($execution, $prefix, array(), array('action' => 'install'));
+    }
+    if ($action === 'reset') {
+        $GLOBALS['wp_codebox_external_http_guardrail']['events'] = array();
+        return array('metrics' => array($prefix . '_event_count' => 0), 'steps' => array(array('schema' => 'wp-codebox/bench-command-step/v1', 'type' => 'external-http-guardrail', 'action' => 'reset')));
+    }
+    if ($action !== 'collect') {
+        throw new RuntimeException('external-http-guardrail bench workload steps support install, collect, or reset actions.');
+    }
+    $execution = wp_codebox_bench_run_command_step($step, 'external-http-guardrail', static function (array $step): array {
+        $state = wp_codebox_bench_external_http_guardrail_state();
+        $events = is_array($state['events'] ?? null) ? $state['events'] : array();
+        $summary = wp_codebox_bench_external_http_guardrail_summary($events, isset($step['sampleLimit']) && is_numeric($step['sampleLimit']) ? (int) $step['sampleLimit'] : 20);
+        $artifact = array(
+            'schema' => 'wp-codebox/wordpress-external-http-guardrail/v1',
+            'policy' => $state['policy'] ?? array(),
+            'summary' => $summary,
+            'events' => $events,
+        );
+        return array(
+            'metrics' => array(
+                'event_count' => $summary['event_count'],
+                'allowed_count' => $summary['allowed_count'],
+                'blocked_count' => $summary['blocked_count'],
+                'host_count' => count($summary['hosts']),
+            ),
+            'artifacts' => array('external-http-guardrail' => $artifact),
+            'metadata' => array('external_http_guardrail_schema' => $artifact['schema']),
+        );
+    });
+    $result = is_array($execution['result'] ?? null) ? $execution['result'] : array();
+    return wp_codebox_bench_command_step_payload($execution, $prefix, array(
+        $prefix . '_event_count' => (float) ($result['metrics']['event_count'] ?? 0),
+        $prefix . '_allowed_count' => (float) ($result['metrics']['allowed_count'] ?? 0),
+        $prefix . '_blocked_count' => (float) ($result['metrics']['blocked_count'] ?? 0),
+        $prefix . '_host_count' => (float) ($result['metrics']['host_count'] ?? 0),
+    ), array('action' => 'collect'));
 }
 
 function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): array {
@@ -886,6 +1227,10 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
 			$result = wp_codebox_bench_run_rest_request_step($step);
 		} elseif ($type === 'db-inventory') {
 			$result = wp_codebox_bench_run_db_inventory_step($step);
+		} elseif ($type === 'rest-db-query-profiler') {
+			$result = wp_codebox_bench_run_rest_db_query_profiler_step($step);
+		} elseif ($type === 'external-http-guardrail') {
+			$result = wp_codebox_bench_run_external_http_guardrail_step($step);
 		} else {
             throw new RuntimeException('Unsupported bench workload step type: ' . $type);
         }

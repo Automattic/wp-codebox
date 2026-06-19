@@ -46,7 +46,17 @@ The command contract is intentionally broad enough for future workload types:
 - **WP-CLI:** configured workload steps that execute in the same sandbox.
 - **Ability:** future ability-backed workload steps should still return generic numeric metrics and metadata.
 - **REST:** configured `rest-request` steps call `rest_do_request()` in-process. A configured workload may declare `route_matrix` as a compact list of REST routes; WP Codebox expands each route into the existing `rest-request` step type.
+- **Database inventory:** configured `db-inventory` steps collect table, row, column, index, and byte-count inventory through the benchmark artifact path.
 - **Browser:** `wordpress.browser-probe` captures generic browser performance and memory artifacts. When a recipe runs browser probes before `wordpress.bench`, selected numeric `browser_*` metrics are promoted into each benchmark scenario while raw browser artifacts remain in the bundle.
+
+WP Codebox does not currently expose a REST DB query profiler workload step. Full
+REST query profiling needs an upstream runtime hook that brackets each
+`rest_do_request()` call, captures `$wpdb->queries` or an equivalent query log for
+that request only, and emits a bounded artifact with query count, total query
+time, repeated-query summaries, and redacted SQL fingerprints. Until that hook
+exists, caller rigs should use real `rest_request_cases` and `db-inventory`
+workloads separately and leave `rest-db-query-profiler` as a documented missing
+primitive rather than emitting synthetic query-profile artifacts.
 
 ## REST Route Matrices
 
