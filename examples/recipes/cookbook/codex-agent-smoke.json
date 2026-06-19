@@ -29,13 +29,13 @@
         "activate": true
       },
       {
-        "source": "/sample/prepared-component-stack/data-machine",
-        "slug": "data-machine",
+        "source": "/sample/prepared-component-stack/runtime-engine",
+        "slug": "runtime-engine",
         "activate": true
       },
       {
-        "source": "/sample/prepared-component-stack/data-machine-code",
-        "slug": "data-machine-code",
+        "source": "/sample/prepared-component-stack/runtime-tools",
+        "slug": "runtime-tools",
         "activate": true
       },
       {

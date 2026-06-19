@@ -25,7 +25,7 @@ files plus dry-run evidence limited to shareable metadata.
 
 ### `codex-agent-smoke.json`
 
-Runs a headless Data Machine agent inside a disposable WordPress Playground
+Runs a headless agent runtime inside a disposable WordPress Playground
 sandbox using the Codex provider. This is the smallest end-to-end recipe for
 proving that WP Codebox can mount the agent runtime stack, overlay a
 `php-ai-client` branch with provider-supplied request auth, activate a Codex
@@ -36,8 +36,8 @@ uses explicit placeholder input paths so callers can see the full contract shape
 and replace each path with their prepared local checkout or artifact:
 
 - `/sample/prepared-component-stack/agents-api`
-- `/sample/prepared-component-stack/data-machine`
-- `/sample/prepared-component-stack/data-machine-code`
+- `/sample/prepared-component-stack/runtime-engine`
+- `/sample/prepared-component-stack/runtime-tools`
 - `/sample/prepared-provider-stack/php-ai-client`
 - `/sample/prepared-provider-stack/ai-provider-for-openai`
 
@@ -49,7 +49,7 @@ a dry-run plan with the sandbox backend, overlays, extra plugins, secret
 environment names, and resolved agent command arguments.
 
 - The component stack provides the WordPress plugins needed by the sandbox agent
-  runtime: `agents-api`, `data-machine`, and `data-machine-code`.
+  runtime: `agents-api`, `runtime-engine`, and `runtime-tools`.
 - The provider stack provides the `php-ai-client` overlay and provider plugin
   selected by `provider=codex` and
   `provider-plugin-slugs=ai-provider-for-openai`.

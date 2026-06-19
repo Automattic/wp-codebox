@@ -67,10 +67,10 @@ throw new RuntimeException('explicit pluginFile resolution must not read plugin 
 
   const sandboxOptions = parseAgentRuntimeProbeOptions([
     "--component", `agents-api=${explicitSource}`,
-    "--component", `data-machine=${explicitSource}`,
-    "--component", `data-machine-code=${explicitSource}`,
+    "--component", `runtime-engine=${explicitSource}`,
+    "--component", `runtime-tools=${explicitSource}`,
   ], (value) => JSON.parse(value))
-  assert.deepEqual(sandboxOptions.components.map((component) => component.slug), ["agents-api", "data-machine", "data-machine-code"])
+  assert.deepEqual(sandboxOptions.components.map((component) => component.slug), ["agents-api", "runtime-engine", "runtime-tools"])
 
   const portableOptions = parseAgentRuntimeProbeOptions([
     "--component", `custom-runtime=${explicitSource}`,
@@ -81,6 +81,10 @@ throw new RuntimeException('explicit pluginFile resolution must not read plugin 
     "--agents-api", explicitSource,
   ], (value) => JSON.parse(value))
   assert.deepEqual(compatibilityOptions.components.map((component) => component.slug), ["agents-api"])
+
+  assert.throws(() => parseAgentRuntimeProbeOptions([
+    "--runtime-engine", explicitSource,
+  ], (value) => JSON.parse(value)), /Unknown option: --runtime-engine/)
 
   const explicitFile = readFileSync(join(explicitSource, "custom-entry.php"), "utf8")
   assert.match(explicitFile, /must not read plugin contents/)

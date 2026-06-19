@@ -38,17 +38,17 @@ function apply_filters( $hook, $value, ...$args ) {
 		),
 		'placement_capabilities' => array( 'agents.runtime' ),
 	);
-	$value['data-machine'] = array(
-		'id' => 'data-machine',
-		'provides' => array( 'data-machine.runtime' ),
+	$value['sample-runtime'] = array(
+		'id' => 'sample-runtime',
+		'provides' => array( 'sample.runtime' ),
 		'requires' => array( 'agents' ),
 		'runtime' => array(
-			'components' => array( 'data-machine', 'data-machine-code' ),
+			'components' => array( 'sample-runtime', 'sample-runtime-tools' ),
 			'plugins' => array(
-				array( 'slug' => 'data-machine', 'url' => 'https://example.test/data-machine.zip', 'activate' => true ),
-				array( 'slug' => 'data-machine-code', 'url' => 'https://example.test/data-machine-code.zip', 'activate' => true ),
+				array( 'slug' => 'sample-runtime', 'url' => 'https://example.test/sample-runtime.zip', 'activate' => true ),
+				array( 'slug' => 'sample-runtime-tools', 'url' => 'https://example.test/sample-runtime-tools.zip', 'activate' => true ),
 			),
-			'bootstrap' => array( array( 'operation' => 'set_option', 'args' => array( 'name' => 'datamachine_runtime', 'value' => 'sandbox' ) ) ),
+			'bootstrap' => array( array( 'operation' => 'set_option', 'args' => array( 'name' => 'sample_runtime', 'value' => 'sandbox' ) ) ),
 		),
 	);
 	$value['provider-connector'] = array(
@@ -73,7 +73,7 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 
 $input = array(
 	'runtime_recipe' => array(
-		'capabilities' => array( 'data-machine.runtime', 'provider.connector' ),
+		'capabilities' => array( 'sample.runtime', 'provider.connector' ),
 	),
 	'runtime' => array(
 		'plugins' => array( array( 'slug' => 'caller-plugin', 'url' => 'https://example.test/caller.zip' ) ),
@@ -91,8 +91,8 @@ $local_task = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 echo json_encode( array( 'resolved' => $resolved, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
 `)
 
-assert.deepEqual(result.resolved.runtime.components, ["agents-api", "data-machine", "data-machine-code"])
-assert.deepEqual(result.resolved.runtime.plugins.map((plugin: { slug: string }) => plugin.slug), ["caller-plugin", "agents-api", "data-machine", "data-machine-code"])
+assert.deepEqual(result.resolved.runtime.components, ["agents-api", "sample-runtime", "sample-runtime-tools"])
+assert.deepEqual(result.resolved.runtime.plugins.map((plugin: { slug: string }) => plugin.slug), ["caller-plugin", "agents-api", "sample-runtime", "sample-runtime-tools"])
 assert.deepEqual(result.resolved.inherit.connectors, ["existing", "primary-ai"])
 assert.deepEqual(result.resolved.provider_plugin_paths, ["/opt/provider-plugin"])
 assert.deepEqual(result.resolved.secret_env, ["PROVIDER_TOKEN"])

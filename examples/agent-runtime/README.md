@@ -6,16 +6,16 @@ Set local checkout paths, then run the preset:
 
 ```bash
 AGENTS_API_PATH=/path/to/agents-api \
-DATA_MACHINE_PATH=/path/to/data-machine \
-DATA_MACHINE_CODE_PATH=/path/to/data-machine-code \
+RUNTIME_ENGINE_PATH=/path/to/runtime-engine \
+RUNTIME_TOOLS_PATH=/path/to/runtime-tools \
 PROVIDER_PLUGIN_PATH=/path/to/ai-provider-plugin \
 npm run wp-codebox -- agent-runtime-probe \
   --component agents-api="$AGENTS_API_PATH" \
-  --component data-machine="$DATA_MACHINE_PATH" \
-  --component data-machine-code="$DATA_MACHINE_CODE_PATH" \
+  --component runtime-engine="$RUNTIME_ENGINE_PATH" \
+  --component runtime-tools="$RUNTIME_TOOLS_PATH" \
   --provider-plugin "$PROVIDER_PLUGIN_PATH" \
   --artifacts ./artifacts \
   --json
 ```
 
-The preset mounts each `--component` at its declared slug, uses WordPress `7.0` by default, activates the plugins in dependency order, and returns a JSON readiness packet. It intentionally does not require provider credentials or model calls. Legacy stack-specific flags such as `--agents-api` still work as compatibility aliases; new examples should prefer generic `--component` entries.
+The preset mounts each `--component` at its declared slug, uses WordPress `7.0` by default, activates the plugins in dependency order, and returns a JSON readiness packet. It intentionally does not require provider credentials or model calls. Stack-specific shortcuts should be replaced with generic `--component` entries.
