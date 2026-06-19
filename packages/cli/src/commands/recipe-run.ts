@@ -839,7 +839,7 @@ function phaseDistributionStartupProbeData(recipe: WorkspaceRecipe): Record<stri
       index,
       name: probe.name,
       type: probe.type,
-      executable: probe.type === "wp-cli" || probe.type === "php",
+      executable: probe.type === "wp-cli" || probe.type === "php" || probe.type === "browser",
     })),
   }
 }

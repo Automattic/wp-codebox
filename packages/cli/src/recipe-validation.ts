@@ -765,6 +765,7 @@ export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
   const distributionStartupProbeCommands = (recipe.distribution?.startupProbes ?? []).flatMap((probe) => {
     if (probe.type === "wp-cli") return ["wordpress.wp-cli"]
     if (probe.type === "php") return ["wordpress.run-php"]
+    if (probe.type === "browser") return ["wordpress.browser-probe"]
     return []
   })
   const commands = [

@@ -256,6 +256,10 @@ export interface RecipeRunDistributionStartupProbe {
   stdout?: string
   stderr?: string
   reason?: string
+  missingCommand?: string
+  url?: string
+  expectStatus?: number
+  availableCommands?: string[]
   metadata?: Record<string, unknown>
 }
 

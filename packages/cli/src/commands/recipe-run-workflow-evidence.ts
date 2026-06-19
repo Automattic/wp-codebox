@@ -180,14 +180,18 @@ export async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: 
 export async function runDistributionStartupProbes(recipe: WorkspaceRecipe, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunDistributionStartupProbe[]> {
   const results: RecipeRunDistributionStartupProbe[] = []
   for (const [index, probe] of (recipe.distribution?.startupProbes ?? []).entries()) {
-    if (probe.type === "http" || probe.type === "browser") {
+    if (probe.type === "http") {
       results.push(stripUndefined({
         schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
         index,
         name: probe.name,
         type: probe.type,
         status: "skipped" as const,
-        reason: "Distribution startup probe type is planned but not executable by this runtime primitive.",
+        reason: "Distribution startup http probes require a generic HTTP runtime command, but this runtime only exposes REST and browser primitives.",
+        missingCommand: "wordpress.http-request",
+        url: probe.url,
+        expectStatus: probe.expectStatus,
+        availableCommands: ["wordpress.rest-request", "wordpress.browser-probe"],
         metadata: probe.metadata,
       }))
       continue
@@ -228,9 +232,7 @@ async function executeRecipeProbe(runtime: Runtime, probe: WorkspaceRecipeProbe,
 }
 
 async function executeDistributionStartupProbe(runtime: Runtime, probe: WorkspaceRecipeDistributionStartupProbe, index: number): Promise<RecipeExecutionResult> {
-  const spec = probe.type === "wp-cli"
-    ? { command: "wordpress.wp-cli", args: [`command=${probe.command ?? ""}`] }
-    : { command: "wordpress.run-php", args: [`code=${probe.code ?? ""}`] }
+  const spec = distributionStartupProbeExecutionSpec(probe)
   try {
     const execution = await runtime.execute(spec)
     return withRecipeExecutionPhase(execution, "setup", index, `distribution.startupProbe:${probe.name}`)
@@ -238,6 +240,16 @@ async function executeDistributionStartupProbe(runtime: Runtime, probe: Workspac
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Distribution startup probe "${probe.name}" failed before producing a result: ${message}`, { cause: error })
   }
+}
+
+function distributionStartupProbeExecutionSpec(probe: WorkspaceRecipeDistributionStartupProbe): { command: string; args: string[] } {
+  if (probe.type === "wp-cli") {
+    return { command: "wordpress.wp-cli", args: [`command=${probe.command ?? ""}`] }
+  }
+  if (probe.type === "php") {
+    return { command: "wordpress.run-php", args: [`code=${probe.code ?? ""}`] }
+  }
+  return { command: "wordpress.browser-probe", args: [`url=${probe.url ?? ""}`] }
 }
 
 function parseProbeJson(stdout: string): unknown | undefined {

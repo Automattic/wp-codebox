@@ -13,7 +13,8 @@ const recipe: WorkspaceRecipe = {
     startupProbes: [
       { name: "database", type: "wp-cli", command: "option get siteurl", metadata: { role: "readiness" } },
       { name: "bootstrap", type: "php", code: "echo 'ready';" },
-      { name: "homepage", type: "http", url: "/" },
+      { name: "homepage", type: "browser", url: "/" },
+      { name: "api", type: "http", url: "/wp-json/", expectStatus: 200 },
     ],
   },
   workflow: { steps: [{ command: "wordpress.run-php", args: ["code=echo 'workload';"] }] },
@@ -22,6 +23,7 @@ const recipe: WorkspaceRecipe = {
 const policy = recipePolicy(recipe)
 assert.ok(policy.commands.includes("wordpress.wp-cli"), "wp-cli startup probes are policy-visible")
 assert.ok(policy.commands.includes("wordpress.run-php"), "php startup probes are policy-visible")
+assert.ok(policy.commands.includes("wordpress.browser-probe"), "browser startup probes are policy-visible")
 
 const executed: Array<{ command: string; args: string[] }> = []
 const runtime = {
@@ -46,14 +48,20 @@ const results = await runDistributionStartupProbes(recipe, runtime, executions)
 assert.deepEqual(executed, [
   { command: "wordpress.wp-cli", args: ["command=option get siteurl"] },
   { command: "wordpress.run-php", args: ["code=echo 'ready';"] },
+  { command: "wordpress.browser-probe", args: ["url=/"] },
 ])
-assert.equal(executions.length, 2)
+assert.equal(executions.length, 3)
 assert.deepEqual(results.map((result) => [result.name, result.type, result.status]), [
   ["database", "wp-cli", "passed"],
   ["bootstrap", "php", "passed"],
-  ["homepage", "http", "skipped"],
+  ["homepage", "browser", "passed"],
+  ["api", "http", "skipped"],
 ])
 assert.equal(results[0]?.metadata?.role, "readiness")
+assert.equal(results[3]?.missingCommand, "wordpress.http-request")
+assert.equal(results[3]?.url, "/wp-json/")
+assert.equal(results[3]?.expectStatus, 200)
+assert.deepEqual(results[3]?.availableCommands, ["wordpress.rest-request", "wordpress.browser-probe"])
 assert.equal(distributionStartupProbeFailure(results), undefined)
 
 const summary = normalizeRecipeRunSummary({
