@@ -180,24 +180,16 @@ export async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: 
 export async function runDistributionStartupProbes(recipe: WorkspaceRecipe, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunDistributionStartupProbe[]> {
   const results: RecipeRunDistributionStartupProbe[] = []
   for (const [index, probe] of (recipe.distribution?.startupProbes ?? []).entries()) {
-    if (probe.type === "http") {
-      results.push(stripUndefined({
-        schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
-        index,
-        name: probe.name,
-        type: probe.type,
-        status: "skipped" as const,
-        reason: "Distribution startup http probes require a generic HTTP runtime command, but this runtime only exposes REST and browser primitives.",
-        missingCommand: "wordpress.http-request",
-        url: probe.url,
-        expectStatus: probe.expectStatus,
-        availableCommands: ["wordpress.rest-request", "wordpress.browser-probe"],
-        metadata: probe.metadata,
-      }))
+    const execution = await executeDistributionStartupProbe(runtime, probe, index).catch((error) => {
+      if (probe.type === "http" && distributionStartupHttpProbeCommandUnavailable(error)) {
+        return undefined
+      }
+      throw error
+    })
+    if (!execution) {
+      results.push(distributionStartupHttpProbeSkipped(probe, index))
       continue
     }
-
-    const execution = await executeDistributionStartupProbe(runtime, probe, index)
     executions.push(execution)
     results.push(stripUndefined({
       schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
@@ -249,7 +241,31 @@ function distributionStartupProbeExecutionSpec(probe: WorkspaceRecipeDistributio
   if (probe.type === "php") {
     return { command: "wordpress.run-php", args: [`code=${probe.code ?? ""}`] }
   }
+  if (probe.type === "http") {
+    return { command: "wordpress.http-request", args: [`url=${probe.url ?? ""}`, probe.expectStatus === undefined ? undefined : `expect-status=${probe.expectStatus}`].filter((arg): arg is string => Boolean(arg)) }
+  }
   return { command: "wordpress.browser-probe", args: [`url=${probe.url ?? ""}`] }
+}
+
+function distributionStartupHttpProbeSkipped(probe: WorkspaceRecipeDistributionStartupProbe, index: number): RecipeRunDistributionStartupProbe {
+  return stripUndefined({
+    schema: "wp-codebox/distribution-startup-probe-result/v1" as const,
+    index,
+    name: probe.name,
+    type: probe.type,
+    status: "skipped" as const,
+    reason: "Distribution startup http probes require a generic HTTP runtime command, but this runtime does not expose wordpress.http-request.",
+    missingCommand: "wordpress.http-request",
+    url: probe.url,
+    expectStatus: probe.expectStatus,
+    availableCommands: ["wordpress.rest-request", "wordpress.browser-probe"],
+    metadata: probe.metadata,
+  })
+}
+
+function distributionStartupHttpProbeCommandUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("wordpress.http-request") && (message.includes("No Playground command handler") || message.includes("unavailable") || message.includes("not allowed"))
 }
 
 function parseProbeJson(stdout: string): unknown | undefined {

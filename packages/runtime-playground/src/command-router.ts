@@ -12,6 +12,7 @@ interface PlaygroundCommandRuntime {
   runExportBrowserStorageState(spec: ExecutionSpec): Promise<string>
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>
+  runHttpRequest(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runAbility(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runBench(spec: ExecutionSpec): Promise<string>

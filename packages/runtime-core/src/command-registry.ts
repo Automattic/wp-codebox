@@ -274,6 +274,21 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runAbility" },
   },
   {
+    id: "wordpress.http-request",
+    description: "Execute a generic HTTP request against the live runtime preview or an absolute URL.",
+    acceptedArgs: [
+      { name: "method", description: "HTTP method for the request; defaults to GET.", format: "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS" },
+      { name: "url", description: "Preview path or absolute URL to request.", required: true, format: "path or URL" },
+      { name: "headers-json", description: "Optional request headers object.", format: "JSON object" },
+      { name: "body", description: "Optional raw request body.", format: "string" },
+      { name: "expect-status", description: "Optional expected HTTP status; the command fails when the response status differs.", format: "HTTP status code" },
+    ],
+    outputShape: "JSON object with command, method, url, resolvedUrl, status, headers, bodyBytes, timing, and diagnostics.",
+    policyRequirement: "Runtime policy commands must include wordpress.http-request.",
+    recipe: true,
+    handler: { kind: "playground", method: "runHttpRequest" },
+  },
+  {
     id: "wordpress.rest-request",
     description: "Execute an in-process WordPress REST request with WP_REST_Request and rest_do_request().",
     acceptedArgs: [
