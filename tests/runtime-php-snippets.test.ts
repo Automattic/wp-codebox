@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { phpRuntimeComponentLifecycleActionReplayFunction, phpRuntimeComponentLifecycleReplayFunction } from "../packages/runtime-core/src/index.js"
 
 const lifecycleReplaySnippet = phpRuntimeComponentLifecycleReplayFunction("wp_codebox_test")
@@ -71,3 +72,14 @@ assert.deepEqual(JSON.parse(actionOutput), {
   wp_abilities_api_init: 1,
   wp_codebox_runtime_abilities_ready: 1,
 })
+
+const sandboxAgentCode = await resolveSandboxTaskCode({
+  task: "Say hello",
+  agent: "wp-codebox-sandbox",
+  provider: "codex",
+  model: "gpt-5.5",
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+assert.match(sandboxAgentCode, /wp_codebox_register_sandbox_chat_handler\(\)/)
+assert.match(sandboxAgentCode, /wp_agent_chat_handler/)
+assert.match(sandboxAgentCode, /wp_codebox_execute_sandbox_chat_turn/)

@@ -127,6 +127,50 @@ $sandbox_stack['default_agent'] = wp_codebox_ensure_sandbox_default_agent(
     $sandbox_default_agent,
     json_decode(${JSON.stringify(JSON.stringify(input))}, true)
 );
+wp_codebox_register_sandbox_chat_handler();
+
+function wp_codebox_register_sandbox_chat_handler(): void {
+    add_filter('wp_agent_chat_handler', static function ($handler, array $input) {
+        if (null !== $handler) {
+            return $handler;
+        }
+        return static function (array $chat_input) {
+            return wp_codebox_execute_sandbox_chat_turn($chat_input);
+        };
+    }, 100, 2);
+}
+
+function wp_codebox_execute_sandbox_chat_turn(array $chat_input) {
+    if (!class_exists('\\WordPress\\AiClient\\AiClient')) {
+        return new WP_Error('wp_codebox_ai_client_unavailable', 'PHP AI Client is unavailable inside the sandbox.');
+    }
+
+    $provider = trim((string) ($chat_input['provider'] ?? ''));
+    $model = trim((string) ($chat_input['model'] ?? ''));
+    $message = trim((string) ($chat_input['message'] ?? ''));
+    if ('' === $provider || '' === $model) {
+        return new WP_Error('wp_codebox_provider_model_required', 'WP Codebox sandbox chat requires provider and model.');
+    }
+    if ('' === $message) {
+        return new WP_Error('wp_codebox_message_required', 'WP Codebox sandbox chat requires a message.');
+    }
+
+    try {
+        $provider_class = \\WordPress\\AiClient\\AiClient::defaultRegistry()->getProviderClassName($provider);
+        $prompt_builder = \\WordPress\\AiClient\\AiClient::prompt($message)->usingModel($provider_class::model($model));
+        $result = $prompt_builder->generateTextResult();
+        $reply = method_exists($result, 'toText') ? (string) $result->toText() : '';
+        if ('' === $reply) {
+            return new WP_Error('wp_codebox_empty_reply', 'WP Codebox sandbox chat returned an empty reply.');
+        }
+        return array(
+            'session_id' => (string) ($chat_input['session_id'] ?? $chat_input['client_context']['codebox_session_id'] ?? 'wp-codebox-sandbox'),
+            'reply' => $reply,
+        );
+    } catch (Throwable $throwable) {
+        return new WP_Error('wp_codebox_sandbox_chat_failed', $throwable->getMessage(), array('type' => get_class($throwable)));
+    }
+}
 
 function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agent_input): array {
     if ('' === $agent_slug) {
