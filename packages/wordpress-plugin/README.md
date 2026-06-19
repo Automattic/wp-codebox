@@ -12,8 +12,12 @@ the parent control plane for review, replay, or apply-back.
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
+- `wp-codebox/import-artifact-bundle`
+- `wp-codebox/reimport-artifact-bundle`
 - `wp-codebox/apply-approved-artifact`
 - `wp-codebox/stage-artifact-apply`
+- `wp-codebox/preview-reuse-decision`
+- `wp-codebox/open-or-create-browser-contained-site`
 - WP-CLI wrappers under `wp codebox ...`
 
 The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
@@ -150,6 +154,19 @@ Returned artifact metadata includes the runtime manifest, replay blueprint,
 after-state notes, captured readwrite mount index, event streams, and logs. WP
 Codebox owns this capture boundary so the parent site can discard the disposable
 sandbox while keeping durable evidence and outputs.
+
+`import-artifact-bundle` and `reimport-artifact-bundle` are generic bundle
+ingress primitives for consumers that already have a WP Codebox artifact bundle.
+They verify the bundle, copy it into the configured artifact store when needed,
+and return a stable `wp-codebox/artifact-result-envelope/v1`. Repeating the same
+import without `replace` returns `status: "existing"` with the same artifact
+reference, so parent orchestrators can safely retry after transport failures.
+
+Browser-contained preview consumers can call `preview-reuse-decision` before
+opening a preview. It returns an explicit `action` such as `hydrate-ref` or
+`create-new`, plus a stable `identity_key`. `open-or-create-browser-contained-site`
+uses that decision to open a reusable contained site when possible and falls back
+to fresh session creation only when the decision requires materialization.
 
 ## Apply-Back Approval
 

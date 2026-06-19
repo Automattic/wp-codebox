@@ -98,6 +98,7 @@
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
     "test:php-browser-callback-contracts": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-callback-contracts-smoke.php",
     "test:php-browser-contained-site-contract": "php scripts/php-browser-contained-site-contract-smoke.php",
+    "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",
     "test:mcp-client-configs": "tsx tests/mcp-client-configs.test.ts",
     "test:runtime-tool-policy": "tsx tests/runtime-tool-policy.test.ts",

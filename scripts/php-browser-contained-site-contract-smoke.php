@@ -70,6 +70,20 @@ expect( false === $miss['current'], 'Expected miss current=false.' );
 expect( false === $miss['materialized'], 'Expected miss materialized=false.' );
 expect( 'browser-contained-site:studio-native-preview:' . $source_digest === $miss['recovery_handle'], 'Expected stable miss recovery handle.' );
 
+$miss_decision = WP_Codebox_Abilities::preview_reuse_decision(
+	array(
+		'cache_key'     => 'studio-native-preview',
+		'source_digest' => $source_digest,
+	)
+);
+
+expect( ! is_wp_error( $miss_decision ), 'Expected miss preview reuse decision to return an envelope.' );
+expect( 'wp-codebox/preview-reuse-decision/v1' === $miss_decision['schema'], 'Expected preview reuse decision schema.' );
+expect( 'create-new' === $miss_decision['action'], 'Expected miss preview decision to create a new contained site.' );
+expect( true === $miss_decision['reload_required'], 'Expected miss preview decision to require reload/materialization.' );
+expect( 'materialize' === $miss_decision['open_mode'], 'Expected miss preview decision open_mode=materialize.' );
+expect( isset( $miss_decision['identity_key'] ) && 64 === strlen( $miss_decision['identity_key'] ), 'Expected stable decision identity key.' );
+
 $GLOBALS['wp_codebox_test_transient'] = array(
 	'schema'                 => 'wp-codebox/browser-prepared-runtime-artifact/v1',
 	'cache_key'              => 'studio-native-preview',
@@ -121,5 +135,40 @@ expect( 'wp-codebox/preview-lease/v1' === $open['preview_lease']['schema'], 'Exp
 expect( 'active' === $open['preview_lease']['lease']['status'], 'Expected active preview lease.' );
 expect( 'browser-contained-site:studio-native-preview:' . $source_digest === $open['recovery_handle'], 'Expected stable open recovery handle.' );
 expect( 'reuse_prepared_runtime' === $open['contained_site']['open_mode'], 'Expected contained site lifecycle fields.' );
+
+$reuse_decision = WP_Codebox_Abilities::preview_reuse_decision(
+	array(
+		'cache_key'     => 'studio-native-preview',
+		'source_digest' => $source_digest,
+	)
+);
+
+expect( ! is_wp_error( $reuse_decision ), 'Expected recoverable preview reuse decision to return an envelope.' );
+expect( 'hydrate-ref' === $reuse_decision['action'], 'Expected recoverable preview decision to hydrate a prepared ref.' );
+expect( false === $reuse_decision['reload_required'], 'Expected recoverable preview decision not to require reload.' );
+expect( 'prepared_runtime' === $reuse_decision['reuse_level'], 'Expected recoverable preview decision reuse level.' );
+expect( true === $reuse_decision['prepared_runtime_recoverable'], 'Expected recoverable preview decision to surface prepared runtime recovery.' );
+
+$open_or_create = WP_Codebox_Abilities::open_or_create_browser_contained_site(
+	array(
+		'cache_key'     => 'studio-native-preview',
+		'source_digest' => $source_digest,
+		'playground'    => array(
+			'preview_public_url' => 'https://preview.example.test',
+			'site_url'           => 'https://preview.example.test/wp',
+			'local_url'          => 'http://localhost:8881/preview',
+			'lease'              => array( 'status' => 'active' ),
+		),
+	)
+);
+
+expect( ! is_wp_error( $open_or_create ), 'Expected open-or-create to return an envelope.' );
+expect( true === $open_or_create['success'], 'Expected open-or-create success=true for reusable prepared runtime.' );
+expect( 'wp-codebox/browser-contained-site-open-or-create/v1' === $open_or_create['schema'], 'Expected open-or-create schema.' );
+expect( 'opened' === $open_or_create['action'], 'Expected open-or-create to open reusable prepared runtime.' );
+expect( false === $open_or_create['reload_required'], 'Expected opened reusable runtime not to require reload.' );
+expect( 'hydrate-ref' === $open_or_create['decision']['action'], 'Expected open-or-create decision to hydrate ref.' );
+expect( isset( $open_or_create['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected open-or-create preview boot hydration endpoint.' );
+expect( 'wp-codebox/preview-lease/v1' === $open_or_create['preview_lease']['schema'], 'Expected open-or-create preview lease DTO.' );
 
 fwrite( STDOUT, "PHP browser contained site contract smoke passed\n" );
