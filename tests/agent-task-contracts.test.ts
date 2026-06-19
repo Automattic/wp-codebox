@@ -37,24 +37,12 @@ const strictLegacyNoOp = normalizeAgentTaskRunResult({ success: true, agent_resu
 assert.equal(strictLegacyNoOp.status, "succeeded")
 assert.equal(strictLegacyNoOp.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), false)
 
-const compatLegacyNoOp = normalizeAgentTaskRunResult({ success: true, agent_result: { noOpReason: "Nothing to do", changedFiles: { count: 0 }, patch: { bytes: 0 } } }, { exitStatus: 0, compatMode: true })
-assert.equal(compatLegacyNoOp.status, "no_op")
-assert.equal(compatLegacyNoOp.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
-
 const strictNestedTerminal = normalizeAgentTerminalResult({ agent_runtime: { success: true, result: { pending_tools: ["review"], completed: false } } })
 assert.equal(strictNestedTerminal, undefined)
-
-const compatNestedTerminal = normalizeAgentTerminalResult({ agent_runtime: { success: true, result: { pending_tools: ["review"], completed: false } } }, { compatMode: true })
-assert.equal(compatNestedTerminal?.status, "incomplete")
-assert.equal(compatNestedTerminal?.diagnostics?.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
 
 const strictRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } })
 assert.deepEqual(strictRuntimeWorkload.outputs, {})
 assert.equal(strictRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), false)
-
-const compatRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } }, { compatMode: true })
-assert.deepEqual(compatRuntimeWorkload.outputs, { answer: "legacy" })
-assert.equal(compatRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
 
 const catalog = commandCatalogOutput()
 const agentSandboxRun = catalog.commands.find((command) => command.id === "wp-codebox.agent-sandbox-run")

@@ -45,4 +45,8 @@ assert.match(exampleConsumerDoc, /^# Example Consumer Boundary Contracts/m)
 assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
 assert.match(exampleConsumerDoc, /## Example Consumers/)
 
+const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")
+assert.match(agentRuntimeContract, /`generic-ability-runtime-run` is the canonical primitive/)
+assert.doesNotMatch(agentRuntimeContract, /Until the upstream agent\/provider stack exposes one stable browser-runtime primitive/)
+
 console.log("docs boundary language ok")

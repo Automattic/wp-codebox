@@ -240,20 +240,26 @@ Current exported code covers the entry point, task input normalization, agent-ta
 
 ### Browser-runtime invocation primitive
 
-Until the upstream agent/provider stack exposes one stable browser-runtime primitive, WP Codebox owns the integration glue for disposable Playground runtimes:
+`generic-ability-runtime-run` is the canonical primitive for callers that need to
+invoke a WordPress ability in a disposable runtime with provider/runtime
+components. WP Codebox supplies the runtime invocation payload, component
+contracts, provider plugin contracts, artifact handoff metadata, and the expected
+result schema. Parent control planes supply policy: repository selection,
+authorization, retries, retention, publication approval, and how resulting refs
+attach to their job records.
 
-- authorizing the runtime principal that is allowed to execute the sandbox task;
-- importing caller-provided agent bundles into the sandbox runtime;
-- checking provider readiness and registering browser-safe provider proxies;
-- executing the selected agent through `agents/chat` with runtime-scoped context; and
-- returning structured success, no-op, provider-error, and diagnostic evidence to the artifact bundle.
+The primitive keeps the browser-runtime boundary generic:
 
-The desired upstream contract is a generic capability with a single request/result boundary, not a Codebox-specific adapter. A browser runtime should be able to call one stable primitive with:
+- runtime principals or capability tokens are supplied by the caller;
+- ability input carries task text plus optional structured context and tool
+  policy;
+- component and provider contracts declare runtime substrate without naming a
+  consumer product;
+- artifact handoff and transcript recorders use WP Codebox schema names; and
+- command output is normalized as
+  `wp-codebox/generic-ability-runtime-run-result/v1` when an expected result
+  schema is supplied.
 
-- a runtime principal or capability token supplied by the caller;
-- task text plus optional structured context and tool policy;
-- agent bundle references or inline bundle content;
-- provider selection, readiness requirements, and proxy descriptors; and
-- artifact/diagnostic sinks for transcripts, provider failures, and normalized agent output.
-
-The primitive should validate authorization, import bundles, prepare provider access, run the agent, and return a normalized result envelope. With that contract in place, `WP_Codebox_Agent_Runtime_Invoker` can shrink to request construction, artifact persistence, and compatibility checks while the upstream agent/provider stack owns browser-runtime invocation semantics.
+Consumer-specific browser invocation adapters should target this primitive
+instead of reintroducing fallback request shapes or product-specific runtime
+semantics in WP Codebox core.
