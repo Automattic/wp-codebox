@@ -512,7 +512,8 @@ final class WP_Codebox_Browser_Task_Builder {
 
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
 	public static function browser_preview_boot_config( array $session ): array {
-		$playground             = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+		$primary                = is_array( $session['primary'] ?? null ) ? $session['primary'] : array();
+		$playground             = is_array( $session['playground'] ?? null ) ? $session['playground'] : ( is_array( $primary['playground'] ?? null ) ? $primary['playground'] : array() );
 		$prepared_runtime       = self::browser_prepared_runtime_from_envelope( $session, $playground );
 		$site_blueprint_artifact = is_array( $session['site_blueprint_artifact'] ?? null ) ? $session['site_blueprint_artifact'] : array();
 		$session_envelope       = is_array( $session['session'] ?? null ) ? $session['session'] : array();
