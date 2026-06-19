@@ -439,15 +439,18 @@ private static function browser_product_dto_schema(): array {
 private static function browser_contained_site_schema(): array {
 	return array(
 		'type'        => 'object',
-		'description' => 'Durable browser-contained WordPress site handle. The parent product stores this envelope and can call the status ability to recover a prepared runtime blueprint when the transient still exists.',
+		'description' => 'Durable browser-contained WordPress site handle. The caller stores this envelope and can call the status ability to recover a prepared runtime blueprint when the transient still exists.',
 		'properties'  => array(
 			'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/browser-contained-site/v1' ),
 			'site_id'       => array( 'type' => 'string' ),
 			'preview_id'    => array( 'type' => 'string' ),
 			'session_id'    => array( 'type' => 'string' ),
 			'caller_id'     => array( 'type' => 'string' ),
-			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable', 'miss', 'disabled' ) ),
+			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable', 'miss', 'disabled', 'incompatible' ) ),
+			'resolution'    => array( 'type' => 'object' ),
 			'persistence'   => array( 'type' => 'string', 'enum' => array( 'browser-contained' ) ),
+			'artifact_seed' => array( 'type' => 'string' ),
+			'artifact_revision' => array( 'type' => 'string' ),
 			'recovery'      => array( 'type' => 'object' ),
 			'source_digest' => array( 'type' => 'object' ),
 			'preview'       => array( 'type' => 'object' ),
@@ -482,7 +485,7 @@ private static function trusted_orchestrator_authorization_schema( string $scope
 			),
 			'caller' => array(
 				'type'        => 'string',
-				'description' => 'Stable caller id, for example studio-web.',
+				'description' => 'Stable caller id, for example browser-client.',
 			),
 			'scope'  => array(
 				'type'        => 'string',
