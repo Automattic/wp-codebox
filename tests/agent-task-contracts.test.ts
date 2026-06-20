@@ -106,11 +106,16 @@ assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run")
 
 const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
+const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 try {
   const agentsApiSource = join(agentRecipeTemp, "agents-api")
   mkdirSync(agentsApiSource)
   writeFileSync(join(agentsApiSource, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
   process.env.WP_CODEBOX_AGENTS_API_PATH = agentsApiSource
+  const runtimeEngineSource = join(agentRecipeTemp, "runtime-engine")
+  mkdirSync(runtimeEngineSource)
+  writeFileSync(join(runtimeEngineSource, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
+  process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = runtimeEngineSource
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
@@ -158,6 +163,7 @@ try {
     metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
   })
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "runtime-engine" && component.loadAs === "mu-plugin"), true)
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
   assert.equal(extraPlugins.filter((plugin) => plugin.slug === "test-provider" && plugin.loadAs === "plugin").length, 1)
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
@@ -189,6 +195,11 @@ try {
     delete process.env.WP_CODEBOX_AGENTS_API_PATH
   } else {
     process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
+  }
+  if (originalRuntimeComponentPaths === undefined) {
+    delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
+  } else {
+    process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = originalRuntimeComponentPaths
   }
   rmSync(agentRecipeTemp, { recursive: true, force: true })
 }

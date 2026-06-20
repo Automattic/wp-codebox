@@ -8,6 +8,7 @@ import { agentRuntimeMounts, parseAgentRuntimeProbeOptions, type AgentRuntimeMou
 const root = mkdtempSync(join(tmpdir(), "wp-codebox-agent-runtime-components-"))
 const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
+const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 
 try {
   const dataMachine = join(root, "data-machine")
@@ -28,13 +29,23 @@ try {
   const defaultAgentsApi = join(root, "agents-api")
   mkdirSync(defaultAgentsApi, { recursive: true })
   writeFileSync(join(defaultAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
+  const runtimeEngine = join(root, "runtime-engine")
+  const runtimeTools = join(root, "runtime-tools")
+  mkdirSync(runtimeEngine, { recursive: true })
+  mkdirSync(runtimeTools, { recursive: true })
+  writeFileSync(join(runtimeEngine, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
+  writeFileSync(join(runtimeTools, "runtime-tools.php"), "<?php\n/* Plugin Name: Runtime Tools */\n")
+  process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = `${runtimeEngine},${runtimeTools}`
   const workspace = join(root, "workspace")
   mkdirSync(workspace, { recursive: true })
   chdir(workspace)
-  const defaultMount = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
+  const defaultMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
+  const defaultMount = defaultMounts
     .find((mount) => mount.metadata?.slug === "agents-api")
   assertSamePath(defaultMount?.source, defaultAgentsApi)
   assert.equal(defaultMount?.target, "/wordpress/wp-content/mu-plugins/wp-codebox-runtime/agents-api")
+  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-engine")?.source, runtimeEngine)
+  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-tools")?.source, runtimeTools)
 
   const explicitAgentsApi = join(root, "explicit-agents-api")
   mkdirSync(explicitAgentsApi, { recursive: true })
@@ -49,6 +60,11 @@ try {
     delete process.env.WP_CODEBOX_AGENTS_API_PATH
   } else {
     process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
+  }
+  if (originalRuntimeComponentPaths === undefined) {
+    delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
+  } else {
+    process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = originalRuntimeComponentPaths
   }
   rmSync(root, { recursive: true, force: true })
 }

@@ -476,6 +476,11 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
   for (const component of options.components) {
     bySlug.set(component.slug, component)
   }
+  for (const component of defaultRuntimeComponents()) {
+    if (!bySlug.has(component.slug)) {
+      bySlug.set(component.slug, component)
+    }
+  }
   for (const component of options.components) {
     if (bySlug.has("agents-api")) {
       break
@@ -494,6 +499,20 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
     }
   }
   return [...bySlug.values()]
+}
+
+function defaultRuntimeComponents(): AgentRuntimeComponent[] {
+  return defaultRuntimeComponentPaths()
+    .map((source) => componentFromPath(source, undefined, undefined, "mu-plugin", "component"))
+}
+
+function defaultRuntimeComponentPaths(): string[] {
+  return (process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+    .split(/[,:]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => resolve(value))
+    .filter((source) => existsSync(source))
 }
 
 function defaultAgentsApiPath(): string {

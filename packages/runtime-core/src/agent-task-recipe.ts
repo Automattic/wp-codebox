@@ -160,23 +160,64 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
 }
 
 function defaultAgentRuntimeComponentPlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], callerExtraPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {
-  if ([...componentPlugins, ...callerExtraPlugins].some((plugin) => plugin.slug === "agents-api")) {
-    return []
+  const existingSlugs = new Set([...componentPlugins, ...callerExtraPlugins].map((plugin) => plugin.slug))
+  const defaults: WorkspaceRecipeExtraPlugin[] = []
+
+  for (const component of defaultRuntimeComponentPlugins()) {
+    if (!existingSlugs.has(component.slug)) {
+      defaults.push(component)
+      existingSlugs.add(component.slug)
+    }
   }
 
-  const agentsApiPath = defaultAgentsApiPath()
-  if (!agentsApiPath) {
-    return []
+  if (!existingSlugs.has("agents-api")) {
+    const bundledAgentsApiPath = [...componentPlugins, ...callerExtraPlugins, ...defaults]
+      .map((component) => agentsApiPathFromRuntimeComponent(component))
+      .find(Boolean)
+    const agentsApiPath = bundledAgentsApiPath || defaultAgentsApiPath()
+    if (agentsApiPath) {
+      defaults.push({
+        source: agentsApiPath,
+        slug: "agents-api",
+        pluginFile: "agents-api/agents-api.php",
+        activate: false,
+        loadAs: "mu-plugin",
+        metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
+      })
+    }
   }
 
-  return [{
-    source: agentsApiPath,
-    slug: "agents-api",
-    pluginFile: "agents-api/agents-api.php",
-    activate: false,
-    loadAs: "mu-plugin",
-    metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
-  }]
+  return defaults
+}
+
+function defaultRuntimeComponentPlugins(): WorkspaceRecipeExtraPlugin[] {
+  return defaultRuntimeComponentPaths().map((source) => {
+    const entrypoint = resolvePluginEntrypointContract({ source, loadAs: "mu-plugin" })
+    return {
+      source,
+      slug: entrypoint.slug,
+      pluginFile: entrypoint.pluginFile,
+      activate: false,
+      loadAs: "mu-plugin" as const,
+      metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
+    }
+  })
+}
+
+function defaultRuntimeComponentPaths(): string[] {
+  return (process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+    .split(/[,:]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => resolve(value))
+    .filter((source) => existsSync(source))
+}
+
+function agentsApiPathFromRuntimeComponent(component: WorkspaceRecipeExtraPlugin): string {
+  return [
+    join(component.source, "vendor", "wordpress", "agents-api"),
+    join(component.source, "vendor", "automattic", "agents-api"),
+  ].find((candidate) => existsSync(join(candidate, "agents-api.php"))) ?? ""
 }
 
 function defaultAgentsApiPath(): string {

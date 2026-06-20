@@ -80,6 +80,33 @@ const sandboxAgentCode = await resolveSandboxTaskCode({
   model: "gpt-5.5",
   sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
 })
-assert.match(sandboxAgentCode, /wp_codebox_register_sandbox_chat_handler\(\)/)
-assert.match(sandboxAgentCode, /wp_agent_chat_handler/)
-assert.match(sandboxAgentCode, /wp_codebox_execute_sandbox_chat_turn/)
+assert.doesNotMatch(sandboxAgentCode, /wp_codebox_register_sandbox_chat_handler\(\)/)
+assert.doesNotMatch(sandboxAgentCode, /wp_agent_chat_handler/)
+assert.doesNotMatch(sandboxAgentCode, /wp_codebox_execute_sandbox_chat_turn/)
+
+const sandboxAgentCodeWithTools = await resolveSandboxTaskCode({
+  task: "Inspect workspace",
+  agent: "wp-codebox-sandbox",
+  provider: "codex",
+  model: "gpt-5.5",
+  sandboxToolPolicy: {
+    schema: "wp-codebox/sandbox-tool-policy/v1",
+    version: 1,
+    metadata: {},
+    tools: [
+      {
+        id: "workspace_ls",
+        runtime_tool_id: "workspace_ls",
+        execution_location: "sandbox",
+        transport_visibility: "sandbox",
+        allowed: true,
+        runtime: {
+          environment: "runtime_local",
+          capability_scope: "runtime_local",
+        },
+      },
+    ],
+  },
+})
+assert.match(sandboxAgentCodeWithTools, /\\"allow_only\\":\[\\"workspace_ls\\"\]/)
+assert.match(sandboxAgentCodeWithTools, /\\"completion_assertions\\":\{\\"required_tool_names\\":\[\\"workspace_ls\\"\]\}/)
