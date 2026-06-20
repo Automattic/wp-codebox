@@ -1,6 +1,6 @@
 {
   "name": "wp-codebox-workspace",
-  "version": "0.8.5",
+  "version": "0.8.10",
   "private": true,
   "type": "module",
   "exports": {
