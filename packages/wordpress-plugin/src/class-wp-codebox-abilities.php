@@ -98,9 +98,13 @@ final class WP_Codebox_Abilities {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( self::class, 'rest_browser_blueprint_ref' ),
-				'permission_callback' => static fn(): bool => current_user_can( 'manage_options' ),
+				'permission_callback' => array( self::class, 'can_hydrate_browser_blueprint_ref' ),
 			)
 		);
+	}
+
+	public static function can_hydrate_browser_blueprint_ref(): bool {
+		return is_user_logged_in() || current_user_can( 'manage_options' );
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
