@@ -101,12 +101,15 @@ export interface RunPlanWorkerAdapter<TWorker extends RunPlanWorkerContract = Ru
 
 export interface RunPlanExecutorOptions<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike = RunPlanWorkerResult> extends RunPlanNormalizationOptions {
   adapter: RunPlanWorkerAdapter<TWorker, TResult>
+  clock?: RunPlanClock
   onWorkerStarted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, index: number) => Promise<void> | void
   onWorkerCompleted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   onWorkerFailed?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   onWorkerSkipped?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   createSkippedResult?: (descriptor: RunPlanWorkerDescriptor<TWorker>, dependencies: TResult[]) => TResult
 }
+
+export type RunPlanClock = () => Date | string
 
 export interface RunPlanExecutorResult<TResult extends RunPlanWorkerResultLike = RunPlanWorkerResult> {
   success: boolean
@@ -239,8 +242,13 @@ export function validateRunPlanDependencies<TWorker extends RunPlanWorkerContrac
   for (const worker of workers) visit(worker)
 }
 
-export function createRunPlanEvent<TEvent>(schema: string, event: Omit<TEvent, "schema" | "time"> & { time?: string }): TEvent {
-  return { schema, time: event.time ?? new Date().toISOString(), ...event } as TEvent
+export function createRunPlanEvent<TEvent>(schema: string, event: Omit<TEvent, "schema" | "time"> & { time?: string }, options: { clock?: RunPlanClock } = {}): TEvent {
+  return { schema, time: event.time ?? runPlanClockIso(options.clock), ...event } as TEvent
+}
+
+export function runPlanClockIso(clock?: RunPlanClock): string {
+  const value = clock ? clock() : new Date()
+  return typeof value === "string" ? value : value.toISOString()
 }
 
 export async function runBoundedConcurrent<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
