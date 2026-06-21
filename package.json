@@ -72,6 +72,7 @@
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
     "test:runtime-recipe-resolver": "tsx tests/runtime-recipe-resolver.test.ts",
+    "test:runtime-profile-resolver": "tsx tests/runtime-profile-resolver.test.ts",
     "test:runtime-episode-contracts": "tsx tests/runtime-episode-contracts.test.ts",
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",

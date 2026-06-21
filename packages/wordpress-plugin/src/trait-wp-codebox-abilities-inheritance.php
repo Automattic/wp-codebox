@@ -34,6 +34,15 @@ private static function browser_inheritance_resolution_payload( array $input ): 
 private static function browser_input_with_inheritance( array $input, array $inheritance ): array|WP_Error {
 	$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::browser_provider_plugin_paths( $input ), self::browser_inheritance_provider_plugin_paths( $inheritance ) ) ) );
 	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ) ) ) );
+	if ( class_exists( 'WP_Codebox_Runtime_Profile_Resolver' ) ) {
+		$resolved = WP_Codebox_Runtime_Profile_Resolver::apply_to_input( $input, $inheritance );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$input = WP_Codebox_Browser_Task_Builder::apply_runtime_profile( $resolved );
+	}
+
 	if ( class_exists( 'WP_Codebox_Runtime_Recipe_Resolver' ) ) {
 		$resolved = WP_Codebox_Runtime_Recipe_Resolver::apply_to_input( $input, $inheritance );
 		if ( is_wp_error( $resolved ) ) {
