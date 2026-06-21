@@ -11,9 +11,11 @@ product or job system.
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
   `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
   `packages/runtime-core/src/provider-runtime-contracts.ts`, and
-  `packages/runtime-core/src/command-agent-run.ts`.
+  `packages/runtime-core/src/command-agent-run.ts`, and
+  `packages/runtime-core/src/wordpress-workload-primitives.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts` and
-  `tests/command-agent-run.test.ts`.
+  `tests/command-agent-run.test.ts`, plus
+  `tests/wordpress-workload-primitives.test.ts` for workload helpers.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
 ## Artifact Storage
@@ -181,3 +183,35 @@ their job records.
 The contract intentionally uses WP Codebox task names and short WP Codebox
 ability names. Downstream product names, backend ability names, and
 orchestration policy stay outside the runtime invocation payload.
+
+## WordPress Workload Primitives
+
+`wordpressAbilityStep()` builds the stable `wordpress.ability` recipe step shape.
+`wordpressWorkloadRunRecipe()` builds a minimal WordPress Playground-backed recipe
+around caller-supplied workload steps without exposing Playground blueprint,
+mount, runPHP, OPFS, or browser-client internals as the public contract.
+
+`playgroundPreviewUrl()` emits a `wp-codebox/playground-preview-url/v1` envelope
+for local, public, or secure preview URLs. Callers get the effective URL and
+diagnostics while the Playground adapter remains free to change its internal
+preview plumbing.
+
+```ts
+import { playgroundPreviewUrl, wordpressAbilityStep, wordpressWorkloadRunRecipe } from "@automattic/wp-codebox-core"
+
+const recipe = wordpressWorkloadRunRecipe({
+  preview: { publicUrl: "https://preview.example.test/run-1/" },
+  steps: [wordpressAbilityStep({
+    name: "example/do-work",
+    input: { prompt: "collect evidence" },
+    expectedResultSchema: "example/result/v1",
+  })],
+})
+
+const preview = playgroundPreviewUrl({
+  localUrl: "http://127.0.0.1:9400/",
+  publicUrl: "https://preview.example.test/run-1/",
+  path: "/wp-admin/",
+  mode: "secure",
+})
+```
