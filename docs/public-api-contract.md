@@ -11,6 +11,10 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core`: runtime, task/package, runner workspace, tool
   bridge, browser task/contained-site, artifact metadata, recipe, policy, and
   provider contract types and helpers.
+- `@automattic/wp-codebox-core/public`: curated public facade for runtime,
+  task/package, runner workspace, tool bridge, browser, artifact, recipe,
+  policy, and provider contract types and helpers. New external TypeScript
+  consumers should prefer this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
   contract metadata used by CLI and orchestrator consumers.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
@@ -29,7 +33,7 @@ Use these package entrypoints from external integrations:
   environment injection outside the command entrypoint.
 
 The workspace package mirrors the core entrypoints as `./core`,
-`./core/contracts`, `./core/artifacts`, `./recipe-builders`,
+`./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
 `./agent-task-recipe`, `./runtime-presets`, and `./cli/recipe-secret-env` for
 local consumers in this repo.
 
@@ -54,9 +58,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `commands` output, and recipe validation descriptors.
 
 When adding a new public type or helper, place it in the focused owner module and
-export it through the narrowest stable entrypoint that matches its lifecycle
-area. Avoid adding implementation helpers to a public barrel only because they
-are convenient for one in-repo caller.
+export it through `@automattic/wp-codebox-core/public` or the narrowest stable
+entrypoint that matches its lifecycle area. Avoid adding implementation helpers
+to a public barrel only because they are convenient for one in-repo caller.
 
 ## Internal Entry Point
 

@@ -8,6 +8,10 @@
       "types": "./packages/runtime-core/dist/index.d.ts",
       "import": "./packages/runtime-core/dist/index.js"
     },
+    "./core/public": {
+      "types": "./packages/runtime-core/dist/public.d.ts",
+      "import": "./packages/runtime-core/dist/public.js"
+    },
     "./core/contracts": {
       "types": "./packages/runtime-core/dist/contracts.d.ts",
       "import": "./packages/runtime-core/dist/contracts.js"

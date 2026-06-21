@@ -1,3 +1,8 @@
+/**
+ * @deprecated Unstable monorepo implementation surface. External integrations
+ * should import from @automattic/wp-codebox-core/public or a focused public
+ * subpath instead.
+ */
 export * from "./benchmark-substrate.js"
 export * from "./fanout-aggregation.js"
 export * from "./object-utils.js"
