@@ -190,14 +190,16 @@ final class WP_Codebox_Run_Plan {
 		$aggregate = $root . DIRECTORY_SEPARATOR . 'aggregate';
 
 		return array(
-			'root'                => $root,
-			'workers'             => $workers,
-			'aggregate'           => $aggregate,
-			'aggregate_artifacts' => $aggregate . DIRECTORY_SEPARATOR . 'artifacts',
-			'plan'                => $root . DIRECTORY_SEPARATOR . 'plan.json',
-			'events'              => $root . DIRECTORY_SEPARATOR . 'events.jsonl',
-			'result'              => $root . DIRECTORY_SEPARATOR . 'result.json',
-			'aggregate_result'    => $aggregate . DIRECTORY_SEPARATOR . 'result.json',
+			'root'                   => $root,
+			'workers'                => $workers,
+			'aggregate'              => $aggregate,
+			'aggregate_artifacts'    => $aggregate . DIRECTORY_SEPARATOR . 'artifacts',
+			'aggregate_final'        => dirname( $root ) . DIRECTORY_SEPARATOR . 'aggregate' . DIRECTORY_SEPARATOR . 'final',
+			'plan'                   => $root . DIRECTORY_SEPARATOR . 'plan.json',
+			'events'                 => $root . DIRECTORY_SEPARATOR . 'events.jsonl',
+			'result'                 => $root . DIRECTORY_SEPARATOR . 'result.json',
+			'aggregate_result'       => $aggregate . DIRECTORY_SEPARATOR . 'result.json',
+			'aggregate_final_result' => dirname( $root ) . DIRECTORY_SEPARATOR . 'aggregate' . DIRECTORY_SEPARATOR . 'final' . DIRECTORY_SEPARATOR . 'result.json',
 		);
 	}
 

@@ -46,6 +46,7 @@ require_once __DIR__ . '/src/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
 require_once __DIR__ . '/src/class-wp-codebox-json.php';
 require_once __DIR__ . '/src/class-wp-codebox-run-plan.php';
+require_once __DIR__ . '/src/class-wp-codebox-fanout-aggregation.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-process-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-run-result-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-outcome-classifier.php';
