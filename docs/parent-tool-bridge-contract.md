@@ -133,8 +133,7 @@ Minimal integration points:
 
 Host adapters can map their endpoint or command metadata into this Codebox
 contract without adding product semantics to WP Codebox core. Upstream systems
-provide generic tool/run inputs; Codebox performs any WP Codebox schema mapping at
-its boundary. When an adapter dispatches to an external tool registry, the adapter
+provide generic tool/run inputs; Codebox performs any WP Codebox schema mapping at its boundary. When an adapter dispatches to an external tool registry, the adapter
 maps Codebox canonical ids such as `workspace.read`, `workspace.search`,
 `workspace.write`, and `workspace.edit` outward to that registry's ids. The
 external registry does not need to recognize `wp-codebox/sandbox-tool-policy/v1`.
