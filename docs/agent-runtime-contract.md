@@ -186,9 +186,10 @@ External orchestrators own policy around repository selection, authorization, re
 
 Runner workspace backends are integration-owned. A site that wants these abilities
 to perform real workspace operations must register a backend through the
-`wp_codebox_runner_workspace_backend` filter. If no backend is registered, the
-WP Codebox abilities return an unavailable backend result instead of naming or
-assuming a downstream workspace system.
+`wp_codebox_runner_workspace_backend` filter using the generic
+`wp-codebox/runner-workspace-backend/v1` config shape. If no backend is
+registered, the WP Codebox abilities return an unavailable backend result instead
+of naming or assuming a downstream workspace system.
 
 Preferred ability names for external callers are:
 

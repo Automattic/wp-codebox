@@ -13,6 +13,7 @@ const genericContractDocs = [
   "docs/recipe-contract.md",
   "docs/sandbox-session-contract.md",
   "docs/tool-bridge-contract.md",
+  "docs/runner-workspace-backend-contract.md",
   "docs/external-apply-adapter-contract.md",
   "docs/agent-fanout-contract.md",
   "docs/agent-runtime-contract.md",
@@ -69,7 +70,17 @@ assert.match(publicBoundaryText, /Data Machine must not parse, validate, or emit
 assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
 assert.match(publicBoundaryText, /upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,\s+and task runtimes are implementation details/)
+assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
+assert.match(publicBoundaryText, /backend ability names stay behind this\s+adapter config and\s+are not part of the consumer-facing surface/)
 assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
+
+const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")
+assert.match(runnerWorkspaceBackendContract, /^# Runner Workspace Backend Contract/m)
+assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-backend\/v1`/)
+assert.match(runnerWorkspaceBackendContract, /External callers use WP Codebox runner workspace\s+abilities and result schemas/)
+assert.match(runnerWorkspaceBackendContract, /Those names are adapter inputs,\s+not documented consumer-facing operation ids/)
+assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-prepare`/)
+assert.doesNotMatch(runnerWorkspaceBackendContract, /datamachine|data[-_ ]?machine|homeboy/i)
 
 const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")
 assert.match(agentRuntimeContract, /`generic-ability-runtime-run` is the canonical primitive/)

@@ -67,9 +67,7 @@ The stable public surface is grouped by lifecycle area rather than by product:
   instead of composing core runtime internals directly.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
-  backend adapter config shape named by `RUNNER_WORKSPACE_BACKEND_FILTER`,
-  `RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`, and
-  `RunnerWorkspaceBackendConfig`.
+  backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
 - **Tool bridge:** host tool registry, managed host command, host command
   executor, sandbox tool policy, and tool-call artifact contracts.
 - **Parent tool bridge:** `wp-codebox/parent-tool-bridge/v1`,
@@ -152,11 +150,12 @@ Artifact handoff, import, and materialization results normalize to
 
 Runner workspace backends are installed by integration code and discovered via
 the `wp_codebox_runner_workspace_backend` filter. The stable backend config is
-`RunnerWorkspaceBackendConfig`: an optional backend `id`, an optional
-`workspace_root_constant`, and an `abilities` map keyed by
-`RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`. Public callers still use the Codebox
-ability ids and request/result schemas; backend ability names stay behind this
-adapter config and are not part of the consumer-facing surface.
+`wp-codebox/runner-workspace-backend/v1`: an optional backend `id`, an optional
+`workspace_root_constant`, and an `abilities` map keyed by generic runner
+workspace operation names. Public callers still use the Codebox ability ids and
+request/result schemas; backend ability names stay behind this adapter config and
+are not part of the consumer-facing surface. See
+`docs/runner-workspace-backend-contract.md`.
 
 ## Internal Entry Point
 

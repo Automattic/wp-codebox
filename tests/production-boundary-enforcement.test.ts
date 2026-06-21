@@ -9,6 +9,7 @@ const publicDocPaths = [
   "README.md",
   "docs/README.md",
   "docs/portable-wp-codebox.md",
+  "docs/runner-workspace-backend-contract.md",
   "packages/cli/README.md",
   "packages/wordpress-plugin/README.md",
   "examples/simple-plugin/README.md",
