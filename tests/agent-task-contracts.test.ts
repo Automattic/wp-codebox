@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
@@ -10,6 +10,9 @@ import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 
 const succeeded = normalizeAgentTaskRunResult({ success: true, status: "completed" }, { exitStatus: 0 })
+assert.equal(AGENT_TASK_RUN_RESULT_SCHEMA, "wp-codebox/agent-task-run-result/v1")
+assert.equal(AGENT_TASK_RUN_RESULT_JSON_SCHEMA.properties.schema.const, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(succeeded.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(succeeded.status, "succeeded")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: succeeded }), 0)
 

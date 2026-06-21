@@ -4,6 +4,34 @@ import { normalizeAgentTaskStatus } from "./status-taxonomy.js"
 
 export const AGENT_TASK_RUN_RESULT_SCHEMA = "wp-codebox/agent-task-run-result/v1" as const
 
+export const AGENT_TASK_RUN_RESULT_JSON_SCHEMA = {
+  type: "object",
+  required: ["schema", "status", "success", "summary", "artifacts", "refs", "diagnostics", "metadata", "no_op"],
+  properties: {
+    schema: { type: "string", const: AGENT_TASK_RUN_RESULT_SCHEMA },
+    status: { type: "string" },
+    success: { type: "boolean" },
+    summary: { type: "string" },
+    artifacts: { type: "array", items: { type: "object" } },
+    refs: {
+      type: "object",
+      properties: {
+        artifact_bundles: { type: "array", items: { type: "object" } },
+        changed_files: { type: "array", items: { type: "object" } },
+        patches: { type: "array", items: { type: "object" } },
+        transcripts: { type: "array", items: { type: "object" } },
+        logs: { type: "array", items: { type: "object" } },
+        runtimes: { type: "array", items: { type: "object" } },
+      },
+    },
+    diagnostics: { type: "array", items: { type: "object" } },
+    metadata: { type: "object" },
+    terminal_result: { type: "object" },
+    no_op: { type: "object" },
+    failure_classification: { type: "string" },
+  },
+} as const
+
 export type AgentTaskRunStatus =
   | "succeeded"
   | "failed"

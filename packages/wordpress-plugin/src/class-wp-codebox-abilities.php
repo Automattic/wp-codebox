@@ -227,6 +227,23 @@ final class WP_Codebox_Abilities {
 					'description' => 'Root directory containing WP Codebox artifact bundles.',
 				),
 			);
+			$agent_task_run_result_schema = array(
+				'type'        => 'object',
+				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers. Prefer this over stdout, raw run internals, or legacy status fields.',
+				'properties'  => array(
+					'schema'                 => array( 'type' => 'string', 'const' => 'wp-codebox/agent-task-run-result/v1' ),
+					'status'                 => array( 'type' => 'string' ),
+					'success'                => array( 'type' => 'boolean' ),
+					'summary'                => array( 'type' => 'string' ),
+					'artifacts'              => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'refs'                   => array( 'type' => 'object' ),
+					'diagnostics'            => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'metadata'               => array( 'type' => 'object' ),
+					'terminal_result'        => array( 'type' => 'object' ),
+					'no_op'                  => array( 'type' => 'object' ),
+					'failure_classification' => array( 'type' => 'string' ),
+				),
+			);
 
 			wp_register_ability(
 				'wp-codebox/run-agent-task',
@@ -251,6 +268,7 @@ final class WP_Codebox_Abilities {
 							'wp'        => array( 'type' => 'string' ),
 							'paths'     => array( 'type' => 'object' ),
 							'artifacts' => array( 'type' => 'string' ),
+							'agent_task_run_result' => $agent_task_run_result_schema,
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
 							'diagnostics' => array( 'type' => 'object' ),
