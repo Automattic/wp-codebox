@@ -7,6 +7,8 @@ import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEM
 import {
   RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
+  RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
+  RUNNER_WORKSPACE_BACKEND_FILTER,
   RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_REQUEST_SCHEMA,
@@ -71,6 +73,10 @@ export interface RuntimeContractManifest {
     runRuntimePackage: typeof CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY
   }
   providerRuntime: ProviderRuntimeInvocationContract
+  runnerWorkspaceBackend: {
+    filter: typeof RUNNER_WORKSPACE_BACKEND_FILTER
+    abilityKeys: typeof RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS
+  }
 }
 
 export function runtimeContractManifest(): RuntimeContractManifest {
@@ -82,6 +88,10 @@ export function runtimeContractManifest(): RuntimeContractManifest {
       runRuntimePackage: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
     },
     providerRuntime: providerRuntimeInvocationContract(),
+    runnerWorkspaceBackend: {
+      filter: RUNNER_WORKSPACE_BACKEND_FILTER,
+      abilityKeys: RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
+    },
   }
 }
 

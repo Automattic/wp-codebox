@@ -66,7 +66,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
   instead of composing core runtime internals directly.
 - **Runner workspace:** workspace policy, preload artifact, source-root
-  preparation, mount primitive, and runner workspace publication contracts.
+  preparation, mount primitive, runner workspace publication contracts, and the
+  backend adapter config shape named by `RUNNER_WORKSPACE_BACKEND_FILTER`,
+  `RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`, and
+  `RunnerWorkspaceBackendConfig`.
 - **Tool bridge:** host tool registry, managed host command, host command
   executor, sandbox tool policy, and tool-call artifact contracts.
 - **Browser task and contained site:** browser interaction, callback, probe,
@@ -134,6 +137,14 @@ Runtime package callers use `wp-codebox/run-runtime-package` or
 `wp-codebox/runtime-package-output-projection/v1`. These contracts are generic
 Codebox runtime/package shapes and do not require consumers to know backend
 ability ids.
+
+Runner workspace backends are installed by integration code and discovered via
+the `wp_codebox_runner_workspace_backend` filter. The stable backend config is
+`RunnerWorkspaceBackendConfig`: an optional backend `id`, an optional
+`workspace_root_constant`, and an `abilities` map keyed by
+`RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`. Public callers still use the Codebox
+ability ids and request/result schemas; backend ability names stay behind this
+adapter config and are not part of the consumer-facing surface.
 
 ## Internal Entry Point
 

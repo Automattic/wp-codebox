@@ -8,6 +8,8 @@ import {
   normalizeBrowserRunResult,
   runtimePackageExecutionInput,
   persistedBrowserArtifactRefs,
+  RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
+  RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
 
 const root = new URL("..", import.meta.url)
@@ -60,6 +62,7 @@ assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
 const docs = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
 const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts", root), "utf8")
+const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", root), "utf8")
 
 for (const publicEntry of [
   "@automattic/wp-codebox-core",
@@ -121,6 +124,9 @@ assert.match(docs, /## Integration Boundary/)
 assert.match(docs, /Codebox may adapt those upstream systems into\s+generic Codebox inputs internally/)
 assert.match(docs, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
 assert.match(docs, /Codebox adapter translates from generic\s+Data Machine inputs into the Codebox task\/recipe\/runtime contracts/)
+assert.match(docs, /RUNNER_WORKSPACE_BACKEND_FILTER/)
+assert.match(docs, /RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS/)
+assert.match(docs, /RunnerWorkspaceBackendConfig/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")
@@ -129,5 +135,11 @@ assert.equal(typeof persistedBrowserArtifactRefs, "function")
 assert.equal(typeof artifactBundleFileManifest, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
+assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
+assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
+assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))
+for (const key of RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS) {
+  assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(key)), `PHP adapter must recognize backend ability key ${key}`)
+}
 
 console.log("public API contract ok")

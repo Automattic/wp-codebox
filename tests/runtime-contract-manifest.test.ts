@@ -18,6 +18,8 @@ import {
   RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
+  RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
+  RUNNER_WORKSPACE_BACKEND_FILTER,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
@@ -36,6 +38,10 @@ assert.equal(manifest.version, 1)
 assert.deepEqual(manifest.schemas, RUNTIME_CONTRACT_SCHEMAS)
 assert.deepEqual(manifest.abilities, { runRuntimePackage: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY })
 assert.deepEqual(manifest.providerRuntime, providerRuntimeInvocationContract())
+assert.deepEqual(manifest.runnerWorkspaceBackend, {
+  filter: RUNNER_WORKSPACE_BACKEND_FILTER,
+  abilityKeys: RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
+})
 
 assert.equal(manifest.schemas.providerRuntime.invocation, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
 assert.equal(manifest.schemas.providerRuntime.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
@@ -52,6 +58,17 @@ assert.equal(manifest.schemas.runnerWorkspace.prepareResult, RUNNER_WORKSPACE_PR
 assert.equal(manifest.schemas.runnerWorkspace.captureResult, RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.commandResult, RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.publicationResult, RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA)
+assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
+assert.deepEqual(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS, [
+  "workspace_adopt",
+  "workspace_show",
+  "workspace_clone",
+  "workspace_worktree_add",
+  "workspace_git_status",
+  "workspace_git_diff",
+  "run_runner_workspace_command",
+  "publish_runner_workspace",
+])
 assert.equal(manifest.schemas.fanoutAggregation.input, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(manifest.schemas.fanoutAggregation.output, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 
