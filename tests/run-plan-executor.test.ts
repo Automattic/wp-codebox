@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { executeRunPlan, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
+import { createRunPlanEvent, executeRunPlan, type RunPlanEventContract, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
 
 const events: string[] = []
 const adapter: RunPlanWorkerAdapter = {
@@ -42,5 +42,11 @@ assert.deepEqual(events, ["started:one", "started:failed", "completed:one", "fai
 
 await assert.rejects(executeRunPlan({ concurrency: 1, workers: [{ id: "missing-goal" }] }, { adapter, requireGoal: true }), /requires goal/)
 await assert.rejects(executeRunPlan({ concurrency: 1, workers: [{ id: "duplicate", goal: "one" }, { id: "duplicate", goal: "two" }] }, { adapter }), /must be unique/)
+
+assert.deepEqual(createRunPlanEvent<RunPlanEventContract>("wp-codebox/run-plan-event/v1", { event: "worker.started" }, { clock: () => "2026-03-04T05:06:07.000Z" }), {
+  schema: "wp-codebox/run-plan-event/v1",
+  time: "2026-03-04T05:06:07.000Z",
+  event: "worker.started",
+})
 
 console.log("run plan executor ok")

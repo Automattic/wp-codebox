@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
-import { commandArgValue, createRunPlanEvent, executeRunPlan, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanWorkerAdapter, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
+import { isAbsolute, join, relative, sep } from "node:path"
+import { commandArgValue, createRunPlanEvent, executeRunPlan, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanClock, type RunPlanWorkerAdapter, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
 import { agentTaskStatusSucceeded, aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
@@ -11,6 +11,8 @@ export interface AgentFanoutExecutionOptions {
   recipeDirectory: string
   previewHoldSeconds?: string
   previewPublicUrl?: string
+  sessionId?: string
+  clock?: RunPlanClock
   runWorker?: (input: AgentTaskRunInput, options: AgentTaskRunOptions) => Promise<AgentFanoutWorkerOutput>
 }
 
@@ -20,7 +22,7 @@ export interface AgentFanoutExecutionResult {
   success: boolean
   session: {
     id: string
-    children: Array<{ id: string; worker_id: string; status: string; artifacts: string }>
+    children: Array<{ id: string; worker_id: string; status: string; artifacts: string; artifact_refs: Array<Record<string, unknown>> }>
   }
   concurrency: number
   plan: Record<string, unknown>
@@ -30,6 +32,7 @@ export interface AgentFanoutExecutionResult {
   counts: { total: number; completed: number; failed: number; cancelled: number }
   events_path: string
   result_path: string
+  diagnostics?: Record<string, unknown>
 }
 
 interface AgentFanoutWorkerResult {
@@ -56,7 +59,8 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     throw new Error("wp-codebox.agent-fanout requires at least one worker")
   }
 
-  const sessionId = stringValue(request.orchestrator?.session_id) || stringValue(request.orchestrator?.request_id) || `fanout-${Date.now()}`
+  const clock = fanoutClock(request, options.clock)
+  const sessionId = options.sessionId || stringValue(request.session_id) || stringValue(request.orchestrator?.session_id) || stringValue(request.orchestrator?.request_id) || `fanout-${Date.now()}`
   const concurrency = normalizeRunPlanConcurrency(request.concurrency, { maxConcurrency: MAX_FANOUT_CONCURRENCY, concurrencyMode: "clamp" })
   const fanoutRoot = join(options.artifactRoot, "fanout")
   const workersRoot = join(fanoutRoot, "workers")
@@ -83,19 +87,20 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     })),
   }
   await writeJson(planPath, plan)
-  await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 })
+  await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 }, clock)
 
   const execution = await executeRunPlan({ workers: request.workers, concurrency }, {
     adapter: agentTaskFanoutWorkerAdapter(request, { ...options, workersRoot, sessionId }),
     defaultAgent: stringValue(request.agent),
     requireGoal: true,
-    onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", worker_id: worker.id }),
-    onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", worker_id: worker.id, status: result.status }),
-    onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", worker_id: worker.id, status: result.status }),
+    clock,
+    onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", worker_id: worker.id }, clock),
+    onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", worker_id: worker.id, status: result.status }, clock),
+    onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", worker_id: worker.id, status: result.status }, clock),
   })
   const workerResults: AgentFanoutWorkerResult[] = execution.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
 
-  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length })
+  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length }, clock)
   const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
     plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
     policy: stringValue(request.aggregation?.policy) || "fail",
@@ -114,7 +119,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   })
   await writeJson(join(aggregateRoot, "result.json"), aggregate)
   await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
-  await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status })
+  await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status }, clock)
 
   const counts = execution.counts
   const success = aggregate.status === "succeeded"
@@ -124,7 +129,13 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     success,
     session: {
       id: sessionId,
-      children: workerResults.map((worker) => ({ id: worker.session_id, worker_id: worker.worker_id, status: worker.status, artifacts: join(workersRoot, worker.worker_id, "artifacts") })),
+      children: workerResults.map((worker) => ({
+        id: worker.session_id,
+        worker_id: worker.worker_id,
+        status: worker.status,
+        artifacts: `fanout/workers/${worker.worker_id}/artifacts`,
+        artifact_refs: worker.artifact_refs,
+      })),
     },
     concurrency,
     plan,
@@ -142,9 +153,20 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     counts,
     events_path: eventsPath,
     result_path: resultPath,
+    diagnostics: {
+      private: {
+        local_paths: {
+          root: fanoutRoot,
+          events: eventsPath,
+          result: resultPath,
+          workers: workersRoot,
+          children: workerResults.map((worker) => ({ worker_id: worker.worker_id, artifacts: join(workersRoot, worker.worker_id, "artifacts") })),
+        },
+      },
+    },
   }
   await writeJson(resultPath, result)
-  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", total: counts.total, completed: counts.completed, failed: counts.failed, cancelled: counts.cancelled })
+  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", total: counts.total, completed: counts.completed, failed: counts.failed, cancelled: counts.cancelled }, clock)
   return result
 }
 
@@ -188,7 +210,7 @@ function agentTaskFanoutWorkerAdapter(request: FanoutRequestContract, options: A
           required: descriptor.required,
           session_id: childSessionId,
           result_ref: resultRef,
-          artifact_refs: workerArtifactRefs(descriptor.id, output),
+          artifact_refs: workerArtifactRefs(descriptor.id, output, options.artifactRoot),
           output,
           ...(!success ? { error: { code: "worker-failed", message: stringValue(objectValue(output.error)?.message) || `Fanout worker ${descriptor.id} failed.` } } : {}),
         }) as AgentFanoutWorkerExecutionResult
@@ -262,8 +284,8 @@ function inheritedAgentTaskInput(source: Record<string, unknown>): Record<string
   return result
 }
 
-async function emitEvent(path: string, event: Omit<FanoutLifecycleEvent, "schema" | "time" | "worker_id"> & { worker_id?: string }): Promise<void> {
-  await appendFile(path, `${JSON.stringify(createRunPlanEvent<FanoutLifecycleEvent>(FANOUT_EVENT_SCHEMA, event))}\n`)
+async function emitEvent(path: string, event: Omit<FanoutLifecycleEvent, "schema" | "time" | "worker_id"> & { worker_id?: string }, clock?: RunPlanClock): Promise<void> {
+  await appendFile(path, `${JSON.stringify(createRunPlanEvent<FanoutLifecycleEvent>(FANOUT_EVENT_SCHEMA, event, { clock }))}\n`)
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
@@ -271,16 +293,28 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
-function workerArtifactRefs(workerId: string, output: Record<string, unknown>): Array<Record<string, unknown>> {
+function workerArtifactRefs(workerId: string, output: Record<string, unknown>, artifactRoot: string): Array<Record<string, unknown>> {
   const refs = Array.isArray(output.evidence_refs) ? output.evidence_refs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))) : []
   return refs.map((ref, index) => stripUndefined({
     id: `${workerId}:${index}`,
     worker_id: workerId,
     namespace: `workers/${workerId}`,
-    path: stringValue(ref.uri) || stringValue(ref.path),
+    path: bundleRelativeArtifactRef(stringValue(ref.uri) || stringValue(ref.path), artifactRoot),
     kind: stringValue(ref.kind) || "codebox-evidence",
-    metadata: ref,
+    metadata: stripUndefined({ ...ref, private: stripUndefined({ local_path: isAbsolute(stringValue(ref.path)) ? stringValue(ref.path) : undefined }) }),
   }))
+}
+
+function bundleRelativeArtifactRef(path: string, artifactRoot: string): string | undefined {
+  if (!path || !isAbsolute(path)) return path
+  const relativePath = relative(artifactRoot, path).split(sep).join("/")
+  return relativePath.startsWith("../") || relativePath === ".." ? undefined : relativePath
+}
+
+function fanoutClock(request: FanoutRequestContract, fallback?: RunPlanClock): RunPlanClock | undefined {
+  const deterministic = objectValue(request.deterministic) ?? objectValue(request.replay)
+  const fixedTime = stringValue(deterministic?.event_time ?? deterministic?.eventTime ?? request.event_time)
+  return fixedTime ? () => fixedTime : fallback
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
