@@ -56,6 +56,7 @@
         }
       ],
       "tool_bridge": {},
+      "parent_tool_bridge": {},
       "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"
@@ -122,6 +123,7 @@
         }
       ],
       "tool_bridge": {},
+      "parent_tool_bridge": {},
       "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"
