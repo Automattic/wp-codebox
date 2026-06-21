@@ -37,6 +37,12 @@ publish `window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
 for product consumers running inside the browser. Legacy top-level
 `window.wpCodeboxBrowser` methods remain available for existing callers.
 
+Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. When an
+ability has multiple registered names, new integrations should prefer the
+inspectable `meta.canonical_ability` value. Aliases stay registered for existing
+callers, but docs and schemas should describe the canonical Codebox-owned name
+first.
+
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
 `./agent-task-recipe`, `./runtime-presets`, and `./cli/recipe-secret-env` for
@@ -66,6 +72,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   envelope, and materialization contracts.
 - **Inspect:** command registry metadata, JSON Schema factories, CLI `schema` and
   `commands` output, and recipe validation descriptors.
+
+Implementation backends are intentionally not public namespaces. References to
+Agents API, Data Machine Code, or WordPress Playground describe the current
+upstream/runtime adapter behind WP Codebox; consumers should depend on the
+Codebox ability ids, schemas, package entrypoints, and browser SDK facades above.
 
 When adding a new public type or helper, place it in the focused owner module and
 export it through `@automattic/wp-codebox-core/public` or the narrowest stable

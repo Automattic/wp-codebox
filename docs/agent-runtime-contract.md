@@ -14,6 +14,11 @@ The command reads one JSON request from `--input-file`, writes a single JSON env
 
 Direct `wp-codebox agent-sandbox-run` remains an operator/debug command. Product orchestrators should call `agent-task-run` or the parent-site `wp-codebox/run-agent-task` ability so WP Codebox can build the private recipe, capture artifacts, normalize no-op/failure evidence, and clean up temporary recipe files.
 
+Terms such as Agents API, Data Machine Code, and WordPress Playground in this
+document identify current upstream adapters or runtime backends. They are
+implementation details behind the Codebox-owned CLI command, ability ids, and
+`wp-codebox/*` schemas unless explicitly listed as stable Codebox contracts.
+
 ## Input Boundary
 
 `request.json` uses the task input contract plus agent runtime placement fields:
@@ -176,7 +181,7 @@ Runner workspace publication is a separate exported contract in runtime-core:
 
 External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into `wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`, so callers never import backend ability names.
 
-When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. The adapter maps the Codebox surface to `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery.
+When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. That backend maps the canonical Codebox surface (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) to its own implementation abilities, including `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery. Consumers should not call those backend ability names through the Codebox contract.
 
 ## Provider Runtime Invocation Names
 
@@ -193,7 +198,7 @@ These names are identifiers and contract anchors, not a queue or policy implemen
 
 ## Agents API Adapter Boundary
 
-WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the ability names and execution wrapper for:
+WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the upstream ability names and execution wrapper for:
 
 - `chat()` -> `agents/chat`.
 - `run_task()` -> `agents/run-task`.
@@ -201,7 +206,7 @@ WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter
 - `get_task_run()` / `cancel_task_run()` -> task run-control abilities.
 - `get_chat_run()`, `cancel_chat_run()`, `queue_chat_message()`, and `list_chat_run_events()` -> chat run-control abilities.
 
-This is the Codebox-facing contract. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser Playground runtime principals; that bridge remains private generated code and should not become a consumer API.
+This is the Codebox-facing adapter contract for upstream Agents API integration. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser runtime principals; that bridge remains private generated code and should not become a consumer API.
 
 ## Heartbeat And Cleanup Metadata
 

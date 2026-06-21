@@ -7,22 +7,37 @@ the parent control plane for review, replay, or apply-back.
 
 ## Ability
 
+Canonical consumer-facing ability names are listed first. Compatibility aliases
+remain registered where existing callers already use them; inspectable ability
+metadata exposes `meta.canonical_ability` for aliases.
+
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
+- `wp-codebox/run-agent-task-fanout`
+- `wp-codebox/create-browser-playground-session`
+- `wp-codebox/browser-connector-request`
+- `wp-codebox/prepare`
+- `wp-codebox/capture`
+- `wp-codebox/command`
+- `wp-codebox/publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
+- `wp-codebox/review-artifact`
+- `wp-codebox/apply-artifact-preflight`
 - `wp-codebox/import-artifact-bundle`
 - `wp-codebox/reimport-artifact-bundle`
-- `wp-codebox/apply-approved-artifact`
 - `wp-codebox/stage-artifact-apply`
+- `wp-codebox/apply-approved-artifact`
 - `wp-codebox/preview-reuse-decision`
 - `wp-codebox/open-or-create-browser-contained-site`
 - WP-CLI wrappers under `wp codebox ...`
 
-The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
-WordPress Playground runtime, mounts the requested runtime components, invokes
-the configured sandbox-local ability or hook task, and returns artifact metadata.
+The host task abilities build a private Codebox recipe, boot a disposable
+sandbox runtime, mount the requested runtime components, invoke the configured
+sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
+WordPress Playground, and upstream task runtimes are implementation details of
+the current runner, not consumer-facing API names.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`
@@ -35,6 +50,8 @@ imports each bundle through `wp_agent_import_runtime_bundles` or the
 named by `runtime_task.ability` with `runtime_task.input`. The runtime owner
 plugin defines that ability contract; WP Codebox only preserves the generic
 transport, task input, status, diagnostics, and evidence refs.
+The `wp_agent_*` hooks are upstream runtime integration seams; consumers should
+treat the `agent_bundles` and `runtime_task` fields as the Codebox contract.
 
 ```json
 {

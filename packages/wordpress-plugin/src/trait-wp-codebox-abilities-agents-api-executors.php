@@ -1,6 +1,10 @@
 <?php
 /**
- * Agents API task executor adapters for WP Codebox.
+ * Internal Agents API task executor adapters for WP Codebox.
+ *
+ * These adapters let the upstream task runtime call Codebox-owned execution
+ * targets. Consumer-facing integrations should use the wp-codebox/* abilities
+ * and schemas registered by WP_Codebox_Abilities instead of upstream names.
  *
  * @package WPCodebox
  */

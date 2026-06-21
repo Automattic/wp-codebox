@@ -449,7 +449,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::runner_workspace_prepare_output_schema(),
 					'execute_callback'    => array( self::class, 'prepare_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/prepare' ),
 				)
 			);
 
@@ -457,13 +457,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/prepare-runner-workspace',
 				array(
 					'label'               => 'Prepare Runner Workspace',
-					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Compatibility alias for wp-codebox/prepare. Prefer the canonical WP Codebox runner workspace prepare ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_prepare_input_schema(),
 					'output_schema'       => self::runner_workspace_prepare_output_schema(),
 					'execute_callback'    => array( self::class, 'prepare_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/prepare', 'alias_of' => 'wp-codebox/prepare' ),
 				)
 			);
 
@@ -477,7 +477,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
 					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/publish' ),
 				)
 			);
 
@@ -485,13 +485,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/publish-runner-workspace',
 				array(
 					'label'               => 'Publish Runner Workspace',
-					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'description'         => 'Compatibility alias for wp-codebox/publish. Prefer the canonical WP Codebox runner workspace publish ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_publication_input_schema(),
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
 					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/publish', 'alias_of' => 'wp-codebox/publish' ),
 				)
 			);
 
@@ -499,13 +499,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-publish',
 				array(
 					'label'               => 'Publish Runner Workspace',
-					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'description'         => 'Compatibility alias for wp-codebox/publish. Prefer the canonical WP Codebox runner workspace publish ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_publication_input_schema(),
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
 					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/publish', 'alias_of' => 'wp-codebox/publish' ),
 				)
 			);
 
@@ -519,7 +519,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::runner_workspace_capture_output_schema(),
 					'execute_callback'    => array( self::class, 'capture_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/capture' ),
 				)
 			);
 
@@ -527,13 +527,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/capture-runner-workspace',
 				array(
 					'label'               => 'Capture Runner Workspace',
-					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Compatibility alias for wp-codebox/capture. Prefer the canonical WP Codebox runner workspace capture ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_capture_input_schema(),
 					'output_schema'       => self::runner_workspace_capture_output_schema(),
 					'execute_callback'    => array( self::class, 'capture_runner_workspace' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/capture', 'alias_of' => 'wp-codebox/capture' ),
 				)
 			);
 
@@ -547,7 +547,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::runner_workspace_command_output_schema(),
 					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/command' ),
 				)
 			);
 
@@ -555,13 +555,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-runner-workspace-command',
 				array(
 					'label'               => 'Run Runner Workspace Command',
-					'description'         => 'Run a bounded verification or drift-check command against a runner-owned workspace through the WP Codebox runner boundary.',
+					'description'         => 'Compatibility alias for wp-codebox/command. Prefer the canonical WP Codebox runner workspace command ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_command_input_schema(),
 					'output_schema'       => self::runner_workspace_command_output_schema(),
 					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/command', 'alias_of' => 'wp-codebox/command' ),
 				)
 			);
 
@@ -569,13 +569,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-command',
 				array(
 					'label'               => 'Run Runner Workspace Command',
-					'description'         => 'Run a bounded verification or drift-check command against a runner-owned workspace through the WP Codebox runner boundary.',
+					'description'         => 'Compatibility alias for wp-codebox/command. Prefer the canonical WP Codebox runner workspace command ability in new integrations.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_command_input_schema(),
 					'output_schema'       => self::runner_workspace_command_output_schema(),
 					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/command', 'alias_of' => 'wp-codebox/command' ),
 				)
 			);
 
