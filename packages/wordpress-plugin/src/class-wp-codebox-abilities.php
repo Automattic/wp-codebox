@@ -102,6 +102,15 @@ final class WP_Codebox_Abilities {
 				'permission_callback' => array( self::class, 'can_hydrate_browser_blueprint_ref' ),
 			)
 		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/preview-boot-ref',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_preview_boot_ref' ),
+				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+			)
+		);
 	}
 
 	public static function can_hydrate_browser_blueprint_ref(): bool {
@@ -127,6 +136,16 @@ final class WP_Codebox_Abilities {
 				'input_hash' => (string) $request->get_param( 'input_hash' ),
 			)
 		);
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_preview_boot_ref( WP_REST_Request $request ): array|WP_Error {
+		$input = $request->get_json_params();
+		if ( ! is_array( $input ) ) {
+			return new WP_Error( 'wp_codebox_preview_boot_ref_payload_invalid', 'Preview boot refs require a JSON object.', array( 'status' => 400 ) );
+		}
+
+		return self::preview_boot_ref( $input );
 	}
 
 	/**

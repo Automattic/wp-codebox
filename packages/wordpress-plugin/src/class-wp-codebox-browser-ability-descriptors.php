@@ -45,6 +45,27 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
 				'meta'                => array( 'show_in_rest' => true ),
 			),
+			'wp-codebox/preview-boot-ref' => array(
+				'label'               => 'Preview Boot Ref',
+				'description'         => 'Resolve a Codebox-contained preview into a stable Studio-style boot DTO. Consumers should read boot, blueprint_ref, preview_lease, and startup_diagnostics instead of raw Playground URLs, scope, blueprint, or legacy session internals.',
+				'category'            => 'wp-codebox',
+				'input_schema'        => array( 'type' => 'object', 'properties' => array( 'contained_site' => $context['browser_contained_site_schema'], 'site_id' => array( 'type' => 'string' ), 'cache_key' => array( 'type' => 'string' ), 'source_digest' => array( 'type' => array( 'string', 'object' ) ), 'input_hash' => array( 'type' => 'string' ), 'playground' => array( 'type' => 'object' ), 'preview_lease' => array( 'type' => 'object' ) ) ),
+				'output_schema'       => array(
+					'type'       => 'object',
+					'properties' => array(
+						'success'             => array( 'type' => 'boolean' ),
+						'schema'              => array( 'type' => 'string', 'const' => 'wp-codebox/preview-boot-ref/v1' ),
+						'boot'                => array( 'type' => 'object' ),
+						'blueprint_ref'       => array( 'type' => 'object' ),
+						'preview_lease'       => array( 'type' => 'object' ),
+						'startup_diagnostics' => array( 'type' => 'object' ),
+						'compatibility'       => array( 'type' => 'object' ),
+					),
+				),
+				'execute_callback'    => array( WP_Codebox_Abilities::class, 'preview_boot_ref' ),
+				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
+				'meta'                => array( 'show_in_rest' => true ),
+			),
 			'wp-codebox/destroy-browser-contained-site-session' => array(
 				'label'               => 'Destroy Browser Contained Site Session',
 				'description'         => 'Release a Codebox-contained browser site session lease and return a terminal contained-site envelope.',

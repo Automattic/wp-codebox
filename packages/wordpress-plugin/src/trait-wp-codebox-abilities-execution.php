@@ -411,6 +411,54 @@ public static function boot_browser_contained_site_session( array $input ): arra
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function preview_boot_ref( array $input ): array|WP_Error {
+	$boot_result = self::boot_browser_contained_site_session( $input );
+	if ( is_wp_error( $boot_result ) ) {
+		return $boot_result;
+	}
+
+	$boot           = is_array( $boot_result['boot'] ?? null ) ? $boot_result['boot'] : array();
+	$contained_site = is_array( $boot_result['contained_site'] ?? null ) ? $boot_result['contained_site'] : array();
+	$preview_lease  = is_array( $boot_result['preview_lease'] ?? null ) ? $boot_result['preview_lease'] : array();
+	$diagnostics    = is_array( $boot_result['startup_diagnostics'] ?? null ) ? $boot_result['startup_diagnostics'] : array();
+	$blueprint_ref  = is_array( $boot['blueprint_ref'] ?? null ) ? $boot['blueprint_ref'] : array();
+	$preview        = is_array( $boot['preview'] ?? null ) ? $boot['preview'] : $preview_lease;
+
+	$stable_boot = array_filter(
+		array(
+			'schema'        => 'wp-codebox/browser-contained-site-boot/v1',
+			'session_id'    => (string) ( $boot['session_id'] ?? '' ),
+			'site_id'       => (string) ( $boot['site_id'] ?? '' ),
+			'status'        => (string) ( $boot['status'] ?? '' ),
+			'preview'       => $preview,
+			'blueprint_ref' => $blueprint_ref,
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+
+	return array_filter(
+		array(
+			'success'             => true === ( $boot_result['success'] ?? false ),
+			'schema'              => 'wp-codebox/preview-boot-ref/v1',
+			'boot'                => $stable_boot,
+			'blueprint_ref'       => $blueprint_ref,
+			'preview_lease'       => $preview_lease,
+			'startup_diagnostics' => $diagnostics,
+			'compatibility'       => array_filter(
+				array(
+					'contained_site_schema' => (string) ( $contained_site['schema'] ?? '' ),
+					'session_result_schema' => (string) ( $boot_result['schema'] ?? '' ),
+					'legacy_contained_site' => $contained_site,
+					'legacy_session_result' => $boot_result,
+				),
+				static fn( mixed $value ): bool => array() !== $value && '' !== $value
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function destroy_browser_contained_site_session( array $input ): array|WP_Error {
 	$contained_site = self::browser_contained_site_public_input( is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array() );
 	$site_id        = (string) ( $input['site_id'] ?? $contained_site['site_id'] ?? '' );
