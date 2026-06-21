@@ -137,6 +137,124 @@ public static function create_browser_playground_session( array $input ): array|
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function open_or_create_browser_contained_site( array $input ): array|WP_Error {
+	$contained_site = is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array();
+	if ( empty( $contained_site ) ) {
+		return new WP_Error( 'wp_codebox_browser_contained_site_missing', 'A contained_site descriptor is required.', array( 'status' => 400 ) );
+	}
+
+	$fallback_create = true === ( $input['fallback_create'] ?? false );
+	if ( ! $fallback_create || '' === trim( (string) ( $input['goal'] ?? '' ) ) ) {
+		return self::browser_contained_site_open_unavailable( $contained_site, $input, $fallback_create ? 'fallback-create-missing-goal' : 'fallback-create-not-requested' );
+	}
+
+	$session = self::create_browser_playground_session( $input );
+	if ( is_wp_error( $session ) ) {
+		return $session;
+	}
+
+	$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+	$playground       = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+	$runtime          = is_array( $session['runtime'] ?? null ) ? $session['runtime'] : array();
+	$preview_lease    = is_array( $input['preview_lease'] ?? null ) ? $input['preview_lease'] : ( is_array( $contained_site['preview_lease'] ?? null ) ? $contained_site['preview_lease'] : array() );
+	$preview_boot     = array_filter(
+		array(
+			'schema'                => 'wp-codebox/browser-preview-boot/v1',
+			'session_id'            => (string) ( $session_envelope['id'] ?? '' ),
+			'client_module_url'     => (string) ( $playground['client_module_url'] ?? '' ),
+			'remote_url'            => (string) ( $playground['remote_url'] ?? '' ),
+			'cors_proxy_url'        => (string) ( $playground['cors_proxy_url'] ?? '' ),
+			'preview_url'           => (string) ( $playground['preview_url'] ?? '' ),
+			'blueprint'             => is_array( $playground['blueprint'] ?? null ) ? $playground['blueprint'] : null,
+			'blueprint_ref_dto'     => is_array( $contained_site['blueprint_ref'] ?? null ) ? $contained_site['blueprint_ref'] : null,
+			'prepared_runtime'      => is_array( $playground['prepared_runtime'] ?? null ) ? $playground['prepared_runtime'] : ( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : null ),
+			'artifact_base_path'    => (string) ( $playground['artifact_base_path'] ?? '' ),
+			'artifact_base_url'     => (string) ( $playground['artifact_base_url'] ?? '' ),
+		),
+		static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+	);
+
+	$opened_site = array_filter(
+		array_merge(
+			$contained_site,
+			array(
+				'schema'        => (string) ( $contained_site['schema'] ?? 'wp-codebox/browser-contained-site/v1' ),
+				'status'        => true === ( $session['success'] ?? false ) ? 'created' : (string) ( $session['status'] ?? 'blocked' ),
+				'session_id'    => (string) ( $session_envelope['id'] ?? '' ),
+				'preview_boot'  => $preview_boot,
+				'preview_lease' => $preview_lease,
+				'runtime'       => $runtime,
+			)
+		),
+		static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+	);
+
+	$open = array(
+		'success'        => true === ( $session['success'] ?? false ),
+		'schema'         => 'wp-codebox/browser-contained-site-open/v1',
+		'status'         => true === ( $session['success'] ?? false ) ? 'created' : (string) ( $session['status'] ?? 'blocked' ),
+		'contained_site' => $opened_site,
+		'preview_boot'   => $preview_boot,
+		'preview_lease'  => $preview_lease,
+		'resolution'     => array(
+			'schema'   => 'wp-codebox/browser-contained-site-resolution/v1',
+			'status'   => true === ( $session['success'] ?? false ) ? 'created' : (string) ( $session['status'] ?? 'blocked' ),
+			'outcome'  => true === ( $session['success'] ?? false ) ? 'created' : 'blocked',
+			'reused'   => false,
+			'fallback' => 'created-browser-playground-session',
+		),
+	);
+
+	return array(
+		'success'        => $open['success'],
+		'schema'         => 'wp-codebox/browser-contained-site-open-or-create/v1',
+		'status'         => $open['status'],
+		'action'         => 'created',
+		'open'           => $open,
+		'created'        => $open,
+		'contained_site' => $opened_site,
+		'preview_boot'   => $preview_boot,
+		'preview_lease'  => $preview_lease,
+		'resolution'     => $open['resolution'],
+		'session'        => $session_envelope,
+	);
+}
+
+/** @param array<string,mixed> $contained_site Contained site descriptor. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+private static function browser_contained_site_open_unavailable( array $contained_site, array $input, string $reason ): array {
+	$preview_lease = is_array( $input['preview_lease'] ?? null ) ? $input['preview_lease'] : ( is_array( $contained_site['preview_lease'] ?? null ) ? $contained_site['preview_lease'] : array() );
+	$resolution    = array(
+		'schema'   => 'wp-codebox/browser-contained-site-resolution/v1',
+		'status'   => 'unavailable',
+		'outcome'  => 'unavailable',
+		'reused'   => false,
+		'fallback' => $reason,
+	);
+	$open          = array_filter(
+		array(
+			'success'        => false,
+			'schema'         => 'wp-codebox/browser-contained-site-open/v1',
+			'status'         => 'unavailable',
+			'contained_site' => $contained_site,
+			'preview_lease'  => $preview_lease,
+			'resolution'     => $resolution,
+		),
+		static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+	);
+
+	return array(
+		'success'        => false,
+		'schema'         => 'wp-codebox/browser-contained-site-open-or-create/v1',
+		'status'         => 'unavailable',
+		'action'         => 'unavailable',
+		'open'           => $open,
+		'contained_site' => $contained_site,
+		'preview_lease'  => $preview_lease,
+		'resolution'     => $resolution,
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
 	$session = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $session ) ) {

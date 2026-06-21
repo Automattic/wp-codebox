@@ -272,7 +272,7 @@ class PlaygroundRuntime implements Runtime {
         command: spec.command,
         args: spec.args ?? [],
         exitCode: 0,
-        stdout: await executePlaygroundCommand(this, spec, this.hostTools),
+        stdout: await timeoutPlaygroundCommand(executePlaygroundCommand(this, spec, this.hostTools), spec, abortController),
         stderr: "",
         startedAt,
         finishedAt: now(),
@@ -1213,4 +1213,28 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): P
       signal.addEventListener("abort", () => reject(new Error("Runtime execution was aborted during cleanup")), { once: true })
     }),
   ])
+}
+
+function timeoutPlaygroundCommand<T>(operation: Promise<T>, spec: ExecutionSpec, abortController: AbortController): Promise<T> {
+  const timeoutMs = spec.timeoutMs
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return operation
+  }
+
+  operation.catch(() => undefined)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    operation,
+    new Promise<T>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        abortController.abort()
+        reject(new Error(`Runtime command ${spec.command} exceeded timeoutMs=${Math.round(timeoutMs)}`))
+      }, Math.round(timeoutMs))
+      timeout.unref()
+    }),
+  ]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  })
 }

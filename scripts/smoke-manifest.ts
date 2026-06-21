@@ -71,6 +71,7 @@ export const smokeGroups = {
       tsxSmoke("run-registry-smoke"),
       tsxSmoke("wordpress-state-contract-smoke"),
       tsxSmoke("playground-command-errors-smoke"),
+      tsxSmoke("playground-command-timeout-smoke"),
       tsxSmoke("replay-export-snapshot-scoping-smoke"),
       tsxSmoke("composer-backed-source-hydration-smoke"),
       tsxSmoke("recipe-run-composer-autoload-extra-plugin-smoke"),

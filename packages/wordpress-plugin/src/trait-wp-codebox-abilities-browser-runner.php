@@ -950,9 +950,51 @@ return array_filter( array(
 ) );
 }
 
+function wp_codebox_browser_agent_bundle_importer_diagnostics(): array {
+global $wp_filter;
+$callback_count = 0;
+if ( isset( $wp_filter[\'wp_agent_runtime_import_bundle\'] ) && is_object( $wp_filter[\'wp_agent_runtime_import_bundle\'] ) && isset( $wp_filter[\'wp_agent_runtime_import_bundle\']->callbacks ) && is_array( $wp_filter[\'wp_agent_runtime_import_bundle\']->callbacks ) ) {
+	foreach ( $wp_filter[\'wp_agent_runtime_import_bundle\']->callbacks as $callbacks ) {
+		$callback_count += is_array( $callbacks ) ? count( $callbacks ) : 0;
+	}
+}
+
+$candidates = array();
+if ( defined( \'AGENTS_API_PATH\' ) ) {
+	$candidates[] = trailingslashit( AGENTS_API_PATH ) . \'src/Registry/register-agent-runtime-bundle-importer.php\';
+}
+$candidates[] = trailingslashit( WP_PLUGIN_DIR ) . \'agents-api/src/Registry/register-agent-runtime-bundle-importer.php\';
+
+return array(
+	\'agents_api_path_defined\' => defined( \'AGENTS_API_PATH\' ),
+	\'agents_api_path\' => defined( \'AGENTS_API_PATH\' ) ? (string) AGENTS_API_PATH : \'\',
+	\'wp_plugin_dir\' => defined( \'WP_PLUGIN_DIR\' ) ? (string) WP_PLUGIN_DIR : \'\',
+	\'wp_agent_import_runtime_bundles_exists\' => function_exists( \'wp_agent_import_runtime_bundles\' ),
+	\'wp_agent_runtime_import_bundle_callback_count\' => $callback_count,
+	\'candidate_importers\' => array_values( array_map( static fn( $path ) => array(
+		\'path\' => (string) $path,
+		\'readable\' => is_readable( $path ),
+	), $candidates ) ),
+);
+}
+
 function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 if ( empty( $bundle_specs ) ) {
 	return array();
+}
+
+if ( ! function_exists( \'wp_agent_import_runtime_bundles\' ) ) {
+	$agents_api_importers = array();
+	if ( defined( \'AGENTS_API_PATH\' ) ) {
+		$agents_api_importers[] = trailingslashit( AGENTS_API_PATH ) . \'src/Registry/register-agent-runtime-bundle-importer.php\';
+	}
+	$agents_api_importers[] = trailingslashit( WP_PLUGIN_DIR ) . \'agents-api/src/Registry/register-agent-runtime-bundle-importer.php\';
+	foreach ( $agents_api_importers as $agents_api_importer ) {
+		if ( is_readable( $agents_api_importer ) ) {
+			require_once $agents_api_importer;
+			break;
+		}
+	}
 }
 
 if ( function_exists( \'wp_agent_import_runtime_bundles\' ) ) {
@@ -966,7 +1008,7 @@ foreach ( $bundle_specs as $index => $spec ) {
 		continue;
 	}
 	if ( ! isset( $spec[\'source\'] ) && ! isset( $spec[\'bundle\'] ) ) {
-		$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_source_missing\', \'message\' => \'Agent bundle spec requires source or bundle.\' ) );
+		$imports[] = array( \'success\' => false, \'index\' => $index, \'error\' => array( \'code\' => \'agent_bundle_source_missing\', \'message\' => \'Agent bundle spec requires source or bundle.\', \'data\' => array( \'spec_keys\' => array_values( array_slice( array_map( \'strval\', array_keys( $spec ) ), 0, 12 ) ), \'has_source\' => isset( $spec[\'source\'] ), \'has_bundle\' => isset( $spec[\'bundle\'] ), \'slug\' => is_scalar( $spec[\'slug\'] ?? null ) ? (string) $spec[\'slug\'] : \'\' ) ) );
 		continue;
 	}
 
@@ -988,7 +1030,7 @@ foreach ( $bundle_specs as $index => $spec ) {
 	}
 	$result = apply_filters( \'wp_agent_runtime_import_bundle\', null, $spec, $input, $index );
 	if ( null === $result ) {
-		$result = new WP_Error( \'wp_codebox_agent_bundle_importer_unavailable\', \'No browser runtime agent bundle importer handled this bundle spec.\', array( \'index\' => $index ) );
+		$result = new WP_Error( \'wp_codebox_agent_bundle_importer_unavailable\', \'No browser runtime agent bundle importer handled this bundle spec.\', array( \'index\' => $index, \'diagnostics\' => wp_codebox_browser_agent_bundle_importer_diagnostics() ) );
 	}
 	$imports[] = is_wp_error( $result )
 		? array( \'success\' => false, \'index\' => $index, \'source\' => isset( $input[\'source\'] ) ? $input[\'source\'] : \'inline\', \'error\' => array( \'code\' => $result->get_error_code(), \'message\' => $result->get_error_message(), \'data\' => $result->get_error_data() ) )
@@ -1144,6 +1186,14 @@ $provider_proxy_diagnostics = wp_codebox_browser_install_provider_proxy( $payloa
 
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
+$artifact_contract_schema = (string) ( $wp_codebox_browser_artifact_environment[\'contract\'][\'schema\'] ?? \'\' );
+if ( \'\' !== $artifact_contract_schema && \'\' !== (string) ( $wp_codebox_browser_artifact_environment[\'entrypoint\'] ?? \'\' ) ) {
+	$artifact_entrypoint_path = rtrim( (string) $wp_codebox_browser_artifact_environment[\'base_path\'], \'/\' ) . \'/\' . ltrim( (string) $wp_codebox_browser_artifact_environment[\'entrypoint\'], \'/\' );
+	$message .= "\n\nRequired artifact output:\n";
+	$message .= "- Write the final browser-runnable artifact entrypoint to {$artifact_entrypoint_path}.\n";
+	$message .= "- Use the filesystem_write tool for this file before finishing.\n";
+	$message .= "- The captured artifact schema is {$artifact_contract_schema}.";
+}
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
 $runtime_user_id = (int) ( $payload[\'user_id\'] ?? ( function_exists( \'get_current_user_id\' ) ? get_current_user_id() : 0 ) );
 if ( $runtime_user_id <= 0 ) {

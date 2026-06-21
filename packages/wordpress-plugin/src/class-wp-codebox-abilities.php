@@ -479,6 +479,41 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/open-or-create-browser-contained-site',
+				array(
+					'label'               => 'Open Or Create Browser Contained Site',
+					'description'         => 'Open a browser-contained site when a reusable prepared runtime is available, or create a fresh browser Playground session from the provided generic session input.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'contained_site' ),
+						'properties' => $browser_session_properties + array(
+							'contained_site'  => array(
+								'type'        => 'object',
+								'description' => 'Opaque caller-owned contained-site descriptor returned by a prior browser session or product target.',
+							),
+							'preview_lease'   => array(
+								'anyOf'       => array(
+									array( 'type' => 'object' ),
+									array( 'type' => 'null' ),
+								),
+								'description' => 'Optional caller-owned preview lease metadata to preserve on the returned contained-site envelope.',
+							),
+							'fallback_create' => array(
+								'type'        => 'boolean',
+								'description' => 'When true, create a fresh browser Playground session if the contained-site descriptor cannot be opened directly.',
+								'default'     => false,
+							),
+						),
+					),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'open_or_create_browser_contained_site' ),
+					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/create-browser-materializer-contract',
 				array(
 					'label'               => 'Create Browser Materializer Contract',

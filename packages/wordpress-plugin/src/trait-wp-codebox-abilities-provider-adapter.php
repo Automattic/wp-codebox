@@ -26,7 +26,8 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 		}
 
 		$inheritance = $inheritance_payload['inheritance'];
-		$connector   = self::browser_provider_request_connector( $input, $inheritance );
+		$raw_connector = self::browser_provider_request_connector_raw( $input, $inheritance );
+		$connector   = self::redact_provider_metadata( $raw_connector );
 		if ( empty( $connector ) ) {
 			return new WP_Error( 'wp_codebox_browser_provider_connector_required', 'Browser provider requests require a resolved connector scope.', array( 'status' => 403, 'schema' => 'wp-codebox/browser-provider-error/v1' ) );
 		}
@@ -53,6 +54,9 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 		 * @param array<string,mixed> $input           Original ability input.
 		 */
 		$response = apply_filters( 'wp_codebox_browser_provider_request', null, $adapter_request, $input );
+		if ( null === $response ) {
+			$response = self::default_browser_provider_request( $adapter_request, $raw_connector );
+		}
 
 		if ( null === $response ) {
 			return new WP_Error( 'wp_codebox_browser_provider_adapter_missing', 'No browser provider adapter handled this connector-scoped request.', array( 'status' => 501, 'schema' => 'wp-codebox/browser-provider-error/v1', 'operation' => $operation, 'provider' => $adapter_request['provider'], 'model' => $adapter_request['model'], 'connector' => $connector ) );
@@ -69,8 +73,133 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 		return self::normalize_browser_provider_response( $response, $adapter_request );
 	}
 
+	/** @param array<string,mixed> $adapter_request Generic redacted provider request. @return array<string,mixed>|WP_Error|null */
+	private static function default_browser_provider_request( array $adapter_request, array $raw_connector ): array|WP_Error|null {
+		if ( 'http.request' !== (string) ( $adapter_request['operation'] ?? '' ) ) {
+			return null;
+		}
+
+		$request = is_array( $adapter_request['request'] ?? null ) ? $adapter_request['request'] : array();
+		$uri     = trim( (string) ( $request['uri'] ?? '' ) );
+		$scheme  = '' !== $uri ? wp_parse_url( $uri, PHP_URL_SCHEME ) : '';
+		if ( 'https' !== $scheme ) {
+			return new WP_Error( 'wp_codebox_browser_provider_uri_invalid', 'Browser provider HTTP requests must use HTTPS URLs.', array( 'status' => 400, 'schema' => 'wp-codebox/browser-provider-error/v1' ) );
+		}
+
+		$method  = strtoupper( trim( (string) ( $request['method'] ?? 'POST' ) ) );
+		$headers = is_array( $request['headers'] ?? null ) ? $request['headers'] : array();
+		$headers = array_filter(
+			array_map( static fn( mixed $value ): string => is_scalar( $value ) ? (string) $value : '', $headers ),
+			static fn( string $value ): bool => '' !== $value
+		);
+		$authorization_header = (string) ( $headers['Authorization'] ?? $headers['authorization'] ?? '' );
+		if ( '' === $authorization_header || str_contains( strtolower( $authorization_header ), '[redacted]' ) ) {
+			$secret = self::browser_provider_connector_secret( $raw_connector, (string) ( $adapter_request['provider'] ?? '' ) );
+			if ( '' === $secret ) {
+				return new WP_Error( 'wp_codebox_browser_provider_secret_unavailable', 'Browser provider request could not resolve connector credentials.', array( 'status' => 403, 'schema' => 'wp-codebox/browser-provider-error/v1' ) );
+			}
+
+			unset( $headers['authorization'] );
+			$headers['Authorization'] = 'Bearer ' . $secret;
+		}
+
+		$body = null;
+		if ( array_key_exists( 'body', $request ) ) {
+			if ( is_scalar( $request['body'] ) ) {
+				$body = (string) $request['body'];
+				$trimmed_body = trim( $body );
+				if ( str_starts_with( $trimmed_body, '{' ) || str_starts_with( $trimmed_body, '[' ) ) {
+					foreach ( array_keys( $headers ) as $header_name ) {
+						if ( 'content-type' === strtolower( (string) $header_name ) ) {
+							unset( $headers[ $header_name ] );
+						}
+					}
+					$headers['Content-Type'] = 'application/json';
+				}
+			} elseif ( is_array( $request['body'] ) ) {
+				$encoded_body = wp_json_encode( $request['body'] );
+				if ( false === $encoded_body ) {
+					return new WP_Error( 'wp_codebox_browser_provider_body_invalid', 'Browser provider HTTP request body could not be encoded as JSON.', array( 'status' => 400, 'schema' => 'wp-codebox/browser-provider-error/v1' ) );
+				}
+
+				$body = $encoded_body;
+				foreach ( array_keys( $headers ) as $header_name ) {
+					if ( 'content-type' === strtolower( (string) $header_name ) ) {
+						unset( $headers[ $header_name ] );
+					}
+				}
+				$headers['Content-Type'] = 'application/json';
+			}
+		}
+
+		$response = wp_remote_request( $uri, array(
+			'method'      => in_array( $method, array( 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ), true ) ? $method : 'POST',
+			'headers'     => $headers,
+			'body'        => $body,
+			'timeout'     => 120,
+			'redirection' => 0,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( $response->get_error_code(), $response->get_error_message(), array( 'status' => 502, 'schema' => 'wp-codebox/browser-provider-error/v1' ) );
+		}
+
+		return array(
+			'response' => array(
+				'http' => array(
+					'status'  => (int) wp_remote_retrieve_response_code( $response ),
+					'headers' => wp_remote_retrieve_headers( $response )->getAll(),
+					'body'    => (string) wp_remote_retrieve_body( $response ),
+				),
+			),
+		);
+	}
+
+	/** @param array<string,mixed> $connector Redacted connector metadata. */
+	private static function browser_provider_connector_secret( array $connector, string $provider = '' ): string {
+		$names = array();
+		foreach ( is_array( $connector['secretEnv'] ?? null ) ? $connector['secretEnv'] : array() as $name ) {
+			$names[] = (string) $name;
+		}
+		$credentials = is_array( $connector['credentials'] ?? null ) ? $connector['credentials'] : array();
+		foreach ( is_array( $credentials['secrets'] ?? null ) ? $credentials['secrets'] : array() as $secret ) {
+			if ( is_array( $secret ) && 'available' === (string) ( $secret['status'] ?? '' ) ) {
+				$names[] = (string) ( $secret['name'] ?? '' );
+			}
+		}
+		$provider_key = strtoupper( preg_replace( '/[^A-Za-z0-9]+/', '_', trim( $provider ) ) );
+		if ( '' !== $provider_key ) {
+			$names[] = $provider_key . '_API_KEY';
+		}
+
+		foreach ( array_values( array_unique( array_filter( $names ) ) ) as $name ) {
+			if ( 1 !== preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) {
+				continue;
+			}
+			$value = getenv( $name );
+			if ( is_string( $value ) && '' !== trim( $value ) ) {
+				return trim( $value );
+			}
+		}
+
+		$provider_key = strtolower( preg_replace( '/[^A-Za-z0-9]+/', '_', trim( $provider ) ) );
+		if ( '' !== $provider_key && function_exists( 'get_option' ) ) {
+			$value = get_option( 'connectors_ai_' . $provider_key . '_api_key', '' );
+			if ( is_string( $value ) && '' !== trim( $value ) ) {
+				return trim( $value );
+			}
+		}
+
+		return '';
+	}
+
 	/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
 	private static function browser_provider_request_connector( array $input, array $inheritance ): array {
+		return self::redact_provider_metadata( self::browser_provider_request_connector_raw( $input, $inheritance ) );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
+	private static function browser_provider_request_connector_raw( array $input, array $inheritance ): array {
 		$requested_name = trim( (string) ( $input['connector'] ?? '' ) );
 		foreach ( $inheritance['connectors'] as $connector ) {
 			$name = trim( (string) ( $connector['name'] ?? '' ) );
@@ -82,7 +211,7 @@ trait WP_Codebox_Abilities_Provider_Adapter {
 				continue;
 			}
 
-			return self::redact_provider_metadata( $connector );
+			return $connector;
 		}
 
 		return array();
