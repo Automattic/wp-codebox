@@ -248,6 +248,8 @@ class PlaygroundRuntime implements Runtime {
         stdout: typeof output === "string" ? output : commandEnvelopeStdout(output),
         stderr: envelope?.stderr ?? "",
         ...(envelope ? { result: envelope } : {}),
+        ...(envelope?.diagnostics !== undefined ? { diagnostics: envelope.diagnostics } : {}),
+        ...(envelope?.artifactRefs?.length ? { artifactRefs: envelope.artifactRefs } : {}),
         startedAt,
         finishedAt: now(),
       }
@@ -738,10 +740,11 @@ class PlaygroundRuntime implements Runtime {
     return result.output
   }
 
-  async runPhp(spec: ExecutionSpec): Promise<string> {
+  async runPhp(spec: ExecutionSpec): Promise<RuntimeCommandResultEnvelope | string> {
     const server = await this.bootPlayground()
     return runPhpCommand({
       createRuntimeWpCliBridge: (targetServer) => this.createRuntimeWpCliBridge(targetServer),
+      artifactRoot: this.artifactRoot,
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
       runtimeSpec: this.spec,
       server,

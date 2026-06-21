@@ -7,7 +7,7 @@ export type PlaygroundCommandOutput = string | RuntimeCommandResultEnvelope
 interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>
   runCommandAgent(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
-  runPhp(spec: ExecutionSpec): Promise<string>
+  runPhp(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runWpCli(spec: ExecutionSpec): Promise<string>
   runExportBrowserStorageState(spec: ExecutionSpec): Promise<string>
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
