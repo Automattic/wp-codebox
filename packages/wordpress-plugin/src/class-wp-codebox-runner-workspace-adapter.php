@@ -8,6 +8,9 @@
 defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Runner_Workspace_Adapter {
+	public const BACKEND_SCHEMA  = 'wp-codebox/runner-workspace-backend/v1';
+	public const BACKEND_VERSION = 1;
+
 	private const ABILITY_KEYS = array(
 		'workspace_adopt',
 		'workspace_show',
@@ -20,6 +23,26 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 	);
 
 	private const ABILITY_NAME_PATTERN = '#^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$#i';
+	private const BACKEND_ID_PATTERN = '#^[a-z0-9][a-z0-9._-]*$#i';
+
+	/** @return array<string,mixed> */
+	public static function backend_schema(): array {
+		return array(
+			'$id'        => self::BACKEND_SCHEMA,
+			'type'       => 'object',
+			'properties' => array(
+				'schema'                  => array( 'type' => 'string', 'const' => self::BACKEND_SCHEMA ),
+				'version'                 => array( 'type' => 'integer', 'const' => self::BACKEND_VERSION ),
+				'id'                      => array( 'type' => 'string', 'description' => 'Opaque integration-owned backend id.' ),
+				'workspace_root_constant' => array( 'type' => 'string', 'description' => 'Optional constant name used by the backend to find the workspace root.' ),
+				'abilities'               => array(
+					'type'                 => 'object',
+					'additionalProperties' => array( 'type' => 'string' ),
+					'description'          => 'Private backend operation map keyed by WP Codebox runner workspace operation names.',
+				),
+			),
+		);
+	}
 
 	/** @return array<string,mixed> */
 	public function prepare( array $input ): array {
@@ -132,19 +155,61 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 	private function config(): array {
 		$config    = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
 		$config    = is_array( $config ) ? $config : array();
+		$issues    = self::backend_config_issues( $config );
 		$abilities = $this->normalize_abilities( $config['abilities'] ?? null );
 
 		return array(
+			'schema'                  => self::BACKEND_SCHEMA,
+			'version'                 => self::BACKEND_VERSION,
 			'id'                      => is_string( $config['id'] ?? null ) ? trim( $config['id'] ) : '',
 			'workspace_root_constant' => is_string( $config['workspace_root_constant'] ?? null ) ? trim( $config['workspace_root_constant'] ) : '',
 			'abilities'               => $abilities,
+			'issues'                  => $issues,
 		);
 	}
 
 	/** @return array<string,mixed> */
 	private function abilities(): array {
 		$config = $this->config();
+		if ( ! empty( $config['issues'] ) ) {
+			return array();
+		}
+
 		return is_array( $config['abilities'] ?? null ) ? $config['abilities'] : array();
+	}
+
+	/** @param array<string,mixed> $config @return array<int,array<string,string>> */
+	public static function backend_config_issues( array $config ): array {
+		$issues = array();
+		if ( isset( $config['schema'] ) && self::BACKEND_SCHEMA !== (string) $config['schema'] ) {
+			$issues[] = array( 'field' => 'schema', 'message' => 'runner workspace backend schema must be ' . self::BACKEND_SCHEMA . '.' );
+		}
+		if ( isset( $config['version'] ) && self::BACKEND_VERSION !== (int) $config['version'] ) {
+			$issues[] = array( 'field' => 'version', 'message' => 'runner workspace backend version must be ' . self::BACKEND_VERSION . '.' );
+		}
+		$id = is_string( $config['id'] ?? null ) ? trim( $config['id'] ) : '';
+		if ( '' !== $id && 1 !== preg_match( self::BACKEND_ID_PATTERN, $id ) ) {
+			$issues[] = array( 'field' => 'id', 'message' => 'runner workspace backend id must be a lowercase slug.' );
+		}
+		if ( isset( $config['workspace_root_constant'] ) && ! is_string( $config['workspace_root_constant'] ) ) {
+			$issues[] = array( 'field' => 'workspace_root_constant', 'message' => 'runner workspace backend workspace_root_constant must be a string.' );
+		}
+		if ( isset( $config['abilities'] ) && ! is_array( $config['abilities'] ) ) {
+			$issues[] = array( 'field' => 'abilities', 'message' => 'runner workspace backend abilities must be an object.' );
+			return $issues;
+		}
+
+		foreach ( is_array( $config['abilities'] ?? null ) ? $config['abilities'] : array() as $key => $value ) {
+			if ( ! in_array( (string) $key, self::ABILITY_KEYS, true ) ) {
+				$issues[] = array( 'field' => 'abilities.' . (string) $key, 'message' => 'runner workspace backend ability key is not supported.' );
+				continue;
+			}
+			if ( ! is_string( $value ) || '' === trim( $value ) || 1 !== preg_match( self::ABILITY_NAME_PATTERN, trim( $value ) ) ) {
+				$issues[] = array( 'field' => 'abilities.' . (string) $key, 'message' => 'runner workspace backend ability value must be a namespace/name string.' );
+			}
+		}
+
+		return $issues;
 	}
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */

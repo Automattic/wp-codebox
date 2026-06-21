@@ -13,6 +13,9 @@ import {
   normalizeBrowserRunResult,
   parentToolBridgeContract,
   performanceObservation,
+  runWordPressWpCli,
+  runWordPressPhp,
+  requestWordPressRest,
   runtimePackageExecutionInput,
   runtimeProfile,
   persistedBrowserArtifactRefs,
@@ -125,6 +128,7 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
+  "./wordpress-runtime-actions.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
@@ -141,15 +145,14 @@ for (const internalModule of [
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
-assert.match(docs, /not a stable compatibility surface for external integrations/)
+assert.match(docs, /External integrations use the stable entrypoints listed above/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
 assert.match(docs, /## Integration Boundary/)
-assert.match(docs, /Codebox may adapt those upstream systems into\s+generic Codebox inputs internally/)
-assert.match(docs, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
-assert.match(docs, /Codebox adapter translates from generic\s+Data Machine inputs into the Codebox task\/recipe\/runtime contracts/)
-assert.match(docs, /RUNNER_WORKSPACE_BACKEND_FILTER/)
-assert.match(docs, /RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS/)
-assert.match(docs, /RunnerWorkspaceBackendConfig/)
+assert.match(docs, /Codebox adapts those upstream systems into\s+generic Codebox inputs/)
+assert.match(docs, /Codebox adapter translates from generic Data Machine inputs into the Codebox\s+task\/recipe\/runtime contracts/)
+assert.match(docs, /wp-codebox\/runner-workspace-backend\/v1/)
+assert.match(docs, /backend adapter config schema/)
+assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")
@@ -165,6 +168,9 @@ assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
+assert.equal(typeof runWordPressWpCli, "function")
+assert.equal(typeof runWordPressPhp, "function")
+assert.equal(typeof requestWordPressRest, "function")
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)

@@ -1,10 +1,9 @@
 # Public API Contract
 
 WP Codebox has two kinds of API surface: stable public entrypoints for host
-integrations, and monorepo internals for implementation reuse. This document is
-the maintained contract map for package consumers. Consumers use Codebox APIs;
-they do not couple to the upstream systems that Codebox uses to assemble or run a
-sandbox.
+integrations, and monorepo helper entrypoints for package implementation reuse.
+This document is the maintained contract map for package consumers. Consumers use
+Codebox APIs to assemble and run sandboxes.
 
 ## Stable Entry Points
 
@@ -31,7 +30,7 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
   for creating Playground-backed WordPress runtimes and episodes, running episode
   actions with lifecycle hooks, collecting runtime/episode artifacts, and reading
-  browser artifact metrics without importing backend internals.
+  browser artifact metrics through the published Playground facade.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
@@ -67,9 +66,7 @@ The stable public surface is grouped by lifecycle area rather than by product:
   instead of composing core runtime internals directly.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
-  backend adapter config shape named by `RUNNER_WORKSPACE_BACKEND_FILTER`,
-  `RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`, and
-  `RunnerWorkspaceBackendConfig`.
+  backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
 - **Tool bridge:** host tool registry, managed host command, host command
   executor, sandbox tool policy, and tool-call artifact contracts.
 - **Parent tool bridge:** `wp-codebox/parent-tool-bridge/v1`,
@@ -111,11 +108,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Inspect:** command registry metadata, JSON Schema factories, CLI `schema` and
   `commands` output, and recipe validation descriptors.
 
-Implementation backends are intentionally not public namespaces. References to
-Data Machine, Agents API, Data Machine Code, or WordPress Playground describe the
-current upstream/runtime adapters behind WP Codebox; consumers should depend on
-the Codebox ability ids, schemas, package entrypoints, and browser SDK facades
-above.
+Current backend references such as Data Machine, Agents API, Data Machine Code,
+or WordPress Playground describe the upstream/runtime adapters WP Codebox uses.
+Consumers depend on the Codebox ability ids, schemas, package entrypoints, and
+browser SDK facades above.
 
 ## Integration Boundary
 
@@ -132,12 +128,10 @@ runtime stack:
 - WordPress Playground boot, filesystem, preview, PHP, and WP-CLI details map to
   Codebox runtime, mount, command, preview, and browser-session contracts.
 
-The dependency direction is one-way: Codebox may adapt those upstream systems into
-generic Codebox inputs internally. Data Machine must not parse, validate, or emit
-WP Codebox-specific schemas as a compatibility requirement. If a Data Machine
-workflow needs to launch a sandbox, the Codebox adapter translates from generic
-Data Machine inputs into the Codebox task/recipe/runtime contracts at the
-boundary.
+The dependency direction is one-way: Codebox adapts those upstream systems into
+generic Codebox inputs. If a Data Machine workflow launches a sandbox, the
+Codebox adapter translates from generic Data Machine inputs into the Codebox
+task/recipe/runtime contracts at the boundary.
 
 When adding a new public type or helper, place it in the focused owner module and
 export it through `@automattic/wp-codebox-core/public` or the narrowest stable
@@ -149,8 +143,7 @@ Runtime package callers use `wp-codebox/run-runtime-package` or
 `wp-codebox/runtime-package-execution-input/v1`; typed artifact declarations use
 `wp-codebox/runtime-package-artifact-declaration/v1`; output projections use
 `wp-codebox/runtime-package-output-projection/v1`. These contracts are generic
-Codebox runtime/package shapes and do not require consumers to know backend
-ability ids.
+Codebox runtime/package shapes for consumers using the runtime package API.
 
 Agent task callers use the `wp-codebox/run-agent-task` ability or
 `wp-codebox agent-task-run --json`. Caller-facing results normalize to
@@ -172,18 +165,18 @@ suite contract.
 
 Runner workspace backends are installed by integration code and discovered via
 the `wp_codebox_runner_workspace_backend` filter. The stable backend config is
-`RunnerWorkspaceBackendConfig`: an optional backend `id`, an optional
-`workspace_root_constant`, and an `abilities` map keyed by
-`RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS`. Public callers still use the Codebox
-ability ids and request/result schemas; backend ability names stay behind this
-adapter config and are not part of the consumer-facing surface.
+`wp-codebox/runner-workspace-backend/v1`: an optional backend `id`, an optional
+`workspace_root_constant`, and an `abilities` map keyed by generic runner
+workspace operation names. Public callers use the Codebox ability ids and
+request/result schemas while the adapter config maps each operation to its
+integration-provided backend ability. See `docs/runner-workspace-backend-contract.md`.
 
 ## Internal Entry Point
 
 `@automattic/wp-codebox-core/internals` exists for this monorepo's package split
-and may be used by tests, the CLI, and backend packages in this repository. It is
-not a stable compatibility surface for external integrations. Symbols exported
-only through `./internals` may change or move without a public API migration.
+and may be used by tests, the CLI, and backend packages in this repository.
+External integrations use the stable entrypoints listed above. Symbols exported
+only through `./internals` may change or move between package releases.
 
 Keep `./internals` intentionally small. If an internal helper becomes useful to
 external consumers, move the consumer-safe contract into the focused public owner

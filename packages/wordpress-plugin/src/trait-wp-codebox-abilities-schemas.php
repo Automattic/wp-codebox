@@ -623,6 +623,124 @@ private static function runtime_task_result_schema(): array {
 	);
 }
 
+/** @return array<string,mixed> */
+private static function wordpress_workload_run_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'steps' ),
+		'properties' => array(
+			'schema'               => array( 'type' => 'string', 'const' => 'wp-codebox/wordpress-workload-run/v1' ),
+			'wordpress_version'    => self::string_property_schema( 'WordPress version requested for the disposable Playground workload.' ),
+			'blueprint'            => self::object_property_schema( 'Optional WordPress Playground blueprint object.' ),
+			'preview'              => self::object_property_schema( 'Optional preview settings for the workload.' ),
+			'mounts'               => self::mount_schema(),
+			'runtime_stack_mounts' => self::object_array_property_schema( 'Runtime stack mounts for the disposable workload.' ),
+			'runtime_overlays'     => self::object_array_property_schema( 'Runtime overlays for the disposable workload.' ),
+			'runtime_env'          => self::object_property_schema( 'Non-secret runtime environment values. Secret values must use secret_env names.' ),
+			'secret_env'           => self::string_array_property_schema( 'Parent environment variable names expected by the workload. Values are never accepted in this payload.' ),
+			'staged_files'         => self::object_array_property_schema( 'Explicit staged file descriptors accepted by the recipe runtime.' ),
+			'before'               => self::wordpress_workload_steps_schema(),
+			'steps'                => self::wordpress_workload_steps_schema(),
+			'after'                => self::wordpress_workload_steps_schema(),
+			'metadata'             => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function wordpress_workload_steps_schema(): array {
+	return array(
+		'type'  => 'array',
+		'items' => array(
+			'type'       => 'object',
+			'required'   => array( 'command' ),
+			'properties' => array(
+				'command'      => array( 'type' => 'string' ),
+				'args'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+				'allowFailure' => array( 'type' => 'boolean' ),
+				'advisory'     => array( 'type' => 'boolean' ),
+			),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function wordpress_workload_run_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'     => array( 'type' => 'boolean' ),
+			'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/wordpress-workload-run-result/v1' ),
+			'status'      => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'request'     => self::object_property_schema(),
+			'artifacts'   => self::object_array_property_schema(),
+			'diagnostics' => self::object_array_property_schema(),
+			'metadata'    => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'id', 'cases' ),
+		'properties' => array(
+			'schema'   => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite/v1' ),
+			'id'       => array( 'type' => 'string' ),
+			'version'  => array( 'type' => 'string' ),
+			'target'   => self::fuzz_suite_target_schema(),
+			'cases'    => array(
+				'type'  => 'array',
+				'items' => array(
+					'type'       => 'object',
+					'required'   => array( 'id' ),
+					'properties' => array(
+						'id'          => array( 'type' => 'string' ),
+						'target'      => self::fuzz_suite_target_schema(),
+						'input'       => array(),
+						'description' => array( 'type' => 'string' ),
+						'metadata'    => self::object_property_schema(),
+					),
+				),
+			),
+			'metadata' => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_target_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'kind'       => array( 'type' => 'string', 'enum' => array( 'ability', 'command', 'http', 'rest', 'runtime' ) ),
+			'id'         => array( 'type' => 'string' ),
+			'entrypoint' => array( 'type' => 'string' ),
+			'label'      => array( 'type' => 'string' ),
+			'metadata'   => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'      => array( 'type' => 'boolean' ),
+			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite-result/v1' ),
+			'status'       => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'suite'        => self::object_property_schema(),
+			'summary'      => self::object_property_schema(),
+			'cases'        => self::object_array_property_schema(),
+			'diagnostics'  => self::object_array_property_schema(),
+			'artifactRefs' => self::object_array_property_schema(),
+			'metadata'     => self::object_property_schema(),
+		),
+	);
+}
+
 /**
  * Shared host-side sandbox runner input fields used by task, batch, and fanout abilities.
  *

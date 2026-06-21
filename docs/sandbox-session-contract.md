@@ -19,7 +19,7 @@ Disposable Playground sandbox
   owns in-sandbox agent behavior only
 ```
 
-The host WP Codebox plugin should not depend on a specific parent job system.
+The host WP Codebox plugin receives parent job context through this session contract.
 External orchestrators consume the same abilities and artifact contracts.
 
 ## Browser Playground Permission Model
@@ -122,7 +122,7 @@ dispatches the request through Codebox's connector boundary.
 | Ability | Trusted scope | Purpose |
 | --- | --- | --- |
 | `wp-codebox/create-browser-playground-session` | `browser-session:create` | Create a disposable browser Playground session and materialization contract. |
-| `wp-codebox/browser-connector-request` | `browser-connector:request` | Resolve a connector-scoped request server-side without exposing raw credentials. |
+| `wp-codebox/browser-connector-request` | `browser-connector:request` | Resolve a connector-scoped request server-side with credentials kept in the connector runtime. |
 | `wp-codebox/execute-browser-provider-request` | `browser-connector:request` | Legacy provider-adapter path with the provider-adapter response shape. Prefer `wp-codebox/browser-connector-request` for new connector-scoped browser calls unless this shape is required. |
 
 Administrators with `manage_options` retain access to all three abilities. A

@@ -250,7 +250,7 @@ final class WP_Codebox_Abilities {
 			);
 			$agent_task_run_result_schema = array(
 				'type'        => 'object',
-				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers. Prefer this over stdout, raw run internals, or legacy status fields.',
+				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers, including status, refs, metadata, and terminal result details.',
 				'properties'  => array(
 					'schema'                 => array( 'type' => 'string', 'const' => 'wp-codebox/agent-task-run-result/v1' ),
 					'status'                 => array( 'type' => 'string' ),
@@ -321,6 +321,34 @@ final class WP_Codebox_Abilities {
 					'execute_callback'    => array( self::class, 'run_runtime_task' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-task' ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-wordpress-workload',
+				array(
+					'label'               => 'Run WordPress Workload',
+					'description'         => 'Expose the public wp-codebox/wordpress-workload-run/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::wordpress_workload_run_request_schema(),
+					'output_schema'       => self::wordpress_workload_run_result_schema(),
+					'execute_callback'    => array( self::class, 'run_wordpress_workload' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload', 'safe_stub' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-fuzz-suite',
+				array(
+					'label'               => 'Run Fuzz Suite',
+					'description'         => 'Expose the public wp-codebox/fuzz-suite/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::fuzz_suite_request_schema(),
+					'output_schema'       => self::fuzz_suite_result_schema(),
+					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'safe_stub' => true ),
 				)
 			);
 
@@ -471,7 +499,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-runtime-package',
 				array(
 					'label'               => 'Run Runtime Package',
-					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary without exposing backend ability ids to callers.',
+					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured backend ability adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -567,7 +595,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-prepare',
 				array(
 					'label'               => 'Prepare Runner Workspace',
-					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_prepare_input_schema(),
 					'output_schema'       => self::runner_workspace_prepare_output_schema(),
@@ -623,7 +651,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-publish',
 				array(
 					'label'               => 'Publish Runner Workspace',
-					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary using the configured publication backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_publication_input_schema(),
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
@@ -651,7 +679,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-capture',
 				array(
 					'label'               => 'Capture Runner Workspace',
-					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_capture_input_schema(),
 					'output_schema'       => self::runner_workspace_capture_output_schema(),

@@ -13,6 +13,7 @@ const genericContractDocs = [
   "docs/recipe-contract.md",
   "docs/sandbox-session-contract.md",
   "docs/tool-bridge-contract.md",
+  "docs/runner-workspace-backend-contract.md",
   "docs/external-apply-adapter-contract.md",
   "docs/agent-fanout-contract.md",
   "docs/agent-runtime-contract.md",
@@ -54,22 +55,31 @@ const exampleConsumerDoc = await readFile(new URL("docs/example-consumer-boundar
 assert.match(exampleConsumerDoc, /^# Example Consumer Boundary Contracts/m)
 assert.match(exampleConsumerDoc, /## Public\/Internal Boundary/)
 assert.match(exampleConsumerDoc, /Consumers compose WP Codebox APIs\./)
-assert.match(exampleConsumerDoc, /Host job, artifact, approval queue, and flow concepts stay behind Codebox run,\s+artifact, approval, and session contracts\./)
-assert.match(exampleConsumerDoc, /Agents API execution targets and principals stay behind Codebox task, provider,\s+permission, and runtime-session contracts\./)
-assert.match(exampleConsumerDoc, /Host workspace lifecycle and source-control workflow details stay behind\s+Codebox source, workspace, evidence, and apply-back contracts\./)
-assert.match(exampleConsumerDoc, /WordPress Playground boot, filesystem, preview, and PHP\/WP-CLI details stay\s+behind Codebox runtime, mount, command, preview, and browser-session contracts\./)
+assert.match(exampleConsumerDoc, /Host job, artifact, approval queue, and flow concepts map to Codebox run,\s+artifact, approval, and session contracts\./)
+assert.match(exampleConsumerDoc, /Agents API execution targets and principals map to Codebox task, provider,\s+permission, and runtime-session contracts\./)
+assert.match(exampleConsumerDoc, /Host workspace lifecycle and source-control workflow details map to\s+Codebox source, workspace, evidence, and apply-back contracts\./)
+assert.match(exampleConsumerDoc, /WordPress Playground boot, filesystem, preview, and PHP\/WP-CLI details map to\s+Codebox runtime, mount, command, preview, and browser-session contracts\./)
 assert.match(exampleConsumerDoc, /Public schema names, top-level DTO fields, package entrypoints, and docs intended\s+for consumers use Codebox vocabulary\./)
 assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
 assert.match(exampleConsumerDoc, /## Example Consumers/)
 assert.doesNotMatch(exampleConsumerDoc, /data[-_ ]?machine|datamachine/i)
 
 const publicBoundaryText = (await Promise.all(publicBoundaryDocs.map((doc) => readFile(new URL(doc, root), "utf8")))).join("\n")
-assert.match(publicBoundaryText, /Consumers should call\s+Codebox ability ids, schemas, package entrypoints, browser SDK facades, and CLI\s+commands/)
-assert.match(publicBoundaryText, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
+assert.match(publicBoundaryText, /Consumers depend on\s+the Codebox ability ids, schemas, package entrypoints, and\s+browser SDK facades/)
+assert.match(publicBoundaryText, /Codebox adapter translates from generic Data Machine inputs into the Codebox\s+task\/recipe\/runtime contracts at the boundary/)
 assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
-assert.match(publicBoundaryText, /upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,\s+and task runtimes are implementation details/)
+assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
+assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
 assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
+
+const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")
+assert.match(runnerWorkspaceBackendContract, /^# Runner Workspace Backend Contract/m)
+assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-backend\/v1`/)
+assert.match(runnerWorkspaceBackendContract, /External callers use WP Codebox runner workspace\s+abilities and result schemas/)
+assert.match(runnerWorkspaceBackendContract, /Those names are adapter inputs\s+for the stable Codebox runner workspace operation ids/)
+assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-prepare`/)
+assert.doesNotMatch(runnerWorkspaceBackendContract, /datamachine|data[-_ ]?machine|homeboy/i)
 
 const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")
 assert.match(agentRuntimeContract, /`generic-ability-runtime-run` is the canonical primitive/)

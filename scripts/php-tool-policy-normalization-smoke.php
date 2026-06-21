@@ -29,6 +29,7 @@ function is_wp_error( mixed $value ): bool {
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
@@ -62,6 +63,9 @@ assert_same( 'filesystem_write', $task_input['sandbox_tool_policy']['tools'][0][
 assert_same( 'runtime_local', $task_input['sandbox_tool_policy']['tools'][0]['runtime']['environment'], 'runtime environment' );
 assert_same( 'runtime_local', $task_input['sandbox_tool_policy']['tools'][0]['runtime']['capability_scope'], 'runtime scope' );
 assert_same( 'wp-codebox/tool-bridge/v1', $task_input['tool_bridge']['schema'], 'tool bridge schema' );
+assert_same( 'wp-codebox/host-tool-policy/v1', $task_input['tool_bridge']['host_policy']['schema'], 'host policy schema' );
+assert_same( 'filesystem-write', $task_input['tool_bridge']['host_policy']['tools'][0]['id'], 'host policy tool id' );
+assert_same( 'filesystem_write', $task_input['tool_bridge']['host_policy']['tools'][0]['runtime_tool_id'], 'host policy runtime tool id' );
 assert_same( 'wp_codebox_browser_runtime_tool_callback', $task_input['tool_bridge']['dispatcher']['callback'], 'tool bridge dispatcher callback' );
 assert_same( 'allowlist', $task_input['tool_bridge']['authorization']['mode'], 'tool bridge authorization mode' );
 assert_same( 'wp-codebox/sandbox-tool-policy/v1', $task_input['tool_bridge']['sandbox_tool_policy']['schema'], 'tool bridge carries policy' );
