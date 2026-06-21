@@ -433,7 +433,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => false,
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => $status,
-				'failure_type' => $failure_type,
+				'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
 				'error'        => self::sanitize_runner_workspace_public_error( $error ),
 				'repo'         => (string) ( $input['repo'] ?? '' ),
 				'branch'       => (string) ( $input['branch'] ?? '' ),
@@ -615,7 +615,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => false,
 				'schema'       => 'wp-codebox/runner-workspace-publication-result/v1',
 				'status'       => $status,
-				'failure_type' => $failure_type,
+				'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
 				'error'        => self::sanitize_runner_workspace_public_error( $error ),
 				'workspace'    => array_filter( array( 'handle' => (string) ( $input['workspace'] ?? '' ), 'path' => (string) ( $input['workspace_path'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
 				'branch'       => array_filter( array( 'base' => (string) ( $input['base'] ?? '' ), 'head' => (string) ( $input['head'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
@@ -648,7 +648,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 	}
 
 	private static function redact_runner_workspace_backend_slugs( string $value ): string {
-		return preg_replace( '#\bdatamachine-code/[a-z0-9._/-]+#i', 'runner workspace backend', $value ) ?? $value;
+		return preg_replace( '#\bdatamachine-code(?:/[a-z0-9._/-]+)?#i', 'runner workspace backend', $value ) ?? $value;
 	}
 
 	/** @param array<string,mixed> $input Normalized input. @param array<string,mixed> $extra Extra response fields. @return array<string,mixed> */
@@ -659,7 +659,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'success'      => false,
 					'schema'       => 'command' === $operation ? 'wp-codebox/runner-workspace-command-result/v1' : 'wp-codebox/runner-workspace-capture-result/v1',
 					'status'       => $status,
-					'failure_type' => $failure_type,
+					'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
 					'error'        => self::sanitize_runner_workspace_public_error( $error ),
 					'workspace'    => self::runner_workspace_identity_result( $input ),
 				),

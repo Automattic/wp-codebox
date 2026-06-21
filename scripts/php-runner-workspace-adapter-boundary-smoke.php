@@ -34,6 +34,7 @@ function is_wp_error( mixed $value ): bool {
 $GLOBALS['wp_codebox_test_abilities'] = array();
 $GLOBALS['wp_codebox_test_filters']   = array();
 $GLOBALS['wp_codebox_ability_calls']  = array();
+$GLOBALS['wp_codebox_ability_lookups'] = array();
 
 function add_filter( string $hook, callable $callback, int $priority = 10, int $accepted_args = 1 ): void {
 	unset( $priority, $accepted_args );
@@ -49,6 +50,7 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 }
 
 function wp_get_ability( string $name ): ?object {
+	$GLOBALS['wp_codebox_ability_lookups'][] = $name;
 	return $GLOBALS['wp_codebox_test_abilities'][ $name ] ?? null;
 }
 
@@ -66,6 +68,14 @@ function register_test_ability( string $name, callable $callback ): void {
 function assert_same_contract( mixed $expected, mixed $actual, string $label ): void {
 	if ( $expected !== $actual ) {
 		fwrite( STDERR, $label . " failed.\nExpected: " . json_encode( $expected, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\nActual: " . json_encode( $actual, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n" );
+		exit( 1 );
+	}
+}
+
+function assert_no_backend_leak( mixed $value, string $label ): void {
+	$json = json_encode( $value, JSON_UNESCAPED_SLASHES );
+	if ( ! is_string( $json ) || str_contains( $json, 'datamachine-code' ) ) {
+		fwrite( STDERR, $label . " leaked backend identifiers.\nActual: " . json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n" );
 		exit( 1 );
 	}
 }
@@ -138,5 +148,42 @@ $failure = WP_Codebox_Abilities::capture_runner_workspace( array( 'workspace' =>
 assert_same_contract( false, $failure['success'], 'failure success' );
 assert_same_contract( 'runner workspace backend exploded', $failure['error']['message'], 'public error redacts backend ability slug' );
 assert_same_contract( false, array_key_exists( 'ability', $failure['error']['data'] ?? array() ), 'public error removes backend ability key' );
+assert_no_backend_leak( $failure, 'wp error failure' );
+
+$GLOBALS['wp_codebox_test_abilities']['datamachine-code/run-runner-workspace-command'] = new class() {
+	public function execute( array $input ): array {
+		unset( $input );
+		return array(
+			'success'      => false,
+			'failure_type' => 'datamachine-code/run-runner-workspace-command',
+			'error'        => array(
+				'code'    => 'datamachine-code/run-runner-workspace-command',
+				'message' => 'datamachine-code/run-runner-workspace-command failed',
+				'data'    => array( 'backend_ability' => 'datamachine-code/run-runner-workspace-command' ),
+			),
+		);
+	}
+};
+
+$backend_failure = WP_Codebox_Abilities::run_runner_workspace_command( array( 'workspace' => 'wp-codebox@task', 'repo' => 'wp-codebox', 'command' => 'php -l file.php' ) );
+assert_same_contract( false, $backend_failure['success'], 'backend failure success' );
+assert_same_contract( 'runner workspace backend', $backend_failure['failure_type'], 'backend failure type redacted' );
+assert_no_backend_leak( $backend_failure, 'backend failure' );
+
+$GLOBALS['wp_codebox_test_filters']['wp_codebox_runner_workspace_backend'] = array(
+	static fn(): array => array(
+		'id'        => 'datamachine-code',
+		'abilities' => array(
+			'run_runner_workspace_command' => 'datamachine-code',
+		),
+	),
+);
+$GLOBALS['wp_codebox_ability_lookups'] = array();
+
+$invalid_map_failure = WP_Codebox_Abilities::run_runner_workspace_command( array( 'workspace' => 'wp-codebox@task', 'repo' => 'wp-codebox', 'command' => 'php -l file.php' ) );
+assert_same_contract( false, $invalid_map_failure['success'], 'invalid map failure success' );
+assert_same_contract( 'backend_unavailable', $invalid_map_failure['failure_type'], 'invalid map failure type' );
+assert_same_contract( false, in_array( 'datamachine-code', $GLOBALS['wp_codebox_ability_lookups'], true ), 'invalid backend ability is not looked up' );
+assert_no_backend_leak( $invalid_map_failure, 'invalid map failure' );
 
 fwrite( STDOUT, "PHP runner workspace adapter boundary smoke passed\n" );

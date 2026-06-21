@@ -8,6 +8,19 @@
 defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Runner_Workspace_Adapter {
+	private const ABILITY_KEYS = array(
+		'workspace_adopt',
+		'workspace_show',
+		'workspace_clone',
+		'workspace_worktree_add',
+		'workspace_git_status',
+		'workspace_git_diff',
+		'run_runner_workspace_command',
+		'publish_runner_workspace',
+	);
+
+	private const ABILITY_NAME_PATTERN = '#^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$#i';
+
 	/** @return array<string,mixed> */
 	public function prepare( array $input ): array {
 		$abilities     = $this->abilities();
@@ -117,15 +130,14 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 	/** @return array<string,mixed> */
 	private function config(): array {
-		$config = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
-		if ( is_array( $config ) && ! empty( $config ) ) {
-			return $config;
-		}
+		$config    = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
+		$config    = is_array( $config ) ? $config : array();
+		$abilities = $this->normalize_abilities( $config['abilities'] ?? null );
 
 		return array(
-			'id'                      => '',
-			'workspace_root_constant' => '',
-			'abilities'               => array(),
+			'id'                      => is_string( $config['id'] ?? null ) ? trim( $config['id'] ) : '',
+			'workspace_root_constant' => is_string( $config['workspace_root_constant'] ?? null ) ? trim( $config['workspace_root_constant'] ) : '',
+			'abilities'               => $abilities,
 		);
 	}
 
@@ -141,8 +153,34 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 		return $this->execute( (string) ( $abilities[ $key ] ?? '' ), $input );
 	}
 
+	/** @return array<string,string> */
+	private function normalize_abilities( mixed $abilities ): array {
+		if ( ! is_array( $abilities ) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( self::ABILITY_KEYS as $key ) {
+			$value = $abilities[ $key ] ?? null;
+			if ( ! is_string( $value ) ) {
+				continue;
+			}
+
+			$value = trim( $value );
+			if ( '' !== $value && preg_match( self::ABILITY_NAME_PATTERN, $value ) ) {
+				$normalized[ $key ] = $value;
+			}
+		}
+
+		return $normalized;
+	}
+
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	private function execute( string $ability_name, array $input ): array {
+		if ( ! $this->valid_ability_name( $ability_name ) ) {
+			return $this->failure( 'backend_unavailable', 'wp_codebox_runner_workspace_backend_unavailable', 'Runner workspace backend is not available for this operation.' );
+		}
+
 		$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
 		if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
 			return $this->failure( 'backend_unavailable', 'wp_codebox_runner_workspace_backend_unavailable', 'Runner workspace backend is not available for this operation.' );
@@ -177,8 +215,16 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 	}
 
 	private function ability_available( string $ability_name ): bool {
+		if ( ! $this->valid_ability_name( $ability_name ) ) {
+			return false;
+		}
+
 		$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
 		return $ability && is_callable( array( $ability, 'execute' ) );
+	}
+
+	private function valid_ability_name( string $ability_name ): bool {
+		return '' !== $ability_name && 1 === preg_match( self::ABILITY_NAME_PATTERN, $ability_name );
 	}
 
 	/** @return array{success:bool,failure_type:string,error:array<string,string>} */
