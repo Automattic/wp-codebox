@@ -10,10 +10,10 @@ export const PROVIDER_RUNTIME_TASK_NAMES = {
 } as const
 
 export const PROVIDER_RUNTIME_ABILITY_NAMES = {
-  workspacePrepare: "wp-codebox/prepare",
-  workspaceCapture: "wp-codebox/capture",
-  workspaceCommand: "wp-codebox/command",
-  workspacePublish: "wp-codebox/publish",
+  workspacePrepare: "wp-codebox/runner-workspace-prepare",
+  workspaceCapture: "wp-codebox/runner-workspace-capture",
+  workspaceCommand: "wp-codebox/runner-workspace-command",
+  workspacePublish: "wp-codebox/runner-workspace-publish",
   toolCallTranscriptRecord: "wp-codebox/record-tool-call-transcript",
   artifactHandoff: "wp-codebox/handoff-artifacts",
 } as const

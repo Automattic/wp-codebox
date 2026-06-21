@@ -7,7 +7,7 @@ import {
   PROVIDER_RUNTIME_TASK_NAMES,
   providerRuntimeInvocationContract,
 } from "../packages/runtime-core/src/index.js"
-import { phpCallBlock } from "../scripts/test-kit.js"
+import { phpCallBlock, phpFunctionBlock } from "../scripts/test-kit.js"
 
 const contract = providerRuntimeInvocationContract()
 
@@ -17,10 +17,10 @@ assert.deepEqual(contract.tasks, PROVIDER_RUNTIME_TASK_NAMES)
 assert.deepEqual(contract.abilities, PROVIDER_RUNTIME_ABILITY_NAMES)
 assert.equal(contract.tasks.workspacePrepare, "wp-codebox.runner-workspace.prepare")
 assert.equal(contract.tasks.workspaceCapture, "wp-codebox.runner-workspace.capture")
-assert.equal(contract.abilities.workspacePrepare, "wp-codebox/prepare")
-assert.equal(contract.abilities.workspaceCapture, "wp-codebox/capture")
-assert.equal(contract.abilities.workspaceCommand, "wp-codebox/command")
-assert.equal(contract.abilities.workspacePublish, "wp-codebox/publish")
+assert.equal(contract.abilities.workspacePrepare, "wp-codebox/runner-workspace-prepare")
+assert.equal(contract.abilities.workspaceCapture, "wp-codebox/runner-workspace-capture")
+assert.equal(contract.abilities.workspaceCommand, "wp-codebox/runner-workspace-command")
+assert.equal(contract.abilities.workspacePublish, "wp-codebox/runner-workspace-publish")
 assert.equal(contract.result_schemas.workspace_prepare, "wp-codebox/runner-workspace-prepare-result/v1")
 assert.equal(contract.result_schemas.workspace_capture, "wp-codebox/runner-workspace-capture-result/v1")
 assert.equal(contract.result_schemas.workspace_command, "wp-codebox/runner-workspace-command-result/v1")
@@ -35,6 +35,10 @@ const registeredAbilityIds = [
   contract.abilities.workspaceCapture,
   contract.abilities.workspaceCommand,
   contract.abilities.workspacePublish,
+  "wp-codebox/prepare",
+  "wp-codebox/capture",
+  "wp-codebox/command",
+  "wp-codebox/publish",
   "wp-codebox/prepare-runner-workspace",
   "wp-codebox/capture-runner-workspace",
   "wp-codebox/run-runner-workspace-command",
@@ -57,5 +61,10 @@ assert.doesNotMatch(runnerWorkspacePhp, /datamachine|data machine|homeboy|wpsg|w
 
 const serialized = JSON.stringify(contract)
 assert.doesNotMatch(serialized, /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
+assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_prepare_output_schema"), /'backend'|'input'|'result'/)
+assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_capture_output_schema"), /'backend'/)
+assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_command_output_schema"), /'backend'/)
+assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_publication_output_schema"), /'backend'/)
+assert.match(runnerWorkspacePhp, /sanitize_runner_workspace_public_error/)
 
 console.log("provider runtime contracts ok")
