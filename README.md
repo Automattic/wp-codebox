@@ -1391,7 +1391,7 @@ Generic caller-owned `request.json` payloads may use this shape:
 }
 ```
 
-WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes `agent_task_run_result` with `schema: "wp-codebox/agent-task-run-result/v1"`. Consumers should read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, `agent_task_run_result.metadata`, and `failure_evidence` instead of parsing stdout, raw `run` internals, or legacy top-level status fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
+WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes `agent_task_run_result` with `schema: "wp-codebox/agent-task-run-result/v1"`. Consumers read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, `agent_task_run_result.metadata`, and `failure_evidence` as the stable result envelope. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
 Failed `agent-task-run` responses also include `failure_evidence` with `schema: "wp-codebox/agent-task-run-failure-evidence/v1"`. This block is intentionally safe for parent orchestrators to persist alongside their own task failure record. It includes the best available `phase`, `command`, `exit_code`, message, stdout/stderr snippets, runtime and sandbox identifiers, artifact directory or bundle identifiers, recipe-run status/run ID, diagnostics, phase evidence, and the serialized error. If recipe-run fails before normal runtime artifacts exist or returns malformed output, `agent-task-run` still emits this fallback evidence block in the CLI JSON payload and references it from `evidence_refs` with kind `codebox-agent-task-failure-evidence`.
 
@@ -1401,7 +1401,7 @@ Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacem
 
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()`, `AGENT_TASK_RUN_RESULT_SCHEMA`, and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` from `@automattic/wp-codebox-core`. The helper accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 
-Consumers that only need artifact pointers should use `normalizePublicArtifactRefDTO()`, `normalizePublicArtifactRefDTOs()`, `publicArtifactRefGroups()`, `findChangedFilesArtifactRef()`, and `findPatchArtifactRef()` instead of parsing raw bundle, session, or recipe-run internals. Browser hosts can also use `normalizeBrowserSessionProductDTO()` to project a product-safe `wp-codebox/browser-session-product-dto/v1` view with stable artifact ref groups and secret-like fields redacted.
+Consumers that only need artifact pointers use `normalizePublicArtifactRefDTO()`, `normalizePublicArtifactRefDTOs()`, `publicArtifactRefGroups()`, `findChangedFilesArtifactRef()`, and `findPatchArtifactRef()` to read bundle, session, and recipe-run artifact references. Browser hosts can also use `normalizeBrowserSessionProductDTO()` to project a product-safe `wp-codebox/browser-session-product-dto/v1` view with stable artifact ref groups and secret-like fields redacted.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter-only/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 
@@ -1451,7 +1451,7 @@ WP Codebox owns:
 
 WP Codebox does not own:
 
-- Agent identity, sessions, or model loop internals. Mounted agent runtimes own those.
+- Agent identity, sessions, or model loops. Mounted agent runtimes own those.
 - Model provider authentication. Provider plugins and parent control planes own credentials.
 - Production mutation or deploy. Apply-back must be separate and reviewed.
 - CI/eval orchestration. Parent control planes and other consumers can invoke WP Codebox.

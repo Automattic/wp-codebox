@@ -250,7 +250,7 @@ final class WP_Codebox_Abilities {
 			);
 			$agent_task_run_result_schema = array(
 				'type'        => 'object',
-				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers. Prefer this over stdout, raw run internals, or legacy status fields.',
+				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers, including status, refs, metadata, and terminal result details.',
 				'properties'  => array(
 					'schema'                 => array( 'type' => 'string', 'const' => 'wp-codebox/agent-task-run-result/v1' ),
 					'status'                 => array( 'type' => 'string' ),
@@ -471,7 +471,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-runtime-package',
 				array(
 					'label'               => 'Run Runtime Package',
-					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary without exposing backend ability ids to callers.',
+					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured backend ability adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
@@ -567,7 +567,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-prepare',
 				array(
 					'label'               => 'Prepare Runner Workspace',
-					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_prepare_input_schema(),
 					'output_schema'       => self::runner_workspace_prepare_output_schema(),
@@ -623,7 +623,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-publish',
 				array(
 					'label'               => 'Publish Runner Workspace',
-					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary using the configured publication backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_publication_input_schema(),
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
@@ -651,7 +651,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-capture',
 				array(
 					'label'               => 'Capture Runner Workspace',
-					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_capture_input_schema(),
 					'output_schema'       => self::runner_workspace_capture_output_schema(),
