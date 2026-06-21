@@ -36,8 +36,10 @@ metadata exposes `meta.canonical_ability` for aliases.
 The host task abilities build a private Codebox recipe, boot a disposable
 sandbox runtime, mount the requested runtime components, invoke the configured
 sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
-WordPress Playground, and upstream task runtimes are implementation details of
-the current runner, not consumer-facing API names.
+Data Machine, Agents API, Data Machine Code, WordPress Playground, and upstream
+task runtimes are implementation details of the current runner, not
+consumer-facing API names. The plugin maps those internals to Codebox task,
+runtime, artifact, and apply contracts before returning results to consumers.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`

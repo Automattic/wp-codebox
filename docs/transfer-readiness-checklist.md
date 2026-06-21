@@ -52,7 +52,7 @@ Current workspace packages:
 
 - `packages/runtime-core` owns backend-agnostic contracts: runtime policy,
   command registry, task input, workspace policy, recipe schemas, artifact
-  verification, sandbox Data Machine tool policy, and shared types.
+  verification, generic sandbox tool policy, and shared types.
 - `packages/runtime-playground` owns the WordPress Playground backend adapter:
   Playground boot, command routing, WP-CLI/PHP/browser command runners,
   snapshots, observations, mounted-file capture, diagnostics, and artifact bundle
@@ -80,7 +80,8 @@ Transfer checklist:
   review UX, or model-evaluation scoring.
 - Keep the WordPress plugin as a parent-site adapter; it should expose abilities
   and host configuration without depending on a specific product database, queue,
-  UI, or Data Machine install beyond optional integration filters.
+  UI, or Data Machine install. Codebox adapters map generic Data Machine inputs to
+  Codebox contracts internally when that integration is present.
 - Track helper deduplication through issue #344 so shared object/hash/artifact
   helpers move to stable package homes without creating dependency cycles.
 
@@ -207,9 +208,9 @@ Transfer checklist:
   validation versus runtime enforcement.
 - Workspace policy must keep sandbox writes inside declared writable roots and
   hide configured paths from artifact capture or tool access.
-- Sandbox Data Machine tools must stay on the explicit safe allow-list; parent
-  worktree lifecycle, GitSync, PR mutation, issue mutation, comments, deploys,
-  cleanup, and apply-back operations remain parent-only.
+- Sandbox tools mapped from a parent system must stay on the explicit safe
+  allow-list; parent worktree lifecycle, GitSync, PR mutation, issue mutation,
+  comments, deploys, cleanup, and apply-back operations remain parent-only.
 - Artifact access must resolve paths under the configured artifact root and reject
   outside-root traversal.
 - Apply-back must require reviewed `approved_files[]` and digest-verified bundle

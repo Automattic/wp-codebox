@@ -27,8 +27,8 @@ unless this index says otherwise.
   artifacts, runner workspace publication, lifecycle metadata, provider
   overlays, and default sandbox bootstrap expectations.
 - [Public API contract](./public-api-contract.md) defines stable package
-  entrypoints, lifecycle contract areas, inspectable surfaces, and the limited
-  role of `./internals`.
+  entrypoints, lifecycle contract areas, inspectable surfaces, Codebox's wrapper
+  role around upstream runtime systems, and the limited role of `./internals`.
 - [Generic runtime primitives](./generic-runtime-primitives.md) documents the
   caller-neutral artifact storage, trusted browser origin, materialization, and
   target-context envelopes shared by runtime integrations.

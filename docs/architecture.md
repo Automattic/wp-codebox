@@ -8,6 +8,12 @@ WordPress Playground runtime, mount the target code and agent stack, collect
 reviewable artifacts, and return those artifacts to the caller for apply or
 discard.
 
+WP Codebox is also the portable integration surface for the current agent runtime
+stack. Data Machine, Agents API, Data Machine Code, and WordPress Playground are
+implementation inputs that Codebox can wrap internally. Consumers should call
+Codebox ability ids, schemas, package entrypoints, browser SDK facades, and CLI
+commands instead of assembling workflows from those upstream APIs directly.
+
 ```text
 Parent control plane
   owns users, auth, durable jobs, review UX, and apply-back policy
@@ -96,8 +102,8 @@ backend or host adapter. The important modules are:
   episode contracts, and `createRuntime()`.
 - [`src/index.ts`](../packages/runtime-core/src/index.ts): the stable package
   root for runtime, recipe, policy, artifact metadata, task, browser, host-tool,
-  fanout contract, and result-envelope types. Keep implementation helpers out of
-  this barrel.
+  fanout contract, and result-envelope types. Keep implementation helpers and
+  upstream adapter vocabulary out of this barrel.
 - [`docs/public-api-contract.md`](./public-api-contract.md): the maintained
   contract map for stable package entrypoints, inspectable surfaces, lifecycle
   contract areas, and the limited role of `./internals`.
@@ -108,7 +114,8 @@ backend or host adapter. The important modules are:
   export-link, diagnostics, and partial-discovery helpers.
 - `@automattic/wp-codebox-core/internals`: implementation helpers used inside
   this monorepo. External consumers should not rely on this path as a stable
-  compatibility surface.
+  compatibility surface; it is private/unstable even though the package exports it
+  for workspace package reuse.
 - [`src/runtime-policy.ts`](../packages/runtime-core/src/runtime-policy.ts):
   `RuntimePolicy`, policy validation, and command allow-list enforcement.
 - [`src/command-registry.ts`](../packages/runtime-core/src/command-registry.ts):

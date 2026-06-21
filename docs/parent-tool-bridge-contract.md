@@ -131,6 +131,7 @@ Minimal integration points:
   `parent_request` into the sandbox run input.
 - CLI input accepts `--parent-tool-bridge='<json>'` as an object-valued field.
 
-Homeboy Extensions and Data Machine can later inject their specific endpoint or
-command metadata behind this contract without adding their product semantics to
-WP Codebox core.
+Host adapters can later map their endpoint or command metadata into this Codebox
+contract without adding product semantics to WP Codebox core. Upstream systems
+such as Data Machine should provide generic tool/run inputs; Codebox performs any
+WP Codebox schema mapping at its boundary.
