@@ -24,10 +24,13 @@ Use these package entrypoints from external integrations:
   backend factory and backend-owned helper types.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
+- `./cli/recipe-secret-env`: workspace-local helper entrypoint for CLI recipe
+  secret environment providers.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
-`./agent-task-recipe`, and `./runtime-presets` for local consumers in this repo.
+`./agent-task-recipe`, `./runtime-presets`, and CLI helper subpaths for local
+consumers in this repo.
 
 ## Contract Areas
 

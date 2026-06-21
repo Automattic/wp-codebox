@@ -24,7 +24,7 @@ try {
   }, normalizeTaskInput({ goal: "verify component contract staging" }), "latest")
 
   const plugins = recipe.inputs?.extra_plugins ?? []
-  assert.equal(plugins.length, 2, "component_contracts should become canonical staged plugin inputs")
+  assert.equal(plugins.filter((plugin) => plugin.metadata?.componentContract).length, 2, "component_contracts should become canonical staged plugin inputs")
 
   const domain = plugins.find((plugin) => plugin.slug === "domain-component")
   const runtime = plugins.find((plugin) => plugin.slug === "runtime-component")

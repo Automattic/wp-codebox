@@ -53,15 +53,15 @@ assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilitie
 assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
 
 for (const backendAbility of [
-  "datamachine-code/workspace-adopt",
-  "datamachine-code/workspace-show",
-  "datamachine-code/workspace-clone",
-  "datamachine-code/workspace-worktree-add",
-  "datamachine-code/workspace-git-status",
-  "datamachine-code/workspace-git-diff",
-  "datamachine-code/publish-runner-workspace",
-  "datamachine-code/run-runner-workspace-command",
-  "datamachine-code/workspace-capabilities",
+  "wp-codebox-runner-backend/workspace-adopt",
+  "wp-codebox-runner-backend/workspace-show",
+  "wp-codebox-runner-backend/workspace-clone",
+  "wp-codebox-runner-backend/workspace-worktree-add",
+  "wp-codebox-runner-backend/workspace-git-status",
+  "wp-codebox-runner-backend/workspace-git-diff",
+  "wp-codebox-runner-backend/publish-runner-workspace",
+  "wp-codebox-runner-backend/run-runner-workspace-command",
+  "wp-codebox-runner-backend/workspace-capabilities",
 ]) {
   assert.match(runnerWorkspacePhp, new RegExp(`'${backendAbility}'`))
 }
