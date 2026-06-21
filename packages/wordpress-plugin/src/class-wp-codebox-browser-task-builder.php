@@ -381,6 +381,15 @@ final class WP_Codebox_Browser_Task_Builder {
 
 	/** @param array<string,mixed> $input Browser task input. @return array<string,mixed> */
 	public static function apply_runtime_profile( array $input ): array {
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$profile_input = is_array( $input['runtime_profile'] ?? null ) ? $input['runtime_profile'] : array();
+		if ( class_exists( 'WP_Codebox_Runtime_Profile_Resolver' ) && empty( $runtime['resolved_profile'] ) && empty( $profile_input['resolved_profile'] ) ) {
+			$resolved = WP_Codebox_Runtime_Profile_Resolver::apply_to_input( $input );
+			if ( ! is_wp_error( $resolved ) ) {
+				$input = $resolved;
+			}
+		}
+
 		$profile = is_array( $input['runtime_profile'] ?? null ) ? self::runtime_profile( $input['runtime_profile'] ) : array();
 		if ( empty( $profile ) ) {
 			return $input;

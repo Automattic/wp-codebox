@@ -1,0 +1,377 @@
+<?php
+/**
+ * Runtime profile descriptor resolution for WordPress sandboxes.
+ *
+ * @package WPCodebox
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+final class WP_Codebox_Runtime_Profile_Resolver {
+
+	/** @param array<string,mixed> $input Caller task input. @param array<string,mixed> $inheritance Resolved inheritance metadata. @return array<string,mixed>|WP_Error */
+	public static function apply_to_input( array $input, array $inheritance = array() ): array|WP_Error {
+		$request = self::request_from_input( $input );
+		if ( empty( $request['profiles'] ) && empty( $request['components'] ) && empty( $request['capabilities'] ) ) {
+			return $input;
+		}
+
+		$resolved = self::resolve( $request, $input, $inheritance );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$profile = is_array( $input['runtime_profile'] ?? null ) ? $input['runtime_profile'] : array();
+		foreach ( array( 'id', 'profile', 'profiles', 'components', 'capabilities' ) as $selector_field ) {
+			unset( $profile[ $selector_field ] );
+		}
+		$profile = self::merge_profile( $resolved['profile'], $profile );
+		$profile['resolved_profile'] = $resolved['contract'];
+
+		$input['runtime_profile'] = $profile;
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$runtime['resolved_profile'] = $resolved['contract'];
+		$input['runtime'] = $runtime;
+
+		foreach ( array( 'provider_plugin_paths', 'secret_env', 'agent_bundles' ) as $field ) {
+			if ( ! empty( $resolved[ $field ] ) ) {
+				$input[ $field ] = self::merge_lists( is_array( $input[ $field ] ?? null ) ? $input[ $field ] : array(), $resolved[ $field ] );
+			}
+		}
+
+		if ( ! empty( $resolved['inherit'] ) ) {
+			$input['inherit'] = self::merge_inherit( is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array(), $resolved['inherit'] );
+		}
+
+		if ( ! empty( $resolved['placement_capabilities'] ) ) {
+			$placement = is_array( $input['placement'] ?? null ) ? $input['placement'] : array();
+			$placement['required_capabilities'] = self::merge_string_lists( is_array( $placement['required_capabilities'] ?? null ) ? $placement['required_capabilities'] : array(), $resolved['placement_capabilities'] );
+			$input['placement'] = $placement;
+		}
+
+		return $input;
+	}
+
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,mixed> $input Caller task input. @param array<string,mixed> $inheritance Resolved inheritance metadata. @return array<string,mixed>|WP_Error */
+	public static function resolve( array $request, array $input = array(), array $inheritance = array() ): array|WP_Error {
+		$registry = self::profile_registry( $input, $inheritance );
+		$profile_ids = self::requested_profile_ids( $request, $registry );
+		$selected = array();
+		$errors = array();
+
+		foreach ( $profile_ids as $profile_id ) {
+			self::select_profile( $profile_id, $registry, $selected, $errors );
+		}
+
+		if ( ! empty( $errors ) ) {
+			return new WP_Error( 'wp_codebox_runtime_profile_unresolved', 'Runtime profiles could not be resolved.', array( 'status' => 400, 'errors' => $errors ) );
+		}
+
+		$resolved = array(
+			'schema'                 => 'wp-codebox/runtime-profile-resolution/v1',
+			'profiles'               => array(),
+			'capabilities'           => array(),
+			'profile'                => array(),
+			'inherit'                => array(),
+			'provider_plugin_paths'  => array(),
+			'secret_env'             => array(),
+			'agent_bundles'          => array(),
+			'placement_capabilities' => array(),
+		);
+
+		foreach ( $selected as $profile ) {
+			$resolved['profiles'][] = self::profile_public_entry( $profile );
+			$resolved['capabilities'] = self::merge_string_lists( $resolved['capabilities'], self::profile_capabilities( $profile ) );
+			$resolved['profile'] = self::merge_profile( $resolved['profile'], $profile );
+			$resolved['inherit'] = self::merge_inherit( $resolved['inherit'], is_array( $profile['inherit'] ?? null ) ? $profile['inherit'] : array() );
+			$resolved['provider_plugin_paths'] = self::merge_string_lists( $resolved['provider_plugin_paths'], $profile['provider_plugin_paths'] ?? array() );
+			$resolved['secret_env'] = self::merge_secret_env( $resolved['secret_env'], $profile['secret_env'] ?? array() );
+			$resolved['agent_bundles'] = self::merge_lists( $resolved['agent_bundles'], is_array( $profile['agent_bundles'] ?? null ) ? $profile['agent_bundles'] : array() );
+			$resolved['placement_capabilities'] = self::merge_string_lists( $resolved['placement_capabilities'], $profile['placement_capabilities'] ?? array() );
+		}
+
+		$resolved['profile']['id'] = implode( '+', array_map( static fn( array $profile ): string => (string) ( $profile['id'] ?? '' ), $resolved['profiles'] ) );
+		foreach ( self::unresolved_component_entries( $request, $registry ) as $component ) {
+			$resolved['profile']['components'] = self::merge_lists( is_array( $resolved['profile']['components'] ?? null ) ? $resolved['profile']['components'] : array(), array( $component ) );
+		}
+
+		$resolved['contract'] = self::contract( $request, $resolved );
+		return $resolved;
+	}
+
+	/** @param array<string,mixed> $input Caller task input. @return array{profiles:string[],components:string[],capabilities:string[]} */
+	private static function request_from_input( array $input ): array {
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$profile = $input['runtime_profile'] ?? ( $runtime['profile'] ?? array() );
+		$profile_array = is_array( $profile ) ? $profile : array();
+
+		$profiles = self::merge_string_lists(
+			is_string( $profile ) ? array( $profile ) : array(),
+			$profile_array['profiles'] ?? array(),
+			$profile_array['profile'] ?? array(),
+			$runtime['profiles'] ?? array(),
+			$input['runtime_profiles'] ?? array()
+		);
+		$id = trim( (string) ( $profile_array['id'] ?? '' ) );
+		if ( '' !== $id && ! in_array( $id, $profiles, true ) ) {
+			$profiles[] = $id;
+		}
+
+		return array(
+			'profiles'     => $profiles,
+			'components'   => self::merge_string_lists( $profile_array['components'] ?? array(), $runtime['components'] ?? array(), $input['runtime_components'] ?? array() ),
+			'capabilities' => self::merge_string_lists( $profile_array['capabilities'] ?? array(), $runtime['capabilities'] ?? array(), $input['runtime_capabilities'] ?? array() ),
+		);
+	}
+
+	/** @param array<string,mixed> $input Caller task input. @param array<string,mixed> $inheritance Resolved inheritance metadata. @return array<string,array<string,mixed>> */
+	private static function profile_registry( array $input, array $inheritance ): array {
+		$registry = array(
+			'wordpress-playground' => array(
+				'id'                     => 'wordpress-playground',
+				'label'                  => 'WordPress Playground sandbox',
+				'capabilities'           => array( 'wordpress.playground', 'browser.preview' ),
+				'placement_capabilities' => array( 'wordpress.playground', 'browser.preview' ),
+			),
+			'agents-api' => array(
+				'id'                     => 'agents-api',
+				'label'                  => 'Agents API runtime',
+				'capabilities'           => array( 'agents-api', 'agents.runtime' ),
+				'requires'                => array( 'wordpress-playground' ),
+				'components'              => array( array( 'slug' => 'agents-api' ) ),
+				'placement_capabilities' => array( 'agents.runtime' ),
+			),
+			'data-machine' => array(
+				'id'           => 'data-machine',
+				'label'        => 'Data Machine runtime',
+				'capabilities' => array( 'data-machine', 'datamachine.runtime' ),
+				'requires'      => array( 'agents-api' ),
+				'components'    => array( array( 'slug' => 'data-machine' ) ),
+			),
+			'data-machine-code' => array(
+				'id'           => 'data-machine-code',
+				'label'        => 'Data Machine Code runtime',
+				'capabilities' => array( 'data-machine-code', 'datamachine-code.runtime' ),
+				'requires'      => array( 'data-machine' ),
+				'components'    => array( array( 'slug' => 'data-machine-code' ) ),
+			),
+			'provider-openai' => array(
+				'id'               => 'provider-openai',
+				'label'            => 'OpenAI provider plugin',
+				'capabilities'     => array( 'provider.openai' ),
+				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-openai', 'activate' => true ) ),
+			),
+			'provider-claude-code' => array(
+				'id'               => 'provider-claude-code',
+				'label'            => 'Claude Code provider plugin',
+				'capabilities'     => array( 'provider.claude-code' ),
+				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-claude-code', 'activate' => true ) ),
+			),
+		);
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$registry = apply_filters( 'wp_codebox_runtime_profile_registry', $registry, $input, $inheritance );
+		}
+
+		$normalized = array();
+		foreach ( is_array( $registry ) ? $registry : array() as $key => $profile ) {
+			if ( ! is_array( $profile ) ) {
+				continue;
+			}
+			$id = self::safe_key( (string) ( $profile['id'] ?? $profile['profile'] ?? $key ) );
+			if ( '' === $id ) {
+				continue;
+			}
+			$profile['id'] = $id;
+			$normalized[ $id ] = $profile;
+		}
+
+		return $normalized;
+	}
+
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,array<string,mixed>> $registry Profile registry. @return string[] */
+	private static function requested_profile_ids( array $request, array $registry ): array {
+		$ids = array();
+		foreach ( self::merge_string_lists( $request['profiles'] ?? array(), $request['components'] ?? array() ) as $profile_id ) {
+			if ( isset( $registry[ $profile_id ] ) ) {
+				$ids[] = $profile_id;
+			}
+		}
+
+		foreach ( self::merge_string_lists( $request['capabilities'] ?? array() ) as $capability ) {
+			foreach ( $registry as $id => $profile ) {
+				if ( in_array( $capability, self::profile_capabilities( $profile ), true ) ) {
+					$ids[] = $id;
+				}
+			}
+		}
+
+		return array_values( array_unique( $ids ) );
+	}
+
+	/** @param array<string,array<string,mixed>> $registry. @param array<string,array<string,mixed>> $selected. @param array<int,array<string,string>> $errors. */
+	private static function select_profile( string $profile_id, array $registry, array &$selected, array &$errors ): void {
+		$profile_id = self::safe_key( $profile_id );
+		if ( '' === $profile_id || isset( $selected[ $profile_id ] ) ) {
+			return;
+		}
+		if ( ! isset( $registry[ $profile_id ] ) ) {
+			$errors[] = array( 'code' => 'profile_not_registered', 'profile' => $profile_id );
+			return;
+		}
+
+		$profile = $registry[ $profile_id ];
+		foreach ( self::merge_string_lists( $profile['requires'] ?? array() ) as $required ) {
+			$required_id = isset( $registry[ $required ] ) ? $required : self::profile_id_for_capability( $required, $registry );
+			if ( '' === $required_id ) {
+				$errors[] = array( 'code' => 'requirement_not_registered', 'profile' => $profile_id, 'requirement' => $required );
+				continue;
+			}
+			self::select_profile( $required_id, $registry, $selected, $errors );
+		}
+
+		$selected[ $profile_id ] = $profile;
+	}
+
+	/** @param array<string,array<string,mixed>> $registry. */
+	private static function profile_id_for_capability( string $capability, array $registry ): string {
+		foreach ( $registry as $id => $profile ) {
+			if ( in_array( $capability, self::profile_capabilities( $profile ), true ) ) {
+				return $id;
+			}
+		}
+
+		return '';
+	}
+
+	/** @param array<string,mixed> $profile Profile descriptor. @return string[] */
+	private static function profile_capabilities( array $profile ): array {
+		return self::merge_string_lists( $profile['provides'] ?? array(), $profile['capabilities'] ?? array() );
+	}
+
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,array<string,mixed>> $registry Profile registry. @return array<int,array<string,string>> */
+	private static function unresolved_component_entries( array $request, array $registry ): array {
+		$entries = array();
+		foreach ( self::merge_string_lists( $request['components'] ?? array() ) as $component ) {
+			if ( ! isset( $registry[ $component ] ) ) {
+				$entries[] = array( 'slug' => $component );
+			}
+		}
+
+		return $entries;
+	}
+
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,mixed> $resolved Resolution payload. @return array<string,mixed> */
+	private static function contract( array $request, array $resolved ): array {
+		return array_filter(
+			array(
+				'schema'       => 'wp-codebox/runtime-profile-resolution/v1',
+				'request'      => array(
+					'profiles'     => self::merge_string_lists( $request['profiles'] ?? array() ),
+					'components'   => self::merge_string_lists( $request['components'] ?? array() ),
+					'capabilities' => self::merge_string_lists( $request['capabilities'] ?? array() ),
+				),
+				'profiles'     => $resolved['profiles'],
+				'capabilities' => $resolved['capabilities'],
+				'summary'      => array(
+					'profiles'         => count( $resolved['profiles'] ),
+					'components'       => count( is_array( $resolved['profile']['components'] ?? null ) ? $resolved['profile']['components'] : array() ),
+					'provider_plugins' => count( is_array( $resolved['profile']['provider_plugins'] ?? null ) ? $resolved['profile']['provider_plugins'] : array() ),
+					'overlays'         => count( is_array( $resolved['profile']['runtime_overlays'] ?? null ) ? $resolved['profile']['runtime_overlays'] : array() ),
+				),
+			),
+			static fn( mixed $value ): bool => array() !== $value && '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $profile Profile descriptor. @return array<string,mixed> */
+	private static function profile_public_entry( array $profile ): array {
+		return array_filter(
+			array(
+				'id'         => (string) ( $profile['id'] ?? '' ),
+				'label'      => (string) ( $profile['label'] ?? '' ),
+				'provides'   => self::profile_capabilities( $profile ),
+				'requires'   => self::merge_string_lists( $profile['requires'] ?? array() ),
+				'provenance' => is_array( $profile['provenance'] ?? null ) ? $profile['provenance'] : array(),
+			),
+			static fn( mixed $value ): bool => array() !== $value && '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $base Base profile. @param array<string,mixed> $extra Extra profile. @return array<string,mixed> */
+	private static function merge_profile( array $base, array $extra ): array {
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts', 'provider_plugins', 'extra_plugins', 'component_contracts', 'bootstrap' ) as $field ) {
+			$base[ $field ] = self::merge_lists( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
+		}
+
+		foreach ( array( 'env', 'metadata', 'readiness', 'provenance' ) as $field ) {
+			$base[ $field ] = array_merge( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
+		}
+
+		return array_filter( $base, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+	}
+
+	/** @param array<string,mixed> $base Base inherit. @param array<string,mixed> $extra Extra inherit. @return array<string,mixed> */
+	private static function merge_inherit( array $base, array $extra ): array {
+		foreach ( array( 'connectors', 'settings' ) as $field ) {
+			$base[ $field ] = self::merge_string_lists( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
+		}
+
+		return array_filter( $base, static fn( mixed $value ): bool => array() !== $value );
+	}
+
+	/** @return array<int,mixed> */
+	private static function merge_lists( mixed ...$lists ): array {
+		$merged = array();
+		$seen = array();
+		foreach ( $lists as $list ) {
+			foreach ( is_array( $list ) ? $list : array() as $item ) {
+				$key = is_array( $item ) ? md5( wp_json_encode( $item ) ?: serialize( $item ) ) : 'scalar:' . (string) $item;
+				if ( isset( $seen[ $key ] ) ) {
+					continue;
+				}
+				$seen[ $key ] = true;
+				$merged[] = $item;
+			}
+		}
+
+		return $merged;
+	}
+
+	/** @return string[] */
+	private static function merge_string_lists( mixed ...$lists ): array {
+		$merged = array();
+		foreach ( $lists as $list ) {
+			if ( is_string( $list ) ) {
+				$list = array( $list );
+			}
+			foreach ( is_array( $list ) ? $list : array() as $item ) {
+				$item = self::safe_key( (string) $item );
+				if ( '' !== $item && ! in_array( $item, $merged, true ) ) {
+					$merged[] = $item;
+				}
+			}
+		}
+
+		return $merged;
+	}
+
+	/** @return string[] */
+	private static function merge_secret_env( mixed ...$lists ): array {
+		$merged = array();
+		foreach ( $lists as $list ) {
+			foreach ( is_array( $list ) ? $list : array() as $item ) {
+				$item = trim( (string) $item );
+				if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $item ) && ! in_array( $item, $merged, true ) ) {
+					$merged[] = $item;
+				}
+			}
+		}
+
+		return $merged;
+	}
+
+	private static function safe_key( string $value ): string {
+		return trim( strtolower( preg_replace( '/[^a-zA-Z0-9_\-\.]+/', '-', $value ) ?? '' ), '-' );
+	}
+}
