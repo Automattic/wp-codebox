@@ -1,13 +1,6 @@
 import { isPlainObject as isRecord } from "@automattic/wp-codebox-core/internals"
-
-export interface WordPressFixtureUserSpec {
-  userId?: number
-  username?: string
-  email?: string
-  role?: string
-  displayName?: string
-  password?: string
-}
+import type { WordPressFixtureUserSpec } from "./wordpress-user-sessions.js"
+export type { WordPressFixtureUserSpec } from "./wordpress-user-sessions.js"
 
 export interface BrowserStorageStateCookie {
   name: string
@@ -30,6 +23,7 @@ export interface WordPressFixtureUserStorageStateEnvelope {
   kind: "wordpress-fixture-user-admin-auth"
   user: {
     id: number
+    name?: string
     username: string
     email: string
     role: string
@@ -253,6 +247,7 @@ echo wp_json_encode(
         'kind'         => 'wordpress-fixture-user-admin-auth',
         'user'         => array(
             'id'       => $user_id,
+            'name'     => isset( $fixture_user['name'] ) && is_string( $fixture_user['name'] ) ? $fixture_user['name'] : '',
             'username' => $user->user_login,
             'email'    => $user->user_email,
             'role'     => $role,

@@ -73,6 +73,8 @@ top-level fields:
 - `secretEnv`
 - `pluginRuntime`
 - `fixtureDatabases`
+- `fixtureUsers`
+- `userSessions`
 - `siteSeeds`
 - `stagedFiles`
 - `sourcePackages`
@@ -192,6 +194,36 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+## Runtime Checkpoints
+
+Recipes can create named checkpoints and restore them later in the same run.
+Checkpoints are generic runtime isolation primitives for bounded mutation loops;
+they are not a high-volume fuzz runner.
+
+```json
+{
+  "workflow": {
+    "steps": [
+      { "command": "wp-codebox.checkpoint-create", "args": ["name=baseline"] },
+      { "command": "wordpress.run-php", "args": ["code=update_option( 'example_flag', 'mutated' );"] },
+      { "command": "wp-codebox.checkpoint-restore", "args": ["name=baseline"] },
+      { "command": "wp-codebox.checkpoint-list" }
+    ]
+  }
+}
+```
+
+Supported commands:
+
+- `wp-codebox.checkpoint-create` captures the current runtime state under `name`.
+- `wp-codebox.checkpoint-restore` restores a previously created `name`.
+- `wp-codebox.checkpoint-list` emits metadata for checkpoints created in the run.
+
+Checkpoint create accepts the same snapshot scoping arguments as
+`wordpress.capture-state-bundle`, plus optional `metadata-json`. Unsupported
+runtime backends fail closed with a structured
+`wp-codebox/runtime-checkpoint-failure/v1` diagnostic and exit code `1`.
+
 ## REST Benchmark Workloads
 
 Recipes can pass REST profiling workloads to `wordpress.bench` with
@@ -296,6 +328,44 @@ These are generic declarations for orchestrators and future runtime setup
 support. The current built-in fixture importer treats multisite/domain bootstrap
 as declared metadata and blocks executable fixture imports that require runtime
 setup not yet provided by WP Codebox.
+
+## Fixture Users And User Sessions
+
+Recipes can declare named WordPress fixture users in `inputs.fixtureUsers` and
+named command execution sessions in `inputs.userSessions`. A fixture user is a
+generic WordPress user contract: `name`, optional `userId`, `username`, `email`,
+`role`, `displayName`, and `password`. Commands that support user/session
+resolution can accept `user=<name>` or `session=<name>`.
+
+`userSessions` reference a fixture user by name. Session artifacts such as
+browser storage state, cookie jars, or tokens are metadata only and must be
+declared with `redactionRequired: true`; command output reports only safe
+structured metadata such as schema, selected user name/role, artifact kind/path,
+and the redaction flag.
+
+```json
+{
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "admin", "username": "fixture-admin", "role": "administrator" }
+    ],
+    "userSessions": [
+      {
+        "name": "admin-browser",
+        "user": "admin",
+        "artifacts": [
+          { "kind": "browser-storage-state", "path": "files/browser-storage-state/storage-state.json", "redactionRequired": true }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      { "command": "wordpress.rest-request", "args": ["path=/wp/v2/users/me", "session=admin-browser"] }
+    ]
+  }
+}
+```
 
 ```json
 {

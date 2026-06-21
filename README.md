@@ -1143,6 +1143,40 @@ Artifact bundle ids are content-addressed for the apply-back contract. The runti
 
 Every `manifest.files[]` entry also carries `sha256: { "algorithm": "sha256", "value": "..." }`. For regular files, `value` is the SHA-256 of that artifact file's bytes. For `manifest.json`, `value` is a canonical self-hash over the parsed manifest with the manifest entry's own hash replaced by 64 zeroes, using the `wp-codebox/artifact-manifest-self/v1` domain separator. `wp-codebox artifacts verify` rejects missing hashes and mismatched hashes for any declared file, so tampering with replay-critical or supporting artifacts is detected even when the top-level content digest inputs are unchanged.
 
+Scenario and fuzz-style workflows can add optional case-level indexes under
+`manifest.cases[]` without introducing a dedicated runner contract. Each case
+has a stable `id`, optional `hash` or `digest`, `artifacts[]` refs with
+bundle-relative paths and optional SHA-256 values, redaction metadata, and
+verification metadata such as `status`, `verifiedAt`, and `verifier`:
+
+```json
+{
+  "cases": [
+    {
+      "id": "case-1",
+      "hash": { "algorithm": "sha256", "value": "..." },
+      "artifacts": [
+        {
+          "path": "files/cases/case-1.json",
+          "kind": "case-result",
+          "contentType": "application/json",
+          "sha256": { "algorithm": "sha256", "value": "..." },
+          "publicUrl": "https://example.test/artifacts/files/cases/case-1.json",
+          "redaction": { "policy": "none", "sensitive": false }
+        }
+      ],
+      "verification": { "status": "passed", "verifiedAt": "2026-05-27T00:00:00.000Z" }
+    }
+  ]
+}
+```
+
+Case artifact paths must be present in `manifest.files[]`. When a case artifact
+declares `sha256`, `wp-codebox artifacts verify` hashes the referenced file and
+fails on mismatch. Reviewer-facing case `publicUrl` values and manifest viewer
+bases must be absolute HTTP(S) URLs and must not point at loopback or local
+hosts, so public refs do not expose host-local paths as review evidence.
+
 `wp-codebox artifacts verify` also fails closed on unsafe bundle topology: all
 declared file paths must be bundle-relative, non-duplicated, traversal-free,
 listed in `manifest.files[]` when used as digest inputs or evidence refs, and

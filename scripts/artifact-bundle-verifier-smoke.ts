@@ -64,6 +64,21 @@ try {
   await writeFile(join(fileHashMismatch, "files/test-results.json"), "{\"tampered\":true}\n")
   assertViolation(await verifyArtifactBundle(fileHashMismatch), "file-hash-mismatch")
 
+  const caseReferenceMissing = await copyBundle(validBundle, join(workspace, "case-reference-missing"))
+  const caseReferenceMissingManifest = manifestFixture(await calculateArtifactContentDigest(caseReferenceMissing, ["files/changed-files.json", "files/patch.diff"]))
+  caseReferenceMissingManifest.cases![0]!.artifacts[0]!.path = "files/cases/missing.json"
+  await attachManifestFileHashes(caseReferenceMissing, caseReferenceMissingManifest)
+  await writeJson(join(caseReferenceMissing, "manifest.json"), caseReferenceMissingManifest)
+  assertViolation(await verifyArtifactBundle(caseReferenceMissing), "malformed-reference")
+
+  const caseLocalPublicUrl = await copyBundle(validBundle, join(workspace, "case-local-public-url"))
+  const caseLocalPublicUrlManifest = manifestFixture(await calculateArtifactContentDigest(caseLocalPublicUrl, ["files/changed-files.json", "files/patch.diff"]))
+  caseLocalPublicUrlManifest.cases![0]!.artifacts[0]!.publicUrl = "http://127.0.0.1:8881/artifacts/case.json"
+  await attachCaseArtifactHashes(caseLocalPublicUrl, caseLocalPublicUrlManifest)
+  await attachManifestFileHashes(caseLocalPublicUrl, caseLocalPublicUrlManifest)
+  await writeJson(join(caseLocalPublicUrl, "manifest.json"), caseLocalPublicUrlManifest)
+  assertViolation(await verifyArtifactBundle(caseLocalPublicUrl), "unsafe-file")
+
   const missingFileHash = await copyBundle(validBundle, join(workspace, "missing-file-hash"))
   const missingHashManifest = manifestFixture(await calculateArtifactContentDigest(missingFileHash, ["files/changed-files.json", "files/patch.diff"]))
   await attachManifestFileHashes(missingFileHash, missingHashManifest)
@@ -116,12 +131,14 @@ try {
 
 async function writeValidBundle(directory: string): Promise<void> {
   await mkdir(join(directory, "files"), { recursive: true })
+  await mkdir(join(directory, "files/cases"), { recursive: true })
   const changedFiles = `${JSON.stringify({ schema: "wp-codebox/changed-files/v1", files: [{ path: "/wordpress/wp-content/plugins/example/file.txt", status: "added", mountIndex: 0, mountTarget: "/wordpress/wp-content/plugins/example", relativePath: "file.txt", patchPath: "files/diffs/0-file.txt.diff" }] }, null, 2)}\n`
   const patch = "diff --git a/wordpress/wp-content/plugins/example/file.txt b/wordpress/wp-content/plugins/example/file.txt\nnew file mode 100644\n--- /dev/null\n+++ b/wordpress/wp-content/plugins/example/file.txt\n@@ -0,0 +1 @@\n+cooked\n"
   await writeFile(join(directory, "files/changed-files.json"), changedFiles)
   await writeFile(join(directory, "files/patch.diff"), patch)
   await writeFile(join(directory, "metadata.json"), "{}\n")
   await writeFile(join(directory, "files/test-results.json"), "{}\n")
+  await writeJson(join(directory, "files/cases/case-1.json"), { schema: "example/case-result/v1", id: "case-1", status: "passed" })
 
   const digest = await calculateArtifactContentDigest(directory, ["files/changed-files.json", "files/patch.diff"])
   await writeJson(join(directory, "files/runtime-episode-trace.json"), runtimeEpisodeTraceFixture(digest))
@@ -139,6 +156,7 @@ async function writeValidBundle(directory: string): Promise<void> {
     },
   })
   const manifest = manifestFixture(digest)
+  await attachCaseArtifactHashes(directory, manifest)
   await attachManifestFileHashes(directory, manifest)
   await writeJson(join(directory, "manifest.json"), manifest)
 }
@@ -166,8 +184,27 @@ function manifestFixture(digest: string): ArtifactManifest {
       fileFixture("files/patch.diff", "patch", "text/x-diff"),
       fileFixture("files/review.json", "review", "application/json"),
       fileFixture("files/test-results.json", "test-results", "application/json"),
+      fileFixture("files/cases/case-1.json", "case-result", "application/json"),
       fileFixture("files/runtime-episode-trace.json", "runtime-episode-trace", "application/json"),
       fileFixture("files/runtime-episode.jsonl", "runtime-episode-events", "application/x-ndjson"),
+    ],
+    cases: [
+      {
+        id: "case-1",
+        hash: { algorithm: "sha256", value: createHash("sha256").update("case-1").digest("hex") },
+        artifacts: [
+          {
+            path: "files/cases/case-1.json",
+            kind: "case-result",
+            contentType: "application/json",
+            sha256: { algorithm: "sha256", value: "0".repeat(64) },
+            publicUrl: "https://artifacts.example.test/runs/fixture/files/cases/case-1.json",
+            redaction: { policy: "none", sensitive: false },
+          },
+        ],
+        redaction: { policy: "none", sensitive: false },
+        verification: { status: "passed", verifiedAt: "2026-05-27T00:00:00.000Z", verifier: "artifact-bundle-verifier-smoke" },
+      },
     ],
   }
 }
@@ -218,6 +255,14 @@ async function attachManifestFileHashes(directory: string, manifest: ArtifactMan
   for (const file of manifest.files) {
     if (file.path === "manifest.json") {
       file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
+    }
+  }
+}
+
+async function attachCaseArtifactHashes(directory: string, manifest: ArtifactManifest): Promise<void> {
+  for (const manifestCase of manifest.cases ?? []) {
+    for (const artifact of manifestCase.artifacts) {
+      artifact.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, { path: artifact.path, kind: artifact.kind, contentType: artifact.contentType ?? "application/octet-stream", sha256: artifact.sha256 ?? { algorithm: "sha256", value: "0".repeat(64) } }) }
     }
   }
 }

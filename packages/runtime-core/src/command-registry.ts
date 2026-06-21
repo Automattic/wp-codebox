@@ -264,6 +264,51 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runExportReplayPackage" },
   },
   {
+    id: "wp-codebox.checkpoint-create",
+    description: "Create a named runtime checkpoint for later restore within the same recipe run.",
+    acceptedArgs: [
+      { name: "name", description: "Checkpoint name. Use letters, numbers, dots, underscores, or hyphens.", required: true, format: "string" },
+      { name: "metadata-json", description: "Optional non-secret JSON object recorded on the checkpoint metadata.", format: "JSON object" },
+      ...snapshotScopingAcceptedArgs,
+    ],
+    outputShape: "wp-codebox/runtime-checkpoint-result/v1 JSON with checkpoint name, snapshot id, created timestamp, summary, and metadata.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/runtime-checkpoint-result/v1", {
+      operation: { const: "create" },
+      checkpoint: { type: "object" },
+    }),
+    policyRequirement: "Host-side recipe helper; supported runtime backends create a same-run checkpoint, unsupported backends fail closed with structured diagnostics.",
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox.checkpoint-create" },
+  },
+  {
+    id: "wp-codebox.checkpoint-restore",
+    description: "Restore a previously created named runtime checkpoint within the same recipe run.",
+    acceptedArgs: [
+      { name: "name", description: "Checkpoint name to restore.", required: true, format: "string" },
+    ],
+    outputShape: "wp-codebox/runtime-checkpoint-result/v1 JSON with restored checkpoint metadata.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/runtime-checkpoint-result/v1", {
+      operation: { const: "restore" },
+      checkpoint: { type: "object" },
+    }),
+    policyRequirement: "Host-side recipe helper; supported runtime backends restore a same-run checkpoint, unsupported backends fail closed with structured diagnostics.",
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox.checkpoint-restore" },
+  },
+  {
+    id: "wp-codebox.checkpoint-list",
+    description: "List named runtime checkpoints created during the current recipe run.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/runtime-checkpoint-result/v1 JSON with checkpoint metadata entries.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/runtime-checkpoint-result/v1", {
+      operation: { const: "list" },
+      checkpoints: { type: "array" },
+    }),
+    policyRequirement: "Host-side recipe helper; supported runtime backends list same-run checkpoints, unsupported backends fail closed with structured diagnostics.",
+    recipe: true,
+    handler: { kind: "recipe-alias", command: "wp-codebox.checkpoint-list" },
+  },
+  {
     id: "wordpress.ability",
     description: "Execute a registered WordPress Ability in the sandbox.",
     acceptedArgs: [
@@ -301,8 +346,10 @@ export const commandRegistry = [
       { name: "params-json", description: "Optional request parameters object.", format: "JSON object" },
       { name: "body", description: "Optional raw request body.", format: "string" },
       { name: "body-json", description: "Optional JSON request body string; takes precedence over body.", format: "JSON string" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before running the REST request.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before running the REST request.", format: "user session name" },
     ],
-    outputShape: "JSON object with command, method, path, route, status, headers, body/data, timing, and diagnostics.",
+    outputShape: "JSON object with command, method, path, route, status, headers, body/data, optional safe userSession metadata, timing, and diagnostics.",
     policyRequirement: "Runtime policy commands must include wordpress.rest-request.",
     recipe: true,
     handler: { kind: "playground", method: "runRestRequest" },

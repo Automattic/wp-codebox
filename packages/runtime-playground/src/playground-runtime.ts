@@ -47,6 +47,9 @@ import type {
   RuntimeInfo,
   RuntimeCommandResultEnvelope,
   Snapshot,
+  RuntimeCheckpointResult,
+  RuntimeCheckpointSpec,
+  RuntimeCheckpointMetadata,
 } from "@automattic/wp-codebox-core"
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -134,6 +137,7 @@ class PlaygroundRuntime implements Runtime {
   private readonly commands: ExecutionResult[] = []
   private readonly observations: ObservationResult[] = []
   private readonly snapshots: Snapshot[] = []
+  private readonly checkpoints = new Map<string, { snapshot: Snapshot; metadata: RuntimeCheckpointMetadata }>()
   private readonly events: LifecycleEvent[] = []
   private readonly browserProbes: BrowserArtifact[] = []
   private readonly pluginChecks: PluginCheckArtifact[] = []
@@ -373,6 +377,60 @@ class PlaygroundRuntime implements Runtime {
     this.snapshots.push(snapshot)
 
     return snapshot
+  }
+
+  async createCheckpoint(spec: RuntimeCheckpointSpec): Promise<RuntimeCheckpointResult> {
+    const name = normalizeCheckpointName(spec.name)
+    const snapshot = await this.snapshot(spec.snapshotOptions as RuntimeSnapshotExportOptions | undefined)
+    const summary = snapshot.metadata.summary && typeof snapshot.metadata.summary === "object" && !Array.isArray(snapshot.metadata.summary)
+      ? snapshot.metadata.summary as Record<string, unknown>
+      : undefined
+    const checkpoint: RuntimeCheckpointMetadata = {
+      name,
+      snapshotId: snapshot.id,
+      createdAt: snapshot.createdAt,
+      ...(spec.metadata ? { metadata: spec.metadata } : {}),
+      ...(summary ? { summary } : {}),
+    }
+    this.checkpoints.set(name, { snapshot, metadata: checkpoint })
+    this.recordEvent("runtime.checkpoint.created", { checkpoint })
+    return {
+      schema: "wp-codebox/runtime-checkpoint-result/v1",
+      status: "created",
+      operation: "create",
+      checkpoint,
+    }
+  }
+
+  async restoreCheckpoint(name: string): Promise<RuntimeCheckpointResult> {
+    const checkpointName = normalizeCheckpointName(name)
+    const checkpointRecord = this.checkpoints.get(checkpointName)
+    if (!checkpointRecord) {
+      throw new PlaygroundSnapshotRestoreError(`Runtime checkpoint not found: ${checkpointName}`)
+    }
+
+    await this.restoreSnapshotPayload(await runtimeSnapshotPayload(checkpointRecord.snapshot))
+    const checkpoint: RuntimeCheckpointMetadata = {
+      ...checkpointRecord.metadata,
+      restoredAt: now(),
+    }
+    checkpointRecord.metadata = checkpoint
+    this.recordEvent("runtime.checkpoint.restored", { checkpoint })
+    return {
+      schema: "wp-codebox/runtime-checkpoint-result/v1",
+      status: "restored",
+      operation: "restore",
+      checkpoint,
+    }
+  }
+
+  async listCheckpoints(): Promise<RuntimeCheckpointResult> {
+    return {
+      schema: "wp-codebox/runtime-checkpoint-result/v1",
+      status: "listed",
+      operation: "list",
+      checkpoints: [...this.checkpoints.values()].map((checkpoint) => checkpoint.metadata),
+    }
   }
 
   private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string, options: RuntimeSnapshotExportOptions = {}): Promise<RuntimeSnapshotArtifact> {
@@ -1198,6 +1256,14 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
     return new URL(url, baseUrl).toString()
   }
 
+}
+
+function normalizeCheckpointName(name: string): string {
+  const normalized = name.trim()
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(normalized)) {
+    throw new Error("Runtime checkpoint names must use 1-120 letters, numbers, dots, underscores, or hyphens.")
+  }
+  return normalized
 }
 
 export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackendOptions = {}): RuntimeBackend {
