@@ -10,6 +10,8 @@ product or job system.
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
   `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
+  `packages/runtime-core/src/runtime-boundary-contracts.ts`, and
+  `packages/runtime-core/src/runtime-profile-compiler.ts`, and
   `packages/runtime-core/src/provider-runtime-contracts.ts`, and
   `packages/runtime-core/src/command-agent-run.ts`, and
   `packages/runtime-core/src/wordpress-workload-primitives.ts`.
@@ -113,6 +115,16 @@ Recipe schema accepts these bundles through `runtime.overlays[]`:
   }
 }
 ```
+
+## Runtime Profiles
+
+`wp-codebox/runtime-profile/v1` is the caller-facing runtime request/result
+contract for agent-capable WordPress sandboxes. It exposes generic capabilities,
+components, readiness, diagnostics, and provenance while backend adapters resolve
+plugin paths, overlays, activation order, and readiness details internally.
+
+See [`runtime-profile-contract.md`](./runtime-profile-contract.md) for the field
+contract and examples.
 
 ## Target Context Provisioning
 

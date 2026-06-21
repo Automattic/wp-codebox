@@ -37,9 +37,18 @@ export interface RuntimeProfileReadiness {
   evidence?: Record<string, unknown>
 }
 
+export interface RuntimeProfileDiagnostic {
+  code: string
+  status?: RuntimeProfileReadinessStatus
+  message?: string
+  severity?: "info" | "warning" | "error" | (string & {})
+  evidence?: Record<string, unknown>
+}
+
 export interface RuntimeProfile {
   schema: typeof RUNTIME_PROFILE_SCHEMA
   id?: string
+  capabilities?: string[]
   component_contracts?: Record<string, unknown>[]
   extra_plugins?: Record<string, unknown>[]
   provider_plugins?: Record<string, unknown>[]
@@ -54,6 +63,7 @@ export interface RuntimeProfile {
   runtime_config_mounts?: Record<string, unknown>[]
   env?: Record<string, string>
   readiness?: RuntimeProfileReadiness
+  diagnostics?: RuntimeProfileDiagnostic[]
   provenance?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
@@ -187,6 +197,7 @@ export function runtimeProfile(input: unknown): RuntimeProfile {
   return {
     schema: RUNTIME_PROFILE_SCHEMA,
     id: optionalString(value.id, "id"),
+    capabilities: normalizeStringList(value.capabilities, "capabilities"),
     component_contracts: normalizeObjectList(value.component_contracts, "component_contracts"),
     extra_plugins: normalizeObjectList(value.extra_plugins, "extra_plugins"),
     provider_plugins: normalizeObjectList(value.provider_plugins, "provider_plugins"),
@@ -201,6 +212,7 @@ export function runtimeProfile(input: unknown): RuntimeProfile {
     runtime_config_mounts: normalizeObjectList(value.runtime_config_mounts, "runtime_config_mounts"),
     env: normalizeEnv(value.env),
     readiness: value.readiness === undefined ? undefined : normalizeReadiness(value.readiness),
+    diagnostics: normalizeDiagnostics(value.diagnostics),
     provenance: normalizeOptionalObject(value.provenance, "Runtime profile provenance"),
     metadata: normalizeOptionalObject(value.metadata, "Runtime profile metadata"),
   }
@@ -416,6 +428,22 @@ function normalizeReadiness(input: unknown): RuntimeProfileReadiness {
     evidence: normalizeOptionalObject(value.evidence, "readiness.evidence"),
   }
 }
+
+function normalizeDiagnostics(input: unknown): RuntimeProfileDiagnostic[] | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) throw new Error("Runtime profile diagnostics must be an array.")
+  return input.map((entry, index) => {
+    const value = requireObject(entry, `Runtime profile diagnostics[${index}]`) as Partial<RuntimeProfileDiagnostic>
+    return {
+      code: requiredIdentifier(value.code, `diagnostics[${index}].code`),
+      status: optionalString(value.status, `diagnostics[${index}].status`) as RuntimeProfileReadinessStatus | undefined,
+      message: optionalString(value.message, `diagnostics[${index}].message`),
+      severity: optionalString(value.severity, `diagnostics[${index}].severity`) as RuntimeProfileDiagnostic["severity"],
+      evidence: normalizeOptionalObject(value.evidence, `diagnostics[${index}].evidence`),
+    }
+  })
+}
+
 
 function normalizeAlignment(input: unknown): PreviewAlignmentEvidence {
   const value = requireObject(input, "Preview alignment") as Partial<PreviewAlignmentEvidence>

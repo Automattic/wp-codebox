@@ -93,7 +93,19 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		$resolved['profile']['id'] = implode( '+', array_map( static fn( array $profile ): string => (string) ( $profile['id'] ?? '' ), $resolved['profiles'] ) );
 		foreach ( self::unresolved_component_entries( $request, $registry ) as $component ) {
 			$resolved['profile']['components'] = self::merge_lists( is_array( $resolved['profile']['components'] ?? null ) ? $resolved['profile']['components'] : array(), array( $component ) );
+			$resolved['unresolved_components'] = self::merge_lists( is_array( $resolved['unresolved_components'] ?? null ) ? $resolved['unresolved_components'] : array(), array( $component ) );
 		}
+		$resolved['profile']['schema']       = 'wp-codebox/runtime-profile/v1';
+		$resolved['profile']['capabilities'] = $resolved['capabilities'];
+		$resolved['profile']['readiness']    = is_array( $resolved['profile']['readiness'] ?? null ) && ! empty( $resolved['profile']['readiness'] ) ? $resolved['profile']['readiness'] : self::readiness( $resolved['profile'] );
+		$resolved['profile']['diagnostics']  = self::diagnostics( $request, $resolved );
+		$resolved['profile']['provenance']   = array_merge(
+			array(
+				'owner'    => 'wp-codebox',
+				'resolver' => __CLASS__,
+			),
+			is_array( $resolved['profile']['provenance'] ?? null ) ? $resolved['profile']['provenance'] : array()
+		);
 
 		$resolved['contract'] = self::contract( $request, $resolved );
 		return $resolved;
@@ -284,6 +296,63 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		);
 	}
 
+	/** @param array<string,mixed> $profile Resolved runtime profile. @return array<string,mixed> */
+	private static function readiness( array $profile ): array {
+		$missing = array();
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays' ) as $field ) {
+			foreach ( is_array( $profile[ $field ] ?? null ) ? $profile[ $field ] : array() as $entry ) {
+				if ( ! is_array( $entry ) ) {
+					continue;
+				}
+				$required  = false !== ( $entry['required'] ?? true );
+				$readiness = (string) ( $entry['readiness'] ?? '' );
+				$slug      = (string) ( $entry['slug'] ?? $entry['id'] ?? '' );
+				if ( $required && 'missing' === $readiness && '' !== $slug ) {
+					$missing[] = $field . ':' . $slug;
+				}
+			}
+		}
+
+		return array(
+			'status' => empty( $missing ) ? 'ready' : 'missing',
+			'checks' => array(
+				'dependencies' => empty( $missing ),
+			),
+			'missing' => $missing,
+		);
+	}
+
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,mixed> $resolved Resolution payload. @return array<int,array<string,mixed>> */
+	private static function diagnostics( array $request, array $resolved ): array {
+		$diagnostics = array(
+			array(
+				'code'     => 'runtime_profile.resolved',
+				'status'   => (string) ( $resolved['profile']['readiness']['status'] ?? 'ready' ),
+				'severity' => 'info',
+				'message'  => 'Runtime profile resolved by WP Codebox.',
+				'evidence' => array(
+					'profiles'         => count( $resolved['profiles'] ),
+					'components'       => count( is_array( $resolved['profile']['components'] ?? null ) ? $resolved['profile']['components'] : array() ),
+					'provider_plugins' => count( is_array( $resolved['profile']['provider_plugins'] ?? null ) ? $resolved['profile']['provider_plugins'] : array() ),
+					'overlays'         => count( is_array( $resolved['profile']['runtime_overlays'] ?? null ) ? $resolved['profile']['runtime_overlays'] : array() ),
+				),
+			),
+		);
+
+		$unresolved = is_array( $resolved['unresolved_components'] ?? null ) ? $resolved['unresolved_components'] : array();
+		if ( ! empty( $unresolved ) ) {
+			$diagnostics[] = array(
+				'code'     => 'runtime_profile.unregistered_components',
+				'status'   => 'unknown',
+				'severity' => 'warning',
+				'message'  => 'Runtime profile includes caller-provided components that WP Codebox did not resolve from its registry.',
+				'evidence' => array( 'components' => $unresolved ),
+			);
+		}
+
+		return $diagnostics;
+	}
+
 	/** @param array<string,mixed> $profile Profile descriptor. @return array<string,mixed> */
 	private static function profile_public_entry( array $profile ): array {
 		return array_filter(
@@ -300,9 +369,10 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 
 	/** @param array<string,mixed> $base Base profile. @param array<string,mixed> $extra Extra profile. @return array<string,mixed> */
 	private static function merge_profile( array $base, array $extra ): array {
-		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts', 'provider_plugins', 'extra_plugins', 'component_contracts', 'bootstrap' ) as $field ) {
+		foreach ( array( 'components', 'plugins', 'mu_plugins', 'themes', 'overlays', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts', 'provider_plugins', 'extra_plugins', 'component_contracts', 'bootstrap', 'diagnostics' ) as $field ) {
 			$base[ $field ] = self::merge_lists( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
 		}
+		$base['capabilities'] = self::merge_string_lists( $base['capabilities'] ?? array(), $extra['capabilities'] ?? array() );
 
 		foreach ( array( 'env', 'metadata', 'readiness', 'provenance' ) as $field ) {
 			$base[ $field ] = array_merge( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );

@@ -29,6 +29,9 @@ unless this index says otherwise.
 - [Generic runtime primitives](./generic-runtime-primitives.md) documents the
   caller-neutral artifact storage, trusted browser origin, materialization, and
   target-context envelopes shared by runtime integrations.
+- [Runtime profile contract](./runtime-profile-contract.md) documents
+  `wp-codebox/runtime-profile/v1`, the Codebox-owned profile request/result lane
+  for capabilities, components, readiness, diagnostics, and provenance.
 - [Portable WP Codebox](./portable-wp-codebox.md) documents portable runtime
   packaging and invocation.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
@@ -63,6 +66,9 @@ unless this index says otherwise.
   `packages/runtime-core/src/browser-session-origin.ts`,
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`.
+- Runtime profile TypeScript contracts:
+  `packages/runtime-core/src/runtime-boundary-contracts.ts` and
+  `packages/runtime-core/src/runtime-profile-compiler.ts`.
 - JSON Schema factory: `packages/runtime-core/src/recipe-schema.ts`.
 - Default check coverage: `npm run check` includes
   `npm run test:generic-primitives` through the smoke manifest `core` group.
