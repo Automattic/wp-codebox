@@ -68,7 +68,7 @@ assert.match(publicBoundaryText, /Consumers should call\s+Codebox ability ids, s
 assert.match(publicBoundaryText, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
 assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
-assert.match(publicBoundaryText, /Data Machine, Agents API, Data Machine Code, WordPress Playground, and upstream\s+task runtimes are implementation details/)
+assert.match(publicBoundaryText, /upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,\s+and task runtimes are implementation details/)
 assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
 
 const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")

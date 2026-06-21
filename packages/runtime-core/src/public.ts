@@ -1,7 +1,7 @@
 /**
  * Curated public facade for external Codebox integrations. This surface exposes
- * Codebox-owned contracts, not Data Machine, Agents API, Data Machine Code, or
- * raw WordPress Playground implementation APIs.
+ * Codebox-owned contracts, not upstream runtime, workspace, provider, or
+ * sandbox backend implementation APIs.
  */
 export * from "./agent-runtime-workload.js"
 export * from "./agent-workload.js"

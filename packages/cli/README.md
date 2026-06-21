@@ -4,9 +4,8 @@ CLI entrypoint for running disposable WP Codebox sandboxes and collecting
 reviewable artifact bundles. **Secure coding environments inside WordPress** — every command runs against a fresh WordPress Playground instance that can't touch your host site.
 
 The CLI is a public Codebox surface. Consumers should use its documented commands
-and JSON outputs rather than importing package internals or depending on Data
-Machine, Agents API, Data Machine Code, or raw WordPress Playground details used
-behind the runner.
+and JSON outputs rather than importing package internals or depending on upstream
+runtime, workspace, provider, or sandbox backend details used behind the runner.
 
 ## Install
 
