@@ -96,6 +96,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Browser metrics:** Node consumers can call `collectBrowserArtifactMetrics()`
   from `@automattic/wp-codebox-playground/public` to summarize browser metrics
   from an existing artifact bundle directory.
+- **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
+  boundary cases against a Codebox-owned target such as an ability, command, HTTP
+  endpoint, REST route, or runtime action. `wp-codebox/fuzz-suite-result/v1`
+  reports case status, diagnostics, artifact refs, and suite summary without
+  embedding product-specific Woo, Gutenberg, Jetpack, or Core assertions.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
@@ -149,6 +154,13 @@ Agent task callers use the `wp-codebox/run-agent-task` ability or
 Artifact handoff, import, and materialization results normalize to
 `wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
 `normalizeArtifactResultEnvelope()`.
+
+Fuzzing callers use `fuzzSuiteContract()` to publish or discover suites and
+`fuzzSuiteResultEnvelope()` to return the stable result DTO. Hosts own how cases
+are generated and executed. Product adapters may translate Woo, Gutenberg,
+Jetpack, Core, or other domain-specific probes into these generic case records at
+their own boundary; those product semantics are not part of the Codebox fuzz
+suite contract.
 
 Runner workspace backends are installed by integration code and discovered via
 the `wp_codebox_runner_workspace_backend` filter. The stable backend config is

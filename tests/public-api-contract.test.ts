@@ -6,6 +6,8 @@ import {
   buildRuntimePackageRunRecipe,
   browserArtifactPersistenceProjection,
   browserRunResultEnvelope,
+  fuzzSuiteContract,
+  fuzzSuiteResultEnvelope,
   normalizeAgentTaskRunResult,
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
@@ -15,6 +17,8 @@ import {
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  FUZZ_SUITE_RESULT_SCHEMA,
+  FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
@@ -98,6 +102,7 @@ for (const contractArea of [
   "Browser task and contained site",
   "Browser SDK",
   "Browser metrics",
+  "Fuzz suite",
   "Artifacts",
   "Inspect",
 ]) {
@@ -109,6 +114,7 @@ for (const publicModule of [
   "./agent-task-run-result.js",
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
+  "./fuzz-suite-contracts.js",
   "./parent-tool-bridge.js",
   "./recipe-builders.js",
   "./runtime-boundary-contracts.js",
@@ -151,6 +157,8 @@ assert.equal(typeof artifactResultEnvelope, "function")
 assert.equal(typeof normalizeArtifactResultEnvelope, "function")
 assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
+assert.equal(typeof fuzzSuiteContract, "function")
+assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
@@ -158,6 +166,15 @@ assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ART
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
+assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
+assert.deepEqual(fuzzSuiteResultEnvelope({
+  suite: { id: "ability-boundary" },
+  cases: [
+    { id: "empty-input", status: "passed", success: true, diagnostics: [], artifactRefs: [{ path: "fuzz/case.json", kind: "json" }] },
+    { id: "bad-input", status: "failed", success: false, diagnostics: [{ severity: "error", message: "Rejected bad input." }] },
+  ],
+}).summary, { total: 2, passed: 1, failed: 1, error: 0, skipped: 0 })
+assert.equal(fuzzSuiteResultEnvelope({ suite: { id: "ability-boundary" } }).schema, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
 assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))
