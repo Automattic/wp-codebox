@@ -40,6 +40,7 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./agent-task-recipe",
   "./runtime-presets",
   "./playground",
+  "./playground/public",
   "./cli",
   "./cli/recipe-secret-env",
 ])
@@ -55,7 +56,7 @@ assert.deepEqual(exportKeys(corePackage), [
   "./runtime-presets",
 ])
 
-assert.deepEqual(exportKeys(playgroundPackage), ["."])
+assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
 const docs = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
 const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts", root), "utf8")
@@ -69,6 +70,7 @@ for (const publicEntry of [
   "@automattic/wp-codebox-core/agent-task-recipe",
   "@automattic/wp-codebox-core/runtime-presets",
   "@automattic/wp-codebox-playground",
+  "@automattic/wp-codebox-playground/public",
   "@automattic/wp-codebox-cli",
   "./cli/recipe-secret-env",
   "@automattic/wp-codebox-cli/recipe-secret-env",
@@ -82,6 +84,7 @@ for (const contractArea of [
   "Tool bridge",
   "Browser task and contained site",
   "Browser SDK",
+  "Browser metrics",
   "Artifacts",
   "Inspect",
 ]) {
@@ -94,6 +97,7 @@ for (const publicModule of [
   "./browser-callback-contracts.js",
   "./recipe-builders.js",
   "./runtime-contracts.js",
+  "./runtime-episode.js",
   "./runtime-package-execution.js",
   "./wordpress-workload-primitives.js",
 ]) {
