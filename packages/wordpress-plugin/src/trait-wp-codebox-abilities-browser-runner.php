@@ -244,12 +244,7 @@ $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && (
 
 $runtime_lifecycle = wp_codebox_browser_runtime_replay_ability_lifecycle();
 
-if ( is_readable( $task_path ) ) {
-$raw_payload = json_decode( (string) file_get_contents( $task_path ), true );
-if ( is_array( $raw_payload ) ) {
-	$payload = array_replace_recursive( $payload, $raw_payload );
-}
-}
+$payload = wp_codebox_worker_json_merge_file( $task_path, $payload );
 
 $wp_codebox_browser_artifact_environment = wp_codebox_browser_artifact_environment( $payload );
 $provider_proxy_diagnostics = wp_codebox_browser_install_provider_proxy( $payload );
