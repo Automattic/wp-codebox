@@ -112,6 +112,7 @@
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
+    "test:php-agent-runtime-execution": "php scripts/php-agent-runtime-execution-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
     "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
