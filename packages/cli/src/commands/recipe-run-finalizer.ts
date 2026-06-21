@@ -57,6 +57,7 @@ interface RecipeRunCommonOutputFields {
   terminalResult?: RecipeRunOutput["terminalResult"]
   completionOutcome?: RecipeRunOutput["completionOutcome"]
   replayStatus?: RecipeRunOutput["replayStatus"]
+  fuzzRun?: RecipeRunOutput["fuzzRun"]
   artifacts?: ArtifactBundle
   interruption?: RecipeRunOutput["interruption"]
 }
@@ -107,6 +108,7 @@ export function completedRecipeOutputFields(args: {
   advisoryFailures: RecipeAdvisoryFailure[]
   browserEvidence: RecipeBrowserEvidence[]
   benchResultsList: NonNullable<RecipeRunOutput["benchResultsList"]>
+  fuzzRun?: RecipeRunOutput["fuzzRun"]
   evidence: Awaited<ReturnType<typeof finalizeRecipeArtifactEvidence>> & Awaited<ReturnType<typeof finalizeAgentSandboxEvidence>>
 }): Pick<RecipeRunOutput, "executions"> & Partial<RecipeRunOutput> {
   return {
@@ -129,6 +131,7 @@ export function completedRecipeOutputFields(args: {
     ...(args.evidence.terminalResult ? { terminalResult: recipeTerminalResultOutput(args.evidence.terminalResult) } : {}),
     ...(args.evidence.completionOutcome ? { completionOutcome: recipeCompletionOutcomeOutput(args.evidence.completionOutcome) } : {}),
     ...(args.evidence.replayStatus ? { replayStatus: recipeReplayStatusOutput(args.evidence.replayStatus) } : {}),
+    ...(args.fuzzRun ? { fuzzRun: args.fuzzRun } : {}),
   }
 }
 

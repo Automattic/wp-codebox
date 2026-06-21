@@ -10,6 +10,7 @@ defined( 'ABSPATH' ) || exit;
 final class WP_Codebox_Host_Run_Result_Normalizer {
 
 	private const SCHEMA = 'wp-codebox/agent-task-run/v1';
+	private const RUN_RESULT_SCHEMA = 'wp-codebox/agent-task-run-result/v1';
 
 	/**
 	 * @param array<string,mixed> $prepared Prepared run.
@@ -112,6 +113,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 		$response['diagnostics']   = $adapters['run_diagnostics']( $decoded, $exit_code, $outcome );
 		$response['evidence_refs'] = $adapters['evidence_refs']( $response['session'], $decoded );
 		$response['run_metadata']  = $adapters['run_metadata']( $session_id, $input, $wp_version, $decoded );
+		$response['agent_task_run_result'] = $this->agent_task_run_result( $response, $exit_code );
 
 		return $response;
 	}
@@ -157,13 +159,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			'artifacts'           => $artifacts,
 			'exit_code'           => $exit_code,
 			'agent_result'        => is_array( $run['agentResult'] ?? null ) ? $run['agentResult'] : array(),
-			'agent_task_result'   => array(
-				'schema'                 => 'wp-codebox/agent-task-run-result/v1',
-				'success'                => false,
-				'status'                 => 'timeout' === $failure_classification ? 'timeout' : 'failed',
-				'summary'                => $message,
-				'failure_classification' => $failure_classification,
-			),
+			'agent_task_result'   => is_array( $run['agentTaskResult'] ?? null ) ? $run['agentTaskResult'] : array(),
 			'completion_outcome'  => $adapters['completion_outcome']( $run ),
 			'run'                 => $run,
 			'error'               => $error,
@@ -178,7 +174,154 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			'run_metadata'        => $adapters['run_metadata']( $session_id, $input, $wp_version, $run ),
 		);
 		$response['evidence_refs'] = $adapters['evidence_refs']( $response['session'], $run );
+		$response['agent_task_run_result'] = $this->agent_task_run_result( $response, $exit_code, $message, $failure_classification );
 
 		return $response;
+	}
+
+	/**
+	 * @param array<string,mixed> $response Agent task run response.
+	 * @return array<string,mixed>
+	 */
+	private function agent_task_run_result( array $response, int $exit_code, string $summary = '', string $failure_classification = '' ): array {
+		$agent_result      = is_array( $response['agent_result'] ?? null ) ? $response['agent_result'] : array();
+		$agent_task_result = is_array( $response['agent_task_result'] ?? null ) ? $response['agent_task_result'] : array();
+		$run               = is_array( $response['run'] ?? null ) ? $response['run'] : array();
+		$run_metadata      = is_array( $response['run_metadata'] ?? null ) ? $response['run_metadata'] : array();
+		$diagnostics       = is_array( $response['diagnostics'] ?? null ) ? $response['diagnostics'] : array();
+		$status            = (string) ( $response['agent_task_status'] ?? '' );
+		if ( '' === $status ) {
+			$status = WP_Codebox_Status_Taxonomy::agent_task_status(
+				array(
+					'status'      => $response['status'] ?? '',
+					'success'     => $response['success'] ?? false,
+					'exit_status' => $exit_code,
+				)
+			);
+		}
+
+		$changed_files = is_array( $agent_result['changedFiles'] ?? null ) ? $agent_result['changedFiles'] : array();
+		$patch         = is_array( $agent_result['patch'] ?? null ) ? $agent_result['patch'] : array();
+		$no_op_reason  = (string) ( $agent_result['noOpReason'] ?? ( $response['no_op_reason'] ?? '' ) );
+		$changed_count = isset( $changed_files['count'] ) ? (int) $changed_files['count'] : null;
+		$patch_bytes   = isset( $patch['bytes'] ) ? (int) $patch['bytes'] : null;
+		$no_op         = array(
+			'detected' => 'no_op' === $status || ( true === ( $response['success'] ?? false ) && '' !== $no_op_reason && 0 === $changed_count && 0 === $patch_bytes ),
+		);
+		if ( '' !== $no_op_reason ) {
+			$no_op['reason'] = $no_op_reason;
+		}
+		if ( null !== $changed_count ) {
+			$no_op['changed_files_count'] = $changed_count;
+		}
+		if ( null !== $patch_bytes ) {
+			$no_op['patch_bytes'] = $patch_bytes;
+		}
+
+		$artifacts = $this->agent_task_run_artifacts( $response, $agent_result, $run );
+		$result    = array(
+			'schema'      => self::RUN_RESULT_SCHEMA,
+			'status'      => $status,
+			'success'     => in_array( $status, array( 'succeeded', 'no_op' ), true ),
+			'summary'     => '' !== $summary ? $summary : (string) ( $response['summary'] ?? $agent_result['summary'] ?? ( in_array( $status, array( 'succeeded', 'no_op' ), true ) ? 'WP Codebox agent task succeeded.' : 'WP Codebox agent task failed.' ) ),
+			'artifacts'   => $artifacts,
+			'refs'        => array(
+				'artifact_bundles' => $this->artifact_refs_by_kind( $artifacts, array( 'artifact-bundle', 'codebox-artifact-bundle' ) ),
+				'changed_files'    => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-changed-files' ) ),
+				'patches'          => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-patch' ) ),
+				'transcripts'      => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-transcript' ) ),
+				'logs'             => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-runtime-log', 'codebox-command-log' ) ),
+				'runtimes'         => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-runtime' ) ),
+			),
+			'diagnostics' => array_values( array_filter( $diagnostics, 'is_array' ) ),
+			'metadata'    => array_filter(
+				array(
+					'run_id'              => $run_metadata['run_id'] ?? $run_metadata['session_id'] ?? null,
+					'run_status'          => $run_metadata['run_status'] ?? null,
+					'runtime_id'          => $run_metadata['runtime_id'] ?? null,
+					'runtime_status'      => $run_metadata['runtime_status'] ?? null,
+					'changed_files_count' => $changed_count,
+					'patch_bytes'         => $patch_bytes,
+					'patch_sha256'        => $patch['sha256'] ?? null,
+					'no_op_reason'        => '' !== $no_op_reason ? $no_op_reason : null,
+				),
+				static fn( mixed $value ): bool => null !== $value && '' !== $value
+			),
+			'no_op'       => $no_op,
+		);
+
+		if ( is_array( $response['terminal_result'] ?? null ) ) {
+			$result['terminal_result'] = $response['terminal_result'];
+		}
+		if ( '' !== $failure_classification ) {
+			$result['failure_classification'] = $failure_classification;
+		} elseif ( ! in_array( $status, array( 'succeeded', 'no_op' ), true ) ) {
+			$result['failure_classification'] = 'timeout' === $status ? 'timeout' : 'runtime';
+		}
+		if ( is_array( $agent_task_result ) && isset( $agent_task_result['schema'] ) ) {
+			$result['metadata']['agent_task_result_schema'] = (string) $agent_task_result['schema'];
+		}
+
+		return $result;
+	}
+
+	/** @param array<int,array<string,mixed>> $artifacts @param string[] $kinds @return array<int,array<string,mixed>> */
+	private function artifact_refs_by_kind( array $artifacts, array $kinds ): array {
+		return array_values( array_filter( $artifacts, static fn( array $artifact ): bool => in_array( (string) ( $artifact['kind'] ?? '' ), $kinds, true ) ) );
+	}
+
+	/** @param array<string,mixed> $response @param array<string,mixed> $agent_result @param array<string,mixed> $run @return array<int,array<string,mixed>> */
+	private function agent_task_run_artifacts( array $response, array $agent_result, array $run ): array {
+		$artifacts = array();
+		$root      = (string) ( $agent_result['artifacts']['directory'] ?? $response['artifacts'] ?? '' );
+		$this->append_artifact_ref( $artifacts, array( 'id' => basename( $root ), 'kind' => 'codebox-artifact-bundle', 'path' => $root ) );
+		$this->append_agent_artifact_ref( $artifacts, 'codebox-changed-files', $root, is_array( $agent_result['changedFiles'] ?? null ) ? $agent_result['changedFiles'] : array() );
+		$this->append_agent_artifact_ref( $artifacts, 'codebox-patch', $root, is_array( $agent_result['patch'] ?? null ) ? $agent_result['patch'] : array() );
+		$this->append_agent_artifact_ref( $artifacts, 'codebox-transcript', $root, is_array( $agent_result['transcript'] ?? null ) ? $agent_result['transcript'] : array() );
+
+		if ( is_array( $run['artifacts'] ?? null ) ) {
+			$this->append_artifact_ref( $artifacts, array( 'id' => 'codebox-runtime-log', 'kind' => 'codebox-runtime-log', 'path' => (string) ( $run['artifacts']['runtimeLogPath'] ?? '' ) ) );
+			$this->append_artifact_ref( $artifacts, array( 'id' => 'codebox-command-log', 'kind' => 'codebox-command-log', 'path' => (string) ( $run['artifacts']['commandsLogPath'] ?? '' ) ) );
+		}
+
+		$runtime = is_array( $run['runtime'] ?? null ) ? $run['runtime'] : array();
+		$this->append_artifact_ref( $artifacts, array( 'id' => (string) ( $runtime['id'] ?? '' ), 'kind' => 'codebox-runtime', 'metadata' => array( 'status' => (string) ( $runtime['status'] ?? '' ) ) ) );
+
+		return $artifacts;
+	}
+
+	/** @param array<int,array<string,mixed>> $artifacts @param array<string,mixed> $metadata */
+	private function append_agent_artifact_ref( array &$artifacts, string $kind, string $root, array $metadata ): void {
+		$artifact = (string) ( $metadata['artifact'] ?? '' );
+		$path     = '' !== $root && '' !== $artifact ? rtrim( $root, '/\\' ) . '/' . ltrim( $artifact, '/\\' ) : '';
+		$this->append_artifact_ref(
+			$artifacts,
+			array(
+				'id'         => $kind,
+				'kind'       => $kind,
+				'path'       => $path,
+				'sha256'     => (string) ( $metadata['sha256'] ?? '' ),
+				'size_bytes' => isset( $metadata['bytes'] ) ? (int) $metadata['bytes'] : null,
+				'metadata'   => $metadata,
+			)
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $artifacts @param array<string,mixed> $artifact */
+	private function append_artifact_ref( array &$artifacts, array $artifact ): void {
+		$artifact = array_filter( $artifact, static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value );
+		if ( empty( $artifact['kind'] ) ) {
+			return;
+		}
+		$key = (string) ( $artifact['path'] ?? $artifact['url'] ?? $artifact['id'] ?? '' );
+		if ( '' === $key ) {
+			return;
+		}
+		foreach ( $artifacts as $existing ) {
+			if ( $key === (string) ( $existing['path'] ?? $existing['url'] ?? $existing['id'] ?? '' ) ) {
+				return;
+			}
+		}
+		$artifacts[] = $artifact;
 	}
 }

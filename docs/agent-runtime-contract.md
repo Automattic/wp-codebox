@@ -135,7 +135,7 @@ WP Codebox rejects product ability paths that pass raw `code` or `code_file`. De
 }
 ```
 
-`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. Orchestrators should normalize the full `agent-task-run` envelope with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`. The normalized `wp-codebox/agent-task-run-result/v1` groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
+`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. `agent_task_run_result` is the caller-facing `wp-codebox/agent-task-run-result/v1` contract emitted by the CLI and WordPress ability surfaces. Orchestrators should read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, and `agent_task_run_result.metadata` instead of parsing stdout or raw runtime internals. Node consumers can also normalize older or nested envelopes with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`; the package exports `AGENT_TASK_RUN_RESULT_SCHEMA` and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` for contract checks. The normalized envelope groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
 
 Failed `agent-task-run` responses include `wp-codebox/agent-task-run-failure-evidence/v1` in `failure_evidence` when available. This block is safe for orchestrators to persist with job failure records and includes phase, command, exit code, redacted stdout/stderr snippets, runtime and sandbox identifiers, artifact references, diagnostics, and serialized error data.
 
@@ -179,18 +179,27 @@ Runner workspace publication is a separate exported contract in runtime-core:
 - `wp-codebox/runner-workspace-command-request/v1`
 - `wp-codebox/runner-workspace-command-result/v1`
 
-External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into `wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`, so callers never import backend ability names.
+External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into WP Codebox-owned runner workspace abilities, so callers never import backend ability names.
 
-When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. That backend maps the canonical Codebox surface (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) to its own implementation abilities, including `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery. Consumers should not call those backend ability names through the Codebox contract.
+When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. Backend ability names are adapter configuration and diagnostic detail only; public responses normalize backend output to Codebox result schemas and redact backend ability slugs from public errors.
+
+Preferred ability names for external callers are:
+
+- `wp-codebox/runner-workspace-prepare`
+- `wp-codebox/runner-workspace-capture`
+- `wp-codebox/runner-workspace-command`
+- `wp-codebox/runner-workspace-publish`
+
+Short aliases (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) remain registered for existing callers.
 
 ## Provider Runtime Invocation Names
 
 Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:
 
-- `wp-codebox.runner-workspace.prepare` / `wp-codebox/prepare` for runner workspace preparation.
-- `wp-codebox.runner-workspace.capture` / `wp-codebox/capture` for runner workspace status and diff capture.
-- `wp-codebox.runner-workspace.command` / `wp-codebox/command` for bounded runner workspace commands.
-- `wp-codebox.runner-workspace.publish` / `wp-codebox/publish` for branch, commit, PR, or equivalent publication handoff.
+- `wp-codebox.runner-workspace.prepare` / `wp-codebox/runner-workspace-prepare` for runner workspace preparation.
+- `wp-codebox.runner-workspace.capture` / `wp-codebox/runner-workspace-capture` for runner workspace status and diff capture.
+- `wp-codebox.runner-workspace.command` / `wp-codebox/runner-workspace-command` for bounded runner workspace commands.
+- `wp-codebox.runner-workspace.publish` / `wp-codebox/runner-workspace-publish` for branch, commit, PR, or equivalent publication handoff.
 - `wp-codebox.tool-call-transcript.record` / `wp-codebox/record-tool-call-transcript` for product-neutral tool-call transcript evidence.
 - `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
 

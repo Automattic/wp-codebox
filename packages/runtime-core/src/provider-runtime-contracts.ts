@@ -1,4 +1,7 @@
 export const PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA = "wp-codebox/provider-runtime-invocation-contract/v1" as const
+export const PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA = "wp-codebox/provider-credential-requirements/v1" as const
+export const PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA = "wp-codebox/provider-credential-preflight/v1" as const
+export const PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA = "wp-codebox/provider-credential-resolution/v1" as const
 
 export const PROVIDER_RUNTIME_TASK_NAMES = {
   workspacePrepare: "wp-codebox.runner-workspace.prepare",
@@ -10,10 +13,10 @@ export const PROVIDER_RUNTIME_TASK_NAMES = {
 } as const
 
 export const PROVIDER_RUNTIME_ABILITY_NAMES = {
-  workspacePrepare: "wp-codebox/prepare",
-  workspaceCapture: "wp-codebox/capture",
-  workspaceCommand: "wp-codebox/command",
-  workspacePublish: "wp-codebox/publish",
+  workspacePrepare: "wp-codebox/runner-workspace-prepare",
+  workspaceCapture: "wp-codebox/runner-workspace-capture",
+  workspaceCommand: "wp-codebox/runner-workspace-command",
+  workspacePublish: "wp-codebox/runner-workspace-publish",
   toolCallTranscriptRecord: "wp-codebox/record-tool-call-transcript",
   artifactHandoff: "wp-codebox/handoff-artifacts",
 } as const
@@ -33,6 +36,44 @@ export interface ProviderRuntimeInvocationContract {
     tool_call_transcript: "wp-codebox/tool-call-transcript/v1"
     evidence_artifact_envelope: "wp-codebox/evidence-artifact-envelope/v1"
   }
+}
+
+export type ProviderCredentialStatus = "available" | "missing" | "denied" | "not-required"
+
+export interface ProviderCredentialRequirement {
+  name: string
+  required: boolean
+  kind?: string
+  scope?: string
+  source?: string
+  secretEnv?: string[]
+}
+
+export interface ProviderCredentialRequirementsContract {
+  schema: typeof PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA
+  provider: string
+  model?: string
+  requirements: ProviderCredentialRequirement[]
+  redacted: true
+}
+
+export interface ProviderCredentialPreflightContract {
+  schema: typeof PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA
+  provider: string
+  model?: string
+  status: ProviderCredentialStatus
+  requirements: ProviderCredentialRequirement[]
+  secret_env: string[]
+  diagnostics: Array<{ code?: string; severity?: "info" | "warning" | "error"; message?: string }>
+  redacted: true
+}
+
+export interface ProviderCredentialResolutionContract {
+  schema: typeof PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA
+  requirements: ProviderCredentialRequirementsContract
+  preflight: ProviderCredentialPreflightContract
+  secret_env: string[]
+  redacted: true
 }
 
 export function providerRuntimeInvocationContract(): ProviderRuntimeInvocationContract {

@@ -10,6 +10,7 @@
 		'browser-runtime:info',
 		'browser-runtime:normalize-error',
 		'browser-runtime:normalize-result',
+		'browser-runtime:normalize-browser-run-result',
 		'browser-runtime:invoke-result',
 		'playground:run-php',
 		'playground:run-recipe',
@@ -179,6 +180,92 @@
 		}
 	};
 
+	const normalizeBrowserArtifactDigest = ( value ) => {
+		if ( typeof value === 'string' && value ) {
+			return { algorithm: 'sha256', value };
+		}
+		if ( ! isPlainObject( value ) ) {
+			return null;
+		}
+		const digestValue = typeof value.value === 'string' && value.value ? value.value : null;
+		return digestValue ? { algorithm: value.algorithm || 'sha256', value: digestValue } : normalizeBrowserArtifactDigest( value.sha256 || value.digest || value.contentDigest || value.content_digest );
+	};
+
+	const normalizeBrowserArtifactRef = ( artifact, defaults = {} ) => {
+		if ( ! isPlainObject( artifact ) ) {
+			return null;
+		}
+		const ref = {
+			kind: artifact.kind || artifact.artifact_type || artifact.role || defaults.kind || 'artifact',
+			id: artifact.id || artifact.artifact_id || artifact.artifactId || defaults.id || undefined,
+			path: artifact.path || artifact.artifacts_path || artifact.artifactsPath || artifact.directory || defaults.path || undefined,
+			digest: normalizeBrowserArtifactDigest( artifact.digest || artifact.sha256 || artifact.contentDigest || artifact.content_digest ) || defaults.digest || undefined,
+		};
+		if ( ! ref.id && ! ref.path && ! ref.digest && ! artifact.kind && ! artifact.artifact_type && ! artifact.role ) {
+			return null;
+		}
+		return Object.fromEntries( Object.entries( ref ).filter( ( [ , item ] ) => item !== undefined && item !== null ) );
+	};
+
+	const browserArtifactPersistenceRef = ( input ) => {
+		const source = input?.schema === 'wp-codebox/materialization-result/v1' && isPlainObject( input.result ) ? input.result : ( isPlainObject( input?.result ) && ( input.result.artifact || input.result.artifacts || input.result.artifact_bundle || input.result.artifactBundle || input.result.materialization ) ? input.result : input || {} );
+		const artifactBundle = isPlainObject( source.artifact_bundle ) ? source.artifact_bundle : ( isPlainObject( source.artifactBundle ) ? source.artifactBundle : null );
+		const artifact = isPlainObject( source.artifact ) ? source.artifact : null;
+		const artifacts = Array.isArray( source.artifacts ) ? source.artifacts.filter( isPlainObject ) : ( artifact ? [ artifact ] : [] );
+		const materialization = isPlainObject( source.materialization ) ? source.materialization : null;
+		const refs = [];
+		const bundleRef = normalizeBrowserArtifactRef( artifactBundle, { kind: 'artifact-bundle' } );
+		if ( bundleRef ) {
+			refs.push( bundleRef );
+		}
+		for ( const item of artifacts ) {
+			const ref = normalizeBrowserArtifactRef( item, { kind: 'browser-artifact' } );
+			if ( ref?.path || ref?.id ) {
+				refs.push( ref );
+			}
+		}
+		if ( materialization?.id || materialization?.artifact_id ) {
+			refs.push( { kind: 'materialization', id: materialization.id || materialization.artifact_id } );
+		}
+		const seen = new Set();
+		const artifactRefs = refs.filter( ( ref ) => {
+			const key = `${ ref.kind }\u0000${ ref.id || '' }\u0000${ ref.path || '' }\u0000${ ref.digest?.algorithm || '' }\u0000${ ref.digest?.value || '' }`;
+			if ( seen.has( key ) ) {
+				return false;
+			}
+			seen.add( key );
+			return true;
+		} );
+
+		return {
+			schema: 'wp-codebox/browser-artifact-persistence/ref/v1',
+			...( artifact ? { artifact } : {} ),
+			artifacts,
+			...( artifactBundle ? { artifactBundle } : {} ),
+			...( materialization ? { materialization } : {} ),
+			artifactRefs,
+		};
+	};
+
+	const normalizeBrowserRunResult = ( result, operation = 'browser-run' ) => {
+		if ( result?.schema === 'wp-codebox/browser-run-result/v1' ) {
+			return result;
+		}
+		const payload = isPlainObject( result?.result ) ? result.result : ( isPlainObject( result?.data ) ? result.data : ( isPlainObject( result?.response ) ? result.response : ( isPlainObject( result ) ? result : null ) ) );
+		const success = result?.success === true || payload?.success === true;
+		const status = success ? 'completed' : ( result?.status === 'skipped' ? 'skipped' : 'failed' );
+		return {
+			schema: 'wp-codebox/browser-run-result/v1',
+			operation,
+			status,
+			success,
+			result: payload,
+			artifactRefs: browserArtifactPersistenceRef( payload || result ).artifactRefs,
+			diagnostics: [],
+			...( success ? {} : { error: normalizeBrowserSdkError( result?.error || payload?.error || new Error( 'Browser run failed.' ) ) } ),
+		};
+	};
+
 	const browserSdkInfo = () => ( {
 		schema: browserSdkSchema,
 		apiVersion: 'v1',
@@ -198,8 +285,11 @@
 		getCapabilities: () => browserSdkInfo(),
 		info: browserSdkInfo,
 		normalizeError: normalizeBrowserSdkError,
+		normalizeBrowserRunResult,
+		browserArtifactPersistenceRef,
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
+		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,

@@ -15,6 +15,9 @@ unless this index says otherwise.
   orchestration boundary for sandbox sessions.
 - [Tool bridge contract](./tool-bridge-contract.md) defines the Codebox-owned
   allowlisted sandbox tool envelope and dispatcher metadata.
+- [Parent tool bridge contract](./parent-tool-bridge-contract.md) defines the
+  Codebox-owned host-dispatched tool envelope, request/result schemas, sandbox
+  env injection metadata, transcript artifact refs, and failure behavior.
 - [External apply adapter contract](./external-apply-adapter-contract.md)
   documents reviewed artifact apply-back.
 - [Agent fanout contract](./agent-fanout-contract.md) documents generic
@@ -29,6 +32,9 @@ unless this index says otherwise.
 - [Generic runtime primitives](./generic-runtime-primitives.md) documents the
   caller-neutral artifact storage, trusted browser origin, materialization, and
   target-context envelopes shared by runtime integrations.
+- [Runtime profile contract](./runtime-profile-contract.md) documents
+  `wp-codebox/runtime-profile/v1`, the Codebox-owned profile request/result lane
+  for capabilities, components, readiness, diagnostics, and provenance.
 - [Portable WP Codebox](./portable-wp-codebox.md) documents portable runtime
   packaging and invocation.
 - [Benchmark contract](./benchmark-contract.md) documents benchmark evidence
@@ -63,6 +69,9 @@ unless this index says otherwise.
   `packages/runtime-core/src/browser-session-origin.ts`,
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`.
+- Runtime profile TypeScript contracts:
+  `packages/runtime-core/src/runtime-boundary-contracts.ts` and
+  `packages/runtime-core/src/runtime-profile-compiler.ts`.
 - JSON Schema factory: `packages/runtime-core/src/recipe-schema.ts`.
 - Default check coverage: `npm run check` includes
   `npm run test:generic-primitives` through the smoke manifest `core` group.

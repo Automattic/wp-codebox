@@ -58,6 +58,7 @@ top-level fields:
 - `runtime`
 - `inputs`
 - `workflow`
+- `fuzzRun`
 - `artifacts`
 - `probes`
 
@@ -73,6 +74,8 @@ top-level fields:
 - `secretEnv`
 - `pluginRuntime`
 - `fixtureDatabases`
+- `fixtureUsers`
+- `userSessions`
 - `siteSeeds`
 - `stagedFiles`
 - `sourcePackages`
@@ -192,12 +195,128 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+## Fuzz Case Runs
+
+Recipes may declare a bounded, deterministic fuzz case skeleton with
+`fuzzRun.schema: "wp-codebox/fuzz-run/v1"`. This primitive does not generate
+inputs or implement a fuzzing strategy. It gives callers a generic way to name
+cases, attach input/hash/replay metadata, and run setup/action/assert/teardown
+phases through the same command machinery as normal workflow steps.
+
+Each case requires a stable `case_id` and at least one `action` step:
+
+```json
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "workflow": {
+    "steps": [{ "command": "inspect-mounted-inputs" }]
+  },
+  "fuzzRun": {
+    "schema": "wp-codebox/fuzz-run/v1",
+    "cases": [
+      {
+        "case_id": "case-001",
+        "input": { "path": "/example" },
+        "inputHash": { "algorithm": "sha256", "value": "abc123" },
+        "phases": {
+          "setup": [{ "command": "wordpress.run-php", "args": ["code=update_option('case','case-001');"] }],
+          "action": [{ "command": "wordpress.wp-cli", "args": ["command=option get case"] }],
+          "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('case') !== 'case-001') { exit(1); }"] }],
+          "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('case');"] }]
+        },
+        "artifacts": [{ "name": "case-log", "path": "/tmp/wp-codebox/fuzz/case-001.json" }],
+        "replay": { "seed": "seed-001", "inputRef": "fixtures/cases/case-001.json" }
+      }
+    ]
+  }
+}
+```
+
+The runtime output includes `fuzzRun.schema: "wp-codebox/fuzz-run-result/v1"`
+with per-case status, timing, command references/results, declared artifact
+references, diagnostics, and replay metadata placeholders. Fuzz case phase steps
+are ordinary recipe commands, so command permissions and validation come from the
+existing command catalog.
+
+### Plugin State
+
+Use `wordpress.plugin-state` when a recipe or runtime caller needs structured
+WordPress plugin state instead of shelling out to `wp plugin` directly. The
+command accepts a plugin slug, plugin file, or plugin path and can report,
+activate, or deactivate the resolved plugin with WordPress plugin APIs.
+
+```json
+{
+  "command": "wordpress.plugin-state",
+  "args": ["action=activate", "plugin=my-plugin"]
+}
+```
+
+The result uses the `wp-codebox/wordpress-plugin-state/v1` schema and includes
+the requested action, resolved target identity, before/after active plugin
+lists, network-active plugin lists where multisite is available, multisite
+support notes, diagnostics, errors, and `artifactRefs`.
+
+## Runtime Checkpoints
+
+Recipes can create named checkpoints and restore them later in the same run.
+Checkpoints are generic runtime isolation primitives for bounded mutation loops;
+they are not a high-volume fuzz runner.
+
+```json
+{
+  "workflow": {
+    "steps": [
+      { "command": "wp-codebox.checkpoint-create", "args": ["name=baseline"] },
+      { "command": "wordpress.run-php", "args": ["code=update_option( 'example_flag', 'mutated' );"] },
+      { "command": "wp-codebox.checkpoint-restore", "args": ["name=baseline"] },
+      { "command": "wp-codebox.checkpoint-list" }
+    ]
+  }
+}
+```
+
+Supported commands:
+
+- `wp-codebox.checkpoint-create` captures the current runtime state under `name`.
+- `wp-codebox.checkpoint-restore` restores a previously created `name`.
+- `wp-codebox.checkpoint-list` emits metadata for checkpoints created in the run.
+
+Checkpoint create accepts the same snapshot scoping arguments as
+`wordpress.capture-state-bundle`, plus optional `metadata-json`. Unsupported
+runtime backends fail closed with a structured
+`wp-codebox/runtime-checkpoint-failure/v1` diagnostic and exit code `1`.
+
 ## REST Benchmark Workloads
 
 Recipes can pass REST profiling workloads to `wordpress.bench` with
 `workloads-json`. A workload may use `route_matrix` to declare a bounded set of
 REST requests; the runtime expands each route into the existing `rest-request`
 step and returns normal benchmark scenarios/artifacts.
+
+## Command Diagnostics
+
+Recipe steps may opt into bounded per-command diagnostics with a `diagnostics`
+object. Capture is disabled by default. The first supported capture kind is
+`wpdb-queries` on `wordpress.run-php`, which records redacted SQL fingerprints
+from `$wpdb->queries` around the command and links a structured
+`wp-codebox/command-diagnostics/v1` artifact from the execution result.
+
+```json
+{
+  "command": "wordpress.run-php",
+  "args": ["code=$wpdb->get_results('SELECT * FROM wp_posts WHERE ID = 123');"],
+  "diagnostics": {
+    "capture": ["wpdb-queries"],
+    "maxItems": 25,
+    "maxBytes": 32768
+  }
+}
+```
+
+The same command also accepts `capture-diagnostics=wpdb-queries`,
+`diagnostics-max-items=<n>`, and `diagnostics-max-bytes=<n>` args for direct
+runtime callers. Limits are capped at 500 records and 524288 serialized bytes.
 
 ```json
 {
@@ -272,6 +391,44 @@ These are generic declarations for orchestrators and future runtime setup
 support. The current built-in fixture importer treats multisite/domain bootstrap
 as declared metadata and blocks executable fixture imports that require runtime
 setup not yet provided by WP Codebox.
+
+## Fixture Users And User Sessions
+
+Recipes can declare named WordPress fixture users in `inputs.fixtureUsers` and
+named command execution sessions in `inputs.userSessions`. A fixture user is a
+generic WordPress user contract: `name`, optional `userId`, `username`, `email`,
+`role`, `displayName`, and `password`. Commands that support user/session
+resolution can accept `user=<name>` or `session=<name>`.
+
+`userSessions` reference a fixture user by name. Session artifacts such as
+browser storage state, cookie jars, or tokens are metadata only and must be
+declared with `redactionRequired: true`; command output reports only safe
+structured metadata such as schema, selected user name/role, artifact kind/path,
+and the redaction flag.
+
+```json
+{
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "admin", "username": "fixture-admin", "role": "administrator" }
+    ],
+    "userSessions": [
+      {
+        "name": "admin-browser",
+        "user": "admin",
+        "artifacts": [
+          { "kind": "browser-storage-state", "path": "files/browser-storage-state/storage-state.json", "redactionRequired": true }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      { "command": "wordpress.rest-request", "args": ["path=/wp/v2/users/me", "session=admin-browser"] }
+    ]
+  }
+}
+```
 
 ```json
 {

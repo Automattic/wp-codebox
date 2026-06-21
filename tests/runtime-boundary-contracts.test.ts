@@ -4,6 +4,7 @@ import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEM
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
+  capabilities: ["agents.runtime", "provider.openai", "agents.runtime"],
   components: [{ kind: "component", slug: "agents-api", required: true, readiness: "ready", provenance: { source: "registry" } }],
   plugins: [{ kind: "plugin", slug: "wp-codebox", target: "/wordpress/wp-content/plugins/wp-codebox", activate: true }],
   mu_plugins: [{ kind: "mu_plugin", slug: "loader" }],
@@ -12,10 +13,12 @@ const profile = runtimeProfile({
   overlays: [{ kind: "overlay", slug: "provider-runtime", source: "/tmp/provider.zip" }],
   env: { WP_ENVIRONMENT_TYPE: "local" },
   readiness: { status: "ready", checks: { components: true }, missing: [] },
+  diagnostics: [{ code: "runtime_profile.resolved", status: "ready", severity: "info", message: "resolved" }],
   provenance: { generated_by: "test" },
 })
 
 assert.equal(profile.schema, "wp-codebox/runtime-profile/v1")
+assert.deepEqual(profile.capabilities, ["agents.runtime", "provider.openai"])
 assert.equal(profile.components[0].slug, "agents-api")
 assert.deepEqual(profile.bootstrap?.steps, ["install", "activate"])
 assert.deepEqual(profile.env, { WP_ENVIRONMENT_TYPE: "local" })
@@ -28,8 +31,14 @@ const executionPlan = compileRuntimeProfile({
   overlays: [{ kind: "overlay", slug: "runtime-overlay", source: "/workspace/runtime-overlay", target: "/runtime/overlay" }],
   runtime_overlays: [{ kind: "library", library: "generic-runtime", source: "/workspace/overlay", strategy: "copy" }],
   env: { WP_ENVIRONMENT_TYPE: "local" },
+  capabilities: ["wordpress.playground", "agents.runtime"],
+  diagnostics: [{ code: "runtime_profile.resolved", status: "ready" }],
+  provenance: { owner: "wp-codebox" },
 })
 
+assert.deepEqual(executionPlan.capabilities, ["wordpress.playground", "agents.runtime"])
+assert.deepEqual(executionPlan.diagnostics, [{ code: "runtime_profile.resolved", status: "ready", message: undefined, severity: undefined, evidence: undefined }])
+assert.deepEqual(executionPlan.provenance, { owner: "wp-codebox" })
 assert.deepEqual(executionPlan.extra_plugins, [
   {
     source: "/workspace/runtime-component",

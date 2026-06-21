@@ -1,4 +1,4 @@
-import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef } from "@automattic/wp-codebox-core"
+import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -67,6 +67,7 @@ export interface RecipeRunOutput {
   terminalResult?: AgentTerminalResult
   completionOutcome?: SandboxCompletionOutcome
   replayStatus?: RecipeReplayStatusSummary
+  fuzzRun?: RecipeFuzzRunResult
   result?: RecipeRunSummary
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
@@ -98,6 +99,74 @@ export type RecipeExecutionResult = ExecutionResult & {
   recipeStepIndex?: number
   recipeCommand?: string
   recipeAdvisory?: boolean
+  fuzzCaseId?: string
+  fuzzCaseIndex?: number
+  fuzzPhase?: WorkspaceRecipeFuzzCasePhase
+  fuzzStepIndex?: number
+}
+
+export type RecipeFuzzCaseStatus = "passed" | "failed" | "skipped"
+
+export interface RecipeFuzzRunResult {
+  schema: "wp-codebox/fuzz-run-result/v1"
+  sourceSchema: "wp-codebox/fuzz-run/v1"
+  status: RecipeFuzzCaseStatus
+  totalCases: number
+  cases: RecipeFuzzCaseResult[]
+}
+
+export interface RecipeFuzzCaseResult {
+  schema: "wp-codebox/fuzz-case-result/v1"
+  case_id: string
+  index: number
+  status: RecipeFuzzCaseStatus
+  timing: {
+    startedAt?: string
+    finishedAt?: string
+    durationMs?: number
+  }
+  input?: Record<string, unknown>
+  inputHash?: { algorithm: string; value: string }
+  metadata?: Record<string, unknown>
+  phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, RecipeFuzzCasePhaseResult>>
+  commandRefs: RecipeFuzzCaseCommandRef[]
+  artifactRefs: RecipeFuzzCaseArtifactRef[]
+  diagnostics: RecipeFuzzCaseDiagnostic[]
+  replay: {
+    seed?: string | number
+    inputRef?: string
+    notes?: string
+    metadata?: Record<string, unknown>
+  }
+}
+
+export interface RecipeFuzzCasePhaseResult {
+  status: RecipeFuzzCaseStatus
+  commandRefs: RecipeFuzzCaseCommandRef[]
+}
+
+export interface RecipeFuzzCaseCommandRef {
+  executionIndex: number
+  phase: WorkspaceRecipeFuzzCasePhase
+  stepIndex: number
+  command: string
+  status: "completed" | "failed"
+  exitCode: number
+  result: Pick<ExecutionResult, "id" | "startedAt" | "finishedAt" | "stdout" | "stderr">
+}
+
+export interface RecipeFuzzCaseArtifactRef {
+  name: string
+  path: string
+  required?: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface RecipeFuzzCaseDiagnostic {
+  severity: "error" | "warning" | "info"
+  phase?: WorkspaceRecipeFuzzCasePhase
+  commandRef?: number
+  message: string
 }
 
 export interface RecipeAdvisoryFailure {

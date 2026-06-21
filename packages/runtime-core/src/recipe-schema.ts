@@ -177,6 +177,16 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             description: "Fixture database declarations imported into the sandbox with deterministic reset metadata. Sources are local recipe files; no production database access is implied.",
             items: { $ref: "#/$defs/fixtureDatabase" },
           },
+          fixtureUsers: {
+            type: "array",
+            description: "Named WordPress fixture users/roles that recipe commands can resolve with user=<name> or through a named user session.",
+            items: { $ref: "#/$defs/fixtureUser" },
+          },
+          userSessions: {
+            type: "array",
+            description: "Named command execution sessions that reference fixture users. Cookie/token/storage-state artifacts remain redaction-required metadata.",
+            items: { $ref: "#/$defs/userSession" },
+          },
           siteSeeds: {
             type: "array",
             description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
@@ -221,6 +231,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           },
         },
       },
+      fuzzRun: { $ref: "#/$defs/fuzzRun" },
       artifacts: {
         type: "object",
         additionalProperties: false,
@@ -833,6 +844,43 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
+      fixtureUser: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name"],
+        properties: {
+          name: { type: "string", minLength: 1, pattern: "^[A-Za-z0-9._-]+$" },
+          userId: { type: "integer", minimum: 1 },
+          username: { type: "string", minLength: 1 },
+          email: { type: "string", minLength: 1 },
+          role: { type: "string", minLength: 1 },
+          displayName: { type: "string" },
+          password: { type: "string", minLength: 1 },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      userSessionArtifact: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "redactionRequired"],
+        properties: {
+          kind: { type: "string", minLength: 1 },
+          path: { type: "string", minLength: 1 },
+          redactionRequired: { const: true },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      userSession: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "user"],
+        properties: {
+          name: { type: "string", minLength: 1, pattern: "^[A-Za-z0-9._-]+$" },
+          user: { type: "string", minLength: 1 },
+          artifacts: { type: "array", items: { $ref: "#/$defs/userSessionArtifact" } },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
       recipeProbe: {
         type: "object",
         additionalProperties: false,
@@ -1017,8 +1065,78 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string" },
           },
+          diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
+        },
+      },
+      commandDiagnosticsCapture: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          capture: {
+            type: "array",
+            items: { enum: ["wpdb-queries"] },
+            uniqueItems: true,
+          },
+          maxItems: { type: "integer", minimum: 1, maximum: 500 },
+          maxBytes: { type: "integer", minimum: 1, maximum: 524288 },
+        },
+      },
+      fuzzRun: {
+        type: "object",
+        additionalProperties: false,
+        required: ["schema", "cases"],
+        properties: {
+          schema: { const: "wp-codebox/fuzz-run/v1" },
+          metadata: { type: "object" },
+          cases: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: { $ref: "#/$defs/fuzzCase" },
+          },
+        },
+      },
+      fuzzCase: {
+        type: "object",
+        additionalProperties: false,
+        required: ["case_id", "phases"],
+        properties: {
+          case_id: { type: "string", pattern: "^[A-Za-z0-9._-]+$" },
+          input: { type: "object" },
+          inputHash: {
+            type: "object",
+            additionalProperties: false,
+            required: ["algorithm", "value"],
+            properties: {
+              algorithm: { type: "string" },
+              value: { type: "string" },
+            },
+          },
+          metadata: { type: "object" },
+          phases: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action"],
+            properties: {
+              setup: { type: "array", items: { $ref: "#/$defs/step" } },
+              action: { type: "array", minItems: 1, items: { $ref: "#/$defs/step" } },
+              assert: { type: "array", items: { $ref: "#/$defs/step" } },
+              teardown: { type: "array", items: { $ref: "#/$defs/step" } },
+            },
+          },
+          artifacts: { type: "array", items: { $ref: "#/$defs/declaredArtifact" } },
+          replay: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              seed: { oneOf: [{ type: "string" }, { type: "number" }] },
+              inputRef: { type: "string" },
+              notes: { type: "string" },
+              metadata: { type: "object" },
+            },
+          },
         },
       },
       inheritanceRequest: {

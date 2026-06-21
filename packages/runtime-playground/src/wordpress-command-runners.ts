@@ -1,3 +1,6 @@
+import { createHash, randomBytes } from "node:crypto"
+import { mkdir, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import type { BrowserArtifact } from "./browser-artifacts.js"
 import { promoteBrowserMetricsToBenchResults } from "./browser-metrics.js"
 import { writePluginCheckArtifacts, writeThemeCheckArtifacts, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
@@ -20,6 +23,8 @@ import {
   normalizePluginCheckOutput,
   normalizeThemeCheckOutput,
   phpunitRunCode,
+  pluginStateInputFromArgs,
+  pluginStatePhpCode,
   PLUGIN_PHPUNIT_RESULT_FILE,
   positiveIntegerArg,
   httpRequestInputFromArgs,
@@ -33,7 +38,8 @@ import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playgr
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import { redactJsonValue, type ExecutionSpec, type MountSpec, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
 type RunWpCliCommand = (server: PlaygroundCliServer, argv: string[]) => Promise<PlaygroundRunResponse>
@@ -48,24 +54,30 @@ type BrowserProviderProxyMessage = {
 }
 
 export async function runPhpCommand({
+  artifactRoot,
   createRuntimeWpCliBridge,
   runPlaygroundCommand,
   runtimeSpec,
   server,
   spec,
 }: {
+  artifactRoot: string
   createRuntimeWpCliBridge: CreateRuntimeWpCliBridge
   runPlaygroundCommand: RunPlaygroundCommand
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<string> {
+}): Promise<string | RuntimeCommandResultEnvelope> {
   const code = await phpCodeFromArgs(spec.args ?? [])
+  const diagnosticsCapture = commandDiagnosticsCaptureSpecFromArgs(spec.args ?? [], spec.diagnostics)
+  const bootstrapArgs = diagnosticsCapture ? [...(spec.args ?? []), ...commandDiagnosticsCaptureArgs(diagnosticsCapture)] : spec.args ?? []
+  const marker = diagnosticsCapture ? `WP_CODEBOX_COMMAND_DIAGNOSTICS:${randomBytes(16).toString("hex")}:` : undefined
+  const commandCode = diagnosticsCapture && marker ? runPhpCommandDiagnosticsPhp(code, marker, diagnosticsCapture.maxItems ?? 50, diagnosticsCapture.maxBytes ?? 64 * 1024) : code
   const bridge = argValue(spec.args ?? [], "wp-cli-bridge") === "1" ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
   const removeProviderProxy = installBrowserProviderProxy(server)
   try {
-    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, code, spec.args ?? [], bridge) })
+    response = await runPlaygroundCommand("wordpress.run-php", server, { code: bootstrapPhpCode(runtimeSpec, commandCode, bootstrapArgs, bridge) })
     assertPlaygroundResponseOk("wordpress.run-php", response)
   } finally {
     await removeProviderProxy?.()
@@ -74,7 +86,112 @@ export async function runPhpCommand({
     }
   }
 
-  return response.text
+  if (!diagnosticsCapture || !marker) {
+    return response.text
+  }
+
+  const parsed = splitRunPhpDiagnostics(response.text, marker)
+  if (!parsed.diagnostics) {
+    return response.text
+  }
+
+  const artifact = await writeCommandDiagnosticsArtifact(artifactRoot, parsed.diagnostics)
+  return createRuntimeCommandResultEnvelope({
+    status: "ok",
+    stdout: parsed.stdout,
+    diagnostics: parsed.diagnostics,
+    artifactRefs: [artifact],
+  })
+}
+
+interface RunPhpDiagnosticsPayload {
+  schema: typeof COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA
+  command: "wordpress.run-php"
+  capture: string[]
+  limits: { maxItems: number; maxBytes: number }
+  summary: { captured: number; truncated: boolean; bytes: number }
+  wpdbQueries?: Array<{ fingerprint: string; count: number; sampleMs?: number; caller?: string }>
+}
+
+function runPhpCommandDiagnosticsPhp(code: string, marker: string, maxItems: number, maxBytes: number): string {
+  return `
+$wp_codebox_command_diagnostics_start = isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries) ? count($GLOBALS['wpdb']->queries) : 0;
+${code.replace(/^<\?php\s*/, "")}
+$wp_codebox_command_diagnostics_queries = array();
+if (isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries)) {
+    $wp_codebox_command_diagnostics_slice = array_slice($GLOBALS['wpdb']->queries, $wp_codebox_command_diagnostics_start);
+    foreach ($wp_codebox_command_diagnostics_slice as $wp_codebox_command_diagnostics_query) {
+        $wp_codebox_command_diagnostics_sql = is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[0]) ? (string) $wp_codebox_command_diagnostics_query[0] : '';
+        if ($wp_codebox_command_diagnostics_sql === '') {
+            continue;
+        }
+        $wp_codebox_command_diagnostics_fingerprint = preg_replace('/\\s+/', ' ', trim($wp_codebox_command_diagnostics_sql));
+        $wp_codebox_command_diagnostics_fingerprint = preg_replace("/'(?:''|[^'])*'/", "'?'", $wp_codebox_command_diagnostics_fingerprint);
+        $wp_codebox_command_diagnostics_fingerprint = preg_replace('/\\b\\d+(?:\\.\\d+)?\\b/', '?', $wp_codebox_command_diagnostics_fingerprint);
+        $wp_codebox_command_diagnostics_key = hash('sha256', $wp_codebox_command_diagnostics_fingerprint);
+        if (!isset($wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key])) {
+            $wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key] = array(
+                'fingerprint' => $wp_codebox_command_diagnostics_fingerprint,
+                'count' => 0,
+                'sampleMs' => is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[1]) ? round(((float) $wp_codebox_command_diagnostics_query[1]) * 1000, 3) : null,
+                'caller' => is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[2]) ? substr((string) $wp_codebox_command_diagnostics_query[2], 0, 240) : null,
+            );
+        }
+        $wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key]['count']++;
+    }
+}
+$wp_codebox_command_diagnostics_payload = array(
+    'schema' => 'wp-codebox/command-diagnostics/v1',
+    'command' => 'wordpress.run-php',
+    'capture' => array('wpdb-queries'),
+    'limits' => array('maxItems' => ${maxItems}, 'maxBytes' => ${maxBytes}),
+    'summary' => array('captured' => 0, 'truncated' => false, 'bytes' => 0),
+    'wpdbQueries' => array_values($wp_codebox_command_diagnostics_queries),
+);
+$wp_codebox_command_diagnostics_payload['summary']['captured'] = count($wp_codebox_command_diagnostics_payload['wpdbQueries']);
+if (count($wp_codebox_command_diagnostics_payload['wpdbQueries']) > ${maxItems}) {
+    $wp_codebox_command_diagnostics_payload['wpdbQueries'] = array_slice($wp_codebox_command_diagnostics_payload['wpdbQueries'], 0, ${maxItems});
+    $wp_codebox_command_diagnostics_payload['summary']['truncated'] = true;
+}
+$wp_codebox_command_diagnostics_json = json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES);
+if (strlen($wp_codebox_command_diagnostics_json) > ${maxBytes}) {
+    $wp_codebox_command_diagnostics_payload['wpdbQueries'] = array();
+    $wp_codebox_command_diagnostics_payload['summary']['truncated'] = true;
+    $wp_codebox_command_diagnostics_json = json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES);
+}
+$wp_codebox_command_diagnostics_payload['summary']['bytes'] = strlen($wp_codebox_command_diagnostics_json);
+$wp_codebox_command_diagnostics_json = json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES);
+echo "\n${marker}" . json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES) . "\n";
+`
+}
+
+function splitRunPhpDiagnostics(stdout: string, marker: string): { stdout: string; diagnostics?: RunPhpDiagnosticsPayload } {
+  const index = stdout.lastIndexOf(`\n${marker}`)
+  if (index < 0) {
+    return { stdout }
+  }
+  const before = stdout.slice(0, index)
+  const after = stdout.slice(index + marker.length + 1).trim()
+  try {
+    const diagnostics = JSON.parse(after) as RunPhpDiagnosticsPayload
+    return { stdout: before, diagnostics }
+  } catch {
+    return { stdout }
+  }
+}
+
+async function writeCommandDiagnosticsArtifact(artifactRoot: string, diagnostics: RunPhpDiagnosticsPayload): Promise<RuntimeEpisodeTraceRef> {
+  const artifactPath = `files/commands/wordpress-run-php-diagnostics-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.json`
+  const absolutePath = join(artifactRoot, artifactPath)
+  const contents = `${JSON.stringify(diagnostics, null, 2)}\n`
+  await mkdir(dirname(absolutePath), { recursive: true })
+  await writeFile(absolutePath, contents)
+  return {
+    kind: "command-diagnostics",
+    id: "wordpress.run-php:diagnostics",
+    path: artifactPath,
+    digest: { algorithm: "sha256", value: createHash("sha256").update(contents).digest("hex") },
+  }
 }
 
 function installBrowserProviderProxy(server: PlaygroundCliServer): (() => Promise<void>) | undefined {
@@ -241,6 +358,23 @@ export async function runPluginCheckCommand({
   }
 }
 
+export async function runPluginStateCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = pluginStateInputFromArgs(spec.args ?? [])
+  const response = await runPlaygroundCommand("wordpress.plugin-state", server, { code: bootstrapPhpCode(runtimeSpec, pluginStatePhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.plugin-state", response)
+  return response.text
+}
+
 export async function runThemeCheckCommand({
   artifactRoot,
   runPlaygroundCommand,
@@ -317,6 +451,7 @@ export async function runRestRequestCommand({
   spec: ExecutionSpec
 }): Promise<string> {
   const input = restRequestInputFromArgs(spec.args ?? [])
+  input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-request", response)
   return response.text

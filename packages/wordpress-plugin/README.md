@@ -122,6 +122,17 @@ environment and are not accepted in the ability payload. For example, pass
 `"secret_env": ["GITHUB_TOKEN"]` after the host process has `GITHUB_TOKEN` in
 its environment; do not pass token values through ability input.
 
+Provider plugins can also own their credential boundary through the generic
+credential hooks. `wp_codebox_provider_credential_requirements` returns a
+redacted `wp-codebox/provider-credential-requirements/v1` declaration for the
+selected provider/model, and `wp_codebox_resolve_provider_credentials` returns a
+redacted `wp-codebox/provider-credential-preflight/v1` status plus the env var
+names WP Codebox may expose. WP Codebox fails closed on `missing` or `denied`,
+merges only allowed env names into `secret_env`, and records only redacted
+requirements/preflight diagnostics in the runtime dependency plan. Hook results
+must not include raw token values; fields such as `secret_env_values`,
+`credentials`, or provider-specific token payloads are ignored by this boundary.
+
 Callers may also pass an `inherit` declaration to request parent-environment
 connectors or settings by name:
 

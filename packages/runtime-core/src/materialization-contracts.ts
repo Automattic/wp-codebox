@@ -1,7 +1,9 @@
 import type { RuntimeRunArtifactRef } from "./run-registry.js"
 
 export const MATERIALIZATION_RESULT_SCHEMA = "wp-codebox/materialization-result/v1" as const
-export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
+export const BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA = "wp-codebox/browser-artifact-persistence/ref/v1" as const
+export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
+export const LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
 export const ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA = "wp-codebox/artifact-bundle-file-manifest/v1" as const
 
 export interface MaterializationArtifactRef {
@@ -101,14 +103,16 @@ export interface BrowserArtifactProjectionInput {
   result?: Record<string, unknown> | null
 }
 
-export interface BrowserArtifactPersistenceProjection {
-  schema: typeof BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
+export interface BrowserArtifactPersistenceRef {
+  schema: typeof BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
   artifact?: Record<string, unknown>
   artifacts: Record<string, unknown>[]
   artifactBundle?: Record<string, unknown>
   materialization?: Record<string, unknown>
   artifactRefs: MaterializationArtifactRef[]
 }
+
+export type BrowserArtifactPersistenceProjection = BrowserArtifactPersistenceRef
 
 export interface ArtifactBundleFileManifest {
   schema: typeof ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA
@@ -272,7 +276,7 @@ export function browserArtifactPersistenceProjection(input: BrowserArtifactProje
   const artifactRefs = browserArtifactProjectionRefs({ artifactBundle, artifacts, materialization })
 
   return stripUndefined({
-    schema: BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA,
+    schema: BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
     artifact,
     artifacts,
     artifactBundle,
@@ -326,7 +330,7 @@ export function persistedBrowserArtifactRefs(input: BrowserArtifactProjectionInp
 }
 
 export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput | MaterializationResultEnvelope | BrowserArtifactPersistenceProjection | unknown): ArtifactBundleFileManifest {
-  const projection = isRecord(input) && input.schema === BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
+  const projection = isBrowserArtifactPersistenceRef(input)
     ? input as unknown as BrowserArtifactPersistenceProjection
     : browserArtifactPersistenceProjection(input)
   const refs = normalizeMaterializationArtifactRefs(projection.artifactRefs)
@@ -338,6 +342,10 @@ export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput
     files,
     paths: files.map((file) => file.path as string),
   })
+}
+
+export function isBrowserArtifactPersistenceRef(input: unknown): input is BrowserArtifactPersistenceRef {
+  return isRecord(input) && (input.schema === BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA || input.schema === LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA)
 }
 
 export function materializationRunArtifactRefs(results: MaterializationPhaseResult[]): RuntimeRunArtifactRef[] {

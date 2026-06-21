@@ -196,8 +196,47 @@ export interface WorkspaceRecipeSourcePackage {
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
+  diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   allowFailure?: boolean
   advisory?: boolean
+}
+
+export interface RuntimeCommandDiagnosticsCaptureSpec {
+  capture?: RuntimeCommandDiagnosticsCaptureKind[]
+  maxItems?: number
+  maxBytes?: number
+}
+
+export type RuntimeCommandDiagnosticsCaptureKind = "wpdb-queries"
+
+export type WorkspaceRecipeFuzzCasePhase = "setup" | "action" | "assert" | "teardown"
+
+export interface WorkspaceRecipeFuzzCaseInputDigest {
+  algorithm: "sha256" | (string & {})
+  value: string
+}
+
+export interface WorkspaceRecipeFuzzCaseReplayMetadata {
+  seed?: string | number
+  inputRef?: string
+  notes?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeFuzzCase {
+  case_id: string
+  input?: Record<string, unknown>
+  inputHash?: WorkspaceRecipeFuzzCaseInputDigest
+  metadata?: Record<string, unknown>
+  phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>>
+  artifacts?: WorkspaceRecipeDeclaredArtifact[]
+  replay?: WorkspaceRecipeFuzzCaseReplayMetadata
+}
+
+export interface WorkspaceRecipeFuzzRun {
+  schema: "wp-codebox/fuzz-run/v1"
+  cases: WorkspaceRecipeFuzzCase[]
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeFixtureDatabaseReset {
@@ -211,6 +250,31 @@ export interface WorkspaceRecipeFixtureDatabase {
   source: string
   format?: "sql"
   reset?: WorkspaceRecipeFixtureDatabaseReset
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeFixtureUser {
+  name: string
+  userId?: number
+  username?: string
+  email?: string
+  role?: string
+  displayName?: string
+  password?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeSessionArtifact {
+  kind: "browser-storage-state" | "cookie-jar" | "token" | (string & {})
+  path?: string
+  redactionRequired: true
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeUserSession {
+  name: string
+  user: string
+  artifacts?: WorkspaceRecipeSessionArtifact[]
   metadata?: Record<string, unknown>
 }
 
@@ -455,6 +519,8 @@ export interface WorkspaceRecipe {
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
+    fixtureUsers?: WorkspaceRecipeFixtureUser[]
+    userSessions?: WorkspaceRecipeUserSession[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     sourcePackages?: WorkspaceRecipeSourcePackage[]
@@ -467,6 +533,7 @@ export interface WorkspaceRecipe {
     steps: WorkspaceRecipeStep[]
     after?: WorkspaceRecipeStep[]
   }
+  fuzzRun?: WorkspaceRecipeFuzzRun
   artifacts?: {
     directory?: string
     verify?: boolean | WorkspaceRecipeArtifactVerifier
@@ -555,6 +622,7 @@ export interface MountSpec {
 export interface ExecutionSpec {
   command: string
   args?: string[]
+  diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   cwd?: string
   timeoutMs?: number
 }
@@ -611,6 +679,8 @@ export interface ExecutionResult {
   stdout: string
   stderr: string
   result?: RuntimeCommandResultEnvelope
+  diagnostics?: unknown
+  artifactRefs?: RuntimeEpisodeTraceRef[]
   startedAt: string
   finishedAt: string
 }
@@ -698,6 +768,70 @@ export interface Snapshot {
   metadata: Record<string, unknown>
   artifactRefs?: RuntimeEpisodeTraceRef[]
   digest?: RuntimeEpisodeContentDigest
+}
+
+export type RuntimeCheckpointOperation = "create" | "restore" | "list"
+
+export interface RuntimeCheckpointSpec {
+  name: string
+  metadata?: Record<string, unknown>
+  snapshotOptions?: unknown
+}
+
+export interface RuntimeCheckpointMetadata {
+  name: string
+  snapshotId: string
+  createdAt: string
+  restoredAt?: string
+  metadata?: Record<string, unknown>
+  summary?: Record<string, unknown>
+}
+
+export interface RuntimeCheckpointResult {
+  schema: "wp-codebox/runtime-checkpoint-result/v1"
+  status: "created" | "restored" | "listed"
+  operation: RuntimeCheckpointOperation
+  checkpoint?: RuntimeCheckpointMetadata
+  checkpoints?: RuntimeCheckpointMetadata[]
+}
+
+export interface RuntimeCheckpointFailureDiagnostic {
+  schema: "wp-codebox/runtime-checkpoint-failure/v1"
+  status: "unsupported" | "not-found" | "invalid-request" | "failed"
+  operation: RuntimeCheckpointOperation
+  backend?: RuntimeBackendKind
+  name?: string
+  code: string
+  message: string
+  supported: false
+}
+
+export class RuntimeCheckpointError extends Error {
+  readonly diagnostic: RuntimeCheckpointFailureDiagnostic
+
+  constructor(diagnostic: RuntimeCheckpointFailureDiagnostic) {
+    super(diagnostic.message)
+    this.name = "RuntimeCheckpointError"
+    this.diagnostic = diagnostic
+  }
+
+  toJSON(): RuntimeCheckpointFailureDiagnostic & { name: string } {
+    return { ...this.diagnostic, name: this.name }
+  }
+}
+
+export function runtimeCheckpointUnsupportedDiagnostic(operation: RuntimeCheckpointOperation, runtime?: RuntimeInfo, name?: string): RuntimeCheckpointFailureDiagnostic {
+  const backend = runtime?.backend
+  return {
+    schema: "wp-codebox/runtime-checkpoint-failure/v1",
+    status: "unsupported",
+    operation,
+    ...(backend ? { backend } : {}),
+    ...(name ? { name } : {}),
+    code: "runtime-checkpoints-unsupported",
+    message: backend ? `Runtime backend does not support checkpoints: ${backend}` : "Runtime backend does not support checkpoints.",
+    supported: false,
+  }
 }
 
 export interface RuntimeRestoreSpec {
@@ -982,6 +1116,9 @@ export interface Runtime {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
   snapshot(options?: unknown): Promise<Snapshot>
+  createCheckpoint?(spec: RuntimeCheckpointSpec): Promise<RuntimeCheckpointResult>
+  restoreCheckpoint?(name: string): Promise<RuntimeCheckpointResult>
+  listCheckpoints?(): Promise<RuntimeCheckpointResult>
   collectArtifacts(spec?: ArtifactSpec): Promise<ArtifactBundle>
   destroy(): Promise<void>
 }

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { commandArgValue, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { commandArgValue, commandDiagnosticsCaptureArgs, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type ExecutionSpec, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
@@ -107,11 +107,12 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
   ]
 }
 
-export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<{ command: string; args: string[] }> {
+export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<ExecutionSpec & { args: string[] }> {
   if (step.command === "wp-codebox.agent-runtime-probe") {
     return {
       command: "wordpress.run-php",
-      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []))}`],
+      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []))}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)],
+      diagnostics: step.diagnostics,
     }
   }
 
@@ -148,11 +149,13 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       args: [
         `code=${agentSandboxRunCode(task, body, providerPluginContracts(args))}`,
         "wp-cli-bridge=1",
+        ...commandDiagnosticsCaptureArgs(step.diagnostics),
       ],
+      diagnostics: step.diagnostics,
     }
   }
 
-  return { command: step.command, args: step.args ?? [] }
+  return { command: step.command, args: [...(step.args ?? []), ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
 }
 
 export function agentRuntimeMetadata(options: AgentRuntimeProbeOptions, runtimeMetadata: (artifactsDirectory: string | undefined, wpVersion: string) => Record<string, unknown>, defaultWordPressVersion: string): Record<string, unknown> {

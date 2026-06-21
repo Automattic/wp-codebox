@@ -4,7 +4,15 @@ import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 const result = await runPhpJson<{
   input: {
     runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number } } }
-    runtime_profile: { provider_plugins: Array<{ slug: string }>; runtime_overlays: Array<{ id: string }> }
+    runtime_profile: {
+      schema: string
+      capabilities: string[]
+      provider_plugins: Array<{ slug: string }>
+      runtime_overlays: Array<{ id: string }>
+      readiness: { status: string; checks: Record<string, boolean> }
+      diagnostics: Array<{ code: string; status: string; severity: string; evidence: Record<string, unknown> }>
+      provenance: { owner: string; resolver: string }
+    }
     placement: { required_capabilities: string[] }
   }
   unresolved: {
@@ -17,7 +25,25 @@ class WP_Error {
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
-function apply_filters( $hook, $value, ...$args ) { return $value; }
+function apply_filters( $hook, $value, ...$args ) {
+	if ( 'wp_codebox_runtime_profile_registry' === $hook ) {
+		$value['content-runtime'] = array(
+			'id' => 'content-runtime',
+			'label' => 'Content runtime',
+			'capabilities' => array( 'content.runtime' ),
+			'requires' => array( 'agents-api' ),
+			'components' => array( array( 'slug' => 'content-runtime' ) ),
+		);
+		$value['workspace-runtime'] = array(
+			'id' => 'workspace-runtime',
+			'label' => 'Workspace runtime',
+			'capabilities' => array( 'workspace.runtime' ),
+			'requires' => array( 'content-runtime' ),
+			'components' => array( array( 'slug' => 'workspace-runtime' ) ),
+		);
+	}
+	return $value;
+}
 
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-profile-resolver.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-recipe-resolver.php`)};
@@ -31,7 +57,7 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 $input = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	'sandbox_session_id' => 'runtime-profile-session',
 	'runtime_profile' => array(
-		'profiles' => array( 'data-machine-code' ),
+		'profiles' => array( 'workspace-runtime' ),
 		'components' => array( 'workspace-overlay' ),
 		'capabilities' => array( 'provider.openai' ),
 		'runtime_overlays' => array( array( 'id' => 'codex-runtime-overlay' ) ),
@@ -50,13 +76,30 @@ echo json_encode( array( 'input' => $input, 'unresolved' => $unresolved ), JSON_
 
 assert.deepEqual(result.input.runtime.components.map((component) => component.slug), [
   "agents-api",
-  "data-machine",
-  "data-machine-code",
+  "content-runtime",
+  "workspace-runtime",
   "workspace-overlay",
+])
+assert.equal(result.input.runtime_profile.schema, "wp-codebox/runtime-profile/v1")
+assert.deepEqual(result.input.runtime_profile.capabilities, [
+  "wordpress.playground",
+  "browser.preview",
+  "agents-api",
+  "agents.runtime",
+  "data-machine",
+  "datamachine.runtime",
+  "data-machine-code",
+  "datamachine-code.runtime",
+  "provider.openai",
 ])
 assert.deepEqual(result.input.runtime.plugins.map((plugin) => plugin.slug), ["ai-provider-for-openai"])
 assert.deepEqual(result.input.runtime_profile.provider_plugins.map((plugin) => plugin.slug), ["ai-provider-for-openai"])
 assert.deepEqual(result.input.runtime_profile.runtime_overlays.map((overlay) => overlay.id), ["codex-runtime-overlay"])
+assert.equal(result.input.runtime_profile.readiness.status, "ready")
+assert.equal(result.input.runtime_profile.readiness.checks.dependencies, true)
+assert.equal(result.input.runtime_profile.diagnostics[0].code, "runtime_profile.resolved")
+assert.equal(result.input.runtime_profile.diagnostics[0].severity, "info")
+assert.equal(result.input.runtime_profile.provenance.owner, "wp-codebox")
 assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playground", "browser.preview", "agents.runtime"])
 assert.equal(result.input.runtime.resolved_profile.schema, "wp-codebox/runtime-profile-resolution/v1")
 assert.equal(result.input.runtime.resolved_profile.summary.profiles, 5)

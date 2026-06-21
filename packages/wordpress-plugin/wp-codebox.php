@@ -24,6 +24,7 @@ require_once __DIR__ . '/src/class-wp-codebox-runtime-tool-policy-descriptor.php
 require_once __DIR__ . '/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-path-policy.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-task.php';
+require_once __DIR__ . '/src/class-wp-codebox-provider-credentials.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-dependency-plan.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-profile-resolver.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-recipe-resolver.php';
