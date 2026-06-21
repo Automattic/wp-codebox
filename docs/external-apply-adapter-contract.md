@@ -16,7 +16,8 @@ code that already owns approval and audit UX.
 WP Codebox sandbox
   -> artifact bundle
   -> parent review approval
-  -> wp-codebox/apply-approved-artifact
+  -> wp-codebox/stage-artifact-apply
+  -> adapter-only wp-codebox/apply-approved-artifact
   -> wp_codebox_apply_approved_artifact filter payload
   -> external adapter records branch, commit, PR URL, and artifact digest
 ```
