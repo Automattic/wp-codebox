@@ -1273,19 +1273,30 @@ Binary files and oversized files are copied when allowed by capture limits but a
 
 ## WordPress Plugin
 
-The WordPress plugin registers parent-site abilities:
+The WordPress plugin registers parent-site abilities. Canonical consumer-facing
+names are listed first; compatibility aliases stay registered where older callers
+already use them and expose `meta.canonical_ability` in ability metadata.
 
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
+- `wp-codebox/run-agent-task-fanout`
+- `wp-codebox/create-browser-playground-session`
+- `wp-codebox/browser-connector-request`
+- `wp-codebox/prepare`
+- `wp-codebox/capture`
+- `wp-codebox/command`
+- `wp-codebox/publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
+- `wp-codebox/review-artifact`
+- `wp-codebox/apply-artifact-preflight`
 - `wp-codebox/apply-approved-artifact`
 - `wp-codebox/stage-artifact-apply`
 
 Canonical agent-task execution paths are intentionally split by caller runtime:
 
-- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Playground sandboxes, mount the configured agent stack, invoke the sandbox agent through `agents/chat`, and return artifact metadata.
+- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Codebox sandboxes, mount the configured agent stack, invoke the configured sandbox-local task, and return artifact metadata. The current implementation may use WordPress Playground and upstream runtime abilities such as `agents/chat`; callers should treat those as backend details behind the Codebox contract.
 - Portable CLI execution uses `wp-codebox recipe-run --recipe <path>`. Recipes use the `wp-codebox.agent-sandbox-run` helper step when they need the agent-task bridge; direct `agent-sandbox-run` remains an operator/debug command, not the product API for frontend callers.
 - No-Node/browser execution uses `wp-codebox/create-browser-playground-session`. The host prepares a browser-executable Playground recipe and runner payload; the browser executes `wordpress.run-php` inside Playground instead of requiring host shell or Node access.
 

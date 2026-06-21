@@ -114,17 +114,16 @@ and retry policy still belong to the parent control plane.
 
 ## Browser Provider Adapter Contract
 
-Browser Playground provider calls that need parent-side connector authorization
-use the generic `wp-codebox/execute-browser-provider-request` ability. WP Codebox
-resolves connector inheritance on the parent site, strips raw credential values,
-and dispatches the request through the `wp_codebox_browser_provider_request`
-filter.
+Browser sandbox calls that need parent-side connector authorization should use
+the canonical `wp-codebox/browser-connector-request` ability. WP Codebox resolves
+connector inheritance on the parent site, strips raw credential values, and
+dispatches the request through Codebox's connector boundary.
 
 | Ability | Trusted scope | Purpose |
 | --- | --- | --- |
 | `wp-codebox/create-browser-playground-session` | `browser-session:create` | Create a disposable browser Playground session and materialization contract. |
 | `wp-codebox/browser-connector-request` | `browser-connector:request` | Resolve a connector-scoped request server-side without exposing raw credentials. |
-| `wp-codebox/execute-browser-provider-request` | `browser-connector:request` | Execute a provider request through the same connector/request boundary. |
+| `wp-codebox/execute-browser-provider-request` | `browser-connector:request` | Legacy provider-adapter path with the provider-adapter response shape. Prefer `wp-codebox/browser-connector-request` for new connector-scoped browser calls unless this shape is required. |
 
 Administrators with `manage_options` retain access to all three abilities. A
 trusted orchestrator granted only `browser-session:create` can create browser
@@ -132,11 +131,13 @@ sessions, but cannot execute connector/provider requests.
 
 ```text
 Browser connector bridge
-  -> wp-codebox/execute-browser-provider-request
+  -> wp-codebox/browser-connector-request
     -> parent-side connector inheritance resolution
-      -> wp_codebox_browser_provider_request filter
-        -> provider adapter owned by the host/control plane
+      -> connector/provider adapter owned by the host/control plane
 ```
+
+`wp_codebox_browser_provider_request` is the internal adapter filter behind the
+legacy provider-adapter path; it is not the consumer-facing API name.
 
 The adapter filter receives a redacted request envelope:
 
