@@ -33,6 +33,31 @@ metadata exposes `meta.canonical_ability` for aliases.
 - `wp-codebox/open-or-create-browser-contained-site`
 - WP-CLI wrappers under `wp codebox ...`
 
+## PHP Facade
+
+Consumers running inside WordPress can call `WP_Codebox_API` instead of
+depending on ability registration details or lower-level runtime classes. The
+facade only exposes WP Codebox operations and delegates to the same service
+layer as the ability and WP-CLI surfaces:
+
+- `WP_Codebox_API::run_agent_task( $input )`
+- `WP_Codebox_API::create_browser_session( $input )`
+- `WP_Codebox_API::open_or_create_browser_session( $input )`
+- `WP_Codebox_API::list_artifacts( $input )`
+- `WP_Codebox_API::get_artifact( $input )`
+- `WP_Codebox_API::preflight_artifact_apply( $input )`
+- `WP_Codebox_API::stage_artifact_apply( $input )`
+- `WP_Codebox_API::apply_approved_artifact( $input )`
+- `WP_Codebox_API::prepare_runner_workspace( $input )`
+- `WP_Codebox_API::capture_runner_workspace( $input )`
+- `WP_Codebox_API::run_runner_workspace_command( $input )`
+- `WP_Codebox_API::publish_runner_workspace( $input )`
+
+For ability-name-oriented callers, `WP_Codebox_API::execute_ability( $name,
+$input )` accepts supported `wp-codebox/...` ability names and compatibility
+aliases only. Host workspace backends, task runtimes, provider adapters, and
+sandbox implementations remain private implementation details.
+
 The host task abilities build a private Codebox recipe, boot a disposable
 sandbox runtime, mount the requested runtime components, invoke the configured
 sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
