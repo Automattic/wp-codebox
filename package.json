@@ -96,6 +96,7 @@
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
+    "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
     "test:php-browser-callback-contracts": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-callback-contracts-smoke.php",
     "test:php-browser-contained-site-contract": "php scripts/php-browser-contained-site-contract-smoke.php",
