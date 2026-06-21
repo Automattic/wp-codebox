@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -12,7 +12,17 @@ export interface RecipeValidationIssue {
   message: string
 }
 
-export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after"
+export type RecipeWorkflowPhase = "setup" | "before" | "steps" | "after" | `fuzz:${WorkspaceRecipeFuzzCasePhase}`
+
+export interface RecipeWorkflowStepRef {
+  phase: Exclude<RecipeWorkflowPhase, "setup">
+  index: number
+  step: WorkspaceRecipe["workflow"]["steps"][number]
+  fuzzCaseId?: string
+  fuzzCaseIndex?: number
+  fuzzPhase?: WorkspaceRecipeFuzzCasePhase
+  fuzzStepIndex?: number
+}
 
 export const defaultPolicy: RuntimePolicy = {
   network: "deny",
@@ -189,6 +199,7 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
 
   validateFixtureDatabases(recipe.inputs?.fixtureDatabases, recipePath)
   validateRecipeProbes(recipe.probes, recipePath)
+  validateRecipeFuzzRun(recipe.fuzzRun, recipePath)
   validateDeclaredArtifacts(recipe.artifacts?.paths, recipePath)
 
   const siteSeeds = recipe.inputs?.siteSeeds ?? []
@@ -760,12 +771,26 @@ function isRelativeArtifactPath(path: string): boolean {
   }
 }
 
-export function recipeWorkflowSteps(recipe: WorkspaceRecipe): Array<{ phase: Exclude<RecipeWorkflowPhase, "setup">; index: number; step: WorkspaceRecipe["workflow"]["steps"][number] }> {
+export function recipeWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
   return [
     ...(recipe.workflow.before ?? []).map((step, index) => ({ phase: "before" as const, index, step })),
     ...recipe.workflow.steps.map((step, index) => ({ phase: "steps" as const, index, step })),
     ...(recipe.workflow.after ?? []).map((step, index) => ({ phase: "after" as const, index, step })),
+    ...recipeFuzzWorkflowSteps(recipe),
   ]
+}
+
+function recipeFuzzWorkflowSteps(recipe: WorkspaceRecipe): RecipeWorkflowStepRef[] {
+  const phaseNames: WorkspaceRecipeFuzzCasePhase[] = ["setup", "action", "assert", "teardown"]
+  return (recipe.fuzzRun?.cases ?? []).flatMap((fuzzCase, fuzzCaseIndex) => phaseNames.flatMap((fuzzPhase) => (fuzzCase.phases[fuzzPhase] ?? []).map((step, fuzzStepIndex) => ({
+    phase: `fuzz:${fuzzPhase}` as const,
+    index: fuzzStepIndex,
+    step,
+    fuzzCaseId: fuzzCase.case_id,
+    fuzzCaseIndex,
+    fuzzPhase,
+    fuzzStepIndex,
+  }))))
 }
 
 export function recipePolicy(recipe: WorkspaceRecipe): RuntimePolicy {
@@ -861,6 +886,61 @@ function validateRecipeProbes(probes: WorkspaceRecipeProbe[] | undefined, recipe
     }
     if (probe.step.args !== undefined && !Array.isArray(probe.step.args)) {
       throw new Error(`Recipe probes step args must be arrays: ${recipePath}`)
+    }
+  }
+}
+
+function validateRecipeFuzzRun(fuzzRun: WorkspaceRecipe["fuzzRun"] | undefined, recipePath: string): void {
+  if (fuzzRun === undefined) {
+    return
+  }
+  if (!fuzzRun || typeof fuzzRun !== "object" || Array.isArray(fuzzRun)) {
+    throw new Error(`Recipe fuzzRun must be an object: ${recipePath}`)
+  }
+  if (fuzzRun.schema !== "wp-codebox/fuzz-run/v1") {
+    throw new Error(`Recipe fuzzRun schema is unsupported: ${recipePath}`)
+  }
+  if (!Array.isArray(fuzzRun.cases) || fuzzRun.cases.length === 0) {
+    throw new Error(`Recipe fuzzRun cases must be a non-empty array: ${recipePath}`)
+  }
+
+  const seenCaseIds = new Set<string>()
+  for (const [caseIndex, fuzzCase] of fuzzRun.cases.entries()) {
+    const casePath = `$.fuzzRun.cases[${caseIndex}]`
+    if (!fuzzCase || typeof fuzzCase !== "object") {
+      throw new Error(`Recipe fuzzRun cases entries must be objects: ${recipePath}`)
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(fuzzCase.case_id ?? "")) {
+      throw new Error(`Recipe fuzzRun case_id must be deterministic and URL-safe at ${casePath}: ${recipePath}`)
+    }
+    if (seenCaseIds.has(fuzzCase.case_id)) {
+      throw new Error(`Recipe fuzzRun case_id must be unique: ${fuzzCase.case_id}: ${recipePath}`)
+    }
+    seenCaseIds.add(fuzzCase.case_id)
+
+    const phases = fuzzCase.phases
+    if (!phases || typeof phases !== "object" || Array.isArray(phases)) {
+      throw new Error(`Recipe fuzzRun phases must be an object at ${casePath}: ${recipePath}`)
+    }
+    if (!Array.isArray(phases.action) || phases.action.length === 0) {
+      throw new Error(`Recipe fuzzRun cases require at least one action step at ${casePath}: ${recipePath}`)
+    }
+    for (const phase of ["setup", "action", "assert", "teardown"] as const) {
+      const steps = phases[phase]
+      if (steps === undefined) {
+        continue
+      }
+      if (!Array.isArray(steps)) {
+        throw new Error(`Recipe fuzzRun ${phase} phase must be an array at ${casePath}: ${recipePath}`)
+      }
+      for (const [stepIndex, step] of steps.entries()) {
+        if (!step || typeof step.command !== "string" || step.command === "") {
+          throw new Error(`Recipe fuzzRun ${phase}[${stepIndex}] entries must include a command at ${casePath}: ${recipePath}`)
+        }
+        if (step.args !== undefined && !Array.isArray(step.args)) {
+          throw new Error(`Recipe fuzzRun ${phase}[${stepIndex}] args must be arrays at ${casePath}: ${recipePath}`)
+        }
+      }
     }
   }
 }

@@ -231,6 +231,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           },
         },
       },
+      fuzzRun: { $ref: "#/$defs/fuzzRun" },
       artifacts: {
         type: "object",
         additionalProperties: false,
@@ -1066,6 +1067,62 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
+        },
+      },
+      fuzzRun: {
+        type: "object",
+        additionalProperties: false,
+        required: ["schema", "cases"],
+        properties: {
+          schema: { const: "wp-codebox/fuzz-run/v1" },
+          metadata: { type: "object" },
+          cases: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: { $ref: "#/$defs/fuzzCase" },
+          },
+        },
+      },
+      fuzzCase: {
+        type: "object",
+        additionalProperties: false,
+        required: ["case_id", "phases"],
+        properties: {
+          case_id: { type: "string", pattern: "^[A-Za-z0-9._-]+$" },
+          input: { type: "object" },
+          inputHash: {
+            type: "object",
+            additionalProperties: false,
+            required: ["algorithm", "value"],
+            properties: {
+              algorithm: { type: "string" },
+              value: { type: "string" },
+            },
+          },
+          metadata: { type: "object" },
+          phases: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action"],
+            properties: {
+              setup: { type: "array", items: { $ref: "#/$defs/step" } },
+              action: { type: "array", minItems: 1, items: { $ref: "#/$defs/step" } },
+              assert: { type: "array", items: { $ref: "#/$defs/step" } },
+              teardown: { type: "array", items: { $ref: "#/$defs/step" } },
+            },
+          },
+          artifacts: { type: "array", items: { $ref: "#/$defs/declaredArtifact" } },
+          replay: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              seed: { oneOf: [{ type: "string" }, { type: "number" }] },
+              inputRef: { type: "string" },
+              notes: { type: "string" },
+              metadata: { type: "object" },
+            },
+          },
         },
       },
       inheritanceRequest: {
