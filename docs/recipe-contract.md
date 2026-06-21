@@ -2,8 +2,8 @@
 
 WP Codebox recipes use the `wp-codebox/workspace-recipe/v1` schema. A recipe is
 a declarative sandbox setup plus ordered workflow steps. The CLI validates the
-recipe before booting WordPress Playground, then returns a structured artifact
-bundle after execution.
+recipe before booting the selected WordPress runtime, then returns a structured
+artifact bundle after execution.
 
 Use the generated schema and command catalog as the source of truth:
 
@@ -25,7 +25,7 @@ npm run wp-codebox -- recipe-run --recipe ./path/to/recipe.json --dry-run --json
 {
   "schema": "wp-codebox/workspace-recipe/v1",
   "runtime": {
-    "backend": "wordpress-playground",
+    "backend": "wordpress",
     "wp": "latest"
   },
   "inputs": {
@@ -47,6 +47,16 @@ npm run wp-codebox -- recipe-run --recipe ./path/to/recipe.json --dry-run --json
   }
 }
 ```
+
+`runtime.backend` may be omitted. When present, `wordpress` is the neutral
+WordPress runtime name and currently resolves to the WordPress Playground backend.
+Existing recipes that specify `wordpress-playground` continue to work as a
+compatibility spelling.
+
+Raw Playground-oriented fields such as `runtime.blueprint`, `runtime.phpVersion`,
+`runtime.wordpressInstallMode`, and Playground backend packages are advanced
+compatibility fields. Prefer the neutral `wordpress` backend and recipe inputs
+for new runtime setup where possible.
 
 ## Stable Field Names
 

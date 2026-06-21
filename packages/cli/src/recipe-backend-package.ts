@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readFile, stat } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import type { RuntimeBackendFactoryContext, RuntimeBackendKind, WorkspaceRecipe, WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
+import { normalizeRuntimeBackendKind, type RuntimeBackendFactoryContext, type RuntimeBackendKind, type WorkspaceRecipe, type WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
 
 export interface RuntimeBackendPackageProvenance {
   schema: "wp-codebox/runtime-backend-package/v1"
@@ -105,7 +105,7 @@ export class RecipeRuntimeBackendPackageError extends Error {
   }
 }
 
-export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe, recipeDirectory: string, backendKind: RuntimeBackendKind = recipe.runtime?.backend ?? "wordpress-playground"): Promise<PreparedRuntimeBackendPackage | undefined> {
+export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe, recipeDirectory: string, backendKind: RuntimeBackendKind = normalizeRuntimeBackendKind(recipe.runtime?.backend)): Promise<PreparedRuntimeBackendPackage | undefined> {
   const backendPackage = recipe.runtime?.backendPackage
   if (!backendPackage) {
     return undefined
@@ -124,7 +124,7 @@ export async function prepareRecipeRuntimeBackendPackage(recipe: WorkspaceRecipe
     : resolvedSource
   const entrypointContents = await readBackendEntrypoint(backendPackage, entrypoint)
   const module = await importBackendEntrypoint(backendPackage, entrypoint)
-  const adapter = runtimeBackendPackageAdapterRegistry.resolve(backendKind)
+  const adapter = runtimeBackendPackageAdapterRegistry.resolve(normalizeRuntimeBackendKind(backendKind))
   const adapterResult = adapter.prepare({ backendPackage, resolvedSource, entrypoint, entrypointContents, manifest, module })
 
   return {
