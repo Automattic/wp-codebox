@@ -47,7 +47,29 @@ function wp_parse_url( string $url ): array|false {
 }
 
 function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed {
+	if ( 'wp_codebox_browser_runtime_plugin_package_allowed_hosts' === $hook_name ) {
+		$value[] = 'example.test';
+	}
+
 	return $value;
+}
+
+/** @param array<string,mixed> $args */
+function wp_safe_remote_get( string $url, array $args = array() ): array {
+	return array(
+		'response' => array( 'code' => 200 ),
+		'body'     => $GLOBALS['wp_codebox_remote_package_body'] ?? '',
+	);
+}
+
+/** @param array<string,mixed> $response */
+function wp_remote_retrieve_response_code( array $response ): int {
+	return (int) ( $response['response']['code'] ?? 0 );
+}
+
+/** @param array<string,mixed> $response */
+function wp_remote_retrieve_body( array $response ): string {
+	return (string) ( $response['body'] ?? '' );
 }
 
 function sanitize_key( string $key ): string {
@@ -64,6 +86,20 @@ final class WP_Codebox_Browser_Runtime_Local_Package_Smoke {
 	public static function normalize( array $mu_plugins ): array|WP_Error {
 		$method = new ReflectionMethod( self::class, 'normalize_browser_mu_plugins' );
 		return $method->invoke( null, $mu_plugins );
+	}
+
+	/** @return array<int,string> */
+	private static function string_list( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map( 'strval', $value ),
+				static fn( string $item ): bool => '' !== trim( $item )
+			)
+		);
 	}
 }
 
@@ -96,7 +132,9 @@ remove_tree( $root );
 mkdir( $root . '/source', 0777, true );
 
 $zip_path = $root . '/source/runtime.zip';
-file_put_contents( $zip_path, "PK\x03\x04local-package-smoke" );
+$package_body = "PK\x03\x04local-package-smoke";
+file_put_contents( $zip_path, $package_body );
+$GLOBALS['wp_codebox_remote_package_body'] = $package_body;
 $sha256 = hash_file( 'sha256', $zip_path );
 if ( ! is_string( $sha256 ) ) {
 	fail( 'Could not hash test package.' );
@@ -142,6 +180,34 @@ $mismatch = WP_Codebox_Browser_Runtime_Local_Package_Smoke::normalize(
 );
 if ( ! is_wp_error( $mismatch ) || 'wp_codebox_browser_plugin_package_hash_mismatch' !== $mismatch->get_error_code() ) {
 	fail( 'Expected sha256 mismatch to fail.' );
+}
+
+$remote_fallback = WP_Codebox_Browser_Runtime_Local_Package_Smoke::normalize(
+	array(
+		array(
+			'slug'   => 'runtime-smoke',
+			'file'   => 'runtime-smoke.php',
+			'path'   => $root . '/missing/runtime.zip',
+			'url'    => 'https://example.test/runtime.zip',
+			'sha256' => $sha256,
+			'entry'  => 'runtime-smoke/runtime-smoke.php',
+		),
+	)
+);
+
+if ( is_wp_error( $remote_fallback ) ) {
+	fail( 'Expected missing local package with URL fallback to succeed, got ' . $remote_fallback->get_error_code() . ': ' . $remote_fallback->get_error_message() );
+}
+
+$remote_entry = $remote_fallback[0] ?? array();
+if ( ! str_starts_with( (string) ( $remote_entry['url'] ?? '' ), 'data:application/zip;base64,' ) ) {
+	fail( 'Expected missing local package with URL fallback to use data URL delivery.' );
+}
+if ( ( $remote_entry['provenance']['source'] ?? '' ) !== 'runtime-mu-plugin-remote-package' ) {
+	fail( 'Expected remote package provenance for missing path fallback.' );
+}
+if ( 'https://example.test/runtime.zip' !== ( $remote_entry['provenance']['url'] ?? '' ) ) {
+	fail( 'Expected remote package provenance to keep the source URL.' );
 }
 
 remove_tree( $root );

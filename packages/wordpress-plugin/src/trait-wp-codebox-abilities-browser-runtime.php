@@ -31,33 +31,29 @@ private static function normalize_browser_mu_plugins( array $mu_plugins ): array
 				return new WP_Error( 'wp_codebox_browser_mu_plugin_slug_missing', 'Packaged browser mu-plugin specs require a slug.', array( 'status' => 400, 'index' => $index ) );
 			}
 
-			if ( '' !== $source_path ) {
-				if ( is_file( $source_path ) && str_ends_with( strtolower( $source_path ), '.zip' ) ) {
-					$package    = self::browser_package_local_archive( $slug, $source_path, $index, (string) ( $mu_plugin['sha256'] ?? '' ), 'plugin' );
-					$provenance = array(
-						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
-						'source' => 'runtime-mu-plugin-package-path',
-						'path'   => $source_path,
-					);
-				} else {
-					if ( ! is_dir( $source_path ) ) {
-						return new WP_Error( 'wp_codebox_browser_mu_plugin_path_missing', 'Browser mu-plugin path does not exist.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
-					}
-
-					$package    = self::browser_package_component_plugin( $slug, $source_path );
-					$provenance = array(
-						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
-						'source' => 'runtime-mu-plugin-path',
-						'path'   => $source_path,
-					);
-				}
-			} else {
+			if ( '' !== $source_path && is_file( $source_path ) && str_ends_with( strtolower( $source_path ), '.zip' ) ) {
+				$package    = self::browser_package_local_archive( $slug, $source_path, $index, (string) ( $mu_plugin['sha256'] ?? '' ), 'plugin' );
+				$provenance = array(
+					'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+					'source' => 'runtime-mu-plugin-package-path',
+					'path'   => $source_path,
+				);
+			} elseif ( '' !== $source_path && is_dir( $source_path ) ) {
+				$package    = self::browser_package_component_plugin( $slug, $source_path );
+				$provenance = array(
+					'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+					'source' => 'runtime-mu-plugin-path',
+					'path'   => $source_path,
+				);
+			} elseif ( '' !== $source_url ) {
 				$package    = self::browser_remote_mu_plugin_package( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
 				$provenance = array(
 					'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
 					'source' => 'runtime-mu-plugin-remote-package',
 					'url'    => $source_url,
 				);
+			} else {
+				return new WP_Error( 'wp_codebox_browser_mu_plugin_path_missing', 'Browser mu-plugin path does not exist.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
 			}
 
 			if ( is_wp_error( $package ) ) {
