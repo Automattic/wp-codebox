@@ -2,12 +2,21 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import {
   artifactBundleFileManifest,
+  artifactResultEnvelope,
   buildRuntimePackageRunRecipe,
   browserArtifactPersistenceProjection,
   browserRunResultEnvelope,
+  normalizeAgentTaskRunResult,
+  normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
+  parentToolBridgeContract,
   runtimePackageExecutionInput,
+  runtimeProfile,
   persistedBrowserArtifactRefs,
+  AGENT_TASK_RUN_RESULT_SCHEMA,
+  ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  PARENT_TOOL_BRIDGE_SCHEMA,
+  RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
@@ -85,6 +94,7 @@ for (const contractArea of [
   "Runtime task/package",
   "Runner workspace",
   "Tool bridge",
+  "Parent tool bridge",
   "Browser task and contained site",
   "Browser SDK",
   "Browser metrics",
@@ -96,9 +106,12 @@ for (const contractArea of [
 
 for (const publicModule of [
   "./agent-runtime-workload.js",
+  "./agent-task-run-result.js",
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
+  "./parent-tool-bridge.js",
   "./recipe-builders.js",
+  "./runtime-boundary-contracts.js",
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
@@ -133,8 +146,18 @@ assert.equal(typeof browserRunResultEnvelope, "function")
 assert.equal(typeof browserArtifactPersistenceProjection, "function")
 assert.equal(typeof persistedBrowserArtifactRefs, "function")
 assert.equal(typeof artifactBundleFileManifest, "function")
+assert.equal(typeof normalizeAgentTaskRunResult, "function")
+assert.equal(typeof artifactResultEnvelope, "function")
+assert.equal(typeof normalizeArtifactResultEnvelope, "function")
+assert.equal(typeof runtimeProfile, "function")
+assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
+assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
+assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
 assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))

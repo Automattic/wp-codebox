@@ -6,6 +6,9 @@ import {
   CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  PARENT_TOOL_BRIDGE_SCHEMA,
+  PARENT_TOOL_REQUEST_SCHEMA,
+  PARENT_TOOL_RESULT_SCHEMA,
   PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
   PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
   PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
@@ -58,6 +61,9 @@ assert.equal(manifest.schemas.runnerWorkspace.prepareResult, RUNNER_WORKSPACE_PR
 assert.equal(manifest.schemas.runnerWorkspace.captureResult, RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.commandResult, RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.publicationResult, RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA)
+assert.equal(manifest.schemas.parentToolBridge.bridge, PARENT_TOOL_BRIDGE_SCHEMA)
+assert.equal(manifest.schemas.parentToolBridge.request, PARENT_TOOL_REQUEST_SCHEMA)
+assert.equal(manifest.schemas.parentToolBridge.result, PARENT_TOOL_RESULT_SCHEMA)
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.deepEqual(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS, [
   "workspace_adopt",

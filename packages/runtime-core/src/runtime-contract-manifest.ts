@@ -1,6 +1,7 @@
 import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTaskRunResultSummary } from "./agent-task-run-result.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
+import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
 import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, providerRuntimeInvocationContract, type ProviderRuntimeInvocationContract } from "./provider-runtime-contracts.js"
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, runtimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
@@ -55,6 +56,11 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     commandResult: RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
     publicationRequest: RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
     publicationResult: RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
+  },
+  parentToolBridge: {
+    bridge: PARENT_TOOL_BRIDGE_SCHEMA,
+    request: PARENT_TOOL_REQUEST_SCHEMA,
+    result: PARENT_TOOL_RESULT_SCHEMA,
   },
   fanoutAggregation: {
     input: FANOUT_AGGREGATION_INPUT_SCHEMA,

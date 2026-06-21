@@ -11,12 +11,12 @@ sandbox.
 Use these package entrypoints from external integrations:
 
 - `@automattic/wp-codebox-core`: runtime, task/package, runner workspace, tool
-  bridge, browser task/contained-site, artifact metadata, recipe, policy, and
-  provider contract types and helpers.
+  bridge, parent tool bridge, browser task/contained-site, artifact metadata,
+  recipe, policy, and provider contract types and helpers.
 - `@automattic/wp-codebox-core/public`: curated public facade for runtime,
-  task/package, runner workspace, tool bridge, browser, artifact, recipe,
-  policy, and provider contract types and helpers. New external TypeScript
-  consumers should prefer this facade over the broad root barrel.
+  task/package, runner workspace, tool bridge, parent tool bridge, browser,
+  artifact, recipe, policy, and provider contract types and helpers. New external TypeScript consumers should prefer
+  this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
   contract metadata used by CLI and orchestrator consumers.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
@@ -72,6 +72,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `RunnerWorkspaceBackendConfig`.
 - **Tool bridge:** host tool registry, managed host command, host command
   executor, sandbox tool policy, and tool-call artifact contracts.
+- **Parent tool bridge:** `wp-codebox/parent-tool-bridge/v1`,
+  `wp-codebox/parent-tool-request/v1`, and `wp-codebox/parent-tool-result/v1`
+  describe allowlisted calls from a sandbox to a host dispatcher. Codebox owns
+  the envelope and authorization shape; host adapters own endpoint, command, and
+  product payload validation.
 - **Browser task and contained site:** browser interaction, callback, probe,
   review bridge, session origin, artifact lifecycle, result shape, and runtime
   boundary contracts.
@@ -137,6 +142,13 @@ Runtime package callers use `wp-codebox/run-runtime-package` or
 `wp-codebox/runtime-package-output-projection/v1`. These contracts are generic
 Codebox runtime/package shapes and do not require consumers to know backend
 ability ids.
+
+Agent task callers use the `wp-codebox/run-agent-task` ability or
+`wp-codebox agent-task-run --json`. Caller-facing results normalize to
+`wp-codebox/agent-task-run-result/v1` through `normalizeAgentTaskRunResult()`.
+Artifact handoff, import, and materialization results normalize to
+`wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
+`normalizeArtifactResultEnvelope()`.
 
 Runner workspace backends are installed by integration code and discovered via
 the `wp_codebox_runner_workspace_backend` filter. The stable backend config is
