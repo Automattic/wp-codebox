@@ -103,6 +103,7 @@
     "test:fixture-auth-storage-state": "tsx tests/fixture-auth-storage-state.test.ts",
     "test:recipe-user-session": "tsx tests/recipe-user-session.test.ts",
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
+    "test:command-router": "tsx tests/command-router.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
