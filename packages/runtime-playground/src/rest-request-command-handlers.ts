@@ -1,4 +1,5 @@
 import { argValue, jsonObjectArg } from "./command-args.js"
+import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 
 export interface RestRequestCommandInput {
   method: string
@@ -6,6 +7,7 @@ export interface RestRequestCommandInput {
   headers: Record<string, unknown>
   params: Record<string, unknown>
   body: string
+  userSession?: WordPressUserSessionResolution
 }
 
 export function restRequestInputFromArgs(args: string[]): RestRequestCommandInput {
@@ -27,6 +29,7 @@ export function restRequestInputFromArgs(args: string[]): RestRequestCommandInpu
 }
 
 export function restRequestPhpCode(input: RestRequestCommandInput): string {
+  const userSessionMetadata = input.userSession?.metadata
   return `define( 'REST_REQUEST', true );
 $wp_codebox_started_at = microtime( true );
 $wp_codebox_method = ${JSON.stringify(input.method)};
@@ -34,10 +37,13 @@ $wp_codebox_path = ${JSON.stringify(input.path)};
 $wp_codebox_headers = json_decode( ${JSON.stringify(JSON.stringify(input.headers))}, true );
 $wp_codebox_params = json_decode( ${JSON.stringify(JSON.stringify(input.params))}, true );
 $wp_codebox_body = ${JSON.stringify(input.body)};
+$wp_codebox_user_session = json_decode( ${JSON.stringify(JSON.stringify(userSessionMetadata ?? null))}, true );
 
 if ( ! class_exists( 'WP_REST_Request' ) || ! function_exists( 'rest_do_request' ) ) {
     throw new RuntimeException( 'The WordPress REST API is not available in this runtime.' );
 }
+
+${input.userSession ? wordpressFixtureUserPhpCode(input.userSession.user) : ""}
 
 $wp_codebox_path_parts = parse_url( $wp_codebox_path );
 if ( ! is_array( $wp_codebox_path_parts ) ) {
@@ -83,6 +89,7 @@ echo wp_json_encode( array(
     'headers' => $wp_codebox_response->get_headers(),
     'body' => $wp_codebox_data,
     'data' => $wp_codebox_data,
+    'userSession' => is_array( $wp_codebox_user_session ) ? $wp_codebox_user_session : null,
     'timing' => array(
         'duration_ms' => (int) round( ( $wp_codebox_finished_at - $wp_codebox_started_at ) * 1000 ),
     ),

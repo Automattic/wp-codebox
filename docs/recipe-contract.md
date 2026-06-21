@@ -73,6 +73,8 @@ top-level fields:
 - `secretEnv`
 - `pluginRuntime`
 - `fixtureDatabases`
+- `fixtureUsers`
+- `userSessions`
 - `siteSeeds`
 - `stagedFiles`
 - `sourcePackages`
@@ -272,6 +274,44 @@ These are generic declarations for orchestrators and future runtime setup
 support. The current built-in fixture importer treats multisite/domain bootstrap
 as declared metadata and blocks executable fixture imports that require runtime
 setup not yet provided by WP Codebox.
+
+## Fixture Users And User Sessions
+
+Recipes can declare named WordPress fixture users in `inputs.fixtureUsers` and
+named command execution sessions in `inputs.userSessions`. A fixture user is a
+generic WordPress user contract: `name`, optional `userId`, `username`, `email`,
+`role`, `displayName`, and `password`. Commands that support user/session
+resolution can accept `user=<name>` or `session=<name>`.
+
+`userSessions` reference a fixture user by name. Session artifacts such as
+browser storage state, cookie jars, or tokens are metadata only and must be
+declared with `redactionRequired: true`; command output reports only safe
+structured metadata such as schema, selected user name/role, artifact kind/path,
+and the redaction flag.
+
+```json
+{
+  "inputs": {
+    "fixtureUsers": [
+      { "name": "admin", "username": "fixture-admin", "role": "administrator" }
+    ],
+    "userSessions": [
+      {
+        "name": "admin-browser",
+        "user": "admin",
+        "artifacts": [
+          { "kind": "browser-storage-state", "path": "files/browser-storage-state/storage-state.json", "redactionRequired": true }
+        ]
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      { "command": "wordpress.rest-request", "args": ["path=/wp/v2/users/me", "session=admin-browser"] }
+    ]
+  }
+}
+```
 
 ```json
 {

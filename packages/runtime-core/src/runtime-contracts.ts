@@ -214,6 +214,31 @@ export interface WorkspaceRecipeFixtureDatabase {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeFixtureUser {
+  name: string
+  userId?: number
+  username?: string
+  email?: string
+  role?: string
+  displayName?: string
+  password?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeSessionArtifact {
+  kind: "browser-storage-state" | "cookie-jar" | "token" | (string & {})
+  path?: string
+  redactionRequired: true
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeUserSession {
+  name: string
+  user: string
+  artifacts?: WorkspaceRecipeSessionArtifact[]
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeProbe {
   name: string
   step: WorkspaceRecipeStep
@@ -455,6 +480,8 @@ export interface WorkspaceRecipe {
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]
+    fixtureUsers?: WorkspaceRecipeFixtureUser[]
+    userSessions?: WorkspaceRecipeUserSession[]
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     sourcePackages?: WorkspaceRecipeSourcePackage[]
