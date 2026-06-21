@@ -8,6 +8,9 @@ import { componentManifestForRuntimePlugins, runtimeDependencyPlanContract } fro
 import { prepareRecipeSourcePackageSync } from "./recipe-source-packages.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
 import { sandboxToolPolicyFromAllowedTools } from "./sandbox-tool-policy.js"
+import { runtimePresetById, type RuntimePresetDefinition, type RuntimePresetRegistryManifest } from "./runtime-preset-registry.js"
+import { runtimeProfilePreflight } from "./runtime-profile-compiler.js"
+import type { RuntimeProfileReadiness } from "./runtime-boundary-contracts.js"
 
 export const GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA = "wp-codebox/generic-ability-runtime-run-result/v1" as const
 
@@ -26,6 +29,9 @@ export interface GenericAbilityRuntimeProviderPluginContract extends GenericAbil
 export interface GenericAbilityRuntimeRunOptions {
   abilityId: string
   abilityInput?: Record<string, unknown>
+  runtimePresetId?: string
+  runtimeProfile?: RuntimePresetDefinition
+  runtimePresetRegistry?: RuntimePresetRegistryManifest | RuntimePresetRegistryManifest[]
   expectedResultSchema?: string | Record<string, unknown>
   wordpressVersion?: string
   blueprint?: unknown
@@ -45,6 +51,7 @@ export interface GenericAbilityRuntimeRunOptions {
 }
 
 export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRuntimeRunOptions): WorkspaceRecipe {
+  options = applyRuntimePresetOptions(options)
   const abilityId = stringValue(options.abilityId)
   if (!abilityId) {
     throw new Error("buildGenericAbilityRuntimeRunRecipe requires abilityId")
@@ -55,6 +62,15 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
   const providerPathPlugins = providerPluginsFromPaths(options.providerPluginPaths, options.artifactsPath)
   const providers = [...explicitProviderPlugins, ...providerPathPlugins]
   const componentManifest = componentManifestForRuntimePlugins(componentPlugins, providers)
+  const dependencyPlan = runtimeDependencyPlanContract({
+    provider_plugin_paths: options.providerPluginPaths,
+    provider_plugins: providers,
+    component_plugins: componentPlugins,
+    runtime_overlays: options.runtimeOverlays,
+    secret_env: options.secretEnv,
+    runtime_env: options.runtimeEnv,
+  })
+  const readiness = runtimeProfileReadiness(options)
   const expectedResultSchema = options.expectedResultSchema
   const toolPolicy = options.toolPolicy ?? (stringList(options.allowedTools).length > 0
     ? sandboxToolPolicyFromAllowedTools(options.allowedTools ?? [], { source: "wp-codebox.generic-ability-runtime-run.allowed-tools" })
@@ -65,16 +81,12 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
       schema: GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA,
       ability_id: abilityId,
       expected_result_schema: expectedResultSchema,
+      selection: runtimeSelection(options),
       provider_runtime_contract: providerRuntimeInvocationContract(),
       component_manifest: componentManifest,
-      dependency_plan: runtimeDependencyPlanContract({
-        provider_plugin_paths: options.providerPluginPaths,
-        provider_plugins: providers,
-        component_plugins: componentPlugins,
-        runtime_overlays: options.runtimeOverlays,
-        secret_env: options.secretEnv,
-        runtime_env: options.runtimeEnv,
-      }),
+      dependency_plan: dependencyPlan,
+      readiness,
+      diagnostics: runtimeDiagnostics(options, readiness),
       sandbox_tool_policy: toolPolicy,
     },
   })
@@ -92,6 +104,9 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
       mounts: Array.isArray(options.mounts) ? options.mounts : [],
       extra_plugins: [...componentPlugins, ...providers],
       component_manifest: componentManifest,
+      runtimeDependencyPlan: dependencyPlan,
+      runtimeReadiness: readiness,
+      runtimeDiagnostics: runtimeDiagnostics(options, readiness),
       runtimeEnv: runtimeEnv(options.runtimeEnv),
       secretEnv: stringList(options.secretEnv),
       stagedFiles: Array.isArray(options.stagedFiles) && options.stagedFiles.length > 0 ? options.stagedFiles : undefined,
@@ -108,6 +123,94 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
       after: Array.isArray(options.verifySteps) && options.verifySteps.length > 0 ? options.verifySteps : undefined,
     }),
   }) as WorkspaceRecipe
+}
+
+function applyRuntimePresetOptions(options: GenericAbilityRuntimeRunOptions): GenericAbilityRuntimeRunOptions {
+  const preset = resolveRuntimePreset(options)
+  if (!preset) return options
+  const modelDefaults = preset.modelDefaults ?? {}
+  const abilityInput = stripUndefined({
+    provider: modelDefaults.provider,
+    model: modelDefaults.model,
+    mode: modelDefaults.mode,
+    agent: modelDefaults.agent,
+    maxTurns: modelDefaults.maxTurns,
+    timeoutSeconds: modelDefaults.timeoutSeconds,
+    ...options.abilityInput,
+  })
+
+  return {
+    ...options,
+    abilityInput,
+    components: [...(preset.components ?? []), ...(options.components ?? [])],
+    providerPlugins: [...(preset.provider?.plugins ?? []), ...(options.providerPlugins ?? [])],
+    runtimeOverlays: [...(preset.runtimeOverlays ?? []), ...(options.runtimeOverlays ?? [])],
+    runtimeEnv: { ...envDefaults(preset.requiredEnv?.runtime), ...(options.runtimeEnv ?? {}) },
+    secretEnv: [...stringList(preset.requiredEnv?.secret), ...stringList(options.secretEnv)],
+  }
+}
+
+function resolveRuntimePreset(options: GenericAbilityRuntimeRunOptions): RuntimePresetDefinition | undefined {
+  if (options.runtimeProfile && (!options.runtimePresetId || options.runtimeProfile.id === options.runtimePresetId)) {
+    return options.runtimeProfile
+  }
+  const id = stringValue(options.runtimePresetId)
+  if (!id) return undefined
+  const registries = Array.isArray(options.runtimePresetRegistry) ? options.runtimePresetRegistry : options.runtimePresetRegistry ? [options.runtimePresetRegistry] : []
+  for (const registry of registries) {
+    const preset = runtimePresetById(registry, id)
+    if (preset) return preset
+  }
+  throw new Error(`Runtime preset not found: ${id}`)
+}
+
+function runtimeSelection(options: GenericAbilityRuntimeRunOptions): Record<string, unknown> | undefined {
+  const preset = resolveRuntimePreset(options)
+  if (!preset?.modelDefaults && !options.runtimePresetId) return undefined
+  const defaults = preset?.modelDefaults ?? {}
+  return stripUndefined({
+    runtimePresetId: options.runtimePresetId ?? preset?.id,
+    provider: defaults.provider,
+    model: defaults.model,
+    mode: defaults.mode,
+    agent: defaults.agent,
+    maxTurns: defaults.maxTurns,
+    timeoutSeconds: defaults.timeoutSeconds,
+  })
+}
+
+function runtimeProfileReadiness(options: GenericAbilityRuntimeRunOptions): RuntimeProfileReadiness {
+  const preset = resolveRuntimePreset(options)
+  return runtimeProfilePreflight({
+    schema: "wp-codebox/runtime-profile/v1",
+    id: preset?.id ?? options.runtimePresetId ?? "generic-ability-runtime-run",
+    components: [
+      ...(preset?.components ?? []).map((component) => ({ kind: "component", slug: component.slug ?? slugFromPath(component.source), source: component.source, readiness: "ready" })),
+      ...(preset?.provider?.plugins ?? []).map((plugin) => ({ kind: plugin.loadAs === "mu-plugin" ? "mu_plugin" : "plugin", slug: plugin.slug ?? slugFromPath(plugin.source), source: plugin.source, readiness: "ready" })),
+    ],
+    runtime_overlays: options.runtimeOverlays ?? [],
+  }).readiness
+}
+
+function runtimeDiagnostics(options: GenericAbilityRuntimeRunOptions, readiness: RuntimeProfileReadiness): Array<Record<string, unknown>> {
+  const preset = resolveRuntimePreset(options)
+  return [stripUndefined({
+    code: preset ? "runtime_preset.resolved" : "runtime_preset.not_requested",
+    status: readiness.status ?? "ready",
+    severity: "info",
+    message: preset ? "Runtime preset resolved by WP Codebox." : "Runtime preset was not requested.",
+    evidence: preset ? {
+      runtimePresetId: preset.id,
+      components: preset.components?.length ?? 0,
+      providerPlugins: preset.provider?.plugins?.length ?? 0,
+      overlays: preset.runtimeOverlays?.length ?? 0,
+      secretEnv: preset.requiredEnv?.secret?.length ?? 0,
+    } : undefined,
+  })]
+}
+
+function envDefaults(names: string[] | undefined): Record<string, string> {
+  return Object.fromEntries(stringList(names).map((name) => [name, ""]))
 }
 
 function runtimePlugins(contracts: GenericAbilityRuntimeComponentContract[] | undefined, role: "component" | "provider", artifactsRoot = ""): WorkspaceRecipeExtraPlugin[] {

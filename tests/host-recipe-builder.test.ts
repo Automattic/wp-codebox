@@ -9,13 +9,36 @@ const result = await runPhpJson<{
     workflow: { steps: Array<{ command: string; args: string[] }> }
     runtime: { overlays: unknown[] }
   }
+  preset_result: { dependency_plan: { schema: string }; readiness: { status: string }; diagnostics: Array<{ code: string }> }
+  preset_recipe: {
+    inputs: { secretEnv: string[]; runtimeEnv: Record<string, string>; extra_plugins: Array<{ slug: string }> }
+    workflow: { steps: Array<{ args: string[] }> }
+  }
 }>(`
 define('ABSPATH', ${phpStringLiteral(repoRoot)});
 class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
+function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
+function apply_filters( $hook, $value, ...$args ) {
+	if ( 'wp_codebox_runtime_profile_registry' === $hook ) {
+		$value['preset-provider-runtime'] = array(
+			'id' => 'preset-provider-runtime',
+			'label' => 'Preset provider runtime',
+			'components' => array( array( 'source' => '/components/preset-component', 'slug' => 'preset-component', 'activate' => true ) ),
+			'provider_plugins' => array( array( 'source' => '/plugins/preset-provider', 'slug' => 'preset-provider', 'activate' => true ) ),
+			'runtime_overlays' => array( array( 'kind' => 'plugin', 'library' => 'preset-runtime', 'strategy' => 'replace', 'source' => '/overlays/preset' ) ),
+			'secret_env' => array( 'PRESET_SECRET' ),
+			'env' => array( 'PRESET_RUNTIME_ENV' => '1' ),
+			'model_defaults' => array( 'agent' => 'preset-agent', 'mode' => 'sandbox', 'provider' => 'preset-provider', 'model' => 'preset-model' ),
+		);
+	}
+	return $value;
+}
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-profile-resolver.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php`)};
 
 $legacy_adapter_calls = array();
@@ -64,6 +87,36 @@ $result = $builder->build(
 	)
 );
 
+$preset_result = $builder->build(
+	array(),
+	array( 'runtimePresetId' => 'preset-provider-runtime', 'session_id' => 'session-456' ),
+	array( 'Build with preset defaults' ),
+	'latest',
+	null,
+	array(
+		'inheritance_resolution' => static fn( array $input ): array => array( 'connectors' => array(), 'settings' => array() ),
+		'connector_credentials_error' => static fn( array $inheritance ): null => null,
+		'provider_plugin_paths' => static fn(): array => array(),
+		'agent_bundles' => static fn(): array => array(),
+		'agent_slug' => static fn( array $input ): string => (string) ( $input['agent'] ?? '' ),
+		'mode' => static fn( array $input ): string => (string) ( $input['mode'] ?? '' ),
+		'provider' => static fn( array $input ): string => (string) ( $input['provider'] ?? '' ),
+		'model' => static fn( array $input ): string => (string) ( $input['model'] ?? '' ),
+		'inheritance_request' => static fn(): array => array( 'connectors' => array(), 'settings' => array() ),
+		'secret_env_names' => static fn(): array => array(),
+		'component_plugins' => static fn(): array => array(),
+		'runtime_task' => static fn(): array => array(),
+		'task_input' => static fn( array $input ): array => array( 'goal' => $input['goal'], 'sandbox_tool_policy' => array( 'commands' => array() ) ),
+		'json_encode' => static fn( mixed $value ): string => json_encode( $value, JSON_UNESCAPED_SLASHES ),
+		'task_timeout_seconds' => static fn( array $input ): int => 0,
+		'recipe_mounts' => static fn(): array => array(),
+		'recipe_workspaces' => static fn(): array => array(),
+		'recipe_runtime' => static fn( array $input, string $wp_version, WP_Codebox_Runtime_Dependency_Plan $plan ): array => array( 'wp' => $wp_version, 'blueprint' => array( 'steps' => array() ), 'overlays' => $plan->runtime_overlays() ),
+		'site_seed_recipe_entries' => static fn(): array => array( 'siteSeeds' => array(), 'cleanup_paths' => array() ),
+		'runtime_env' => static fn( array $input ): array => is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : array(),
+	)
+);
+
 if ( is_wp_error( $result ) ) {
 	fwrite( STDERR, $result->message );
 	exit( 1 );
@@ -71,8 +124,10 @@ if ( is_wp_error( $result ) ) {
 
 $recipe = json_decode( file_get_contents( $result['path'] ), true );
 unlink( $result['path'] );
+$preset_recipe = json_decode( file_get_contents( $preset_result['path'] ), true );
+unlink( $preset_result['path'] );
 
-echo json_encode( array( 'legacy_adapter_calls' => $legacy_adapter_calls, 'recipe' => $recipe ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'legacy_adapter_calls' => $legacy_adapter_calls, 'recipe' => $recipe, 'preset_result' => $preset_result, 'preset_recipe' => $preset_recipe ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.deepEqual(result.legacy_adapter_calls, [])
@@ -92,5 +147,14 @@ assert.ok(result.recipe.workflow.steps[0].args.includes("provider=planned-provid
 assert.ok(result.recipe.workflow.steps[0].args.includes("model=planned-model"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("provider-plugin-slugs=planned-provider"))
 assert.deepEqual(result.recipe.runtime.overlays, [{ kind: "plugin", library: "demo", strategy: "replace", source: "/overlays/demo" }])
+assert.deepEqual(result.preset_recipe.inputs.secretEnv, ["PRESET_SECRET"])
+assert.deepEqual(result.preset_recipe.inputs.runtimeEnv, { PRESET_RUNTIME_ENV: "1", WP_AGENT_RUNTIME: "1" })
+assert.deepEqual(result.preset_recipe.inputs.extra_plugins.map((plugin: { slug: string }) => plugin.slug), ["preset-component", "preset-provider"])
+assert.ok(result.preset_recipe.workflow.steps[0].args.includes("agent=preset-agent"))
+assert.ok(result.preset_recipe.workflow.steps[0].args.includes("provider=preset-provider"))
+assert.ok(result.preset_recipe.workflow.steps[0].args.includes("model=preset-model"))
+assert.equal(result.preset_result.dependency_plan.schema, "wp-codebox/runtime-dependency-plan/v1")
+assert.equal(result.preset_result.readiness.status, "ready")
+assert.equal(result.preset_result.diagnostics[0].code, "runtime_profile.resolved")
 
 console.log("host recipe builder ok")

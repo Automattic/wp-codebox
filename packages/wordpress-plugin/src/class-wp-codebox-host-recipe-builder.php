@@ -16,9 +16,17 @@ final class WP_Codebox_Host_Recipe_Builder {
 	 * @param array<string,mixed> $input Ability input.
 	 * @param string[] $task_prompts Encoded task prompts.
 	 * @param array<string,callable> $adapters Runner adapters for host-specific policy and filesystem concerns.
-	 * @return array{path:string,cleanup_paths:array<int,string>}|WP_Error
+	 * @return array{path:string,cleanup_paths:array<int,string>,dependency_plan:array<string,mixed>,readiness:array<string,mixed>,diagnostics:array<int,array<string,mixed>>}|WP_Error
 	 */
 	public function build( array $paths, array $input, array $task_prompts, string $wp_version, ?array $inheritance, array $adapters ): array|WP_Error {
+		if ( class_exists( 'WP_Codebox_Browser_Task_Builder' ) ) {
+			$profiled_input = WP_Codebox_Browser_Task_Builder::apply_runtime_profile( $input );
+			if ( is_wp_error( $profiled_input ) ) {
+				return $profiled_input;
+			}
+			$input = $profiled_input;
+		}
+
 		$inheritance      = $inheritance ?? $adapters['inheritance_resolution']( $input );
 		$credential_error = $adapters['connector_credentials_error']( $inheritance );
 		if ( null !== $credential_error ) {
@@ -130,8 +138,11 @@ final class WP_Codebox_Host_Recipe_Builder {
 		}
 
 		return array(
-			'path'          => $file,
-			'cleanup_paths' => $site_seed_payload['cleanup_paths'],
+			'path'            => $file,
+			'cleanup_paths'   => $site_seed_payload['cleanup_paths'],
+			'dependency_plan' => $dependency_plan->to_contract(),
+			'readiness'       => is_array( $input['runtime_profile']['readiness'] ?? null ) ? $input['runtime_profile']['readiness'] : array(),
+			'diagnostics'     => is_array( $input['runtime_profile']['diagnostics'] ?? null ) ? $input['runtime_profile']['diagnostics'] : array(),
 		);
 	}
 
@@ -142,14 +153,17 @@ final class WP_Codebox_Host_Recipe_Builder {
 	 * @param array<string,callable> $adapters Runner adapters for host-specific policy and filesystem concerns.
 	 */
 	private static function runtime_dependency_plan_from_adapters( array $input, array $inheritance, array $component_plugins, array $adapters ): WP_Codebox_Runtime_Dependency_Plan {
-		$provider_plugin_paths = $adapters['provider_plugin_paths']( $input, $inheritance );
-		$provider_plugins      = array_map(
-			static fn( string $path ): array => array(
-				'source'   => $path,
-				'slug'     => basename( $path ),
-				'activate' => false,
-			),
-			$provider_plugin_paths
+		$provider_plugin_paths = array_values( array_unique( array_merge( $adapters['provider_plugin_paths']( $input, $inheritance ), self::string_list_any( $input['provider_plugin_paths'] ?? array() ) ) ) );
+		$provider_plugins      = array_merge(
+			self::provider_plugins_from_input( $input ),
+			array_map(
+				static fn( string $path ): array => array(
+					'source'   => $path,
+					'slug'     => basename( $path ),
+					'activate' => false,
+				),
+				$provider_plugin_paths
+			)
 		);
 
 		return new WP_Codebox_Runtime_Dependency_Plan(
@@ -161,13 +175,55 @@ final class WP_Codebox_Host_Recipe_Builder {
 			),
 			$provider_plugin_paths,
 			$provider_plugins,
-			$component_plugins,
+			array_merge( self::component_plugins_from_input( $input ), $component_plugins ),
 			is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
 			$inheritance,
 			$adapters['inheritance_request']( $input ),
 			$adapters['agent_bundles']( $input ),
-			$adapters['secret_env_names']( $input, $inheritance ),
-			$adapters['runtime_env']( $input )
+			array_merge( self::secret_env_list( $input['secret_env'] ?? array() ), $adapters['secret_env_names']( $input, $inheritance ) ),
+			array_merge( self::runtime_env_map( $input['runtime_env'] ?? array() ), $adapters['runtime_env']( $input ) )
+		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private static function component_plugins_from_input( array $input ): array {
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$components = array();
+		foreach ( is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array() as $component ) {
+			if ( is_array( $component ) && '' !== trim( (string) ( $component['source'] ?? $component['path'] ?? '' ) ) ) {
+				$components[] = self::normalize_provider_plugin( $component );
+			}
+		}
+
+		return $components;
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private static function provider_plugins_from_input( array $input ): array {
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$plugins = array();
+		foreach ( is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() as $plugin ) {
+			if ( is_array( $plugin ) && '' !== trim( (string) ( $plugin['source'] ?? $plugin['path'] ?? '' ) ) ) {
+				$plugins[] = self::normalize_provider_plugin( $plugin );
+			}
+		}
+
+		return $plugins;
+	}
+
+	/** @param array<string,mixed> $plugin Provider plugin input. @return array<string,mixed> */
+	private static function normalize_provider_plugin( array $plugin ): array {
+		$source = trim( (string) ( $plugin['source'] ?? $plugin['path'] ?? '' ) );
+		return array_filter(
+			array(
+				'source'     => $source,
+				'slug'       => trim( (string) ( $plugin['slug'] ?? basename( $source ) ) ),
+				'pluginFile' => trim( (string) ( $plugin['pluginFile'] ?? $plugin['plugin_file'] ?? '' ) ),
+				'activate'   => array_key_exists( 'activate', $plugin ) ? (bool) $plugin['activate'] : true,
+				'loadAs'     => trim( (string) ( $plugin['loadAs'] ?? $plugin['load_as'] ?? '' ) ),
+				'metadata'   => is_array( $plugin['metadata'] ?? null ) ? $plugin['metadata'] : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
 	}
 
@@ -216,5 +272,36 @@ final class WP_Codebox_Host_Recipe_Builder {
 		return 'mu-plugin' === (string) ( $plugin['loadAs'] ?? '' )
 			? '/wordpress/wp-content/mu-plugins/wp-codebox-runtime/' . $slug
 			: '/wordpress/wp-content/plugins/' . $slug;
+	}
+
+	/** @return string[] */
+	private static function string_list_any( mixed $value ): array {
+		$items = array();
+		foreach ( is_array( $value ) ? $value : array() as $item ) {
+			$item = trim( (string) $item );
+			if ( '' !== $item && ! in_array( $item, $items, true ) ) {
+				$items[] = $item;
+			}
+		}
+
+		return $items;
+	}
+
+	/** @return string[] */
+	private static function secret_env_list( mixed $value ): array {
+		return array_values( array_filter( self::string_list_any( $value ), static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) );
+	}
+
+	/** @return array<string,string> */
+	private static function runtime_env_map( mixed $value ): array {
+		$env = array();
+		foreach ( is_array( $value ) ? $value : array() as $name => $env_value ) {
+			$name = trim( (string) $name );
+			if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) && is_scalar( $env_value ) ) {
+				$env[ $name ] = (string) $env_value;
+			}
+		}
+
+		return $env;
 	}
 }

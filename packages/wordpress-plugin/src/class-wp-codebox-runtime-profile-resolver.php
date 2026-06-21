@@ -51,6 +51,17 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			}
 		}
 
+		if ( ! empty( $resolved['model_defaults'] ) ) {
+			foreach ( array( 'agent', 'mode', 'provider', 'model', 'max_turns', 'task_timeout_seconds' ) as $field ) {
+				if ( empty( $input[ $field ] ) && ! empty( $resolved['model_defaults'][ $field ] ) ) {
+					$input[ $field ] = $resolved['model_defaults'][ $field ];
+				}
+			}
+		}
+		if ( ! empty( $resolved['profile']['env'] ) && is_array( $resolved['profile']['env'] ) ) {
+			$input['runtime_env'] = array_merge( $resolved['profile']['env'], is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : array() );
+		}
+
 		if ( ! empty( $resolved['inherit'] ) ) {
 			$input['inherit'] = self::merge_inherit( is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array(), $resolved['inherit'] );
 		}
@@ -89,6 +100,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			'secret_env'             => array(),
 			'agent_bundles'          => array(),
 			'placement_capabilities' => array(),
+			'model_defaults'         => array(),
 		);
 
 		foreach ( $selected as $profile ) {
@@ -100,6 +112,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			$resolved['secret_env'] = self::merge_secret_env( $resolved['secret_env'], $profile['secret_env'] ?? array() );
 			$resolved['agent_bundles'] = self::merge_lists( $resolved['agent_bundles'], is_array( $profile['agent_bundles'] ?? null ) ? $profile['agent_bundles'] : array() );
 			$resolved['placement_capabilities'] = self::merge_string_lists( $resolved['placement_capabilities'], $profile['placement_capabilities'] ?? array() );
+			$resolved['model_defaults'] = array_merge( $resolved['model_defaults'], is_array( $profile['model_defaults'] ?? null ) ? $profile['model_defaults'] : ( is_array( $profile['modelDefaults'] ?? null ) ? $profile['modelDefaults'] : array() ) );
 		}
 
 		$resolved['profile']['id'] = implode( '+', array_map( static fn( array $profile ): string => (string) ( $profile['id'] ?? '' ), $resolved['profiles'] ) );
@@ -127,12 +140,21 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 	private static function request_from_input( array $input ): array {
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
 		$profile = $input['runtime_profile'] ?? ( $runtime['profile'] ?? array() );
+		if ( ! is_array( $profile ) && is_array( $input['runtimeProfile'] ?? null ) ) {
+			$profile = $input['runtimeProfile'];
+		}
 		$profile_array = is_array( $profile ) ? $profile : array();
 
 		$profiles = self::merge_string_lists(
 			is_string( $profile ) ? array( $profile ) : array(),
+			$input['runtimePresetId'] ?? array(),
+			$input['runtime_preset_id'] ?? array(),
+			$runtime['runtimePresetId'] ?? array(),
+			$runtime['runtime_preset_id'] ?? array(),
 			$profile_array['profiles'] ?? array(),
 			$profile_array['profile'] ?? array(),
+			$profile_array['runtimePresetId'] ?? array(),
+			$profile_array['runtime_preset_id'] ?? array(),
 			$runtime['profiles'] ?? array(),
 			$input['runtime_profiles'] ?? array()
 		);
