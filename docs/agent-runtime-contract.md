@@ -188,6 +188,18 @@ Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` throug
 
 These names are identifiers and contract anchors, not a queue or policy implementation. The corresponding result schemas remain the existing runner workspace, tool-call transcript, and evidence artifact envelope contracts. External orchestrators still own backend placement, authorization, retries, retention, and publication policy.
 
+## Agents API Adapter Boundary
+
+WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the ability names and execution wrapper for:
+
+- `chat()` -> `agents/chat`.
+- `run_task()` -> `agents/run-task`.
+- `run_runtime_package()` -> `agents/run-runtime-package`.
+- `get_task_run()` / `cancel_task_run()` -> task run-control abilities.
+- `get_chat_run()`, `cancel_chat_run()`, `queue_chat_message()`, and `list_chat_run_events()` -> chat run-control abilities.
+
+This is the Codebox-facing contract. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser Playground runtime principals; that bridge remains private generated code and should not become a consumer API.
+
 ## Heartbeat And Cleanup Metadata
 
 Recipe execution writes run registry records with schema `wp-codebox/run-registry-entry/v1`. The lifecycle block uses `wp-codebox/run-lifecycle/v1` and carries:

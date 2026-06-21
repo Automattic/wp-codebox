@@ -156,7 +156,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'result_path' => '/tmp/wp-codebox-browser-result.json',
 				'invocation'  => array(
 					'type' => 'ability',
-					'name' => 'agents/chat',
+					'name' => class_exists( 'WP_Codebox_Agents_API_Adapter' ) ? WP_Codebox_Agents_API_Adapter::CHAT : 'agents/chat',
 				),
 			),
 		);
