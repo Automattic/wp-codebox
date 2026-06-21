@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
 const descriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php", "utf8")
+const schemasPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-schemas.php", "utf8")
 
 const taskAliases = new Map([
   ["wp-codebox/run-sandbox-task", { canonical: "wp-codebox/run-agent-task", canonicalVar: "run_agent_task_ability", aliasVar: "run_sandbox_task_ability", callback: "run_agent_task" }],
@@ -16,6 +17,11 @@ for (const [alias, expectation] of taskAliases) {
   assert.match(abilitiesPhp, new RegExp(`\\$${expectation.aliasVar}\\['meta'\\]\\s*=\\s*array\\([\\s\\S]*'canonical_ability'\\s*=>\\s*'${expectation.canonical}'[\\s\\S]*'alias_of'\\s*=>\\s*'${expectation.canonical}'[\\s\\S]*\\);`))
   assert.match(abilitiesPhp, new RegExp(`\\$${expectation.canonicalVar}\\s*=\\s*array\\([\\s\\S]*'execute_callback'\\s*=>\\s*array\\(\\s*self::class,\\s*'${expectation.callback}'\\s*\\)`))
 }
+
+assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-task'/)
+assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_task'\s*\)/)
+assert.match(schemasPhp, /'schema'\s*=>\s*array\(\s*'type'\s*=>\s*'string',\s*'const'\s*=>\s*'wp-codebox\/runtime-task-request\/v1'\s*\)/)
+assert.match(schemasPhp, /'schema'\s*=>\s*array\(\s*'type'\s*=>\s*'string',\s*'const'\s*=>\s*'wp-codebox\/runtime-task-result\/v1'\s*\)/)
 
 const browserAliases = new Map([
   ["wp-codebox/create-sandbox-session", "wp-codebox/create-browser-playground-session"],
@@ -35,6 +41,6 @@ assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-pac
 assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_package'\s*\)/)
 assert.match(abilitiesPhp, /'canonical_ability'\s*=>\s*'wp-codebox\/run-runtime-package'/)
 assert.doesNotMatch(abilitiesPhp, /wp_register_ability\(\s*'agents\/run-runtime-package'/)
-assert.doesNotMatch(abilitiesPhp + descriptorsPhp, /datamachine|data machine/i)
+assert.doesNotMatch(abilitiesPhp + descriptorsPhp + schemasPhp, /datamachine|data machine/i)
 
 console.log("public ability aliases ok")

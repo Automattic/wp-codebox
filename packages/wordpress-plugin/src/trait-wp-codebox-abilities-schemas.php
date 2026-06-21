@@ -576,6 +576,53 @@ private static function artifact_apply_input_properties( string $approved_files_
 	);
 }
 
+/** @return array<string,mixed> */
+private static function runtime_task_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'task' ),
+		'properties' => array(
+			'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-task-request/v1' ),
+			'task'               => array( 'type' => array( 'string', 'object' ) ),
+			'input'              => array( 'type' => 'object' ),
+			'task_input'         => self::task_input_schema(),
+			'executor'           => array( 'type' => array( 'string', 'object' ) ),
+			'target'             => array( 'type' => array( 'string', 'object' ) ),
+			'target_id'          => array( 'type' => 'string' ),
+			'executor_id'        => array( 'type' => 'string' ),
+			'mode'               => self::string_property_schema(),
+			'agent'              => self::string_property_schema(),
+			'provider'           => self::string_property_schema(),
+			'model'              => self::string_property_schema(),
+			'sandbox_session_id' => self::string_property_schema(),
+			'orchestrator'       => self::object_property_schema(),
+			'metadata'           => self::object_property_schema(),
+			'options'            => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function runtime_task_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'       => array( 'type' => 'boolean' ),
+			'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-task-result/v1' ),
+			'status'        => array( 'type' => 'string' ),
+			'execution'     => array( 'type' => 'string' ),
+			'task'          => array( 'type' => array( 'string', 'object' ) ),
+			'result'        => array( 'type' => 'object' ),
+			'error'         => array( 'type' => 'object' ),
+			'events'        => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'artifacts'     => array( 'type' => array( 'object', 'array', 'string' ) ),
+			'run'           => array( 'type' => 'object' ),
+			'metadata'      => array( 'type' => 'object' ),
+			'upstream_refs' => array( 'type' => 'object' ),
+		),
+	);
+}
+
 /**
  * Shared host-side sandbox runner input fields used by task, batch, and fanout abilities.
  *

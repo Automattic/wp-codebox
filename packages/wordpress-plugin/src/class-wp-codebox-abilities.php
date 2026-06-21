@@ -22,6 +22,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-browser-connectors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-agents-api-executors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
+require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 
 final class WP_Codebox_Abilities {
@@ -308,6 +309,20 @@ final class WP_Codebox_Abilities {
 			$run_sandbox_task_ability['description'] = 'Run a bounded task inside an isolated WP Codebox WordPress sandbox and return artifacts.';
 			$run_sandbox_task_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task', 'alias_of' => 'wp-codebox/run-agent-task' );
 			wp_register_ability( 'wp-codebox/run-sandbox-task', $run_sandbox_task_ability );
+
+			wp_register_ability(
+				'wp-codebox/run-runtime-task',
+				array(
+					'label'               => 'Run Runtime Task',
+					'description'         => 'Run a runtime task through the WP Codebox boundary and return a stable wp-codebox result envelope.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runtime_task_request_schema(),
+					'output_schema'       => self::runtime_task_result_schema(),
+					'execute_callback'    => array( self::class, 'run_runtime_task' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-task' ),
+				)
+			);
 
 			$run_agent_task_batch_ability = array(
 					'label'               => 'Run Agent Sandbox Task Batch',

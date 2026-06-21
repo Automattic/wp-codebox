@@ -29,6 +29,11 @@ public static function run_runtime_package( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_runtime_task( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Runtime_Task_Runner() )->run( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function request_host_delegation( array $input ): array|WP_Error {
 	return self::execute_host_delegation_request( $input );
 }
