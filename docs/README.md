@@ -13,6 +13,8 @@ unless this index says otherwise.
   assertion syntax.
 - [Sandbox session contract](./sandbox-session-contract.md) defines the parent
   orchestration boundary for sandbox sessions.
+- [Tool bridge contract](./tool-bridge-contract.md) defines the Codebox-owned
+  allowlisted sandbox tool envelope and dispatcher metadata.
 - [External apply adapter contract](./external-apply-adapter-contract.md)
   documents reviewed artifact apply-back.
 - [Agent fanout contract](./agent-fanout-contract.md) documents generic

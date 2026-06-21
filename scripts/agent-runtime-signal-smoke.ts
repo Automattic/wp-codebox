@@ -29,7 +29,7 @@ try {
 
   const agentOutput = await runRecipe(agentRecipePath)
   assert.equal(agentOutput.success, true)
-  const agentPayload = JSON.parse(String(agentOutput.executions?.[0]?.stdout ?? "{}")) as { output?: string }
+  const agentPayload = JSON.parse(String(agentCommandStdout(agentOutput) ?? "{}")) as { output?: string }
   assert.equal(agentPayload.output, "1")
 
   const frontendRecipePath = join(root, "frontend-run-php-recipe.json")
@@ -54,9 +54,21 @@ try {
   rmSync(root, { recursive: true, force: true })
 }
 
-async function runRecipe(recipePath: string): Promise<{ success?: boolean; executions?: Array<{ stdout?: string }> }> {
+type RecipeRunSmokeOutput = {
+  success?: boolean
+  executions?: Array<{ recipe_phase?: string; stdout?: string }>
+  result?: { commands?: Array<{ recipe_phase?: string; stdout_tail?: string }>; summary?: { commands?: Array<{ recipe_phase?: string; stdout_tail?: string }> } }
+}
+
+function agentCommandStdout(output: RecipeRunSmokeOutput): string | undefined {
+  return output.executions?.find((execution) => execution.recipe_phase === "steps")?.stdout
+    ?? output.result?.commands?.find((command) => command.recipe_phase === "steps")?.stdout_tail
+    ?? output.result?.summary?.commands?.find((command) => command.recipe_phase === "steps")?.stdout_tail
+}
+
+async function runRecipe(recipePath: string): Promise<RecipeRunSmokeOutput> {
   const output = await captureStdout(async () => await runRecipeRunCommand(["--recipe", recipePath, "--json"]))
-  return JSON.parse(output) as { success?: boolean; executions?: Array<{ stdout?: string }> }
+  return JSON.parse(output) as RecipeRunSmokeOutput
 }
 
 async function captureStdout(callback: () => Promise<unknown>): Promise<string> {

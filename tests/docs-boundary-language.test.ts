@@ -12,6 +12,7 @@ const genericContractDocs = [
   "docs/architecture.md",
   "docs/recipe-contract.md",
   "docs/sandbox-session-contract.md",
+  "docs/tool-bridge-contract.md",
   "docs/external-apply-adapter-contract.md",
   "docs/agent-fanout-contract.md",
   "docs/agent-runtime-contract.md",
