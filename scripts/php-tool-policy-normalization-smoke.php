@@ -61,6 +61,10 @@ assert_same( 'filesystem-write', $task_input['sandbox_tool_policy']['tools'][0][
 assert_same( 'filesystem_write', $task_input['sandbox_tool_policy']['tools'][0]['runtime_tool_id'], 'provider-safe runtime tool id' );
 assert_same( 'runtime_local', $task_input['sandbox_tool_policy']['tools'][0]['runtime']['environment'], 'runtime environment' );
 assert_same( 'runtime_local', $task_input['sandbox_tool_policy']['tools'][0]['runtime']['capability_scope'], 'runtime scope' );
+assert_same( 'wp-codebox/tool-bridge/v1', $task_input['tool_bridge']['schema'], 'tool bridge schema' );
+assert_same( 'wp_codebox_browser_runtime_tool_callback', $task_input['tool_bridge']['dispatcher']['callback'], 'tool bridge dispatcher callback' );
+assert_same( 'allowlist', $task_input['tool_bridge']['authorization']['mode'], 'tool bridge authorization mode' );
+assert_same( 'wp-codebox/sandbox-tool-policy/v1', $task_input['tool_bridge']['sandbox_tool_policy']['schema'], 'tool bridge carries policy' );
 
 $validator = new WP_Codebox_Host_Tool_Policy_Validator();
 assert_same( null, $validator->validate_task_tools( $task_input ), 'validator accepts normalized semantic policy' );
@@ -93,6 +97,17 @@ $explicit_policy = WP_Codebox_Agent_Task::normalize_input(
 assert_not_error( $explicit_policy, 'explicit policy remains accepted' );
 assert_same( 'custom_filesystem_write', $explicit_policy['sandbox_tool_policy']['tools'][0]['runtime_tool_id'], 'explicit runtime id preserved' );
 assert_same( null, $validator->validate_allowed_tools( array( 'custom_filesystem_write' ), $explicit_policy ), 'validator accepts explicit runtime tool id alias' );
+
+$bridge_policy = ( new WP_Codebox_Sandbox_Tool_Policy_Normalizer() )->tool_bridge_from_allowed_tools( array( 'filesystem-write' ) );
+$bridge_task_input = WP_Codebox_Agent_Task::normalize_input(
+	array(
+		'goal'          => 'Create a page',
+		'allowed_tools' => array( 'filesystem-write' ),
+		'tool_bridge'   => $bridge_policy,
+	)
+);
+assert_not_error( $bridge_task_input, 'explicit tool bridge normalizes' );
+assert_same( 'filesystem_write', $bridge_task_input['sandbox_tool_policy']['tools'][0]['runtime_tool_id'], 'explicit tool bridge policy selected' );
 
 $descriptor_policy = array(
 	'schema'  => 'wp-codebox/sandbox-tool-policy/v1',

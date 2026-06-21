@@ -61,8 +61,8 @@ async function runRecipe(recipePath: string): Promise<RecipeRunDebugOutput> {
 
 type RecipeRunDebugOutput = {
   success?: boolean
-  executions?: Array<{ stdout?: string; recipeCommand?: string; command?: string }>
-  result?: { commands?: Array<{ command?: string; recipe_phase?: string; stdout_tail?: string }> }
+  executions?: Array<{ stdout?: string; recipeCommand?: string; command?: string; recipe_phase?: string }>
+  result?: { commands?: Array<{ command?: string; recipe_phase?: string; stdout_tail?: string }>; summary?: { commands?: Array<{ command?: string; recipe_phase?: string; stdout_tail?: string }> } }
 }
 
 function sandboxPayload(output: RecipeRunDebugOutput, command: string): { output?: string } {
@@ -72,13 +72,13 @@ function sandboxPayload(output: RecipeRunDebugOutput, command: string): { output
 }
 
 function sandboxOutput(output: RecipeRunDebugOutput, command: string): string {
-  const execution = output.executions?.find((entry) => entry.recipeCommand === command || entry.command === command)
+  const execution = output.executions?.find((entry) => entry.recipeCommand === command || entry.command === command || entry.recipe_phase === "steps")
   if (execution?.stdout) {
     return execution.stdout
   }
 
   const summaryCommand = output.result?.commands?.find((entry) => entry.command === command || entry.recipe_phase === "steps")
-  return summaryCommand?.stdout_tail ?? ""
+  return summaryCommand?.stdout_tail ?? output.result?.summary?.commands?.find((entry) => entry.command === command || entry.recipe_phase === "steps")?.stdout_tail ?? ""
 }
 
 async function captureStdout(callback: () => Promise<unknown>): Promise<string> {

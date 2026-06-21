@@ -257,6 +257,9 @@ $agent_bundle_imports = array();
 $runtime_invocation_preflight = array();
 $sandbox_tool_ids = array();
 $sandbox_policy = is_array( $payload[\'task_input\'][\'sandbox_tool_policy\'] ?? null ) ? $payload[\'task_input\'][\'sandbox_tool_policy\'] : array();
+if ( empty( $sandbox_policy ) && is_array( $payload[\'task_input\'][\'tool_bridge\'][\'sandbox_tool_policy\'] ?? null ) ) {
+	$sandbox_policy = $payload[\'task_input\'][\'tool_bridge\'][\'sandbox_tool_policy\'];
+}
 foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'tools\'] : array() as $tool_policy_entry ) {
 	if ( ! is_array( $tool_policy_entry ) || empty( $tool_policy_entry[\'allowed\'] ) ) {
 		continue;

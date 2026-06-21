@@ -774,7 +774,7 @@ private static function compact_browser_executable_task_input( array $task_input
 			$compact[ $field ] = $value;
 		}
 	}
-	foreach ( array( 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'sandbox_tool_policy', 'policy', 'context' ) as $field ) {
+	foreach ( array( 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'tool_bridge', 'sandbox_tool_policy', 'policy', 'context' ) as $field ) {
 		if ( is_array( $task_input[ $field ] ?? null ) ) {
 			$compact[ $field ] = self::compact_browser_dto_value( $task_input[ $field ] );
 		}

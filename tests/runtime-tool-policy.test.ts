@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, sandboxAllowedRuntimeToolIds, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
+import { resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, sandboxAllowedRuntimeToolIds, toolBridgeFromSandboxToolPolicy, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
 
 const policy: SandboxToolPolicySnapshot = {
   schema: "wp-codebox/sandbox-tool-policy/v1",
@@ -53,5 +53,13 @@ assert.equal(resolveRuntimeToolAlias(effective, "write_file")?.runtimeToolId, "c
 assert.equal(resolveRuntimeToolAlias(policy, "client/browser-review")?.parentOnly, true)
 
 assert.deepEqual(sandboxAllowedRuntimeToolIds(policy), ["client/filesystem-write"])
+
+const bridge = toolBridgeFromSandboxToolPolicy(policy, ["filesystem-write"])
+assert.equal(bridge.schema, "wp-codebox/tool-bridge/v1")
+assert.deepEqual(bridge.allowed_tools, ["filesystem-write"])
+assert.equal(bridge.dispatcher.owner, "wp-codebox")
+assert.equal(bridge.dispatcher.callback, "wp_codebox_browser_runtime_tool_callback")
+assert.equal(bridge.authorization.mode, "allowlist")
+assert.equal(bridge.sandbox_tool_policy.schema, "wp-codebox/sandbox-tool-policy/v1")
 
 console.log("runtime tool policy passed")

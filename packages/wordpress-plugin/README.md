@@ -284,10 +284,12 @@ produces artifact metadata, changed files, patches, and review evidence; the
 parent control plane performs reviewed apply-back, branch pushes, deploys, and PR
 creation.
 
-The WordPress runner validates requested `allowed_tools` against the caller's
-resolved `sandbox_tool_policy` before the sandbox process starts. Product layers
-own their own tool taxonomy and risk policy; WP Codebox only
-validates the generic snapshot shape and enforces the resolved boundary.
+The WordPress runner validates requested `allowed_tools` against the Codebox-owned
+`wp-codebox/tool-bridge/v1` envelope before the sandbox process starts. The
+bridge carries the enforced `sandbox_tool_policy`, dispatcher metadata,
+allowlist authorization notes, and redaction notes. Product layers own their own
+tool taxonomy and risk policy; WP Codebox owns the bridge shape, validates the
+generic snapshot, and enforces the resolved boundary.
 
 External systems are consumers or mounted tools. They do not own WP Codebox's
 artifact contract.

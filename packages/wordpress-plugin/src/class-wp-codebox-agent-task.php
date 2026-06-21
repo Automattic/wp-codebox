@@ -36,11 +36,15 @@ final class WP_Codebox_Agent_Task {
 		}
 
 		if ( ! empty( $task_input['allowed_tools'] ) ) {
-			$policy = ( new WP_Codebox_Sandbox_Tool_Policy_Normalizer() )->normalize_for_task_input( $task_input );
+			$normalizer = new WP_Codebox_Sandbox_Tool_Policy_Normalizer();
+			$policy     = $normalizer->normalize_for_task_input( $task_input );
 			if ( is_wp_error( $policy ) ) {
 				return $policy;
 			}
 			$task_input['sandbox_tool_policy'] = $policy;
+			if ( empty( $task_input['tool_bridge'] ) ) {
+				$task_input['tool_bridge'] = $normalizer->tool_bridge_from_policy( $task_input['allowed_tools'], $policy, $task_input );
+			}
 		}
 
 		return $task_input;

@@ -11,6 +11,8 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 
 	public const SCHEMA  = 'wp-codebox/sandbox-tool-policy/v1';
 	public const VERSION = 1;
+	public const TOOL_BRIDGE_SCHEMA  = 'wp-codebox/tool-bridge/v1';
+	public const TOOL_BRIDGE_VERSION = 1;
 
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const AGENTS_API_RUNTIME_ENVIRONMENT = 'environment';
@@ -26,6 +28,16 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function normalize_for_task_input( array $input ): array|WP_Error {
 		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array();
+		$bridge = is_array( $input['tool_bridge'] ?? null ) ? $input['tool_bridge'] : array();
+		if ( empty( $policy ) && ! empty( $bridge ) ) {
+			$policy = $this->policy_from_tool_bridge( $bridge );
+		}
+		if ( empty( $policy ) && function_exists( 'apply_filters' ) ) {
+			$bridge = apply_filters( 'wp_codebox_tool_bridge', array(), WP_Codebox_Agent_Task::string_list( $input['allowed_tools'] ?? array() ), $input );
+			if ( is_array( $bridge ) ) {
+				$policy = $this->policy_from_tool_bridge( $bridge );
+			}
+		}
 		if ( empty( $policy ) ) {
 			$policy = $this->from_allowed_tools( WP_Codebox_Agent_Task::string_list( $input['allowed_tools'] ?? array() ), $input );
 		}
@@ -47,6 +59,51 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		}
 
 		return $policy;
+	}
+
+	/** @param string[] $allowed_tools @param array<string,mixed> $context @return array<string,mixed> */
+	public function tool_bridge_from_allowed_tools( array $allowed_tools, array $context = array() ): array {
+		$policy = $this->from_allowed_tools( $allowed_tools, $context );
+		if ( empty( $policy ) ) {
+			return array();
+		}
+
+		return $this->tool_bridge_from_policy( $allowed_tools, $policy, $context );
+	}
+
+	/** @param string[] $allowed_tools @param array<string,mixed> $policy @param array<string,mixed> $context @return array<string,mixed> */
+	public function tool_bridge_from_policy( array $allowed_tools, array $policy, array $context = array() ): array {
+		if ( empty( $policy ) ) {
+			return array();
+		}
+
+		$bridge = array(
+			'schema'              => self::TOOL_BRIDGE_SCHEMA,
+			'version'             => self::TOOL_BRIDGE_VERSION,
+			'allowed_tools'       => WP_Codebox_Agent_Task::string_list( $allowed_tools ),
+			'sandbox_tool_policy' => $policy,
+			'dispatcher'          => array(
+				'owner'    => 'wp-codebox',
+				'callback' => 'wp_codebox_browser_runtime_tool_callback',
+				'location' => 'sandbox',
+			),
+			'authorization'       => array(
+				'mode'  => 'allowlist',
+				'notes' => 'Only sandbox-visible tools in sandbox_tool_policy are exposed to the runtime agent. Parent control-plane actions remain outside the sandbox bridge.',
+			),
+			'redaction'           => array(
+				'notes' => 'Secret values are passed through environment allowlists only and must not be embedded in tool bridge payloads, logs, or dispatcher metadata.',
+			),
+		);
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$filtered = apply_filters( 'wp_codebox_resolved_tool_bridge', $bridge, $allowed_tools, $context );
+			if ( is_array( $filtered ) ) {
+				$bridge = $filtered;
+			}
+		}
+
+		return $bridge;
 	}
 
 	/** @param string[] $tools @param array<string,mixed> $task_input */
@@ -199,6 +256,15 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		}
 
 		return $entry;
+	}
+
+	/** @param array<string,mixed> $bridge @return array<string,mixed> */
+	private function policy_from_tool_bridge( array $bridge ): array {
+		if ( self::TOOL_BRIDGE_SCHEMA !== ( $bridge['schema'] ?? '' ) || self::TOOL_BRIDGE_VERSION !== (int) ( $bridge['version'] ?? 0 ) ) {
+			return array();
+		}
+
+		return is_array( $bridge['sandbox_tool_policy'] ?? null ) ? $bridge['sandbox_tool_policy'] : array();
 	}
 
 	private function provider_safe_runtime_tool_id( string $tool_id ): string {

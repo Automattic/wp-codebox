@@ -54,6 +54,7 @@ for (const publicEntry of [
   "@automattic/wp-codebox-playground",
   "@automattic/wp-codebox-cli",
   "./cli/recipe-secret-env",
+  "@automattic/wp-codebox-cli/recipe-secret-env",
 ]) {
   assert.match(docs, new RegExp(publicEntry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `docs must mention ${publicEntry}`)
 }

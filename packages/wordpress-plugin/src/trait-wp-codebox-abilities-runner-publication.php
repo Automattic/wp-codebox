@@ -570,19 +570,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		}
 
 		return array(
-			'id'                      => 'runner-workspace-backend',
-			'workspace_root_constant' => 'WP_CODEBOX_RUNNER_WORKSPACE_ROOT',
-			'abilities'               => array(
-				'workspace_adopt'               => 'wp-codebox-runner-backend/workspace-adopt',
-				'workspace_show'                => 'wp-codebox-runner-backend/workspace-show',
-				'workspace_clone'               => 'wp-codebox-runner-backend/workspace-clone',
-				'workspace_worktree_add'        => 'wp-codebox-runner-backend/workspace-worktree-add',
-				'workspace_git_status'          => 'wp-codebox-runner-backend/workspace-git-status',
-				'workspace_git_diff'            => 'wp-codebox-runner-backend/workspace-git-diff',
-				'publish_runner_workspace'      => 'wp-codebox-runner-backend/publish-runner-workspace',
-				'run_runner_workspace_command' => 'wp-codebox-runner-backend/run-runner-workspace-command',
-				'workspace_capabilities'        => 'wp-codebox-runner-backend/workspace-capabilities',
-			),
+			'id'                      => '',
+			'workspace_root_constant' => '',
+			'abilities'               => array(),
 		);
 	}
 
