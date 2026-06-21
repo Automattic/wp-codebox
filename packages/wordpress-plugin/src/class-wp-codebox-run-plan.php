@@ -91,6 +91,81 @@ final class WP_Codebox_Run_Plan {
 		return $descriptors;
 	}
 
+	/**
+	 * @param array<int,array<string,mixed>> $descriptors Worker descriptors.
+	 * @return true|WP_Error
+	 */
+	public function validate_dependencies( array $descriptors ): true|WP_Error {
+		$by_id = array();
+		foreach ( $descriptors as $descriptor ) {
+			$by_id[ (string) $descriptor['id'] ] = $descriptor;
+		}
+
+		foreach ( $descriptors as $descriptor ) {
+			$id = (string) $descriptor['id'];
+			foreach ( $descriptor['depends_on'] ?? array() as $dependency ) {
+				$dependency = (string) $dependency;
+				if ( $dependency === $id ) {
+					return new WP_Error( 'wp_codebox_run_plan_dependency_self', 'Run plan worker cannot depend on itself.', array( 'status' => 400, 'worker_id' => $id ) );
+				}
+				if ( ! isset( $by_id[ $dependency ] ) ) {
+					return new WP_Error( 'wp_codebox_run_plan_dependency_unknown', 'Run plan worker depends on unknown worker.', array( 'status' => 400, 'worker_id' => $id, 'dependency' => $dependency ) );
+				}
+			}
+		}
+
+		$visiting = array();
+		$visited  = array();
+		foreach ( $descriptors as $descriptor ) {
+			$error = $this->visit_dependency( $descriptor, $by_id, $visiting, $visited );
+			if ( is_wp_error( $error ) ) {
+				return $error;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Return deterministic dependency batches in worker input order.
+	 *
+	 * @param array<int,array<string,mixed>> $descriptors Worker descriptors.
+	 * @return array<int,array<int,string>>|WP_Error
+	 */
+	public function dependency_batches( array $descriptors ): array|WP_Error {
+		$valid = $this->validate_dependencies( $descriptors );
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
+		}
+
+		$remaining = array_fill_keys( array_map( static fn( array $descriptor ): string => (string) $descriptor['id'], $descriptors ), true );
+		$batches   = array();
+		while ( ! empty( $remaining ) ) {
+			$batch = array();
+			foreach ( $descriptors as $descriptor ) {
+				$id = (string) $descriptor['id'];
+				if ( empty( $remaining[ $id ] ) ) {
+					continue;
+				}
+				$dependencies = $descriptor['depends_on'] ?? array();
+				if ( empty( array_filter( $dependencies, static fn( string $dependency ): bool => isset( $remaining[ $dependency ] ) ) ) ) {
+					$batch[] = $id;
+				}
+			}
+
+			if ( empty( $batch ) ) {
+				return new WP_Error( 'wp_codebox_run_plan_dependency_unscheduled', 'Run plan dependencies could not be scheduled.', array( 'status' => 400 ) );
+			}
+
+			foreach ( $batch as $id ) {
+				unset( $remaining[ $id ] );
+			}
+			$batches[] = $batch;
+		}
+
+		return $batches;
+	}
+
 	/** @param array<string,mixed> $source Source. @return array<string,mixed> */
 	public function cancellation_metadata( array $source ): array {
 		$timeout = $this->positive_integer( $source['timeoutSeconds'] ?? $source['timeout_seconds'] ?? $source['task_timeout_seconds'] ?? null );
@@ -151,22 +226,26 @@ final class WP_Codebox_Run_Plan {
 		);
 	}
 
-	/** @param array<int,array<string,mixed>> $runs Child run results. @return array{total:int,completed:int,failed:int,cancelled:int} */
+	/** @param array<int,array<string,mixed>> $runs Child run results. @return array{total:int,completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} */
 	public function result_counts( array $runs ): array {
 		$completed = count( array_filter( $runs, static fn( array $run ): bool => true === ( $run['success'] ?? false ) ) );
+		$skipped   = count( array_filter( $runs, static fn( array $run ): bool => 'skipped' === ( $run['status'] ?? '' ) ) );
 		$cancelled = count( array_filter( $runs, static fn( array $run ): bool => 'cancelled' === ( $run['status'] ?? '' ) ) );
+		$timed_out = count( array_filter( $runs, static fn( array $run ): bool => in_array( (string) ( $run['status'] ?? '' ), array( 'timed_out', 'timeout' ), true ) ) );
 
 		return array(
 			'total'     => count( $runs ),
 			'completed' => $completed,
-			'failed'    => count( $runs ) - $completed - $cancelled,
+			'failed'    => count( $runs ) - $completed - $skipped - $cancelled - $timed_out,
+			'skipped'   => $skipped,
 			'cancelled' => $cancelled,
+			'timed_out' => $timed_out,
 		);
 	}
 
-	/** @param array{failed:int,cancelled:int} $counts Counts. */
+	/** @param array{failed:int,skipped:int,cancelled:int,timed_out:int} $counts Counts. */
 	public function succeeded( array $counts ): bool {
-		return 0 === $counts['failed'] && 0 === $counts['cancelled'];
+		return 0 === $counts['failed'] && 0 === $counts['skipped'] && 0 === $counts['cancelled'] && 0 === $counts['timed_out'];
 	}
 
 	/** @param array<string,string> $paths Run-plan artifact paths. @return array<string,mixed> */
@@ -187,15 +266,44 @@ final class WP_Codebox_Run_Plan {
 		return array_values( array_filter( $runs, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) );
 	}
 
-	/** @param array{completed:int,failed:int,cancelled:int} $counts Counts. @return array<string,mixed> */
+	/** @param array{completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} $counts Counts. @return array<string,mixed> */
 	public function aggregate_result( string $schema, string $status, array $counts ): array {
 		return array(
 			'schema'    => $schema,
 			'status'    => $status,
 			'completed' => $counts['completed'],
 			'failed'    => $counts['failed'],
+			'skipped'   => $counts['skipped'],
 			'cancelled' => $counts['cancelled'],
+			'timed_out' => $counts['timed_out'],
 		);
+	}
+
+	/**
+	 * @param array<string,mixed>             $descriptor Worker descriptor.
+	 * @param array<string,array<string,mixed>> $by_id Worker map.
+	 * @param array<string,bool>              $visiting Visiting set.
+	 * @param array<string,bool>              $visited Visited set.
+	 */
+	private function visit_dependency( array $descriptor, array $by_id, array &$visiting, array &$visited ): true|WP_Error {
+		$id = (string) $descriptor['id'];
+		if ( isset( $visited[ $id ] ) ) {
+			return true;
+		}
+		if ( isset( $visiting[ $id ] ) ) {
+			return new WP_Error( 'wp_codebox_run_plan_dependency_cycle', 'Run plan dependencies contain a cycle.', array( 'status' => 400, 'worker_id' => $id ) );
+		}
+		$visiting[ $id ] = true;
+		foreach ( $descriptor['depends_on'] ?? array() as $dependency ) {
+			$error = $this->visit_dependency( $by_id[ (string) $dependency ], $by_id, $visiting, $visited );
+			if ( is_wp_error( $error ) ) {
+				return $error;
+			}
+		}
+		unset( $visiting[ $id ] );
+		$visited[ $id ] = true;
+
+		return true;
 	}
 
 	/** @param array<string,mixed> $event Event data. @return array<string,mixed> */

@@ -118,21 +118,23 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$worker_prepare = $this->prepare_agent_task_run( $worker_input );
 			if ( is_wp_error( $worker_prepare ) ) {
 				$prepared_workers[] = array(
-					'id'       => $worker_id,
-					'index'    => $index,
-					'prepared' => null,
-					'error'    => $worker_prepare,
-					'path'     => $worker_path,
+					'id'         => $worker_id,
+					'index'      => $index,
+					'depends_on' => $worker['_run_plan_descriptor']['depends_on'] ?? array(),
+					'prepared'   => null,
+					'error'      => $worker_prepare,
+					'path'       => $worker_path,
 				);
 				continue;
 			}
 
 			$prepared_workers[] = array(
-				'id'       => $worker_id,
-				'index'    => $index,
-				'prepared' => $worker_prepare,
-				'error'    => null,
-				'path'     => $worker_path,
+				'id'         => $worker_id,
+				'index'      => $index,
+				'depends_on' => $worker['_run_plan_descriptor']['depends_on'] ?? array(),
+				'prepared'   => $worker_prepare,
+				'error'      => null,
+				'path'       => $worker_path,
 			);
 		}
 
@@ -145,7 +147,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$counts = $this->result_builder->status_counts( $runs );
 		$success = $this->run_plan->succeeded( $counts );
 		$status  = $success ? 'completed' : 'failed';
-		$this->append_fanout_event( $paths['root'], array( 'event' => 'aggregation.started', 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'cancelled' => $counts['cancelled'] ) );
+		$this->append_fanout_event( $paths['root'], array( 'event' => 'aggregation.started', 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'skipped' => $counts['skipped'], 'cancelled' => $counts['cancelled'], 'timed_out' => $counts['timed_out'] ) );
 
 		$result = $this->result_builder->fanout_result(
 			self::FANOUT_SCHEMA,
@@ -165,7 +167,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$this->write_json_file( $paths['aggregate_result'], $this->run_plan->aggregate_result( self::FANOUT_AGGREGATE_SCHEMA, $status, $counts ) );
 		$this->append_fanout_event( $paths['root'], array( 'event' => 'aggregation.completed', 'status' => $status ) );
 		$this->write_json_file( $paths['result'], $result );
-		$this->append_fanout_event( $paths['root'], array( 'event' => $success ? 'fanout.completed' : 'fanout.failed', 'status' => $status, 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'cancelled' => $counts['cancelled'] ) );
+		$this->append_fanout_event( $paths['root'], array( 'event' => $success ? 'fanout.completed' : 'fanout.failed', 'status' => $status, 'completed' => $counts['completed'], 'failed' => $counts['failed'], 'skipped' => $counts['skipped'], 'cancelled' => $counts['cancelled'], 'timed_out' => $counts['timed_out'] ) );
 
 		return $result;
 	}
@@ -359,6 +361,10 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		if ( is_wp_error( $descriptors ) ) {
 			return $this->fanout_worker_descriptor_error( $descriptors );
 		}
+		$dependencies = $this->run_plan->validate_dependencies( $descriptors );
+		if ( is_wp_error( $dependencies ) ) {
+			return $this->fanout_worker_descriptor_error( $dependencies );
+		}
 
 		return array_map(
 			static function ( array $descriptor ): array {
@@ -413,30 +419,51 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<int,array<string,mixed>> $prepared_workers Prepared workers. @return array<int,array<string,mixed>> */
 	private function execute_prepared_fanout_workers( array $prepared_workers, int $concurrency, string $fanout_path ): array {
-		$runs   = array();
-		$active = array();
-		$next   = 0;
-		$total  = count( $prepared_workers );
+		$runs      = array();
+		$active    = array();
+		$remaining = array_fill_keys( array_map( static fn( array $worker ): int => (int) $worker['index'], $prepared_workers ), true );
+		$by_id     = array();
+		foreach ( $prepared_workers as $worker ) {
+			$by_id[ (string) $worker['id'] ] = $worker;
+		}
 
-		while ( $next < $total || ! empty( $active ) ) {
-			while ( count( $active ) < $concurrency && $next < $total ) {
-				$item = $prepared_workers[ $next ];
-				++$next;
+		while ( ! empty( $remaining ) || ! empty( $active ) ) {
+			foreach ( $prepared_workers as $item ) {
+				$index = (int) $item['index'];
+				if ( empty( $remaining[ $index ] ) || count( $active ) >= $concurrency ) {
+					continue;
+				}
+
+				$dependency_results = $this->fanout_dependency_results( $item, $by_id, $runs );
+				if ( count( $dependency_results ) !== count( $item['depends_on'] ?? array() ) ) {
+					continue;
+				}
+
+				if ( ! empty( array_filter( $dependency_results, static fn( array $run ): bool => true !== ( $run['success'] ?? false ) ) ) ) {
+					$runs[ $index ] = $this->result_builder->fanout_worker_skipped_result( $item, $dependency_results );
+					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ $index ] );
+					$this->append_fanout_event( $fanout_path, array( 'event' => 'worker.skipped', 'worker_id' => (string) $item['id'], 'status' => 'skipped' ) );
+					unset( $remaining[ $index ] );
+					continue;
+				}
 
 				if ( is_wp_error( $item['error'] ?? null ) ) {
-					$runs[ (int) $item['index'] ] = $this->result_builder->fanout_worker_error_result( $item, $item['error'], 0, 0 );
-					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $item['index'] ] );
+					$runs[ $index ] = $this->result_builder->fanout_worker_error_result( $item, $item['error'], 0, 0 );
+					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ $index ] );
+					unset( $remaining[ $index ] );
 					continue;
 				}
 
 				$started = $this->process_runner->start_fanout_worker_process( $item );
 				if ( is_wp_error( $started ) ) {
-					$runs[ (int) $item['index'] ] = $this->result_builder->fanout_worker_error_result( $item, $started, 0, 0 );
-					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $item['index'] ] );
+					$runs[ $index ] = $this->result_builder->fanout_worker_error_result( $item, $started, 0, 0 );
+					$this->write_json_file( (string) $item['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ $index ] );
+					unset( $remaining[ $index ] );
 					continue;
 				}
 
 				$active[] = $started;
+				unset( $remaining[ $index ] );
 				$this->append_fanout_event( $fanout_path, array( 'event' => 'worker.started', 'worker_id' => (string) $item['id'], 'active' => count( $active ) ) );
 			}
 
@@ -467,6 +494,20 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $runs;
 	}
 
+	/** @param array<string,mixed> $worker Worker metadata. @param array<string,array<string,mixed>> $by_id Workers by id. @param array<int,array<string,mixed>> $runs Completed runs. @return array<int,array<string,mixed>> */
+	private function fanout_dependency_results( array $worker, array $by_id, array $runs ): array {
+		$results = array();
+		foreach ( $worker['depends_on'] ?? array() as $dependency ) {
+			$dependency_index = (int) ( $by_id[ (string) $dependency ]['index'] ?? -1 );
+			if ( ! isset( $runs[ $dependency_index ] ) ) {
+				continue;
+			}
+			$results[] = $runs[ $dependency_index ];
+		}
+
+		return $results;
+	}
+
 	private function ensure_directory( string $path ): bool {
 		return is_dir( $path ) || mkdir( $path, 0777, true );
 	}
@@ -494,6 +535,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'wp_codebox_run_plan_path_segment_invalid' => new WP_Error( 'wp_codebox_fanout_worker_id_invalid', 'Each fanout worker requires a stable alphanumeric id.', $data ),
 			'wp_codebox_run_plan_worker_id_duplicate' => new WP_Error( 'wp_codebox_fanout_worker_id_duplicate', 'Fanout worker ids must be unique.', $data ),
 			'wp_codebox_run_plan_worker_goal_missing' => new WP_Error( 'wp_codebox_fanout_worker_goal_missing', 'Each fanout worker requires goal.', $data ),
+			'wp_codebox_run_plan_dependency_self', 'wp_codebox_run_plan_dependency_unknown', 'wp_codebox_run_plan_dependency_cycle' => new WP_Error( 'wp_codebox_fanout_worker_dependency_invalid', 'Fanout worker dependencies must reference an acyclic set of worker ids.', $data ),
 			default => $error,
 		};
 	}

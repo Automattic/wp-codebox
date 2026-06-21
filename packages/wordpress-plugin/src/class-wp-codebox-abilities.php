@@ -371,6 +371,8 @@ final class WP_Codebox_Abilities {
 										'id'                 => array( 'type' => 'string' ),
 										'task'               => array( 'type' => 'string' ),
 										'agent'              => array( 'type' => 'string' ),
+										'dependsOn'          => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+										'depends_on'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 										'timeout_seconds'    => array( 'type' => 'integer' ),
 									) + self::task_input_alias_properties( $task_input_schema ),
 								),
@@ -392,7 +394,9 @@ final class WP_Codebox_Abilities {
 							'total'       => array( 'type' => 'integer' ),
 							'completed'   => array( 'type' => 'integer' ),
 							'failed'      => array( 'type' => 'integer' ),
+							'skipped'     => array( 'type' => 'integer' ),
 							'cancelled'   => array( 'type' => 'integer' ),
+							'timed_out'   => array( 'type' => 'integer' ),
 							'timings'     => array( 'type' => 'object' ),
 							'artifacts'   => array(
 								'type'       => 'object',
