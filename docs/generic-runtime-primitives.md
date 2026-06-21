@@ -266,8 +266,8 @@ artifact special-casing while keeping projection policy outside Codebox core.
 
 `wordpressAbilityStep()` builds the stable `wordpress.ability` recipe step shape.
 `wordpressWorkloadRunRecipe()` builds a minimal WordPress Playground-backed recipe
-around caller-supplied workload steps without exposing Playground blueprint,
-mount, runPHP, OPFS, or browser-client internals as the public contract.
+around caller-supplied workload steps while returning Codebox runtime descriptors
+for mounts, PHP execution, OPFS use, and browser-client access.
 
 `playgroundPreviewUrl()` emits a `wp-codebox/playground-preview-url/v1` envelope
 for local, public, or secure preview URLs. Callers get the effective URL and

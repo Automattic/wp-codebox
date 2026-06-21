@@ -131,15 +131,14 @@ for (const internalModule of [
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
-assert.match(docs, /not a stable compatibility surface for external integrations/)
+assert.match(docs, /External integrations use the stable entrypoints listed above/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
 assert.match(docs, /## Integration Boundary/)
-assert.match(docs, /Codebox may adapt those upstream systems into\s+generic Codebox inputs internally/)
-assert.match(docs, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
-assert.match(docs, /Codebox adapter translates from generic\s+Data Machine inputs into the Codebox task\/recipe\/runtime contracts/)
+assert.match(docs, /Codebox adapts those upstream systems into\s+generic Codebox inputs/)
+assert.match(docs, /Codebox adapter translates from generic Data Machine inputs into the Codebox\s+task\/recipe\/runtime contracts/)
 assert.match(docs, /wp-codebox\/runner-workspace-backend\/v1/)
 assert.match(docs, /backend adapter config schema/)
-assert.match(docs, /backend ability names stay behind this adapter config and\s+are not part of the consumer-facing surface/)
+assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")

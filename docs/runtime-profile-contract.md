@@ -21,12 +21,11 @@ a portable profile envelope with:
 - `diagnostics`: structured, non-secret resolver evidence for operators and UI.
 - `provenance`: Codebox ownership and resolver metadata.
 
-The profile contract is the public lane. Consumers should not depend on Agents
-API, Data Machine, Data Machine Code, WordPress Playground, provider plugin
-paths, overlay file paths, activation order, or backend readiness internals.
-Those may appear in backend execution plans or `runtime.resolved_profile`
-diagnostics, but the caller-facing request/result remains the generic Codebox
-profile.
+The profile contract is the public lane. Consumers use the profile request and
+result fields for capabilities, components, readiness, diagnostics, and
+provenance. Backend execution plans and `runtime.resolved_profile` diagnostics
+may include adapter provenance such as provider plugin paths, overlay file paths,
+activation order, and readiness details.
 
 Example request fragment:
 
