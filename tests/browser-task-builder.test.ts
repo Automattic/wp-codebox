@@ -11,6 +11,9 @@ class WP_Error {
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
 function sanitize_key( $value ) { return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $value ) ); }
+class WP_Codebox_Agents_API_Adapter {
+	public static function default_chat_ability(): string { return 'agents/chat'; }
+}
 $GLOBALS['wp_codebox_test_transients'] = array();
 function get_transient( $key ) { return $GLOBALS['wp_codebox_test_transients'][ $key ] ?? false; }
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
@@ -267,6 +270,7 @@ assert.equal(result.local_task.component_contracts[0].slug, "profile-component")
 assert.equal(result.local_task.runtime_overlays[0].slug, "profile-overlay")
 assert.deepEqual(result.local_task.provider_plugin_paths, ["/profile/provider", "/existing/provider"])
 assert.deepEqual(result.local_task.runtime_env, { PROFILE_ENV: "1", EXISTING: "1" })
+assert.equal(result.local_task.runtime_requirements, undefined)
 assert.deepEqual(result.local_task.placement.allowed_targets, ["browser"])
 assert.deepEqual(result.local_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
 assert.equal(result.local_task.browser_runner.invocation.name, "agents/chat")
@@ -327,5 +331,46 @@ assert.equal(result.recipe_dto.browser.runner_contract.php_footer.type, "generat
 assert.equal(JSON.stringify(result.recipe_dto).includes("must-not-leak"), false)
 assert.equal(JSON.stringify(result.recipe_dto).includes("code="), false)
 assert.equal(JSON.stringify(result.recipe_dto).includes("php_prelude\":\""), false)
+
+const readiness = await runPhpJson<any>(`
+define('ABSPATH', ${rootPath});
+class WP_Error {
+	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
+}
+function is_wp_error( $value ) { return $value instanceof WP_Error; }
+function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
+function apply_filters( $hook, $value, ...$args ) { return $value; }
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-inheritance.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-runtime.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-blueprint.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php`)};
+class WP_Codebox_Readiness_Test_Abilities {
+	use WP_Codebox_Abilities_Inheritance;
+	use WP_Codebox_Abilities_Browser_Runtime;
+	use WP_Codebox_Abilities_Browser_Blueprint;
+	use WP_Codebox_Abilities_Execution;
+}
+$method = new ReflectionMethod( WP_Codebox_Readiness_Test_Abilities::class, 'browser_ready_to_code_signal' );
+$generic = $method->invoke( null, array(
+	'goal' => 'Materialize a static artifact.',
+	'runtime_requirements' => array( 'requires_provider' => false ),
+), array( 'plugins' => array(), 'components' => array() ) );
+$provider = $method->invoke( null, array(
+	'goal' => 'Run an AI coding agent.',
+	'runtime_requirements' => array( 'requires_provider' => true ),
+), array( 'plugins' => array(), 'components' => array() ) );
+echo json_encode( array( 'generic' => $generic, 'provider' => $provider ), JSON_UNESCAPED_SLASHES );
+`)
+
+assert.equal(readiness.generic.emitted, true)
+assert.equal(readiness.generic.requirement_metadata.runtime_requirements.requires_provider, false)
+assert.equal(readiness.generic.requirements.provider_plugin, true)
+assert.equal(readiness.generic.requirements.provider_secret, true)
+assert.deepEqual(readiness.generic.missing, [])
+assert.equal(readiness.provider.emitted, false)
+assert.deepEqual(readiness.provider.missing, ["provider_secret"])
 
 console.log("browser task builder ok")
