@@ -14,10 +14,9 @@ The command reads one JSON request from `--input-file`, writes a single JSON env
 
 Direct `wp-codebox agent-sandbox-run` remains an operator/debug command. Product orchestrators should call `agent-task-run` or the parent-site `wp-codebox/run-agent-task` ability so WP Codebox can build the private recipe, capture artifacts, normalize no-op/failure evidence, and clean up temporary recipe files.
 
-Terms such as Agents API, Data Machine Code, and WordPress Playground in this
-document identify current upstream adapters or runtime backends. They are
-implementation details behind the Codebox-owned CLI command, ability ids, and
-`wp-codebox/*` schemas unless explicitly listed as stable Codebox contracts.
+Named provider stacks, workspace managers, and sandbox backends are implementation
+details behind the Codebox-owned CLI command, ability ids, and `wp-codebox/*`
+schemas unless explicitly listed as stable Codebox contracts.
 
 ## Input Boundary
 
@@ -76,6 +75,10 @@ implementation details behind the Codebox-owned CLI command, ability ids, and
   }
 }
 ```
+
+`allowed_tools` uses Codebox canonical tool ids. Hosts that dispatch to another
+tool system map these ids inside their Codebox adapter; callers do not pass host
+tool ids or teach the host system about `wp-codebox/sandbox-tool-policy/v1`.
 
 Stable fields exported from runtime-core:
 

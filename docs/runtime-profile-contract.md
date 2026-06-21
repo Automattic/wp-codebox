@@ -20,11 +20,10 @@ portable profile envelope with:
 - `diagnostics`: structured, non-secret resolver evidence for operators and UI.
 - `provenance`: Codebox ownership and resolver metadata.
 
-The profile contract is the public lane. Consumers should not depend on Agents
-API, Data Machine, Data Machine Code, provider plugin paths, overlay file paths,
-activation order, or backend readiness internals. Those may appear in backend
-execution plans or diagnostics, but the caller-facing request/result remains the
-generic Codebox profile.
+The profile contract is the public lane. Consumers should not depend on provider
+plugin paths, overlay file paths, activation order, or backend readiness
+internals. Those may appear in backend execution plans or diagnostics, but the
+caller-facing request/result remains the generic Codebox profile.
 
 Example request fragment:
 

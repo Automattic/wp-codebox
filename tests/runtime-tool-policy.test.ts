@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, sandboxAllowedRuntimeToolIds, toolBridgeFromSandboxToolPolicy, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
+import { resolveEffectiveRuntimeToolPolicy, resolveRuntimeToolAlias, runtimeToolInputFromSandboxToolPolicy, sandboxAllowedRuntimeToolIds, sandboxToolPolicyFromAllowedTools, toolBridgeFromSandboxToolPolicy, type SandboxToolPolicySnapshot } from "../packages/runtime-core/src/index.js"
 
 const policy: SandboxToolPolicySnapshot = {
   schema: "wp-codebox/sandbox-tool-policy/v1",
@@ -53,6 +53,14 @@ assert.equal(resolveRuntimeToolAlias(effective, "write_file")?.runtimeToolId, "c
 assert.equal(resolveRuntimeToolAlias(policy, "client/browser-review")?.parentOnly, true)
 
 assert.deepEqual(sandboxAllowedRuntimeToolIds(policy), ["client/filesystem-write"])
+
+assert.deepEqual(runtimeToolInputFromSandboxToolPolicy(policy).allowed_tools, ["client/filesystem-write"])
+assert.deepEqual(runtimeToolInputFromSandboxToolPolicy(policy).runtime_tools.map((tool) => tool.id), ["filesystem-write"])
+
+const canonicalPolicy = sandboxToolPolicyFromAllowedTools(["workspace.read", "workspace.search", "workspace.write", "workspace.edit"], { source: "test" })
+assert.equal(canonicalPolicy.schema, "wp-codebox/sandbox-tool-policy/v1")
+assert.deepEqual(canonicalPolicy.tools.map((tool) => tool.id), ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"])
+assert.deepEqual(runtimeToolInputFromSandboxToolPolicy(canonicalPolicy).allowed_tools, ["workspace_read", "workspace_search", "workspace_write", "workspace_edit"])
 
 const bridge = toolBridgeFromSandboxToolPolicy(policy, ["filesystem-write"])
 assert.equal(bridge.schema, "wp-codebox/tool-bridge/v1")

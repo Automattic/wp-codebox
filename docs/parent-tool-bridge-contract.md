@@ -131,7 +131,10 @@ Minimal integration points:
   `parent_request` into the sandbox run input.
 - CLI input accepts `--parent-tool-bridge='<json>'` as an object-valued field.
 
-Host adapters can later map their endpoint or command metadata into this Codebox
+Host adapters can map their endpoint or command metadata into this Codebox
 contract without adding product semantics to WP Codebox core. Upstream systems
-such as Data Machine should provide generic tool/run inputs; Codebox performs any
-WP Codebox schema mapping at its boundary.
+provide generic tool/run inputs; Codebox performs any WP Codebox schema mapping at
+its boundary. When an adapter dispatches to an external tool registry, the adapter
+maps Codebox canonical ids such as `workspace.read`, `workspace.search`,
+`workspace.write`, and `workspace.edit` outward to that registry's ids. The
+external registry does not need to recognize `wp-codebox/sandbox-tool-policy/v1`.

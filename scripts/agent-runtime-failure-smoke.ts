@@ -86,7 +86,7 @@ const singleResult = buildAgentTaskSingleResult({
       agent_runtime: {
         success: true,
         result: {
-          schema: "datamachine/agent-bundle-result/v1",
+          schema: "example/agent-bundle-result/v1",
           success: true,
           status: "completed",
           outputs: {
@@ -102,7 +102,7 @@ const singleResult = buildAgentTaskSingleResult({
       agent_runtime: {
         success: true,
         result: {
-          schema: "datamachine/agent-bundle-result/v1",
+          schema: "example/agent-bundle-result/v1",
           success: true,
           status: "completed",
           outputs: {

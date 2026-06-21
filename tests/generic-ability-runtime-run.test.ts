@@ -83,6 +83,13 @@ await withTempDir("wp-codebox-generic-ability-runtime-run-", async (root) => {
 
   const stableSubpathRecipe = buildGenericAbilityRuntimeRunRecipeFromStableSubpath({ abilityId: "example/runtime-run" })
   assert.equal(stableSubpathRecipe.workflow.steps[0].command, "wordpress.ability")
+
+  const allowedToolsRecipe = buildGenericAbilityRuntimeRunRecipe({ abilityId: "example/runtime-run", allowedTools: ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"] })
+  const allowedToolsInputArg = allowedToolsRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("input="))
+  assert.ok(allowedToolsInputArg)
+  const allowedToolsInput = JSON.parse(allowedToolsInputArg.slice("input=".length))
+  assert.deepEqual(allowedToolsInput.runtime_invocation.sandbox_tool_policy.tools.map((tool: { id: string }) => tool.id), ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"])
+  assert.deepEqual(allowedToolsInput.runtime_invocation.sandbox_tool_policy.tools.map((tool: { runtime_tool_id: string }) => tool.runtime_tool_id), ["workspace_read", "workspace_search", "workspace_write", "workspace_edit"])
 })
 
 assert.equal(expectedAbilityResultSchemaFromArgs(["expected-result-schema=\"example/result/v1\""]), "example/result/v1")

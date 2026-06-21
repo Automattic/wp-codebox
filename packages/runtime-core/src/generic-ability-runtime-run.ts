@@ -7,6 +7,7 @@ import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount,
 import { componentManifestForRuntimePlugins, runtimeDependencyPlanContract } from "./agent-task-recipe.js"
 import { prepareRecipeSourcePackageSync } from "./recipe-source-packages.js"
 import { isPlainObject, stringList, stripUndefined } from "./object-utils.js"
+import { sandboxToolPolicyFromAllowedTools } from "./sandbox-tool-policy.js"
 
 export const GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA = "wp-codebox/generic-ability-runtime-run-result/v1" as const
 
@@ -35,6 +36,7 @@ export interface GenericAbilityRuntimeRunOptions {
   runtimeOverlays?: WorkspaceRecipeRuntimeOverlay[]
   runtimeEnv?: Record<string, string | number | boolean>
   secretEnv?: string[]
+  allowedTools?: string[]
   toolPolicy?: SandboxToolPolicySnapshot
   mounts?: WorkspaceRecipeMount[]
   runtimeStackMounts?: WorkspaceRecipeMount[]
@@ -54,6 +56,9 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
   const providers = [...explicitProviderPlugins, ...providerPathPlugins]
   const componentManifest = componentManifestForRuntimePlugins(componentPlugins, providers)
   const expectedResultSchema = options.expectedResultSchema
+  const toolPolicy = options.toolPolicy ?? (stringList(options.allowedTools).length > 0
+    ? sandboxToolPolicyFromAllowedTools(options.allowedTools ?? [], { source: "wp-codebox.generic-ability-runtime-run.allowed-tools" })
+    : undefined)
   const abilityInput = stripUndefined({
     ...(isPlainObject(options.abilityInput) ? options.abilityInput : {}),
     runtime_invocation: {
@@ -70,7 +75,7 @@ export function buildGenericAbilityRuntimeRunRecipe(options: GenericAbilityRunti
         secret_env: options.secretEnv,
         runtime_env: options.runtimeEnv,
       }),
-      sandbox_tool_policy: options.toolPolicy,
+      sandbox_tool_policy: toolPolicy,
     },
   })
 

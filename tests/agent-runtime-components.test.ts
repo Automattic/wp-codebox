@@ -11,13 +11,13 @@ const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 
 try {
-  const dataMachine = join(root, "data-machine")
-  const agentsApi = join(dataMachine, "vendor", "wordpress", "agents-api")
+  const runtimeHost = join(root, "runtime-host")
+  const agentsApi = join(runtimeHost, "vendor", "wordpress", "agents-api")
   mkdirSync(agentsApi, { recursive: true })
-  writeFileSync(join(dataMachine, "data-machine.php"), "<?php\n/* Plugin Name: Data Machine */\n")
+  writeFileSync(join(runtimeHost, "runtime-host.php"), "<?php\n/* Plugin Name: Runtime Host */\n")
   writeFileSync(join(agentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
 
-  const options = parseAgentRuntimeProbeOptions(["--component", dataMachine], parseMount)
+  const options = parseAgentRuntimeProbeOptions(["--component", runtimeHost], parseMount)
   const mounts = agentRuntimeMounts(options)
   const agentsApiMount = mounts.find((mount) => mount.metadata?.slug === "agents-api")
 

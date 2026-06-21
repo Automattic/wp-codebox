@@ -12,11 +12,11 @@ Consumers compose WP Codebox APIs. They should not assemble public workflows fro
 raw upstream APIs that WP Codebox uses to run a sandbox. WP Codebox owns the
 stable contracts and wraps implementation dependencies behind those contracts:
 
-- Data Machine job, artifact, pending-action, and flow concepts stay behind
-  Codebox run, artifact, approval, and session contracts.
+- Host job, artifact, approval queue, and flow concepts stay behind Codebox run,
+  artifact, approval, and session contracts.
 - Agents API execution targets and principals stay behind Codebox task, provider,
   permission, and runtime-session contracts.
-- Data Machine Code workspace lifecycle and GitHub workflow details stay behind
+- Host workspace lifecycle and source-control workflow details stay behind
   Codebox source, workspace, evidence, and apply-back contracts.
 - WordPress Playground boot, filesystem, preview, and PHP/WP-CLI details stay
   behind Codebox runtime, mount, command, preview, and browser-session contracts.
@@ -73,8 +73,8 @@ runtime source bundles, and secret-like fields.
 
 ## Example Consumers
 
-Studio Web, Homeboy, Static Site Importer, hosted services, CI jobs, local tools,
-and other callers can consume these seams through their own adapters. Those
-adapters own product-specific defaults, queue state, deploy behavior, import
-semantics, and review UX. WP Codebox owns the generic runtime profile, preview
-lease, browser session DTO, and artifact boundaries.
+Hosted services, CI jobs, local tools, and other callers can consume these seams
+through their own adapters. Those adapters own product-specific defaults, queue
+state, deploy behavior, import semantics, and review UX. WP Codebox owns the
+generic runtime profile, preview lease, browser session DTO, and artifact
+boundaries.

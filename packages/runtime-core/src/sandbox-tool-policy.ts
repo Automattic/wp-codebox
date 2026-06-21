@@ -77,6 +77,11 @@ export interface EffectiveRuntimeToolPolicy {
   metadata: Record<string, unknown>
 }
 
+export interface RuntimeToolInput {
+  allowed_tools: string[]
+  runtime_tools: RuntimeToolDescriptor[]
+}
+
 export interface ToolBridgeContract {
   schema: typeof TOOL_BRIDGE_SCHEMA
   version: typeof TOOL_BRIDGE_VERSION
@@ -185,6 +190,33 @@ export function sandboxAllowedRuntimeToolIds(policy: SandboxToolPolicySnapshot):
   return resolveEffectiveRuntimeToolPolicy(policy).allowedRuntimeToolIds
 }
 
+export function runtimeToolInputFromSandboxToolPolicy(policy: SandboxToolPolicySnapshot): RuntimeToolInput {
+  const effective = resolveEffectiveRuntimeToolPolicy(policy)
+  return {
+    allowed_tools: effective.allowedRuntimeToolIds,
+    runtime_tools: effective.tools.filter((tool) => tool.visible),
+  }
+}
+
+export function sandboxToolPolicyFromAllowedTools(allowedTools: string[], metadata: Record<string, unknown> = {}): SandboxToolPolicySnapshot {
+  return {
+    schema: SANDBOX_TOOL_POLICY_SCHEMA,
+    version: SANDBOX_TOOL_POLICY_VERSION,
+    tools: stringList(allowedTools).map((tool) => ({
+      id: tool,
+      runtime_tool_id: providerSafeRuntimeToolId(tool),
+      execution_location: "sandbox",
+      transport_visibility: "sandbox",
+      allowed: true,
+      runtime: {
+        [AGENTS_API_RUNTIME_ENVIRONMENT]: AGENTS_API_RUNTIME_LOCAL,
+        [AGENTS_API_RUNTIME_CAPABILITY_SCOPE]: AGENTS_API_RUNTIME_LOCAL,
+      },
+    })),
+    metadata,
+  }
+}
+
 export function toolBridgeFromSandboxToolPolicy(policy: SandboxToolPolicySnapshot, allowedTools: string[] = []): ToolBridgeContract {
   return {
     schema: TOOL_BRIDGE_SCHEMA,
@@ -271,4 +303,8 @@ function runtimeToolDescriptor(tool: SandboxToolPolicyTool): RuntimeToolDescript
     ...(policy ? { policy } : {}),
     ...(tool.metadata ? { metadata: tool.metadata } : {}),
   }
+}
+
+function providerSafeRuntimeToolId(toolId: string): string {
+  return toolId.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "")
 }

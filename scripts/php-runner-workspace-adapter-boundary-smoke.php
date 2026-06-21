@@ -74,6 +74,9 @@ require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abili
 
 add_filter(
 	'wp_codebox_runner_workspace_backend',
+	// Private adapter mapping: Codebox calls its runner-workspace contract and this
+	// test maps outward to a host ability registry. The host does not parse
+	// Codebox sandbox tool policy schemas.
 	static fn(): array => array(
 		'id'        => 'datamachine-code',
 		'abilities' => array(

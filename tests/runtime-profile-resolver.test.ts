@@ -57,7 +57,7 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
 
-$default_resolution = WP_Codebox_Runtime_Profile_Resolver::resolve( array( 'profiles' => array( 'data-machine-code' ) ) );
+$default_resolution = WP_Codebox_Runtime_Profile_Resolver::resolve( array( 'profiles' => array( 'missing-workspace-runtime' ) ) );
 
 $input = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	'sandbox_session_id' => 'runtime-profile-session',
@@ -80,7 +80,7 @@ echo json_encode( array( 'default_error' => array( 'code' => $default_resolution
 `)
 
 assert.equal(result.default_error.code, "wp_codebox_runtime_profile_unresolved")
-assert.deepEqual(result.default_error.data.errors, [{ code: "profile_not_registered", profile: "data-machine-code" }])
+assert.deepEqual(result.default_error.data.errors, [{ code: "profile_not_registered", profile: "missing-workspace-runtime" }])
 assert.deepEqual(result.input.runtime.components.map((component) => component.slug), [
   "agents-api",
   "content-runtime",
