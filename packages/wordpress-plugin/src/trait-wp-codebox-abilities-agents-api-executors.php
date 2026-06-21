@@ -135,6 +135,11 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 
 	/** @param array<string,mixed> $input Task input. @param array<string,mixed> $request Full request. @return array<string,mixed> */
 	private static function agents_api_task_input( array $input, array $request ): array {
+		$normalized_workload = WP_Codebox_Agent_Workload::normalize_ability_input( $input );
+		if ( ! is_wp_error( $normalized_workload ) ) {
+			$input = $normalized_workload;
+		}
+
 		if ( self::AGENTS_API_TASK_INPUT_SCHEMA === (string) ( $input['schema'] ?? '' ) ) {
 			$input['schema'] = WP_Codebox_Task_Input_Contract::SCHEMA;
 		}

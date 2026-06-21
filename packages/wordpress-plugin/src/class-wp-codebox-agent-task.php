@@ -23,6 +23,11 @@ final class WP_Codebox_Agent_Task {
 	public static function normalize_input( array $input, ?callable $allowed_tools_validator = null, bool $keep_empty = false ): array|WP_Error {
 		unset( $keep_empty );
 
+		$input = WP_Codebox_Agent_Workload::normalize_ability_input( $input );
+		if ( is_wp_error( $input ) ) {
+			return $input;
+		}
+
 		$task_input = WP_Codebox_Task_Input_Contract::normalize( $input );
 		if ( is_wp_error( $task_input ) ) {
 			return $task_input;

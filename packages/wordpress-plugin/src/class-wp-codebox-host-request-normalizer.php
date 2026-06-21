@@ -31,6 +31,11 @@ final class WP_Codebox_Host_Request_Normalizer {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function normalize( array $input ): array|WP_Error {
+		$input = WP_Codebox_Agent_Workload::normalize_ability_input( $input );
+		if ( is_wp_error( $input ) ) {
+			return $input;
+		}
+
 		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
 		$schema  = (string) ( $request['schema'] ?? '' );
 		if ( self::TASK_INPUT_SCHEMA !== $schema ) {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 
-import { createWorkspaceRecipeJsonSchema, TASK_INPUT_ABILITY_ALIAS_FIELDS, TASK_INPUT_JSON_SCHEMA } from "../packages/runtime-core/src/index.js"
+import { AGENT_WORKLOAD_JSON_SCHEMA, createWorkspaceRecipeJsonSchema, TASK_INPUT_ABILITY_ALIAS_FIELDS, TASK_INPUT_JSON_SCHEMA } from "../packages/runtime-core/src/index.js"
 import { evaluatePhpJson } from "../scripts/test-kit.js"
 
 const taskInputContract = "packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php"
+const agentWorkloadContract = "packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php"
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(sortObject(value), null, 2)
@@ -18,6 +19,9 @@ function sortObject(value: unknown): unknown {
 
 const phpTaskInputSchema = await evaluatePhpJson("WP_Codebox_Task_Input_Contract::schema()", [taskInputContract])
 assert.equal(canonicalJson(phpTaskInputSchema), canonicalJson(TASK_INPUT_JSON_SCHEMA), "PHP task input schema must match runtime-core TASK_INPUT_JSON_SCHEMA")
+
+const phpAgentWorkloadSchema = await evaluatePhpJson("WP_Codebox_Agent_Workload::schema()", [agentWorkloadContract])
+assert.equal(canonicalJson(phpAgentWorkloadSchema), canonicalJson(AGENT_WORKLOAD_JSON_SCHEMA), "PHP agent workload schema must match runtime-core AGENT_WORKLOAD_JSON_SCHEMA")
 
 const phpAliasFields = await evaluatePhpJson("WP_Codebox_Task_Input_Contract::ABILITY_ALIAS_FIELDS", [taskInputContract])
 assert.deepEqual(phpAliasFields, [...TASK_INPUT_ABILITY_ALIAS_FIELDS], "PHP ability task aliases must match runtime-core alias fields")

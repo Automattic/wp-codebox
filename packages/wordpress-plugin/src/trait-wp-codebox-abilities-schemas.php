@@ -512,6 +512,11 @@ private static function task_input_schema(): array {
 }
 
 /** @return array<string,mixed> */
+private static function agent_workload_schema(): array {
+	return WP_Codebox_Agent_Workload::schema();
+}
+
+/** @return array<string,mixed> */
 private static function string_property_schema( string $description = '' ): array {
 	$schema = array( 'type' => 'string' );
 	if ( '' !== $description ) {
@@ -587,13 +592,15 @@ private static function host_agent_task_input_properties( array $task_input_sche
 	$detailed = ! empty( $options['detailed'] );
 
 	$properties = array(
-		'agent'                  => self::string_property_schema( $detailed ? 'Sandbox agent slug to invoke through agents/chat. Defaults through wp_codebox_default_agent.' : '' ),
+		'agent_workload'         => self::agent_workload_schema(),
+		'workload'               => self::agent_workload_schema(),
+		'agent'                  => self::string_property_schema( $detailed ? 'Codebox agent runtime id. Defaults through wp_codebox_default_agent.' : '' ),
 		'mode'                   => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
 		'provider'               => self::string_property_schema( $detailed ? 'AI provider id to seed into the sandbox agent config.' : '' ),
 		'model'                  => self::string_property_schema( $detailed ? 'AI model id to seed into the sandbox agent config.' : '' ),
 		'provider_plugin_paths'  => self::string_array_property_schema( $detailed ? 'AI provider plugin directories to mount and activate inside the sandbox.' : '' ),
 		'agent_bundles'          => self::agent_bundle_schema(),
-		'runtime_task'           => self::object_property_schema( $detailed ? 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.' : '' ),
+		'runtime_task'           => self::object_property_schema( $detailed ? 'Internal runtime adapter task request. Prefer agent_workload.agent_runtime.runtime_task for public callers.' : '' ),
 		'parent_request'         => self::object_property_schema( $detailed ? 'Canonical wp-codebox/task-input/v1 parent request normalized into the WP Codebox runner contract.' : '' ),
 		'component_contracts'    => self::component_contracts_schema( $detailed ? 'Caller-declared runtime components WP Codebox should package, mount, or probe.' : '' ),
 		'mounts'                 => $mount_schema,
@@ -687,7 +694,9 @@ private static function component_contracts_schema( string $description = '' ): 
  */
 private static function browser_task_input_properties( array $task_input_schema, array $inherit_schema, array $session_input, bool $detailed = false ): array {
 	return self::task_input_alias_properties( $task_input_schema ) + array(
-		'agent'                   => self::string_property_schema( $detailed ? 'Sandbox agent slug to invoke through agents/chat inside the browser Playground.' : '' ),
+		'agent_workload'          => self::agent_workload_schema(),
+		'workload'                => self::agent_workload_schema(),
+		'agent'                   => self::string_property_schema( $detailed ? 'Codebox agent runtime id for the browser sandbox.' : '' ),
 		'provider'                => self::string_property_schema( $detailed ? 'AI provider id to seed into the browser Playground agent invocation.' : '' ),
 		'model'                   => self::string_property_schema( $detailed ? 'AI model id to seed into the browser Playground agent invocation.' : '' ),
 		'mode'                    => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
