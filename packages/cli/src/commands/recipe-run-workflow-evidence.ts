@@ -136,22 +136,34 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
         previewPublicUrl: options?.previewPublicUrl,
       })
       const finishedAt = new Date().toISOString()
-      return withRecipeExecutionPhase({
-        id: `agent-fanout-${workflowStep.index}`,
-        command: workflowStep.step.command,
-        args: workflowStep.step.args ?? [],
-        exitCode: result.success ? 0 : 1,
-        stdout: `${JSON.stringify(result, null, 2)}\n`,
-        stderr: "",
-        startedAt,
-        finishedAt,
-      }, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+      return {
+        ...withRecipeExecutionPhase({
+          id: `agent-fanout-${workflowStep.index}`,
+          command: workflowStep.step.command,
+          args: workflowStep.step.args ?? [],
+          exitCode: result.success ? 0 : 1,
+          stdout: `${JSON.stringify(result, null, 2)}\n`,
+          stderr: "",
+          startedAt,
+          finishedAt,
+        }, workflowStep.phase, workflowStep.index, workflowStep.step.command),
+        ...(workflowStep.fuzzCaseId ? { fuzzCaseId: workflowStep.fuzzCaseId } : {}),
+        ...(workflowStep.fuzzCaseIndex !== undefined ? { fuzzCaseIndex: workflowStep.fuzzCaseIndex } : {}),
+        ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),
+        ...(workflowStep.fuzzStepIndex !== undefined ? { fuzzStepIndex: workflowStep.fuzzStepIndex } : {}),
+      }
     }
     if (isRuntimeCheckpointRecipeCommand(workflowStep.step.command)) {
       return withRecipeExecutionPhase(await executeRuntimeCheckpointRecipeCommand(runtime, workflowStep.step.command, workflowStep.step.args ?? []), workflowStep.phase, workflowStep.index, workflowStep.step.command)
     }
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
-    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+    return {
+      ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command),
+      ...(workflowStep.fuzzCaseId ? { fuzzCaseId: workflowStep.fuzzCaseId } : {}),
+      ...(workflowStep.fuzzCaseIndex !== undefined ? { fuzzCaseIndex: workflowStep.fuzzCaseIndex } : {}),
+      ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),
+      ...(workflowStep.fuzzStepIndex !== undefined ? { fuzzStepIndex: workflowStep.fuzzStepIndex } : {}),
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })

@@ -58,6 +58,7 @@ top-level fields:
 - `runtime`
 - `inputs`
 - `workflow`
+- `fuzzRun`
 - `artifacts`
 - `probes`
 
@@ -193,6 +194,68 @@ npm run wp-codebox -- commands --json
 Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
+
+## Fuzz Case Runs
+
+Recipes may declare a bounded, deterministic fuzz case skeleton with
+`fuzzRun.schema: "wp-codebox/fuzz-run/v1"`. This primitive does not generate
+inputs or implement a fuzzing strategy. It gives callers a generic way to name
+cases, attach input/hash/replay metadata, and run setup/action/assert/teardown
+phases through the same command machinery as normal workflow steps.
+
+Each case requires a stable `case_id` and at least one `action` step:
+
+```json
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "workflow": {
+    "steps": [{ "command": "inspect-mounted-inputs" }]
+  },
+  "fuzzRun": {
+    "schema": "wp-codebox/fuzz-run/v1",
+    "cases": [
+      {
+        "case_id": "case-001",
+        "input": { "path": "/example" },
+        "inputHash": { "algorithm": "sha256", "value": "abc123" },
+        "phases": {
+          "setup": [{ "command": "wordpress.run-php", "args": ["code=update_option('case','case-001');"] }],
+          "action": [{ "command": "wordpress.wp-cli", "args": ["command=option get case"] }],
+          "assert": [{ "command": "wordpress.run-php", "args": ["code=if (get_option('case') !== 'case-001') { exit(1); }"] }],
+          "teardown": [{ "command": "wordpress.run-php", "args": ["code=delete_option('case');"] }]
+        },
+        "artifacts": [{ "name": "case-log", "path": "/tmp/wp-codebox/fuzz/case-001.json" }],
+        "replay": { "seed": "seed-001", "inputRef": "fixtures/cases/case-001.json" }
+      }
+    ]
+  }
+}
+```
+
+The runtime output includes `fuzzRun.schema: "wp-codebox/fuzz-run-result/v1"`
+with per-case status, timing, command references/results, declared artifact
+references, diagnostics, and replay metadata placeholders. Fuzz case phase steps
+are ordinary recipe commands, so command permissions and validation come from the
+existing command catalog.
+
+### Plugin State
+
+Use `wordpress.plugin-state` when a recipe or runtime caller needs structured
+WordPress plugin state instead of shelling out to `wp plugin` directly. The
+command accepts a plugin slug, plugin file, or plugin path and can report,
+activate, or deactivate the resolved plugin with WordPress plugin APIs.
+
+```json
+{
+  "command": "wordpress.plugin-state",
+  "args": ["action=activate", "plugin=my-plugin"]
+}
+```
+
+The result uses the `wp-codebox/wordpress-plugin-state/v1` schema and includes
+the requested action, resolved target identity, before/after active plugin
+lists, network-active plugin lists where multisite is available, multisite
+support notes, diagnostics, errors, and `artifactRefs`.
 
 ## Runtime Checkpoints
 

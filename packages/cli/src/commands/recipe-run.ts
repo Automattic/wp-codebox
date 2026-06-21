@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -25,7 +25,7 @@ import { RecipePhaseError } from "./recipe-run-phases.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
 import { distributionStartupProbeFailure, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -314,6 +314,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     if (benchResultsList.length > 0) {
       await writeBenchmarkArtifactEvidence(artifacts, benchResultsList)
     }
+    const fuzzRunResult = recipeFuzzRunResult(recipe, executions)
 
     if (recipeFailure) {
       const finalRuntimeInfo = runtimeInfo ?? await runtime.info()
@@ -332,7 +333,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
+        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }),
       })
     }
 
@@ -351,7 +352,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, evidence }),
+      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }),
     })
   } catch (error) {
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
@@ -432,6 +433,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
+    const fuzzRunResult = recipeFuzzRunResult(recipe, executions)
     return await finalizeRecoveredRecipeFailure({
       recipePath,
       runRegistry,
@@ -460,6 +462,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         phaseEvidence: phaseTracker.list(),
         ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
         ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
+        ...(fuzzRunResult ? { fuzzRun: fuzzRunResult } : {}),
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
       },
     })
@@ -820,8 +823,88 @@ echo wp_json_encode(array('counts' => $counts));`
 function phaseWorkflowData(workflowSteps: ReturnType<typeof recipeWorkflowSteps>): Record<string, unknown> {
   return {
     count: workflowSteps.length,
-    steps: workflowSteps.map((workflowStep) => ({ phase: workflowStep.phase, index: workflowStep.index, command: workflowStep.step.command })),
+    steps: workflowSteps.map((workflowStep) => stripUndefined({ phase: workflowStep.phase, index: workflowStep.index, command: workflowStep.step.command, fuzzCaseId: workflowStep.fuzzCaseId, fuzzPhase: workflowStep.fuzzPhase })),
   }
+}
+
+export function recipeFuzzRunResult(recipe: WorkspaceRecipe, executions: RecipeExecutionResult[]): RecipeFuzzRunResult | undefined {
+  if (!recipe.fuzzRun) {
+    return undefined
+  }
+
+  const cases = recipe.fuzzRun.cases.map((fuzzCase, index): RecipeFuzzCaseResult => {
+    const caseExecutions = executions
+      .map((execution, executionIndex) => ({ execution, executionIndex }))
+      .filter(({ execution }) => execution.fuzzCaseId === fuzzCase.case_id)
+    const commandRefs = caseExecutions.map(({ execution, executionIndex }): RecipeFuzzCaseCommandRef => ({
+      executionIndex,
+      phase: execution.fuzzPhase ?? "action",
+      stepIndex: execution.fuzzStepIndex ?? execution.recipeStepIndex ?? 0,
+      command: execution.recipeCommand ?? execution.command,
+      status: execution.exitCode === 0 ? "completed" : "failed",
+      exitCode: execution.exitCode,
+      result: {
+        id: execution.id,
+        startedAt: execution.startedAt,
+        finishedAt: execution.finishedAt,
+        stdout: execution.stdout,
+        stderr: execution.stderr,
+      },
+    }))
+    const status = fuzzCaseStatus(commandRefs, fuzzCase.phases)
+    return stripUndefined({
+      schema: "wp-codebox/fuzz-case-result/v1" as const,
+      case_id: fuzzCase.case_id,
+      index,
+      status,
+      timing: fuzzCaseTiming(commandRefs),
+      input: fuzzCase.input,
+      inputHash: fuzzCase.inputHash,
+      metadata: fuzzCase.metadata,
+      phases: fuzzCasePhaseResults(commandRefs),
+      commandRefs,
+      artifactRefs: (fuzzCase.artifacts ?? []).map((artifact) => stripUndefined({ name: artifact.name, path: artifact.path, required: artifact.required, metadata: artifact.metadata })),
+      diagnostics: commandRefs.filter((ref) => ref.status === "failed").map((ref) => ({ severity: "error" as const, phase: ref.phase, commandRef: ref.executionIndex, message: `${ref.command} exited with ${ref.exitCode}` })),
+      replay: fuzzCase.replay ?? {},
+    }) as RecipeFuzzCaseResult
+  })
+
+  return {
+    schema: "wp-codebox/fuzz-run-result/v1",
+    sourceSchema: "wp-codebox/fuzz-run/v1",
+    status: cases.some((fuzzCase) => fuzzCase.status === "failed") ? "failed" : cases.every((fuzzCase) => fuzzCase.status === "skipped") ? "skipped" : "passed",
+    totalCases: cases.length,
+    cases,
+  }
+}
+
+function fuzzCaseStatus(commandRefs: RecipeFuzzCaseCommandRef[], phases: NonNullable<WorkspaceRecipe["fuzzRun"]>["cases"][number]["phases"]): RecipeFuzzCaseStatus {
+  if (commandRefs.some((ref) => ref.status === "failed")) {
+    return "failed"
+  }
+  const declaredStepCount = (Object.values(phases) as Array<WorkspaceRecipe["workflow"]["steps"] | undefined>).reduce((total, steps) => total + (steps?.length ?? 0), 0)
+  return commandRefs.length >= declaredStepCount ? "passed" : "skipped"
+}
+
+function fuzzCaseTiming(commandRefs: RecipeFuzzCaseCommandRef[]): RecipeFuzzCaseResult["timing"] {
+  const startedAt = commandRefs.map((ref) => ref.result.startedAt).filter(Boolean).sort()[0]
+  const finishedAt = commandRefs.map((ref) => ref.result.finishedAt).filter(Boolean).sort().at(-1)
+  const durationMs = startedAt && finishedAt ? Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) : undefined
+  return stripUndefined({ startedAt, finishedAt, durationMs })
+}
+
+function fuzzCasePhaseResults(commandRefs: RecipeFuzzCaseCommandRef[]): RecipeFuzzCaseResult["phases"] {
+  const phases: RecipeFuzzCaseResult["phases"] = {}
+  for (const phase of ["setup", "action", "assert", "teardown"] as const) {
+    const phaseRefs = commandRefs.filter((ref) => ref.phase === phase)
+    if (phaseRefs.length > 0) {
+      phases[phase] = {
+        status: phaseRefs.some((ref) => ref.status === "failed") ? "failed" : "passed",
+        commandRefs: phaseRefs,
+      }
+    }
+  }
+  return phases
 }
 
 function phaseFixtureDatabaseData(recipe: WorkspaceRecipe): Record<string, unknown> {

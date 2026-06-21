@@ -209,6 +209,36 @@ export interface RuntimeCommandDiagnosticsCaptureSpec {
 
 export type RuntimeCommandDiagnosticsCaptureKind = "wpdb-queries"
 
+export type WorkspaceRecipeFuzzCasePhase = "setup" | "action" | "assert" | "teardown"
+
+export interface WorkspaceRecipeFuzzCaseInputDigest {
+  algorithm: "sha256" | (string & {})
+  value: string
+}
+
+export interface WorkspaceRecipeFuzzCaseReplayMetadata {
+  seed?: string | number
+  inputRef?: string
+  notes?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface WorkspaceRecipeFuzzCase {
+  case_id: string
+  input?: Record<string, unknown>
+  inputHash?: WorkspaceRecipeFuzzCaseInputDigest
+  metadata?: Record<string, unknown>
+  phases: Partial<Record<WorkspaceRecipeFuzzCasePhase, WorkspaceRecipeStep[]>>
+  artifacts?: WorkspaceRecipeDeclaredArtifact[]
+  replay?: WorkspaceRecipeFuzzCaseReplayMetadata
+}
+
+export interface WorkspaceRecipeFuzzRun {
+  schema: "wp-codebox/fuzz-run/v1"
+  cases: WorkspaceRecipeFuzzCase[]
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeFixtureDatabaseReset {
   strategy?: "none" | "truncate-tables"
   tables?: string[]
@@ -503,6 +533,7 @@ export interface WorkspaceRecipe {
     steps: WorkspaceRecipeStep[]
     after?: WorkspaceRecipeStep[]
   }
+  fuzzRun?: WorkspaceRecipeFuzzRun
   artifacts?: {
     directory?: string
     verify?: boolean | WorkspaceRecipeArtifactVerifier

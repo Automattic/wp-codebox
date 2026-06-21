@@ -23,6 +23,8 @@ import {
   normalizePluginCheckOutput,
   normalizeThemeCheckOutput,
   phpunitRunCode,
+  pluginStateInputFromArgs,
+  pluginStatePhpCode,
   PLUGIN_PHPUNIT_RESULT_FILE,
   positiveIntegerArg,
   httpRequestInputFromArgs,
@@ -354,6 +356,23 @@ export async function runPluginCheckCommand({
     artifact: await writePluginCheckArtifacts(artifactRoot, pluginSlug, rawOutput, normalized),
     output: `${JSON.stringify(normalized, null, 2)}\n`,
   }
+}
+
+export async function runPluginStateCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = pluginStateInputFromArgs(spec.args ?? [])
+  const response = await runPlaygroundCommand("wordpress.plugin-state", server, { code: bootstrapPhpCode(runtimeSpec, pluginStatePhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.plugin-state", response)
+  return response.text
 }
 
 export async function runThemeCheckCommand({
