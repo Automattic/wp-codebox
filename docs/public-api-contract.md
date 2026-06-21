@@ -96,6 +96,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Browser metrics:** Node consumers can call `collectBrowserArtifactMetrics()`
   from `@automattic/wp-codebox-playground/public` to summarize browser metrics
   from an existing artifact bundle directory.
+- **Performance observation:** `wp-codebox/performance-observation/v1` describes
+  normalized command diagnostics and performance evidence: elapsed timing, memory
+  delta, database query counts/time/fingerprints, repeated-query summaries, hook
+  timing placeholders, network counts, and browser/admin metric placeholders.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. `wp-codebox/fuzz-suite-result/v1`
@@ -154,6 +158,10 @@ Agent task callers use the `wp-codebox/run-agent-task` ability or
 Artifact handoff, import, and materialization results normalize to
 `wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
 `normalizeArtifactResultEnvelope()`.
+
+Fuzzing callers can attach `performanceObservation()` output to case diagnostics
+or evidence artifacts when command behavior needs comparable performance context.
+`wordpress.run-php` diagnostics include this shape for opted-in query capture.
 
 Fuzzing callers use `fuzzSuiteContract()` to publish or discover suites and
 `fuzzSuiteResultEnvelope()` to return the stable result DTO. Hosts own how cases
