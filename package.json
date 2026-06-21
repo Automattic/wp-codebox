@@ -87,6 +87,7 @@
     "test:browser-runner-template": "tsx tests/browser-runner-template.test.ts",
     "test:editor-actions": "tsx tests/editor-actions.test.ts",
     "test:artifact-result-envelope": "tsx tests/artifact-result-envelope.test.ts",
+    "test:artifact-reference-dtos": "tsx tests/artifact-reference-dtos.test.ts",
     "test:artifact-path-primitives": "tsx tests/artifact-path-primitives.test.ts",
     "test:browser-callback-materialization-contracts": "tsx tests/browser-callback-materialization-contracts.test.ts",
     "test:materialize-replay-package-command": "tsx tests/materialize-replay-package-command.test.ts",
