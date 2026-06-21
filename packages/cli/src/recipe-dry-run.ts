@@ -2,6 +2,7 @@ import { basename, dirname, resolve } from "node:path"
 import { fixtureImportDeterministicIdPlan, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
+import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
 import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
@@ -65,7 +66,7 @@ export interface RecipePlan {
   siteSeeds: RecipeDryRunSiteSeed[]
   stagedFiles: RecipeDryRunStagedFile[]
   probes: RecipeDryRunProbe[]
-  secretEnv: Array<{ name: string; available: boolean }>
+  secretEnv: Array<{ name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
   policy: RuntimePolicy & {
     valid: boolean
     issues: ReturnType<typeof validateRuntimePolicy>["issues"]
@@ -93,7 +94,7 @@ interface RecipeDryRunDistribution {
   safety: {
     network: "deny" | "declared"
     allowedHosts: string[]
-    secretEnv: Array<{ name: string; available: boolean }>
+    secretEnv: Array<{ name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
     ambientSecrets: false
   }
 }
@@ -307,6 +308,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
   const siteSeeds = recipeDryRunSiteSeeds(recipe, recipeDirectory)
   const stagedFiles = await recipeDryRunStagedFiles(recipe, recipeDirectory)
   const workflowSteps = await recipeDryRunSteps(recipe, recipeDirectory, policy, context)
+  const secretEnvSummary = resolveRecipeSecretEnv(recipe.inputs?.secretEnv ?? []).summary
   const probes = await recipeDryRunProbes(recipe, recipeDirectory, policy, context)
   const recipeMounts = await Promise.all((recipe.inputs?.mounts ?? []).map(async (mount) => {
     const source = resolve(recipeDirectory, mount.source)
@@ -430,10 +432,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
     siteSeeds,
     stagedFiles,
     probes,
-    secretEnv: (recipe.inputs?.secretEnv ?? []).map((name) => ({
-      name,
-      available: process.env[name] !== undefined,
-    })),
+    secretEnv: secretEnvSummary.map(recipeDryRunSecretEnvEntry),
     policy: {
       ...policy,
       valid: policyValidation.valid,
@@ -526,12 +525,18 @@ async function recipeDryRunDistribution(distribution: WorkspaceRecipeDistributio
     safety: {
       network: distribution.safety?.network ?? "deny",
       allowedHosts: distribution.safety?.allowedHosts ?? [],
-      secretEnv: (distribution.safety?.secretEnv ?? []).map((name) => ({
-        name,
-        available: process.env[name] !== undefined,
-      })),
+      secretEnv: resolveRecipeSecretEnv(distribution.safety?.secretEnv ?? []).summary.map(recipeDryRunSecretEnvEntry),
       ambientSecrets: false,
     },
+  }
+}
+
+function recipeDryRunSecretEnvEntry(entry: RecipeSecretEnvSummaryEntry): { name: string; available: boolean; status: RecipeSecretEnvSummaryEntry["status"]; source?: string } {
+  return {
+    name: entry.name,
+    available: entry.status === "available",
+    status: entry.status,
+    ...(entry.source ? { source: entry.source } : {}),
   }
 }
 

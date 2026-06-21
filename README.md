@@ -721,7 +721,7 @@ npm run wp-codebox -- run \
 Supported runtime commands today:
 
 - `inspect-mounted-inputs`: list mounted input entries from inside Playground.
-- `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`.
+- `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`. It can opt into bounded command diagnostics with `capture-diagnostics=wpdb-queries` or a recipe step `diagnostics` object; captured `$wpdb->queries` fingerprints are capped and linked as a `wp-codebox/command-diagnostics/v1` artifact from the command result.
 - `wordpress.wp-cli`: run WP-CLI; accepts `command='wp option get home'` or plain args.
 - `wordpress.ability`: execute a registered WordPress Ability; accepts `name=<ability>` and optional JSON `input=<object>`.
 - `wordpress.phpunit`: run a mounted plugin's PHPUnit suite; accepts `plugin-slug=<slug>` (or explicit `code`/`code-file`) plus `test-file`, `autoload-file`, `tests-dir`, and `phpunit-xml`.
@@ -877,7 +877,14 @@ Browser Playground callers can provide sandbox-owned MU plugin source through `r
 
 `browser_runner.invocation.type` supports `ability` for a `namespace/name` WordPress Ability and `task` for a caller-owned WordPress hook. WP Codebox validates the invocation shape, runs it inside the disposable Playground only, and returns normal artifact metadata without encoding product-specific repair semantics.
 
-The packaged browser runtime exposes `window.wpCodeboxBrowser.runBrowserSessionRecipe( client, sessionOutput, taskPayload?, options? )` for executing the `wp-codebox/create-browser-playground-session` response. Pass the full ability output as `sessionOutput`; WP Codebox resolves `sessionOutput.recipe`, stages `taskPayload` or `sessionOutput.task_input` at the recipe's browser task path, runs the generated PHP request step through Playground, and returns the parsed runner result. Product callers should use this helper instead of reading `recipe.workflow.steps` or extracting `code=` arguments themselves.
+The packaged browser runtime exposes `window.wpCodeboxBrowser.v1` as the stable browser SDK for product callers and keeps legacy top-level helpers available for internal compatibility. Use `window.wpCodeboxBrowser.v1.runBrowserSessionRecipe( client, sessionOutput, taskPayload?, options? )` to execute the `wp-codebox/create-browser-playground-session` response and receive a `wp-codebox/browser-run-result/v1` envelope. Pass the full ability output as `sessionOutput`; WP Codebox resolves `sessionOutput.recipe`, stages `taskPayload` or `sessionOutput.task_input` at the recipe's browser task path, runs the generated PHP request step through Playground, and normalizes the result. Product callers should use this helper instead of reading `recipe.workflow.steps`, extracting `code=` arguments, or depending on legacy raw runner variants.
+
+Browser run and artifact outputs use one product-safe DTO lane:
+
+- `wp-codebox/browser-run-result/v1` reports `operation`, `status`, `success`, normalized `result`, `artifactRefs`, `diagnostics`, and an `error` on failure.
+- `wp-codebox/browser-artifact-persistence/ref/v1` reports persisted browser artifact data and canonical `artifactRefs`. Older `wp-codebox/browser-artifact-persistence-projection/v1` inputs are still accepted by helpers for compatibility, but new consumer-facing output uses the `/ref/v1` schema.
+- `window.wpCodeboxBrowser.v1.normalizeBrowserRunResult()` and `browserArtifactPersistenceRef()` normalize legacy browser runner/materialization variants into those DTOs.
+- Non-browser TypeScript consumers should use the equivalent public DTO helpers from `@automattic/wp-codebox-core/public`: `normalizeBrowserRunResult()`, `browserRunResultEnvelope()`, `browserArtifactPersistenceProjection()`, `persistedBrowserArtifactRefs()`, and `artifactBundleFileManifest()`.
 
 `browser_runner.capture_paths` is the generic result-capture layer for browser materialization. Each entry names a sandbox-local file that the generated runner should read after the ability or hook returns. The runner writes `/tmp/wp-codebox-agent-result.json` with `wp-codebox/browser-materialization/v1`, normalized `success`/`status`/`error` fields, invocation metadata, the raw response, and captured files as `wp-codebox/browser-capture/v1` records. JSON files are decoded into `json`, text files into `content`, and binary files into `content_base64`, bounded by `max_bytes`.
 
@@ -1137,6 +1144,40 @@ Artifact bundle ids are content-addressed for the apply-back contract. The runti
 
 Every `manifest.files[]` entry also carries `sha256: { "algorithm": "sha256", "value": "..." }`. For regular files, `value` is the SHA-256 of that artifact file's bytes. For `manifest.json`, `value` is a canonical self-hash over the parsed manifest with the manifest entry's own hash replaced by 64 zeroes, using the `wp-codebox/artifact-manifest-self/v1` domain separator. `wp-codebox artifacts verify` rejects missing hashes and mismatched hashes for any declared file, so tampering with replay-critical or supporting artifacts is detected even when the top-level content digest inputs are unchanged.
 
+Scenario and fuzz-style workflows can add optional case-level indexes under
+`manifest.cases[]` without introducing a dedicated runner contract. Each case
+has a stable `id`, optional `hash` or `digest`, `artifacts[]` refs with
+bundle-relative paths and optional SHA-256 values, redaction metadata, and
+verification metadata such as `status`, `verifiedAt`, and `verifier`:
+
+```json
+{
+  "cases": [
+    {
+      "id": "case-1",
+      "hash": { "algorithm": "sha256", "value": "..." },
+      "artifacts": [
+        {
+          "path": "files/cases/case-1.json",
+          "kind": "case-result",
+          "contentType": "application/json",
+          "sha256": { "algorithm": "sha256", "value": "..." },
+          "publicUrl": "https://example.test/artifacts/files/cases/case-1.json",
+          "redaction": { "policy": "none", "sensitive": false }
+        }
+      ],
+      "verification": { "status": "passed", "verifiedAt": "2026-05-27T00:00:00.000Z" }
+    }
+  ]
+}
+```
+
+Case artifact paths must be present in `manifest.files[]`. When a case artifact
+declares `sha256`, `wp-codebox artifacts verify` hashes the referenced file and
+fails on mismatch. Reviewer-facing case `publicUrl` values and manifest viewer
+bases must be absolute HTTP(S) URLs and must not point at loopback or local
+hosts, so public refs do not expose host-local paths as review evidence.
+
 `wp-codebox artifacts verify` also fails closed on unsafe bundle topology: all
 declared file paths must be bundle-relative, non-duplicated, traversal-free,
 listed in `manifest.files[]` when used as digest inputs or evidence refs, and
@@ -1233,19 +1274,30 @@ Binary files and oversized files are copied when allowed by capture limits but a
 
 ## WordPress Plugin
 
-The WordPress plugin registers parent-site abilities:
+The WordPress plugin registers parent-site abilities. Canonical consumer-facing
+names are listed first; compatibility aliases stay registered where older callers
+already use them and expose `meta.canonical_ability` in ability metadata.
 
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
+- `wp-codebox/run-agent-task-fanout`
+- `wp-codebox/create-browser-playground-session`
+- `wp-codebox/browser-connector-request`
+- `wp-codebox/prepare`
+- `wp-codebox/capture`
+- `wp-codebox/command`
+- `wp-codebox/publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
+- `wp-codebox/review-artifact`
+- `wp-codebox/apply-artifact-preflight`
 - `wp-codebox/apply-approved-artifact`
 - `wp-codebox/stage-artifact-apply`
 
 Canonical agent-task execution paths are intentionally split by caller runtime:
 
-- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Playground sandboxes, mount the configured agent stack, invoke the sandbox agent through `agents/chat`, and return artifact metadata.
+- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Codebox sandboxes, mount the configured agent stack, invoke the configured sandbox-local task, and return artifact metadata. The current implementation may use WordPress Playground and upstream runtime abilities such as `agents/chat`; callers should treat those as backend details behind the Codebox contract.
 - Portable CLI execution uses `wp-codebox recipe-run --recipe <path>`. Recipes use the `wp-codebox.agent-sandbox-run` helper step when they need the agent-task bridge; direct `agent-sandbox-run` remains an operator/debug command, not the product API for frontend callers.
 - No-Node/browser execution uses `wp-codebox/create-browser-playground-session`. The host prepares a browser-executable Playground recipe and runner payload; the browser executes `wordpress.run-php` inside Playground instead of requiring host shell or Node access.
 
@@ -1339,7 +1391,7 @@ Generic caller-owned `request.json` payloads may use this shape:
 }
 ```
 
-WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes stable top-level `status`, `session`, `artifacts`, `diagnostics`, `evidence_refs`, `run_metadata`, `completion_outcome`, and raw `run` fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
+WP Codebox normalizes the task input, writes the private temporary recipe, runs `wp-codebox recipe-run`, then deletes temporary recipe/seed files. The JSON response keeps `schema: "wp-codebox/agent-task-run/v1"` and includes `agent_task_run_result` with `schema: "wp-codebox/agent-task-run-result/v1"`. Consumers should read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, `agent_task_run_result.metadata`, and `failure_evidence` instead of parsing stdout, raw `run` internals, or legacy top-level status fields. Secret values are never accepted in the request or returned in the response; `secret_env` carries names only.
 
 Failed `agent-task-run` responses also include `failure_evidence` with `schema: "wp-codebox/agent-task-run-failure-evidence/v1"`. This block is intentionally safe for parent orchestrators to persist alongside their own task failure record. It includes the best available `phase`, `command`, `exit_code`, message, stdout/stderr snippets, runtime and sandbox identifiers, artifact directory or bundle identifiers, recipe-run status/run ID, diagnostics, phase evidence, and the serialized error. If recipe-run fails before normal runtime artifacts exist or returns malformed output, `agent-task-run` still emits this fallback evidence block in the CLI JSON payload and references it from `evidence_refs` with kind `codebox-agent-task-failure-evidence`.
 
@@ -1347,7 +1399,7 @@ Provider stacks are assembled from generic primitives: `provider_plugin_paths`, 
 
 Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. The cookbook recipe at `examples/recipes/cookbook/codex-agent-smoke.json` shows one concrete provider setup using these primitives without adding provider-specific behavior to WP Codebox itself.
 
-Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core`. It accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
+Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()`, `AGENT_TASK_RUN_RESULT_SCHEMA`, and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` from `@automattic/wp-codebox-core`. The helper accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 

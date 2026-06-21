@@ -14,6 +14,11 @@ The command reads one JSON request from `--input-file`, writes a single JSON env
 
 Direct `wp-codebox agent-sandbox-run` remains an operator/debug command. Product orchestrators should call `agent-task-run` or the parent-site `wp-codebox/run-agent-task` ability so WP Codebox can build the private recipe, capture artifacts, normalize no-op/failure evidence, and clean up temporary recipe files.
 
+Terms such as Agents API, Data Machine Code, and WordPress Playground in this
+document identify current upstream adapters or runtime backends. They are
+implementation details behind the Codebox-owned CLI command, ability ids, and
+`wp-codebox/*` schemas unless explicitly listed as stable Codebox contracts.
+
 ## Input Boundary
 
 `request.json` uses the task input contract plus agent runtime placement fields:
@@ -130,7 +135,7 @@ WP Codebox rejects product ability paths that pass raw `code` or `code_file`. De
 }
 ```
 
-`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. Orchestrators should normalize the full `agent-task-run` envelope with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`. The normalized `wp-codebox/agent-task-run-result/v1` groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
+`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. `agent_task_run_result` is the caller-facing `wp-codebox/agent-task-run-result/v1` contract emitted by the CLI and WordPress ability surfaces. Orchestrators should read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, and `agent_task_run_result.metadata` instead of parsing stdout or raw runtime internals. Node consumers can also normalize older or nested envelopes with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`; the package exports `AGENT_TASK_RUN_RESULT_SCHEMA` and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` for contract checks. The normalized envelope groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
 
 Failed `agent-task-run` responses include `wp-codebox/agent-task-run-failure-evidence/v1` in `failure_evidence` when available. This block is safe for orchestrators to persist with job failure records and includes phase, command, exit code, redacted stdout/stderr snippets, runtime and sandbox identifiers, artifact references, diagnostics, and serialized error data.
 
@@ -174,12 +179,28 @@ Runner workspace publication is a separate exported contract in runtime-core:
 - `wp-codebox/runner-workspace-command-request/v1`
 - `wp-codebox/runner-workspace-command-result/v1`
 
-External orchestrators own the backend that turns a sandbox result into a durable workspace, branch, commit, PR, package, or other publication target. WP Codebox defines the request/result shapes so callers can exchange workspace identity, changed paths, commit/PR metadata, evidence context, and backend failure information without encoding placement policy in the sandbox runtime.
+External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into WP Codebox-owned runner workspace abilities, so callers never import backend ability names.
+
+Runner workspace backends are integration-owned. A site that wants these abilities
+to perform real workspace operations must register a backend through the
+`wp_codebox_runner_workspace_backend` filter. If no backend is registered, the
+WP Codebox abilities return an unavailable backend result instead of naming or
+assuming a downstream workspace system.
+
+Preferred ability names for external callers are:
+
+- `wp-codebox/runner-workspace-prepare`
+- `wp-codebox/runner-workspace-capture`
+- `wp-codebox/runner-workspace-command`
+- `wp-codebox/runner-workspace-publish`
+
+Short aliases (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) remain registered for existing callers.
 
 ## Provider Runtime Invocation Names
 
 Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:
 
+- `wp-codebox.runner-workspace.prepare` / `wp-codebox/runner-workspace-prepare` for runner workspace preparation.
 - `wp-codebox.runner-workspace.capture` / `wp-codebox/runner-workspace-capture` for runner workspace status and diff capture.
 - `wp-codebox.runner-workspace.command` / `wp-codebox/runner-workspace-command` for bounded runner workspace commands.
 - `wp-codebox.runner-workspace.publish` / `wp-codebox/runner-workspace-publish` for branch, commit, PR, or equivalent publication handoff.
@@ -187,6 +208,39 @@ Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` throug
 - `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
 
 These names are identifiers and contract anchors, not a queue or policy implementation. The corresponding result schemas remain the existing runner workspace, tool-call transcript, and evidence artifact envelope contracts. External orchestrators still own backend placement, authorization, retries, retention, and publication policy.
+
+## Runtime Profiles
+
+Parent-site callers may request runtime stack concepts with `runtime_profile`,
+`runtime_profiles`, `runtime_components`, or `runtime_capabilities`. WP Codebox
+ships only generic defaults for the WordPress Playground sandbox, the agent
+runtime substrate, and provider-plugin mounting. Product runtime stacks are
+registered by integrations with `wp_codebox_runtime_profile_registry`.
+
+Profile descriptors support `aliases` so consumers can request stable concepts
+such as `agent-runtime` or an integration-owned alias without coupling to a
+plugin slug. Unknown explicit profile names fail closed with
+`wp_codebox_runtime_profile_unresolved`; unknown component slugs remain caller
+components and are passed through as runtime component entries.
+
+Provider credentials are outside the runtime profile contract. Profiles may
+request connector inheritance or name `secret_env` variables, but raw credential
+values stay in the parent process or provider integration and must not be stored
+in task JSON or artifacts. Provider-specific credential adapters belong in the
+provider or integration package that owns those credentials, not in WP Codebox's
+generic runtime profile defaults.
+
+## Agents API Adapter Boundary
+
+WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the upstream ability names and execution wrapper for:
+
+- `chat()` -> `agents/chat`.
+- `run_task()` -> `agents/run-task`.
+- `run_runtime_package()` -> `agents/run-runtime-package`.
+- `get_task_run()` / `cancel_task_run()` -> task run-control abilities.
+- `get_chat_run()`, `cancel_chat_run()`, `queue_chat_message()`, and `list_chat_run_events()` -> chat run-control abilities.
+
+This is the Codebox-facing adapter contract for upstream Agents API integration. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser runtime principals; that bridge remains private generated code and should not become a consumer API.
 
 ## Heartbeat And Cleanup Metadata
 

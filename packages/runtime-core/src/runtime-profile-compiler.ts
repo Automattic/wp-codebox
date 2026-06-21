@@ -11,10 +11,13 @@ export interface RuntimeProfileDependencyPlan {
 export interface RuntimeProfileExecutionPlan {
   schema: "wp-codebox/runtime-profile-execution-plan/v1"
   dependency_plan: RuntimeProfileDependencyPlan
+  capabilities?: string[]
   extra_plugins?: WorkspaceRecipeExtraPlugin[]
   runtime_overlays?: Array<Record<string, unknown>>
   runtime_env?: Record<string, string>
   readiness?: RuntimeProfileReadiness
+  diagnostics?: RuntimeProfile["diagnostics"]
+  provenance?: RuntimeProfile["provenance"]
 }
 
 export interface RuntimeProfilePreflight {
@@ -45,10 +48,13 @@ export function compileRuntimeProfile(input: unknown): RuntimeProfileExecutionPl
       runtime_overlays: runtimeOverlays,
       runtime_env: profile.env,
     }) as RuntimeProfileDependencyPlan,
+    capabilities: profile.capabilities,
     extra_plugins: componentPlugins.length > 0 ? componentPlugins : undefined,
     runtime_overlays: runtimeOverlays.length > 0 ? runtimeOverlays : undefined,
     runtime_env: profile.env,
     readiness,
+    diagnostics: profile.diagnostics,
+    provenance: profile.provenance,
   }) as RuntimeProfileExecutionPlan
 }
 

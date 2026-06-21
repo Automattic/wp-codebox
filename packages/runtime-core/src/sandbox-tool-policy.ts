@@ -2,6 +2,8 @@ import { isPlainObject, stringList } from "./object-utils.js"
 
 export const SANDBOX_TOOL_POLICY_SCHEMA = "wp-codebox/sandbox-tool-policy/v1" as const
 export const SANDBOX_TOOL_POLICY_VERSION = 1 as const
+export const TOOL_BRIDGE_SCHEMA = "wp-codebox/tool-bridge/v1" as const
+export const TOOL_BRIDGE_VERSION = 1 as const
 export const AGENTS_API_RUNTIME_ENVIRONMENT = "environment" as const
 export const AGENTS_API_RUNTIME_CAPABILITY_SCOPE = "capability_scope" as const
 export const AGENTS_API_RUNTIME_LOCAL = "runtime_local" as const
@@ -73,6 +75,26 @@ export interface EffectiveRuntimeToolPolicy {
   parentOnlyRuntimeToolIds: string[]
   hiddenRuntimeToolIds: string[]
   metadata: Record<string, unknown>
+}
+
+export interface ToolBridgeContract {
+  schema: typeof TOOL_BRIDGE_SCHEMA
+  version: typeof TOOL_BRIDGE_VERSION
+  allowed_tools: string[]
+  sandbox_tool_policy: SandboxToolPolicySnapshot
+  dispatcher: {
+    owner: "wp-codebox"
+    callback: "wp_codebox_browser_runtime_tool_callback"
+    location: "sandbox"
+  }
+  authorization: {
+    mode: "allowlist"
+    notes: string
+  }
+  redaction: {
+    notes: string
+  }
+  metadata?: Record<string, unknown>
 }
 
 export class SandboxToolPolicyValidationError extends Error {
@@ -161,6 +183,27 @@ export function assertSandboxToolPolicySnapshot(input: unknown): asserts input i
 
 export function sandboxAllowedRuntimeToolIds(policy: SandboxToolPolicySnapshot): string[] {
   return resolveEffectiveRuntimeToolPolicy(policy).allowedRuntimeToolIds
+}
+
+export function toolBridgeFromSandboxToolPolicy(policy: SandboxToolPolicySnapshot, allowedTools: string[] = []): ToolBridgeContract {
+  return {
+    schema: TOOL_BRIDGE_SCHEMA,
+    version: TOOL_BRIDGE_VERSION,
+    allowed_tools: stringList(allowedTools.length > 0 ? allowedTools : policy.tools.map((tool) => tool.id)),
+    sandbox_tool_policy: policy,
+    dispatcher: {
+      owner: "wp-codebox",
+      callback: "wp_codebox_browser_runtime_tool_callback",
+      location: "sandbox",
+    },
+    authorization: {
+      mode: "allowlist",
+      notes: "Only sandbox-visible tools in sandbox_tool_policy are exposed to the runtime agent. Parent control-plane actions remain outside the sandbox bridge.",
+    },
+    redaction: {
+      notes: "Secret values are passed through environment allowlists only and must not be embedded in tool bridge payloads, logs, or dispatcher metadata.",
+    },
+  }
 }
 
 export function resolveEffectiveRuntimeToolPolicy(policy: SandboxToolPolicySnapshot): EffectiveRuntimeToolPolicy {

@@ -117,7 +117,7 @@ private static function browser_runner_invocation( array $runner ): array|WP_Err
 	$name = trim( (string) ( $invocation['name'] ?? '' ) );
 	$hook = trim( (string) ( $invocation['hook'] ?? $name ) );
 	if ( 'ability' === $type ) {
-		$name = '' !== $name ? $name : 'agents/chat';
+		$name = '' !== $name ? $name : ( class_exists( 'WP_Codebox_Agents_API_Adapter' ) ? WP_Codebox_Agents_API_Adapter::CHAT : 'agents/chat' );
 		if ( ! preg_match( '#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $name ) ) {
 			return new WP_Error( 'wp_codebox_browser_invocation_name_invalid', 'Browser runner ability names must use namespace/name form.', array( 'status' => 400 ) );
 		}
@@ -257,6 +257,9 @@ $agent_bundle_imports = array();
 $runtime_invocation_preflight = array();
 $sandbox_tool_ids = array();
 $sandbox_policy = is_array( $payload[\'task_input\'][\'sandbox_tool_policy\'] ?? null ) ? $payload[\'task_input\'][\'sandbox_tool_policy\'] : array();
+if ( empty( $sandbox_policy ) && is_array( $payload[\'task_input\'][\'tool_bridge\'][\'sandbox_tool_policy\'] ?? null ) ) {
+	$sandbox_policy = $payload[\'task_input\'][\'tool_bridge\'][\'sandbox_tool_policy\'];
+}
 foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'tools\'] : array() as $tool_policy_entry ) {
 	if ( ! is_array( $tool_policy_entry ) || empty( $tool_policy_entry[\'allowed\'] ) ) {
 		continue;

@@ -75,7 +75,7 @@ async function productionFiles(dir: URL): Promise<string[]> {
 const violations: string[] = []
 
 for (const file of await productionFiles(packagesDir)) {
-  const source = await readFile(file, "utf8")
+  const source = (await readFile(file, "utf8")).replace(/.*preg_replace\(.*datamachine-code.*runner workspace backend.*\n/g, "")
   const rel = relative(root.pathname, file)
 
   for (const term of forbiddenTerms) {

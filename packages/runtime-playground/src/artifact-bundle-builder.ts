@@ -257,6 +257,7 @@ export class ArtifactBundleBuilder {
       ...(durablePreview ? durablePreview.manifestFiles : []),
       ...source.browserManifestFiles(),
       ...source.observationManifestFiles(),
+      ...commandArtifactManifestFiles(source.artifactRoot, source.commands),
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
       ...runtimeSnapshotFiles,
@@ -478,6 +479,23 @@ export class ArtifactBundleBuilder {
       createdAt,
     }
   }
+}
+
+function commandArtifactManifestFiles(artifactRoot: string, commands: ExecutionResult[]): ArtifactManifestFile[] {
+  const seen = new Set<string>()
+  return commands.flatMap((command) => [
+    ...(command.artifactRefs ?? []),
+    ...(command.result?.artifactRefs ?? []),
+  ]).flatMap((ref) => {
+    if (typeof ref.path !== "string" || ref.path.length === 0) {
+      return []
+    }
+    if (seen.has(ref.path)) {
+      return []
+    }
+    seen.add(ref.path)
+    return [artifactManifestFile(join(artifactRoot, ref.path), ref.kind || "command-artifact", ref.path.endsWith(".json") ? "application/json" : "text/plain")]
+  })
 }
 
 async function firstRuntimeStateSnapshotPayload(snapshots: Snapshot[]): Promise<RuntimeSnapshotArtifact | undefined> {

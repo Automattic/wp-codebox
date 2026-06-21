@@ -28,6 +28,7 @@ export function bootstrapPhpCode(spec: RuntimeCreateSpec, code: string, args: st
   return `<?php
 ${phpFatalDiagnosticPhp()}
 ${pluginRuntimeBootstrapPhp(spec)}
+${saveQueriesBootstrapPhp(args)}
 ${runtimeEnvPhp(spec)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
@@ -37,6 +38,18 @@ ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCli
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
 ${phpBody(code)}`
+}
+
+function saveQueriesBootstrapPhp(args: string[]): string {
+  const capture = argValue(args, "capture-diagnostics")
+  if (!capture?.split(",").map((item) => item.trim()).includes("wpdb-queries")) {
+    return ""
+  }
+
+  return `if (!defined('SAVEQUERIES')) {
+    define('SAVEQUERIES', true);
+}
+`
 }
 
 function phpFatalDiagnosticPhp(): string {

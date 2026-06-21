@@ -2,7 +2,7 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileListDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
-import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
+import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, ArtifactManifestCase, ArtifactManifestCaseArtifactRef, ArtifactManifestCaseVerificationMetadata, ArtifactManifestFile } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import { RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
@@ -133,6 +133,9 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
       violations.push({ code: "invalid-manifest-shape", path: fieldPath, file: file.path, message: `Manifest file path is duplicated: ${file.path}` })
     }
     manifestFiles.add(file.path)
+    if (file.viewer?.base) {
+      validateReviewerPublicUrl(file.viewer.base, `${fieldPath}.viewer.base`, violations, file.path)
+    }
     try {
       await verifyBundleFileTopology(bundleDirectory, file.path, fieldPath, violations)
     } catch {
@@ -167,6 +170,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyRuntimeReplayReferenceIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyTypedArtifactIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
   await verifyToolCallTranscriptArtifacts(bundleDirectory, manifest, manifestFiles, violations)
+  await verifyManifestCases(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
 }
@@ -372,6 +376,7 @@ function isArtifactManifestShape(value: unknown): value is ArtifactManifest {
     && typeof contentDigest.value === "string"
     && Array.isArray(value.files)
     && value.files.every(isArtifactManifestFileShape)
+    && (value.cases === undefined || (Array.isArray(value.cases) && value.cases.every(isArtifactManifestCaseShape)))
 }
 
 function isArtifactManifestFileShape(value: unknown): value is ArtifactManifestFile {
@@ -379,6 +384,34 @@ function isArtifactManifestFileShape(value: unknown): value is ArtifactManifestF
     && typeof value.path === "string"
     && typeof value.kind === "string"
     && typeof value.contentType === "string"
+}
+
+function isArtifactManifestCaseShape(value: unknown): value is ArtifactManifestCase {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && value.id.trim().length > 0
+    && (value.hash === undefined || isArtifactFileDigestShape(value.hash))
+    && (value.digest === undefined || isArtifactFileDigestShape(value.digest))
+    && Array.isArray(value.artifacts)
+    && value.artifacts.every(isArtifactManifestCaseArtifactRefShape)
+    && (value.verification === undefined || isArtifactManifestCaseVerificationMetadataShape(value.verification))
+}
+
+function isArtifactManifestCaseArtifactRefShape(value: unknown): value is ArtifactManifestCaseArtifactRef {
+  return isRecord(value)
+    && typeof value.path === "string"
+    && typeof value.kind === "string"
+    && (value.contentType === undefined || typeof value.contentType === "string")
+    && (value.sha256 === undefined || isArtifactFileDigestShape(value.sha256))
+    && (value.publicUrl === undefined || typeof value.publicUrl === "string")
+}
+
+function isArtifactManifestCaseVerificationMetadataShape(value: unknown): value is ArtifactManifestCaseVerificationMetadata {
+  return isRecord(value)
+    && typeof value.status === "string"
+    && (value.verifiedAt === undefined || typeof value.verifiedAt === "string")
+    && (value.verifier === undefined || typeof value.verifier === "string")
+    && (value.diagnostics === undefined || (Array.isArray(value.diagnostics) && value.diagnostics.every((diagnostic) => typeof diagnostic === "string")))
 }
 
 function isRuntimeReferenceManifestShape(value: unknown): value is RuntimeReferenceManifest {
@@ -982,6 +1015,67 @@ async function verifyTypedArtifactFileDigest(directory: string, path: string, ex
     }
   } catch (error) {
     violations.push({ code: "missing-file", path: fieldPath, file: path, message: `Unable to read typed artifact file: ${errorMessage(error)}` })
+  }
+}
+
+async function verifyManifestCases(directory: string, manifest: ArtifactManifest, manifestFiles: Set<string>, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  if (!manifest.cases) {
+    return
+  }
+
+  const caseIds = new Set<string>()
+  for (const [caseIndex, manifestCase] of manifest.cases.entries()) {
+    const casePath = `manifest.cases[${caseIndex}]`
+    if (caseIds.has(manifestCase.id)) {
+      violations.push({ code: "invalid-manifest-shape", path: `${casePath}.id`, message: `Case id is duplicated: ${manifestCase.id}` })
+    }
+    caseIds.add(manifestCase.id)
+
+    if (manifestCase.verification?.verifiedAt !== undefined && Number.isNaN(new Date(manifestCase.verification.verifiedAt).valueOf())) {
+      violations.push({ code: "invalid-manifest-shape", path: `${casePath}.verification.verifiedAt`, message: "Case verification verifiedAt must be a valid date string." })
+    }
+
+    for (const [artifactIndex, artifact] of manifestCase.artifacts.entries()) {
+      const artifactPath = `${casePath}.artifacts[${artifactIndex}]`
+      validateArtifactReference(artifact.path, `${artifactPath}.path`, manifestFiles, violations)
+      if (artifact.sha256) {
+        await verifyManifestCaseArtifactDigest(directory, artifact.path, artifact.sha256, `${artifactPath}.sha256`, violations)
+      }
+      if (artifact.publicUrl !== undefined) {
+        validateReviewerPublicUrl(artifact.publicUrl, `${artifactPath}.publicUrl`, violations, artifact.path)
+      }
+    }
+  }
+}
+
+async function verifyManifestCaseArtifactDigest(directory: string, path: string, sha256: ArtifactFileDigest, fieldPath: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  try {
+    const actualSha256 = artifactFileDigest(await readFile(join(directory, path))).value
+    if (actualSha256 !== sha256.value) {
+      violations.push({ code: "file-hash-mismatch", path: fieldPath, file: path, message: `Case artifact digest mismatch for ${path}: expected ${actualSha256}, got ${sha256.value}` })
+    }
+  } catch (error) {
+    violations.push({ code: "missing-file", path: fieldPath, file: path, message: `Unable to read case artifact file: ${errorMessage(error)}` })
+  }
+}
+
+function validateReviewerPublicUrl(value: string, fieldPath: string, violations: ArtifactBundleVerificationViolation[], file?: string): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    violations.push({ code: "malformed-reference", path: fieldPath, file, message: "Reviewer-facing artifact URL must be an absolute http:// or https:// URL." })
+    return
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    violations.push({ code: "unsafe-file", path: fieldPath, file, message: "Reviewer-facing artifact URL must use http:// or https://." })
+    return
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  if (hostname === "localhost" || hostname === "0.0.0.0" || hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname) || hostname.endsWith(".local")) {
+    violations.push({ code: "unsafe-file", path: fieldPath, file, message: "Reviewer-facing artifact URL must not use a loopback or local host." })
   }
 }
 

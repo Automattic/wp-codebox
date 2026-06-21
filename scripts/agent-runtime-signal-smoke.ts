@@ -29,7 +29,7 @@ try {
 
   const agentOutput = await runRecipe(agentRecipePath)
   assert.equal(agentOutput.success, true)
-  const agentPayload = JSON.parse(String(agentOutput.executions?.[0]?.stdout ?? "{}")) as { output?: string }
+  const agentPayload = sandboxPayload(agentOutput, "wp-codebox.agent-sandbox-run")
   assert.equal(agentPayload.output, "1")
 
   const frontendRecipePath = join(root, "frontend-run-php-recipe.json")
@@ -47,16 +47,38 @@ try {
 
   const frontendOutput = await runRecipe(frontendRecipePath)
   assert.equal(frontendOutput.success, true)
-  assert.equal(frontendOutput.executions?.[0]?.stdout, "unset")
+  assert.equal(sandboxOutput(frontendOutput, "wordpress.run-php"), "unset")
 
   console.log("agent-runtime-signal-smoke: ok")
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
 
-async function runRecipe(recipePath: string): Promise<{ success?: boolean; executions?: Array<{ stdout?: string }> }> {
+async function runRecipe(recipePath: string): Promise<RecipeRunDebugOutput> {
   const output = await captureStdout(async () => await runRecipeRunCommand(["--recipe", recipePath, "--json"]))
-  return JSON.parse(output) as { success?: boolean; executions?: Array<{ stdout?: string }> }
+  return JSON.parse(output) as RecipeRunDebugOutput
+}
+
+type RecipeRunDebugOutput = {
+  success?: boolean
+  executions?: Array<{ stdout?: string; recipeCommand?: string; command?: string; recipe_phase?: string }>
+  result?: { commands?: Array<{ command?: string; recipe_phase?: string; stdout_tail?: string }>; summary?: { commands?: Array<{ command?: string; recipe_phase?: string; stdout_tail?: string }> } }
+}
+
+function sandboxPayload(output: RecipeRunDebugOutput, command: string): { output?: string } {
+  const raw = sandboxOutput(output, command)
+  assert.ok(raw, `Expected ${command} output in recipe-run executions or summary commands`)
+  return JSON.parse(raw) as { output?: string }
+}
+
+function sandboxOutput(output: RecipeRunDebugOutput, command: string): string {
+  const execution = output.executions?.find((entry) => entry.recipeCommand === command || entry.command === command || entry.recipe_phase === "steps")
+  if (execution?.stdout) {
+    return execution.stdout
+  }
+
+  const summaryCommand = output.result?.commands?.find((entry) => entry.command === command || entry.recipe_phase === "steps")
+  return summaryCommand?.stdout_tail ?? output.result?.summary?.commands?.find((entry) => entry.command === command || entry.recipe_phase === "steps")?.stdout_tail ?? ""
 }
 
 async function captureStdout(callback: () => Promise<unknown>): Promise<string> {

@@ -156,7 +156,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'result_path' => '/tmp/wp-codebox-browser-result.json',
 				'invocation'  => array(
 					'type' => 'ability',
-					'name' => 'agents/chat',
+					'name' => class_exists( 'WP_Codebox_Agents_API_Adapter' ) ? WP_Codebox_Agents_API_Adapter::CHAT : 'agents/chat',
 				),
 			),
 		);
@@ -356,6 +356,7 @@ final class WP_Codebox_Browser_Task_Builder {
 			array(
 				'schema'       => 'wp-codebox/runtime-profile/v1',
 				'id'           => trim( (string) ( $profile['id'] ?? '' ) ),
+				'capabilities' => self::string_list_any( $profile['capabilities'] ?? array() ),
 				'component_contracts' => self::object_list( $profile['component_contracts'] ?? array() ),
 				'extra_plugins'       => self::object_list( $profile['extra_plugins'] ?? array() ),
 				'provider_plugins'    => self::object_list( $profile['provider_plugins'] ?? array() ),
@@ -370,6 +371,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'bootstrap'    => is_array( $profile['bootstrap'] ?? null ) ? $profile['bootstrap'] : array(),
 				'env'          => is_array( $profile['env'] ?? null ) ? self::string_map( $profile['env'] ) : array(),
 				'readiness'    => is_array( $profile['readiness'] ?? null ) ? self::compact_public_value( $profile['readiness'] ) : array(),
+				'diagnostics'  => self::object_list( $profile['diagnostics'] ?? array() ),
 				'provenance'   => is_array( $profile['provenance'] ?? null ) ? self::compact_public_value( $profile['provenance'] ) : array(),
 				'metadata'     => is_array( $profile['metadata'] ?? null ) ? self::compact_public_value( $profile['metadata'] ) : array(),
 			),
@@ -381,6 +383,15 @@ final class WP_Codebox_Browser_Task_Builder {
 
 	/** @param array<string,mixed> $input Browser task input. @return array<string,mixed> */
 	public static function apply_runtime_profile( array $input ): array {
+		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$profile_input = is_array( $input['runtime_profile'] ?? null ) ? $input['runtime_profile'] : array();
+		if ( class_exists( 'WP_Codebox_Runtime_Profile_Resolver' ) && empty( $runtime['resolved_profile'] ) && empty( $profile_input['resolved_profile'] ) ) {
+			$resolved = WP_Codebox_Runtime_Profile_Resolver::apply_to_input( $input );
+			if ( ! is_wp_error( $resolved ) ) {
+				$input = $resolved;
+			}
+		}
+
 		$profile = is_array( $input['runtime_profile'] ?? null ) ? self::runtime_profile( $input['runtime_profile'] ) : array();
 		if ( empty( $profile ) ) {
 			return $input;

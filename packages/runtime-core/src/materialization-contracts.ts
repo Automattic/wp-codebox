@@ -1,7 +1,9 @@
 import type { RuntimeRunArtifactRef } from "./run-registry.js"
 
 export const MATERIALIZATION_RESULT_SCHEMA = "wp-codebox/materialization-result/v1" as const
-export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
+export const BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA = "wp-codebox/browser-artifact-persistence/ref/v1" as const
+export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
+export const LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
 export const ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA = "wp-codebox/artifact-bundle-file-manifest/v1" as const
 
 export interface MaterializationArtifactRef {
@@ -83,6 +85,15 @@ export interface SkippedMaterializationResultEnvelope extends MaterializationRes
 
 export type MaterializationResultEnvelope = CompletedMaterializationResultEnvelope | FailedMaterializationResultEnvelope | SkippedMaterializationResultEnvelope
 
+export interface MaterializationResultEnvelopeExtraction {
+  report?: Record<string, unknown>
+  response?: Record<string, unknown>
+  result?: Record<string, unknown>
+  task?: string
+  error?: FailedMaterializationResultEnvelope["error"]
+  malformed?: boolean
+}
+
 export interface BrowserArtifactProjectionInput {
   artifact?: Record<string, unknown> | null
   artifacts?: unknown
@@ -92,14 +103,16 @@ export interface BrowserArtifactProjectionInput {
   result?: Record<string, unknown> | null
 }
 
-export interface BrowserArtifactPersistenceProjection {
-  schema: typeof BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
+export interface BrowserArtifactPersistenceRef {
+  schema: typeof BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
   artifact?: Record<string, unknown>
   artifacts: Record<string, unknown>[]
   artifactBundle?: Record<string, unknown>
   materialization?: Record<string, unknown>
   artifactRefs: MaterializationArtifactRef[]
 }
+
+export type BrowserArtifactPersistenceProjection = BrowserArtifactPersistenceRef
 
 export interface ArtifactBundleFileManifest {
   schema: typeof ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA
@@ -178,34 +191,23 @@ export function materializationResultEnvelope(input: {
 }
 
 export function normalizeMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): MaterializationResultEnvelope {
-  const materializationRecord = asRecord(materialization)
-  const raw = asRecord(materializationRecord?.response) ?? materializationRecord
-  const report = raw?.schema === MATERIALIZATION_RESULT_SCHEMA || typeof raw?.schema === "string"
-    ? raw
-    : undefined
-  const response = asRecord(report?.response) ?? raw
+  const extracted = extractMaterializationResultEnvelope(materialization, fallbackMessage)
+  const { report, response } = extracted
   if (response?.success !== true) {
     return materializationResultEnvelope({
-      task: stringValue(response?.task) || stringValue(report?.task),
+      task: extracted.task,
       status: "failed",
       report: report ?? null,
       response,
-      error: errorObject(response) ?? errorObject(report) ?? fallbackMessage,
+      error: extracted.error ?? fallbackMessage,
       codeboxMaterialization: materialization,
     })
   }
 
-  const canonicalResult = firstRecord(
-    asRecord(response.result)?.result,
-    asRecord(response.result)?.data,
-    asRecord(response.result)?.response,
-    response.result,
-    response.data,
-    response.response,
-  )
+  const canonicalResult = extracted.result
   if (canonicalResult?.success === false) {
     return materializationResultEnvelope({
-      task: stringValue(response.task) || stringValue(report?.task),
+      task: extracted.task,
       status: "failed",
       result: canonicalResult,
       report: report ?? null,
@@ -214,14 +216,46 @@ export function normalizeMaterializationResultEnvelope(materialization: unknown,
       codeboxMaterialization: materialization,
     })
   }
+  if (extracted.malformed) {
+    return materializationResultEnvelope({
+      task: extracted.task,
+      status: "failed",
+      report: report ?? null,
+      response,
+      error: extracted.error ?? fallbackMessage,
+      codeboxMaterialization: materialization,
+    })
+  }
 
   return requireCompletedMaterializationResultEnvelope(materializationResultEnvelope({
-    task: stringValue(response.task) || stringValue(report?.task),
+    task: extracted.task,
     result: canonicalResult ?? response,
     report: report ?? null,
     response,
     codeboxMaterialization: materialization,
   }))
+}
+
+export function extractMaterializationResultEnvelope(materialization: unknown, fallbackMessage = "Materialization failed."): MaterializationResultEnvelopeExtraction {
+  const materializationRecord = asRecord(materialization)
+  const raw = asRecord(materializationRecord?.response) ?? materializationRecord
+  const report = raw?.schema === MATERIALIZATION_RESULT_SCHEMA || typeof raw?.schema === "string"
+    ? raw
+    : undefined
+  const response = asRecord(report?.response) ?? raw
+  const result = canonicalMaterializationResult(response) ?? capturedMaterializationResult(response) ?? capturedMaterializationResult(report)
+  const task = stringValue(response?.task) || stringValue(report?.task) || undefined
+  const error = errorObject(response) ?? errorObject(report)
+  const malformed = response?.success === true && response.schema === MATERIALIZATION_RESULT_SCHEMA && !result
+
+  return stripUndefined({
+    report,
+    response,
+    result,
+    task,
+    error: malformed ? error ?? normalizeError(fallbackMessage, fallbackMessage) : error,
+    malformed: malformed || undefined,
+  })
 }
 
 export function requireCompletedMaterializationResultEnvelope(envelope: MaterializationResultEnvelope): CompletedMaterializationResultEnvelope {
@@ -242,7 +276,7 @@ export function browserArtifactPersistenceProjection(input: BrowserArtifactProje
   const artifactRefs = browserArtifactProjectionRefs({ artifactBundle, artifacts, materialization })
 
   return stripUndefined({
-    schema: BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA,
+    schema: BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
     artifact,
     artifacts,
     artifactBundle,
@@ -296,7 +330,7 @@ export function persistedBrowserArtifactRefs(input: BrowserArtifactProjectionInp
 }
 
 export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput | MaterializationResultEnvelope | BrowserArtifactPersistenceProjection | unknown): ArtifactBundleFileManifest {
-  const projection = isRecord(input) && input.schema === BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
+  const projection = isBrowserArtifactPersistenceRef(input)
     ? input as unknown as BrowserArtifactPersistenceProjection
     : browserArtifactPersistenceProjection(input)
   const refs = normalizeMaterializationArtifactRefs(projection.artifactRefs)
@@ -308,6 +342,10 @@ export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput
     files,
     paths: files.map((file) => file.path as string),
   })
+}
+
+export function isBrowserArtifactPersistenceRef(input: unknown): input is BrowserArtifactPersistenceRef {
+  return isRecord(input) && (input.schema === BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA || input.schema === LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA)
 }
 
 export function materializationRunArtifactRefs(results: MaterializationPhaseResult[]): RuntimeRunArtifactRef[] {
@@ -402,6 +440,42 @@ function errorObject(value: Record<string, unknown> | undefined): FailedMaterial
   const error = asRecord(value?.error)
   const message = stringValue(error?.message) || stringValue(value?.message)
   return message ? normalizeError({ name: stringValue(error?.name) || "Error", message, code: stringValue(error?.code) || undefined }, message) : undefined
+}
+
+function canonicalMaterializationResult(response: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return firstRecord(
+    asRecord(response?.result)?.result,
+    asRecord(response?.result)?.data,
+    asRecord(response?.result)?.response,
+    response?.result,
+    response?.data,
+    response?.response,
+  )
+}
+
+function capturedMaterializationResult(source: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const captures = Array.isArray(source?.captures) ? source.captures : []
+  for (const capture of captures) {
+    const captureRecord = asRecord(capture)
+    const json = asRecord(captureRecord?.json) ?? parseJsonRecord(captureRecord?.content)
+    const nestedResponse = asRecord(json?.response) ?? json
+    const result = canonicalMaterializationResult(nestedResponse)
+    if (result) {
+      return result
+    }
+  }
+  return undefined
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined
+  }
+  try {
+    return asRecord(JSON.parse(value))
+  } catch {
+    return undefined
+  }
 }
 
 function firstRecord(...values: unknown[]): Record<string, unknown> | undefined {

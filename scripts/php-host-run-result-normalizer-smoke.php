@@ -69,6 +69,9 @@ $timeout = $normalizer->normalize( $prepared, array( 'exit_code' => 124, 'output
 smoke_assert( is_array( $timeout ) && ! is_wp_error( $timeout ), 'timeout returns result envelope' );
 smoke_assert( false === $timeout['success'], 'timeout envelope is unsuccessful' );
 smoke_assert( 'timeout' === $timeout['agent_task_status'], 'timeout maps to agent task timeout' );
+smoke_assert( 'wp-codebox/agent-task-run-result/v1' === $timeout['agent_task_run_result']['schema'], 'timeout includes canonical agent task run result schema' );
+smoke_assert( false === $timeout['agent_task_run_result']['success'], 'timeout canonical result is unsuccessful' );
+smoke_assert( 'timeout' === $timeout['agent_task_run_result']['status'], 'timeout canonical result status is timeout' );
 smoke_assert( 'wp_codebox_run_timeout' === $timeout['error']['code'], 'timeout error code is preserved' );
 
 $invalid_json = $normalizer->normalize( $prepared, array( 'exit_code' => 0, 'output' => 'not-json' ), $adapters );
@@ -80,5 +83,20 @@ $non_zero = $normalizer->normalize( $prepared, array( 'exit_code' => 2, 'output'
 smoke_assert( is_array( $non_zero ) && ! is_wp_error( $non_zero ), 'non-zero exit returns result envelope' );
 smoke_assert( 'wp_codebox_run_failed' === $non_zero['error']['code'], 'non-zero error code is preserved' );
 smoke_assert( 'non_zero_exit' === $non_zero['error']['failure_classification'], 'non-zero classification is preserved' );
+
+$success = $normalizer->normalize(
+	$prepared,
+	array(
+		'exit_code' => 0,
+		'output'    => '{"agentResult":{"artifacts":{"directory":"/tmp/wp-codebox-artifacts"},"summary":"Changed one file","changedFiles":{"artifact":"files/changed-files.json","count":1},"patch":{"artifact":"files/patch.diff","bytes":10},"transcript":{"artifact":"files/transcript.json"}},"runtime":{"id":"runtime-1","status":"destroyed"}}',
+	),
+	$adapters
+);
+smoke_assert( is_array( $success ) && ! is_wp_error( $success ), 'success returns result envelope' );
+smoke_assert( 'wp-codebox/agent-task-run-result/v1' === $success['agent_task_run_result']['schema'], 'success includes canonical agent task run result schema' );
+smoke_assert( 'succeeded' === $success['agent_task_run_result']['status'], 'success canonical result status is succeeded' );
+smoke_assert( true === $success['agent_task_run_result']['success'], 'success canonical result is successful' );
+smoke_assert( 1 === $success['agent_task_run_result']['metadata']['changed_files_count'], 'success canonical result includes changed file count' );
+smoke_assert( 'codebox-patch' === $success['agent_task_run_result']['refs']['patches'][0]['kind'], 'success canonical result includes patch ref' );
 
 echo "host run result normalizer smoke passed\n";

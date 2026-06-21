@@ -55,6 +55,8 @@
           "token_env": "AGENT_BUNDLE_TOKEN"
         }
       ],
+      "tool_bridge": {},
+      "parent_tool_bridge": {},
       "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"
@@ -120,6 +122,8 @@
           "token_env": "AGENT_BUNDLE_TOKEN"
         }
       ],
+      "tool_bridge": {},
+      "parent_tool_bridge": {},
       "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"

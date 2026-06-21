@@ -25,15 +25,11 @@ final class WP_Codebox_Agent_Runtime_Invoker {
 	}
 
 	public function is_agents_api_ready(): bool {
-		return $this->is_ability_available( 'agents/chat' );
+		return $this->is_ability_available( WP_Codebox_Agents_API_Adapter::CHAT );
 	}
 
 	public function is_ability_available( string $name ): bool {
-		if ( '' === $name || ! function_exists( 'wp_get_ability' ) ) {
-			return false;
-		}
-
-		return (bool) wp_get_ability( $name );
+		return ( new WP_Codebox_Agents_API_Adapter() )->is_available( $name );
 	}
 
 	/** @param array{url:string,method:string,headers:array<string,string>,body:string} $prepared Prepared request. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
@@ -241,6 +237,33 @@ return array(
 );
 }
 
+function wp_codebox_browser_runtime_agents_ability_names(): array {
+return array(
+	'chat' => 'agents/chat',
+	'run_task' => 'agents/run-task',
+	'run_runtime_package' => 'agents/run-runtime-package',
+	'get_task_run' => 'agents/get-task-run',
+	'cancel_task_run' => 'agents/cancel-task-run',
+	'get_chat_run' => 'agents/get-chat-run',
+	'cancel_chat_run' => 'agents/cancel-chat-run',
+	'queue_chat_message' => 'agents/queue-chat-message',
+	'list_chat_run_events' => 'agents/list-chat-run-events',
+);
+}
+
+function wp_codebox_browser_runtime_agents_ability_exists( string $ability_name ): bool {
+return '' !== $ability_name && function_exists( 'wp_get_ability' ) && wp_get_ability( $ability_name ) instanceof WP_Ability;
+}
+
+function wp_codebox_browser_runtime_execute_agents_ability( string $ability_name, array $input ) {
+if ( ! wp_codebox_browser_runtime_agents_ability_exists( $ability_name ) ) {
+	return new WP_Error( 'wp_codebox_browser_ability_unavailable', 'The requested ability is not available inside the Playground site.', array( 'ability' => $ability_name ) );
+}
+
+$ability = wp_get_ability( $ability_name );
+return $ability->execute( $input );
+}
+
 function wp_codebox_browser_runtime_prepare_input( array $payload, array $invocation, string $session_id, array $runtime_tool_declarations, array $ability_tools, array $allowed_tool_ids, array $sandbox_tool_ids ): array {
 $agent = sanitize_key( (string) ( $payload['agent'] ?? 'wp-codebox-sandbox' ) );
 $message = (string) ( $payload['message'] ?? ( $payload['task_input']['goal'] ?? '' ) );
@@ -429,10 +452,9 @@ if ( empty( $preflight['error'] ) && 'task' === $invocation_type ) {
 	}
 }
 if ( empty( $preflight['error'] ) && 'task' !== $invocation_type ) {
-	$ability_name = (string) ( $invocation['name'] ?? 'agents/chat' );
+	$ability_name = (string) ( $invocation['name'] ?? wp_codebox_browser_runtime_agents_ability_names()['chat'] );
 	$preflight['ability'] = $ability_name;
-	$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
-	if ( ! $ability instanceof WP_Ability ) {
+	if ( ! wp_codebox_browser_runtime_agents_ability_exists( $ability_name ) ) {
 		$preflight['error'] = new WP_Error( 'wp_codebox_browser_ability_unavailable', 'The requested ability is not available inside the Playground site.', array( 'ability' => $ability_name ) );
 	}
 }
@@ -472,8 +494,7 @@ if ( null === $response ) {
 		if ( 'task' === (string) ( $invocation['type'] ?? 'ability' ) ) {
 			$response = apply_filters( (string) ( $invocation['hook'] ?? $invocation['name'] ?? '' ), null, $input, $payload );
 		} else {
-			$ability = wp_get_ability( (string) ( $invocation['name'] ?? 'agents/chat' ) );
-			$response = $ability->execute( $input );
+			$response = wp_codebox_browser_runtime_execute_agents_ability( (string) ( $invocation['name'] ?? wp_codebox_browser_runtime_agents_ability_names()['chat'] ), $input );
 		}
 	} catch ( Throwable $exception ) {
 		$response = $exception;

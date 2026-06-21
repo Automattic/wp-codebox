@@ -1,4 +1,5 @@
 import type { MaterializationArtifactRef, MaterializationDiagnostic } from "./materialization-contracts.js"
+import { buildArtifactDiagnostics, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics } from "./artifact-diagnostics.js"
 
 export const ARTIFACT_RESULT_ENVELOPE_SCHEMA = "wp-codebox/artifact-result-envelope/v1" as const
 
@@ -40,6 +41,37 @@ export interface SkippedArtifactResultEnvelope extends ArtifactResultEnvelopeBas
 }
 
 export type ArtifactResultEnvelope = SuccessfulArtifactResultEnvelope | FailedArtifactResultEnvelope | SkippedArtifactResultEnvelope
+
+export function artifactDiagnosticsResultEnvelope(input: {
+  operation: ArtifactResultOperation
+  status?: ArtifactResultStatus
+  diagnosticsInput: unknown
+  diagnosticOptions?: ArtifactDiagnosticNormalizerOptions
+  artifactBundle?: MaterializationArtifactRef
+  artifactRefs?: MaterializationArtifactRef[]
+  verification?: Record<string, unknown>
+  result?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  error?: { name?: string; message?: string; code?: string } | Error | string
+  reason?: string
+}): ArtifactResultEnvelope {
+  const artifactDiagnostics = buildArtifactDiagnostics(input.diagnosticsInput, input.diagnosticOptions)
+  return artifactResultEnvelope({
+    operation: input.operation,
+    status: input.status,
+    artifactBundle: input.artifactBundle,
+    artifactRefs: input.artifactRefs,
+    verification: input.verification,
+    result: stripUndefined({
+      ...input.result,
+      artifactDiagnostics,
+    }),
+    diagnostics: artifactDiagnosticsResultDiagnostics(artifactDiagnostics),
+    metadata: input.metadata,
+    error: input.error,
+    reason: input.reason,
+  })
+}
 
 export function artifactResultEnvelope(input: {
   operation: ArtifactResultOperation
@@ -133,6 +165,19 @@ function normalizeArtifactRefs(refs: MaterializationArtifactRef[]): Materializat
     normalized.push(ref)
   }
   return normalized
+}
+
+function artifactDiagnosticsResultDiagnostics(artifactDiagnostics: ArtifactDiagnostics): MaterializationDiagnostic[] {
+  if (artifactDiagnostics.summary.total === 0) {
+    return []
+  }
+
+  return [{
+    code: "wp-codebox.artifact-diagnostics.reported",
+    message: `${artifactDiagnostics.summary.total} artifact diagnostic${artifactDiagnostics.summary.total === 1 ? "" : "s"} reported.`,
+    severity: artifactDiagnostics.summary.error > 0 ? "error" : artifactDiagnostics.summary.warning > 0 ? "warning" : "info",
+    metadata: { summary: artifactDiagnostics.summary },
+  }]
 }
 
 function materializationArtifactRef(input: unknown): MaterializationArtifactRef | undefined {

@@ -2,15 +2,18 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import {
   artifactBundleFileManifest,
+  browserRunResultEnvelope,
   browserArtifactGrant,
   browserArtifactPersistenceProjection,
   browserArtifactRef,
   browserCallbackCapability,
   browserCallbackResultEnvelope,
   browserCallbackSignature,
+  extractMaterializationResultEnvelope,
   materializationResultEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
+  normalizeBrowserRunResult,
   normalizeMaterializationArtifactRefs,
   normalizeMaterializationResultEnvelope,
   persistedBrowserArtifactRefs,
@@ -166,7 +169,7 @@ const failedMaterializationEnvelope = materializationResultEnvelope({
     status: "failed",
     error: { name: "Error", message: "invalid snapshot", code: "invalid-snapshot" },
   })],
-  projections: [{ kind: "browser-artifacts", schema: "wp-codebox/browser-artifact-persistence-projection/v1", artifacts: [] }],
+  projections: [{ kind: "browser-artifacts", schema: "wp-codebox/browser-artifact-persistence/ref/v1", artifacts: [] }],
 })
 assert.equal(failedMaterializationEnvelope.schema, "wp-codebox/materialization-result/v1")
 assert.equal(failedMaterializationEnvelope.status, "failed")
@@ -199,7 +202,7 @@ const materializationEnvelope = normalizeMaterializationResultEnvelope({
 assert.equal(materializationEnvelope.schema, "wp-codebox/materialization-result/v1")
 assert.equal(materializationEnvelope.task, "persist-browser-artifacts")
 const projection = browserArtifactPersistenceProjection(materializationEnvelope)
-assert.equal(projection.schema, "wp-codebox/browser-artifact-persistence-projection/v1")
+assert.equal(projection.schema, "wp-codebox/browser-artifact-persistence/ref/v1")
 assert.deepEqual(projection.artifacts, [{ path: "files/browser/index.html", kind: "browser-html", sha256: "def" }])
 assert.deepEqual(projection.artifactRefs, [
   {
@@ -220,6 +223,72 @@ assert.deepEqual(projection.artifactRefs, [
 ])
 assert.deepEqual(persistedBrowserArtifactRefs(projection), projection.artifactRefs)
 assert.deepEqual(browserArtifactPersistenceProjection(projection).artifactRefs, projection.artifactRefs)
+assert.deepEqual(browserArtifactPersistenceProjection({ schema: "wp-codebox/browser-artifact-persistence-projection/v1", artifacts: projection.artifacts, artifactBundle: projection.artifactBundle }).artifactRefs.slice(0, 2), projection.artifactRefs.slice(0, 2))
+
+const browserRun = normalizeBrowserRunResult({ success: true, data: materializationEnvelope.result }, "browser-session-recipe")
+assert.equal(browserRun.schema, "wp-codebox/browser-run-result/v1")
+assert.equal(browserRun.status, "completed")
+assert.equal(browserRun.success, true)
+assert.deepEqual(browserRun.artifactRefs, projection.artifactRefs)
+assert.equal(browserRunResultEnvelope({ operation: "browser-session-recipe", result: materializationEnvelope.result, artifactRefs: projection.artifactRefs }).schema, "wp-codebox/browser-run-result/v1")
+
+const canonicalMaterialization = extractMaterializationResultEnvelope({
+  schema: "wp-codebox/materialization-result/v1",
+  task: "generic-materialization",
+  success: true,
+  result: { artifact: { path: "files/output.json", kind: "generic-json", sha256: "abc" } },
+})
+assert.equal(canonicalMaterialization.task, "generic-materialization")
+assert.deepEqual(canonicalMaterialization.result, { artifact: { path: "files/output.json", kind: "generic-json", sha256: "abc" } })
+
+const nestedCaptureMaterialization = normalizeMaterializationResultEnvelope({
+  response: {
+    schema: "wp-codebox/browser-materialization/v1",
+    success: true,
+    task: "capture-materialization",
+    captures: [{
+      schema: "wp-codebox/browser-capture/v1",
+      path: "/tmp/materialization.json",
+      json: { success: true, result: { artifact: { path: "files/captured.json", kind: "generic-json", sha256: "123" } } },
+    }],
+  },
+})
+assert.equal(nestedCaptureMaterialization.status, "completed")
+assert.deepEqual(nestedCaptureMaterialization.result, { artifact: { path: "files/captured.json", kind: "generic-json", sha256: "123" } })
+
+const nestedCaptureContentMaterialization = normalizeMaterializationResultEnvelope({
+  response: {
+    schema: "wp-codebox/browser-materialization/v1",
+    success: true,
+    task: "capture-content-materialization",
+    captures: [{
+      schema: "wp-codebox/browser-capture/v1",
+      path: "/tmp/materialization.json",
+      content: JSON.stringify({ success: true, result: { artifact: { path: "files/captured-content.json", kind: "generic-json", sha256: "456" } } }),
+    }],
+  },
+})
+assert.equal(nestedCaptureContentMaterialization.status, "completed")
+assert.deepEqual(nestedCaptureContentMaterialization.result, { artifact: { path: "files/captured-content.json", kind: "generic-json", sha256: "456" } })
+
+const explicitFailureMaterialization = normalizeMaterializationResultEnvelope({
+  schema: "wp-codebox/materialization-result/v1",
+  task: "generic-materialization",
+  success: false,
+  error: { name: "Error", message: "explicit materialization failure", code: "explicit-failure" },
+})
+assert.equal(explicitFailureMaterialization.status, "failed")
+assert.equal(explicitFailureMaterialization.error.message, "explicit materialization failure")
+assert.equal(explicitFailureMaterialization.error.code, "explicit-failure")
+
+const missingResultMaterialization = normalizeMaterializationResultEnvelope({
+  schema: "wp-codebox/materialization-result/v1",
+  task: "generic-materialization",
+  success: true,
+})
+assert.equal(missingResultMaterialization.status, "failed")
+assert.equal(missingResultMaterialization.error.message, "Materialization failed.")
+
 assert.deepEqual(normalizeMaterializationArtifactRefs([
   { kind: "browser-html", path: "files/browser/index.html", sha256: "def" },
   { role: "browser-html", path: "files/browser/index.html", content_digest: "def" },

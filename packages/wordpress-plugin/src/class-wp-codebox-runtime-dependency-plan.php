@@ -39,6 +39,9 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 	/** @var array<string,string> */
 	private array $runtime_env;
 
+	/** @var array<string,mixed> */
+	private array $provider_credentials;
+
 	/**
 	 * @param array<string,mixed> $selection Provider/model/runtime selection metadata.
 	 * @param string[] $provider_plugin_paths Resolved provider plugin paths.
@@ -50,8 +53,9 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 	 * @param array<int,array<string,mixed>> $agent_bundles Agent bundle import specs.
 	 * @param string[] $secret_env_names Required secret env names.
 	 * @param array<string,mixed> $runtime_env Non-secret runtime environment values.
+	 * @param array<string,mixed> $provider_credentials Redacted provider credential resolution metadata.
 	 */
-	public function __construct( array $selection, array $provider_plugin_paths, array $provider_plugins, array $component_plugins, array $runtime_overlays, array $inheritance, array $inheritance_request, array $agent_bundles, array $secret_env_names, array $runtime_env = array() ) {
+	public function __construct( array $selection, array $provider_plugin_paths, array $provider_plugins, array $component_plugins, array $runtime_overlays, array $inheritance, array $inheritance_request, array $agent_bundles, array $secret_env_names, array $runtime_env = array(), array $provider_credentials = array() ) {
 		$this->selection             = $selection;
 		$this->provider_plugin_paths = self::string_list( $provider_plugin_paths );
 		$this->provider_plugins      = array_values( array_filter( $provider_plugins, 'is_array' ) );
@@ -68,6 +72,7 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 		$this->agent_bundles         = array_values( array_filter( $agent_bundles, 'is_array' ) );
 		$this->secret_env_names      = self::secret_env_list( $secret_env_names );
 		$this->runtime_env           = self::runtime_env_map( $runtime_env );
+		$this->provider_credentials  = self::normalize_provider_credentials( $provider_credentials );
 	}
 
 	/** @return array<string,mixed> */
@@ -133,6 +138,11 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 		return $this->runtime_env;
 	}
 
+	/** @return array<string,mixed> */
+	public function provider_credentials(): array {
+		return $this->provider_credentials;
+	}
+
 	/** @param array<string,string> $defaults @return array<string,string> */
 	public function runtime_env_with_defaults( array $defaults ): array {
 		return array_merge( $this->runtime_env, self::runtime_env_map( $defaults ) );
@@ -168,6 +178,7 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 				'agent_bundles'         => $this->agent_bundles,
 				'secret_env'            => $this->secret_env_names,
 				'runtime_env'           => $this->runtime_env,
+				'provider_credentials'  => $this->provider_credentials,
 			),
 			static fn( mixed $value ): bool => array() !== $value && '' !== $value
 		);
@@ -206,5 +217,30 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 		}
 
 		return $env;
+	}
+
+	/** @return array<string,mixed> */
+	private static function normalize_provider_credentials( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$requirements = is_array( $value['requirements'] ?? null ) ? $value['requirements'] : array();
+		$preflight    = is_array( $value['preflight'] ?? null ) ? $value['preflight'] : array();
+		$secret_env   = self::secret_env_list( $value['secret_env'] ?? $preflight['secret_env'] ?? array() );
+		if ( empty( $requirements ) && empty( $preflight ) && empty( $secret_env ) ) {
+			return array();
+		}
+
+		return array_filter(
+			array(
+				'schema'       => 'wp-codebox/provider-credential-resolution/v1',
+				'requirements' => $requirements,
+				'preflight'    => $preflight,
+				'secret_env'   => $secret_env,
+				'redacted'     => true,
+			),
+			static fn( mixed $entry ): bool => array() !== $entry && '' !== $entry
+		);
 	}
 }

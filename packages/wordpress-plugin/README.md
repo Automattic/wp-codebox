@@ -7,22 +7,37 @@ the parent control plane for review, replay, or apply-back.
 
 ## Ability
 
+Canonical consumer-facing ability names are listed first. Compatibility aliases
+remain registered where existing callers already use them; inspectable ability
+metadata exposes `meta.canonical_ability` for aliases.
+
 - `wp-codebox/run-agent-task`
 - `wp-codebox/run-agent-task-batch`
+- `wp-codebox/run-agent-task-fanout`
+- `wp-codebox/create-browser-playground-session`
+- `wp-codebox/browser-connector-request`
+- `wp-codebox/prepare`
+- `wp-codebox/capture`
+- `wp-codebox/command`
+- `wp-codebox/publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
+- `wp-codebox/review-artifact`
+- `wp-codebox/apply-artifact-preflight`
 - `wp-codebox/import-artifact-bundle`
 - `wp-codebox/reimport-artifact-bundle`
-- `wp-codebox/apply-approved-artifact`
 - `wp-codebox/stage-artifact-apply`
+- `wp-codebox/apply-approved-artifact`
 - `wp-codebox/preview-reuse-decision`
 - `wp-codebox/open-or-create-browser-contained-site`
 - WP-CLI wrappers under `wp codebox ...`
 
-The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
-WordPress Playground runtime, mounts the requested runtime components, invokes
-the configured sandbox-local ability or hook task, and returns artifact metadata.
+The host task abilities build a private Codebox recipe, boot a disposable
+sandbox runtime, mount the requested runtime components, invoke the configured
+sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
+WordPress Playground, and upstream task runtimes are implementation details of
+the current runner, not consumer-facing API names.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`
@@ -35,6 +50,8 @@ imports each bundle through `wp_agent_import_runtime_bundles` or the
 named by `runtime_task.ability` with `runtime_task.input`. The runtime owner
 plugin defines that ability contract; WP Codebox only preserves the generic
 transport, task input, status, diagnostics, and evidence refs.
+The `wp_agent_*` hooks are upstream runtime integration seams; consumers should
+treat the `agent_bundles` and `runtime_task` fields as the Codebox contract.
 
 ```json
 {
@@ -104,6 +121,17 @@ parent process credentials inside the sandbox; values are read from the process
 environment and are not accepted in the ability payload. For example, pass
 `"secret_env": ["GITHUB_TOKEN"]` after the host process has `GITHUB_TOKEN` in
 its environment; do not pass token values through ability input.
+
+Provider plugins can also own their credential boundary through the generic
+credential hooks. `wp_codebox_provider_credential_requirements` returns a
+redacted `wp-codebox/provider-credential-requirements/v1` declaration for the
+selected provider/model, and `wp_codebox_resolve_provider_credentials` returns a
+redacted `wp-codebox/provider-credential-preflight/v1` status plus the env var
+names WP Codebox may expose. WP Codebox fails closed on `missing` or `denied`,
+merges only allowed env names into `secret_env`, and records only redacted
+requirements/preflight diagnostics in the runtime dependency plan. Hook results
+must not include raw token values; fields such as `secret_env_values`,
+`credentials`, or provider-specific token payloads are ignored by this boundary.
 
 Callers may also pass an `inherit` declaration to request parent-environment
 connectors or settings by name:
@@ -284,10 +312,12 @@ produces artifact metadata, changed files, patches, and review evidence; the
 parent control plane performs reviewed apply-back, branch pushes, deploys, and PR
 creation.
 
-The WordPress runner validates requested `allowed_tools` against the caller's
-resolved `sandbox_tool_policy` before the sandbox process starts. Product layers
-own their own tool taxonomy and risk policy; WP Codebox only
-validates the generic snapshot shape and enforces the resolved boundary.
+The WordPress runner validates requested `allowed_tools` against the Codebox-owned
+`wp-codebox/tool-bridge/v1` envelope before the sandbox process starts. The
+bridge carries the enforced `sandbox_tool_policy`, dispatcher metadata,
+allowlist authorization notes, and redaction notes. Product layers own their own
+tool taxonomy and risk policy; WP Codebox owns the bridge shape, validates the
+generic snapshot, and enforces the resolved boundary.
 
 External systems are consumers or mounted tools. They do not own WP Codebox's
 artifact contract.

@@ -72,6 +72,35 @@ export interface ArtifactViewerMetadata {
   }
 }
 
+export interface ArtifactManifestCaseArtifactRef {
+  path: string
+  kind: string
+  contentType?: string
+  sha256?: ArtifactFileDigest
+  publicUrl?: string
+  redaction?: ArtifactRedactionMetadata
+  provenance?: ArtifactProvenanceMetadata
+  metadata?: Record<string, unknown>
+}
+
+export interface ArtifactManifestCaseVerificationMetadata {
+  status: "passed" | "failed" | "skipped" | "unknown" | (string & {})
+  verifiedAt?: string
+  verifier?: string
+  diagnostics?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface ArtifactManifestCase {
+  id: string
+  hash?: ArtifactFileDigest
+  digest?: ArtifactFileDigest
+  artifacts: ArtifactManifestCaseArtifactRef[]
+  redaction?: ArtifactRedactionMetadata
+  verification?: ArtifactManifestCaseVerificationMetadata
+  metadata?: Record<string, unknown>
+}
+
 export interface ArtifactFileDigest {
   algorithm: "sha256"
   value: string
@@ -83,6 +112,7 @@ export interface ArtifactManifest {
   createdAt: string
   runtime: RuntimeInfo
   files: ArtifactManifestFile[]
+  cases?: ArtifactManifestCase[]
 }
 
 export interface ArtifactContentDigest {

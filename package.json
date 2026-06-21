@@ -8,6 +8,10 @@
       "types": "./packages/runtime-core/dist/index.d.ts",
       "import": "./packages/runtime-core/dist/index.js"
     },
+    "./core/public": {
+      "types": "./packages/runtime-core/dist/public.d.ts",
+      "import": "./packages/runtime-core/dist/public.js"
+    },
     "./core/contracts": {
       "types": "./packages/runtime-core/dist/contracts.d.ts",
       "import": "./packages/runtime-core/dist/contracts.js"
@@ -39,6 +43,10 @@
     "./cli": {
       "types": "./packages/cli/dist/index.d.ts",
       "import": "./packages/cli/dist/index.js"
+    },
+    "./cli/recipe-secret-env": {
+      "types": "./packages/cli/dist/recipe-secret-env.d.ts",
+      "import": "./packages/cli/dist/recipe-secret-env.js"
     }
   },
   "bin": {
@@ -68,6 +76,7 @@
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
     "test:runtime-recipe-resolver": "tsx tests/runtime-recipe-resolver.test.ts",
+    "test:runtime-profile-resolver": "tsx tests/runtime-profile-resolver.test.ts",
     "test:runtime-episode-contracts": "tsx tests/runtime-episode-contracts.test.ts",
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",
@@ -90,14 +99,17 @@
     "test:browser-provider-permissions": "tsx tests/browser-provider-permissions.test.ts",
     "test:browser-provider-bridge-inheritance": "tsx tests/browser-provider-bridge-inheritance.test.ts",
     "test:fixture-auth-storage-state": "tsx tests/fixture-auth-storage-state.test.ts",
+    "test:recipe-user-session": "tsx tests/recipe-user-session.test.ts",
     "test:reviewer-access": "tsx tests/reviewer-access.test.ts",
     "test:command-agent-run": "tsx tests/command-agent-run.test.ts",
     "test:host-command-executor": "tsx tests/host-command-executor.test.ts",
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
+    "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
     "test:php-browser-callback-contracts": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-callback-contracts-smoke.php",
+    "test:php-agents-api-adapter-contract": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-agents-api-adapter-contract-smoke.php",
     "test:php-browser-contained-site-contract": "php scripts/php-browser-contained-site-contract-smoke.php",
     "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",
@@ -110,6 +122,8 @@
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
+    "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
+    "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
@@ -119,7 +133,10 @@
     "test:distribution-startup-probes": "tsx tests/distribution-startup-probes.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
+    "test:php-provider-credential-boundary": "php scripts/php-provider-credential-boundary-smoke.php",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
+    "test:public-api-contract": "tsx tests/public-api-contract.test.ts",
+    "test:browser-sdk-facade": "tsx tests/browser-sdk-facade.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },
   "workspaces": [

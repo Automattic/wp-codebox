@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
+import { commandArgValue, parseCommandJsonObject, runtimeCheckpointUnsupportedDiagnostic, type ArtifactBundle, type ArtifactManifestFile, type ExecutionResult, type Runtime, type RuntimeCheckpointFailureDiagnostic, type RuntimeCheckpointOperation, type RuntimeCheckpointResult, type WorkspaceRecipe, type WorkspaceRecipeDistributionSetupArtifact, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeProbe } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
@@ -136,23 +136,126 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
         previewPublicUrl: options?.previewPublicUrl,
       })
       const finishedAt = new Date().toISOString()
-      return withRecipeExecutionPhase({
-        id: `agent-fanout-${workflowStep.index}`,
-        command: workflowStep.step.command,
-        args: workflowStep.step.args ?? [],
-        exitCode: result.success ? 0 : 1,
-        stdout: `${JSON.stringify(result, null, 2)}\n`,
-        stderr: "",
-        startedAt,
-        finishedAt,
-      }, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+      return {
+        ...withRecipeExecutionPhase({
+          id: `agent-fanout-${workflowStep.index}`,
+          command: workflowStep.step.command,
+          args: workflowStep.step.args ?? [],
+          exitCode: result.success ? 0 : 1,
+          stdout: `${JSON.stringify(result, null, 2)}\n`,
+          stderr: "",
+          startedAt,
+          finishedAt,
+        }, workflowStep.phase, workflowStep.index, workflowStep.step.command),
+        ...(workflowStep.fuzzCaseId ? { fuzzCaseId: workflowStep.fuzzCaseId } : {}),
+        ...(workflowStep.fuzzCaseIndex !== undefined ? { fuzzCaseIndex: workflowStep.fuzzCaseIndex } : {}),
+        ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),
+        ...(workflowStep.fuzzStepIndex !== undefined ? { fuzzStepIndex: workflowStep.fuzzStepIndex } : {}),
+      }
+    }
+    if (isRuntimeCheckpointRecipeCommand(workflowStep.step.command)) {
+      return withRecipeExecutionPhase(await executeRuntimeCheckpointRecipeCommand(runtime, workflowStep.step.command, workflowStep.step.args ?? []), workflowStep.phase, workflowStep.index, workflowStep.step.command)
     }
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
-    return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+    return {
+      ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command),
+      ...(workflowStep.fuzzCaseId ? { fuzzCaseId: workflowStep.fuzzCaseId } : {}),
+      ...(workflowStep.fuzzCaseIndex !== undefined ? { fuzzCaseIndex: workflowStep.fuzzCaseIndex } : {}),
+      ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),
+      ...(workflowStep.fuzzStepIndex !== undefined ? { fuzzStepIndex: workflowStep.fuzzStepIndex } : {}),
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe workflow ${workflowStep.phase}[${workflowStep.index}] failed: ${message}`, { cause: error })
   }
+}
+
+async function executeRuntimeCheckpointRecipeCommand(runtime: Runtime, command: string, args: string[]): Promise<ExecutionResult> {
+  const startedAt = new Date().toISOString()
+  const operation = runtimeCheckpointOperation(command)
+  const finish = (exitCode: number, payload: RuntimeCheckpointResult | RuntimeCheckpointFailureDiagnostic): ExecutionResult => ({
+    id: `${command}:${startedAt}`,
+    command,
+    args,
+    exitCode,
+    stdout: `${JSON.stringify({ command, ...payload }, null, 2)}\n`,
+    stderr: exitCode === 0 ? "" : "message" in payload ? payload.message : "Runtime checkpoint command failed.",
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  })
+
+  try {
+    if (operation === "list") {
+      if (!runtime.listCheckpoints) {
+        return finish(1, runtimeCheckpointUnsupportedDiagnostic(operation, await runtime.info()))
+      }
+      return finish(0, await runtime.listCheckpoints())
+    }
+
+    const name = commandArgValue(args, "name")?.trim()
+    if (!name) {
+      return finish(1, runtimeCheckpointFailure(operation, "invalid-request", "runtime-checkpoint-name-required", "Runtime checkpoint command requires name=<checkpoint>."))
+    }
+
+    if (operation === "create") {
+      if (!runtime.createCheckpoint) {
+        return finish(1, runtimeCheckpointUnsupportedDiagnostic(operation, await runtime.info(), name))
+      }
+      return finish(0, await runtime.createCheckpoint({
+        name,
+        metadata: parseCommandJsonObject(commandArgValue(args, "metadata-json"), "metadata-json"),
+        snapshotOptions: snapshotOptionsFromCheckpointArgs(args),
+      }))
+    }
+
+    if (!runtime.restoreCheckpoint) {
+      return finish(1, runtimeCheckpointUnsupportedDiagnostic(operation, await runtime.info(), name))
+    }
+    return finish(0, await runtime.restoreCheckpoint(name))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return finish(1, runtimeCheckpointFailure(operation, "failed", "runtime-checkpoint-operation-failed", message))
+  }
+}
+
+function isRuntimeCheckpointRecipeCommand(command: string): boolean {
+  return command === "wp-codebox.checkpoint-create" || command === "wp-codebox.checkpoint-restore" || command === "wp-codebox.checkpoint-list"
+}
+
+function runtimeCheckpointOperation(command: string): RuntimeCheckpointOperation {
+  if (command === "wp-codebox.checkpoint-create") {
+    return "create"
+  }
+  if (command === "wp-codebox.checkpoint-restore") {
+    return "restore"
+  }
+  return "list"
+}
+
+function runtimeCheckpointFailure(operation: RuntimeCheckpointOperation, status: RuntimeCheckpointFailureDiagnostic["status"], code: string, message: string): RuntimeCheckpointFailureDiagnostic {
+  return {
+    schema: "wp-codebox/runtime-checkpoint-failure/v1",
+    status,
+    operation,
+    code,
+    message,
+    supported: false,
+  }
+}
+
+function snapshotOptionsFromCheckpointArgs(args: string[]): Record<string, string[]> {
+  return {
+    excludedWpContentPaths: commaListArg(args, "snapshot-exclude-wp-content"),
+    includedWpContentPaths: commaListArg(args, "snapshot-include-wp-content"),
+    includedDatabaseTables: commaListArg(args, "snapshot-database-tables"),
+    excludedDatabaseTables: commaListArg(args, "snapshot-exclude-database-tables"),
+    includedOptionNames: commaListArg(args, "snapshot-option-names"),
+    includedPostTypes: commaListArg(args, "snapshot-post-types"),
+  }
+}
+
+function commaListArg(args: string[], name: string): string[] {
+  return (commandArgValue(args, name) ?? "").split(",").map((entry) => entry.trim()).filter(Boolean)
 }
 
 export async function runRecipeProbes(recipe: WorkspaceRecipe, recipeDirectory: string, runtime: Runtime, executions: RecipeExecutionResult[]): Promise<RecipeRunProbe[]> {

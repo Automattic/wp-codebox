@@ -1,0 +1,40 @@
+{
+  "schema": "wp-codebox/workspace-recipe/v1",
+  "runtime": {
+    "backend": "wordpress-playground",
+    "name": "plugin-state-lab",
+    "wp": "7.0"
+  },
+  "inputs": {
+    "mounts": [
+      {
+        "source": "../simple-plugin",
+        "target": "/wordpress/wp-content/plugins/simple-plugin",
+        "mode": "readwrite",
+        "metadata": {
+          "kind": "component",
+          "slug": "simple-plugin"
+        }
+      }
+    ]
+  },
+  "workflow": {
+    "steps": [
+      {
+        "command": "wordpress.plugin-state",
+        "args": ["plugin=simple-plugin"]
+      },
+      {
+        "command": "wordpress.plugin-state",
+        "args": ["action=activate", "plugin=simple-plugin"]
+      },
+      {
+        "command": "wordpress.plugin-state",
+        "args": ["action=deactivate", "file=simple-plugin/simple-plugin.php"]
+      }
+    ]
+  },
+  "artifacts": {
+    "directory": "./artifacts"
+  }
+}

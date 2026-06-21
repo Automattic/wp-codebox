@@ -1,6 +1,7 @@
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
 export { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, type GenericAbilityRuntimeComponentContract, type GenericAbilityRuntimeProviderPluginContract, type GenericAbilityRuntimeRunOptions } from "./generic-ability-runtime-run.js"
+export { buildWordPressWorkloadRunRecipe, playgroundPreviewUrl, wordpressAbilityStep, wordpressWorkloadRunRecipe, PLAYGROUND_PREVIEW_URL_SCHEMA, WORDPRESS_ABILITY_STEP_SCHEMA, WORDPRESS_WORKLOAD_RUN_SCHEMA, type PlaygroundPreviewUrlContract, type PlaygroundPreviewUrlMode, type PlaygroundPreviewUrlOptions, type WordPressAbilityStepOptions, type WordPressWorkloadRunRecipeOptions } from "./wordpress-workload-primitives.js"
 import { normalizeSharedMounts } from "./mount-primitives.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
