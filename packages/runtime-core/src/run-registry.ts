@@ -114,6 +114,11 @@ export interface RuntimeRunRegistryCreateOptions {
   now?: Date
 }
 
+export interface RuntimeRunRegistryDeterminismOptions {
+  clock?: () => Date
+  idFactory?: () => string
+}
+
 export interface RuntimeRunRegistryUpdate {
   status?: RuntimeRunStatus
   runtime?: RuntimeInfo
@@ -162,16 +167,20 @@ const runtimeRunStatusTransitions: Record<RuntimeRunStatus, readonly RuntimeRunS
 
 export class RuntimeRunRegistry {
   readonly directory: string
+  private readonly clock: () => Date
+  private readonly idFactory: () => string
 
-  constructor(directory: string) {
+  constructor(directory: string, options: RuntimeRunRegistryDeterminismOptions = {}) {
     this.directory = resolve(directory)
+    this.clock = options.clock ?? (() => new Date())
+    this.idFactory = options.idFactory ?? createRuntimeRunId
   }
 
   async create(options: RuntimeRunRegistryCreateOptions = {}): Promise<RuntimeRunRecord> {
-    const now = (options.now ?? new Date()).toISOString()
+    const now = (options.now ?? this.clock()).toISOString()
     const record: RuntimeRunRecord = {
       schema: "wp-codebox/run-registry-entry/v1",
-      runId: options.runId ?? createRuntimeRunId(),
+      runId: options.runId ?? this.idFactory(),
       status: options.status ?? "queued",
       lifecycle: buildRuntimeRunLifecycle(options.status ?? "queued", initialRuntimeRunCleanup()),
       createdAt: now,
@@ -197,7 +206,7 @@ export class RuntimeRunRegistry {
 
   async update(runId: string, update: RuntimeRunRegistryUpdate): Promise<RuntimeRunRecord> {
     const current = await this.read(runId)
-    const now = (update.now ?? new Date()).toISOString()
+    const now = (update.now ?? this.clock()).toISOString()
     const status = transitionRuntimeRunStatus(current.status, update.status)
     const cleanup = update.cleanup ? updateRuntimeRunCleanup(current.lifecycle?.cleanup, update.cleanup, now) : current.lifecycle?.cleanup ?? initialRuntimeRunCleanup()
     const cancellation = current.lifecycle?.cancellation
@@ -236,7 +245,7 @@ export class RuntimeRunRegistry {
       }
     }
 
-    const now = (options.now ?? new Date()).toISOString()
+    const now = (options.now ?? this.clock()).toISOString()
     const cancellation = stripUndefined({
       requestedAt: now,
       reason: options.reason,
@@ -258,8 +267,8 @@ export class RuntimeRunRegistry {
     }
   }
 
-  async heartbeat(runId: string, now = new Date()): Promise<RuntimeRunRecord> {
-    return this.update(runId, { now, heartbeat: true })
+  async heartbeat(runId: string, now?: Date): Promise<RuntimeRunRecord> {
+    return this.update(runId, { now: now ?? this.clock(), heartbeat: true })
   }
 
   recordPath(runId: string): string {

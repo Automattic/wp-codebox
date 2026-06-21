@@ -48,6 +48,22 @@ await withTempDir("wp-codebox-run-registry-", async (directory) => {
   assert.equal(retry.lifecycle.cleanup.attempts, 1)
 })
 
+await withTempDir("wp-codebox-run-registry-deterministic-", async (directory) => {
+  const registry = new RuntimeRunRegistry(directory, {
+    idFactory: () => "run_deterministic",
+    clock: () => new Date("2026-02-03T04:05:06.000Z"),
+  })
+  const run = await registry.create({ status: "running" })
+
+  assert.equal(run.runId, "run_deterministic")
+  assert.equal(run.createdAt, "2026-02-03T04:05:06.000Z")
+  assert.equal(run.updatedAt, "2026-02-03T04:05:06.000Z")
+
+  const updated = await registry.update(run.runId, { metadata: { replay: "stable" } })
+  assert.equal(updated.updatedAt, "2026-02-03T04:05:06.000Z")
+  assert.deepEqual(updated.metadata, { replay: "stable" })
+})
+
 await withTempDir("wp-codebox-run-registry-artifacts-", async (directory) => {
   const registry = new RuntimeRunRegistry(directory)
   const run = await registry.create({ runId: "result-artifacts", status: "running" })

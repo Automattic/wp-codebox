@@ -11,7 +11,9 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
     schema: FANOUT_REQUEST_SCHEMA,
     concurrency: 3,
     agent: "sandbox-agent",
-    orchestrator: { session_id: "fanout-test" },
+    session_id: "fanout-test",
+    orchestrator: {},
+    deterministic: { event_time: "2026-01-02T03:04:05.000Z" },
     workers: [
       { id: "one", goal: "Collect first result" },
       { id: "two", goal: "Collect second result" },
@@ -32,8 +34,12 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
   assert.equal(result.concurrency, 3)
   assert.deepEqual(result.counts, { total: 2, completed: 2, failed: 0, cancelled: 0 })
   assert.deepEqual(result.session.children.map((child) => child.id), ["fanout-test:one", "fanout-test:two"])
+  assert.deepEqual(result.session.children.map((child) => child.artifacts), ["fanout/workers/one/artifacts", "fanout/workers/two/artifacts"])
   assert.deepEqual(result.workers.map((worker) => worker.status), ["succeeded", "succeeded"])
   assert.equal(result.workers[0].artifact_refs[0].namespace, "workers/one")
+  assert.equal(result.workers[0].artifact_refs[0].path, "fanout/workers/one/artifacts/result.json")
+  assert.equal((result.workers[0].artifact_refs[0].metadata as Record<string, unknown>).private instanceof Object, true)
+  assert.equal(result.diagnostics?.private instanceof Object, true)
 
   const events = (await readFile(join(root, "fanout", "events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line))
   assert.deepEqual(events.map((event) => event.event), [
@@ -46,6 +52,7 @@ await withTempDir("wp-codebox-agent-fanout-executor-", async (root) => {
     "aggregation.completed",
     "fanout.completed",
   ])
+  assert.deepEqual([...new Set(events.map((event) => event.time))], ["2026-01-02T03:04:05.000Z"])
 })
 
 console.log("agent fanout executor ok")
