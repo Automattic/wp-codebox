@@ -1,5 +1,12 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import {
+  artifactBundleFileManifest,
+  browserArtifactPersistenceProjection,
+  browserRunResultEnvelope,
+  normalizeBrowserRunResult,
+  persistedBrowserArtifactRefs,
+} from "../packages/runtime-core/src/public.js"
 
 const root = new URL("..", import.meta.url)
 
@@ -103,5 +110,11 @@ for (const internalModule of [
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
 assert.match(docs, /not a stable compatibility surface for external integrations/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
+
+assert.equal(typeof normalizeBrowserRunResult, "function")
+assert.equal(typeof browserRunResultEnvelope, "function")
+assert.equal(typeof browserArtifactPersistenceProjection, "function")
+assert.equal(typeof persistedBrowserArtifactRefs, "function")
+assert.equal(typeof artifactBundleFileManifest, "function")
 
 console.log("public API contract ok")
