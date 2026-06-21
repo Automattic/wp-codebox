@@ -192,97 +192,12 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		if ( is_array( $normalized['error'] ?? null ) ) {
 			return self::runner_workspace_prepare_failure( 'invalid_request', $normalized['error'], 'failed', $normalized );
 		}
-		$backend       = self::runner_workspace_backend_config();
-		$abilities     = is_array( $backend['abilities'] ?? null ) ? $backend['abilities'] : array();
-		$adopt_ability = (string) ( $abilities['workspace_adopt'] ?? '' );
-		$show_ability  = (string) ( $abilities['workspace_show'] ?? '' );
-		$clone_ability = (string) ( $abilities['workspace_clone'] ?? '' );
-		$add_ability   = (string) ( $abilities['workspace_worktree_add'] ?? '' );
-
-		$checkout_path = (string) $normalized['checkout_path'];
-		$workspace_root_constant = (string) ( $backend['workspace_root_constant'] ?? '' );
-		if ( '' !== $checkout_path && '' !== $workspace_root_constant && ! defined( $workspace_root_constant ) ) {
-			define( $workspace_root_constant, rtrim( dirname( $checkout_path ), '/' ) );
+		$prepared = self::runner_workspace_adapter()->prepare( $normalized );
+		if ( empty( $prepared['success'] ) ) {
+			return self::runner_workspace_prepare_failure( (string) ( $prepared['failure_type'] ?? 'backend_failed' ), is_array( $prepared['error'] ?? null ) ? $prepared['error'] : array( 'message' => 'Runner workspace preparation failed.' ), 'backend_unavailable' === (string) ( $prepared['failure_type'] ?? '' ) ? 'unavailable' : 'failed', $normalized );
 		}
 
-		$required = '' !== $checkout_path
-			? array( $adopt_ability )
-			: array( $show_ability, $clone_ability, $add_ability );
-
-		foreach ( $required as $ability_name ) {
-			$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
-			if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
-				return self::runner_workspace_prepare_failure(
-					'backend_unavailable',
-					array( 'code' => 'wp_codebox_runner_workspace_prepare_backend_unavailable', 'message' => 'Runner workspace backend is not available for preparation.' ),
-					'unavailable',
-					$normalized
-				);
-			}
-		}
-
-		if ( '' !== $checkout_path ) {
-			$adopt = wp_get_ability( $adopt_ability )->execute( array( 'path' => $checkout_path, 'name' => $normalized['repo'] ) );
-			if ( is_wp_error( $adopt ) ) {
-				return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $adopt->get_error_code(), 'message' => $adopt->get_error_message(), 'data' => $adopt->get_error_data() ), 'failed', $normalized );
-			}
-			if ( ! is_array( $adopt ) || empty( $adopt['success'] ) ) {
-				return self::runner_workspace_prepare_failure( 'backend_failed', array( 'code' => 'wp_codebox_runner_workspace_prepare_adopt_failed', 'message' => 'Runner workspace backend could not adopt the mounted checkout.', 'result' => $adopt ), 'failed', $normalized );
-			}
-
-			return array_filter(
-				array(
-					'success'      => true,
-					'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
-					'status'       => 'prepared',
-					'repo'         => $normalized['repo'],
-					'branch'       => $normalized['branch'],
-					'handle'       => (string) ( $adopt['handle'] ?? $adopt['name'] ?? $normalized['repo'] ),
-					'path'         => (string) ( $adopt['path'] ?? $checkout_path ),
-					'capabilities' => array( 'capture' => true, 'command' => true, 'publish' => true ),
-				),
-				static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
-			);
-		}
-
-		$show = wp_get_ability( $show_ability )->execute( array( 'name' => $normalized['repo'] ) );
-		if ( is_wp_error( $show ) ) {
-			if ( '' === $normalized['clone_url'] ) {
-				return self::runner_workspace_prepare_failure( 'clone_url_required', array( 'code' => 'wp_codebox_runner_workspace_prepare_clone_url_required', 'message' => 'Runner workspace primary is missing and clone_url is empty.' ), 'failed', $normalized );
-			}
-
-			$clone_input = array( 'url' => $normalized['clone_url'], 'name' => $normalized['repo'] );
-			if ( '' !== $normalized['github_token_env'] && '' !== trim( (string) getenv( $normalized['github_token_env'] ) ) && preg_match( '#^https://github\.com/#', $normalized['clone_url'] ) ) {
-				$clone_input['auth_token_env'] = $normalized['github_token_env'];
-			}
-
-			$clone = wp_get_ability( $clone_ability )->execute( array_filter( $clone_input, static fn( mixed $value ): bool => '' !== $value ) );
-			if ( is_wp_error( $clone ) ) {
-				return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $clone->get_error_code(), 'message' => $clone->get_error_message(), 'data' => $clone->get_error_data() ), 'failed', $normalized );
-			}
-		}
-
-		$worktree_input = array_filter(
-			array(
-				'repo'           => $normalized['repo'],
-				'branch'         => $normalized['branch'],
-				'from'           => $normalized['from'],
-				'inject_context' => $normalized['inject_context'],
-				'bootstrap'      => $normalized['bootstrap'],
-				'allow_stale'    => $normalized['allow_stale'],
-				'rebase_base'    => $normalized['rebase_base'],
-				'force'          => $normalized['force'],
-			),
-			static fn( mixed $value ): bool => '' !== $value && null !== $value
-		);
-
-		$worktree = wp_get_ability( $add_ability )->execute( $worktree_input );
-		if ( is_wp_error( $worktree ) ) {
-			return self::runner_workspace_prepare_failure( 'backend_error', array( 'code' => $worktree->get_error_code(), 'message' => $worktree->get_error_message(), 'data' => $worktree->get_error_data() ), 'failed', $normalized );
-		}
-		if ( ! is_array( $worktree ) || empty( $worktree['success'] ) ) {
-			return self::runner_workspace_prepare_failure( 'backend_failed', array( 'code' => 'wp_codebox_runner_workspace_prepare_worktree_failed', 'message' => 'Runner workspace backend could not create the worktree.', 'result' => $worktree ), 'failed', $normalized );
-		}
+		$worktree = is_array( $prepared['result'] ?? null ) ? $prepared['result'] : array();
 
 		return array_filter(
 			array(
@@ -306,53 +221,13 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::runner_workspace_publication_failure( 'invalid_request', $normalized['error'], 'write_without_pr', $normalized );
 		}
 
-		$backend         = self::runner_workspace_backend_config();
-		$abilities       = is_array( $backend['abilities'] ?? null ) ? $backend['abilities'] : array();
-		$publish_ability = (string) ( $abilities['publish_runner_workspace'] ?? '' );
-		$ability         = '' !== $publish_ability && function_exists( 'wp_get_ability' ) ? wp_get_ability( $publish_ability ) : null;
-		if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
-			return self::runner_workspace_publication_failure(
-				'publication_unavailable',
-				array(
-					'code'    => 'wp_codebox_runner_workspace_publication_unavailable',
-					'message' => 'Runner workspace publication is not available in this WP Codebox runtime.',
-				),
-				'write_without_pr',
-				$normalized
-			);
+		$backend = self::runner_workspace_adapter()->publish( self::runner_workspace_publication_backend_input( $normalized ) );
+		if ( empty( $backend['success'] ) ) {
+			$status = 'backend_unavailable' === (string) ( $backend['failure_type'] ?? '' ) ? 'write_without_pr' : 'failed';
+			return self::runner_workspace_publication_failure( (string) ( $backend['failure_type'] ?? 'backend_failed' ), is_array( $backend['error'] ?? null ) ? $backend['error'] : array( 'message' => 'Runner workspace publication failed.' ), $status, $normalized );
 		}
 
-		$result = $ability->execute( self::runner_workspace_publication_backend_input( $normalized ) );
-		if ( is_wp_error( $result ) ) {
-			return self::runner_workspace_publication_failure(
-				'backend_error',
-				array(
-					'code'    => $result->get_error_code(),
-					'message' => $result->get_error_message(),
-					'data'    => $result->get_error_data(),
-				),
-				'failed',
-				$normalized
-			);
-		}
-
-		if ( ! is_array( $result ) ) {
-			return self::runner_workspace_publication_failure(
-				'backend_invalid_response',
-				array(
-					'code'    => 'wp_codebox_runner_workspace_publication_invalid_response',
-					'message' => 'Runner workspace publication backend returned an invalid response.',
-				),
-				'failed',
-				$normalized
-			);
-		}
-
-		if ( false === ( $result['success'] ?? true ) ) {
-			$error = is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace publication failed.' ) );
-			return self::runner_workspace_publication_failure( (string) ( $result['failure_type'] ?? 'backend_failed' ), $error, 'failed', $normalized );
-		}
-
+		$result = is_array( $backend['result'] ?? null ) ? $backend['result'] : array();
 		return self::normalize_runner_workspace_publication_result( $result, $normalized );
 	}
 
@@ -363,10 +238,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::runner_workspace_operation_failure( 'capture', 'invalid_request', $normalized['error'], 'failed', $normalized );
 		}
 
-		$backend_config = self::runner_workspace_backend_config();
-		$abilities      = is_array( $backend_config['abilities'] ?? null ) ? $backend_config['abilities'] : array();
-		$status = self::execute_runner_workspace_backend_ability( (string) ( $abilities['workspace_git_status'] ?? '' ), array( 'name' => $normalized['workspace'] ) );
-		if ( is_array( $status['error'] ?? null ) ) {
+		$status = self::runner_workspace_adapter()->git_status( (string) $normalized['workspace'] );
+		if ( empty( $status['success'] ) ) {
 			return self::runner_workspace_operation_failure( 'capture', (string) $status['failure_type'], $status['error'], 'unavailable', $normalized );
 		}
 
@@ -387,8 +260,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				),
 				static fn( mixed $value ): bool => '' !== $value
 			);
-			$diff = self::execute_runner_workspace_backend_ability( (string) ( $abilities['workspace_git_diff'] ?? '' ), $diff_input );
-			if ( is_array( $diff['error'] ?? null ) ) {
+			$diff = self::runner_workspace_adapter()->git_diff( $diff_input );
+			if ( empty( $diff['success'] ) ) {
 				return self::runner_workspace_operation_failure( 'capture', (string) $diff['failure_type'], $diff['error'], 'unavailable', $normalized );
 			}
 
@@ -464,10 +337,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
 		);
 
-		$backend_config = self::runner_workspace_backend_config();
-		$abilities      = is_array( $backend_config['abilities'] ?? null ) ? $backend_config['abilities'] : array();
-		$backend = self::execute_runner_workspace_backend_ability( (string) ( $abilities['run_runner_workspace_command'] ?? '' ), $backend_input );
-		if ( ! is_array( $backend['error'] ?? null ) ) {
+		$backend = self::runner_workspace_adapter()->run_command( $backend_input );
+		if ( ! empty( $backend['success'] ) ) {
 			$result = is_array( $backend['result'] ?? null ) ? $backend['result'] : array();
 			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input );
 		}
@@ -546,18 +417,13 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		return trim( $slug, '-' );
 	}
 
-	/** @return array<string,mixed> */
-	private static function runner_workspace_backend_config(): array {
-		$config = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
-		if ( is_array( $config ) && ! empty( $config ) ) {
-			return $config;
+	private static function runner_workspace_adapter(): WP_Codebox_Runner_Workspace_Adapter {
+		static $adapter = null;
+		if ( ! $adapter instanceof WP_Codebox_Runner_Workspace_Adapter ) {
+			$adapter = new WP_Codebox_Runner_Workspace_Adapter();
 		}
 
-		return array(
-			'id'                      => '',
-			'workspace_root_constant' => '',
-			'abilities'               => array(),
-		);
+		return $adapter;
 	}
 
 	/** @param array<string,mixed> $error Error shape. @param array<string,mixed> $input Normalized input. @return array<string,mixed> */
@@ -760,51 +626,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			),
 			static fn( mixed $value ): bool => array() !== $value && '' !== $value && null !== $value
 		);
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array{result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
-	private static function execute_runner_workspace_backend_ability( string $ability_name, array $input ): array {
-		$ability = function_exists( 'wp_get_ability' ) ? wp_get_ability( $ability_name ) : null;
-		if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
-			return array(
-				'failure_type' => 'backend_unavailable',
-				'error'        => array(
-					'code'    => 'wp_codebox_runner_workspace_backend_unavailable',
-					'message' => 'Runner workspace backend is not available for this operation.',
-				),
-			);
-		}
-
-		$result = $ability->execute( $input );
-		if ( is_wp_error( $result ) ) {
-			return array(
-				'failure_type' => 'backend_error',
-				'error'        => array(
-					'code'    => $result->get_error_code(),
-					'message' => $result->get_error_message(),
-					'data'    => $result->get_error_data(),
-				),
-			);
-		}
-
-		if ( ! is_array( $result ) ) {
-			return array(
-				'failure_type' => 'backend_invalid_response',
-				'error'        => array(
-					'code'    => 'wp_codebox_runner_workspace_backend_invalid_response',
-					'message' => 'Runner workspace backend ability returned an invalid response.',
-				),
-			);
-		}
-
-		if ( false === ( $result['success'] ?? true ) ) {
-			return array(
-				'failure_type' => (string) ( $result['failure_type'] ?? 'backend_failed' ),
-				'error'        => is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace backend operation failed.' ) ),
-			);
-		}
-
-		return array( 'result' => $result );
 	}
 
 	/** @param array<string,mixed> $error Raw backend or adapter error. @return array<string,mixed> */
