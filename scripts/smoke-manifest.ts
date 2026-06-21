@@ -111,6 +111,7 @@ export const smokeGroups = {
       tsxSmoke("wordpress-state-contract-smoke"),
       tsxSmoke("playground-command-errors-smoke"),
       tsxSmoke("runtime-command-result-envelope-smoke"),
+      tsxSmoke("playground-command-timeout-smoke"),
       tsxSmoke("replay-export-snapshot-scoping-smoke"),
       tsxSmoke("runtime-overlay-validation-smoke"),
       npmScript("test:runtime-php-snippets"),

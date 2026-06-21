@@ -222,6 +222,10 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		$method  = strtoupper( (string) ( $payload['method'] ?? 'POST' ) );
 		$headers = self::safe_headers( is_array( $payload['headers'] ?? null ) ? $payload['headers'] : array() );
 		$body    = self::request_body( $payload );
+		if ( self::request_body_is_json( $payload, $body ) ) {
+			$headers = self::without_header( $headers, 'content-type' );
+			$headers['Content-Type'] = 'application/json';
+		}
 
 		return self::authenticate_request( $provider, $policy, array( 'url' => $url, 'method' => $method, 'headers' => $headers, 'body' => $body ), $request, $input );
 	}
@@ -387,6 +391,16 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		return '';
 	}
 
+	/** @param array<string,mixed> $payload Request payload. */
+	private static function request_body_is_json( array $payload, string $body ): bool {
+		if ( is_array( $payload['body'] ?? null ) || is_array( $payload['data'] ?? null ) ) {
+			return true;
+		}
+
+		$trimmed = trim( $body );
+		return '' !== $trimmed && ( str_starts_with( $trimmed, '{' ) || str_starts_with( $trimmed, '[' ) );
+	}
+
 	/** @param array<string,mixed> $headers Request headers. @return array<string,string> */
 	private static function safe_headers( array $headers ): array {
 		$safe = array();
@@ -406,6 +420,17 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		}
 
 		return $safe;
+	}
+
+	/** @param array<string,string> $headers Request headers. @return array<string,string> */
+	private static function without_header( array $headers, string $name ): array {
+		foreach ( array_keys( $headers ) as $header_name ) {
+			if ( strtolower( (string) $header_name ) === strtolower( $name ) ) {
+				unset( $headers[ $header_name ] );
+			}
+		}
+
+		return $headers;
 	}
 
 	/** @param array<string,array<int,string>|string> $headers Header lists. @return array<string,string> */
