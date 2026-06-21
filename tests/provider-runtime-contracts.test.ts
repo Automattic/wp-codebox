@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
 import {
+  PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+  PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+  PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
   PROVIDER_RUNTIME_ABILITY_NAMES,
   PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
   PROVIDER_RUNTIME_TASK_NAMES,
@@ -27,9 +30,35 @@ assert.equal(contract.result_schemas.workspace_command, "wp-codebox/runner-works
 assert.equal(contract.result_schemas.workspace_publication, "wp-codebox/runner-workspace-publication-result/v1")
 assert.equal(contract.result_schemas.tool_call_transcript, "wp-codebox/tool-call-transcript/v1")
 assert.equal(contract.result_schemas.evidence_artifact_envelope, "wp-codebox/evidence-artifact-envelope/v1")
+assert.equal(PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, "wp-codebox/provider-credential-requirements/v1")
+assert.equal(PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, "wp-codebox/provider-credential-preflight/v1")
+assert.equal(PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, "wp-codebox/provider-credential-resolution/v1")
+
+const credentialResolution = {
+  schema: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  requirements: {
+    schema: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+    provider: "example-provider",
+    requirements: [{ name: "primary_api_token", required: true, kind: "api-token", secretEnv: ["EXAMPLE_PROVIDER_TOKEN"] }],
+    redacted: true,
+  },
+  preflight: {
+    schema: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+    provider: "example-provider",
+    status: "available",
+    requirements: [{ name: "primary_api_token", required: true, kind: "api-token", secretEnv: ["EXAMPLE_PROVIDER_TOKEN"] }],
+    secret_env: ["EXAMPLE_PROVIDER_TOKEN"],
+    diagnostics: [{ code: "resolved", severity: "info", message: "Credential resolved by provider-owned boundary." }],
+    redacted: true,
+  },
+  secret_env: ["EXAMPLE_PROVIDER_TOKEN"],
+  redacted: true,
+}
+assert.doesNotMatch(JSON.stringify(credentialResolution), /token-value|secret_env_values|credentials/i)
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
 const runnerWorkspacePhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-runner-publication.php", "utf8")
+const providerCredentialsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-provider-credentials.php", "utf8")
 const registeredAbilityIds = [
   contract.abilities.workspacePrepare,
   contract.abilities.workspaceCapture,
@@ -53,6 +82,9 @@ assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilitie
 assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
 
 assert.match(runnerWorkspacePhp, /apply_filters\(\s*'wp_codebox_runner_workspace_backend'/)
+assert.match(providerCredentialsPhp, /wp_codebox_provider_credential_requirements/)
+assert.match(providerCredentialsPhp, /wp_codebox_resolve_provider_credentials/)
+assert.doesNotMatch(providerCredentialsPhp, /secret_env_values|access_token|refresh_token/i)
 assert.doesNotMatch(runnerWorkspacePhp, /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 
 const serialized = JSON.stringify(contract)
