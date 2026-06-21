@@ -7,6 +7,7 @@ product or job system.
 
 - TypeScript implementations live in `packages/runtime-core/src/artifact-storage.ts`,
   `packages/runtime-core/src/browser-session-origin.ts`, and
+  `packages/runtime-core/src/runtime-neutral-contracts.ts`, and
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
   `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
@@ -115,6 +116,28 @@ Recipe schema accepts these bundles through `runtime.overlays[]`:
   }
 }
 ```
+
+## Neutral WordPress Runtime Intent
+
+Recipes can omit `runtime.backend` or set it to `wordpress`. WP Codebox currently
+normalizes that neutral WordPress runtime name to the existing
+`wordpress-playground` backend implementation. The `wordpress-playground` spelling
+is still accepted for existing recipes and low-level compatibility.
+
+`runtime-neutral-contracts.ts` also exports helper-only setup intent types for
+callers that need to describe desired setup before compiling it into recipe
+fields:
+
+- `RuntimeWordPressSetupPlanIntent` groups component and filesystem intent for a
+  WordPress sandbox setup plan.
+- `RuntimeWordPressComponentIntent` describes components such as plugins,
+  mu-plugins, themes, WordPress core, and runtime overlays.
+- `RuntimeWordPressFilesystemIntent` describes intended sandbox filesystem
+  materialization, including target path, mode, and purpose.
+
+These intent types are public documentation helpers. Runtime execution still uses
+the concrete recipe fields such as `inputs.extra_plugins`, `inputs.mounts`,
+`inputs.stagedFiles`, `runtime.stack.mounts`, and `runtime.overlays`.
 
 ## Runtime Profiles
 

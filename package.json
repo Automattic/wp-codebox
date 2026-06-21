@@ -126,6 +126,7 @@
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
+    "test:recipe-runtime-backend-normalization": "tsx tests/recipe-runtime-backend-normalization.test.ts",
     "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
     "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",

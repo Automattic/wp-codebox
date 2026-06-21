@@ -1,11 +1,11 @@
-import { createRuntimeBackendRegistry, type RuntimeBackend, type RuntimeBackendFactoryContext, type RuntimeBackendKind, type RuntimeBackendRecipePolicy } from "@automattic/wp-codebox-core"
+import { createRuntimeBackendRegistry, runtimeBackendRecipeAliases, type RuntimeBackend, type RuntimeBackendFactoryContext, type RuntimeBackendKind, type RuntimeBackendRecipePolicy } from "@automattic/wp-codebox-core"
 import type { CommandDefinition } from "@automattic/wp-codebox-core/contracts"
 import { playgroundRuntimeBackendProvider } from "@automattic/wp-codebox-playground"
 
 const cliRuntimeBackendRegistry = createRuntimeBackendRegistry([playgroundRuntimeBackendProvider])
 
 export function listCliRuntimeBackendKinds(): RuntimeBackendKind[] {
-  return cliRuntimeBackendRegistry.list()
+  return cliRuntimeBackendRegistry.list().flatMap((kind) => [kind, ...runtimeBackendRecipeAliases(kind)])
 }
 
 export function cliRuntimeBackendRecipePolicy(): Required<RuntimeBackendRecipePolicy> {

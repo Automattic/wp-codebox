@@ -1,6 +1,9 @@
 import type { CommandDefinition } from "./command-registry.js"
 import type { RuntimeBackend, RuntimeBackendKind } from "./runtime-contracts.js"
 
+export const WORDPRESS_RUNTIME_BACKEND_KIND = "wordpress-playground" as const
+export const WORDPRESS_RUNTIME_BACKEND_ALIAS = "wordpress" as const
+
 /**
  * Runtime-specific dependencies that backend providers may need while creating a backend.
  *
@@ -54,7 +57,7 @@ export class RuntimeBackendRegistry {
   }
 
   resolve(kind: RuntimeBackendKind, context?: RuntimeBackendFactoryContext): RuntimeBackend {
-    const provider = this.#providers.get(kind)
+    const provider = this.#providers.get(normalizeRuntimeBackendKind(kind))
     if (!provider) {
       throw new Error(unsupportedRuntimeBackendMessage(kind, this.list()))
     }
@@ -87,6 +90,19 @@ export function createRuntimeBackendRegistry(providers: readonly RuntimeBackendP
 
 export function resolveRuntimeBackend(kind: RuntimeBackendKind, providers: readonly RuntimeBackendProvider[], context?: RuntimeBackendFactoryContext): RuntimeBackend {
   return createRuntimeBackendRegistry(providers).resolve(kind, context)
+}
+
+export function normalizeRuntimeBackendKind(kind: RuntimeBackendKind | undefined | null): RuntimeBackendKind {
+  const normalized = typeof kind === "string" ? kind.trim() : ""
+  if (!normalized || normalized === WORDPRESS_RUNTIME_BACKEND_ALIAS) {
+    return WORDPRESS_RUNTIME_BACKEND_KIND
+  }
+
+  return normalized as RuntimeBackendKind
+}
+
+export function runtimeBackendRecipeAliases(kind: RuntimeBackendKind): RuntimeBackendKind[] {
+  return kind === WORDPRESS_RUNTIME_BACKEND_KIND ? [WORDPRESS_RUNTIME_BACKEND_ALIAS] : []
 }
 
 function unsupportedRuntimeBackendMessage(kind: RuntimeBackendKind, knownKinds: readonly RuntimeBackendKind[]): string {

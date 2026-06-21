@@ -1,5 +1,5 @@
 import { basename, dirname, resolve } from "node:path"
-import { fixtureImportDeterministicIdPlan, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
+import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validateRuntimePolicy, type FixtureImportDeterministicIdPlan, type MountSpec, type RuntimePolicy, type RuntimeWordPressInstallMode, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeSiteSeedBootstrap, type WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
@@ -411,7 +411,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
 
   return {
     runtime: {
-      backend: recipe.runtime?.backend ?? "wordpress-playground",
+      backend: normalizeRuntimeBackendKind(recipe.runtime?.backend),
       ...(recipe.runtime?.backendPackage ? { backendPackage: recipe.runtime.backendPackage } : {}),
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,

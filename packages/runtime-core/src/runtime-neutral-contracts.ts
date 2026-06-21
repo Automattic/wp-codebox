@@ -1,5 +1,36 @@
 export type BackendNeutralRuntimeBackendKind = string & {}
 
+export type RuntimeWordPressComponentIntentKind = "wordpress-core" | "plugin" | "mu-plugin" | "theme" | "runtime-overlay" | (string & {})
+export type RuntimeWordPressFilesystemIntentType = "directory" | "file" | (string & {})
+export type RuntimeWordPressFilesystemIntentMode = "readonly" | "readwrite" | "generated" | (string & {})
+
+export interface RuntimeWordPressComponentIntent {
+  kind: RuntimeWordPressComponentIntentKind
+  slug?: string
+  source?: string
+  target?: string
+  activate?: boolean
+  capabilities?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface RuntimeWordPressFilesystemIntent {
+  type?: RuntimeWordPressFilesystemIntentType
+  source?: string
+  target: string
+  mode?: RuntimeWordPressFilesystemIntentMode
+  purpose?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface RuntimeWordPressSetupPlanIntent {
+  schema: "wp-codebox/wordpress-runtime-setup-plan/v1"
+  backend?: BackendNeutralRuntimeBackendKind
+  components?: RuntimeWordPressComponentIntent[]
+  filesystem?: RuntimeWordPressFilesystemIntent[]
+  metadata?: Record<string, unknown>
+}
+
 export interface BackendNeutralRuntimeAssetSpec {
   directory?: string
   archive?: string
