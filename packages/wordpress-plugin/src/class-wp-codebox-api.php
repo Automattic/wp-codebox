@@ -49,7 +49,7 @@ final class WP_Codebox_API {
 		$ability_name = trim( $ability_name );
 		$method       = self::ABILITY_METHODS[ $ability_name ] ?? '';
 		if ( '' === $method ) {
-			return new WP_Error( 'wp_codebox_api_ability_not_supported', 'WP_Codebox_API only executes supported wp-codebox consumer operations.', array( 'status' => 400, 'ability' => $ability_name ) );
+			return new WP_Error( 'wp_codebox_api_ability_not_supported', 'WP_Codebox_API only executes supported wp-codebox consumer operations.', array( 'status' => 400 ) );
 		}
 
 		return self::{$method}( $input );
