@@ -12,6 +12,7 @@ import {
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
   parentToolBridgeContract,
+  performanceObservation,
   runWordPressWpCli,
   runWordPressPhp,
   requestWordPressRest,
@@ -23,6 +24,7 @@ import {
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
+  PERFORMANCE_OBSERVATION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
@@ -105,6 +107,7 @@ for (const contractArea of [
   "Browser task and contained site",
   "Browser SDK",
   "Browser metrics",
+  "Performance observation",
   "Fuzz suite",
   "Artifacts",
   "Inspect",
@@ -119,6 +122,7 @@ for (const publicModule of [
   "./browser-callback-contracts.js",
   "./fuzz-suite-contracts.js",
   "./parent-tool-bridge.js",
+  "./performance-observation.js",
   "./recipe-builders.js",
   "./runtime-boundary-contracts.js",
   "./runtime-contracts.js",
@@ -172,6 +176,7 @@ assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ART
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
+assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({
   suite: { id: "ability-boundary" },
