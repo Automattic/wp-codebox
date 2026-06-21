@@ -1,5 +1,7 @@
 import { stripUndefined } from "./object-utils.js"
 
+export const ARTIFACT_DIAGNOSTICS_SCHEMA = "wp-codebox/artifact-diagnostics/v1" as const
+
 export type ArtifactDiagnosticSeverity = "error" | "warning" | "notice" | "info" | (string & {})
 
 export interface ArtifactDiagnosticRef {
@@ -26,7 +28,7 @@ export interface ArtifactDiagnostic {
 }
 
 export interface ArtifactDiagnostics {
-  schema: "wp-codebox/artifact-diagnostics/v1"
+  schema: typeof ARTIFACT_DIAGNOSTICS_SCHEMA
   status: "clean" | "reported"
   summary: {
     total: number
@@ -50,6 +52,26 @@ export interface ArtifactDiagnosticNormalizerOptions {
 export function buildArtifactDiagnostics(input: unknown, options: ArtifactDiagnosticNormalizerOptions = {}): ArtifactDiagnostics {
   const observations = Array.isArray(input) ? input : [input]
   const diagnostics = observations.flatMap((observation, observationIndex) => diagnosticsFromArtifactObservation(observation, observationIndex, options))
+
+  return artifactDiagnosticsEnvelope(diagnostics)
+}
+
+export function normalizeArtifactDiagnostics(input: unknown, options: ArtifactDiagnosticNormalizerOptions = {}): ArtifactDiagnostics {
+  const record = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : undefined
+  if (record?.schema !== ARTIFACT_DIAGNOSTICS_SCHEMA) {
+    return buildArtifactDiagnostics(input, options)
+  }
+
+  return artifactDiagnosticsEnvelope(arrayPayload(record.diagnostics)
+    .map((value, index) => normalizeArtifactDiagnostic(value, record, 0, index, options))
+    .filter((diagnostic): diagnostic is ArtifactDiagnostic => diagnostic !== null))
+}
+
+export function isArtifactDiagnostics(input: unknown): input is ArtifactDiagnostics {
+  return Boolean(input && typeof input === "object" && !Array.isArray(input) && (input as Record<string, unknown>).schema === ARTIFACT_DIAGNOSTICS_SCHEMA)
+}
+
+function artifactDiagnosticsEnvelope(diagnostics: ArtifactDiagnostic[]): ArtifactDiagnostics {
   const summary = {
     total: diagnostics.length,
     error: diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
@@ -59,7 +81,7 @@ export function buildArtifactDiagnostics(input: unknown, options: ArtifactDiagno
   }
 
   return {
-    schema: "wp-codebox/artifact-diagnostics/v1",
+    schema: ARTIFACT_DIAGNOSTICS_SCHEMA,
     status: diagnostics.length > 0 ? "reported" : "clean",
     summary,
     diagnostics,
@@ -101,7 +123,8 @@ function normalizeArtifactDiagnostic(raw: unknown, observation: Record<string, u
   const value = raw as Record<string, unknown>
   const type = stringField(value.type) || stringField(value.kind) || stringField(value.code) || stringField(value.reason_code) || "diagnostic"
   const message = stringField(value.message) || stringField(value.summary) || stringField(value.reason) || stringField(value.excerpt) || stringField(value.error_message) || type
-  const details = stripUndefined(Object.fromEntries(Object.entries(value).filter(([key]) => ![
+  const explicitDetails = value.details && typeof value.details === "object" && !Array.isArray(value.details) ? value.details as Record<string, unknown> : undefined
+  const extraDetails = stripUndefined(Object.fromEntries(Object.entries(value).filter(([key]) => ![
     "id",
     "diagnostic_id",
     "type",
@@ -123,7 +146,14 @@ function normalizeArtifactDiagnostic(raw: unknown, observation: Record<string, u
     "refs",
     "references",
     "artifactRefs",
+    "provenance",
+    "details",
   ].includes(key))))
+  const details = stripUndefined({
+    ...explicitDetails,
+    ...extraDetails,
+  })
+  const provenance = value.provenance && typeof value.provenance === "object" && !Array.isArray(value.provenance) ? value.provenance as Record<string, unknown> : {}
 
   return stripUndefined({
     id: stringField(value.id) || stringField(value.diagnostic_id) || `${stringField(observation.id) ?? `observation-${observationIndex}`}-diagnostic-${diagnosticIndex + 1}`,
@@ -140,6 +170,7 @@ function normalizeArtifactDiagnostic(raw: unknown, observation: Record<string, u
       observationId: stringField(observation.id),
       observationType: stringField(observation.type) || options.observationType,
       observedAt: stringField(observation.observedAt),
+      ...provenance,
     }),
     refs: artifactDiagnosticRefs(value.refs ?? value.references ?? value.artifactRefs, options.refs),
     details: Object.keys(details).length > 0 ? details : undefined,
