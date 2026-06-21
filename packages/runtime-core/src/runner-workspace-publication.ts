@@ -1,5 +1,14 @@
+export const RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA = "wp-codebox/runner-workspace-publication-request/v1" as const
+export const RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA = "wp-codebox/runner-workspace-publication-result/v1" as const
+export const RUNNER_WORKSPACE_PREPARE_REQUEST_SCHEMA = "wp-codebox/runner-workspace-prepare-request/v1" as const
+export const RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA = "wp-codebox/runner-workspace-prepare-result/v1" as const
+export const RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA = "wp-codebox/runner-workspace-capture-request/v1" as const
+export const RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA = "wp-codebox/runner-workspace-capture-result/v1" as const
+export const RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA = "wp-codebox/runner-workspace-command-request/v1" as const
+export const RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA = "wp-codebox/runner-workspace-command-result/v1" as const
+
 export type RunnerWorkspacePublicationRequest = {
-  schema?: "wp-codebox/runner-workspace-publication-request/v1"
+  schema?: typeof RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA
   workspace?: string
   workspace_handle?: string
   workspace_path?: string
@@ -35,7 +44,7 @@ export type RunnerWorkspacePublicationFailureType =
   | string
 
 export type RunnerWorkspacePublicationResult = {
-  schema: "wp-codebox/runner-workspace-publication-result/v1"
+  schema: typeof RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA
   success: boolean
   status: "published" | "failed" | "write_without_pr"
   failure_type?: RunnerWorkspacePublicationFailureType
@@ -85,7 +94,7 @@ export type RunnerWorkspaceIdentity = {
 }
 
 export type RunnerWorkspaceCaptureRequest = RunnerWorkspaceIdentity & {
-  schema?: "wp-codebox/runner-workspace-capture-request/v1"
+  schema?: typeof RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA
   from?: string
   to?: string
   path?: string
@@ -93,7 +102,7 @@ export type RunnerWorkspaceCaptureRequest = RunnerWorkspaceIdentity & {
 }
 
 export type RunnerWorkspaceCaptureResult = {
-  schema: "wp-codebox/runner-workspace-capture-result/v1"
+  schema: typeof RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA
   success: boolean
   backend: string
   changed?: boolean
@@ -120,7 +129,7 @@ export type RunnerWorkspaceCaptureResult = {
 }
 
 export type RunnerWorkspaceCommandRequest = RunnerWorkspaceIdentity & {
-  schema?: "wp-codebox/runner-workspace-command-request/v1"
+  schema?: typeof RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA
   command: string
   description?: string
   timeout_seconds?: number
@@ -130,7 +139,7 @@ export type RunnerWorkspaceCommandRequest = RunnerWorkspaceIdentity & {
 }
 
 export type RunnerWorkspaceCommandResult = {
-  schema: "wp-codebox/runner-workspace-command-result/v1"
+  schema: typeof RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA
   success: boolean
   status: "completed" | "failed" | "unavailable"
   command?: string

@@ -1,0 +1,100 @@
+import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTaskRunResultSummary } from "./agent-task-run-result.js"
+import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
+import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
+import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, providerRuntimeInvocationContract, type ProviderRuntimeInvocationContract } from "./provider-runtime-contracts.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, runtimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
+import {
+  RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
+  RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
+  RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA,
+  RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
+  RUNNER_WORKSPACE_PREPARE_REQUEST_SCHEMA,
+  RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
+  RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
+  RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
+} from "./runner-workspace-publication.js"
+
+export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
+
+export const RUNTIME_CONTRACT_SCHEMAS = {
+  providerRuntime: {
+    invocation: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
+    credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+    credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+    credentialResolution: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  },
+  agentTask: {
+    runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
+  },
+  runtimeBoundary: {
+    profile: RUNTIME_PROFILE_SCHEMA,
+    previewLease: PREVIEW_LEASE_SCHEMA,
+    browserContainedSiteStatus: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
+    browserContainedSiteOpen: BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+    browserSessionProductDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
+    browserPreviewBootConfig: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
+  },
+  artifact: {
+    resultEnvelope: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  },
+  runnerWorkspace: {
+    prepareRequest: RUNNER_WORKSPACE_PREPARE_REQUEST_SCHEMA,
+    prepareResult: RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
+    captureRequest: RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
+    captureResult: RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
+    commandRequest: RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA,
+    commandResult: RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
+    publicationRequest: RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
+    publicationResult: RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
+  },
+  fanoutAggregation: {
+    input: FANOUT_AGGREGATION_INPUT_SCHEMA,
+    output: FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  },
+} as const
+
+export type RuntimeContractSchemaGroup = keyof typeof RUNTIME_CONTRACT_SCHEMAS
+export type RuntimeContractSchema = typeof RUNTIME_CONTRACT_SCHEMAS[RuntimeContractSchemaGroup][keyof typeof RUNTIME_CONTRACT_SCHEMAS[RuntimeContractSchemaGroup]]
+
+export interface RuntimeContractManifest {
+  schema: typeof RUNTIME_CONTRACT_MANIFEST_SCHEMA
+  version: 1
+  schemas: typeof RUNTIME_CONTRACT_SCHEMAS
+  providerRuntime: ProviderRuntimeInvocationContract
+}
+
+export function runtimeContractManifest(): RuntimeContractManifest {
+  return {
+    schema: RUNTIME_CONTRACT_MANIFEST_SCHEMA,
+    version: 1,
+    schemas: RUNTIME_CONTRACT_SCHEMAS,
+    providerRuntime: providerRuntimeInvocationContract(),
+  }
+}
+
+export function runtimeContractSchemaValues(): RuntimeContractSchema[] {
+  return Object.values(RUNTIME_CONTRACT_SCHEMAS).flatMap((group) => Object.values(group)) as RuntimeContractSchema[]
+}
+
+export function isRuntimeContractSchema(value: unknown): value is RuntimeContractSchema {
+  return typeof value === "string" && runtimeContractSchemaValues().includes(value as RuntimeContractSchema)
+}
+
+export function normalizeRuntimeContractSchema(value: unknown): RuntimeContractSchema {
+  if (isRuntimeContractSchema(value)) return value
+  throw new Error(`Unknown WP Codebox runtime contract schema: ${String(value)}`)
+}
+
+export const RUNTIME_CONTRACT_NORMALIZERS = {
+  agentTaskRunResult: normalizeAgentTaskRunResult,
+  artifactResultEnvelope: normalizeArtifactResultEnvelope,
+  fanoutAggregationInput: normalizeFanoutAggregationInput,
+  fanoutAggregationOutput: aggregateFanoutOutputs,
+  runtimeProfile,
+} satisfies {
+  agentTaskRunResult: (input: unknown) => AgentTaskRunResultSummary
+  artifactResultEnvelope: (input: unknown) => ArtifactResultEnvelope
+  fanoutAggregationInput: (input: FanoutAggregationInputRequest) => FanoutAggregationInput
+  fanoutAggregationOutput: (input: FanoutAggregationInputRequest) => FanoutAggregationOutput
+  runtimeProfile: (input: unknown) => RuntimeProfile
+}
