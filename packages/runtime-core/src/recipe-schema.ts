@@ -1065,8 +1065,22 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string" },
           },
+          diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
+        },
+      },
+      commandDiagnosticsCapture: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          capture: {
+            type: "array",
+            items: { enum: ["wpdb-queries"] },
+            uniqueItems: true,
+          },
+          maxItems: { type: "integer", minimum: 1, maximum: 500 },
+          maxBytes: { type: "integer", minimum: 1, maximum: 524288 },
         },
       },
       fuzzRun: {

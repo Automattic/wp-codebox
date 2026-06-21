@@ -196,9 +196,18 @@ export interface WorkspaceRecipeSourcePackage {
 export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
+  diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   allowFailure?: boolean
   advisory?: boolean
 }
+
+export interface RuntimeCommandDiagnosticsCaptureSpec {
+  capture?: RuntimeCommandDiagnosticsCaptureKind[]
+  maxItems?: number
+  maxBytes?: number
+}
+
+export type RuntimeCommandDiagnosticsCaptureKind = "wpdb-queries"
 
 export type WorkspaceRecipeFuzzCasePhase = "setup" | "action" | "assert" | "teardown"
 
@@ -613,6 +622,7 @@ export interface MountSpec {
 export interface ExecutionSpec {
   command: string
   args?: string[]
+  diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   cwd?: string
   timeoutMs?: number
 }
@@ -669,6 +679,8 @@ export interface ExecutionResult {
   stdout: string
   stderr: string
   result?: RuntimeCommandResultEnvelope
+  diagnostics?: unknown
+  artifactRefs?: RuntimeEpisodeTraceRef[]
   startedAt: string
   finishedAt: string
 }

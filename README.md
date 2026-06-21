@@ -721,7 +721,7 @@ npm run wp-codebox -- run \
 Supported runtime commands today:
 
 - `inspect-mounted-inputs`: list mounted input entries from inside Playground.
-- `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`.
+- `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`. It can opt into bounded command diagnostics with `capture-diagnostics=wpdb-queries` or a recipe step `diagnostics` object; captured `$wpdb->queries` fingerprints are capped and linked as a `wp-codebox/command-diagnostics/v1` artifact from the command result.
 - `wordpress.wp-cli`: run WP-CLI; accepts `command='wp option get home'` or plain args.
 - `wordpress.ability`: execute a registered WordPress Ability; accepts `name=<ability>` and optional JSON `input=<object>`.
 - `wordpress.phpunit`: run a mounted plugin's PHPUnit suite; accepts `plugin-slug=<slug>` (or explicit `code`/`code-file`) plus `test-file`, `autoload-file`, `tests-dir`, and `phpunit-xml`.

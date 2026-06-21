@@ -294,6 +294,30 @@ Recipes can pass REST profiling workloads to `wordpress.bench` with
 REST requests; the runtime expands each route into the existing `rest-request`
 step and returns normal benchmark scenarios/artifacts.
 
+## Command Diagnostics
+
+Recipe steps may opt into bounded per-command diagnostics with a `diagnostics`
+object. Capture is disabled by default. The first supported capture kind is
+`wpdb-queries` on `wordpress.run-php`, which records redacted SQL fingerprints
+from `$wpdb->queries` around the command and links a structured
+`wp-codebox/command-diagnostics/v1` artifact from the execution result.
+
+```json
+{
+  "command": "wordpress.run-php",
+  "args": ["code=$wpdb->get_results('SELECT * FROM wp_posts WHERE ID = 123');"],
+  "diagnostics": {
+    "capture": ["wpdb-queries"],
+    "maxItems": 25,
+    "maxBytes": 32768
+  }
+}
+```
+
+The same command also accepts `capture-diagnostics=wpdb-queries`,
+`diagnostics-max-items=<n>`, and `diagnostics-max-bytes=<n>` args for direct
+runtime callers. Limits are capped at 500 records and 524288 serialized bytes.
+
 ```json
 {
   "command": "wordpress.bench",
