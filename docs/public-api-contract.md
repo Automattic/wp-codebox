@@ -46,9 +46,9 @@ local consumers in this repo.
 
 The stable public surface is grouped by lifecycle area rather than by product:
 
-- **Runtime task/package:** task input, agent task recipe, recipe source package,
-  runtime workload, WordPress workload primitives, runtime policy, provider
-  runtime, and command result contracts.
+- **Runtime task/package:** task input, agent task recipe, agent task run result,
+  recipe source package, runtime workload, WordPress workload primitives,
+  runtime policy, provider runtime, and command result contracts.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, and runner workspace publication contracts.
 - **Tool bridge:** host tool registry, managed host command, host command
