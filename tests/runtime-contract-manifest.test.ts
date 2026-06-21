@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
   PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
@@ -12,6 +13,10 @@ import {
   RUNTIME_CONTRACT_MANIFEST_SCHEMA,
   RUNTIME_CONTRACT_NORMALIZERS,
   RUNTIME_CONTRACT_SCHEMAS,
+  RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA,
+  RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA,
+  RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
+  RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
@@ -29,6 +34,7 @@ const manifest = runtimeContractManifest()
 assert.equal(manifest.schema, RUNTIME_CONTRACT_MANIFEST_SCHEMA)
 assert.equal(manifest.version, 1)
 assert.deepEqual(manifest.schemas, RUNTIME_CONTRACT_SCHEMAS)
+assert.deepEqual(manifest.abilities, { runRuntimePackage: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY })
 assert.deepEqual(manifest.providerRuntime, providerRuntimeInvocationContract())
 
 assert.equal(manifest.schemas.providerRuntime.invocation, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
@@ -38,6 +44,10 @@ assert.equal(manifest.schemas.providerRuntime.credentialResolution, PROVIDER_CRE
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.artifact.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(manifest.schemas.artifact.runtimePackageDeclaration, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA)
+assert.equal(manifest.schemas.artifact.runtimePackageProjection, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA)
+assert.equal(manifest.schemas.runtimePackage.executionInput, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA)
+assert.equal(manifest.schemas.runtimePackage.executionResult, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.prepareResult, RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.captureResult, RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.commandResult, RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA)

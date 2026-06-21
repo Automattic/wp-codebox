@@ -434,6 +434,43 @@ final class WP_Codebox_Abilities {
 			wp_register_ability( 'wp-codebox/run-sandbox-task-fanout', $run_sandbox_task_fanout_ability );
 
 			wp_register_ability(
+				'wp-codebox/run-runtime-package',
+				array(
+					'label'               => 'Run Runtime Package',
+					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary without exposing backend ability ids to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'runtime_package' ),
+						'properties' => array(
+							'schema'                => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-package-execution-input/v1' ),
+							'runtime_package'       => array( 'type' => 'string' ),
+							'input'                 => array( 'type' => 'object' ),
+							'expected_result_schema' => array(),
+							'artifact_declarations' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'output_projections'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'metadata'              => array( 'type' => 'object' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'schema'       => array( 'type' => 'string' ),
+							'success'      => array( 'type' => 'boolean' ),
+							'status'       => array( 'type' => 'string' ),
+							'result'       => array( 'type' => 'object' ),
+							'artifacts'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'projections'  => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'diagnostics' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'run_runtime_package' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-package', 'backend_adapter' => 'agents-api-runtime-package' ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/request-host-delegation',
 				array(
 					'label'               => 'Request Host Delegation',

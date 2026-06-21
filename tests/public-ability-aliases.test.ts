@@ -31,6 +31,10 @@ for (const [alias, canonical] of browserAliases) {
 assert.match(descriptorsPhp, /\$descriptors\[\s*\$ability_id\s*\]\s*=\s*\$descriptors\[\s*\$canonical\s*\]/)
 assert.match(descriptorsPhp, /'canonical_ability'\s*=>\s*\$canonical/)
 assert.match(descriptorsPhp, /'alias_of'\s*=>\s*\$canonical/)
+assert.match(abilitiesPhp, /wp_register_ability\(\s*'wp-codebox\/run-runtime-package'/)
+assert.match(abilitiesPhp, /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runtime_package'\s*\)/)
+assert.match(abilitiesPhp, /'canonical_ability'\s*=>\s*'wp-codebox\/run-runtime-package'/)
+assert.doesNotMatch(abilitiesPhp, /wp_register_ability\(\s*'agents\/run-runtime-package'/)
 assert.doesNotMatch(abilitiesPhp + descriptorsPhp, /datamachine|data machine/i)
 
 console.log("public ability aliases ok")

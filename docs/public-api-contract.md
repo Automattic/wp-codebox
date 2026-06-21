@@ -56,7 +56,8 @@ The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
   recipe source package, runtime workload, WordPress workload primitives,
-  runtime policy, provider runtime, and command result contracts.
+  runtime package execution, runtime policy, provider runtime, and command result
+  contracts.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, and runner workspace publication contracts.
 - **Tool bridge:** host tool registry, managed host command, host command
@@ -115,6 +116,14 @@ When adding a new public type or helper, place it in the focused owner module an
 export it through `@automattic/wp-codebox-core/public` or the narrowest stable
 entrypoint that matches its lifecycle area. Avoid adding implementation helpers
 to a public barrel only because they are convenient for one in-repo caller.
+
+Runtime package callers use `wp-codebox/run-runtime-package` or
+`buildRuntimePackageRunRecipe()`. The public request schema is
+`wp-codebox/runtime-package-execution-input/v1`; typed artifact declarations use
+`wp-codebox/runtime-package-artifact-declaration/v1`; output projections use
+`wp-codebox/runtime-package-output-projection/v1`. These contracts are generic
+Codebox runtime/package shapes and do not require consumers to know backend
+ability ids.
 
 ## Internal Entry Point
 
