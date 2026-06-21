@@ -13,6 +13,10 @@ function exportKeys(packageJson: Record<string, unknown>): string[] {
   return Object.keys(exportsField as Record<string, unknown>)
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 const rootPackage = await readJson("package.json")
 const corePackage = await readJson("packages/runtime-core/package.json")
 const playgroundPackage = await readJson("packages/runtime-playground/package.json")
@@ -45,6 +49,7 @@ assert.deepEqual(exportKeys(corePackage), [
 assert.deepEqual(exportKeys(playgroundPackage), ["."])
 
 const docs = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
+const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts", root), "utf8")
 
 for (const publicEntry of [
   "@automattic/wp-codebox-core",
@@ -59,7 +64,7 @@ for (const publicEntry of [
   "./cli/recipe-secret-env",
   "@automattic/wp-codebox-cli/recipe-secret-env",
 ]) {
-  assert.match(docs, new RegExp(publicEntry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `docs must mention ${publicEntry}`)
+  assert.match(docs, new RegExp(escapeRegExp(publicEntry)), `docs must mention ${publicEntry}`)
 }
 
 for (const contractArea of [
@@ -72,6 +77,27 @@ for (const contractArea of [
   "Inspect",
 ]) {
   assert.match(docs, new RegExp(`\\*\\*${contractArea}:\\*\\*`), `docs must define ${contractArea}`)
+}
+
+for (const publicModule of [
+  "./agent-runtime-workload.js",
+  "./artifact-result-envelope.js",
+  "./browser-callback-contracts.js",
+  "./recipe-builders.js",
+  "./runtime-contracts.js",
+  "./wordpress-workload-primitives.js",
+]) {
+  assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
+}
+
+for (const internalModule of [
+  "./benchmark-substrate.js",
+  "./fanout-aggregation.js",
+  "./object-utils.js",
+  "./prepared-source-staging.js",
+  "./runtime-action-adapter.js",
+]) {
+  assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
