@@ -39,6 +39,10 @@
     "./cli": {
       "types": "./packages/cli/dist/index.d.ts",
       "import": "./packages/cli/dist/index.js"
+    },
+    "./cli/recipe-secret-env": {
+      "types": "./packages/cli/dist/recipe-secret-env.d.ts",
+      "import": "./packages/cli/dist/recipe-secret-env.js"
     }
   },
   "bin": {
@@ -110,6 +114,7 @@
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
+    "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
