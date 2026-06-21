@@ -340,6 +340,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'capabilities' => self::public_capabilities( $resolved ),
 				'components'   => $components,
 				'readiness'    => is_array( $resolved['profile']['readiness'] ?? null ) ? $resolved['profile']['readiness'] : array(),
+				'runtime_requirements' => is_array( $resolved['profile']['runtime_requirements'] ?? null ) ? $resolved['profile']['runtime_requirements'] : array(),
 				'diagnostics'  => is_array( $resolved['profile']['diagnostics'] ?? null ) ? $resolved['profile']['diagnostics'] : array(),
 				'provenance'   => is_array( $resolved['profile']['provenance'] ?? null ) ? $resolved['profile']['provenance'] : array(),
 			),
@@ -479,7 +480,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		}
 		$base['capabilities'] = self::merge_string_lists( $base['capabilities'] ?? array(), $extra['capabilities'] ?? array() );
 
-		foreach ( array( 'env', 'metadata', 'readiness', 'provenance' ) as $field ) {
+		foreach ( array( 'env', 'metadata', 'readiness', 'provenance', 'runtime_requirements' ) as $field ) {
 			$base[ $field ] = array_merge( is_array( $base[ $field ] ?? null ) ? $base[ $field ] : array(), is_array( $extra[ $field ] ?? null ) ? $extra[ $field ] : array() );
 		}
 

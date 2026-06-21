@@ -1702,9 +1702,11 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 	$inherit      = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
 	$connectors   = array_values( array_filter( array_map( 'strval', is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array() ) ) );
 	$secret_env   = array_values( array_filter( array_map( 'strval', is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array() ) ) );
+	$runtime_requirements = self::browser_runtime_requirements( $input, array( 'connectors' => array(), 'settings' => array() ) );
+	$requires_provider    = (bool) ( $runtime_requirements['requires_provider'] ?? false );
 	$requirements = array(
-		'provider_plugin'   => ! empty( $provider_plugin_paths ) && self::all_paths_ready( $provider_plugin_paths ),
-		'provider_secret'   => ! empty( $connectors ) || ! empty( $secret_env ),
+		'provider_plugin'   => ! $requires_provider || empty( $provider_plugin_paths ) || self::all_paths_ready( $provider_plugin_paths ),
+		'provider_secret'   => ! $requires_provider || ! empty( $connectors ) || ! empty( $secret_env ),
 		'runtime_dependencies' => true,
 	);
 	foreach ( self::browser_ready_to_code_component_requirements( $input, $runtime ) as $name => $ready ) {
@@ -1729,8 +1731,9 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 		'message'      => $emitted ? 'Browser Playground sandbox is ready to code.' : 'Browser Playground sandbox is not ready to code.',
 		'requirements' => $requirements,
 		'requirement_metadata' => array(
-		'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
-		'components'           => self::browser_runtime_component_readiness_metadata( $input, $runtime ),
+			'runtime_requirements'  => $runtime_requirements,
+			'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
+			'components'           => self::browser_runtime_component_readiness_metadata( $input, $runtime ),
 		),
 		'missing'      => $missing,
 	);

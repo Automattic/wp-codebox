@@ -26,6 +26,9 @@ class WP_Error {
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
+class WP_Codebox_Agents_API_Adapter {
+	public static function default_chat_ability(): string { return 'agents/chat'; }
+}
 function apply_filters( $hook, $value, ...$args ) {
 	if ( 'wp_codebox_runtime_profile_registry' === $hook ) {
 		$value['content-runtime'] = array(

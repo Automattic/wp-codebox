@@ -72,6 +72,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'playground'            => self::merge_defaults( is_array( $spec['playground'] ?? null ) ? $spec['playground'] : array(), $playground_defaults ),
 				'runtime_profile'       => is_array( $spec['runtime_profile'] ?? null ) ? $spec['runtime_profile'] : ( is_array( $spec['runtimeProfile'] ?? null ) ? $spec['runtimeProfile'] : array() ),
 				'runtime'               => is_array( $spec['runtime'] ?? null ) ? $spec['runtime'] : array(),
+				'runtime_requirements'  => self::runtime_requirements( is_array( $spec['runtime_requirements'] ?? null ) ? $spec['runtime_requirements'] : ( is_array( $spec['runtimeRequirements'] ?? null ) ? $spec['runtimeRequirements'] : array() ) ),
 				'browser_runner'        => self::merge_defaults( is_array( $spec['browser_runner'] ?? null ) ? $spec['browser_runner'] : array(), $browser_runner ),
 				'artifact_files'        => is_array( $artifact_contract['files'] ?? null ) ? $artifact_contract['files'] : ( is_array( $spec['artifact_files'] ?? null ) ? $spec['artifact_files'] : array() ),
 				'callback_refs'         => is_array( $spec['callback_refs'] ?? null ) ? $spec['callback_refs'] : array(),
@@ -375,6 +376,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'diagnostics'  => self::object_list( $profile['diagnostics'] ?? array() ),
 				'provenance'   => is_array( $profile['provenance'] ?? null ) ? self::compact_public_value( $profile['provenance'] ) : array(),
 				'metadata'     => is_array( $profile['metadata'] ?? null ) ? self::compact_public_value( $profile['metadata'] ) : array(),
+				'runtime_requirements' => self::runtime_requirements( is_array( $profile['runtime_requirements'] ?? null ) ? $profile['runtime_requirements'] : ( is_array( $profile['runtimeRequirements'] ?? null ) ? $profile['runtimeRequirements'] : array() ) ),
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);
@@ -419,8 +421,26 @@ final class WP_Codebox_Browser_Task_Builder {
 		$input['runtime_config_mounts'] = array_merge( self::object_list( $profile['runtime_config_mounts'] ?? array() ), is_array( $input['runtime_config_mounts'] ?? null ) ? $input['runtime_config_mounts'] : array() );
 		$input['runtime_env']         = array_merge( self::string_map( is_array( $profile['env'] ?? null ) ? $profile['env'] : array() ), is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : array() );
 		$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::provider_plugin_paths_from_specs( $profile['provider_plugins'] ?? array() ), self::string_list_any( $input['provider_plugin_paths'] ?? array() ) ) ) );
+		$runtime_requirements = self::runtime_requirements( array_merge( is_array( $profile['runtime_requirements'] ?? null ) ? $profile['runtime_requirements'] : array(), is_array( $input['runtime_requirements'] ?? null ) ? $input['runtime_requirements'] : array() ) );
+		if ( ! empty( $runtime_requirements ) ) {
+			$input['runtime_requirements'] = $runtime_requirements;
+		} else {
+			unset( $input['runtime_requirements'] );
+		}
 
 		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_apply_runtime_profile', $input, $profile ) : $input;
+	}
+
+	/** @param array<string,mixed> $requirements Runtime requirement contract input. @return array<string,mixed> */
+	public static function runtime_requirements( array $requirements ): array {
+		if ( array_key_exists( 'requires_provider', $requirements ) || array_key_exists( 'requiresProvider', $requirements ) ) {
+			return array(
+				'schema'            => 'wp-codebox/runtime-requirements/v1',
+				'requires_provider' => (bool) ( $requirements['requires_provider'] ?? $requirements['requiresProvider'] ),
+			);
+		}
+
+		return array();
 	}
 
 	/** @param array<string,mixed> $prepared Prepared runtime descriptor. @param array<string,mixed> $session Optional source session. @return array<string,mixed> */
