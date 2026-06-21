@@ -17,6 +17,7 @@ import {
   RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
 } from "./runner-workspace-publication.js"
+import { WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 
@@ -65,6 +66,9 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   fanoutAggregation: {
     input: FANOUT_AGGREGATION_INPUT_SCHEMA,
     output: FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  },
+  wordpressRuntimeDiscovery: {
+    result: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   },
 } as const
 

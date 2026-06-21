@@ -27,6 +27,7 @@ import {
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
+  WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   isRuntimeContractSchema,
   normalizeRuntimeContractSchema,
   providerRuntimeInvocationContract,
@@ -77,6 +78,7 @@ assert.deepEqual(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS, [
 ])
 assert.equal(manifest.schemas.fanoutAggregation.input, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(manifest.schemas.fanoutAggregation.output, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntimeDiscovery.result, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA)
 
 const values = runtimeContractSchemaValues()
 assert.equal(new Set(values).size, values.length, "runtime contract schema constants must be unique")

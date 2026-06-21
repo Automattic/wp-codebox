@@ -145,6 +145,7 @@
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
+    "test:wordpress-runtime-discovery-contracts": "tsx tests/wordpress-runtime-discovery-contracts.test.ts",
     "test:runtime-package-execution": "tsx tests/runtime-package-execution.test.ts",
     "test:public-ability-aliases": "tsx tests/public-ability-aliases.test.ts",
     "test:wordpress-plugin-public-runtime-abilities": "tsx tests/wordpress-plugin-public-runtime-abilities.test.ts",

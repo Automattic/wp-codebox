@@ -31,6 +31,8 @@ import {
   runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
+  runtimeDiscoveryPhpCode,
+  runtimeDiscoverySurfacesFromArgs,
   themeCheckRunCode,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
@@ -454,6 +456,23 @@ export async function runRestRequestCommand({
   input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-request", response)
+  return response.text
+}
+
+export async function runRuntimeDiscoveryCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const surfaces = runtimeDiscoverySurfacesFromArgs(spec.args ?? [])
+  const response = await runPlaygroundCommand("wordpress.runtime-discovery", server, { code: bootstrapPhpCode(runtimeSpec, runtimeDiscoveryPhpCode(surfaces), []) })
+  assertPlaygroundResponseOk("wordpress.runtime-discovery", response)
   return response.text
 }
 
