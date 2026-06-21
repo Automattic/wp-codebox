@@ -18,45 +18,20 @@ final class WP_Codebox_Runtime_Task_Runner {
 			return $this->public_error( 'wp_codebox_runtime_task_request_invalid', 'Runtime task requests require a task.', 400 );
 		}
 
-		$upstream = $this->execute_upstream_runtime_task( $input );
-		if ( ! is_wp_error( $upstream ) ) {
-			return $this->result_envelope( $input, $upstream, 'runtime-task' );
+		foreach ( $this->runtime_task_providers( $input ) as $provider ) {
+			if ( ! $this->provider_matches( $provider, $input ) ) {
+				continue;
+			}
+
+			$result = $this->execute_provider( $provider, $input );
+			if ( is_wp_error( $result ) ) {
+				return $this->public_error_from_private_error( $result );
+			}
+
+			return $this->result_envelope( $input, $result, $this->provider_id( $provider ) );
 		}
 
-		if ( 'wp_codebox_runtime_task_upstream_unavailable' !== $upstream->get_error_code() ) {
-			return $this->public_error( 'wp_codebox_runtime_task_failed', 'Runtime task execution failed.', $this->error_status( $upstream, 500 ) );
-		}
-
-		$fallback = $this->execute_codebox_runtime_task( $input );
-		if ( is_wp_error( $fallback ) ) {
-			return $this->public_error( 'wp_codebox_runtime_task_unavailable', 'Runtime task execution is unavailable.', $this->error_status( $fallback, 501 ) );
-		}
-
-		return $this->result_envelope( $input, $fallback, 'wp-codebox-runtime' );
-	}
-
-	/** @param array<string,mixed> $input Runtime task request. @return array<string,mixed>|WP_Error */
-	private function execute_upstream_runtime_task( array $input ): array|WP_Error {
-		$ability_name = $this->upstream_runtime_task_ability_name();
-		if ( ! function_exists( 'wp_get_ability' ) ) {
-			return new WP_Error( 'wp_codebox_runtime_task_upstream_unavailable', 'Runtime task ability registry unavailable.', array( 'status' => 501 ) );
-		}
-
-		$ability = wp_get_ability( $ability_name );
-		if ( ! $ability || ! method_exists( $ability, 'execute' ) ) {
-			return new WP_Error( 'wp_codebox_runtime_task_upstream_unavailable', 'Runtime task ability unavailable.', array( 'status' => 501 ) );
-		}
-
-		$result = $ability->execute( $this->upstream_request( $input ) );
-		if ( is_wp_error( $result ) ) {
-			return $result;
-		}
-
-		if ( ! is_array( $result ) ) {
-			return new WP_Error( 'wp_codebox_runtime_task_invalid_result', 'Runtime task ability returned an invalid result.', array( 'status' => 502 ) );
-		}
-
-		return $result;
+		return $this->public_error( 'wp_codebox_runtime_task_unavailable', 'Runtime task execution is unavailable.', 501 );
 	}
 
 	/** @param array<string,mixed> $input Runtime task request. @return array<string,mixed>|WP_Error */
@@ -71,18 +46,60 @@ final class WP_Codebox_Runtime_Task_Runner {
 		return WP_Codebox_Abilities::run_agent_task( $task_input );
 	}
 
-	private function upstream_runtime_task_ability_name(): string {
-		return 'data' . 'machine/run-runtime-task';
-	}
+	/** @param array<string,mixed> $input Runtime task request. @return array<int,array<string,mixed>> */
+	private function runtime_task_providers( array $input ): array {
+		$providers = array(
+			array(
+				'id'       => 'wp-codebox-runtime',
+				'callback' => fn( array $request ): array|WP_Error => $this->execute_codebox_runtime_task( $request ),
+			),
+		);
 
-	/** @param array<string,mixed> $input Runtime task request. @return array<string,mixed> */
-	private function upstream_request( array $input ): array {
-		$request = $input;
-		if ( isset( $request['schema'] ) ) {
-			$request['schema'] = 'data' . 'machine/runtime-task-request/v1';
+		if ( function_exists( 'apply_filters' ) ) {
+			$providers = apply_filters( 'wp_codebox_runtime_task_providers', $providers, $input );
 		}
 
-		return $request;
+		if ( ! is_array( $providers ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( $providers, 'is_array' ) );
+	}
+
+	/** @param array<string,mixed> $provider Runtime task provider. @param array<string,mixed> $input Runtime task request. */
+	private function provider_matches( array $provider, array $input ): bool {
+		$matches = $provider['matches'] ?? null;
+		if ( is_callable( $matches ) ) {
+			return true === $matches( $input );
+		}
+
+		return true;
+	}
+
+	/** @param array<string,mixed> $provider Runtime task provider. @param array<string,mixed> $input Runtime task request. @return array<string,mixed>|WP_Error */
+	private function execute_provider( array $provider, array $input ): array|WP_Error {
+		$callback = $provider['callback'] ?? null;
+		if ( ! is_callable( $callback ) ) {
+			return new WP_Error( 'wp_codebox_runtime_task_provider_invalid', 'Runtime task provider is invalid.', array( 'status' => 500 ) );
+		}
+
+		$result = $callback( $input, $provider );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		if ( ! is_array( $result ) ) {
+			return new WP_Error( 'wp_codebox_runtime_task_provider_invalid_result', 'Runtime task provider returned an invalid result.', array( 'status' => 502 ) );
+		}
+
+		return $result;
+	}
+
+	/** @param array<string,mixed> $provider Runtime task provider. */
+	private function provider_id( array $provider ): string {
+		$id = trim( (string) ( $provider['id'] ?? '' ) );
+
+		return '' === $id ? 'runtime-task-provider' : $id;
 	}
 
 	/** @param array<string,mixed> $input Runtime task request. @return array<string,mixed> */
@@ -122,6 +139,7 @@ final class WP_Codebox_Runtime_Task_Runner {
 	/** @param array<string,mixed> $input Runtime task request. @param array<string,mixed> $result Runtime result. @return array<string,mixed> */
 	private function result_envelope( array $input, array $result, string $execution ): array {
 		$success = true === ( $result['success'] ?? true ) && ! in_array( (string) ( $result['status'] ?? '' ), array( 'failed', 'error' ), true );
+		$public  = is_array( $result['public'] ?? null ) ? $result['public'] : $result;
 
 		return array_filter(
 			array(
@@ -130,12 +148,12 @@ final class WP_Codebox_Runtime_Task_Runner {
 				'status'        => (string) ( $result['status'] ?? ( $success ? 'completed' : 'failed' ) ),
 				'execution'     => $execution,
 				'task'          => $input['task'] ?? null,
-				'result'        => $this->sanitize_public_value( $result ),
-				'events'        => is_array( $result['events'] ?? null ) ? $this->sanitize_public_value( $result['events'] ) : array(),
-				'artifacts'     => $this->sanitize_public_value( $result['artifacts'] ?? null ),
-				'run'           => is_array( $result['run'] ?? null ) ? $this->sanitize_public_value( $result['run'] ) : array(),
+				'result'        => $public,
+				'events'        => is_array( $public['events'] ?? null ) ? $public['events'] : array(),
+				'artifacts'     => $public['artifacts'] ?? null,
+				'run'           => is_array( $public['run'] ?? null ) ? $public['run'] : array(),
 				'metadata'      => is_array( $input['metadata'] ?? null ) ? $input['metadata'] : array(),
-				'upstream_refs' => $this->upstream_refs( $result ),
+				'upstream_refs' => $this->upstream_refs( $public ),
 			),
 			static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
 		);
@@ -165,6 +183,17 @@ final class WP_Codebox_Runtime_Task_Runner {
 		);
 	}
 
+	private function public_error_from_private_error( WP_Error $error ): WP_Error {
+		$data   = $error->get_error_data();
+		$public = is_array( $data ) && is_array( $data['public'] ?? null ) ? $data['public'] : array();
+
+		return $this->public_error(
+			(string) ( $public['code'] ?? 'wp_codebox_runtime_task_failed' ),
+			(string) ( $public['message'] ?? 'Runtime task execution failed.' ),
+			(int) ( $public['status'] ?? $this->error_status( $error, 500 ) )
+		);
+	}
+
 	private function error_status( WP_Error $error, int $default ): int {
 		$data = $error->get_error_data();
 		if ( is_array( $data ) && isset( $data['status'] ) ) {
@@ -174,23 +203,4 @@ final class WP_Codebox_Runtime_Task_Runner {
 		return $default;
 	}
 
-	private function sanitize_public_value( mixed $value ): mixed {
-		if ( is_array( $value ) ) {
-			$sanitized = array();
-			foreach ( $value as $key => $item ) {
-				$sanitized[ $key ] = $this->sanitize_public_value( $item );
-			}
-
-			return $sanitized;
-		}
-
-		if ( is_string( $value ) ) {
-			$normalized_value = preg_replace( '/\s+/', '', strtolower( $value ) ) ?? '';
-			if ( str_contains( $normalized_value, 'data' . 'machine' ) ) {
-				return 'internal-runtime';
-			}
-		}
-
-		return $value;
-	}
 }
