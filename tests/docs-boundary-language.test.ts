@@ -22,6 +22,14 @@ const genericContractDocs = [
   "docs/benchmark-contract.md",
 ]
 
+const publicBoundaryDocs = [
+  "docs/public-api-contract.md",
+  "docs/architecture.md",
+  "docs/parent-tool-bridge-contract.md",
+  "packages/cli/README.md",
+  "packages/wordpress-plugin/README.md",
+]
+
 const root = new URL("..", import.meta.url)
 const violations: string[] = []
 
@@ -53,6 +61,14 @@ assert.match(exampleConsumerDoc, /WordPress Playground boot, filesystem, preview
 assert.match(exampleConsumerDoc, /Public schema names, top-level DTO fields, package entrypoints, and docs intended\s+for consumers use Codebox vocabulary\./)
 assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
 assert.match(exampleConsumerDoc, /## Example Consumers/)
+
+const publicBoundaryText = (await Promise.all(publicBoundaryDocs.map((doc) => readFile(new URL(doc, root), "utf8")))).join("\n")
+assert.match(publicBoundaryText, /Consumers should call\s+Codebox ability ids, schemas, package entrypoints, browser SDK facades, and CLI\s+commands/)
+assert.match(publicBoundaryText, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
+assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
+assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
+assert.match(publicBoundaryText, /Data Machine, Agents API, Data Machine Code, WordPress Playground, and upstream\s+task runtimes are implementation details/)
+assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
 
 const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")
 assert.match(agentRuntimeContract, /`generic-ability-runtime-run` is the canonical primitive/)

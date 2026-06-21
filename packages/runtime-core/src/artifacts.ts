@@ -1,3 +1,4 @@
+/** Public artifact helpers for Codebox-produced bundles and apply adapters. */
 export * from "./artifact-manifest.js"
 export * from "./artifact-paths.js"
 export * from "./artifact-capture-policy.js"

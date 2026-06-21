@@ -1,3 +1,8 @@
+/**
+ * Stable root package barrel kept for existing consumers. New integrations should
+ * prefer the curated `@automattic/wp-codebox-core/public` facade or narrower
+ * lifecycle subpaths documented in docs/public-api-contract.md.
+ */
 export * from "./artifact-manifest.js"
 export * from "./artifact-paths.js"
 export * from "./artifact-capture-policy.js"

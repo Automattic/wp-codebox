@@ -1,3 +1,7 @@
+/**
+ * Public WordPress Playground backend adapter for Codebox runtimes. Consumers
+ * should call Codebox runtime contracts rather than raw Playground internals.
+ */
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 export { ArtifactBundleWriter, ManifestedArtifactSet, type ManifestedArtifactFileInput } from "./artifact-bundle-writer.js"
 export { buildArtifactDiagnostics } from "./artifacts.js"

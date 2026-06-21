@@ -2,7 +2,9 @@
 
 WP Codebox has two kinds of API surface: stable public entrypoints for host
 integrations, and monorepo internals for implementation reuse. This document is
-the maintained contract map for package consumers.
+the maintained contract map for package consumers. Consumers use Codebox APIs;
+they do not couple to the upstream systems that Codebox uses to assemble or run a
+sandbox.
 
 ## Stable Entry Points
 
@@ -82,9 +84,32 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `commands` output, and recipe validation descriptors.
 
 Implementation backends are intentionally not public namespaces. References to
-Agents API, Data Machine Code, or WordPress Playground describe the current
-upstream/runtime adapter behind WP Codebox; consumers should depend on the
-Codebox ability ids, schemas, package entrypoints, and browser SDK facades above.
+Data Machine, Agents API, Data Machine Code, or WordPress Playground describe the
+current upstream/runtime adapters behind WP Codebox; consumers should depend on
+the Codebox ability ids, schemas, package entrypoints, and browser SDK facades
+above.
+
+## Integration Boundary
+
+WP Codebox is the portable integration surface around the current WordPress agent
+runtime stack:
+
+- Data Machine concepts such as jobs, artifacts, flows, and pending approvals map
+  to Codebox run, artifact, approval, and session contracts before they reach a
+  consumer.
+- Agents API execution targets, principals, and provider mechanics map to Codebox
+  task, permission, provider, and runtime-session contracts.
+- Data Machine Code workspace lifecycle, GitHub workflow, evidence, and apply-back
+  details map to Codebox source, workspace, artifact, and apply contracts.
+- WordPress Playground boot, filesystem, preview, PHP, and WP-CLI details map to
+  Codebox runtime, mount, command, preview, and browser-session contracts.
+
+The dependency direction is one-way: Codebox may adapt those upstream systems into
+generic Codebox inputs internally. Data Machine must not parse, validate, or emit
+WP Codebox-specific schemas as a compatibility requirement. If a Data Machine
+workflow needs to launch a sandbox, the Codebox adapter translates from generic
+Data Machine inputs into the Codebox task/recipe/runtime contracts at the
+boundary.
 
 When adding a new public type or helper, place it in the focused owner module and
 export it through `@automattic/wp-codebox-core/public` or the narrowest stable
