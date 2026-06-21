@@ -55,9 +55,9 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 	/** @param array<string,mixed> $request Runtime profile request. @param array<string,mixed> $input Caller task input. @param array<string,mixed> $inheritance Resolved inheritance metadata. @return array<string,mixed>|WP_Error */
 	public static function resolve( array $request, array $input = array(), array $inheritance = array() ): array|WP_Error {
 		$registry = self::profile_registry( $input, $inheritance );
-		$profile_ids = self::requested_profile_ids( $request, $registry );
-		$selected = array();
 		$errors = array();
+		$profile_ids = self::requested_profile_ids( $request, $registry, $errors );
+		$selected = array();
 
 		foreach ( $profile_ids as $profile_id ) {
 			self::select_profile( $profile_id, $registry, $selected, $errors );
@@ -136,34 +136,23 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			'agents-api' => array(
 				'id'                     => 'agents-api',
 				'label'                  => 'Agents API runtime',
+				'aliases'                => array( 'agent-runtime', 'wordpress-agent-runtime' ),
 				'capabilities'           => array( 'agents-api', 'agents.runtime' ),
 				'requires'                => array( 'wordpress-playground' ),
 				'components'              => array( array( 'slug' => 'agents-api' ) ),
 				'placement_capabilities' => array( 'agents.runtime' ),
 			),
-			'data-machine' => array(
-				'id'           => 'data-machine',
-				'label'        => 'Data Machine runtime',
-				'capabilities' => array( 'data-machine', 'datamachine.runtime' ),
-				'requires'      => array( 'agents-api' ),
-				'components'    => array( array( 'slug' => 'data-machine' ) ),
-			),
-			'data-machine-code' => array(
-				'id'           => 'data-machine-code',
-				'label'        => 'Data Machine Code runtime',
-				'capabilities' => array( 'data-machine-code', 'datamachine-code.runtime' ),
-				'requires'      => array( 'data-machine' ),
-				'components'    => array( array( 'slug' => 'data-machine-code' ) ),
-			),
 			'provider-openai' => array(
 				'id'               => 'provider-openai',
 				'label'            => 'OpenAI provider plugin',
+				'aliases'          => array( 'openai', 'openai-provider' ),
 				'capabilities'     => array( 'provider.openai' ),
 				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-openai', 'activate' => true ) ),
 			),
 			'provider-claude-code' => array(
 				'id'               => 'provider-claude-code',
 				'label'            => 'Claude Code provider plugin',
+				'aliases'          => array( 'claude-code', 'claude-code-provider' ),
 				'capabilities'     => array( 'provider.claude-code' ),
 				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-claude-code', 'activate' => true ) ),
 			),
@@ -189,12 +178,23 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		return $normalized;
 	}
 
-	/** @param array<string,mixed> $request Runtime profile request. @param array<string,array<string,mixed>> $registry Profile registry. @return string[] */
-	private static function requested_profile_ids( array $request, array $registry ): array {
+	/** @param array<string,mixed> $request Runtime profile request. @param array<string,array<string,mixed>> $registry Profile registry. @param array<int,array<string,string>> $errors Resolution errors. @return string[] */
+	private static function requested_profile_ids( array $request, array $registry, array &$errors ): array {
 		$ids = array();
-		foreach ( self::merge_string_lists( $request['profiles'] ?? array(), $request['components'] ?? array() ) as $profile_id ) {
-			if ( isset( $registry[ $profile_id ] ) ) {
-				$ids[] = $profile_id;
+		foreach ( self::merge_string_lists( $request['profiles'] ?? array() ) as $profile_id ) {
+			$resolved_id = self::profile_id_for_selector( $profile_id, $registry );
+			if ( '' === $resolved_id ) {
+				$errors[] = array( 'code' => 'profile_not_registered', 'profile' => $profile_id );
+				continue;
+			}
+
+			$ids[] = $resolved_id;
+		}
+
+		foreach ( self::merge_string_lists( $request['components'] ?? array() ) as $component ) {
+			$resolved_id = self::profile_id_for_selector( $component, $registry );
+			if ( '' !== $resolved_id ) {
+				$ids[] = $resolved_id;
 			}
 		}
 
@@ -222,7 +222,8 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 
 		$profile = $registry[ $profile_id ];
 		foreach ( self::merge_string_lists( $profile['requires'] ?? array() ) as $required ) {
-			$required_id = isset( $registry[ $required ] ) ? $required : self::profile_id_for_capability( $required, $registry );
+			$required_id = self::profile_id_for_selector( $required, $registry );
+			$required_id = '' !== $required_id ? $required_id : self::profile_id_for_capability( $required, $registry );
 			if ( '' === $required_id ) {
 				$errors[] = array( 'code' => 'requirement_not_registered', 'profile' => $profile_id, 'requirement' => $required );
 				continue;
@@ -237,6 +238,26 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 	private static function profile_id_for_capability( string $capability, array $registry ): string {
 		foreach ( $registry as $id => $profile ) {
 			if ( in_array( $capability, self::profile_capabilities( $profile ), true ) ) {
+				return $id;
+			}
+		}
+
+		return '';
+	}
+
+	/** @param array<string,array<string,mixed>> $registry. */
+	private static function profile_id_for_selector( string $selector, array $registry ): string {
+		$selector = self::safe_key( $selector );
+		if ( '' === $selector ) {
+			return '';
+		}
+
+		if ( isset( $registry[ $selector ] ) ) {
+			return $selector;
+		}
+
+		foreach ( $registry as $id => $profile ) {
+			if ( in_array( $selector, self::merge_string_lists( $profile['aliases'] ?? array() ), true ) ) {
 				return $id;
 			}
 		}
@@ -290,6 +311,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			array(
 				'id'         => (string) ( $profile['id'] ?? '' ),
 				'label'      => (string) ( $profile['label'] ?? '' ),
+				'aliases'    => self::merge_string_lists( $profile['aliases'] ?? array() ),
 				'provides'   => self::profile_capabilities( $profile ),
 				'requires'   => self::merge_string_lists( $profile['requires'] ?? array() ),
 				'provenance' => is_array( $profile['provenance'] ?? null ) ? $profile['provenance'] : array(),

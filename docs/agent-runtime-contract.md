@@ -176,7 +176,11 @@ Runner workspace publication is a separate exported contract in runtime-core:
 
 External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into `wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`, so callers never import backend ability names.
 
-When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. The adapter maps the Codebox surface to `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery.
+Runner workspace backends are integration-owned. A site that wants these abilities
+to perform real workspace operations must register a backend through the
+`wp_codebox_runner_workspace_backend` filter. If no backend is registered, the
+WP Codebox abilities return an unavailable backend result instead of naming or
+assuming a downstream workspace system.
 
 ## Provider Runtime Invocation Names
 
@@ -190,6 +194,27 @@ Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` throug
 - `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
 
 These names are identifiers and contract anchors, not a queue or policy implementation. The corresponding result schemas remain the existing runner workspace, tool-call transcript, and evidence artifact envelope contracts. External orchestrators still own backend placement, authorization, retries, retention, and publication policy.
+
+## Runtime Profiles
+
+Parent-site callers may request runtime stack concepts with `runtime_profile`,
+`runtime_profiles`, `runtime_components`, or `runtime_capabilities`. WP Codebox
+ships only generic defaults for the WordPress Playground sandbox, the agent
+runtime substrate, and provider-plugin mounting. Product runtime stacks are
+registered by integrations with `wp_codebox_runtime_profile_registry`.
+
+Profile descriptors support `aliases` so consumers can request stable concepts
+such as `agent-runtime` or an integration-owned alias without coupling to a
+plugin slug. Unknown explicit profile names fail closed with
+`wp_codebox_runtime_profile_unresolved`; unknown component slugs remain caller
+components and are passed through as runtime component entries.
+
+Provider credentials are outside the runtime profile contract. Profiles may
+request connector inheritance or name `secret_env` variables, but raw credential
+values stay in the parent process or provider integration and must not be stored
+in task JSON or artifacts. Provider-specific credential adapters belong in the
+provider or integration package that owns those credentials, not in WP Codebox's
+generic runtime profile defaults.
 
 ## Agents API Adapter Boundary
 
