@@ -24,6 +24,11 @@ public static function run_agent_task_fanout( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_runtime_package( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Agents_API_Adapter() )->run_runtime_package( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function request_host_delegation( array $input ): array|WP_Error {
 	return self::execute_host_delegation_request( $input );
 }

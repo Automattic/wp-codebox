@@ -17,7 +17,8 @@ product or job system.
   `packages/runtime-core/src/wordpress-workload-primitives.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts` and
   `tests/command-agent-run.test.ts`, plus
-  `tests/wordpress-workload-primitives.test.ts` for workload helpers.
+  `tests/wordpress-workload-primitives.test.ts` for workload helpers and
+  `tests/runtime-package-execution.test.ts` for runtime package execution.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
 ## Artifact Storage
@@ -195,6 +196,48 @@ their job records.
 The contract intentionally uses WP Codebox task names and short WP Codebox
 ability names. Downstream product names, backend ability names, and
 orchestration policy stay outside the runtime invocation payload.
+
+## Runtime Package Execution
+
+`wp-codebox/run-runtime-package` is the public WordPress ability for executing a
+runtime package. Callers should use this Codebox-owned ability id, the
+`CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY` constant, or `buildRuntimePackageRunRecipe()`
+instead of coupling to backend adapter ability ids.
+
+The request envelope is `wp-codebox/runtime-package-execution-input/v1`:
+
+```json
+{
+  "schema": "wp-codebox/runtime-package-execution-input/v1",
+  "runtime_package": "example/runtime-package",
+  "input": { "prompt": "collect evidence" },
+  "artifact_declarations": [
+    {
+      "schema": "wp-codebox/runtime-package-artifact-declaration/v1",
+      "name": "report",
+      "type": "markdown",
+      "direction": "output",
+      "path": "files/report.md",
+      "required": true
+    }
+  ],
+  "output_projections": [
+    {
+      "schema": "wp-codebox/runtime-package-output-projection/v1",
+      "name": "summary",
+      "source": "result.summary",
+      "type": "text"
+    }
+  ],
+  "metadata": {}
+}
+```
+
+Artifact declarations describe typed inputs or outputs the runtime package may
+consume or produce. Output projections describe named caller-facing views over the
+runtime result or artifacts. WP Codebox preserves these generic declarations in
+the runtime package input so downstream systems can remove product-specific
+artifact special-casing while keeping projection policy outside Codebox core.
 
 ## WordPress Workload Primitives
 

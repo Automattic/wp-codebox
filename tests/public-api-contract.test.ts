@@ -2,9 +2,11 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import {
   artifactBundleFileManifest,
+  buildRuntimePackageRunRecipe,
   browserArtifactPersistenceProjection,
   browserRunResultEnvelope,
   normalizeBrowserRunResult,
+  runtimePackageExecutionInput,
   persistedBrowserArtifactRefs,
 } from "../packages/runtime-core/src/public.js"
 
@@ -92,6 +94,7 @@ for (const publicModule of [
   "./browser-callback-contracts.js",
   "./recipe-builders.js",
   "./runtime-contracts.js",
+  "./runtime-package-execution.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
@@ -120,5 +123,7 @@ assert.equal(typeof browserRunResultEnvelope, "function")
 assert.equal(typeof browserArtifactPersistenceProjection, "function")
 assert.equal(typeof persistedBrowserArtifactRefs, "function")
 assert.equal(typeof artifactBundleFileManifest, "function")
+assert.equal(typeof buildRuntimePackageRunRecipe, "function")
+assert.equal(typeof runtimePackageExecutionInput, "function")
 
 console.log("public API contract ok")
