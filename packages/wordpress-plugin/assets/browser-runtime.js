@@ -207,13 +207,33 @@
 		return Object.fromEntries( Object.entries( ref ).filter( ( [ , item ] ) => item !== undefined && item !== null ) );
 	};
 
+	const normalizeBrowserArtifactRefs = ( artifacts ) => {
+		const refs = [];
+		const seen = new Set();
+		for ( const artifact of Array.isArray( artifacts ) ? artifacts : [] ) {
+			const ref = normalizeBrowserArtifactRef( artifact );
+			if ( ! ref ) {
+				continue;
+			}
+			const key = `${ ref.kind }\u0000${ ref.id || '' }\u0000${ ref.path || '' }\u0000${ ref.digest?.algorithm || '' }\u0000${ ref.digest?.value || '' }`;
+			if ( seen.has( key ) ) {
+				continue;
+			}
+			seen.add( key );
+			refs.push( ref );
+		}
+		return refs;
+	};
+
 	const browserArtifactPersistenceRef = ( input ) => {
 		const source = input?.schema === 'wp-codebox/materialization-result/v1' && isPlainObject( input.result ) ? input.result : ( isPlainObject( input?.result ) && ( input.result.artifact || input.result.artifacts || input.result.artifact_bundle || input.result.artifactBundle || input.result.materialization ) ? input.result : input || {} );
 		const artifactBundle = isPlainObject( source.artifact_bundle ) ? source.artifact_bundle : ( isPlainObject( source.artifactBundle ) ? source.artifactBundle : null );
 		const artifact = isPlainObject( source.artifact ) ? source.artifact : null;
 		const artifacts = Array.isArray( source.artifacts ) ? source.artifacts.filter( isPlainObject ) : ( artifact ? [ artifact ] : [] );
 		const materialization = isPlainObject( source.materialization ) ? source.materialization : null;
+		const existingRefs = normalizeBrowserArtifactRefs( source.artifactRefs );
 		const refs = [];
+		refs.push( ...existingRefs );
 		const bundleRef = normalizeBrowserArtifactRef( artifactBundle, { kind: 'artifact-bundle' } );
 		if ( bundleRef ) {
 			refs.push( bundleRef );
@@ -247,9 +267,41 @@
 		};
 	};
 
+	const normalizeBrowserRunStatus = ( value, success ) => {
+		if ( value === 'completed' || value === 'failed' || value === 'skipped' ) {
+			return value;
+		}
+		return success === false ? 'failed' : 'completed';
+	};
+
+	const normalizeBrowserRunDiagnostics = ( diagnostics ) => ( Array.isArray( diagnostics ) ? diagnostics
+		.filter( ( diagnostic ) => isPlainObject( diagnostic ) && typeof diagnostic.code === 'string' && typeof diagnostic.message === 'string' )
+		.map( ( diagnostic ) => Object.fromEntries( Object.entries( {
+			code: diagnostic.code,
+			message: diagnostic.message,
+			severity: [ 'info', 'warning', 'error' ].includes( diagnostic.severity ) ? diagnostic.severity : undefined,
+			phase: typeof diagnostic.phase === 'string' ? diagnostic.phase : undefined,
+			metadata: isPlainObject( diagnostic.metadata ) ? diagnostic.metadata : undefined,
+		} ).filter( ( [ , item ] ) => item !== undefined ) ) ) : [] );
+
 	const normalizeBrowserRunResult = ( result, operation = 'browser-run' ) => {
 		if ( result?.schema === 'wp-codebox/browser-run-result/v1' ) {
-			return result;
+			const status = normalizeBrowserRunStatus( result.status, result.success );
+			const success = status === 'completed';
+			const payload = isPlainObject( result.result ) ? result.result : null;
+			const artifactRefs = normalizeBrowserArtifactRefs( result.artifactRefs );
+			return Object.fromEntries( Object.entries( {
+				schema: 'wp-codebox/browser-run-result/v1',
+				operation: typeof result.operation === 'string' && result.operation ? result.operation : operation,
+				status,
+				success,
+				result: success ? ( payload || {} ) : payload,
+				artifactRefs: artifactRefs.length ? artifactRefs : browserArtifactPersistenceRef( payload || result ).artifactRefs,
+				diagnostics: normalizeBrowserRunDiagnostics( result.diagnostics ),
+				metadata: isPlainObject( result.metadata ) ? result.metadata : undefined,
+				error: status === 'failed' ? normalizeBrowserSdkError( result.error || new Error( 'Browser run failed.' ) ) : undefined,
+				reason: status === 'skipped' && typeof result.reason === 'string' ? result.reason : undefined,
+			} ).filter( ( [ , item ] ) => item !== undefined ) );
 		}
 		const payload = isPlainObject( result?.result ) ? result.result : ( isPlainObject( result?.data ) ? result.data : ( isPlainObject( result?.response ) ? result.response : ( isPlainObject( result ) ? result : null ) ) );
 		const success = result?.success === true || payload?.success === true;

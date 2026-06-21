@@ -884,6 +884,7 @@ Browser run and artifact outputs use one product-safe DTO lane:
 - `wp-codebox/browser-run-result/v1` reports `operation`, `status`, `success`, normalized `result`, `artifactRefs`, `diagnostics`, and an `error` on failure.
 - `wp-codebox/browser-artifact-persistence/ref/v1` reports persisted browser artifact data and canonical `artifactRefs`. Older `wp-codebox/browser-artifact-persistence-projection/v1` inputs are still accepted by helpers for compatibility, but new consumer-facing output uses the `/ref/v1` schema.
 - `window.wpCodeboxBrowser.v1.normalizeBrowserRunResult()` and `browserArtifactPersistenceRef()` normalize legacy browser runner/materialization variants into those DTOs.
+- Non-browser TypeScript consumers should use the equivalent public DTO helpers from `@automattic/wp-codebox-core/public`: `normalizeBrowserRunResult()`, `browserRunResultEnvelope()`, `browserArtifactPersistenceProjection()`, `persistedBrowserArtifactRefs()`, and `artifactBundleFileManifest()`.
 
 `browser_runner.capture_paths` is the generic result-capture layer for browser materialization. Each entry names a sandbox-local file that the generated runner should read after the ability or hook returns. The runner writes `/tmp/wp-codebox-agent-result.json` with `wp-codebox/browser-materialization/v1`, normalized `success`/`status`/`error` fields, invocation metadata, the raw response, and captured files as `wp-codebox/browser-capture/v1` records. JSON files are decoded into `json`, text files into `content`, and binary files into `content_base64`, bounded by `max_bytes`.
 

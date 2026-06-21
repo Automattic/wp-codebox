@@ -64,7 +64,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   returns `wp-codebox/browser-artifact-persistence/ref/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
   `methods` exposes stable references to the existing browser runtime helpers for
-  callers that need legacy raw results internally.
+  callers that need legacy raw results internally. TypeScript consumers outside
+  the browser can use the matching DTO helpers exported from
+  `@automattic/wp-codebox-core/public`: `normalizeBrowserRunResult()`,
+  `browserRunResultEnvelope()`, `browserArtifactPersistenceProjection()`,
+  `persistedBrowserArtifactRefs()`, and `artifactBundleFileManifest()`.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
