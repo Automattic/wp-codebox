@@ -246,9 +246,7 @@ final class WP_Codebox_Abilities {
 				),
 			);
 
-			wp_register_ability(
-				'wp-codebox/run-agent-task',
-				array(
+			$run_agent_task_ability = array(
 					'label'               => 'Run Agent Sandbox Task',
 					'description'         => 'Run a bounded task inside an isolated WP Codebox WordPress agent sandbox and return artifacts.',
 					'category'            => 'wp-codebox',
@@ -282,12 +280,17 @@ final class WP_Codebox_Abilities {
 					'execute_callback'    => array( self::class, 'run_agent_task' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
-				)
 			);
 
-			wp_register_ability(
-				'wp-codebox/run-agent-task-batch',
-				array(
+			wp_register_ability( 'wp-codebox/run-agent-task', $run_agent_task_ability );
+
+			$run_sandbox_task_ability         = $run_agent_task_ability;
+			$run_sandbox_task_ability['label'] = 'Run Sandbox Task';
+			$run_sandbox_task_ability['description'] = 'Run a bounded task inside an isolated WP Codebox WordPress sandbox and return artifacts.';
+			$run_sandbox_task_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task', 'alias_of' => 'wp-codebox/run-agent-task' );
+			wp_register_ability( 'wp-codebox/run-sandbox-task', $run_sandbox_task_ability );
+
+			$run_agent_task_batch_ability = array(
 					'label'               => 'Run Agent Sandbox Task Batch',
 					'description'         => 'Run multiple tasks in isolated WP Codebox WordPress agent sandboxes and return artifacts for each run.',
 					'category'            => 'wp-codebox',
@@ -346,12 +349,17 @@ final class WP_Codebox_Abilities {
 					'execute_callback'    => array( self::class, 'run_agent_task_batch' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
-				)
 			);
 
-			wp_register_ability(
-				'wp-codebox/run-agent-task-fanout',
-				array(
+			wp_register_ability( 'wp-codebox/run-agent-task-batch', $run_agent_task_batch_ability );
+
+			$run_sandbox_task_batch_ability         = $run_agent_task_batch_ability;
+			$run_sandbox_task_batch_ability['label'] = 'Run Sandbox Task Batch';
+			$run_sandbox_task_batch_ability['description'] = 'Run multiple tasks in isolated WP Codebox WordPress sandboxes and return artifacts for each run.';
+			$run_sandbox_task_batch_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task-batch', 'alias_of' => 'wp-codebox/run-agent-task-batch' );
+			wp_register_ability( 'wp-codebox/run-sandbox-task-batch', $run_sandbox_task_batch_ability );
+
+			$run_agent_task_fanout_ability = array(
 					'label'               => 'Run Agent Sandbox Task Fanout',
 					'description'         => 'Run multiple agent sandbox workers with bounded host-side concurrency and parent/child artifact envelopes.',
 					'category'            => 'wp-codebox',
@@ -414,8 +422,15 @@ final class WP_Codebox_Abilities {
 					'execute_callback'    => array( self::class, 'run_agent_task_fanout' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
 					'meta'                => array( 'show_in_rest' => true ),
-				)
 			);
+
+			wp_register_ability( 'wp-codebox/run-agent-task-fanout', $run_agent_task_fanout_ability );
+
+			$run_sandbox_task_fanout_ability         = $run_agent_task_fanout_ability;
+			$run_sandbox_task_fanout_ability['label'] = 'Run Sandbox Task Fanout';
+			$run_sandbox_task_fanout_ability['description'] = 'Run multiple sandbox workers with bounded host-side concurrency and parent/child artifact envelopes.';
+			$run_sandbox_task_fanout_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task-fanout', 'alias_of' => 'wp-codebox/run-agent-task-fanout' );
+			wp_register_ability( 'wp-codebox/run-sandbox-task-fanout', $run_sandbox_task_fanout_ability );
 
 			wp_register_ability(
 				'wp-codebox/request-host-delegation',

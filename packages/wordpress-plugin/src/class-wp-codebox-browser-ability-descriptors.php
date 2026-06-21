@@ -24,7 +24,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 		$inherit_schema              = $context['inherit_schema'];
 		$session_input               = $context['session_input'];
 
-		return array(
+		$descriptors = array(
 			'wp-codebox/create-browser-contained-site-session' => array(
 				'label'               => 'Create Browser Contained Site Session',
 				'description'         => 'Create a Codebox-contained browser site session and return product-safe session, preview lease, boot descriptor, and startup diagnostics without requiring consumers to pass Playground boot internals.',
@@ -606,5 +606,43 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 				'meta'                => array( 'show_in_rest' => true ),
 			),
 		);
+
+		$aliases = array(
+			'wp-codebox/create-sandbox-session'  => array(
+				'canonical'   => 'wp-codebox/create-browser-playground-session',
+				'label'       => 'Create Sandbox Session',
+				'description' => 'Prepare a WP Codebox browser sandbox session without exposing the current runtime implementation name to callers.',
+			),
+			'wp-codebox/create-task-contract'    => array(
+				'canonical'   => 'wp-codebox/create-browser-task-contract',
+				'label'       => 'Create Task Contract',
+				'description' => 'Prepare a product-facing multi-phase WP Codebox task contract with a primary sandbox session and optional materializer phases.',
+			),
+			'wp-codebox/open-contained-runtime'  => array(
+				'canonical'   => 'wp-codebox/open-or-create-browser-contained-site',
+				'label'       => 'Open Contained Runtime',
+				'description' => 'Open a reusable contained WP Codebox runtime when possible, otherwise create a fresh sandbox session from the same task input.',
+			),
+		);
+
+		foreach ( $aliases as $ability_id => $alias ) {
+			$canonical = $alias['canonical'];
+			if ( ! isset( $descriptors[ $canonical ] ) ) {
+				continue;
+			}
+
+			$descriptors[ $ability_id ]                = $descriptors[ $canonical ];
+			$descriptors[ $ability_id ]['label']       = $alias['label'];
+			$descriptors[ $ability_id ]['description'] = $alias['description'];
+			$descriptors[ $ability_id ]['meta']        = array_merge(
+				is_array( $descriptors[ $ability_id ]['meta'] ?? null ) ? $descriptors[ $ability_id ]['meta'] : array(),
+				array(
+					'canonical_ability' => $canonical,
+					'alias_of'          => $canonical,
+				)
+			);
+		}
+
+		return $descriptors;
 	}
 }
