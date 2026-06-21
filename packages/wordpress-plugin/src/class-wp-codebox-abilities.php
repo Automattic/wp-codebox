@@ -414,6 +414,7 @@ final class WP_Codebox_Abilities {
 									'events' => array( 'type' => 'string' ),
 								),
 							),
+							'aggregate'   => array( 'type' => 'object' ),
 							'orchestrator' => array( 'type' => 'object' ),
 							'runs'        => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 							'failures'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
