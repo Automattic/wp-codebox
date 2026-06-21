@@ -40,6 +40,10 @@
       "types": "./packages/runtime-playground/dist/index.d.ts",
       "import": "./packages/runtime-playground/dist/index.js"
     },
+    "./playground/public": {
+      "types": "./packages/runtime-playground/dist/public.d.ts",
+      "import": "./packages/runtime-playground/dist/public.js"
+    },
     "./cli": {
       "types": "./packages/cli/dist/index.d.ts",
       "import": "./packages/cli/dist/index.js"

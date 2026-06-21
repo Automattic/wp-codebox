@@ -28,6 +28,10 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/runtime-presets`: runtime preset registry helpers.
 - `@automattic/wp-codebox-playground`: the current WordPress Playground runtime
   backend factory and backend-owned helper types.
+- `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
+  for creating Playground-backed WordPress runtimes and episodes, running episode
+  actions with lifecycle hooks, collecting runtime/episode artifacts, and reading
+  browser artifact metrics without importing backend internals.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
@@ -47,8 +51,8 @@ first.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
-`./agent-task-recipe`, `./runtime-presets`, and `./cli/recipe-secret-env` for
-local consumers in this repo.
+`./agent-task-recipe`, `./runtime-presets`, `./playground/public`, and
+`./cli/recipe-secret-env` for local consumers in this repo.
 
 ## Contract Areas
 
@@ -57,7 +61,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
   recipe source package, runtime workload, WordPress workload primitives,
   runtime package execution, runtime policy, provider runtime, and command result
-  contracts.
+  contracts. Playground-backed WordPress consumers can use
+  `createWordPressRuntime()`, `createWordPressEpisode()`, and
+  `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
+  instead of composing core runtime internals directly.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, and runner workspace publication contracts.
 - **Tool bridge:** host tool registry, managed host command, host command
@@ -78,6 +85,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `@automattic/wp-codebox-core/public`: `normalizeBrowserRunResult()`,
   `browserRunResultEnvelope()`, `browserArtifactPersistenceProjection()`,
   `persistedBrowserArtifactRefs()`, and `artifactBundleFileManifest()`.
+- **Browser metrics:** Node consumers can call `collectBrowserArtifactMetrics()`
+  from `@automattic/wp-codebox-playground/public` to summarize browser metrics
+  from an existing artifact bundle directory.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
