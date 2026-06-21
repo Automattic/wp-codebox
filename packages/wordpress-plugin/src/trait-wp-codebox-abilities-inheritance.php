@@ -32,8 +32,16 @@ private static function browser_inheritance_resolution_payload( array $input ): 
 
 /** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed>|WP_Error */
 private static function browser_input_with_inheritance( array $input, array $inheritance ): array|WP_Error {
+	$provider_credentials = self::browser_provider_credentials( $input, $inheritance );
+	if ( is_wp_error( $provider_credentials ) ) {
+		return $provider_credentials;
+	}
+
 	$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::browser_provider_plugin_paths( $input ), self::browser_inheritance_provider_plugin_paths( $inheritance ) ) ) );
-	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ) ) ) );
+	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ), self::string_list( $provider_credentials['secret_env'] ?? array() ) ) ) );
+	if ( ! empty( $provider_credentials ) ) {
+		$input['_wp_codebox_provider_credentials'] = $provider_credentials;
+	}
 	if ( class_exists( 'WP_Codebox_Runtime_Profile_Resolver' ) ) {
 		$resolved = WP_Codebox_Runtime_Profile_Resolver::apply_to_input( $input, $inheritance );
 		if ( is_wp_error( $resolved ) ) {
@@ -86,8 +94,29 @@ private static function browser_runtime_dependency_plan( array $input, array $in
 		self::browser_inheritance_request( $input ),
 		self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
 		self::browser_secret_env_names( $input ),
-		self::browser_runtime_env( $input )
+		self::browser_runtime_env( $input ),
+		is_array( $input['_wp_codebox_provider_credentials'] ?? null ) ? $input['_wp_codebox_provider_credentials'] : self::browser_provider_credentials_fallback( $input, $inheritance )
 	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed>|WP_Error */
+private static function browser_provider_credentials( array $input, array $inheritance ): array|WP_Error {
+	return WP_Codebox_Provider_Credentials::resolve(
+		array(
+			'agent'    => self::browser_agent_slug( $input ),
+			'mode'     => self::browser_mode( $input ),
+			'provider' => self::browser_provider( $input, $inheritance ),
+			'model'    => self::browser_model( $input, $inheritance ),
+		),
+		$input,
+		$inheritance
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
+private static function browser_provider_credentials_fallback( array $input, array $inheritance ): array {
+	$resolved = self::browser_provider_credentials( $input, $inheritance );
+	return is_wp_error( $resolved ) ? array() : $resolved;
 }
 
 /** @param array<string,mixed> $input Ability input. */
