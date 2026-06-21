@@ -117,6 +117,7 @@
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
     "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
+    "test:php-runner-workspace-backend-contract": "php scripts/php-runner-workspace-backend-contract-smoke.php",
     "test:php-browser-callback-contracts": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-callback-contracts-smoke.php",
     "test:php-agents-api-adapter-contract": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-agents-api-adapter-contract-smoke.php",
     "test:php-public-api-facade": "php scripts/php-public-api-facade-smoke.php",

@@ -60,15 +60,15 @@ layer as the ability and WP-CLI surfaces:
 For ability-name-oriented callers, `WP_Codebox_API::execute_ability( $name,
 $input )` accepts supported `wp-codebox/...` ability names and compatibility
 aliases only. Host workspace backends, task runtimes, provider adapters, and
-sandbox implementations remain private implementation details.
+sandbox implementations connect to the Codebox ability and result contracts
+through configured adapters.
 
 The host task abilities build a private Codebox recipe, boot a disposable
 sandbox runtime, mount the requested runtime components, invoke the configured
 sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
 upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,
-and task runtimes are implementation details of the current runner, not
-consumer-facing API names. The plugin maps those internals to Codebox task,
-runtime, artifact, and apply contracts before returning results to consumers.
+and task runtimes are runner components mapped to Codebox task, runtime,
+artifact, and apply contracts before returning results to consumers.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`

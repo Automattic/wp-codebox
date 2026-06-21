@@ -11,8 +11,8 @@ The contained-site facade is the product-facing browser lane for WordPress previ
 
 ## Boundary
 
-Consumers should treat `boot` as the public descriptor. It exposes Codebox session identity, preview lease, contained-site handle, and a blueprint ref hydrator. Raw Playground details such as `clientModuleUrl`, `remoteUrl`, runtime `scope`, and inline `blueprint` data are debug/internal implementation details, not required consumer boot inputs.
+Consumers use `boot` as the public descriptor. It exposes Codebox session identity, preview lease, contained-site handle, and a blueprint ref hydrator. Playground fields such as `clientModuleUrl`, `remoteUrl`, runtime `scope`, and inline `blueprint` data are diagnostics for the runtime adapter; consumer boot inputs are the Codebox descriptor fields.
 
 ## Diagnostics
 
-Every facade response includes `startup_diagnostics` with the status, reuse mode, preview lease status, boot-contract validity, and recovery handle. This lets clients distinguish a reusable prepared runtime from a miss or unusable boot contract without inspecting Playground internals.
+Every facade response includes `startup_diagnostics` with the status, reuse mode, preview lease status, boot-contract validity, and recovery handle. Clients use these diagnostics to distinguish a reusable prepared runtime from a miss or unusable boot contract.

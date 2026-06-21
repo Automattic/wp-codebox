@@ -13,6 +13,8 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 	public const VERSION = 1;
 	public const TOOL_BRIDGE_SCHEMA  = 'wp-codebox/tool-bridge/v1';
 	public const TOOL_BRIDGE_VERSION = 1;
+	public const HOST_POLICY_SCHEMA  = 'wp-codebox/host-tool-policy/v1';
+	public const HOST_POLICY_VERSION = 1;
 
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const AGENTS_API_RUNTIME_ENVIRONMENT = 'environment';
@@ -82,6 +84,7 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 			'version'             => self::TOOL_BRIDGE_VERSION,
 			'allowed_tools'       => WP_Codebox_Agent_Task::string_list( $allowed_tools ),
 			'sandbox_tool_policy' => $policy,
+			'host_policy'         => $this->host_policy_from_sandbox_policy( $policy ),
 			'dispatcher'          => array(
 				'owner'    => 'wp-codebox',
 				'callback' => 'wp_codebox_browser_runtime_tool_callback',
@@ -104,6 +107,38 @@ final class WP_Codebox_Sandbox_Tool_Policy_Normalizer {
 		}
 
 		return $bridge;
+	}
+
+	/** @param array<string,mixed> $policy @return array<string,mixed> */
+	public function host_policy_from_sandbox_policy( array $policy ): array {
+		$tools = array();
+		$effective = $this->descriptor_resolver->resolve_effective_runtime_tool_policy( $policy );
+		foreach ( is_array( $effective['tools'] ?? null ) ? $effective['tools'] : array() as $tool ) {
+			if ( ! is_array( $tool ) ) {
+				continue;
+			}
+
+			$tools[] = array_filter(
+				array(
+					'id'                   => (string) ( $tool['id'] ?? '' ),
+					'runtime_tool_id'      => (string) ( $tool['runtimeToolId'] ?? $tool['runtime_tool_id'] ?? '' ),
+					'aliases'              => is_array( $tool['aliases'] ?? null ) ? array_values( array_map( 'strval', $tool['aliases'] ) ) : array(),
+					'execution_location'   => (string) ( $tool['executionLocation'] ?? $tool['execution_location'] ?? '' ),
+					'transport_visibility' => (string) ( $tool['transportVisibility'] ?? $tool['transport_visibility'] ?? '' ),
+					'allowed'              => (bool) ( $tool['allowed'] ?? false ),
+					'denial_reason'        => $this->descriptor_resolver->denial_reason( $tool ) ?? '',
+					'input_schema'         => (string) ( $tool['schema'] ?? '' ),
+					'policy'               => is_array( $tool['policy'] ?? null ) ? $tool['policy'] : array(),
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value
+			);
+		}
+
+		return array(
+			'schema'  => self::HOST_POLICY_SCHEMA,
+			'version' => self::HOST_POLICY_VERSION,
+			'tools'   => $tools,
+		);
 	}
 
 	/** @param string[] $tools @param array<string,mixed> $task_input */

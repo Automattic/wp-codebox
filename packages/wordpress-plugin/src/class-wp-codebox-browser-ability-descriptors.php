@@ -47,7 +47,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/preview-boot-ref' => array(
 				'label'               => 'Preview Boot Ref',
-				'description'         => 'Resolve a Codebox-contained preview into a stable Studio-style boot DTO. Consumers should read boot, blueprint_ref, preview_lease, and startup_diagnostics instead of raw Playground URLs, scope, blueprint, or legacy session internals.',
+				'description'         => 'Resolve a Codebox-contained preview into a stable Studio-style boot DTO with boot, blueprint_ref, preview_lease, and startup_diagnostics fields.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array( 'type' => 'object', 'properties' => array( 'contained_site' => $context['browser_contained_site_schema'], 'site_id' => array( 'type' => 'string' ), 'cache_key' => array( 'type' => 'string' ), 'source_digest' => array( 'type' => array( 'string', 'object' ) ), 'input_hash' => array( 'type' => 'string' ), 'playground' => array( 'type' => 'object' ), 'preview_lease' => array( 'type' => 'object' ) ) ),
 				'output_schema'       => array(
@@ -374,7 +374,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/boot-browser-contained-site-session' => array(
 				'label'               => 'Boot Browser Contained Site Session',
-				'description'         => 'Open a reusable browser-contained preview and return the stable boot DTO that product consumers need: preview lease, blueprint ref, and diagnostics without raw Playground boot internals.',
+				'description'         => 'Open a reusable browser-contained preview and return the stable boot DTO with preview lease, blueprint ref, and diagnostics.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -467,7 +467,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/browser-connector-request'            => array(
 				'label'               => 'Run Browser Connector Request',
-				'description'         => 'Resolve connector credentials server-side and dispatch a generic browser connector request without exposing raw secrets to the browser sandbox.',
+				'description'         => 'Resolve connector credentials server-side and dispatch a generic browser connector request with secrets kept in the connector runtime.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => $context['browser_connector_request_schema'],
 				'output_schema'       => $context['browser_connector_response_schema'],
@@ -751,7 +751,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			'wp-codebox/create-sandbox-session'  => array(
 				'canonical'   => 'wp-codebox/create-browser-playground-session',
 				'label'       => 'Create Sandbox Session',
-				'description' => 'Prepare a WP Codebox browser sandbox session without exposing the current runtime implementation name to callers.',
+				'description' => 'Prepare a WP Codebox browser sandbox session and return the current browser session descriptor.',
 			),
 			'wp-codebox/create-task-contract'    => array(
 				'canonical'   => 'wp-codebox/create-browser-task-contract',
