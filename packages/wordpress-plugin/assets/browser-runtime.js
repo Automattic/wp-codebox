@@ -1319,9 +1319,18 @@ try {
 	};
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
-		const recipe = browserSessionRecipe( session );
 		const payload = taskPayload === undefined ? ( session.task_payload ?? session.task_input ?? {} ) : taskPayload;
-		return runRecipe( client, recipe, payload, {
+		const recipe = browserSessionRecipe( session );
+		const executableRecipe = payload?.agent_bundles && Array.isArray( payload.agent_bundles ) && payload.agent_bundles.length
+			? {
+				...recipe,
+				inputs: {
+					...( recipe.inputs && typeof recipe.inputs === 'object' ? recipe.inputs : {} ),
+					agent_bundles: payload.agent_bundles,
+				},
+			}
+			: recipe;
+		return runRecipe( client, executableRecipe, payload, {
 			...options,
 			name: options.name || 'codebox-browser-session',
 		} );
