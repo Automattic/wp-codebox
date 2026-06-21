@@ -3,17 +3,25 @@ import { dirname, join, relative, resolve } from "node:path"
 import { normalizeRootedPath, pathIsWithinRoot, relativePathIsWithinRoot } from "./file-tree-policy.js"
 import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
-import type { MountSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
+import type { MountSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 
 export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-observation/v1" as const
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeEditorOpenAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
   command: string
+  timeout_ms?: number
+}
+
+export interface RuntimePhpAction {
+  type: "php"
+  code: string
+  bootstrap?: "wordpress" | "none"
+  diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
   timeout_ms?: number
 }
 
@@ -46,6 +54,16 @@ export interface RuntimeBrowserAction {
   wait_for?: string
   duration?: string
   capture?: string[]
+  timeout_ms?: number
+}
+
+export interface RuntimeBrowserProbeAction {
+  type: "browser_probe"
+  url: string
+  wait_for?: string
+  duration?: string
+  capture?: string[]
+  viewport?: string
   timeout_ms?: number
 }
 
@@ -97,6 +115,10 @@ export async function runRuntimeAction(
     return runRuntimeWpCliAction(episode, action)
   }
 
+  if (action.type === "php") {
+    return runRuntimePhpAction(episode, action)
+  }
+
   if (action.type === "rest_request") {
     return runRuntimeRestRequestAction(episode, action)
   }
@@ -105,11 +127,49 @@ export async function runRuntimeAction(
     return runRuntimeBrowserAction(episode, action)
   }
 
+  if (action.type === "browser_probe") {
+    return runRuntimeBrowserProbeAction(episode, action)
+  }
+
   if (action.type === "editor_open") {
     return runRuntimeEditorOpenAction(episode, action)
   }
 
   return runRuntimeFilesystemAction(episode, action, policy)
+}
+
+async function runRuntimePhpAction(episode: RuntimeEpisode, action: RuntimePhpAction): Promise<RuntimeActionObservation> {
+  const args = [`code=${action.code}`]
+  if (action.bootstrap) {
+    args.push(`bootstrap=${action.bootstrap}`)
+  }
+
+  const step = await episode.step(
+    {
+      kind: "command",
+      command: "wordpress.run-php",
+      args,
+      ...(action.diagnostics ? { diagnostics: action.diagnostics } : {}),
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+    },
+    { type: "command-result" },
+  )
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout: step.execution.stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
 }
 
 async function runRuntimeWpCliAction(episode: RuntimeEpisode, action: RuntimeWpCliAction): Promise<RuntimeActionObservation> {
@@ -339,6 +399,57 @@ function runtimeBrowserCommandStep(action: RuntimeBrowserAction): Record<string,
     commandAction.capture = action.capture
   }
   return commandAction
+}
+
+async function runRuntimeBrowserProbeAction(episode: RuntimeEpisode, action: RuntimeBrowserProbeAction): Promise<RuntimeActionObservation> {
+  const args = [`url=${action.url}`]
+  if (action.wait_for) {
+    args.push(`wait-for=${action.wait_for}`)
+  }
+  if (action.duration) {
+    args.push(`duration=${action.duration}`)
+  }
+  if (action.capture && action.capture.length > 0) {
+    args.push(`capture=${action.capture.join(",")}`)
+  }
+  if (action.viewport) {
+    args.push(`viewport=${action.viewport}`)
+  }
+
+  const step = await episode.step(
+    {
+      kind: "browser",
+      command: "wordpress.browser-probe",
+      args,
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+      url: action.url,
+      operation: "probe",
+    },
+    { type: "browser-result" },
+  )
+
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
 }
 
 async function runRuntimeEditorOpenAction(episode: RuntimeEpisode, action: RuntimeEditorOpenAction): Promise<RuntimeActionObservation> {

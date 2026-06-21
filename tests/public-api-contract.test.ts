@@ -10,6 +10,9 @@ import {
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
   parentToolBridgeContract,
+  runWordPressWpCli,
+  runWordPressPhp,
+  requestWordPressRest,
   runtimePackageExecutionInput,
   runtimeProfile,
   persistedBrowserArtifactRefs,
@@ -115,6 +118,7 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
+  "./wordpress-runtime-actions.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
@@ -153,6 +157,9 @@ assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
+assert.equal(typeof runWordPressWpCli, "function")
+assert.equal(typeof runWordPressPhp, "function")
+assert.equal(typeof requestWordPressRest, "function")
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
