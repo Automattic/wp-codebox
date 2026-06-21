@@ -21,6 +21,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runner.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-connectors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-agents-api-executors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
+require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 
 final class WP_Codebox_Abilities {
