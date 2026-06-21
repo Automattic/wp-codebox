@@ -43,13 +43,19 @@ bounded browser session handoff:
 
 - `WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session )`
 - `WP_Codebox_Browser_Task_Builder::browser_preview_boot_config( $session )`
+- `wp-codebox/create-browser-contained-site-session`
+- `wp-codebox/boot-browser-contained-site-session`
+- `wp-codebox/preview-boot-ref`
+- `wp-codebox/destroy-browser-contained-site-session`
 - `wp_codebox_browser_session_product_dto` filter
 - `wp_codebox_browser_preview_boot_config` filter
 
 The DTOs include session identity, task label, target, preview boot config,
 preview lease/alignment data, artifact refs, and readiness signals. They
 intentionally omit raw `task_payload`, raw blueprint bodies, plugin package data,
-runtime source bundles, and secret-like fields.
+`prepared_runtime`, runtime source bundles, low-level Playground boot URLs, and
+secret-like fields. Consumers that need an executable blueprint should follow the
+returned blueprint hydration ref instead of storing inline Playground internals.
 
 ## Example Consumers
 

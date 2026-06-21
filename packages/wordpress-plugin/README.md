@@ -18,6 +18,10 @@ the parent control plane for review, replay, or apply-back.
 - `wp-codebox/stage-artifact-apply`
 - `wp-codebox/preview-reuse-decision`
 - `wp-codebox/open-or-create-browser-contained-site`
+- `wp-codebox/create-browser-contained-site-session`
+- `wp-codebox/boot-browser-contained-site-session`
+- `wp-codebox/preview-boot-ref`
+- `wp-codebox/destroy-browser-contained-site-session`
 - WP-CLI wrappers under `wp codebox ...`
 
 The ability runs `wp-codebox agent-sandbox-run`, which boots a disposable
@@ -167,6 +171,15 @@ opening a preview. It returns an explicit `action` such as `hydrate-ref` or
 `create-new`, plus a stable `identity_key`. `open-or-create-browser-contained-site`
 uses that decision to open a reusable contained site when possible and falls back
 to fresh session creation only when the decision requires materialization.
+
+`open-or-create-browser-contained-site` preserves the legacy open/create envelope
+for existing consumers. New product UIs should prefer the contained-site session
+facades: `create-browser-contained-site-session`,
+`boot-browser-contained-site-session`, `preview-boot-ref`, and
+`destroy-browser-contained-site-session`. Those DTOs expose preview leases,
+startup diagnostics, and blueprint hydration refs without returning inline
+Playground blueprints, `prepared_runtime`, or low-level boot URLs as the default
+consumer contract.
 
 ## Apply-Back Approval
 

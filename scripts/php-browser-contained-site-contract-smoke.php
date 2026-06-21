@@ -171,4 +171,66 @@ expect( 'hydrate-ref' === $open_or_create['decision']['action'], 'Expected open-
 expect( isset( $open_or_create['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected open-or-create preview boot hydration endpoint.' );
 expect( 'wp-codebox/preview-lease/v1' === $open_or_create['preview_lease']['schema'], 'Expected open-or-create preview lease DTO.' );
 
+$boot = WP_Codebox_Abilities::boot_browser_contained_site_session(
+	array(
+		'cache_key'     => 'studio-native-preview',
+		'source_digest' => $source_digest,
+		'playground'    => array(
+			'preview_public_url' => 'https://preview.example.test',
+			'site_url'           => 'https://preview.example.test/wp',
+			'local_url'          => 'http://localhost:8881/preview',
+			'lease'              => array( 'status' => 'active' ),
+		),
+	)
+);
+
+expect( ! is_wp_error( $boot ), 'Expected boot facade to return an envelope.' );
+expect( true === $boot['success'], 'Expected boot facade success=true.' );
+expect( 'wp-codebox/browser-contained-site-boot-result/v1' === $boot['schema'], 'Expected boot result schema.' );
+expect( 'wp-codebox/browser-contained-site-boot/v1' === $boot['boot']['schema'], 'Expected boot descriptor schema.' );
+expect( ! isset( $boot['boot']['client_module_url'] ), 'Boot descriptor must not expose client_module_url.' );
+expect( ! isset( $boot['boot']['remote_url'] ), 'Boot descriptor must not expose remote_url.' );
+expect( ! isset( $boot['boot']['scope'] ), 'Boot descriptor must not expose scope as a consumer boot requirement.' );
+expect( isset( $boot['boot']['blueprint_ref']['hydration_endpoint'] ), 'Boot descriptor should expose a Codebox blueprint ref hydrator.' );
+expect( 'wp-codebox/browser-contained-site-startup-diagnostics/v1' === $boot['startup_diagnostics']['schema'], 'Expected startup diagnostics schema.' );
+expect( 'active' === $boot['startup_diagnostics']['preview_lease_status'], 'Expected active lease diagnostics.' );
+
+$preview_boot_ref = WP_Codebox_Abilities::preview_boot_ref(
+	array(
+		'cache_key'     => 'studio-native-preview',
+		'source_digest' => $source_digest,
+		'playground'    => array(
+			'preview_public_url' => 'https://preview.example.test',
+			'site_url'           => 'https://preview.example.test/wp',
+			'local_url'          => 'http://localhost:8881/preview',
+			'lease'              => array( 'status' => 'active' ),
+		),
+	)
+);
+
+expect( ! is_wp_error( $preview_boot_ref ), 'Expected preview boot ref facade to return an envelope.' );
+expect( true === $preview_boot_ref['success'], 'Expected preview boot ref success=true.' );
+expect( 'wp-codebox/preview-boot-ref/v1' === $preview_boot_ref['schema'], 'Expected preview boot ref schema.' );
+expect( 'wp-codebox/browser-contained-site-boot/v1' === $preview_boot_ref['boot']['schema'], 'Expected stable boot descriptor.' );
+expect( isset( $preview_boot_ref['blueprint_ref']['hydration_endpoint'] ), 'Expected stable blueprint ref hydration endpoint.' );
+expect( ! isset( $preview_boot_ref['boot']['client_module_url'] ), 'Stable boot descriptor must not expose client_module_url.' );
+expect( ! isset( $preview_boot_ref['boot']['remote_url'] ), 'Stable boot descriptor must not expose remote_url.' );
+expect( ! isset( $preview_boot_ref['boot']['cors_proxy_url'] ), 'Stable boot descriptor must not expose cors_proxy_url.' );
+expect( ! isset( $preview_boot_ref['boot']['scope'] ), 'Stable boot descriptor must not expose scope.' );
+expect( ! isset( $preview_boot_ref['boot']['blueprint'] ), 'Stable boot descriptor must not expose raw blueprint.' );
+expect( 'wp-codebox/browser-contained-site/v1' === $preview_boot_ref['compatibility']['contained_site_schema'], 'Expected contained-site compatibility schema.' );
+expect( 'wp-codebox/browser-contained-site-boot-result/v1' === $preview_boot_ref['compatibility']['session_result_schema'], 'Expected session result compatibility schema.' );
+
+$destroy = WP_Codebox_Abilities::destroy_browser_contained_site_session(
+	array(
+		'contained_site' => $boot['contained_site'],
+		'preview_lease'  => $boot['preview_lease']['lease'],
+	)
+);
+
+expect( ! is_wp_error( $destroy ), 'Expected destroy facade to return an envelope.' );
+expect( true === $destroy['success'], 'Expected destroy success=true.' );
+expect( 'wp-codebox/browser-contained-site-destroy/v1' === $destroy['schema'], 'Expected destroy schema.' );
+expect( 'released' === $destroy['preview_lease']['lease']['status'], 'Expected released preview lease.' );
+
 fwrite( STDOUT, "PHP browser contained site contract smoke passed\n" );

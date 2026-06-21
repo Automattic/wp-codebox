@@ -748,7 +748,7 @@ final class WP_Codebox_Browser_Task_Builder {
 	}
 
 	private static function compact_public_value( mixed $value, string $key = '' ): mixed {
-		if ( in_array( $key, array( 'task_payload', 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'blueprint', 'fallback_blueprint', 'runtime', 'plugins' ), true ) ) {
+		if ( in_array( $key, array( 'task_payload', 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'blueprint', 'fallback_blueprint', 'runtime', 'prepared_runtime', 'prepared', 'plugins' ), true ) ) {
 			return null;
 		}
 		if ( class_exists( 'WP_Codebox_Redaction_Policy' ) && WP_Codebox_Redaction_Policy::key_should_redact( 'public_session_dto', $key ) ) {
