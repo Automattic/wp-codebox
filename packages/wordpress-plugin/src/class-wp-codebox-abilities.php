@@ -472,6 +472,20 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/runner-workspace-prepare',
+				array(
+					'label'               => 'Prepare Runner Workspace',
+					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_prepare_input_schema(),
+					'output_schema'       => self::runner_workspace_prepare_output_schema(),
+					'execute_callback'    => array( self::class, 'prepare_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/prepare-runner-workspace',
 				array(
 					'label'               => 'Prepare Runner Workspace',
@@ -529,6 +543,20 @@ final class WP_Codebox_Abilities {
 
 			wp_register_ability(
 				'wp-codebox/capture',
+				array(
+					'label'               => 'Capture Runner Workspace',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_capture_input_schema(),
+					'output_schema'       => self::runner_workspace_capture_output_schema(),
+					'execute_callback'    => array( self::class, 'capture_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/runner-workspace-capture',
 				array(
 					'label'               => 'Capture Runner Workspace',
 					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',

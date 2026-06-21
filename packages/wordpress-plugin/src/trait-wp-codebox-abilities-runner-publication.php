@@ -41,7 +41,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'status'       => array( 'type' => 'string', 'enum' => array( 'prepared', 'failed', 'unavailable' ) ),
 				'handle'       => array( 'type' => 'string' ),
 				'path'         => array( 'type' => 'string' ),
-				'backend'      => array( 'type' => 'string' ),
 				'branch'       => array( 'type' => 'string' ),
 				'repo'         => array( 'type' => 'string' ),
 				'capabilities' => array( 'type' => 'object' ),
@@ -58,7 +57,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			'workspace_handle'  => array( 'type' => 'string' ),
 			'handle'            => array( 'type' => 'string' ),
 			'workspace_path'    => array( 'type' => 'string' ),
-			'workspace_backend' => array( 'type' => 'string' ),
 			'runner_workspace'  => array( 'type' => 'object', 'description' => 'Opaque runner workspace identity and provenance.' ),
 			'repo'              => array( 'type' => 'string', 'description' => 'Target repository, for example Automattic/wp-codebox. Alias: target_repo.' ),
 			'target_repo'       => array( 'type' => 'string' ),
@@ -121,7 +119,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'status'       => array( 'type' => 'object' ),
 				'diff'         => array( 'type' => 'object' ),
 				'changed'      => array( 'type' => 'boolean' ),
-				'backend'      => array( 'type' => 'string' ),
 				'workspace'    => array( 'type' => 'object' ),
 				'failure_type' => array( 'type' => 'string' ),
 				'error'        => array( 'type' => 'object' ),
@@ -160,7 +157,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'stdout'       => array( 'type' => 'string' ),
 				'stderr'       => array( 'type' => 'string' ),
 				'elapsed_ms'   => array( 'type' => 'number' ),
-				'backend'      => array( 'type' => 'string' ),
 				'workspace'    => array( 'type' => 'object' ),
 				'failure_type' => array( 'type' => 'string' ),
 				'error'        => array( 'type' => 'object' ),
@@ -178,7 +174,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'status'       => array( 'type' => 'string', 'enum' => array( 'published', 'failed', 'write_without_pr' ) ),
 				'failure_type' => array( 'type' => 'string' ),
 				'error'        => array( 'type' => 'object' ),
-				'backend'      => array( 'type' => 'string' ),
 				'workspace'    => array( 'type' => 'object' ),
 				'branch'       => array( 'type' => 'object' ),
 				'commit'       => array( 'type' => 'object' ),
@@ -198,7 +193,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::runner_workspace_prepare_failure( 'invalid_request', $normalized['error'], 'failed', $normalized );
 		}
 		$backend       = self::runner_workspace_backend_config();
-		$backend_id    = (string) ( $backend['id'] ?? '' );
 		$abilities     = is_array( $backend['abilities'] ?? null ) ? $backend['abilities'] : array();
 		$adopt_ability = (string) ( $abilities['workspace_adopt'] ?? '' );
 		$show_ability  = (string) ( $abilities['workspace_show'] ?? '' );
@@ -220,7 +214,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
 				return self::runner_workspace_prepare_failure(
 					'backend_unavailable',
-					array( 'code' => 'wp_codebox_runner_workspace_prepare_backend_unavailable', 'message' => 'Runner workspace backend is not available for preparation.', 'backend' => $backend_id ),
+					array( 'code' => 'wp_codebox_runner_workspace_prepare_backend_unavailable', 'message' => 'Runner workspace backend is not available for preparation.' ),
 					'unavailable',
 					$normalized
 				);
@@ -241,14 +235,11 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'success'      => true,
 					'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 					'status'       => 'prepared',
-					'backend'      => $backend_id,
 					'repo'         => $normalized['repo'],
 					'branch'       => $normalized['branch'],
 					'handle'       => (string) ( $adopt['handle'] ?? $adopt['name'] ?? $normalized['repo'] ),
 					'path'         => (string) ( $adopt['path'] ?? $checkout_path ),
 					'capabilities' => array( 'capture' => true, 'command' => true, 'publish' => true ),
-					'input'        => array( 'path' => $checkout_path, 'name' => $normalized['repo'] ),
-					'result'       => $adopt,
 				),
 				static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
 			);
@@ -298,14 +289,11 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => true,
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => 'prepared',
-				'backend'      => $backend_id,
 				'repo'         => $normalized['repo'],
 				'branch'       => (string) ( $worktree['branch'] ?? $normalized['branch'] ),
 				'handle'       => (string) ( $worktree['handle'] ?? '' ),
 				'path'         => (string) ( $worktree['path'] ?? '' ),
 				'capabilities' => array( 'capture' => true, 'command' => true, 'publish' => true ),
-				'input'        => $worktree_input,
-				'result'       => $worktree,
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value && null !== $value
 		);
@@ -362,7 +350,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 
 		if ( false === ( $result['success'] ?? true ) ) {
 			$error = is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace publication failed.' ) );
-			return self::runner_workspace_publication_failure( (string) ( $result['failure_type'] ?? 'backend_failed' ), $error, 'failed', $normalized, $result );
+			return self::runner_workspace_publication_failure( (string) ( $result['failure_type'] ?? 'backend_failed' ), $error, 'failed', $normalized );
 		}
 
 		return self::normalize_runner_workspace_publication_result( $result, $normalized );
@@ -386,7 +374,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$exclude_paths = self::runner_publication_string_list( $input['exclude_paths'] ?? array() );
 		$files         = self::filter_runner_workspace_capture_files( self::runner_publication_string_list( $status_result['files'] ?? array() ), $exclude_paths );
 		$dirty         = count( $files );
-		$backend       = (string) ( $status_result['backend'] ?? $normalized['workspace_backend'] ?? $backend_config['id'] ?? '' );
 		$diff_result   = array();
 		$include_diff  = false !== ( $input['include_diff'] ?? true );
 
@@ -402,7 +389,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			);
 			$diff = self::execute_runner_workspace_backend_ability( (string) ( $abilities['workspace_git_diff'] ?? '' ), $diff_input );
 			if ( is_array( $diff['error'] ?? null ) ) {
-				return self::runner_workspace_operation_failure( 'capture', (string) $diff['failure_type'], $diff['error'], 'unavailable', $normalized, array( 'status' => $status_result ) );
+				return self::runner_workspace_operation_failure( 'capture', (string) $diff['failure_type'], $diff['error'], 'unavailable', $normalized );
 			}
 
 			$diff_result = is_array( $diff['result'] ?? null ) ? $diff['result'] : array();
@@ -415,9 +402,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			array(
 				'success'   => true,
 				'schema'    => 'wp-codebox/runner-workspace-capture-result/v1',
-				'backend'   => $backend,
 				'changed'   => $dirty > 0 || array() !== $files,
-				'workspace' => self::runner_workspace_identity_result( $normalized, $backend ),
+				'workspace' => self::runner_workspace_identity_result( $normalized ),
 				'status'    => array_filter(
 					array(
 						'handle'  => (string) ( $status_result['name'] ?? $normalized['workspace'] ),
@@ -429,7 +415,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 						'commit'  => (string) ( $status_result['commit'] ?? '' ),
 						'dirty'   => $dirty,
 						'files'   => $files,
-						'backend' => $backend,
 					),
 					static fn( mixed $value ): bool => '' !== $value && array() !== $value
 				),
@@ -437,7 +422,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					array(
 						'diff'    => (string) ( $diff_result['diff'] ?? '' ),
 						'name'    => (string) ( $diff_result['name'] ?? $normalized['workspace'] ),
-						'backend' => (string) ( $diff_result['backend'] ?? $backend ),
 					),
 					static fn( mixed $value ): bool => '' !== $value
 				),
@@ -485,7 +469,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$backend = self::execute_runner_workspace_backend_ability( (string) ( $abilities['run_runner_workspace_command'] ?? '' ), $backend_input );
 		if ( ! is_array( $backend['error'] ?? null ) ) {
 			$result = is_array( $backend['result'] ?? null ) ? $backend['result'] : array();
-			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input, (string) ( $result['backend'] ?? $backend_config['id'] ?? '' ) );
+			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input );
 		}
 
 		if ( true === ( $input['allow_local_fallback'] ?? false ) && '' !== $normalized['workspace_path'] && is_dir( $normalized['workspace_path'] ) ) {
@@ -584,8 +568,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => $status,
 				'failure_type' => $failure_type,
-				'error'        => $error,
-				'backend'      => (string) ( self::runner_workspace_backend_config()['id'] ?? '' ),
+				'error'        => self::sanitize_runner_workspace_public_error( $error ),
 				'repo'         => (string) ( $input['repo'] ?? '' ),
 				'branch'       => (string) ( $input['branch'] ?? '' ),
 				'capabilities' => array( 'capture' => false, 'command' => false, 'publish' => false ),
@@ -713,7 +696,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		$commit    = is_array( $result['commit'] ?? null ) ? $result['commit'] : array();
 		$pr        = is_array( $result['pull_request'] ?? null ) ? $result['pull_request'] : array();
 
-		$backend = (string) ( $result['backend'] ?? $workspace['backend'] ?? $input['workspace_backend'] ?? 'unknown' );
 		$sha     = (string) ( $commit['sha'] ?? $result['commit_sha'] ?? $result['commit'] ?? '' );
 		$number  = (int) ( $pr['number'] ?? $result['pull_number'] ?? $result['pr_number'] ?? 0 );
 		$url     = (string) ( $pr['url'] ?? $pr['html_url'] ?? $result['pr_url'] ?? $result['html_url'] ?? $result['url'] ?? '' );
@@ -725,12 +707,10 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => true,
 				'schema'       => 'wp-codebox/runner-workspace-publication-result/v1',
 				'status'       => 'published',
-				'backend'      => $backend,
 				'workspace'    => array_filter(
 					array(
 						'handle'  => (string) ( $workspace['handle'] ?? $workspace['name'] ?? $result['workspace_handle'] ?? $result['name'] ?? $input['workspace'] ),
 						'path'    => (string) ( $workspace['path'] ?? $result['workspace_path'] ?? $input['workspace_path'] ),
-						'backend' => $backend,
 					),
 					static fn( mixed $value ): bool => '' !== $value
 				),
@@ -762,16 +742,15 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		);
 	}
 
-	/** @param array<string,mixed> $error Error shape. @param array<string,mixed> $input Normalized input. @param array<string,mixed> $raw_result Raw backend result. @return array<string,mixed> */
-	private static function runner_workspace_publication_failure( string $failure_type, array $error, string $status, array $input, array $raw_result = array() ): array {
+	/** @param array<string,mixed> $error Error shape. @param array<string,mixed> $input Normalized input. @return array<string,mixed> */
+	private static function runner_workspace_publication_failure( string $failure_type, array $error, string $status, array $input ): array {
 		return array_filter(
 			array(
 				'success'      => false,
 				'schema'       => 'wp-codebox/runner-workspace-publication-result/v1',
 				'status'       => $status,
 				'failure_type' => $failure_type,
-				'error'        => $error,
-				'backend'      => (string) ( $raw_result['backend'] ?? $input['workspace_backend'] ?? 'unavailable' ),
+				'error'        => self::sanitize_runner_workspace_public_error( $error ),
 				'workspace'    => array_filter( array( 'handle' => (string) ( $input['workspace'] ?? '' ), 'path' => (string) ( $input['workspace_path'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
 				'branch'       => array_filter( array( 'base' => (string) ( $input['base'] ?? '' ), 'head' => (string) ( $input['head'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
 				'reused'       => false,
@@ -828,6 +807,29 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		return array( 'result' => $result );
 	}
 
+	/** @param array<string,mixed> $error Raw backend or adapter error. @return array<string,mixed> */
+	private static function sanitize_runner_workspace_public_error( array $error ): array {
+		$sanitized = array();
+		foreach ( $error as $key => $value ) {
+			if ( in_array( $key, array( 'result', 'input', 'backend', 'ability', 'ability_name', 'backend_ability' ), true ) ) {
+				continue;
+			}
+
+			if ( is_array( $value ) ) {
+				$sanitized[ $key ] = self::sanitize_runner_workspace_public_error( $value );
+				continue;
+			}
+
+			$sanitized[ $key ] = is_string( $value ) ? self::redact_runner_workspace_backend_slugs( $value ) : $value;
+		}
+
+		return array_filter( $sanitized, static fn( mixed $value ): bool => array() !== $value && null !== $value );
+	}
+
+	private static function redact_runner_workspace_backend_slugs( string $value ): string {
+		return preg_replace( '#\bdatamachine-code/[a-z0-9._/-]+#i', 'runner workspace backend', $value ) ?? $value;
+	}
+
 	/** @param array<string,mixed> $input Normalized input. @param array<string,mixed> $extra Extra response fields. @return array<string,mixed> */
 	private static function runner_workspace_operation_failure( string $operation, string $failure_type, array $error, string $status, array $input, array $extra = array() ): array {
 		return array_filter(
@@ -837,9 +839,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'schema'       => 'command' === $operation ? 'wp-codebox/runner-workspace-command-result/v1' : 'wp-codebox/runner-workspace-capture-result/v1',
 					'status'       => $status,
 					'failure_type' => $failure_type,
-					'error'        => $error,
-					'backend'      => (string) ( $input['workspace_backend'] ?? 'unavailable' ),
-					'workspace'    => self::runner_workspace_identity_result( $input, (string) ( $input['workspace_backend'] ?? 'unavailable' ) ),
+					'error'        => self::sanitize_runner_workspace_public_error( $error ),
+					'workspace'    => self::runner_workspace_identity_result( $input ),
 				),
 				$extra
 			),
@@ -848,20 +849,19 @@ trait WP_Codebox_Abilities_Runner_Publication {
 	}
 
 	/** @param array<string,mixed> $input Normalized input. @return array<string,mixed> */
-	private static function runner_workspace_identity_result( array $input, string $backend ): array {
+	private static function runner_workspace_identity_result( array $input ): array {
 		return array_filter(
 			array(
 				'handle'  => (string) ( $input['workspace'] ?? '' ),
 				'path'    => (string) ( $input['workspace_path'] ?? '' ),
 				'repo'    => (string) ( $input['repo'] ?? '' ),
-				'backend' => $backend,
 			),
 			static fn( mixed $value ): bool => '' !== $value
 		);
 	}
 
 	/** @param array<string,mixed> $result Backend result. @param array<string,mixed> $input Normalized input. @param array<string,mixed> $command_input Command input. @return array<string,mixed> */
-	private static function normalize_runner_workspace_command_result( array $result, array $input, array $command_input, string $backend ): array {
+	private static function normalize_runner_workspace_command_result( array $result, array $input, array $command_input ): array {
 		$exit_code = (int) ( $result['exit_code'] ?? $result['code'] ?? 0 );
 
 		return array_filter(
@@ -875,8 +875,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'stdout'      => (string) ( $result['stdout'] ?? '' ),
 				'stderr'      => (string) ( $result['stderr'] ?? '' ),
 				'elapsed_ms'  => (float) ( $result['elapsed_ms'] ?? 0 ),
-				'backend'     => $backend,
-				'workspace'   => self::runner_workspace_identity_result( $input, $backend ),
+				'workspace'   => self::runner_workspace_identity_result( $input ),
 			),
 			static fn( mixed $value ): bool => '' !== $value && null !== $value
 		);
@@ -913,8 +912,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'elapsed_ms' => (float) $result['elapsed_ms'],
 			),
 			$input,
-			$command_input,
-			'local_path'
+			$command_input
 		);
 	}
 

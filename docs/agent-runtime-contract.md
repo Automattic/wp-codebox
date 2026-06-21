@@ -174,18 +174,27 @@ Runner workspace publication is a separate exported contract in runtime-core:
 - `wp-codebox/runner-workspace-command-request/v1`
 - `wp-codebox/runner-workspace-command-result/v1`
 
-External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into `wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`, so callers never import backend ability names.
+External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into WP Codebox-owned runner workspace abilities, so callers never import backend ability names.
 
-When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. The adapter maps the Codebox surface to `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery.
+When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. Backend ability names are adapter configuration and diagnostic detail only; public responses normalize backend output to Codebox result schemas and redact backend ability slugs from public errors.
+
+Preferred ability names for external callers are:
+
+- `wp-codebox/runner-workspace-prepare`
+- `wp-codebox/runner-workspace-capture`
+- `wp-codebox/runner-workspace-command`
+- `wp-codebox/runner-workspace-publish`
+
+Short aliases (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) remain registered for existing callers.
 
 ## Provider Runtime Invocation Names
 
 Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:
 
-- `wp-codebox.runner-workspace.prepare` / `wp-codebox/prepare` for runner workspace preparation.
-- `wp-codebox.runner-workspace.capture` / `wp-codebox/capture` for runner workspace status and diff capture.
-- `wp-codebox.runner-workspace.command` / `wp-codebox/command` for bounded runner workspace commands.
-- `wp-codebox.runner-workspace.publish` / `wp-codebox/publish` for branch, commit, PR, or equivalent publication handoff.
+- `wp-codebox.runner-workspace.prepare` / `wp-codebox/runner-workspace-prepare` for runner workspace preparation.
+- `wp-codebox.runner-workspace.capture` / `wp-codebox/runner-workspace-capture` for runner workspace status and diff capture.
+- `wp-codebox.runner-workspace.command` / `wp-codebox/runner-workspace-command` for bounded runner workspace commands.
+- `wp-codebox.runner-workspace.publish` / `wp-codebox/runner-workspace-publish` for branch, commit, PR, or equivalent publication handoff.
 - `wp-codebox.tool-call-transcript.record` / `wp-codebox/record-tool-call-transcript` for product-neutral tool-call transcript evidence.
 - `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
 
