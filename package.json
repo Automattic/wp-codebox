@@ -145,6 +145,7 @@
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-package-execution": "tsx tests/runtime-package-execution.test.ts",
     "test:public-ability-aliases": "tsx tests/public-ability-aliases.test.ts",
+    "test:wordpress-plugin-public-runtime-abilities": "tsx tests/wordpress-plugin-public-runtime-abilities.test.ts",
     "test:recipe-source-packages": "tsx tests/recipe-source-packages.test.ts",
     "test:distribution-startup-probes": "tsx tests/distribution-startup-probes.test.ts",
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",

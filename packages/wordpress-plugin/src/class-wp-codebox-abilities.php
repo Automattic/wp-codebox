@@ -324,6 +324,34 @@ final class WP_Codebox_Abilities {
 				)
 			);
 
+			wp_register_ability(
+				'wp-codebox/run-wordpress-workload',
+				array(
+					'label'               => 'Run WordPress Workload',
+					'description'         => 'Expose the public wp-codebox/wordpress-workload-run/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::wordpress_workload_run_request_schema(),
+					'output_schema'       => self::wordpress_workload_run_result_schema(),
+					'execute_callback'    => array( self::class, 'run_wordpress_workload' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload', 'safe_stub' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-fuzz-suite',
+				array(
+					'label'               => 'Run Fuzz Suite',
+					'description'         => 'Expose the public wp-codebox/fuzz-suite/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::fuzz_suite_request_schema(),
+					'output_schema'       => self::fuzz_suite_result_schema(),
+					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'safe_stub' => true ),
+				)
+			);
+
 			$run_agent_task_batch_ability = array(
 					'label'               => 'Run Agent Sandbox Task Batch',
 					'description'         => 'Run multiple tasks in isolated WP Codebox WordPress agent sandboxes and return artifacts for each run.',

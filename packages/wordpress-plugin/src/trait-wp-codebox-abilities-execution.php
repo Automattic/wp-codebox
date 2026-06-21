@@ -34,6 +34,107 @@ public static function run_runtime_task( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_wordpress_workload( array $input ): array|WP_Error {
+	$unsafe = self::unsafe_execution_fields( $input );
+	if ( ! empty( $unsafe ) ) {
+		return new WP_Error( 'wp_codebox_wordpress_workload_unsafe_input', 'wp-codebox/run-wordpress-workload does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
+	}
+
+	return self::unsupported_public_runtime_envelope(
+		'wp-codebox/wordpress-workload-run-result/v1',
+		'unsupported',
+		'wp_codebox_wordpress_workload_runner_unavailable',
+		'The WordPress workload ability contract is registered, but no safe workload runner is available in the WordPress plugin yet.',
+		array(
+			'request'   => array(
+				'schema' => (string) ( $input['schema'] ?? 'wp-codebox/wordpress-workload-run/v1' ),
+			),
+			'artifacts' => array(),
+			'metadata'  => array( 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
+		)
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_fuzz_suite( array $input ): array|WP_Error {
+	$unsafe = self::unsafe_execution_fields( $input );
+	if ( ! empty( $unsafe ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_suite_unsafe_input', 'wp-codebox/run-fuzz-suite does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
+	}
+
+	$cases = is_array( $input['cases'] ?? null ) ? $input['cases'] : array();
+	return self::unsupported_public_runtime_envelope(
+		'wp-codebox/fuzz-suite-result/v1',
+		'unsupported',
+		'wp_codebox_fuzz_suite_runner_unavailable',
+		'The fuzz suite ability contract is registered, but no safe fuzz runner is available in the WordPress plugin yet.',
+		array(
+			'suite'        => array_filter(
+				array(
+					'id'      => (string) ( $input['id'] ?? '' ),
+					'version' => (string) ( $input['version'] ?? '' ),
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'summary'      => array( 'total' => count( $cases ), 'passed' => 0, 'failed' => 0, 'error' => 0, 'skipped' => count( $cases ) ),
+			'cases'        => array(),
+			'artifactRefs' => array(),
+			'metadata'     => array( 'canonical_ability' => 'wp-codebox/run-fuzz-suite' ),
+		)
+	);
+}
+
+/** @return array<string,mixed> */
+private static function unsupported_public_runtime_envelope( string $schema, string $status, string $code, string $message, array $extra ): array {
+	return array_merge(
+		array(
+			'success'     => false,
+			'schema'      => $schema,
+			'status'      => $status,
+			'diagnostics' => array(
+				array(
+					'code'     => $code,
+					'severity' => 'error',
+					'message'  => $message,
+				),
+			),
+		),
+		$extra
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return string[] */
+private static function unsafe_execution_fields( array $input ): array {
+	$unsafe = array();
+	foreach ( array( 'command' ) as $field ) {
+		if ( array_key_exists( $field, $input ) ) {
+			$unsafe[] = $field;
+		}
+	}
+	self::collect_unsafe_execution_fields( $input, '', $unsafe );
+
+	return array_values( array_unique( $unsafe ) );
+}
+
+/** @param mixed $value Input value. @param string $path Current input path. @param string[] $unsafe Unsafe path accumulator. */
+private static function collect_unsafe_execution_fields( mixed $value, string $path, array &$unsafe ): void {
+	if ( ! is_array( $value ) ) {
+		return;
+	}
+
+	foreach ( $value as $key => $entry ) {
+		$field = is_string( $key ) ? $key : (string) $key;
+		$next_path = '' === $path ? $field : $path . '.' . $field;
+		if ( in_array( $field, array( 'code', 'php', 'php_code', 'raw_code', 'eval', 'shell' ), true ) ) {
+			$unsafe[] = $next_path;
+			continue;
+		}
+
+		self::collect_unsafe_execution_fields( $entry, $next_path, $unsafe );
+	}
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function request_host_delegation( array $input ): array|WP_Error {
 	return self::execute_host_delegation_request( $input );
 }
