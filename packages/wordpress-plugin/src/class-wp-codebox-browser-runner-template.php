@@ -30,12 +30,9 @@ $capture_paths = ' . var_export( $captures, true ) . ';
 $started_at = gmdate( \'c\' );
 $started_monotonic = microtime( true );
 
-if ( is_readable( $task_path ) ) {
-	$raw_payload = json_decode( (string) file_get_contents( $task_path ), true );
-	if ( is_array( $raw_payload ) ) {
-		$payload = array_replace_recursive( $payload, $raw_payload );
-	}
-}
+' . self::worker_json_fragment() . '
+
+$payload = wp_codebox_worker_json_merge_file( $task_path, $payload );
 
 $wp_codebox_component_manifest = is_array( $payload[\'component_manifest\'] ?? null ) ? $payload[\'component_manifest\'] : array();
 if ( ! empty( $wp_codebox_component_manifest ) ) {
@@ -51,6 +48,50 @@ if ( function_exists( \'get_current_user_id\' ) && function_exists( \'wp_set_cur
 	wp_set_current_user( 1 );
 }
 ';
+	}
+
+	/** Builds generic JSON helpers for generated PHP workers. */
+	public static function worker_json_fragment(): string {
+		return <<<'PHP'
+function wp_codebox_worker_json_decode_array( string $json ): ?array {
+	$decoded = json_decode( $json, true );
+	return is_array( $decoded ) ? $decoded : null;
+}
+
+function wp_codebox_worker_json_read_array_file( string $path ): ?array {
+	if ( '' === $path || ! is_readable( $path ) ) {
+		return null;
+	}
+	$contents = file_get_contents( $path );
+	return is_string( $contents ) ? wp_codebox_worker_json_decode_array( $contents ) : null;
+}
+
+function wp_codebox_worker_json_merge_file( string $path, array $defaults ): array {
+	$overrides = wp_codebox_worker_json_read_array_file( $path );
+	return is_array( $overrides ) ? array_replace_recursive( $defaults, $overrides ) : $defaults;
+}
+
+function wp_codebox_worker_json_encode( $value ): ?string {
+	if ( function_exists( 'wp_json_encode' ) ) {
+		$encoded = wp_json_encode( $value, JSON_UNESCAPED_SLASHES );
+	} else {
+		$encoded = json_encode( $value, JSON_UNESCAPED_SLASHES );
+	}
+	return is_string( $encoded ) ? $encoded : null;
+}
+
+function wp_codebox_worker_json_write_file( string $path, $value ): bool {
+	$encoded = wp_codebox_worker_json_encode( $value );
+	if ( null === $encoded ) {
+		return false;
+	}
+	$directory = dirname( $path );
+	if ( '' !== $directory && '.' !== $directory && ! is_dir( $directory ) && ! mkdir( $directory, 0777, true ) && ! is_dir( $directory ) ) {
+		return false;
+	}
+	return false !== file_put_contents( $path, $encoded );
+}
+PHP;
 	}
 
 	/** Builds the generated PHP error normalization fragment. */
@@ -844,8 +885,8 @@ if ( ! empty( \$artifact_bundle ) ) {
 }
 }
 
-file_put_contents( \$result_path, wp_json_encode( \$result ) );
-echo wp_json_encode( \$result );
+wp_codebox_worker_json_write_file( \$result_path, \$result );
+echo wp_codebox_worker_json_encode( \$result );
 PHP;
 	}
 
