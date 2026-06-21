@@ -319,10 +319,8 @@ drive your own UI: `click`/`hover`/`fill`/`type`/`select`/`drag` to interact,
 Keep `steps-json` inline (not `@file`) if it contains an `evaluate` step so the
 recipe auto-grants the `wordpress.browser-actions.evaluate` policy capability.
 
-A worked, plugin-specific consumer of this capability — driving the
-[data-machine-socials](https://github.com/Extra-Chill/data-machine-socials)
-`react-easy-crop` modal under React 19 — lives in that plugin's own repository,
-where the recipe sits next to the code it guards.
+A worked plugin-specific consumer of this capability can live in the target
+plugin's own repository, where the recipe sits next to the code it guards.
 
 ### `woocommerce-store.json`
 

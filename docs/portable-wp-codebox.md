@@ -17,7 +17,7 @@ WordPress Playground is the first backend because it provides a cheap, portable,
 ## Boundary
 
 - **Parent control planes** own operator, CI, and evidence workflows.
-- **Agents API** owns agent identity, sessions, tools, and run loops.
+- **Caller agent layers** own agent identity, sessions, tools, and run loops.
 - **WP AI Client** owns model/provider prompt execution.
 - **Connectors API** owns external service auth and credential configuration.
 - **WP Codebox** owns isolated environments, mounts, execution policy, observations, snapshots, and artifacts.

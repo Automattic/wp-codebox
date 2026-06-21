@@ -98,6 +98,9 @@ backend or host adapter. The important modules are:
   root for runtime, recipe, policy, artifact metadata, task, browser, host-tool,
   fanout contract, and result-envelope types. Keep implementation helpers out of
   this barrel.
+- [`docs/public-api-contract.md`](./public-api-contract.md): the maintained
+  contract map for stable package entrypoints, inspectable surfaces, lifecycle
+  contract areas, and the limited role of `./internals`.
 - `@automattic/wp-codebox-core/contracts`: command catalog metadata and other
   intentional contract surfaces that are useful to CLI/orchestrator consumers but
   not central enough for the package root.
@@ -240,6 +243,9 @@ Package entrypoints are public surfaces, not implementation buckets:
 
 - `runtime-core/src/index.ts` may define truly central runtime contracts and
   re-export focused contract modules.
+- `runtime-core/src/internals.ts` is exported only for monorepo implementation
+  reuse. Treat it as non-stable unless a helper graduates into a focused public
+  owner module and a stable entrypoint.
 - `runtime-playground/src/index.ts` should stay a thin backend factory/export
   surface.
 - `cli/src/index.ts` may remain the executable command orchestrator, but reusable

@@ -66,6 +66,7 @@ echo json_encode( array(
 		'provider_request_schema' => str_contains( $runner_php, 'wp-codebox/browser-provider-proxy-request/v1' ),
 		'result_schema' => str_contains( $runner_php, 'wp-codebox/browser-materialization/v1' ),
 		'tool_bridge_policy' => str_contains( $runner_php, "['tool_bridge']['sandbox_tool_policy']" ),
+		'agents_adapter_helper' => str_contains( $runner_php, 'function wp_codebox_browser_runtime_execute_agents_ability' ),
 		'contract_markers' => str_contains( $runner_php, 'WP_CODEBOX_BROWSER_RUNNER_BODY_START' ) && str_contains( $runner_php, 'WP_CODEBOX_BROWSER_RUNNER_BODY_END' ),
 	),
 ) );
@@ -77,7 +78,7 @@ echo json_encode( array(
 assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
-assert.equal(result.sha256, "ff1b602297598251db857072c439eded397cceb78297e3a5e791fdfdc7a7e828")
+assert.equal(result.sha256, "f6ec347a25fbad795358b3c2d8a68b5654acb87ab76dee036712367404fa73f9")
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,
@@ -90,6 +91,7 @@ assert.deepEqual(result.contains, {
   provider_request_schema: true,
   result_schema: true,
   tool_bridge_policy: true,
+  agents_adapter_helper: true,
   contract_markers: true,
 })
 

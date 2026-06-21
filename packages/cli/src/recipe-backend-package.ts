@@ -3,7 +3,6 @@ import { readFile, stat } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { RuntimeBackendFactoryContext, RuntimeBackendKind, WorkspaceRecipe, WorkspaceRecipeRuntimeBackendPackage } from "@automattic/wp-codebox-core"
-import type { PlaygroundCliModule } from "@automattic/wp-codebox-playground"
 
 export interface RuntimeBackendPackageProvenance {
   schema: "wp-codebox/runtime-backend-package/v1"
@@ -43,6 +42,10 @@ interface PreparedRuntimeBackendPackageAdapterResult {
 interface RuntimeBackendPackageAdapter {
   readonly backendKind: RuntimeBackendKind
   prepare(loadedPackage: LoadedRuntimeBackendPackage): PreparedRuntimeBackendPackageAdapterResult
+}
+
+interface RuntimeCliEntrypointModule {
+  runCLI(args: string[]): unknown
 }
 
 class RuntimeBackendPackageAdapterRegistry {
@@ -85,7 +88,7 @@ const playgroundRuntimeBackendPackageAdapter: RuntimeBackendPackageAdapter = {
     }
 
     return {
-      runtimeBackendContext: { cliModule: module as PlaygroundCliModule },
+      runtimeBackendContext: { cliModule: module as RuntimeCliEntrypointModule },
       diagnostics: [{ status: "passed", message: "Entrypoint exports runCLI" }],
     }
   },
@@ -216,7 +219,7 @@ async function importBackendEntrypoint(backendPackage: WorkspaceRecipeRuntimeBac
   }
 }
 
-function isPlaygroundCliModule(value: unknown): value is PlaygroundCliModule {
+function isPlaygroundCliModule(value: unknown): value is RuntimeCliEntrypointModule {
   return Boolean(value && typeof value === "object" && "runCLI" in value && typeof (value as { runCLI?: unknown }).runCLI === "function")
 }
 

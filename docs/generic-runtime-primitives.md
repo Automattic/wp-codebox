@@ -172,11 +172,12 @@ is the generic runtime-provider handshake introduced by PR #1205: workspace
 capture, workspace command execution, workspace publication, tool-call transcript
 recording, artifact handoff, and runtime evidence result schemas.
 
-WP Codebox owns the names and schemas. Callers own policy: repository selection,
-authorization, retries, retention, publication approval, and how resulting refs
-are attached to their job records.
+WP Codebox owns the names and schemas. The runner workspace ability surface is
+`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and
+`wp-codebox/publish`. Callers own policy: repository selection, authorization,
+retries, retention, publication approval, and how resulting refs are attached to
+their job records.
 
-The contract intentionally uses `wp-codebox.runner-workspace.*`,
-`wp-codebox.tool-call-transcript.record`, and `wp-codebox.artifact-handoff`
-names. Downstream product names and orchestration policy stay outside the
-runtime invocation payload.
+The contract intentionally uses WP Codebox task names and short WP Codebox
+ability names. Downstream product names, backend ability names, and
+orchestration policy stay outside the runtime invocation payload.

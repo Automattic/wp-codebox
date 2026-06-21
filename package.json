@@ -39,6 +39,10 @@
     "./cli": {
       "types": "./packages/cli/dist/index.d.ts",
       "import": "./packages/cli/dist/index.js"
+    },
+    "./cli/recipe-secret-env": {
+      "types": "./packages/cli/dist/recipe-secret-env.d.ts",
+      "import": "./packages/cli/dist/recipe-secret-env.js"
     }
   },
   "bin": {
@@ -96,8 +100,10 @@
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
+    "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
     "test:php-tool-policy-normalization": "php scripts/php-tool-policy-normalization-smoke.php",
     "test:php-browser-callback-contracts": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-callback-contracts-smoke.php",
+    "test:php-agents-api-adapter-contract": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-agents-api-adapter-contract-smoke.php",
     "test:php-browser-contained-site-contract": "php scripts/php-browser-contained-site-contract-smoke.php",
     "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",
@@ -110,6 +116,7 @@
     "test:php-patch-approval-filter": "php scripts/php-patch-approval-filter-smoke.php",
     "test:schema-parity": "tsx tests/schema-parity.test.ts",
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
+    "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
@@ -120,6 +127,7 @@
     "test:path-policy-parity": "tsx tests/path-policy-parity.test.ts",
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
+    "test:public-api-contract": "tsx tests/public-api-contract.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },
   "workspaces": [
