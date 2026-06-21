@@ -1,6 +1,7 @@
 export const PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA = "wp-codebox/provider-runtime-invocation-contract/v1" as const
 
 export const PROVIDER_RUNTIME_TASK_NAMES = {
+  workspacePrepare: "wp-codebox.runner-workspace.prepare",
   workspaceCapture: "wp-codebox.runner-workspace.capture",
   workspaceCommand: "wp-codebox.runner-workspace.command",
   workspacePublish: "wp-codebox.runner-workspace.publish",
@@ -9,9 +10,10 @@ export const PROVIDER_RUNTIME_TASK_NAMES = {
 } as const
 
 export const PROVIDER_RUNTIME_ABILITY_NAMES = {
-  workspaceCapture: "wp-codebox/runner-workspace-capture",
-  workspaceCommand: "wp-codebox/runner-workspace-command",
-  workspacePublish: "wp-codebox/runner-workspace-publish",
+  workspacePrepare: "wp-codebox/prepare",
+  workspaceCapture: "wp-codebox/capture",
+  workspaceCommand: "wp-codebox/command",
+  workspacePublish: "wp-codebox/publish",
   toolCallTranscriptRecord: "wp-codebox/record-tool-call-transcript",
   artifactHandoff: "wp-codebox/handoff-artifacts",
 } as const
@@ -24,6 +26,7 @@ export interface ProviderRuntimeInvocationContract {
   tasks: Record<ProviderRuntimeContractKey, string>
   abilities: Record<ProviderRuntimeContractKey, string>
   result_schemas: {
+    workspace_prepare: "wp-codebox/runner-workspace-prepare-result/v1"
     workspace_capture: "wp-codebox/runner-workspace-capture-result/v1"
     workspace_command: "wp-codebox/runner-workspace-command-result/v1"
     workspace_publication: "wp-codebox/runner-workspace-publication-result/v1"
@@ -39,6 +42,7 @@ export function providerRuntimeInvocationContract(): ProviderRuntimeInvocationCo
     tasks: { ...PROVIDER_RUNTIME_TASK_NAMES },
     abilities: { ...PROVIDER_RUNTIME_ABILITY_NAMES },
     result_schemas: {
+      workspace_prepare: "wp-codebox/runner-workspace-prepare-result/v1",
       workspace_capture: "wp-codebox/runner-workspace-capture-result/v1",
       workspace_command: "wp-codebox/runner-workspace-command-result/v1",
       workspace_publication: "wp-codebox/runner-workspace-publication-result/v1",

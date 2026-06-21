@@ -174,19 +174,34 @@ Runner workspace publication is a separate exported contract in runtime-core:
 - `wp-codebox/runner-workspace-command-request/v1`
 - `wp-codebox/runner-workspace-command-result/v1`
 
-External orchestrators own the backend that turns a sandbox result into a durable workspace, branch, commit, PR, package, or other publication target. WP Codebox defines the request/result shapes so callers can exchange workspace identity, changed paths, commit/PR metadata, evidence context, and backend failure information without encoding placement policy in the sandbox runtime.
+External orchestrators own policy around repository selection, authorization, retries, retention, and publication approval. WP Codebox owns the runner workspace boundary and adapts the configured backend into `wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`, so callers never import backend ability names.
+
+When no custom `wp_codebox_runner_workspace_backend` filter is supplied, WP Codebox uses the Data Machine Code backend adapter. The adapter maps the Codebox surface to `datamachine-code/workspace-adopt`, `datamachine-code/workspace-show`, `datamachine-code/workspace-clone`, `datamachine-code/workspace-worktree-add`, `datamachine-code/workspace-git-status`, `datamachine-code/workspace-git-diff`, `datamachine-code/publish-runner-workspace`, and `datamachine-code/run-runner-workspace-command`; `datamachine-code/workspace-capabilities` is optional backend capability discovery.
 
 ## Provider Runtime Invocation Names
 
 Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:
 
-- `wp-codebox.runner-workspace.capture` / `wp-codebox/runner-workspace-capture` for runner workspace status and diff capture.
-- `wp-codebox.runner-workspace.command` / `wp-codebox/runner-workspace-command` for bounded runner workspace commands.
-- `wp-codebox.runner-workspace.publish` / `wp-codebox/runner-workspace-publish` for branch, commit, PR, or equivalent publication handoff.
+- `wp-codebox.runner-workspace.prepare` / `wp-codebox/prepare` for runner workspace preparation.
+- `wp-codebox.runner-workspace.capture` / `wp-codebox/capture` for runner workspace status and diff capture.
+- `wp-codebox.runner-workspace.command` / `wp-codebox/command` for bounded runner workspace commands.
+- `wp-codebox.runner-workspace.publish` / `wp-codebox/publish` for branch, commit, PR, or equivalent publication handoff.
 - `wp-codebox.tool-call-transcript.record` / `wp-codebox/record-tool-call-transcript` for product-neutral tool-call transcript evidence.
 - `wp-codebox.artifact-handoff` / `wp-codebox/handoff-artifacts` for artifact envelope handoff across a trust boundary.
 
 These names are identifiers and contract anchors, not a queue or policy implementation. The corresponding result schemas remain the existing runner workspace, tool-call transcript, and evidence artifact envelope contracts. External orchestrators still own backend placement, authorization, retries, retention, and publication policy.
+
+## Agents API Adapter Boundary
+
+WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the ability names and execution wrapper for:
+
+- `chat()` -> `agents/chat`.
+- `run_task()` -> `agents/run-task`.
+- `run_runtime_package()` -> `agents/run-runtime-package`.
+- `get_task_run()` / `cancel_task_run()` -> task run-control abilities.
+- `get_chat_run()`, `cancel_chat_run()`, `queue_chat_message()`, and `list_chat_run_events()` -> chat run-control abilities.
+
+This is the Codebox-facing contract. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser Playground runtime principals; that bridge remains private generated code and should not become a consumer API.
 
 ## Heartbeat And Cleanup Metadata
 

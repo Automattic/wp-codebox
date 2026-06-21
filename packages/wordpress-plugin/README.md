@@ -270,9 +270,8 @@ plane.
 
 Sandbox-safe tool abilities should be an explicit allow-list:
 
-- Workspace read/list/search/edit primitives: `datamachine/workspace-read`,
-  `datamachine/workspace-ls`, `datamachine/workspace-grep`,
-  `datamachine/workspace-write`, and `datamachine/workspace-edit`.
+- Workspace read/list/search/edit primitives supplied by the mounted coding
+  tools component.
 - Read-only GitHub context primitives: issue, PR, PR file, check/status, tree,
   file, and repo list/get abilities.
 

@@ -7,6 +7,7 @@ import { promisify } from "node:util"
 import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
+import type { RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
 
 export interface RecipeArtifactEvidenceFile {
   path: string
@@ -224,7 +225,7 @@ export interface RecipeRunAttestation {
     schema: "wp-codebox/redacted-secret-envelope/v1"
     provided: boolean
     count: number
-    secrets: Array<{ name: string; status: "available"; source: "recipe-secret-env" }>
+    secrets: Array<{ name: string; status: RecipeSecretEnvSummaryEntry["status"]; source?: string }>
     redaction: "names-only"
   }
   evidenceRefs: {
@@ -307,7 +308,7 @@ export async function collectAndFinalizeFailedRecipeArtifacts(args: {
   workspaceMounts: RecipeEvidenceWorkspaceMount[]
   stagedFiles: RecipeEvidenceStagedFile[]
   policy: RuntimePolicy
-  secretEnv: Record<string, string>
+  secretEnv: RecipeSecretEnvSummaryEntry[]
   executions: RecipeEvidenceExecutionResult[]
   interruption?: RecipeArtifactsFinalizationController
 }): Promise<ArtifactBundle | undefined> {
@@ -399,7 +400,7 @@ export async function finalizeRecipeArtifactEvidence(
   workspaceMounts: RecipeEvidenceWorkspaceMount[],
   stagedFiles: RecipeEvidenceStagedFile[],
   policy: RuntimePolicy,
-  secretEnv: Record<string, string>,
+  secretEnv: RecipeSecretEnvSummaryEntry[],
 ): Promise<RecipeArtifactEvidenceResult> {
   const result: RecipeArtifactEvidenceResult = {}
   const verifier = normalizeArtifactToggle(recipe.artifacts?.verify)
@@ -1230,7 +1231,7 @@ async function buildRecipeRunAttestation(args: {
   artifacts: ArtifactBundle
   recipe: WorkspaceRecipe
   policy: RuntimePolicy
-  secretEnv: Record<string, string>
+  secretEnv: RecipeSecretEnvSummaryEntry[]
   workspacePolicy: { enabled: boolean; strict: boolean }
   verifier: { enabled: boolean; strict: boolean }
   workspacePolicyFile?: RecipeArtifactEvidenceFile
@@ -1310,9 +1311,9 @@ async function buildRecipeRunAttestation(args: {
     },
     secretEnvelope: {
       schema: "wp-codebox/redacted-secret-envelope/v1",
-      provided: Object.keys(args.secretEnv).length > 0,
-      count: Object.keys(args.secretEnv).length,
-      secrets: Object.keys(args.secretEnv).sort().map((name) => ({ name, status: "available", source: "recipe-secret-env" })),
+      provided: args.secretEnv.some((entry) => entry.status === "available"),
+      count: args.secretEnv.filter((entry) => entry.status === "available").length,
+      secrets: [...args.secretEnv].sort((a, b) => a.name.localeCompare(b.name)),
       redaction: "names-only",
     },
     evidenceRefs: stripUndefined({

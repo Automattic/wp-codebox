@@ -28,7 +28,7 @@ What you can build on top of WP Codebox:
 - **Agentic coding against a WordPress site.** Let users describe a change in chat — from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live Playground preview URL, then let the parent control plane review, apply, and open any PR. The contributor never needs shell access.
 - **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated Playground workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model review artifacts. Example implementation: [wp-gym](https://github.com/Automattic/wp-gym).
 - **Long-running terrariums.** Boot a Playground that an agent evolves over time — software, content, configuration — with day-cycle automation driven from CI. See [world-of-wordpress](https://github.com/chubes4/world-of-wordpress).
-- **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via Playground + WordPress import, post Playground preview links as PR evidence. See [wp-site-generator](https://github.com/chubes4/wp-site-generator).
+- **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via Playground + WordPress import, and post Playground preview links as PR evidence.
 - **Untrusted patch evaluation.** Plugin and theme authors can accept community-submitted patches, run them in a sandbox, capture artifacts (diffs, test results, screenshots), and review before merging. The reviewing tool can be anything.
 - **"Try it in a sandbox first."** Before installing a plugin, theme, or update on a production site, run it in a disposable Playground and see what happens.
 - **Reproduction harness for bug reports.** Ship a recipe with an issue so any contributor can replay the bug deterministically in a clean WordPress instance. The replay can be triggered from a CLI, a CI job, or a maintainer's IDE plugin.
@@ -87,9 +87,9 @@ result outside the sandbox.
 ## Host Tool Registry
 
 `HostToolRegistry` is a WP Codebox transport adapter, not a generic tool
-contract. Agents API owns canonical tool declarations, tool calls, execution
-results, pending external-tool states, and product-neutral runtime metadata.
-The caller owns the concrete tool sources and product policy.
+contract. The caller owns the canonical tool declarations, concrete tool
+sources, execution result semantics, pending external-tool states, runtime
+metadata, and product policy.
 WP Codebox only exposes caller-provided per-run tool declarations to sandbox
 agents, routes allowed calls across the browser/host boundary, and records
 transport diagnostics.
@@ -154,12 +154,13 @@ const result = await runtime.execute({
 Host tool output is a Codebox transport diagnostic envelope with schema
 `wp-codebox/host-tool-result/v1`. Successful calls return `status: "ok"`, an
 `output` value validated against the transport output schema, and `toolResult`
-using the canonical Agents API result shape: `success`, `tool_name`, `result`,
-`metadata`, and optional `runtime`. Invalid input, invalid output, malformed
-JSON, and handler failures return `status: "error"` with a stable transport error
-code while `toolResult` maps the same failure to a canonical tool error. The
-`diagnostics` object is the Codebox-owned portion of the envelope and preserves
-the transport, policy command, validation schemas, and resolved policy metadata.
+using the caller's canonical tool result shape: `success`, `tool_name`,
+`result`, `metadata`, and optional `runtime`. Invalid input, invalid output,
+malformed JSON, and handler failures return `status: "error"` with a stable
+transport error code while `toolResult` maps the same failure to a canonical
+tool error. The `diagnostics` object is the Codebox-owned portion of the
+envelope and preserves the transport, policy command, validation schemas, and
+resolved policy metadata.
 
 Product-specific tools such as evidence commands should live in product
 extensions that provide canonical tool declarations and handlers through this

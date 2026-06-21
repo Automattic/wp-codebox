@@ -12,6 +12,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./recipe-secret-env": {
+      "types": "./dist/recipe-secret-env.d.ts",
+      "import": "./dist/recipe-secret-env.js"
     }
   },
   "files": [
