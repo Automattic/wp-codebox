@@ -220,7 +220,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			if ( ! $ability || ! is_callable( array( $ability, 'execute' ) ) ) {
 				return self::runner_workspace_prepare_failure(
 					'backend_unavailable',
-					array( 'code' => 'wp_codebox_runner_workspace_prepare_backend_unavailable', 'message' => 'Runner workspace backend ability is not available for preparation.', 'ability' => $ability_name ),
+					array( 'code' => 'wp_codebox_runner_workspace_prepare_backend_unavailable', 'message' => 'Runner workspace backend is not available for preparation.', 'backend' => $backend_id ),
 					'unavailable',
 					$normalized
 				);
@@ -565,7 +565,25 @@ trait WP_Codebox_Abilities_Runner_Publication {
 	/** @return array<string,mixed> */
 	private static function runner_workspace_backend_config(): array {
 		$config = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_runner_workspace_backend', array() ) : array();
-		return is_array( $config ) ? $config : array();
+		if ( is_array( $config ) && ! empty( $config ) ) {
+			return $config;
+		}
+
+		return array(
+			'id'                      => 'data-machine-code',
+			'workspace_root_constant' => 'DATAMACHINE_CODE_WORKSPACE_ROOT',
+			'abilities'               => array(
+				'workspace_adopt'               => 'datamachine-code/workspace-adopt',
+				'workspace_show'                => 'datamachine-code/workspace-show',
+				'workspace_clone'               => 'datamachine-code/workspace-clone',
+				'workspace_worktree_add'        => 'datamachine-code/workspace-worktree-add',
+				'workspace_git_status'          => 'datamachine-code/workspace-git-status',
+				'workspace_git_diff'            => 'datamachine-code/workspace-git-diff',
+				'publish_runner_workspace'      => 'datamachine-code/publish-runner-workspace',
+				'run_runner_workspace_command' => 'datamachine-code/run-runner-workspace-command',
+				'workspace_capabilities'        => 'datamachine-code/workspace-capabilities',
+			),
+		);
 	}
 
 	/** @param array<string,mixed> $error Error shape. @param array<string,mixed> $input Normalized input. @return array<string,mixed> */
@@ -783,8 +801,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'failure_type' => 'backend_unavailable',
 				'error'        => array(
 					'code'    => 'wp_codebox_runner_workspace_backend_unavailable',
-					'message' => 'Runner workspace backend ability is not available for this operation.',
-					'ability' => $ability_name,
+					'message' => 'Runner workspace backend is not available for this operation.',
 				),
 			);
 		}
@@ -797,7 +814,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'code'    => $result->get_error_code(),
 					'message' => $result->get_error_message(),
 					'data'    => $result->get_error_data(),
-					'ability' => $ability_name,
 				),
 			);
 		}
@@ -808,7 +824,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'error'        => array(
 					'code'    => 'wp_codebox_runner_workspace_backend_invalid_response',
 					'message' => 'Runner workspace backend ability returned an invalid response.',
-					'ability' => $ability_name,
 				),
 			);
 		}
@@ -816,7 +831,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		if ( false === ( $result['success'] ?? true ) ) {
 			return array(
 				'failure_type' => (string) ( $result['failure_type'] ?? 'backend_failed' ),
-				'error'        => is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace backend operation failed.' ), 'ability' => $ability_name ),
+				'error'        => is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace backend operation failed.' ) ),
 			);
 		}
 
