@@ -4,7 +4,7 @@ import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEM
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
-  components: [{ kind: "component", slug: "agents-api", required: true, readiness: "ready", provenance: { source: "registry" } }],
+  components: [{ kind: "component", slug: "agent-runtime", required: true, readiness: "ready", provenance: { source: "registry" } }],
   plugins: [{ kind: "plugin", slug: "wp-codebox", target: "/wordpress/wp-content/plugins/wp-codebox", activate: true }],
   mu_plugins: [{ kind: "mu_plugin", slug: "loader" }],
   themes: [{ kind: "theme", slug: "twentytwentyfour" }],
@@ -16,7 +16,7 @@ const profile = runtimeProfile({
 })
 
 assert.equal(profile.schema, "wp-codebox/runtime-profile/v1")
-assert.equal(profile.components[0].slug, "agents-api")
+assert.equal(profile.components[0].slug, "agent-runtime")
 assert.deepEqual(profile.bootstrap?.steps, ["install", "activate"])
 assert.deepEqual(profile.env, { WP_ENVIRONMENT_TYPE: "local" })
 
@@ -65,7 +65,7 @@ const lease = previewLease({
   preview_public_url: "https://preview.example.test",
   site_url: "https://site.example.test",
   local_url: "http://127.0.0.1:8881",
-  lease: { id: "lease-1", status: "active", provider: "homeboy" },
+  lease: { id: "lease-1", status: "active", provider: "preview-service" },
   alignment: { status: "aligned", preview_matches_site: true, preview_matches_local: true },
 })
 
@@ -113,4 +113,41 @@ assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components:
 assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /preview_public_url/)
 assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable_prepared_runtime", source_digest: { value: "bad" } }), /source_digest/)
 
+const publicContractEnvelopes = [profile, lease, containedSiteStatus, containedSiteOpen]
+const forbiddenPublicContractTerms = [
+  /data[-_ ]?machine/i,
+  /datamachine/i,
+  /agents[-_ ]?api/i,
+  /wordpress[-_ ]?playground/i,
+  /\bplayground\b/i,
+  /homeboy/i,
+]
+
+for (const contract of publicContractEnvelopes) {
+  for (const publicName of publicContractNames(contract)) {
+    for (const forbidden of forbiddenPublicContractTerms) {
+      assert.doesNotMatch(publicName, forbidden, `${publicName} exposes raw upstream vocabulary in a public boundary contract`)
+    }
+  }
+}
+
 console.log("runtime boundary contracts ok")
+
+function publicContractNames(input: unknown, prefix = ""): string[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return []
+
+  const names: string[] = []
+  for (const [key, value] of Object.entries(input)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    names.push(path)
+    if (key === "schema" && typeof value === "string") names.push(value)
+    if (value && typeof value === "object" && !Array.isArray(value) && !opaquePublicContractField(key)) {
+      names.push(...publicContractNames(value, path))
+    }
+  }
+  return names
+}
+
+function opaquePublicContractField(key: string): boolean {
+  return key === "metadata" || key === "provenance" || key === "evidence" || key === "signals" || key === "error" || key === "artifacts"
+}

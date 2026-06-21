@@ -37,6 +37,18 @@ const forbiddenPublicExportTargets = [
 const forbiddenPublicImportSpecifiers = [
   /@wp-playground\//,
 ]
+const publicContractFiles = [
+  "packages/runtime-core/src/runtime-boundary-contracts.ts",
+  "packages/runtime-core/src/generic-ability-runtime-run.ts",
+  "packages/runtime-core/src/provider-runtime-contracts.ts",
+]
+const forbiddenPublicContractVocabulary = [
+  /data[-_ ]?machine/i,
+  /datamachine/i,
+  /agents[-_ ]?api/i,
+  /wordpress[-_ ]?playground/i,
+  /homeboy/i,
+]
 
 async function productionFiles(dir: URL): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -112,6 +124,17 @@ for (const rel of ["packages/runtime-core/src/index.ts", "packages/runtime-playg
   }
 }
 
+for (const rel of publicContractFiles) {
+  const source = await readFile(new URL(`../${rel}`, import.meta.url), "utf8")
+  for (const publicName of exportedContractNames(source)) {
+    for (const forbidden of forbiddenPublicContractVocabulary) {
+      if (forbidden.test(publicName)) {
+        violations.push(`${rel} exports public contract name ${publicName} with raw upstream vocabulary ${forbidden}`)
+      }
+    }
+  }
+}
+
 assert.deepEqual(
   violations,
   [],
@@ -141,4 +164,18 @@ function exportTargets(exportsField: unknown): string[] {
 
 function exportedModuleSpecifiers(source: string): string[] {
   return [...source.matchAll(/export\s+(?:type\s+)?(?:\{[^}]*\}|\*)\s+from\s+["']([^"']+)["']/g)].map((match) => match[1] ?? "")
+}
+
+function exportedContractNames(source: string): string[] {
+  return [
+    ...source.matchAll(/export\s+(?:const|type|interface|class|function)\s+([A-Za-z0-9_]+)/g),
+    ...source.matchAll(/export\s+\{([^}]+)\}/g),
+    ...source.matchAll(/"(wp-codebox\/[^"]+)"/g),
+  ].flatMap((match) => {
+    const value = match[1] ?? ""
+    if (value.includes(",")) {
+      return value.split(",").map((part) => part.trim().split(/\s+as\s+/i).pop() ?? "").filter(Boolean)
+    }
+    return value ? [value] : []
+  })
 }

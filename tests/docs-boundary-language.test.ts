@@ -42,6 +42,13 @@ assert.deepEqual(
 const exampleConsumerDoc = await readFile(new URL("docs/example-consumer-boundary-contracts.md", root), "utf8")
 
 assert.match(exampleConsumerDoc, /^# Example Consumer Boundary Contracts/m)
+assert.match(exampleConsumerDoc, /## Public\/Internal Boundary/)
+assert.match(exampleConsumerDoc, /Consumers compose WP Codebox APIs\./)
+assert.match(exampleConsumerDoc, /Data Machine job, artifact, pending-action, and flow concepts stay behind\s+Codebox run, artifact, approval, and session contracts\./)
+assert.match(exampleConsumerDoc, /Agents API execution targets and principals stay behind Codebox task, provider,\s+permission, and runtime-session contracts\./)
+assert.match(exampleConsumerDoc, /Data Machine Code workspace lifecycle and GitHub workflow details stay behind\s+Codebox source, workspace, evidence, and apply-back contracts\./)
+assert.match(exampleConsumerDoc, /WordPress Playground boot, filesystem, preview, and PHP\/WP-CLI details stay\s+behind Codebox runtime, mount, command, preview, and browser-session contracts\./)
+assert.match(exampleConsumerDoc, /Public schema names, top-level DTO fields, package entrypoints, and docs intended\s+for consumers use Codebox vocabulary\./)
 assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
 assert.match(exampleConsumerDoc, /## Example Consumers/)
 

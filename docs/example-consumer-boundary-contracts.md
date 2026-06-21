@@ -6,6 +6,26 @@ are generic runtime contracts. Named products may appear in integration notes as
 example consumers, but they are not runtime concepts and must not define schema
 fields, package boundaries, or artifact semantics.
 
+## Public/Internal Boundary
+
+Consumers compose WP Codebox APIs. They should not assemble public workflows from
+raw upstream APIs that WP Codebox uses to run a sandbox. WP Codebox owns the
+stable contracts and wraps implementation dependencies behind those contracts:
+
+- Data Machine job, artifact, pending-action, and flow concepts stay behind
+  Codebox run, artifact, approval, and session contracts.
+- Agents API execution targets and principals stay behind Codebox task, provider,
+  permission, and runtime-session contracts.
+- Data Machine Code workspace lifecycle and GitHub workflow details stay behind
+  Codebox source, workspace, evidence, and apply-back contracts.
+- WordPress Playground boot, filesystem, preview, and PHP/WP-CLI details stay
+  behind Codebox runtime, mount, command, preview, and browser-session contracts.
+
+Public schema names, top-level DTO fields, package entrypoints, and docs intended
+for consumers use Codebox vocabulary. Adapter-specific names may appear only as
+opaque values in provenance, metadata, provider identifiers, diagnostics, or
+example integration notes.
+
 ## Runtime Profile
 
 `runtime-core` exports `RUNTIME_PROFILE_SCHEMA`, `RuntimeProfile`, and
