@@ -421,6 +421,8 @@ interface ResolvedWordPressReleaseForStartup {
   source: PlaygroundWordPressArchiveCacheValidation["source"]
 }
 
+type WordPressReleaseResolver = typeof resolveWordPressRelease
+
 export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory()): Promise<PlaygroundWordPressStartupAsset> {
   if (wordpressZip) {
     const version = startupAssetVersion(versionQuery, wordpressZip)
@@ -428,7 +430,7 @@ export async function resolvePlaygroundWordPressStartupAsset(versionQuery: strin
     return { wp: isHttpUrl(wordpressZip) ? wordpressZip : undefined, localPath: isHttpUrl(wordpressZip) ? undefined : wordpressZip, cacheValidation: { ...cacheValidation, sourceUrl: wordpressZip, source: "pre-resolved" } }
   }
 
-  const release = await resolveWordPressReleaseForStartup(versionQuery)
+  const release = await resolveWordPressReleaseForStartup(versionQuery, cacheDirectory)
   return await withPlaygroundArchiveCacheLock(cacheDirectory, release.version, async (lock) => {
     const cachedArchivePath = join(cacheDirectory, `${release.version}.zip`)
     const archivePaths = [cachedArchivePath, join(cacheDirectory, `prebuilt-wp-content-for-wp-${release.version}.zip`)]
@@ -525,7 +527,7 @@ async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: s
   }
 }
 
-async function resolveWordPressReleaseForStartup(versionQuery: string | undefined): Promise<ResolvedWordPressReleaseForStartup> {
+export async function resolveWordPressReleaseForStartup(versionQuery: string | undefined, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory(), resolver: WordPressReleaseResolver = resolveWordPressRelease): Promise<ResolvedWordPressReleaseForStartup> {
   const exactVersion = exactWordPressVersion(versionQuery)
   if (exactVersion) {
     return {
@@ -536,15 +538,60 @@ async function resolveWordPressReleaseForStartup(versionQuery: string | undefine
   }
 
   try {
-    const release = await resolveWordPressRelease(versionQuery)
-    return {
+    const release = await resolver(versionQuery)
+    const resolved = {
       version: String(release.version),
       releaseUrl: String(release.releaseUrl),
       source: release.source === "api" ? "api" : "inferred",
-    }
+    } satisfies ResolvedWordPressReleaseForStartup
+    await writeCachedWordPressRelease(versionQuery, cacheDirectory, resolved)
+    return resolved
   } catch (error) {
+    const cachedRelease = await readCachedWordPressRelease(versionQuery, cacheDirectory)
+    if (cachedRelease) {
+      return cachedRelease
+    }
     throw new PlaygroundStartupAssetError("wordpress-release-metadata", "https://api.wordpress.org/core/version-check/1.7/?channel=beta", versionQuery ?? "latest", error)
   }
+}
+
+async function writeCachedWordPressRelease(versionQuery: string | undefined, cacheDirectory: string, release: ResolvedWordPressReleaseForStartup): Promise<void> {
+  await mkdir(cacheDirectory, { recursive: true })
+  await writeFile(wordPressReleaseMetadataCachePath(versionQuery, cacheDirectory), `${JSON.stringify({
+    schema: "wp-codebox/wordpress-release-metadata-cache/v1",
+    query: versionQuery || "latest",
+    version: release.version,
+    releaseUrl: release.releaseUrl,
+    source: release.source,
+    cachedAt: new Date().toISOString(),
+  }, null, 2)}\n`)
+}
+
+async function readCachedWordPressRelease(versionQuery: string | undefined, cacheDirectory: string): Promise<ResolvedWordPressReleaseForStartup | undefined> {
+  try {
+    const cached = JSON.parse(await readFile(wordPressReleaseMetadataCachePath(versionQuery, cacheDirectory), "utf8"))
+    if (cached?.schema !== "wp-codebox/wordpress-release-metadata-cache/v1") {
+      return undefined
+    }
+    if (!exactWordPressVersion(cached.version) || typeof cached.releaseUrl !== "string" || !isHttpUrl(cached.releaseUrl)) {
+      return undefined
+    }
+    return {
+      version: cached.version,
+      releaseUrl: cached.releaseUrl,
+      source: "cache",
+    }
+  } catch (error) {
+    if (errorHasCode(error, "ENOENT")) {
+      return undefined
+    }
+    return undefined
+  }
+}
+
+function wordPressReleaseMetadataCachePath(versionQuery: string | undefined, cacheDirectory: string): string {
+  const query = (versionQuery || "latest").replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "latest"
+  return join(cacheDirectory, `wordpress-release-metadata-${query}.json`)
 }
 
 async function validateWordPressArchivePaths(version: string, sourceUrl: string, archivePaths: string[], options: PlaygroundWordPressArchiveCacheValidationOptions): Promise<PlaygroundWordPressArchiveCacheValidation> {
