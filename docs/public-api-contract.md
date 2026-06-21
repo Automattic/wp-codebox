@@ -59,8 +59,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Browser SDK:** `window.wpCodeboxBrowser.v1.info()` reports SDK version,
   capability strings, and global names; `normalizeError()` returns
   `wp-codebox/browser-sdk-error/v1`; `result()` wraps async browser operations in
-  `wp-codebox/browser-sdk-result/v1`; `methods` exposes stable references to the
-  existing browser runtime helpers.
+  `wp-codebox/browser-sdk-result/v1`; `normalizeBrowserRunResult()` returns the
+  product-safe `wp-codebox/browser-run-result/v1` DTO; `browserArtifactPersistenceRef()`
+  returns `wp-codebox/browser-artifact-persistence/ref/v1`; `runBrowserSessionRecipe()`
+  executes the existing runtime helper and returns the stable browser-run DTO;
+  `methods` exposes stable references to the existing browser runtime helpers for
+  callers that need legacy raw results internally.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
