@@ -153,20 +153,6 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'components'              => array( array( 'slug' => 'agents-api' ) ),
 				'placement_capabilities' => array( 'agents.runtime' ),
 			),
-			'data-machine' => array(
-				'id'           => 'data-machine',
-				'label'        => 'Data Machine runtime',
-				'capabilities' => array( 'data-machine', 'datamachine.runtime' ),
-				'requires'      => array( 'agents-api' ),
-				'components'    => array( array( 'slug' => 'data-machine' ) ),
-			),
-			'data-machine-code' => array(
-				'id'           => 'data-machine-code',
-				'label'        => 'Data Machine Code runtime',
-				'capabilities' => array( 'data-machine-code', 'datamachine-code.runtime' ),
-				'requires'      => array( 'data-machine' ),
-				'components'    => array( array( 'slug' => 'data-machine-code' ) ),
-			),
 			'provider-openai' => array(
 				'id'               => 'provider-openai',
 				'label'            => 'OpenAI provider plugin',

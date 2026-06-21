@@ -25,7 +25,25 @@ class WP_Error {
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
-function apply_filters( $hook, $value, ...$args ) { return $value; }
+function apply_filters( $hook, $value, ...$args ) {
+	if ( 'wp_codebox_runtime_profile_registry' === $hook ) {
+		$value['content-runtime'] = array(
+			'id' => 'content-runtime',
+			'label' => 'Content runtime',
+			'capabilities' => array( 'content.runtime' ),
+			'requires' => array( 'agents-api' ),
+			'components' => array( array( 'slug' => 'content-runtime' ) ),
+		);
+		$value['workspace-runtime'] = array(
+			'id' => 'workspace-runtime',
+			'label' => 'Workspace runtime',
+			'capabilities' => array( 'workspace.runtime' ),
+			'requires' => array( 'content-runtime' ),
+			'components' => array( array( 'slug' => 'workspace-runtime' ) ),
+		);
+	}
+	return $value;
+}
 
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-profile-resolver.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-recipe-resolver.php`)};
@@ -39,7 +57,7 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 $input = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	'sandbox_session_id' => 'runtime-profile-session',
 	'runtime_profile' => array(
-		'profiles' => array( 'data-machine-code' ),
+		'profiles' => array( 'workspace-runtime' ),
 		'components' => array( 'workspace-overlay' ),
 		'capabilities' => array( 'provider.openai' ),
 		'runtime_overlays' => array( array( 'id' => 'codex-runtime-overlay' ) ),
@@ -58,8 +76,8 @@ echo json_encode( array( 'input' => $input, 'unresolved' => $unresolved ), JSON_
 
 assert.deepEqual(result.input.runtime.components.map((component) => component.slug), [
   "agents-api",
-  "data-machine",
-  "data-machine-code",
+  "content-runtime",
+  "workspace-runtime",
   "workspace-overlay",
 ])
 assert.equal(result.input.runtime_profile.schema, "wp-codebox/runtime-profile/v1")

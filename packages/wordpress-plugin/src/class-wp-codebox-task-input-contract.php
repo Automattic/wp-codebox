@@ -11,14 +11,14 @@ final class WP_Codebox_Task_Input_Contract {
 
 	public const SCHEMA  = 'wp-codebox/task-input/v1';
 	public const VERSION = 1;
-	public const ABILITY_ALIAS_FIELDS = array( 'goal', 'target', 'allowed_tools', 'tool_bridge', 'sandbox_tool_policy', 'expected_artifacts', 'structured_artifacts', 'policy', 'context' );
+	public const ABILITY_ALIAS_FIELDS = array( 'goal', 'target', 'allowed_tools', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'expected_artifacts', 'structured_artifacts', 'policy', 'context' );
 
 	/** @return array<string,mixed> */
 	public static function schema(): array {
 		return array(
 			'$id'        => self::SCHEMA,
 			'type'       => 'object',
-			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'agent_bundles', 'tool_bridge', 'sandbox_tool_policy', 'policy', 'context' ),
+			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'agent_bundles', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
 					'type'        => 'string',
@@ -108,6 +108,10 @@ final class WP_Codebox_Task_Input_Contract {
 					'type'        => 'object',
 					'description' => 'WP Codebox-owned tool bridge envelope with allowlisted tools, dispatcher metadata, authorization notes, redaction notes, and sandbox_tool_policy.',
 				),
+				'parent_tool_bridge'  => array(
+					'type'        => 'object',
+					'description' => 'WP Codebox-owned parent tool bridge envelope for host-dispatched tools, stable request/result schemas, sandbox env injection metadata, transcript artifact refs, and failure behavior.',
+				),
 				'policy'             => array(
 					'type'        => 'object',
 					'description' => 'Caller policy hints for approvals, apply-back, sandboxing, and risk controls.',
@@ -137,6 +141,7 @@ final class WP_Codebox_Task_Input_Contract {
 			'structured_artifacts' => self::structured_artifacts( $input['structured_artifacts'] ?? array() ),
 			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? array() ),
 			'tool_bridge'        => is_array( $input['tool_bridge'] ?? null ) ? $input['tool_bridge'] : array(),
+			'parent_tool_bridge' => is_array( $input['parent_tool_bridge'] ?? null ) ? $input['parent_tool_bridge'] : array(),
 			'sandbox_tool_policy' => is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array(),
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),

@@ -133,6 +133,7 @@
     "test:php-path-policy-parity": "php scripts/php-path-policy-parity-smoke.php",
     "test:production-boundary-enforcement": "tsx tests/production-boundary-enforcement.test.ts",
     "test:public-api-contract": "tsx tests/public-api-contract.test.ts",
+    "test:parent-tool-bridge-contract": "tsx tests/parent-tool-bridge-contract.test.ts",
     "test:browser-sdk-facade": "tsx tests/browser-sdk-facade.test.ts",
     "check": "npm run test:production-boundary-enforcement && npm run smoke -- --group=check"
   },

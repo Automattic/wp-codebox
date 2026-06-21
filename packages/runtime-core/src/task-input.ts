@@ -1,4 +1,5 @@
 import { isPlainObject, stringList } from "./object-utils.js"
+import type { ParentToolBridgeContract } from "./parent-tool-bridge.js"
 import type { SandboxToolPolicySnapshot, ToolBridgeContract } from "./sandbox-tool-policy.js"
 import { normalizeStructuredArtifacts, type StructuredArtifactPayload } from "./structured-artifacts.js"
 
@@ -11,6 +12,7 @@ export const TASK_INPUT_ABILITY_ALIAS_FIELDS = [
   "target",
   "allowed_tools",
   "tool_bridge",
+  "parent_tool_bridge",
   "sandbox_tool_policy",
   "expected_artifacts",
   "structured_artifacts",
@@ -60,6 +62,7 @@ export interface TaskInput {
   structured_artifacts: StructuredArtifactPayload[]
   agent_bundles: TaskInputAgentBundle[]
   tool_bridge: ToolBridgeContract | Record<string, never>
+  parent_tool_bridge: ParentToolBridgeContract | Record<string, never>
   sandbox_tool_policy: SandboxToolPolicySnapshot | Record<string, never>
   policy: TaskInputPolicy
   context: Record<string, unknown>
@@ -72,7 +75,7 @@ export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "g
 export const TASK_INPUT_JSON_SCHEMA = {
   $id: TASK_INPUT_SCHEMA,
   type: "object",
-  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "agent_bundles", "tool_bridge", "sandbox_tool_policy", "policy", "context"],
+  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "agent_bundles", "tool_bridge", "parent_tool_bridge", "sandbox_tool_policy", "policy", "context"],
   properties: {
     schema: { type: "string", const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { type: "integer", const: TASK_INPUT_VERSION, description: "Task input contract version." },
@@ -148,6 +151,10 @@ export const TASK_INPUT_JSON_SCHEMA = {
       type: "object",
       description: "WP Codebox-owned tool bridge envelope with allowlisted tools, dispatcher metadata, authorization notes, redaction notes, and sandbox_tool_policy.",
     },
+    parent_tool_bridge: {
+      type: "object",
+      description: "WP Codebox-owned parent tool bridge envelope for host-dispatched tools, stable request/result schemas, sandbox env injection metadata, transcript artifact refs, and failure behavior.",
+    },
     policy: {
       type: "object",
       description: "Caller policy hints for approvals, apply-back, sandboxing, and risk controls.",
@@ -173,6 +180,7 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     structured_artifacts: normalizeStructuredArtifacts(input.structured_artifacts, "input"),
     agent_bundles: normalizeAgentBundles(input.agent_bundles),
     tool_bridge: isPlainObject(input.tool_bridge) ? input.tool_bridge as unknown as ToolBridgeContract : {},
+    parent_tool_bridge: isPlainObject(input.parent_tool_bridge) ? input.parent_tool_bridge as unknown as ParentToolBridgeContract : {},
     sandbox_tool_policy: isPlainObject(input.sandbox_tool_policy) ? input.sandbox_tool_policy as unknown as SandboxToolPolicySnapshot : {},
     policy: isPlainObject(input.policy) ? input.policy : {},
     context: isPlainObject(input.context) ? input.context : {},

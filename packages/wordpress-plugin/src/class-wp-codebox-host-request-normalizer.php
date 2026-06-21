@@ -56,6 +56,7 @@ final class WP_Codebox_Host_Request_Normalizer {
 					'goal'                   => $goal,
 					'target'                 => is_array( $request['target'] ?? null ) ? $request['target'] : array(),
 					'allowed_tools'          => is_array( $request['allowed_tools'] ?? null ) ? $request['allowed_tools'] : array(),
+					'parent_tool_bridge'     => is_array( $request['parent_tool_bridge'] ?? null ) ? $request['parent_tool_bridge'] : array(),
 					'sandbox_tool_policy'    => is_array( $request['sandbox_tool_policy'] ?? null ) ? $request['sandbox_tool_policy'] : array(),
 					'expected_artifacts'     => is_array( $request['expected_artifacts'] ?? null ) ? $request['expected_artifacts'] : array(),
 					'policy'                 => is_array( $request['policy'] ?? null ) ? $request['policy'] : array(),
