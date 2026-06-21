@@ -456,16 +456,53 @@
       },
       {
         "success": false,
+        "status": "skipped"
+      },
+      {
+        "success": false,
         "status": "cancelled"
+      },
+      {
+        "success": false,
+        "status": "timed_out"
       }
     ],
     "counts": {
-      "total": 3,
+      "total": 5,
       "completed": 1,
       "failed": 1,
-      "cancelled": 1
+      "skipped": 1,
+      "cancelled": 1,
+      "timed_out": 1
     },
     "succeeded": false,
+    "dependencyWorkers": [
+      {
+        "id": "setup",
+        "goal": "Prepare"
+      },
+      {
+        "id": "parallel",
+        "goal": "Parallel"
+      },
+      {
+        "id": "dependent",
+        "goal": "Dependent",
+        "dependsOn": [
+          "setup",
+          "parallel"
+        ]
+      }
+    ],
+    "dependencyBatches": [
+      [
+        "setup",
+        "parallel"
+      ],
+      [
+        "dependent"
+      ]
+    ],
     "concurrency": {
       "defaulted": 3,
       "clamped": 2

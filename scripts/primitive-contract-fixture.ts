@@ -129,7 +129,15 @@ const componentManifestProviders: WorkspaceRecipeExtraPlugin[] = [
 const runPlanChildren = [
   { success: true, status: "succeeded" },
   { success: false, status: "failed" },
+  { success: false, status: "skipped" },
   { success: false, status: "cancelled" },
+  { success: false, status: "timed_out" },
+]
+
+const runPlanDependencyWorkers = [
+  { id: "setup", goal: "Prepare" },
+  { id: "parallel", goal: "Parallel" },
+  { id: "dependent", goal: "Dependent", dependsOn: ["setup", "parallel"] },
 ]
 
 export function primitiveContractsFixture(): Record<string, unknown> {
@@ -184,6 +192,8 @@ export function primitiveContractsFixture(): Record<string, unknown> {
       children: runPlanChildren,
       counts: runPlanCounts,
       succeeded: runPlanSucceeded(runPlanCounts),
+      dependencyWorkers: runPlanDependencyWorkers,
+      dependencyBatches: [["setup", "parallel"], ["dependent"]],
       concurrency: {
         defaulted: normalizeRunPlanConcurrency("", { defaultConcurrency: 3, maxConcurrency: 5 }),
         clamped: normalizeRunPlanConcurrency(99, { maxConcurrency: 2 }),

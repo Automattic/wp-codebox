@@ -7,6 +7,8 @@ export interface RunPlanWorkerContract {
   goal?: string
   artifactNamespace?: string
   artifact_namespace?: string
+  dependsOn?: string[]
+  depends_on?: string[]
   required?: boolean
   metadata?: Record<string, unknown>
   [key: string]: unknown
@@ -74,7 +76,9 @@ export interface RunPlanResultCounts {
   total: number
   completed: number
   failed: number
+  skipped: number
   cancelled: number
+  timed_out: number
 }
 
 export interface RunPlanWorkerExecution<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract> {
@@ -101,6 +105,8 @@ export interface RunPlanExecutorOptions<TWorker extends RunPlanWorkerContract = 
   onWorkerStarted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, index: number) => Promise<void> | void
   onWorkerCompleted?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   onWorkerFailed?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
+  onWorkerSkipped?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
+  createSkippedResult?: (descriptor: RunPlanWorkerDescriptor<TWorker>, dependencies: TResult[]) => TResult
 }
 
 export type RunPlanClock = () => Date | string
@@ -114,24 +120,29 @@ export interface RunPlanExecutorResult<TResult extends RunPlanWorkerResultLike =
 
 export function countRunPlanChildResults(results: RunPlanChildResult[]): RunPlanResultCounts {
   const completed = results.filter((result) => result.success === true).length
+  const skipped = results.filter((result) => result.status === "skipped").length
   const cancelled = results.filter((result) => result.status === "cancelled").length
+  const timedOut = results.filter((result) => result.status === "timed_out" || result.status === "timeout").length
 
   return {
     total: results.length,
     completed,
-    failed: results.length - completed - cancelled,
+    failed: results.length - completed - skipped - cancelled - timedOut,
+    skipped,
     cancelled,
+    timed_out: timedOut,
   }
 }
 
-export function runPlanSucceeded(counts: Pick<RunPlanResultCounts, "failed" | "cancelled">): boolean {
-  return counts.failed === 0 && counts.cancelled === 0
+export function runPlanSucceeded(counts: Pick<RunPlanResultCounts, "failed" | "skipped" | "cancelled" | "timed_out">): boolean {
+  return counts.failed === 0 && counts.skipped === 0 && counts.cancelled === 0 && counts.timed_out === 0
 }
 
 export async function executeRunPlan<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(plan: Pick<RunPlanContract, "workers" | "concurrency">, options: RunPlanExecutorOptions<TWorker, TResult>): Promise<RunPlanExecutorResult<TResult>> {
   const workers = normalizeRunPlanWorkerDescriptors(plan.workers as TWorker[], options)
+  validateRunPlanDependencies(workers)
   const concurrency = normalizeRunPlanConcurrency(plan.concurrency, options)
-  const results = await runBoundedConcurrent(workers, concurrency, async (descriptor, index) => {
+  const results = await runDependencyAwareConcurrent(workers, concurrency, async (descriptor, index) => {
     await options.onWorkerStarted?.(descriptor, index)
     const result = await options.adapter.run({ descriptor, index })
     if (result.success === true) {
@@ -139,6 +150,10 @@ export async function executeRunPlan<TWorker extends RunPlanWorkerContract, TRes
     } else {
       await options.onWorkerFailed?.(descriptor, result, index)
     }
+    return result
+  }, async (descriptor, dependencies) => {
+    const result = options.createSkippedResult?.(descriptor, dependencies) ?? defaultSkippedRunPlanResult(descriptor, dependencies) as TResult
+    await options.onWorkerSkipped?.(descriptor, result, descriptor.index)
     return result
   })
   const counts = countRunPlanChildResults(results)
@@ -189,11 +204,42 @@ export function normalizeRunPlanWorkerDescriptors<TWorker extends RunPlanWorkerC
       agent: stringValue(worker.agent) || stringValue(options.defaultAgent),
       artifactNamespace: safeRunPlanNamespace(stringValue(worker.artifactNamespace ?? worker.artifact_namespace) || id),
       required: worker.required !== false,
-      dependsOn: Array.isArray(worker.dependsOn) ? worker.dependsOn.filter((dependency): dependency is string => typeof dependency === "string") : [],
+      dependsOn: stringList(worker.dependsOn ?? worker.depends_on),
       timeoutSeconds: positiveInteger(worker.timeoutSeconds ?? worker.timeout_seconds ?? worker.task_timeout_seconds),
       cancellation: runPlanCancellationMetadata(worker),
     }
   })
+}
+
+export function validateRunPlanDependencies<TWorker extends RunPlanWorkerContract>(workers: Array<RunPlanWorkerDescriptor<TWorker>>): void {
+  const byId = new Map(workers.map((worker) => [worker.id, worker]))
+  for (const worker of workers) {
+    for (const dependency of worker.dependsOn) {
+      if (dependency === worker.id) {
+        throw new Error(`Run plan worker cannot depend on itself: ${worker.id}`)
+      }
+      if (!byId.has(dependency)) {
+        throw new Error(`Run plan worker ${worker.id} depends on unknown worker: ${dependency}`)
+      }
+    }
+  }
+
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (worker: RunPlanWorkerDescriptor<TWorker>): void => {
+    if (visited.has(worker.id)) return
+    if (visiting.has(worker.id)) {
+      throw new Error(`Run plan dependencies contain a cycle at worker: ${worker.id}`)
+    }
+    visiting.add(worker.id)
+    for (const dependency of worker.dependsOn) {
+      visit(byId.get(dependency) as RunPlanWorkerDescriptor<TWorker>)
+    }
+    visiting.delete(worker.id)
+    visited.add(worker.id)
+  }
+
+  for (const worker of workers) visit(worker)
 }
 
 export function createRunPlanEvent<TEvent>(schema: string, event: Omit<TEvent, "schema" | "time"> & { time?: string }, options: { clock?: RunPlanClock } = {}): TEvent {
@@ -217,6 +263,64 @@ export async function runBoundedConcurrent<T, R>(items: T[], concurrency: number
   })
   await Promise.all(runners)
   return results
+}
+
+export async function runDependencyAwareConcurrent<T extends { id: string; index: number; dependsOn: string[] }, R extends { success?: boolean; status?: string }>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>, skipped: (item: T, dependencies: R[]) => Promise<R> | R): Promise<R[]> {
+  const effectiveConcurrency = normalizeRunPlanConcurrency(concurrency, { maxConcurrency: items.length || 1 })
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const results = new Array<R>(items.length)
+  const completed = new Set<string>()
+  const running = new Set<string>()
+  let active = 0
+
+  return new Promise((resolve, reject) => {
+    const pump = (): void => {
+      try {
+        let progressed = false
+        for (const item of items) {
+          if (completed.has(item.id) || running.has(item.id)) continue
+          const dependencyResults = item.dependsOn.map((dependency) => results[(byId.get(dependency) as T).index])
+          if (dependencyResults.length !== item.dependsOn.length || dependencyResults.some((result) => !result)) continue
+          if (dependencyResults.some((result) => result && result.success !== true)) {
+            running.add(item.id)
+            active++
+            progressed = true
+            Promise.resolve(skipped(item, dependencyResults.filter((result): result is R => Boolean(result))))
+              .then((result) => {
+                results[item.index] = result
+                running.delete(item.id)
+                completed.add(item.id)
+                active--
+                pump()
+              })
+              .catch(reject)
+            continue
+          }
+          if (active >= effectiveConcurrency) continue
+          running.add(item.id)
+          active++
+          progressed = true
+          Promise.resolve(worker(item, item.index))
+            .then((result) => {
+              results[item.index] = result
+              running.delete(item.id)
+              completed.add(item.id)
+              active--
+              pump()
+            })
+            .catch(reject)
+        }
+        if (completed.size === items.length && active === 0) {
+          resolve(results)
+        } else if (!progressed && active === 0) {
+          reject(new Error("Run plan dependencies could not be scheduled."))
+        }
+      } catch (error) {
+        reject(error)
+      }
+    }
+    pump()
+  })
 }
 
 export function runPlanCancellationMetadata(source: Record<string, unknown>): RunPlanCancellationMetadata {
@@ -248,6 +352,20 @@ export function safeRunPlanNamespace(value: unknown): string {
 function positiveInteger(value: unknown): number | undefined {
   const number = Math.floor(Number(value) || 0)
   return number > 0 ? number : undefined
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => stringValue(item)).filter(Boolean) : []
+}
+
+function defaultSkippedRunPlanResult<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(descriptor: RunPlanWorkerDescriptor<TWorker>, dependencies: TResult[]): TResult {
+  return {
+    workerId: descriptor.id,
+    success: false,
+    status: "skipped",
+    error: { code: "dependency-skipped", message: `Run plan worker ${descriptor.id} skipped because a dependency did not complete successfully.` },
+    dependencies: dependencies.map((dependency) => ({ workerId: dependency.workerId, status: dependency.status, success: dependency.success })),
+  } as unknown as TResult
 }
 
 function stringValue(value: unknown): string {

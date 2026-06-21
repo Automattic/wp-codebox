@@ -29,7 +29,7 @@ export interface AgentFanoutExecutionResult {
   artifacts: Record<string, unknown>
   workers: AgentFanoutWorkerResult[]
   aggregate: FanoutAggregationOutput
-  counts: { total: number; completed: number; failed: number; cancelled: number }
+  counts: { total: number; completed: number; failed: number; skipped: number; cancelled: number; timed_out: number }
   events_path: string
   result_path: string
   diagnostics?: Record<string, unknown>
@@ -84,6 +84,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
       agent: descriptor.agent,
       goal: descriptor.goal,
       artifact_namespace: descriptor.artifactNamespace,
+      depends_on: descriptor.dependsOn,
     })),
   }
   await writeJson(planPath, plan)
@@ -97,10 +98,15 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", worker_id: worker.id }, clock),
     onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", worker_id: worker.id, status: result.status }, clock),
     onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", worker_id: worker.id, status: result.status }, clock),
+    onWorkerSkipped: async (worker, result) => {
+      await writeJson(join(workersRoot, worker.id, "result.json"), result)
+      await emitEvent(eventsPath, { event: "worker.skipped", worker_id: worker.id, status: result.status }, clock)
+    },
+    createSkippedResult: (worker, dependencies) => agentTaskSkippedFanoutWorkerResult(worker, sessionId, dependencies),
   })
   const workerResults: AgentFanoutWorkerResult[] = execution.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
 
-  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status)).length }, clock)
+  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResults.filter((worker) => worker.status === "skipped").length }, clock)
   const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
     plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
     policy: stringValue(request.aggregation?.policy) || "fail",
@@ -166,7 +172,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
     },
   }
   await writeJson(resultPath, result)
-  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", total: counts.total, completed: counts.completed, failed: counts.failed, cancelled: counts.cancelled }, clock)
+  await emitEvent(eventsPath, { event: success ? "fanout.completed" : "fanout.failed", total: counts.total, completed: counts.completed, failed: counts.failed, skipped: counts.skipped, cancelled: counts.cancelled, timed_out: counts.timed_out }, clock)
   return result
 }
 
@@ -232,6 +238,27 @@ function agentTaskFanoutWorkerAdapter(request: FanoutRequestContract, options: A
         await writeJson(join(options.workersRoot, descriptor.id, "result.json"), workerResult)
         return workerResult
       }
+    },
+  }
+}
+
+function agentTaskSkippedFanoutWorkerResult(descriptor: AgentFanoutWorkerDescriptor, sessionId: string, dependencies: AgentFanoutWorkerExecutionResult[]): AgentFanoutWorkerExecutionResult {
+  const childSessionId = `${sessionId}:${descriptor.id}`
+  return {
+    workerId: descriptor.id,
+    success: false,
+    worker_id: descriptor.id,
+    status: "skipped",
+    required: descriptor.required,
+    session_id: childSessionId,
+    result_ref: `fanout/workers/${descriptor.id}/result.json`,
+    artifact_refs: [],
+    error: {
+      code: "dependency-skipped",
+      message: `Fanout worker ${descriptor.id} skipped because a dependency did not complete successfully.`,
+    },
+    output: {
+      dependencies: dependencies.map((dependency) => ({ worker_id: dependency.worker_id, status: dependency.status, success: dependency.success })),
     },
   }
 }

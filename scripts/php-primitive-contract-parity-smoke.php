@@ -133,6 +133,12 @@ assert_same_contract(
 $run_plan = new WP_Codebox_Run_Plan();
 assert_same_contract( $fixture['runPlan']['counts'], $run_plan->result_counts( $fixture['runPlan']['children'] ), 'run-plan result counts' );
 assert_same_contract( $fixture['runPlan']['succeeded'], $run_plan->succeeded( $fixture['runPlan']['counts'] ), 'run-plan succeeded contract' );
+$dependency_descriptors = $run_plan->normalize_worker_descriptors( $fixture['runPlan']['dependencyWorkers'] );
+if ( is_wp_error( $dependency_descriptors ) ) {
+    fwrite( STDERR, 'run-plan dependency descriptor normalization failed: ' . $dependency_descriptors->get_error_message() . "\n" );
+    exit( 1 );
+}
+assert_same_contract( $fixture['runPlan']['dependencyBatches'], $run_plan->dependency_batches( $dependency_descriptors ), 'run-plan dependency batches' );
 assert_same_contract( $fixture['runPlan']['concurrency']['defaulted'], $run_plan->normalize_concurrency( '', array( 'default_concurrency' => 3, 'max_concurrency' => 5 ) ), 'run-plan default concurrency' );
 assert_same_contract( $fixture['runPlan']['concurrency']['clamped'], $run_plan->normalize_concurrency( 99, array( 'max_concurrency' => 2 ) ), 'run-plan clamped concurrency' );
 

@@ -71,8 +71,8 @@ assert_same_contract( array( 'cancel_requested' => false, 'timeout_seconds' => 3
 assert_same_contract( 'copy/final', $descriptors[1]['artifact_namespace'], 'artifact namespace' );
 assert_same_contract( false, $descriptors[1]['required'], 'required flag' );
 assert_same_contract( array( 'cancel_requested' => true, 'reason' => 'caller stopped' ), $descriptors[1]['cancellation'], 'cancel requested metadata' );
-assert_same_contract( array( 'total' => 3, 'completed' => 1, 'failed' => 1, 'cancelled' => 1 ), $run_plan->result_counts( array( array( 'success' => true, 'status' => 'completed' ), array( 'success' => false, 'status' => 'failed' ), array( 'success' => false, 'status' => 'cancelled' ) ) ), 'result counts' );
-assert_same_contract( false, $run_plan->succeeded( array( 'failed' => 1, 'cancelled' => 0 ) ), 'run-plan success' );
+assert_same_contract( array( 'total' => 5, 'completed' => 1, 'failed' => 1, 'skipped' => 1, 'cancelled' => 1, 'timed_out' => 1 ), $run_plan->result_counts( array( array( 'success' => true, 'status' => 'completed' ), array( 'success' => false, 'status' => 'failed' ), array( 'success' => false, 'status' => 'skipped' ), array( 'success' => false, 'status' => 'cancelled' ), array( 'success' => false, 'status' => 'timed_out' ) ) ), 'result counts' );
+assert_same_contract( false, $run_plan->succeeded( array( 'failed' => 1, 'skipped' => 0, 'cancelled' => 0, 'timed_out' => 0 ) ), 'run-plan success' );
 
 $event = $run_plan->event( 'wp-codebox/agent-fanout-event/v1', array( 'event' => 'worker.completed', 'worker_id' => 'design', 'status' => 'completed' ) );
 unset( $event['time'] );

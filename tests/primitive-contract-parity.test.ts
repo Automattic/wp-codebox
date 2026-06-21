@@ -8,6 +8,7 @@ import {
   normalizeCommandEnvelopeStatus,
   normalizePhaseRecipeStatus,
   normalizeRunPlanConcurrency,
+  normalizeRunPlanWorkerDescriptors,
   normalizeRuntimeMountTarget,
   redactJsonValue,
   resolveEffectiveRuntimeToolPolicy,
@@ -79,6 +80,10 @@ assert.deepEqual(
 
 assert.deepEqual(countRunPlanChildResults(fixture.runPlan.children), fixture.runPlan.counts)
 assert.equal(runPlanSucceeded(fixture.runPlan.counts), fixture.runPlan.succeeded)
+assert.deepEqual(
+  runPlanDependencyBatches(normalizeRunPlanWorkerDescriptors(fixture.runPlan.dependencyWorkers)),
+  fixture.runPlan.dependencyBatches,
+)
 assert.equal(normalizeRunPlanConcurrency("", { defaultConcurrency: 3, maxConcurrency: 5 }), fixture.runPlan.concurrency.defaulted)
 assert.equal(normalizeRunPlanConcurrency(99, { maxConcurrency: 2 }), fixture.runPlan.concurrency.clamped)
 assert.deepEqual(fixture.runPlan.schemas, {
@@ -88,3 +93,15 @@ assert.deepEqual(fixture.runPlan.schemas, {
 })
 
 console.log("primitive contract parity passed")
+
+function runPlanDependencyBatches(workers: ReturnType<typeof normalizeRunPlanWorkerDescriptors>): string[][] {
+  const remaining = new Set(workers.map((worker) => worker.id))
+  const batches: string[][] = []
+  while (remaining.size > 0) {
+    const batch = workers.filter((worker) => remaining.has(worker.id) && worker.dependsOn.every((dependency) => !remaining.has(dependency))).map((worker) => worker.id)
+    if (batch.length === 0) throw new Error("Run plan dependencies could not be scheduled.")
+    batch.forEach((worker) => remaining.delete(worker))
+    batches.push(batch)
+  }
+  return batches
+}

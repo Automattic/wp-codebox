@@ -129,6 +129,48 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 		);
 	}
 
+	/** @param array<string,mixed> $worker Worker metadata. @param array<int,array<string,mixed>> $dependencies Dependency results. @return array<string,mixed> */
+	public function fanout_worker_skipped_result( array $worker, array $dependencies ): array {
+		$prepared  = is_array( $worker['prepared'] ?? null ) ? $worker['prepared'] : array();
+		$input     = is_array( $prepared['input'] ?? null ) ? $prepared['input'] : array();
+		$artifacts = (string) ( $prepared['artifacts'] ?? ( (string) $worker['path'] . DIRECTORY_SEPARATOR . 'artifacts' ) );
+
+		return array(
+			'worker_id' => (string) $worker['id'],
+			'index'     => (int) $worker['index'],
+			'success'   => false,
+			'status'    => 'skipped',
+			'agent'     => (string) ( $input['agent'] ?? '' ),
+			'session'   => array_filter(
+				array(
+					'schema' => self::SESSION_SCHEMA,
+					'id'     => (string) ( $prepared['session_id'] ?? '' ),
+					'status' => 'skipped',
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'artifacts' => array(
+				'path'      => $artifacts,
+				'namespace' => (string) $worker['id'],
+				'result'    => 'result.json',
+			),
+			'error'     => array(
+				'code'    => 'dependency-skipped',
+				'message' => 'Fanout worker ' . (string) $worker['id'] . ' skipped because a dependency did not complete successfully.',
+			),
+			'output'    => array(
+				'dependencies' => array_map(
+					static fn( array $dependency ): array => array(
+						'worker_id' => (string) ( $dependency['worker_id'] ?? '' ),
+						'status'    => (string) ( $dependency['status'] ?? '' ),
+						'success'   => true === ( $dependency['success'] ?? false ),
+					),
+					$dependencies
+				),
+			),
+		);
+	}
+
 	/** @param array<string,mixed> $input Ability input. @param array<string,string> $paths Run-plan artifact paths. @param array<int,array<string,mixed>> $runs Child runs. @return array<string,mixed> */
 	public function fanout_parent_session( string $session_id, string $status, array $input, array $paths, array $runs ): array {
 		$children = array_map(
@@ -161,7 +203,7 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 		return $session;
 	}
 
-	/** @param array<string,mixed> $input Ability input. @param array<string,string> $paths Run-plan artifact paths. @param array{total:int,completed:int,failed:int,cancelled:int} $counts Counts. @param array<string,mixed> $plan Plan. @param array<int,array<string,mixed>> $runs Child run results. @return array<string,mixed> */
+	/** @param array<string,mixed> $input Ability input. @param array<string,string> $paths Run-plan artifact paths. @param array{total:int,completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} $counts Counts. @param array<string,mixed> $plan Plan. @param array<int,array<string,mixed>> $runs Child run results. @return array<string,mixed> */
 	public function fanout_result( string $schema, string $artifact_schema, string $execution, string $session_id, string $status, array $input, array $paths, array $counts, float $started_at, float $ended_at, array $plan, array $runs ): array {
 		$success = $this->run_plan->succeeded( $counts );
 
@@ -174,7 +216,9 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 			'total'        => $counts['total'],
 			'completed'    => $counts['completed'],
 			'failed'       => $counts['failed'],
+			'skipped'      => $counts['skipped'],
 			'cancelled'    => $counts['cancelled'],
+			'timed_out'    => $counts['timed_out'],
 			'timings'      => $this->timings( $started_at, $ended_at ),
 			'artifacts'    => $this->run_plan->artifacts( $artifact_schema, $paths ),
 			'orchestrator' => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
@@ -183,7 +227,7 @@ final class WP_Codebox_Agent_Run_Result_Builder {
 		);
 	}
 
-	/** @return array{total:int,completed:int,failed:int,cancelled:int} */
+	/** @return array{total:int,completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} */
 	public function status_counts( array $runs ): array {
 		return $this->run_plan->result_counts( $runs );
 	}

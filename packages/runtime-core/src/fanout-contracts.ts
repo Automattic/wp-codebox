@@ -12,6 +12,7 @@ export const FANOUT_EVENT_TYPES = [
   "worker.started",
   "worker.completed",
   "worker.failed",
+  "worker.skipped",
   "aggregation.started",
   "aggregation.completed",
   "fanout.completed",
@@ -63,6 +64,7 @@ export interface FanoutPlanContract {
     agent: string
     goal: string
     artifact_namespace: string
+    depends_on?: string[]
   }>
 }
 
@@ -76,7 +78,9 @@ export interface FanoutLifecycleEvent {
   total?: number
   completed?: number
   failed?: number
+  skipped?: number
   cancelled?: number
+  timed_out?: number
 }
 
 export interface HostDelegationRequestContract {
