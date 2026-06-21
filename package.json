@@ -72,6 +72,7 @@
     "smoke": "tsx scripts/run-smoke.ts",
     "test:redaction": "tsx tests/redaction.test.ts",
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts",
+    "test:agent-runtime-workload-normalizers": "tsx tests/agent-runtime-workload-normalizers.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
