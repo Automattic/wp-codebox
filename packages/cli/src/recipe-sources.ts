@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
@@ -13,6 +13,8 @@ import { prepareZipSource } from "./zip-source.js"
 export { ALLOW_NETWORK_DOWNLOADS_ENV, ALLOWED_DOWNLOAD_HOSTS_ENV, allowedDownloadHosts, isSha256, maxDownloadBytes, maxExtractedBytes, maxExtractedFiles, MAX_DOWNLOAD_BYTES_ENV, MAX_EXTRACTED_BYTES_ENV, MAX_EXTRACTED_FILES_ENV, REQUIRE_SOURCE_SHA256_ENV, sourceSha256Required } from "./source-policy.js"
 
 const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
+const PHP_SCOPER_DOWNLOAD_ATTEMPTS = 3
+const PHP_SCOPER_DOWNLOAD_TIMEOUT_MS = 120_000
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -692,15 +694,60 @@ async function scopePhpAiClientSource(source: string, stagingRoot: string): Prom
   return scopedRoot
 }
 
-async function resolvePhpScoper(stagingRoot: string): Promise<string> {
+export async function resolvePhpScoper(stagingRoot: string): Promise<string> {
   const configured = process.env.WP_CODEBOX_PHP_SCOPER_PHAR
   if (configured) {
     return configured
   }
 
-  const scoperPath = join(stagingRoot, "php-scoper.phar")
-  await executeManagedHostCommand({ command: "curl", args: ["-fsSL", PHP_SCOPER_URL, "-o", scoperPath], cwd: stagingRoot, allowedCwdRoots: [stagingRoot], maxOutputBytes: 1024 * 1024, label: "download php-scoper" })
-  return scoperPath
+  const cachedPath = phpScoperCachePath()
+  if (await pathIsFile(cachedPath)) {
+    return cachedPath
+  }
+
+  await mkdir(dirname(cachedPath), { recursive: true })
+  let lastError: unknown
+  for (let attempt = 1; attempt <= PHP_SCOPER_DOWNLOAD_ATTEMPTS; attempt++) {
+    if (await pathIsFile(cachedPath)) {
+      return cachedPath
+    }
+
+    const downloadPath = join(dirname(cachedPath), `php-scoper-${process.pid}-${Date.now()}-${attempt}.phar.tmp`)
+    try {
+      await executeManagedHostCommand({
+        command: "curl",
+        args: ["-fsSL", "--retry", "2", "--retry-delay", "2", "--retry-connrefused", "--connect-timeout", "20", PHP_SCOPER_URL, "-o", downloadPath],
+        cwd: stagingRoot,
+        allowedCwdRoots: [stagingRoot],
+        timeoutMs: PHP_SCOPER_DOWNLOAD_TIMEOUT_MS,
+        maxOutputBytes: 1024 * 1024,
+        label: `download php-scoper (attempt ${attempt}/${PHP_SCOPER_DOWNLOAD_ATTEMPTS})`,
+      })
+      await rename(downloadPath, cachedPath)
+      return cachedPath
+    } catch (error) {
+      lastError = error
+      await unlink(downloadPath).catch(() => undefined)
+    }
+  }
+
+  const stagedFallbackPath = join(stagingRoot, "php-scoper.phar")
+  if (await pathIsFile(stagedFallbackPath)) {
+    await copyFile(stagedFallbackPath, cachedPath).catch(() => undefined)
+    return stagedFallbackPath
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+}
+
+function phpScoperCachePath(): string {
+  const cacheRoot = process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR
+    ?? process.env.WP_CODEBOX_CACHE_DIR
+    ?? (process.env.XDG_CACHE_HOME ? join(process.env.XDG_CACHE_HOME, "wp-codebox") : undefined)
+    ?? (process.env.HOME ? join(process.env.HOME, ".cache", "wp-codebox") : undefined)
+    ?? join(tmpdir(), "wp-codebox-cache")
+
+  return join(cacheRoot, "php-scoper", PHP_SCOPER_VERSION, "php-scoper.phar")
 }
 
 function phpAiClientScoperConfig(): string {

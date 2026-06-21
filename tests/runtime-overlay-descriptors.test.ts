@@ -3,13 +3,40 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { parseWorkspaceRecipeJson, validateWorkspaceRecipeShape } from "../packages/cli/src/recipe-validation.js"
-import { prepareRecipeRuntimeOverlays } from "../packages/cli/src/recipe-sources.js"
+import { prepareRecipeRuntimeOverlays, resolvePhpScoper } from "../packages/cli/src/recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor } from "../packages/cli/src/runtime-overlay-registry.js"
 import { discoverRuntimeOverlayDescriptorManifests, runtimeOverlayDescriptorManifest } from "../packages/runtime-core/src/index.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
 const builtIn = runtimeOverlayDescriptor({ kind: "bundled-library", library: "php-ai-client", strategy: "wordpress-scoped-bundle" })
 assert.equal(builtIn?.defaultTarget, "/wordpress/wp-includes/php-ai-client")
+
+await withTempDir("wp-codebox-php-scoper-cache-", async (root) => {
+  const previousConfigured = process.env.WP_CODEBOX_PHP_SCOPER_PHAR
+  const previousCacheDir = process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR
+  try {
+    process.env.WP_CODEBOX_PHP_SCOPER_PHAR = join(root, "configured-scoper.phar")
+    assert.equal(await resolvePhpScoper(root), process.env.WP_CODEBOX_PHP_SCOPER_PHAR)
+
+    delete process.env.WP_CODEBOX_PHP_SCOPER_PHAR
+    process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR = join(root, "cache")
+    const cachedScoper = join(process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR, "php-scoper", "0.18.17", "php-scoper.phar")
+    await mkdir(join(process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR, "php-scoper", "0.18.17"), { recursive: true })
+    await writeFile(cachedScoper, "cached scoper")
+    assert.equal(await resolvePhpScoper(root), cachedScoper)
+  } finally {
+    if (previousConfigured === undefined) {
+      delete process.env.WP_CODEBOX_PHP_SCOPER_PHAR
+    } else {
+      process.env.WP_CODEBOX_PHP_SCOPER_PHAR = previousConfigured
+    }
+    if (previousCacheDir === undefined) {
+      delete process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR
+    } else {
+      process.env.WP_CODEBOX_PHP_SCOPER_CACHE_DIR = previousCacheDir
+    }
+  }
+})
 
 await withTempDir("wp-codebox-runtime-overlay-descriptors-", async (root) => {
   const descriptorDirectory = join(root, "descriptors")
