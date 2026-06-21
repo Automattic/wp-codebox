@@ -25,11 +25,23 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		foreach ( array( 'id', 'profile', 'profiles', 'components', 'capabilities' ) as $selector_field ) {
 			unset( $profile[ $selector_field ] );
 		}
-		$profile = self::merge_profile( $resolved['profile'], $profile );
+		$materialization_profile = self::merge_profile( $resolved['profile'], $profile );
+		$profile                 = self::merge_profile( self::public_profile( $resolved ), $profile );
 		$profile['resolved_profile'] = $resolved['contract'];
 
 		$input['runtime_profile'] = $profile;
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
+		$runtime['plugins'] = self::merge_lists(
+			is_array( $materialization_profile['plugins'] ?? null ) ? $materialization_profile['plugins'] : array(),
+			is_array( $materialization_profile['provider_plugins'] ?? null ) ? $materialization_profile['provider_plugins'] : array(),
+			is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array()
+		);
+		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
+			$items = is_array( $materialization_profile[ $field ] ?? null ) ? $materialization_profile[ $field ] : array();
+			if ( ! empty( $items ) ) {
+				$runtime[ $field ] = self::merge_lists( $items, is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array() );
+			}
+		}
 		$runtime['resolved_profile'] = $resolved['contract'];
 		$input['runtime'] = $runtime;
 
@@ -143,6 +155,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'id'                     => 'wordpress-playground',
 				'label'                  => 'WordPress Playground sandbox',
 				'capabilities'           => array( 'wordpress.playground', 'browser.preview' ),
+				'public_capabilities'    => array( 'wordpress.sandbox', 'browser.preview' ),
 				'placement_capabilities' => array( 'wordpress.playground', 'browser.preview' ),
 			),
 			'agents-api' => array(
@@ -150,6 +163,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'label'                  => 'Agents API runtime',
 				'aliases'                => array( 'agent-runtime', 'wordpress-agent-runtime' ),
 				'capabilities'           => array( 'agents-api', 'agents.runtime' ),
+				'public_capabilities'    => array( 'codebox.agent-runtime' ),
 				'requires'                => array( 'wordpress-playground' ),
 				'components'              => array( array( 'slug' => 'agents-api' ) ),
 				'placement_capabilities' => array( 'agents.runtime' ),
@@ -282,12 +296,53 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 		return self::merge_string_lists( $profile['provides'] ?? array(), $profile['capabilities'] ?? array() );
 	}
 
+	/** @param array<string,mixed> $profile Profile descriptor. @return string[] */
+	private static function profile_public_capabilities( array $profile ): array {
+		$public = self::merge_string_lists( $profile['public_capabilities'] ?? array(), $profile['public_provides'] ?? array() );
+		return ! empty( $public ) ? $public : self::profile_capabilities( $profile );
+	}
+
+	/** @param array<string,mixed> $resolved Resolution payload. @return array<string,mixed> */
+	private static function public_profile( array $resolved ): array {
+		$components = array();
+		foreach ( is_array( $resolved['unresolved_components'] ?? null ) ? $resolved['unresolved_components'] : array() as $component ) {
+			if ( is_array( $component ) ) {
+				$components[] = $component;
+			}
+		}
+
+		return array_filter(
+			array(
+				'schema'       => 'wp-codebox/runtime-profile/v1',
+				'id'           => (string) ( $resolved['profile']['id'] ?? '' ),
+				'capabilities' => self::public_capabilities( $resolved ),
+				'components'   => $components,
+				'readiness'    => is_array( $resolved['profile']['readiness'] ?? null ) ? $resolved['profile']['readiness'] : array(),
+				'diagnostics'  => is_array( $resolved['profile']['diagnostics'] ?? null ) ? $resolved['profile']['diagnostics'] : array(),
+				'provenance'   => is_array( $resolved['profile']['provenance'] ?? null ) ? $resolved['profile']['provenance'] : array(),
+			),
+			static fn( mixed $value ): bool => array() !== $value && '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $resolved Resolution payload. @return string[] */
+	private static function public_capabilities( array $resolved ): array {
+		$capabilities = array();
+		foreach ( is_array( $resolved['profiles'] ?? null ) ? $resolved['profiles'] : array() as $profile ) {
+			if ( is_array( $profile ) ) {
+				$capabilities = self::merge_string_lists( $capabilities, $profile['public_provides'] ?? array(), $profile['provides'] ?? array() );
+			}
+		}
+
+		return $capabilities;
+	}
+
 	/** @param array<string,mixed> $request Runtime profile request. @param array<string,array<string,mixed>> $registry Profile registry. @return array<int,array<string,string>> */
 	private static function unresolved_component_entries( array $request, array $registry ): array {
 		$entries = array();
 		foreach ( self::merge_string_lists( $request['components'] ?? array() ) as $component ) {
 			if ( ! isset( $registry[ $component ] ) ) {
-				$entries[] = array( 'slug' => $component );
+				$entries[] = array( 'kind' => 'component', 'slug' => $component );
 			}
 		}
 
@@ -381,7 +436,13 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'id'         => (string) ( $profile['id'] ?? '' ),
 				'label'      => (string) ( $profile['label'] ?? '' ),
 				'aliases'    => self::merge_string_lists( $profile['aliases'] ?? array() ),
-				'provides'   => self::profile_capabilities( $profile ),
+				'provides'   => self::profile_public_capabilities( $profile ),
+				'internal'   => array_filter(
+					array(
+						'provides' => self::profile_capabilities( $profile ),
+					),
+					static fn( mixed $value ): bool => array() !== $value && '' !== $value
+				),
 				'requires'   => self::merge_string_lists( $profile['requires'] ?? array() ),
 				'provenance' => is_array( $profile['provenance'] ?? null ) ? $profile['provenance'] : array(),
 			),

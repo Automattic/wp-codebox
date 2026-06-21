@@ -4,13 +4,14 @@
 contract for callers that need an agent-capable WordPress sandbox without binding
 to backend plugin names, overlay paths, activation order, or readiness probes.
 
-Callers request profiles by generic capabilities or component selectors. WP
-Codebox resolves those selectors into backend details internally, then returns a
-portable profile envelope with:
+Callers request profiles by generic Codebox capabilities or component selectors.
+WP Codebox resolves those selectors into backend details internally, then returns
+a portable profile envelope with:
 
 - `schema`: `wp-codebox/runtime-profile/v1`.
 - `capabilities`: normalized capability strings provided by the resolved profile.
-- `components`: runtime components selected for the sandbox.
+- `components`: caller-declared portable runtime components that remain part of
+  the public profile.
 - `plugins`, `mu_plugins`, `themes`, `overlays`: optional dependency descriptors
   for backend materialization.
 - `runtime_overlays`, `runtime_state_mounts`, `runtime_config_mounts`: optional
@@ -20,17 +21,19 @@ portable profile envelope with:
 - `diagnostics`: structured, non-secret resolver evidence for operators and UI.
 - `provenance`: Codebox ownership and resolver metadata.
 
-The profile contract is the public lane. Consumers should not depend on provider
-plugin paths, overlay file paths, activation order, or backend readiness
-internals. Those may appear in backend execution plans or diagnostics, but the
-caller-facing request/result remains the generic Codebox profile.
+The profile contract is the public lane. Consumers should not depend on Agents
+API, Data Machine, Data Machine Code, WordPress Playground, provider plugin
+paths, overlay file paths, activation order, or backend readiness internals.
+Those may appear in backend execution plans or `runtime.resolved_profile`
+diagnostics, but the caller-facing request/result remains the generic Codebox
+profile.
 
 Example request fragment:
 
 ```json
 {
   "runtime_profile": {
-    "capabilities": ["agents.runtime", "provider.openai"],
+    "capabilities": ["codebox.agent-runtime", "provider.openai"],
     "components": ["workspace-overlay"]
   }
 }
@@ -41,7 +44,7 @@ Example resolved profile fragment:
 ```json
 {
   "schema": "wp-codebox/runtime-profile/v1",
-  "capabilities": ["wordpress.playground", "browser.preview", "agents.runtime", "provider.openai"],
+  "capabilities": ["wordpress.sandbox", "browser.preview", "codebox.agent-runtime", "provider.openai"],
   "components": [{ "kind": "component", "slug": "workspace-overlay" }],
   "readiness": {
     "status": "ready",

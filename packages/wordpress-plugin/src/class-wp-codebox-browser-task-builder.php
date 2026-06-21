@@ -398,15 +398,14 @@ final class WP_Codebox_Browser_Task_Builder {
 		}
 
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
-		$runtime['plugins'] = array_merge(
-			self::object_list( $profile['plugins'] ?? array() ),
-			self::object_list( $profile['provider_plugins'] ?? array() ),
-			is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array()
-		);
+		$profile_plugins = self::merge_lists( self::object_list( $profile['plugins'] ?? array() ), self::object_list( $profile['provider_plugins'] ?? array() ) );
+		$runtime_plugins = is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array();
+		$runtime['plugins'] = empty( $runtime['resolved_profile'] ) ? self::merge_lists( $profile_plugins, $runtime_plugins ) : self::merge_lists( $runtime_plugins, $profile_plugins );
 		foreach ( array( 'components', 'mu_plugins', 'themes', 'bootstrap', 'runtime_overlays', 'runtime_state_mounts', 'runtime_config_mounts' ) as $field ) {
 			$profile_items = self::object_list( $profile[ $field ] ?? array() );
 			if ( ! empty( $profile_items ) ) {
-				$runtime[ $field ] = array_merge( $profile_items, is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array() );
+				$runtime_items = is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array();
+				$runtime[ $field ] = empty( $runtime['resolved_profile'] ) ? self::merge_lists( $profile_items, $runtime_items ) : self::merge_lists( $runtime_items, $profile_items );
 			}
 		}
 
@@ -820,6 +819,24 @@ final class WP_Codebox_Browser_Task_Builder {
 		}
 
 		return $list;
+	}
+
+	/** @return array<int,mixed> */
+	private static function merge_lists( mixed ...$lists ): array {
+		$merged = array();
+		$seen   = array();
+		foreach ( $lists as $list ) {
+			foreach ( is_array( $list ) ? $list : array() as $item ) {
+				$key = is_array( $item ) ? md5( wp_json_encode( $item ) ?: serialize( $item ) ) : 'scalar:' . (string) $item;
+				if ( isset( $seen[ $key ] ) ) {
+					continue;
+				}
+				$seen[ $key ] = true;
+				$merged[]     = $item;
+			}
+		}
+
+		return $merged;
 	}
 
 	/** @param mixed $value Provider plugin specs. @return string[] */
