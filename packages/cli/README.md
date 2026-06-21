@@ -86,9 +86,9 @@ These are the supported recipe-builder entrypoints. Callers should not resolve
 - `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
 - `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.
 
-Recipes may declare `inputs.siteSeeds` for explicit content/site seed planning. This first slice is dry-run-only: WP Codebox validates bounded fixture or parent-site seed declarations and reports them under `plan.siteSeeds`, but it does not export data from a parent WordPress site and does not import seed records into Playground during normal `recipe-run` execution.
+Recipes may declare `inputs.siteSeeds` for explicit content/site seed setup. Local `fixture` seeds are executable during normal `recipe-run`: WP Codebox validates the declaration, imports bounded JSON records into the Playground sandbox before workflow steps run, and reports structured results under `output.siteSeeds` with seed name, source, type, action, counts, provenance, deterministic-ID diagnostics, and privacy flags. `parent_site` declarations remain non-executable planning metadata until explicit parent export support lands.
 
-Parent-site-derived declarations must stay minimized: each scope needs explicit selectors or `maxRecords`, option scopes must name exact option keys, user scopes must stay anonymized, and parent-site media file copying is rejected. Dry-run output reports only names, selectors, bounds, fixture paths, and privacy flags; it does not include record bodies, option values, user emails, secrets, uploads, or database rows.
+Parent-site-derived declarations must stay minimized: each scope needs explicit selectors or `maxRecords`, option scopes must name exact option keys, user scopes must stay anonymized, and parent-site media file copying is rejected. Dry-run output reports only names, selectors, bounds, fixture paths, and privacy flags; run output reports import counts and diagnostics. Neither output includes record bodies, option values, user emails, secrets, uploads, or database rows.
 
 ## Interactive Boot
 
