@@ -11,6 +11,9 @@ export interface AgentFanoutExecutionOptions {
   recipeDirectory: string
   previewHoldSeconds?: string
   previewPublicUrl?: string
+  previewPort?: string
+  previewBind?: string
+  previewHoldBlocking?: boolean
   sessionId?: string
   clock?: RunPlanClock
   runWorker?: (input: AgentTaskRunInput, options: AgentTaskRunOptions) => Promise<AgentFanoutWorkerOutput>
@@ -178,6 +181,9 @@ function agentTaskFanoutWorkerAdapter(request: FanoutRequestContract, options: A
           json: true,
           previewHoldSeconds: options.previewHoldSeconds ?? "",
           previewPublicUrl: options.previewPublicUrl ?? "",
+          previewPort: options.previewPort ?? "",
+          previewBind: options.previewBind ?? "",
+          previewHoldBlocking: options.previewHoldBlocking ?? false,
         })
         const status = normalizeAgentTaskStatus({ status: output.status, success: output.success })
         const success = agentTaskStatusSucceeded(status)

@@ -134,6 +134,9 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
         recipeDirectory,
         previewHoldSeconds: options?.previewHoldSeconds === undefined ? "" : String(options.previewHoldSeconds),
         previewPublicUrl: options?.previewPublicUrl,
+        previewPort: options?.previewPort === undefined ? "" : String(options.previewPort),
+        previewBind: options?.previewBind,
+        previewHoldBlocking: options?.previewHoldBlocking,
       })
       const finishedAt = new Date().toISOString()
       return {

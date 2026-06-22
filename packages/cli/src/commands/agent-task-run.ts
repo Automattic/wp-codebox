@@ -10,8 +10,11 @@ export type { AgentTaskRunInput } from "@automattic/wp-codebox-core"
 export interface AgentTaskRunOptions {
   inputPath: string
   json: boolean
-  previewHoldSeconds: string
-  previewPublicUrl: string
+  previewHoldSeconds?: string
+  previewPublicUrl?: string
+  previewPort?: string
+  previewBind?: string
+  previewHoldBlocking?: boolean
 }
 
 interface AgentTaskRunOutput {
@@ -106,6 +109,15 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const recipeRunArgs = ["--recipe", recipePath, "--artifacts", artifacts, "--json"]
     if (options.previewHoldSeconds) {
       recipeRunArgs.push("--preview-hold-seconds", options.previewHoldSeconds)
+    }
+    if (options.previewPort) {
+      recipeRunArgs.push("--preview-port", options.previewPort)
+    }
+    if (options.previewBind) {
+      recipeRunArgs.push("--preview-bind", options.previewBind)
+    }
+    if (options.previewHoldBlocking) {
+      recipeRunArgs.push("--preview-hold-blocking")
     }
     if (options.previewPublicUrl) {
       recipeRunArgs.push("--preview-public-url", options.previewPublicUrl)
@@ -331,12 +343,12 @@ export async function buildAgentRuntimeDiagnostics(run: Record<string, unknown>,
 }
 
 function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
-  const { options, positionals } = parseCommandOptions(args, new Set(["--json"]))
+  const { options, positionals } = parseCommandOptions(args, new Set(["--json", "--preview-hold-blocking"]))
   if (positionals.length > 0) {
     throw new Error(`Unknown agent-task-run option: ${positionals[0]}`)
   }
   for (const name of options.keys()) {
-    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url"].includes(name)) {
+    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url", "--preview-port", "--preview-bind", "--preview-hold-blocking"].includes(name)) {
       throw new Error(`Unknown agent-task-run option: ${name}`)
     }
   }
@@ -349,6 +361,9 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
     json: options.get("--json") === true || stringOption(options, "--format") === "json",
     previewHoldSeconds: stringOption(options, "--preview-hold-seconds"),
     previewPublicUrl: stringOption(options, "--preview-public-url"),
+    previewPort: stringOption(options, "--preview-port"),
+    previewBind: stringOption(options, "--preview-bind"),
+    previewHoldBlocking: options.get("--preview-hold-blocking") === true,
   }
 }
 

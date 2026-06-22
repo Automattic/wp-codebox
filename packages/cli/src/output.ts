@@ -315,8 +315,8 @@ export function printHelp(): void {
   wp-codebox preview-lease status (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox preview-lease release (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
-  wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
-  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
+  wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>]
+  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
   wp-codebox recipe-run --recipe <path> [options]
@@ -330,6 +330,12 @@ Options:
   --input-file <path> Agent task input JSON for run-agent-task/agent-task-run.
   --preview-hold-seconds <n>
                     Keep preview runtimes alive after run-agent-task/agent-task-run/recipe-run.
+  --preview-hold-blocking
+                    Block before releasing held previews after run-agent-task/agent-task-run/recipe-run.
+  --preview-port <port>
+                    Fixed local preview proxy port for run-agent-task/agent-task-run/recipe-run.
+  --preview-bind <host>
+                    Bind host or IP for a fixed preview proxy port. Requires --preview-port.
   --preview-public-url <url>
                     Public preview URL passed through to run-agent-task/agent-task-run/recipe-run.
   --bundle <dir>      Artifact bundle directory for artifact verification/probe commands.

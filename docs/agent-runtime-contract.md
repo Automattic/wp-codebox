@@ -7,7 +7,12 @@ WP Codebox exposes a stable, product-neutral sandbox runtime boundary. External 
 The stable orchestrator-facing CLI entry point is:
 
 ```bash
-wp-codebox agent-task-run --input-file=/path/to/request.json --json
+wp-codebox agent-task-run --input-file=/path/to/request.json --json \
+  --preview-hold-seconds 300 \
+  --preview-hold-blocking \
+  --preview-port 4173 \
+  --preview-bind 127.0.0.1 \
+  --preview-public-url https://preview.example.test
 ```
 
 The command reads one JSON request from `--input-file`, writes a single JSON envelope to stdout, and exits non-zero when the normalized result is not successful. Orchestrators should treat stdout JSON as the contract and stderr as diagnostic text only.
