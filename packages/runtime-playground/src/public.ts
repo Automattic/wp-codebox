@@ -43,9 +43,6 @@ export {
   setupWordPressPlugin,
   setupWordPressTheme,
   visitWordPressPage,
-}
-export {
-  collectWordPressArtifacts,
   type RuntimeActionObservation,
   type WordPressAdminPageOptions,
   type WordPressBrowserActionOptions,

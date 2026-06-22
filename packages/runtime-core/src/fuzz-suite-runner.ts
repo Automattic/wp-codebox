@@ -105,9 +105,9 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       continue
     }
 
-    const runtimeAction = target.kind === "runtime-action" && executeRuntimeAction ? fuzzSuiteRuntimeActionInput(fuzzCase.input) : undefined
+    const runtimeAction = target?.kind === "runtime-action" && executeRuntimeAction ? fuzzSuiteRuntimeActionInput(fuzzCase.input) : undefined
     if (runtimeAction?.status === "invalid") {
-      const diagnostic = unsupportedInputAdapterResolution(fuzzCase, target, runtimeAction.message, { adapterKind: "runtime-action" }).diagnostics?.[0]
+      const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, runtimeAction.message, { adapterKind: "runtime-action" }).diagnostics?.[0] : undefined
       if (diagnostic) {
         diagnostics.push(diagnostic)
         cases.push({
@@ -123,7 +123,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       }
     }
 
-    if (runtimeAction?.status === "valid" && executeRuntimeAction) {
+    if (runtimeAction?.status === "valid" && executeRuntimeAction && target) {
       try {
         const observation = await executeRuntimeAction({ suite, case: fuzzCase, caseIndex: index, target, action: runtimeAction.action })
         cases.push({
