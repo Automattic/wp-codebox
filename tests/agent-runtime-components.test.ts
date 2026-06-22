@@ -8,10 +8,14 @@ import { agentRuntimeMounts, parseAgentRuntimeProbeOptions, type AgentRuntimeMou
 const root = mkdtempSync(join(tmpdir(), "wp-codebox-agent-runtime-components-"))
 const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
+const originalDataMachinePath = process.env.WP_CODEBOX_DATA_MACHINE_PATH
+const originalDataMachineCodePath = process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
 try {
+  chdir(root)
+
   const runtimeHost = join(root, "runtime-host")
   const agentsApi = join(runtimeHost, "vendor", "wordpress", "agents-api")
   mkdirSync(agentsApi, { recursive: true })
@@ -24,25 +28,28 @@ try {
 
   assert.equal(agentsApiMount, undefined)
 
-  const defaultAgentsApi = join(root, "agents-api")
-  mkdirSync(defaultAgentsApi, { recursive: true })
-  writeFileSync(join(defaultAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
-  const runtimeEngine = join(root, "runtime-engine")
-  const runtimeTools = join(root, "runtime-tools")
-  mkdirSync(runtimeEngine, { recursive: true })
-  mkdirSync(runtimeTools, { recursive: true })
-  writeFileSync(join(runtimeEngine, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
-  writeFileSync(join(runtimeTools, "runtime-tools.php"), "<?php\n/* Plugin Name: Runtime Tools */\n")
-  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = `${runtimeEngine},${runtimeTools}`
+  const dataMachine = join(root, "data-machine")
+  const bundledAgentsApi = join(dataMachine, "vendor", "wordpress", "agents-api")
+  const dataMachineCode = join(root, "data-machine-code")
+  mkdirSync(bundledAgentsApi, { recursive: true })
+  mkdirSync(dataMachineCode, { recursive: true })
+  writeFileSync(join(dataMachine, "data-machine.php"), "<?php\n/* Plugin Name: Data Machine */\n")
+  writeFileSync(join(bundledAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
+  writeFileSync(join(dataMachineCode, "data-machine-code.php"), "<?php\n/* Plugin Name: Data Machine Code */\n")
   const workspace = join(root, "workspace")
   mkdirSync(workspace, { recursive: true })
   chdir(workspace)
   const defaultMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
-  const defaultMount = defaultMounts
-    .find((mount) => mount.metadata?.slug === "agents-api")
-  assert.equal(defaultMount, undefined)
-  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-engine")?.source, runtimeEngine)
-  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-tools")?.source, runtimeTools)
+  assert.equal(defaultMounts.find((mount) => mount.metadata?.slug === "agents-api"), undefined)
+  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine")?.source, dataMachine)
+  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine-code")?.source, dataMachineCode)
+
+  rmSync(dataMachine, { recursive: true, force: true })
+  const defaultAgentsApi = join(root, "agents-api")
+  mkdirSync(defaultAgentsApi, { recursive: true })
+  writeFileSync(join(defaultAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
+  const fallbackMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
+  assertSamePath(fallbackMounts.find((mount) => mount.metadata?.slug === "agents-api")?.source, defaultAgentsApi)
 
   const explicitAgentsApi = join(root, "explicit-agents-api")
   mkdirSync(explicitAgentsApi, { recursive: true })
@@ -57,6 +64,16 @@ try {
     delete process.env.WP_CODEBOX_AGENTS_API_PATH
   } else {
     process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
+  }
+  if (originalDataMachinePath === undefined) {
+    delete process.env.WP_CODEBOX_DATA_MACHINE_PATH
+  } else {
+    process.env.WP_CODEBOX_DATA_MACHINE_PATH = originalDataMachinePath
+  }
+  if (originalDataMachineCodePath === undefined) {
+    delete process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
+  } else {
+    process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH = originalDataMachineCodePath
   }
   if (originalRuntimeComponentPaths === undefined) {
     delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
