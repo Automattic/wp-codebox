@@ -18,6 +18,7 @@ final class WP_Codebox_API {
 		'wp-codebox/run-agent-task-batch'                   => 'run_agent_task_batch',
 		'wp-codebox/run-agent-task-fanout'                  => 'run_agent_task_fanout',
 		'wp-codebox/run-runtime-task'                       => 'run_runtime_task',
+		'wp-codebox/run-wordpress-workload'                 => 'run_wordpress_workload',
 		'wp-codebox/run-runtime-package'                    => 'run_runtime_package',
 		'wp-codebox/create-browser-playground-session'      => 'create_browser_session',
 		'wp-codebox/create-sandbox-session'                 => 'create_browser_session',
@@ -83,6 +84,11 @@ final class WP_Codebox_API {
 	/** @param array<string,mixed> $input Runtime task input. @return array<string,mixed>|WP_Error */
 	public static function run_runtime_task( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::run_runtime_task( $input );
+	}
+
+	/** @param array<string,mixed> $input WordPress workload input. @return array<string,mixed>|WP_Error */
+	public static function run_wordpress_workload( array $input ): array|WP_Error {
+		return WP_Codebox_Abilities::run_wordpress_workload( $input );
 	}
 
 	/** @param array<string,mixed> $input Runtime package input. @return array<string,mixed>|WP_Error */

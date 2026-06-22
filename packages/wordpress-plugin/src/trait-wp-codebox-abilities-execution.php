@@ -40,19 +40,7 @@ public static function run_wordpress_workload( array $input ): array|WP_Error {
 		return new WP_Error( 'wp_codebox_wordpress_workload_unsafe_input', 'wp-codebox/run-wordpress-workload does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
 	}
 
-	return self::unsupported_public_runtime_envelope(
-		'wp-codebox/wordpress-workload-run-result/v1',
-		'unsupported',
-		'wp_codebox_wordpress_workload_runner_unavailable',
-		'The WordPress workload ability contract is registered, but no safe workload runner is available in the WordPress plugin yet.',
-		array(
-			'request'   => array(
-				'schema' => (string) ( $input['schema'] ?? 'wp-codebox/wordpress-workload-run/v1' ),
-			),
-			'artifacts' => array(),
-			'metadata'  => array( 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
-		)
-	);
+	return ( new WP_Codebox_WordPress_Workload_Runner() )->run( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
