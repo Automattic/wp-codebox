@@ -39,6 +39,26 @@ const canonicalExecutionFailure = agentSandboxRuntimeFailure({
 })
 assert.equal(canonicalExecutionFailure, undefined, "canonical terminal_result overrides legacy pending-tool fields")
 
+const replyExecutionFailure = agentSandboxRuntimeFailure({
+  executionIndex: 0,
+  command: "wordpress.run-php",
+  exitCode: 0,
+  recipeCommand: "wp-codebox.agent-sandbox-run",
+  stdout: "",
+  stderr: "",
+  parsed: {
+    agent_runtime: {
+      success: true,
+      result: {
+        reply: "Concept packet produced.",
+        current_turn: 20,
+        max_turns: 20,
+      },
+    },
+  },
+})
+assert.equal(replyExecutionFailure, undefined, "reply is a terminal answer for max-turn compatibility checks")
+
 const legacy = normalizeAgentTerminalResult({
   status: "processing",
   completed: false,

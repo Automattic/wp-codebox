@@ -1055,7 +1055,7 @@ function reachedMaxTurnsWithoutAnswer(payload: Record<string, unknown>): boolean
 }
 
 function hasTerminalAnswer(payload: Record<string, unknown>): boolean {
-  return ["answer", "final_answer", "finalAnswer", "message", "content"].some((key) => {
+  return ["answer", "final_answer", "finalAnswer", "reply", "message", "content"].some((key) => {
     const value = payload[key]
     return typeof value === "string" && value.trim().length > 0
   })
