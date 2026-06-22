@@ -1,11 +1,16 @@
 import assert from "node:assert/strict"
 import {
+  WORDPRESS_DB_OPERATION_SCHEMA,
+  WORDPRESS_DB_RESULT_SCHEMA,
   WORDPRESS_CRUD_OPERATION_SCHEMA,
   WORDPRESS_CRUD_RESULT_SCHEMA,
+  createUnsupportedWordPressDbResult,
   createUnsupportedWordPressCrudResult,
+  normalizeWordPressDbOperation,
   normalizeWordPressCrudOperation,
 } from "../packages/runtime-core/src/index.js"
 import { getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
+import { wordpressCrudOperationPhpCode, wordpressDbOperationPhpCode } from "../packages/runtime-playground/src/wordpress-crud-command-handlers.js"
 
 const operation = normalizeWordPressCrudOperation({
   schema: WORDPRESS_CRUD_OPERATION_SCHEMA,
@@ -48,8 +53,61 @@ assert.deepEqual(createUnsupportedWordPressCrudResult(operation), {
 const definition = getCommandDefinition("wordpress.crud-operation")
 assert.equal(definition?.outputSchema?.id, WORDPRESS_CRUD_RESULT_SCHEMA)
 assert.equal(definition?.handler.kind, "playground")
+assert.equal(definition?.handler.kind === "playground" ? definition.handler.method : undefined, "runCrudOperation")
+
+const guardedCreate = normalizeWordPressCrudOperation({
+  operation: "create",
+  resource: { kind: "post", type: "post" },
+  data: { post_title: "Guarded" },
+})
+const crudPhp = wordpressCrudOperationPhpCode(guardedCreate)
+assert.match(crudPhp, /wp_insert_post/)
+assert.match(crudPhp, /wp_insert_term/)
+assert.match(crudPhp, /wp_insert_user/)
+assert.match(crudPhp, /add_option/)
+assert.match(crudPhp, /add_metadata/)
+assert.match(crudPhp, /options\.allowWrites=true/)
+assert.match(crudPhp, /options\.dryRun=true/)
 
 assert.throws(() => normalizeWordPressCrudOperation({ operation: "publish", resource: { kind: "post" } }), /operation must be create, read, update, delete, or list/)
 assert.throws(() => normalizeWordPressCrudOperation({ operation: "read", resource: { kind: "post", identifiers: { nested: {} } } }), /identifiers\.nested must be a scalar value/)
+
+const dbOperation = normalizeWordPressDbOperation({
+  schema: WORDPRESS_DB_OPERATION_SCHEMA,
+  operation: "read",
+  resource: { table: "posts", identifiers: { source: "contract" } },
+  query: { columns: ["ID", "post_title"], where: { post_type: "page" }, limit: 5 },
+})
+
+assert.deepEqual(dbOperation, {
+  schema: WORDPRESS_DB_OPERATION_SCHEMA,
+  operation: "read",
+  resource: { table: "posts", identifiers: { source: "contract" } },
+  query: { columns: ["ID", "post_title"], where: { post_type: "page" }, limit: 5 },
+})
+
+assert.deepEqual(createUnsupportedWordPressDbResult(dbOperation), {
+  schema: WORDPRESS_DB_RESULT_SCHEMA,
+  command: "wordpress.db-operation",
+  status: "unsupported",
+  operation: dbOperation,
+  diagnostics: [{ code: "db-operation-unsupported", message: "wordpress.db-operation is not implemented by this runtime backend.", severity: "warning" }],
+  artifactRefs: [],
+})
+
+const dbDefinition = getCommandDefinition("wordpress.db-operation")
+assert.equal(dbDefinition?.outputSchema?.id, WORDPRESS_DB_RESULT_SCHEMA)
+assert.equal(dbDefinition?.handler.kind === "playground" ? dbDefinition.handler.method : undefined, "runDbOperation")
+assert.match(dbDefinition?.policyRequirement ?? "", /generic writes are rejected/i)
+
+const dbPhp = wordpressDbOperationPhpCode(dbOperation)
+assert.match(dbPhp, /SHOW TABLES LIKE/)
+assert.match(dbPhp, /DESCRIBE/)
+assert.match(dbPhp, /SELECT/)
+assert.match(dbPhp, /db-write-unsupported/)
+assert.match(dbPhp, /posts.*postmeta.*options.*terms.*termmeta.*users.*usermeta/s)
+
+assert.throws(() => normalizeWordPressDbOperation({ operation: "drop" }), /operation must be schema, read, query-summary, or write/)
+assert.throws(() => normalizeWordPressDbOperation({ operation: "read", resource: { identifiers: { nested: {} } } }), /identifiers\.nested must be a scalar value/)
 
 console.log("wordpress CRUD contract normalization passed")

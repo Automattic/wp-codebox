@@ -1,4 +1,5 @@
 import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
@@ -423,18 +424,33 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.crud-operation",
-    description: "Execute or normalize a product-neutral WordPress CRUD operation envelope for fuzz orchestration. The public contract is generic and backend implementations must keep product-specific logic out of this command.",
+    description: "Execute a product-neutral WordPress CRUD operation envelope for fuzz orchestration using bounded WordPress core APIs. The public contract is generic and backend implementations must keep product-specific logic out of this command.",
     acceptedArgs: [
       { name: "operation-json", description: "Inline wp-codebox/wordpress-crud-operation/v1 operation envelope. The runtime normalizes schema, operation, resource, data, query, options, and metadata fields before execution.", required: true, format: "JSON object" },
     ],
-    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Unsupported backends return status=unsupported without applying effects.",
+    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Writes require options.allowWrites=true or return status=error without applying effects; dry runs return planned effects only.",
     outputSchema: {
       id: WORDPRESS_CRUD_RESULT_SCHEMA,
       jsonSchema: WORDPRESS_CRUD_RESULT_JSON_SCHEMA,
     },
-    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed with status=unsupported when generic CRUD execution is unavailable.",
+    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed for writes unless options.allowWrites=true or options.dryRun=true.",
     recipe: true,
     handler: { kind: "playground", method: "runCrudOperation" },
+  },
+  {
+    id: "wordpress.db-operation",
+    description: "Execute a bounded generic WordPress database operation envelope for schema inspection, safe reads, and query summaries. Generic writes are explicitly rejected by the foundational contract.",
+    acceptedArgs: [
+      { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, query-summary, and guarded write operations.", required: true, format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Generic DB writes return status=error with db-write-unsupported.",
+    outputSchema: {
+      id: WORDPRESS_DB_RESULT_SCHEMA,
+      jsonSchema: WORDPRESS_DB_RESULT_JSON_SCHEMA,
+    },
+    policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to known WordPress tables and capped row counts; generic writes are rejected.",
+    recipe: true,
+    handler: { kind: "playground", method: "runDbOperation" },
   },
   {
     id: "wordpress.bench",
