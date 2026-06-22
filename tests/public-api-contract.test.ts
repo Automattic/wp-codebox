@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import * as contractsApi from "../packages/runtime-core/src/contracts.js"
 import {
   artifactBundleFileManifest,
   artifactResultEnvelope,
@@ -13,9 +14,6 @@ import {
   normalizeBrowserRunResult,
   parentToolBridgeContract,
   performanceObservation,
-  runWordPressWpCli,
-  runWordPressPhp,
-  requestWordPressRest,
   runtimePackageExecutionInput,
   runtimeProfile,
   persistedBrowserArtifactRefs,
@@ -29,6 +27,7 @@ import {
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
+import * as publicApi from "../packages/runtime-core/src/public.js"
 
 const root = new URL("..", import.meta.url)
 
@@ -80,6 +79,7 @@ assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
 const docs = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
 const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts", root), "utf8")
+const contractsBarrel = await readFile(new URL("packages/runtime-core/src/contracts.ts", root), "utf8")
 const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", root), "utf8")
 
 for (const publicEntry of [
@@ -128,8 +128,6 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
-  "./wordpress-runtime-actions.js",
-  "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
@@ -137,11 +135,39 @@ for (const publicModule of [
 for (const internalModule of [
   "./benchmark-substrate.js",
   "./fanout-aggregation.js",
+  "./generic-ability-runtime-run.js",
   "./object-utils.js",
   "./prepared-source-staging.js",
+  "./provider-runtime-contracts.js",
   "./runtime-action-adapter.js",
+  "./wordpress-runtime-actions.js",
+  "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
+  assert.ok(!contractsBarrel.includes(`export * from "${internalModule}"`), `contracts barrel must not export ${internalModule}`)
+}
+
+assert.ok(!contractsBarrel.includes(`export * from "./index.js"`), "contracts barrel must not re-export the root package barrel")
+
+for (const internalExport of [
+  "GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA",
+  "buildGenericAbilityRuntimeRunRecipe",
+  "PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA",
+  "providerRuntimeInvocationContract",
+  "PROVIDER_RUNTIME_TASK_NAMES",
+  "requestWordPressRest",
+  "runWordPressPhp",
+  "runWordPressWpCli",
+  "WORDPRESS_RUNTIME_ACTION_SCHEMA",
+  "WORDPRESS_WORKLOAD_RUN_SCHEMA",
+  "wordpressAbilityStep",
+  "wordpressWorkloadRunRecipe",
+  "buildWordPressWorkloadRunRecipe",
+  "PLAYGROUND_PREVIEW_URL_SCHEMA",
+  "playgroundPreviewUrl",
+]) {
+  assert.equal(internalExport in publicApi, false, `public facade must not expose internal export ${internalExport}`)
+  assert.equal(internalExport in contractsApi, false, `contracts facade must not expose internal export ${internalExport}`)
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
@@ -168,9 +194,6 @@ assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
-assert.equal(typeof runWordPressWpCli, "function")
-assert.equal(typeof runWordPressPhp, "function")
-assert.equal(typeof requestWordPressRest, "function")
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)

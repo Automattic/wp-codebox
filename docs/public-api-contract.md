@@ -9,12 +9,11 @@ Codebox APIs to assemble and run sandboxes.
 
 Use these package entrypoints from external integrations:
 
-- `@automattic/wp-codebox-core`: runtime, task/package, runner workspace, tool
-  bridge, parent tool bridge, browser task/contained-site, artifact metadata,
-  recipe, policy, and provider contract types and helpers.
+- `@automattic/wp-codebox-core`: broad compatibility barrel for existing
+  consumers. New integrations should use a focused entrypoint below.
 - `@automattic/wp-codebox-core/public`: curated public facade for runtime,
   task/package, runner workspace, tool bridge, parent tool bridge, browser,
-  artifact, recipe, policy, and provider contract types and helpers. New external TypeScript consumers should prefer
+  artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
   this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
   contract metadata used by CLI and orchestrator consumers.
@@ -58,9 +57,8 @@ The workspace package mirrors the core entrypoints as `./core`,
 The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
-  recipe source package, runtime workload, WordPress workload primitives,
-  runtime package execution, runtime policy, provider runtime, and command result
-  contracts. Playground-backed WordPress consumers can use
+  recipe source package, runtime workload, runtime package execution, runtime
+  policy, and command result contracts. Playground-backed WordPress consumers can use
   `createWordPressRuntime()`, `createWordPressEpisode()`, and
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
   instead of composing core runtime internals directly.
@@ -162,6 +160,13 @@ are generated and executed. Product adapters may translate Woo, Gutenberg,
 Jetpack, Core, or other domain-specific probes into these generic case records at
 their own boundary; those product semantics are not part of the Codebox fuzz
 suite contract.
+
+Agent task callers use the `wp-codebox/run-agent-task` ability or
+`wp-codebox agent-task-run --json`. Caller-facing results normalize to
+`wp-codebox/agent-task-run-result/v1` through `normalizeAgentTaskRunResult()`.
+Artifact handoff, import, and materialization results normalize to
+`wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
+`normalizeArtifactResultEnvelope()`.
 
 Runner workspace backends are installed by integration code and discovered via
 the `wp_codebox_runner_workspace_backend` filter. The stable backend config is

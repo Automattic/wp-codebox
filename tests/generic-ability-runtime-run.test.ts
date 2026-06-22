@@ -4,7 +4,6 @@ import { join } from "node:path"
 
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.js"
 import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, runtimePresetRegistryManifest } from "../packages/runtime-core/src/index.js"
-import { buildGenericAbilityRuntimeRunRecipe as buildGenericAbilityRuntimeRunRecipeFromStableSubpath } from "../packages/runtime-core/src/recipe-builders.js"
 import { abilityResponseToCommandEnvelope, expectedAbilityResultSchemaFromArgs } from "../packages/runtime-playground/src/commands.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
@@ -80,9 +79,6 @@ await withTempDir("wp-codebox-generic-ability-runtime-run-", async (root) => {
   assert.ok(cliRecipe.workflow.steps[0].args.includes("name=example/runtime-run"))
   assert.equal(cliRecipe.inputs.extra_plugins.length, 2)
   assert.equal(cliRecipe.runtime.overlays[0].library, "example-runtime")
-
-  const stableSubpathRecipe = buildGenericAbilityRuntimeRunRecipeFromStableSubpath({ abilityId: "example/runtime-run" })
-  assert.equal(stableSubpathRecipe.workflow.steps[0].command, "wordpress.ability")
 
   const allowedToolsRecipe = buildGenericAbilityRuntimeRunRecipe({ abilityId: "example/runtime-run", allowedTools: ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"] })
   const allowedToolsInputArg = allowedToolsRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("input="))
