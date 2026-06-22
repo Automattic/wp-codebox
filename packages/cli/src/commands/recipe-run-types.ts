@@ -224,7 +224,7 @@ export interface RecipeDiagnosticArtifactRef {
   sha256?: string
 }
 
-export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
+export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "apply_distribution" | "import_fixture_databases" | "run_distribution_setup_artifacts" | "run_distribution_startup_probes" | "run_workloads" | "run_probes" | "collect_artifacts"
 
 export interface RecipePhaseEvidence {
   schema: "wp-codebox/recipe-phase-evidence/v1"

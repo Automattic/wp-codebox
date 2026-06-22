@@ -74,6 +74,34 @@ try {
   assert.match(await readFile(join(sharedMount as string, "auto_prepend_file.php"), "utf8"), /<\?php/)
   assert.equal((await stat(join(sharedMount as string, "mu-plugins"))).isDirectory(), true)
   assert.equal((await stat(join(sharedMount as string, "preload"))).isDirectory(), true)
+
+  calls.length = 0
+  const distributionOnlySpec: RuntimeCreateSpec = {
+    ...spec,
+    metadata: {
+      recipe: {
+        distribution: {
+          name: "branch-preview",
+          wordpress: { root: "/wordpress" },
+          env: { WPCOM_BRANCH: "feature/example", FEATURE_ENABLED: true, EMPTY_VALUE: null },
+          constants: { WPCOM_IS_BRANCH_PREVIEW: true, WPCOM_BRANCH_ID: 123 },
+        },
+      },
+    },
+  }
+
+  const distributionOnlyServer = await startPlaygroundCliServer(distributionOnlySpec, [], { cliModule })
+  await distributionOnlyServer[Symbol.asyncDispose]()
+
+  assert.equal(calls.length, 1)
+  const distributionSharedMount = calls[0]["mount-before-install"]?.[0]?.hostPath
+  assert.equal(typeof distributionSharedMount, "string")
+  const distributionAutoPrepend = await readFile(join(distributionSharedMount as string, "auto_prepend_file.php"), "utf8")
+  assert.match(distributionAutoPrepend, /putenv\("WPCOM_BRANCH=feature\/example"\);/)
+  assert.match(distributionAutoPrepend, /putenv\("FEATURE_ENABLED=true"\);/)
+  assert.match(distributionAutoPrepend, /putenv\("EMPTY_VALUE="\);/)
+  assert.match(distributionAutoPrepend, /define\("WPCOM_IS_BRANCH_PREVIEW", true\)/)
+  assert.match(distributionAutoPrepend, /define\("WPCOM_BRANCH_ID", 123\)/)
 } finally {
   await rm(wordpressDirectory, { recursive: true, force: true })
   await rm(artifactsDirectory, { recursive: true, force: true })

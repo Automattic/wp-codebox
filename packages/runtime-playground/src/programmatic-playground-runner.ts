@@ -58,7 +58,7 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
     phpIniEntries,
     createFiles: {
       "/internal/shared/php.ini": options.sharedPhpIniContent,
-      "/internal/shared/auto_prepend_file.php": "<?php\n",
+      "/internal/shared/auto_prepend_file.php": autoPrependPhp(spec),
       "/internal/shared/mu-plugins/.keep": "",
       "/internal/shared/preload/.keep": "",
     },
@@ -99,6 +99,48 @@ export async function startProgrammaticPlaygroundServer(spec: RuntimeCreateSpec,
       await requestHandler[Symbol.asyncDispose]()
     },
   }
+}
+
+function autoPrependPhp(spec: RuntimeCreateSpec): string {
+  const recipe = spec.metadata?.recipe
+  if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)) {
+    return "<?php\n"
+  }
+
+  const distribution = (recipe as { distribution?: unknown }).distribution
+  if (!distribution || typeof distribution !== "object" || Array.isArray(distribution)) {
+    return "<?php\n"
+  }
+
+  const env = (distribution as { env?: unknown }).env
+  const constants = (distribution as { constants?: unknown }).constants
+  const lines: string[] = []
+  if (env && typeof env === "object" && !Array.isArray(env)) {
+    for (const [name, value] of Object.entries(env)) {
+      if (/^[A-Z_][A-Z0-9_]*$/.test(name) && (value === null || ["string", "number", "boolean"].includes(typeof value))) {
+        lines.push(`putenv(${JSON.stringify(`${name}=${value === null ? "" : String(value)}`)});`)
+      }
+    }
+  }
+  if (constants && typeof constants === "object" && !Array.isArray(constants)) {
+    for (const [name, value] of Object.entries(constants)) {
+      if (/^[A-Z_][A-Z0-9_]*$/i.test(name) && (value === null || ["string", "number", "boolean"].includes(typeof value))) {
+        lines.push(`if (!defined(${JSON.stringify(name)})) { define(${JSON.stringify(name)}, ${phpLiteral(value)}); }`)
+      }
+    }
+  }
+
+  return `<?php\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`
+}
+
+function phpLiteral(value: string | number | boolean | null): string {
+  if (typeof value === "string") {
+    return JSON.stringify(value)
+  }
+  if (value === null) {
+    return "null"
+  }
+  return String(value)
 }
 
 async function mountHostDirectory(php: ProgrammaticPHP, vfsPath: string, hostPath: string): Promise<void> {

@@ -103,7 +103,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
   const plan = await planWorkspaceRecipe(recipe, recipeDirectory, { recipePath, artifactsDirectory: configuredArtifactsDirectory }, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec })
   const { valid: _policyValid, issues: _policyIssues, ...policy } = plan.policy
-  const runtimeEnv = normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {})
+  const runtimeEnv = {
+    ...distributionRuntimeEnv(recipe),
+    ...normalizeRuntimeEnv(recipe.inputs?.runtimeEnv ?? {}),
+  }
   const secretEnvResolution = resolveRecipeSecretEnv(recipe.inputs?.secretEnv ?? [], { field: "--secret-env name" })
   const secretEnv = secretEnvResolution.values
   const effectivePolicy = Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" as const } : policy
@@ -580,6 +583,17 @@ async function validateRecipe(options: RecipeValidateOptions): Promise<RecipeVal
 
 function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, string> {
   return normalizeRuntimeEnvRecord(values, { field: "inputs.runtimeEnv", invalid: "omit" })
+}
+
+function distributionRuntimeEnv(recipe: WorkspaceRecipe): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const [name, value] of Object.entries(recipe.distribution?.env ?? {})) {
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+      values[name] = value === null ? "" : String(value)
+    }
+  }
+
+  return normalizeRuntimeEnvRecord(values, { field: "distribution.env", invalid: "omit" })
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
