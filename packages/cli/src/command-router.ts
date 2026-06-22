@@ -17,6 +17,10 @@ const cliCommandRoutes = {
   "workspace-policy": {
     check: "workspacePolicyCheck",
   },
+  "preview-lease": {
+    status: "previewLeaseStatus",
+    release: "previewLeaseRelease",
+  },
   artifacts: {
     verify: "artifactsVerify",
     "apply-preflight": "artifactsApplyPreflight",
