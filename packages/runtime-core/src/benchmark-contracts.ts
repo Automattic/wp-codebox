@@ -105,7 +105,7 @@ export interface BenchResults {
 }
 
 export interface BenchmarkDefinitionWorkloadStep {
-  type: "php" | "wp-cli" | "rest-request" | "ability" | (string & {})
+  type: "php" | "wp-cli" | "rest-request" | "rest-db-query-profiler" | "db-inventory" | "external-http-guardrail" | "ability" | (string & {})
   action?: "install" | "collect" | "reset" | (string & {})
   code?: string
   file?: string

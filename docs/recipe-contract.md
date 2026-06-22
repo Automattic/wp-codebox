@@ -304,6 +304,11 @@ Recipes can pass REST profiling workloads to `wordpress.bench` with
 REST requests; the runtime expands each route into the existing `rest-request`
 step and returns normal benchmark scenarios/artifacts.
 
+Workloads may also use a configured `rest-db-query-profiler` step to run one or
+more `rest_request_cases`, bracket each REST request with `$wpdb->queries`, and
+return bounded, redacted query-profile metrics plus the typed
+`rest-db-query-profile` benchmark artifact.
+
 ## Command Diagnostics
 
 Recipe steps may opt into bounded per-command diagnostics with a `diagnostics`
@@ -335,7 +340,7 @@ runtime callers. Limits are capped at 500 records and 524288 serialized bytes.
     "plugin-slug=woocommerce",
     "iterations=3",
     "warmup-iterations=1",
-    "workloads-json=[{\"id\":\"rest-catalog\",\"source\":\"config\",\"route_matrix\":[{\"id\":\"products-list\",\"method\":\"GET\",\"path\":\"/wc/v3/products\",\"params\":{\"per_page\":10}}],\"artifacts\":{\"route-summary\":{\"path\":\"bench/rest-route-summary.json\",\"kind\":\"json\",\"source\":\"scenario-artifact\"}}}]"
+    "workloads-json=[{\"id\":\"rest-catalog\",\"source\":\"config\",\"route_matrix\":[{\"id\":\"products-list\",\"method\":\"GET\",\"path\":\"/wc/v3/products\",\"params\":{\"per_page\":10}}],\"run\":[{\"type\":\"rest-db-query-profiler\",\"rest_request_cases\":[{\"id\":\"products-list\",\"method\":\"GET\",\"path\":\"/wc/v3/products\",\"params\":{\"per_page\":10}}]}],\"artifacts\":{\"route-summary\":{\"path\":\"bench/rest-route-summary.json\",\"kind\":\"json\",\"source\":\"scenario-artifact\"}}}]"
   ]
 }
 ```
