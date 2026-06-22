@@ -126,6 +126,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./fixture-import-primitives.js",
   "./fuzz-suite-contracts.js",
   "./fuzz-suite-runner.js",
+  "./rest-matrix-contracts.js",
   "./host-command-executor.js",
   "./host-tool-registry.js",
   "./managed-host-command.js",
@@ -161,7 +162,9 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-policy.js",
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
+  "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
+  "./wordpress-runtime-actions.js",
 ])
 
 assert.deepEqual(barrelExportModules(contractsBarrel), [
@@ -229,7 +232,6 @@ for (const internalModule of [
   "./prepared-source-staging.js",
   "./provider-runtime-contracts.js",
   "./runtime-action-adapter.js",
-  "./wordpress-runtime-actions.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
@@ -244,10 +246,6 @@ for (const internalExport of [
   "PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA",
   "providerRuntimeInvocationContract",
   "PROVIDER_RUNTIME_TASK_NAMES",
-  "requestWordPressRest",
-  "runWordPressPhp",
-  "runWordPressWpCli",
-  "WORDPRESS_RUNTIME_ACTION_SCHEMA",
   "WORDPRESS_WORKLOAD_RUN_SCHEMA",
   "wordpressAbilityStep",
   "wordpressWorkloadRunRecipe",

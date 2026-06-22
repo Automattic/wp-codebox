@@ -343,13 +343,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-fuzz-suite',
 				array(
 					'label'               => 'Run Fuzz Suite',
-					'description'         => 'Expose the public wp-codebox/fuzz-suite/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'description'         => 'Run safe WordPress fuzz-suite cases against this disposable runtime and return structured case results plus artifact references.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::fuzz_suite_request_schema(),
 					'output_schema'       => self::fuzz_suite_result_schema(),
 					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'safe_stub' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite' ),
 				)
 			);
 
