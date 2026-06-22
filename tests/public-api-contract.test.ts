@@ -17,6 +17,7 @@ import {
   runtimePackageExecutionInput,
   runtimeContractManifest,
   runtimeProfile,
+  wordpressRestMatrixContract,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
@@ -25,11 +26,13 @@ import {
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
+  WORDPRESS_REST_MATRIX_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
+import * as playgroundPublicApi from "../packages/runtime-playground/src/public.js"
 
 const root = new URL("..", import.meta.url)
 
@@ -45,6 +48,10 @@ function exportKeys(packageJson: Record<string, unknown>): string[] {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function barrelExportModules(source: string): string[] {
+  return Array.from(source.matchAll(/^export \* from "(.+)"$/gm), (match) => match[1])
 }
 
 const rootPackage = await readJson("package.json")
@@ -86,6 +93,88 @@ const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts
 const contractsBarrel = await readFile(new URL("packages/runtime-core/src/contracts.ts", root), "utf8")
 const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", root), "utf8")
 
+assert.deepEqual(barrelExportModules(publicBarrel), [
+  "./agent-runtime-workload.js",
+  "./agent-workload.js",
+  "./agent-task-recipe.js",
+  "./agent-task-run-result.js",
+  "./agent-terminal-result.js",
+  "./artifact-capture-policy.js",
+  "./artifact-diagnostics.js",
+  "./artifact-export-links.js",
+  "./artifact-layout.js",
+  "./artifact-manifest.js",
+  "./artifact-paths.js",
+  "./artifact-references.js",
+  "./artifact-result-envelope.js",
+  "./artifact-review.js",
+  "./artifact-storage.js",
+  "./artifact-test-results.js",
+  "./browser-artifact-lifecycle.js",
+  "./browser-callback-contracts.js",
+  "./browser-interaction.js",
+  "./browser-probe-contract.js",
+  "./browser-result-shapes.js",
+  "./browser-run-result.js",
+  "./browser-review-bridge.js",
+  "./browser-session-origin.js",
+  "./command-agent-run.js",
+  "./command-codecs.js",
+  "./component-contracts.js",
+  "./evidence-artifact-envelope.js",
+  "./fanout-contracts.js",
+  "./fixture-import-primitives.js",
+  "./fuzz-suite-contracts.js",
+  "./fuzz-suite-runner.js",
+  "./rest-matrix-contracts.js",
+  "./host-command-executor.js",
+  "./host-tool-registry.js",
+  "./managed-host-command.js",
+  "./materialization-contracts.js",
+  "./mcp-client-configs.js",
+  "./mount-primitives.js",
+  "./parent-tool-bridge.js",
+  "./performance-observation.js",
+  "./recipe-builders.js",
+  "./recipe-run-summary.js",
+  "./recipe-schema.js",
+  "./recipe-source-packages.js",
+  "./run-plan.js",
+  "./run-registry.js",
+  "./runner-workspace-publication.js",
+  "./runtime-boundary-contracts.js",
+  "./runtime-contract-manifest.js",
+  "./runtime-command-result.js",
+  "./runtime-contracts.js",
+  "./runtime-episode.js",
+  "./runtime-neutral-contracts.js",
+  "./runtime-overlay-bundle.js",
+  "./runtime-overlay-descriptors.js",
+  "./runtime-package-execution.js",
+  "./runtime-policy.js",
+  "./runtime-preset-registry.js",
+  "./sandbox-tool-policy.js",
+  "./source-root-preparation.js",
+  "./structured-artifacts.js",
+  "./task-input.js",
+  "./tool-call-artifacts.js",
+  "./transfer-proof.js",
+  "./workspace-policy.js",
+  "./workspace-preload-artifacts.js",
+  "./wordpress-crud-contracts.js",
+  "./wordpress-page-load-contracts.js",
+  "./wordpress-db-contracts.js",
+  "./wordpress-runtime-discovery-contracts.js",
+  "./wordpress-runtime-actions.js",
+])
+
+assert.deepEqual(barrelExportModules(contractsBarrel), [
+  "./browser-probe-contract.js",
+  "./command-registry.js",
+  "./runtime-contract-manifest.js",
+  "./wordpress-page-load-contracts.js",
+])
+
 for (const publicEntry of [
   "@automattic/wp-codebox-core",
   "@automattic/wp-codebox-core/public",
@@ -125,6 +214,7 @@ for (const publicModule of [
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
   "./fuzz-suite-contracts.js",
+  "./rest-matrix-contracts.js",
   "./parent-tool-bridge.js",
   "./performance-observation.js",
   "./recipe-builders.js",
@@ -132,6 +222,7 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
+  "./wordpress-page-load-contracts.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
@@ -144,7 +235,6 @@ for (const internalModule of [
   "./prepared-source-staging.js",
   "./provider-runtime-contracts.js",
   "./runtime-action-adapter.js",
-  "./wordpress-runtime-actions.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
@@ -159,9 +249,6 @@ for (const internalExport of [
   "PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA",
   "providerRuntimeInvocationContract",
   "PROVIDER_RUNTIME_TASK_NAMES",
-  "requestWordPressRest",
-  "runWordPressPhp",
-  "runWordPressWpCli",
   "WORDPRESS_RUNTIME_ACTION_SCHEMA",
   "WORDPRESS_WORKLOAD_RUN_SCHEMA",
   "wordpressAbilityStep",
@@ -209,6 +296,7 @@ assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
+assert.equal(typeof wordpressRestMatrixContract, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(typeof runtimeContractManifest, "function")
@@ -216,6 +304,7 @@ assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABI
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
 assert.equal("providerRuntime" in runtimeContractManifest(), false)
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(wordpressRestMatrixContract({ id: "public-rest-matrix" }).schema, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
@@ -230,6 +319,13 @@ assert.deepEqual(fuzzSuiteResultEnvelope({
   ],
 }).summary, { total: 2, passed: 1, failed: 1, error: 0, skipped: 0 })
 assert.equal(fuzzSuiteResultEnvelope({ suite: { id: "ability-boundary" } }).schema, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(typeof playgroundPublicApi.runWordPressWpCli, "function")
+assert.equal(typeof playgroundPublicApi.runWordPressPhp, "function")
+assert.equal(typeof playgroundPublicApi.requestWordPressRest, "function")
+assert.equal(typeof playgroundPublicApi.runWordPressBrowserAction, "function")
+assert.equal(typeof playgroundPublicApi.probeWordPressBrowser, "function")
+assert.equal(typeof playgroundPublicApi.openWordPressEditor, "function")
+assert.equal(typeof playgroundPublicApi.collectWordPressArtifacts, "function")
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
 assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))

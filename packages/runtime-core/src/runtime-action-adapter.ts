@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { normalizeRootedPath, pathIsWithinRoot, relativePathIsWithinRoot } from "./file-tree-policy.js"
+import { performanceObservation, type PerformanceObservation } from "./performance-observation.js"
 import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import type { MountSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
@@ -9,7 +10,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -78,6 +79,22 @@ export interface RuntimeEditorOpenAction {
   timeout_ms?: number
 }
 
+export interface RuntimeAdminPageAction {
+  type: "admin_page"
+  path: string
+  wait_for?: string
+  capture?: string[]
+  timeout_ms?: number
+}
+
+export interface RuntimePageAction {
+  type: "page"
+  path: string
+  wait_for?: string
+  capture?: string[]
+  timeout_ms?: number
+}
+
 export interface RuntimeActionAdapterPolicy {
   mounts?: MountSpec[]
   writableRoots?: string[]
@@ -93,6 +110,7 @@ export interface RuntimeActionObservation {
   data: Record<string, unknown>
   observedAt: string
   step?: RuntimeEpisodeStepResult
+  performance?: PerformanceObservation
   artifactRefs?: RuntimeEpisodeTraceRef[]
   digest: RuntimeEpisodeContentDigest
 }
@@ -135,6 +153,14 @@ export async function runRuntimeAction(
     return runRuntimeEditorOpenAction(episode, action)
   }
 
+  if (action.type === "admin_page") {
+    return runRuntimeAdminPageAction(episode, action)
+  }
+
+  if (action.type === "page") {
+    return runRuntimePageAction(episode, action)
+  }
+
   return runRuntimeFilesystemAction(episode, action, policy)
 }
 
@@ -144,12 +170,13 @@ async function runRuntimePhpAction(episode: RuntimeEpisode, action: RuntimePhpAc
     args.push(`bootstrap=${action.bootstrap}`)
   }
 
+  const diagnostics = action.diagnostics ?? { capture: ["wpdb-queries"] as const }
   const step = await episode.step(
     {
       kind: "command",
       command: "wordpress.run-php",
       args,
-      ...(action.diagnostics ? { diagnostics: action.diagnostics } : {}),
+      diagnostics,
       ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
     },
     { type: "command-result" },
@@ -502,6 +529,41 @@ async function runRuntimeEditorOpenAction(episode: RuntimeEpisode, action: Runti
   })
 }
 
+async function runRuntimeAdminPageAction(episode: RuntimeEpisode, action: RuntimeAdminPageAction): Promise<RuntimeActionObservation> {
+  const path = action.path.startsWith("/wp-admin/") ? action.path : `/wp-admin/${action.path.replace(/^\/+/, "")}`
+  const observation = await runRuntimeBrowserProbeAction(episode, {
+    type: "browser_probe",
+    url: path,
+    wait_for: action.wait_for,
+    capture: action.capture,
+    timeout_ms: action.timeout_ms,
+  })
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step: observation.step,
+    data: { ...observation.data, path },
+    artifactRefs: observation.artifactRefs,
+  })
+}
+
+async function runRuntimePageAction(episode: RuntimeEpisode, action: RuntimePageAction): Promise<RuntimeActionObservation> {
+  const observation = await runRuntimeBrowserProbeAction(episode, {
+    type: "browser_probe",
+    url: action.path,
+    wait_for: action.wait_for,
+    capture: action.capture,
+    timeout_ms: action.timeout_ms,
+  })
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step: observation.step,
+    data: { ...observation.data, path: action.path },
+    artifactRefs: observation.artifactRefs,
+  })
+}
+
 function runtimeEditorOpenArgs(action: RuntimeEditorOpenAction): string[] {
   const args: string[] = []
   if (action.target) {
@@ -660,6 +722,7 @@ function runtimeActionObservation(input: {
   artifactRefs?: RuntimeEpisodeTraceRef[]
 }): RuntimeActionObservation {
   const observedAt = new Date().toISOString()
+  const performance = normalizeRuntimeActionPerformanceObservation(input)
   const observation = {
     schema: RUNTIME_ACTION_OBSERVATION_SCHEMA,
     type: input.type,
@@ -667,6 +730,7 @@ function runtimeActionObservation(input: {
     action: input.action,
     data: input.data,
     observedAt,
+    performance,
     ...(input.step ? { step: input.step } : {}),
     ...(input.artifactRefs && input.artifactRefs.length > 0 ? { artifactRefs: input.artifactRefs } : {}),
   }
@@ -675,4 +739,65 @@ function runtimeActionObservation(input: {
     ...observation,
     digest: runtimeEpisodeDigest(observation),
   }
+}
+
+function normalizeRuntimeActionPerformanceObservation(input: {
+  action: RuntimeAction
+  data: Record<string, unknown>
+  step?: RuntimeEpisodeStepResult
+  artifactRefs?: RuntimeEpisodeTraceRef[]
+}): PerformanceObservation {
+  const diagnostics = recordValue(input.step?.execution.diagnostics)
+  const explicit = recordValue(input.data.performance) ?? recordValue(diagnostics?.performance)
+  const startedAt = input.step?.execution.startedAt
+  const finishedAt = input.step?.execution.finishedAt
+  const startedMs = startedAt ? Date.parse(startedAt) : NaN
+  const finishedMs = finishedAt ? Date.parse(finishedAt) : NaN
+  const durationMs = Number.isFinite(startedMs) && Number.isFinite(finishedMs) ? Math.max(0, finishedMs - startedMs) : undefined
+  const timing = recordValue(explicit?.timing) ?? recordValue(input.data.timing)
+  const browser = normalizeRuntimeActionBrowserPerformance(input.data)
+  return performanceObservation({
+    command: input.step?.execution.command,
+    target: runtimeActionTarget(input.action),
+    timing: {
+      ...(startedAt ? { startedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
+      ...timing,
+    },
+    memory: recordValue(explicit?.memory) as PerformanceObservation["memory"],
+    database: recordValue(explicit?.database) as PerformanceObservation["database"],
+    hooks: recordValue(explicit?.hooks) as PerformanceObservation["hooks"],
+    network: recordValue(explicit?.network) as PerformanceObservation["network"],
+    browser: recordValue(explicit?.browser) ?? browser,
+    ...(input.artifactRefs && input.artifactRefs.length > 0 ? { artifactRefs: input.artifactRefs } : {}),
+    metadata: {
+      actionType: input.action.type,
+      ...(input.step ? { stepId: input.step.id, executionId: input.step.execution.id } : {}),
+    },
+  })
+}
+
+function normalizeRuntimeActionBrowserPerformance(data: Record<string, unknown>): PerformanceObservation["browser"] | undefined {
+  const stdout = recordValue(data.stdout)
+  const summary = recordValue(stdout?.summary) ?? recordValue(data.summary)
+  const files = recordValue(stdout?.files) ?? recordValue(data.files)
+  if (!summary && !files) {
+    return undefined
+  }
+  return {
+    metrics: recordValue(summary?.metrics) as Record<string, number> | undefined,
+    admin: {
+      ...(summary ?? {}),
+      ...(files ? { files } : {}),
+    },
+  }
+}
+
+function runtimeActionTarget(action: RuntimeAction): string | undefined {
+  if ("path" in action) return action.path
+  if ("url" in action) return action.url
+  if ("command" in action) return action.command
+  if (action.type === "php") return action.bootstrap ?? "php"
+  return action.type
 }

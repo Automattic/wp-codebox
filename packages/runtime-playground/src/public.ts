@@ -11,6 +11,28 @@ import {
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
 } from "@automattic/wp-codebox-core/public"
+export {
+  collectWordPressArtifacts,
+  openWordPressAdminPage,
+  openWordPressEditor,
+  probeWordPressBrowser,
+  requestWordPressRest,
+  runWordPressBrowserAction,
+  runWordPressPhp,
+  runWordPressWpCli,
+  visitWordPressPage,
+  type RuntimeActionObservation,
+  type WordPressAdminPageOptions,
+  type WordPressBrowserActionOptions,
+  type WordPressBrowserProbeOptions,
+  type WordPressEditorOpenOptions,
+  type WordPressPageOptions,
+  type WordPressPhpOptions,
+  type WordPressRestRequestOptions,
+  type WordPressRuntimeActionEpisode,
+  type WordPressRuntimeArtifactSource,
+  type WordPressWpCliOptions,
+} from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundRuntimeBackendOptions } from "./playground-runtime.js"
 

@@ -50,6 +50,37 @@ export interface WordPressRestRouteDescriptor {
   namespace: string
   methods: string[]
   argNames: string[]
+  endpoints?: WordPressRestRouteEndpointDescriptor[]
+  schema?: WordPressRestRouteSchemaDescriptor
+}
+
+export interface WordPressRestRouteEndpointDescriptor {
+  methods: string[]
+  permission: WordPressRestRoutePermissionDescriptor
+  args: WordPressRestRouteArgDescriptor[]
+}
+
+export interface WordPressRestRoutePermissionDescriptor {
+  mode: "public" | "callback" | "none"
+  callbackType?: string
+}
+
+export interface WordPressRestRouteArgDescriptor {
+  name: string
+  required: boolean
+  type?: string | string[]
+  format?: string
+  enum?: Array<string | number | boolean | null>
+  description?: string
+  defaultPresent?: boolean
+  validateCallback?: boolean
+  sanitizeCallback?: boolean
+}
+
+export interface WordPressRestRouteSchemaDescriptor {
+  title?: string
+  type?: string | string[]
+  properties?: string[]
 }
 
 export interface WordPressAdminPageDiscovery {

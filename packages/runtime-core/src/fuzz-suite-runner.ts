@@ -8,8 +8,37 @@ export interface FuzzSuiteCommandExecutor {
 
 export interface FuzzSuiteRunOptions {
   executor?: FuzzSuiteCommandExecutor | ((spec: ExecutionSpec) => Promise<ExecutionResult>)
+  targetAdapters?: FuzzSuiteTargetAdapterRegistry | readonly FuzzSuiteTargetAdapter[]
   supportedTargetKinds?: readonly string[]
   metadata?: Record<string, unknown>
+}
+
+export type FuzzSuiteTargetAdapterStatus = "supported" | "unsupported"
+
+export interface FuzzSuiteTargetAdapterResolution {
+  status: FuzzSuiteTargetAdapterStatus
+  spec?: ExecutionSpec
+  diagnostics?: FuzzSuiteDiagnostic[]
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteTargetAdapter {
+  kind: string
+  adapt(input: {
+    suite: FuzzSuiteContract
+    case: FuzzSuiteCase
+    caseIndex: number
+    target: FuzzSuiteTargetRef
+  }): FuzzSuiteTargetAdapterResolution
+}
+
+export interface FuzzSuiteTargetAdapterRegistry {
+  resolve(input: {
+    suite: FuzzSuiteContract
+    case: FuzzSuiteCase
+    caseIndex: number
+    target: FuzzSuiteTargetRef
+  }): FuzzSuiteTargetAdapterResolution
 }
 
 export interface FuzzSuiteCaseExecutionInput {
@@ -19,19 +48,19 @@ export interface FuzzSuiteCaseExecutionInput {
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
 }
 
-const DEFAULT_SUPPORTED_TARGET_KINDS = ["command", "runtime"]
+const DEFAULT_SUPPORTED_TARGET_KINDS = ["ability", "command", "http", "rest", "runtime", "runtime-action"]
 
 export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteRunOptions = {}) {
   const cases: FuzzSuiteCaseResult[] = []
   const diagnostics: FuzzSuiteDiagnostic[] = []
   const execute = normalizeFuzzSuiteExecutor(options.executor)
+  const adapterRegistry = normalizeFuzzSuiteTargetAdapterRegistry(options.targetAdapters)
   const supportedTargetKinds = new Set(options.supportedTargetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
 
   for (const [index, fuzzCase] of suite.cases.entries()) {
     const target = fuzzCase.target ?? suite.target
-    const command = fuzzSuiteTargetCommand(target)
     const replayMetadata = fuzzSuiteReplayMetadata(suite, fuzzCase, index, target)
-    if (!target || !command || !supportedTargetKinds.has(target.kind)) {
+    if (!target || !supportedTargetKinds.has(target.kind)) {
       const diagnostic = fuzzSuiteUnsupportedDiagnostic(fuzzCase, target)
       diagnostics.push(diagnostic)
       cases.push({
@@ -41,6 +70,21 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         target,
         diagnostics: [diagnostic],
         metadata: stripUndefined({ replay: replayMetadata }),
+      })
+      continue
+    }
+
+    const adapterResolution = adapterRegistry.resolve({ suite, case: fuzzCase, caseIndex: index, target })
+    const adapterDiagnostics = adapterResolution.diagnostics ?? []
+    if (adapterResolution.status === "unsupported" || !adapterResolution.spec) {
+      diagnostics.push(...adapterDiagnostics)
+      cases.push({
+        id: fuzzCase.id,
+        status: "skipped",
+        success: false,
+        target,
+        diagnostics: adapterDiagnostics,
+        metadata: stripUndefined({ replay: replayMetadata, adapter: adapterResolution.metadata }),
       })
       continue
     }
@@ -65,29 +109,8 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       continue
     }
 
-    const input = normalizeFuzzSuiteCaseExecutionInput(fuzzCase.input)
-    if (!input.valid) {
-      const diagnostic: FuzzSuiteDiagnostic = {
-        severity: "error",
-        code: "fuzz_suite_input_unsupported",
-        caseId: fuzzCase.id,
-        target,
-        message: `Fuzz suite case ${fuzzCase.id} has unsupported command input. Expected an args array or an object with args, cwd, timeoutMs, and diagnostics.`,
-      }
-      diagnostics.push(diagnostic)
-      cases.push({
-        id: fuzzCase.id,
-        status: "skipped",
-        success: false,
-        target,
-        diagnostics: [diagnostic],
-        metadata: stripUndefined({ replay: replayMetadata }),
-      })
-      continue
-    }
-
     try {
-      const spec = stripUndefined({ command, ...input.value }) as ExecutionSpec
+      const spec = adapterResolution.spec
       const execution = await execute(spec)
       const status = execution.exitCode === 0 ? "passed" : "failed"
       const caseDiagnostics = execution.exitCode === 0 ? [] : [{
@@ -95,7 +118,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         code: "fuzz_suite_command_failed",
         caseId: fuzzCase.id,
         target,
-        message: `${command} exited with ${execution.exitCode}`,
+        message: `${spec.command} exited with ${execution.exitCode}`,
         metadata: stripUndefined({ executionId: execution.id, stderr: execution.stderr }),
       }]
       diagnostics.push(...caseDiagnostics)
@@ -110,6 +133,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           input: fuzzCase.input,
           description: fuzzCase.description,
           caseMetadata: fuzzCase.metadata,
+          adapter: adapterResolution.metadata,
           replay: { ...replayMetadata, executionId: execution.id, command: spec },
           execution: {
             id: execution.id,
@@ -163,6 +187,229 @@ function normalizeFuzzSuiteExecutor(executor: FuzzSuiteRunOptions["executor"]): 
   return (spec) => executor.execute(spec)
 }
 
+export function createFuzzSuiteTargetAdapterRegistry(adapters: readonly FuzzSuiteTargetAdapter[] = defaultFuzzSuiteTargetAdapters()): FuzzSuiteTargetAdapterRegistry {
+  const byKind = new Map(adapters.map((adapter) => [adapter.kind, adapter]))
+  return {
+    resolve(input) {
+      const adapter = byKind.get(input.target.kind)
+      if (!adapter) {
+        return unsupportedTargetAdapterResolution(input.case, input.target, `No fuzz suite target adapter is registered for ${input.target.kind}.`, { adapterKind: input.target.kind })
+      }
+      return adapter.adapt(input)
+    },
+  }
+}
+
+function normalizeFuzzSuiteTargetAdapterRegistry(input: FuzzSuiteRunOptions["targetAdapters"]): FuzzSuiteTargetAdapterRegistry {
+  if (!input) {
+    return createFuzzSuiteTargetAdapterRegistry()
+  }
+  if (Array.isArray(input)) {
+    return createFuzzSuiteTargetAdapterRegistry(input)
+  }
+  return input as FuzzSuiteTargetAdapterRegistry
+}
+
+export function defaultFuzzSuiteTargetAdapters(): FuzzSuiteTargetAdapter[] {
+  return [
+    commandFuzzSuiteTargetAdapter("command"),
+    commandFuzzSuiteTargetAdapter("runtime"),
+    abilityFuzzSuiteTargetAdapter(),
+    httpFuzzSuiteTargetAdapter(),
+    restFuzzSuiteTargetAdapter(),
+    runtimeActionFuzzSuiteTargetAdapter(),
+  ]
+}
+
+function commandFuzzSuiteTargetAdapter(kind: "command" | "runtime"): FuzzSuiteTargetAdapter {
+  return {
+    kind,
+    adapt({ case: fuzzCase, target }) {
+      const command = fuzzSuiteTargetCommand(target)
+      const input = normalizeFuzzSuiteCaseExecutionInput(fuzzCase.input)
+      if (!command) {
+        return unsupportedTargetAdapterResolution(fuzzCase, target, `Fuzz suite target ${target.kind} is missing an id or entrypoint.`, { adapterKind: kind })
+      }
+      if (!input.valid) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected an args array or an object with args, cwd, timeoutMs, and diagnostics.", { adapterKind: kind })
+      }
+      return { status: "supported", spec: stripUndefined({ command, ...input.value }) as ExecutionSpec, metadata: { adapterKind: kind } }
+    },
+  }
+}
+
+function abilityFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
+  return {
+    kind: "ability",
+    adapt({ case: fuzzCase, target }) {
+      const ability = fuzzSuiteTargetCommand(target)
+      if (!ability) {
+        return unsupportedTargetAdapterResolution(fuzzCase, target, "Fuzz suite ability target is missing an id or entrypoint.", { adapterKind: "ability" })
+      }
+      const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
+      if (input.invalid) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected ability input to be any JSON value or an object with input, payload, expectedResultSchema, and timeoutMs.", { adapterKind: "ability" })
+      }
+      return {
+        status: "supported",
+        spec: stripUndefined({
+          command: "wordpress.ability",
+          args: [
+            `name=${ability}`,
+            input.payload === undefined ? undefined : `input=${JSON.stringify(input.payload)}`,
+            input.expectedResultSchema === undefined ? undefined : `expected-result-schema=${typeof input.expectedResultSchema === "string" ? input.expectedResultSchema : JSON.stringify(input.expectedResultSchema)}`,
+          ].filter((arg): arg is string => Boolean(arg)),
+          timeoutMs: input.timeoutMs,
+        }) as ExecutionSpec,
+        metadata: { adapterKind: "ability", mappedCommand: "wordpress.ability" },
+      }
+    },
+  }
+}
+
+function httpFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
+  return {
+    kind: "http",
+    adapt({ case: fuzzCase, target }) {
+      const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
+      if (input.invalid || !isRecord(input.payload)) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected HTTP input object with url or path.", { adapterKind: "http" })
+      }
+      const url = stringField(input.payload, "url") ?? stringField(input.payload, "path") ?? fuzzSuiteTargetCommand(target)
+      if (!url) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected HTTP target id/entrypoint or input url/path.", { adapterKind: "http" })
+      }
+      return {
+        status: "supported",
+        spec: stripUndefined({
+          command: "wordpress.http-request",
+          args: [
+            `url=${url}`,
+            optionalStringArg("method", input.payload.method),
+            jsonArg("headers-json", input.payload.headers),
+            input.payload.body === undefined ? undefined : `body=${String(input.payload.body)}`,
+            optionalNumberArg("expect-status", input.payload.expectStatus ?? input.payload.expect_status),
+          ].filter((arg): arg is string => Boolean(arg)),
+          method: stringField(input.payload, "method"),
+          path: url,
+          timeoutMs: input.timeoutMs,
+        }) as ExecutionSpec,
+        metadata: { adapterKind: "http", mappedCommand: "wordpress.http-request" },
+      }
+    },
+  }
+}
+
+function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
+  return {
+    kind: "rest",
+    adapt({ case: fuzzCase, target }) {
+      const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
+      if (input.invalid || !isRecord(input.payload)) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected REST input object with path or route.", { adapterKind: "rest" })
+      }
+      const path = stringField(input.payload, "path") ?? stringField(input.payload, "route") ?? fuzzSuiteTargetCommand(target)
+      if (!path) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected REST target id/entrypoint or input path/route.", { adapterKind: "rest" })
+      }
+      return {
+        status: "supported",
+        spec: stripUndefined({
+          command: "wordpress.rest-request",
+          args: [
+            `path=${path}`,
+            optionalStringArg("method", input.payload.method),
+            jsonArg("headers-json", input.payload.headers),
+            jsonArg("params-json", input.payload.params),
+            input.payload.body === undefined ? undefined : `body=${String(input.payload.body)}`,
+            input.payload.bodyJson === undefined && input.payload.body_json === undefined ? undefined : `body-json=${JSON.stringify(input.payload.bodyJson ?? input.payload.body_json)}`,
+            optionalStringArg("user", input.payload.user),
+            optionalStringArg("session", input.payload.session),
+          ].filter((arg): arg is string => Boolean(arg)),
+          method: stringField(input.payload, "method"),
+          path,
+          timeoutMs: input.timeoutMs,
+        }) as ExecutionSpec,
+        metadata: { adapterKind: "rest", mappedCommand: "wordpress.rest-request" },
+      }
+    },
+  }
+}
+
+function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
+  return {
+    kind: "runtime-action",
+    adapt({ case: fuzzCase, target }) {
+      const input = fuzzSuiteCaseRecordInput(fuzzCase.input)
+      if (input.invalid || !isRecord(input.payload) || typeof input.payload.type !== "string") {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "Expected runtime-action input object with a type field.", { adapterKind: "runtime-action" })
+      }
+
+      if (input.payload.type === "wp_cli") {
+        const command = stringField(input.payload, "command")
+        if (!command) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "Expected wp_cli runtime-action input command.", { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.wp-cli",
+            args: [`command=${command}`],
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.wp-cli" },
+        }
+      }
+
+      if (input.payload.type === "php") {
+        const code = stringField(input.payload, "code")
+        if (!code) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "Expected php runtime-action input code.", { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.run-php",
+            args: [`code=${code}`, optionalStringArg("bootstrap", input.payload.bootstrap)].filter((arg): arg is string => Boolean(arg)),
+            diagnostics: isRecord(input.payload.diagnostics) ? input.payload.diagnostics as RuntimeCommandDiagnosticsCaptureSpec : undefined,
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.run-php" },
+        }
+      }
+
+      if (input.payload.type === "rest_request") {
+        const path = stringField(input.payload, "path") ?? stringField(input.payload, "route")
+        if (!path) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "Expected rest_request runtime-action input path or route.", { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.rest-request",
+            args: [
+              `path=${path}`,
+              optionalStringArg("method", input.payload.method),
+              jsonArg("headers-json", input.payload.headers),
+              jsonArg("params-json", input.payload.params),
+              input.payload.body === undefined ? undefined : `body=${String(input.payload.body)}`,
+              input.payload.bodyJson === undefined && input.payload.body_json === undefined ? undefined : `body-json=${JSON.stringify(input.payload.bodyJson ?? input.payload.body_json)}`,
+              optionalStringArg("user", input.payload.user),
+              optionalStringArg("session", input.payload.session),
+            ].filter((arg): arg is string => Boolean(arg)),
+            method: stringField(input.payload, "method"),
+            path,
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request" },
+        }
+      }
+
+      return unsupportedTargetAdapterResolution(fuzzCase, target, `Runtime-action type ${input.payload.type} needs an episode-aware executor and is not supported by this command-backed runner.`, { adapterKind: "runtime-action", actionType: input.payload.type })
+    },
+  }
+}
+
 function fuzzSuiteTargetCommand(target: FuzzSuiteTargetRef | undefined): string | undefined {
   if (!target) {
     return undefined
@@ -177,6 +424,22 @@ function fuzzSuiteUnsupportedDiagnostic(fuzzCase: FuzzSuiteCase, target: FuzzSui
     caseId: fuzzCase.id,
     target,
     message: target ? `Fuzz suite target ${target.kind}:${fuzzSuiteTargetCommand(target) ?? "<missing-command>"} is not supported by this runner.` : `Fuzz suite case ${fuzzCase.id} has no target.`,
+  }
+}
+
+function unsupportedTargetAdapterResolution(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef, message: string, metadata?: Record<string, unknown>): FuzzSuiteTargetAdapterResolution {
+  return {
+    status: "unsupported",
+    diagnostics: [{ severity: "warning", code: "fuzz_suite_target_adapter_unsupported", caseId: fuzzCase.id, target, message, metadata }],
+    metadata,
+  }
+}
+
+function unsupportedInputAdapterResolution(fuzzCase: FuzzSuiteCase, target: FuzzSuiteTargetRef, message: string, metadata?: Record<string, unknown>): FuzzSuiteTargetAdapterResolution {
+  return {
+    status: "unsupported",
+    diagnostics: [{ severity: "error", code: "fuzz_suite_input_unsupported", caseId: fuzzCase.id, target, message: `Fuzz suite case ${fuzzCase.id} has unsupported ${target.kind} input. ${message}`, metadata }],
+    metadata,
   }
 }
 
@@ -215,6 +478,47 @@ function normalizeFuzzSuiteCaseExecutionInput(input: unknown): { valid: true; va
       diagnostics: record.diagnostics as RuntimeCommandDiagnosticsCaptureSpec | undefined,
     }),
   }
+}
+
+function fuzzSuiteCaseRecordInput(input: unknown): { invalid?: false; payload: unknown; timeoutMs?: number; expectedResultSchema?: unknown } | { invalid: true } {
+  if (!isRecord(input)) {
+    return { payload: input }
+  }
+  const timeoutMs = input.timeoutMs
+  if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs))) {
+    return { invalid: true }
+  }
+  return {
+    payload: input.input ?? input.payload ?? input,
+    timeoutMs,
+    expectedResultSchema: input.expectedResultSchema ?? input.expected_result_schema,
+  }
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return Boolean(input) && typeof input === "object" && !Array.isArray(input)
+}
+
+function stringField(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key]
+  return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
+function optionalStringArg(name: string, value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? `${name}=${value}` : undefined
+}
+
+function optionalNumberArg(name: string, value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? `${name}=${value}` : undefined
+}
+
+function runtimeActionTimeoutMs(input: Record<string, unknown>, fallback: number | undefined): number | undefined {
+  const timeoutMs = input.timeout_ms ?? input.timeoutMs ?? fallback
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) ? timeoutMs : undefined
+}
+
+function jsonArg(name: string, value: unknown): string | undefined {
+  return value === undefined ? undefined : `${name}=${JSON.stringify(value)}`
 }
 
 function fuzzSuiteExecutionArtifactRefs(execution: ExecutionResult): FuzzSuiteArtifactRef[] | undefined {

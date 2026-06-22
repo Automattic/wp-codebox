@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import {
   WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
   WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
+  WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
+  WORDPRESS_REST_MATRIX_SCHEMA,
   WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   type WordPressAdminPageInventory,
@@ -12,7 +14,8 @@ import {
 } from "../packages/runtime-core/src/index.js"
 import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 import { getCommandDefinition, runtimeCommandDefinitions } from "../packages/runtime-core/src/command-registry.js"
-import { runtimeDiscoverySurfacesFromArgs } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
+import { runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
+import { runPhpJson } from "../scripts/test-kit.js"
 
 const result: WordPressRuntimeDiscoveryResult = {
   schema: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
@@ -37,7 +40,18 @@ const restInventory: WordPressRestRouteInventory = {
   schema: WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
   command: "wordpress.rest-route-inventory",
   status: "ok",
-  routes: [],
+    routes: [{
+      route: "/wp/v2/posts/(?P<id>[\\d]+)",
+      namespace: "wp",
+      methods: ["GET", "POST"],
+      argNames: ["id", "context"],
+      endpoints: [{
+        methods: ["GET"],
+        permission: { mode: "public", callbackType: "function" },
+        args: [{ name: "id", required: true, type: "integer", description: "Post id", defaultPresent: false, validateCallback: true, sanitizeCallback: false }],
+      }],
+      schema: { title: "post", type: "object", properties: ["id", "title"] },
+    }],
   namespaces: [],
   diagnostics: [],
 }
@@ -83,5 +97,65 @@ for (const [command, method, schema] of inventoryDefinitions) {
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restRouteInventory, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.adminPageInventory, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.frontendUrlInventory, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
+
+const discoveryPhp = runtimeDiscoveryPhpCode(["rest"]).replace(/^<\?php\n/, "")
+const discovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
+function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function rest_get_server() {
+    return new class {
+        public function get_routes() {
+            return array(
+                '/demo/v1/items/(?P<id>[\\d]+)' => array(
+                    array(
+                        'methods' => array( 'GET' => true ),
+                        'permission_callback' => '__return_true',
+                        'args' => array(
+                            'id' => array(
+                                'required' => true,
+                                'type' => 'integer',
+                                'description' => '<strong>Item id</strong>',
+                                'validate_callback' => 'absint',
+                            ),
+                            'context' => array(
+                                'required' => false,
+                                'type' => 'string',
+                                'enum' => array( 'view', 'edit' ),
+                                'default' => 'view',
+                            ),
+                        ),
+                        'schema' => array(
+                            'title' => 'demo-item',
+                            'type' => 'object',
+                            'properties' => array( 'id' => array(), 'name' => array() ),
+                        ),
+                    ),
+                    array(
+                        'methods' => array( 'POST' => true ),
+                        'permission_callback' => array( 'Demo_Controller', 'create_item_permissions_check' ),
+                        'args' => array(),
+                    ),
+                ),
+            );
+        }
+    };
+}
+${discoveryPhp}
+`)
+
+const route = discovered.rest?.routes[0]
+assert.equal(route?.route, "/demo/v1/items/(?P<id>[\\d]+)")
+assert.deepEqual(route?.methods, ["GET", "POST"])
+assert.equal(route?.endpoints?.[0]?.permission.mode, "public")
+assert.equal(route?.endpoints?.[1]?.permission.mode, "callback")
+assert.equal(route?.endpoints?.[1]?.permission.callbackType, "method")
+assert.equal(route?.endpoints?.[0]?.args[0]?.name, "id")
+assert.equal(route?.endpoints?.[0]?.args[0]?.required, true)
+assert.equal(route?.endpoints?.[0]?.args[0]?.description, "Item id")
+assert.deepEqual(route?.endpoints?.[0]?.args[1]?.enum, ["view", "edit"])
+assert.equal(route?.endpoints?.[0]?.args[1]?.defaultPresent, true)
+assert.deepEqual(route?.schema?.properties, ["id", "name"])
 
 console.log("wordpress runtime discovery contracts ok")
