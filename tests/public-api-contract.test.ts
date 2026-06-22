@@ -16,6 +16,7 @@ import {
   performanceObservation,
   runtimePackageExecutionInput,
   runtimeContractManifest,
+  restRouteInventoryToFuzzSuite,
   runtimeProfile,
   wordpressRestMatrixContract,
   persistedBrowserArtifactRefs,
@@ -173,6 +174,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
+  "./wordpress-fuzz-suite-builders.js",
   "./wordpress-runtime-actions.js",
 ])
 
@@ -233,6 +235,7 @@ for (const publicModule of [
   "./runtime-episode.js",
   "./runtime-package-execution.js",
   "./wordpress-page-load-contracts.js",
+  "./wordpress-fuzz-suite-builders.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
@@ -331,6 +334,7 @@ assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof wordpressRestMatrixContract, "function")
+assert.equal(typeof restRouteInventoryToFuzzSuite, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(typeof runtimeContractManifest, "function")
