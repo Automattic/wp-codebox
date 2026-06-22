@@ -46,17 +46,58 @@ The command contract is intentionally broad enough for future workload types:
 - **WP-CLI:** configured workload steps that execute in the same sandbox.
 - **Ability:** future ability-backed workload steps should still return generic numeric metrics and metadata.
 - **REST:** configured `rest-request` steps call `rest_do_request()` in-process. A configured workload may declare `route_matrix` as a compact list of REST routes; WP Codebox expands each route into the existing `rest-request` step type.
+- **REST DB query profile:** configured `rest-db-query-profiler` steps run one or more REST request cases, bracket each request with `$wpdb->queries`, and emit bounded, redacted query-profile metrics and artifacts.
 - **Database inventory:** configured `db-inventory` steps collect table, row, column, index, and byte-count inventory through the benchmark artifact path.
 - **Browser:** `wordpress.browser-probe` captures generic browser performance and memory artifacts. When a recipe runs browser probes before `wordpress.bench`, selected numeric `browser_*` metrics are promoted into each benchmark scenario while raw browser artifacts remain in the bundle.
 
-WP Codebox does not currently expose a REST DB query profiler workload step. Full
-REST query profiling needs an upstream runtime hook that brackets each
-`rest_do_request()` call, captures `$wpdb->queries` or an equivalent query log for
-that request only, and emits a bounded artifact with query count, total query
-time, repeated-query summaries, and redacted SQL fingerprints. Until that hook
-exists, caller rigs should use real `rest_request_cases` and `db-inventory`
-workloads separately and leave `rest-db-query-profiler` as a documented missing
-primitive rather than emitting synthetic query-profile artifacts.
+## REST DB Query Profiler
+
+`rest-db-query-profiler` is a configured workload step for API/database profiling
+suites that need per-request query evidence without caller-owned PHP glue. It
+accepts `rest_request_cases` or `request_cases`; when neither is supplied, the
+step itself is treated as a single REST request case. Each case uses the same
+REST request fields as `rest-request`: `id`, `case_id`, `method`, `path` or
+`route`, `params`, `headers`, `body`, `body-json`, `capture-response`,
+`metric-prefix`, and `metadata`.
+
+The profiler enables `$wpdb->save_queries` for the duration of the step, records
+only queries captured after each `rest_do_request()` call starts, then restores
+the previous `$wpdb->save_queries` value. Query samples are bounded by
+`sampleLimit` and redacted/truncated by `queryLengthLimit` before being included
+in the inline `rest-db-query-profile` artifact.
+
+```json
+{
+  "id": "rest-db-profile",
+  "source": "config",
+  "run": [
+    {
+      "type": "rest-db-query-profiler",
+      "rest_request_cases": [
+        {
+          "id": "items-search",
+          "method": "GET",
+          "path": "/example/v1/items",
+          "params": { "search": "hat" }
+        }
+      ],
+      "sampleLimit": 25,
+      "queryLengthLimit": 500
+    }
+  ]
+}
+```
+
+The step emits numeric metrics using the selected metric prefix, including
+`<prefix>_cases_count`, `<prefix>_queries_count`, and
+`<prefix>_query_time_ms`. Its inline artifact uses
+`wp-codebox/wordpress-rest-db-query-profile/v1` with summary counts, per-case
+query summaries, operation breakdowns, and redacted SQL/caller samples. When
+artifact collection is enabled, WP Codebox materializes this into
+`files/bench/<component-id>/<scenario-id>-rest-db-query-profile.json` as
+`wp-codebox/benchmark-rest-db-query-profile/v1` and adds a typed
+`benchmark-rest-db-query-profile` artifact reference named
+`rest-db-query-profile`.
 
 ## REST Route Matrices
 
