@@ -29,6 +29,7 @@ final class WP_Ability {
 	}
 }
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-provider-registry.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php';
 
 function assert_no_agents_api_schema_leaks( mixed $value, string $path = '$' ): void {
@@ -78,3 +79,29 @@ assert_no_agents_api_schema_leaks( $package, 'package' );
 $missing = $adapter->cancel_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) );
 assert( is_wp_error( $missing ) );
 assert( 'wp_codebox_agents_api_ability_unavailable' === $missing->get_error_code() );
+
+WP_Codebox_Agents_API_Adapter::register_runtime_provider();
+$providers = WP_Codebox_Runtime_Provider_Registry::providers();
+assert( isset( $providers['agents-api-adapter'] ) );
+assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
+
+$runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
+assert( ! is_wp_error( $runtime_package ) );
+assert( 'wp-codebox/runtime-package-result/v1' === $runtime_package['schema'] );
+assert( 'agents-api-adapter' === $runtime_package['runtime_provider']['id'] );
+assert_no_agents_api_schema_leaks( $runtime_package, 'runtime-package-registry' );
+
+WP_Codebox_Runtime_Provider_Registry::register(
+	'Example Runtime',
+	static fn( array $input ): array => array( 'schema' => 'wp-codebox/example-runtime-result/v1', 'received' => $input ),
+	array( 'label' => 'Example runtime', 'capabilities' => array( 'runtime-package' ) )
+);
+
+$explicit_runtime = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider' => array( 'id' => 'example-runtime' ) ) );
+assert( ! is_wp_error( $explicit_runtime ) );
+assert( 'example-runtime' === $explicit_runtime['runtime_provider']['id'] );
+assert( 'wp-codebox/example-runtime-result/v1' === $explicit_runtime['schema'] );
+
+$unknown_runtime = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider_id' => 'missing-runtime' ) );
+assert( is_wp_error( $unknown_runtime ) );
+assert( 'wp_codebox_runtime_provider_unavailable' === $unknown_runtime->get_error_code() );

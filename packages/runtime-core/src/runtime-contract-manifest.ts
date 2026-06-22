@@ -1,7 +1,12 @@
 import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTaskRunResultSummary } from "./agent-task-run-result.js"
+import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
+import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
+import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
+import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA } from "./provider-runtime-contracts.js"
+import { RUNTIME_RUN_RESULT_SCHEMA } from "./run-registry.js"
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { WORDPRESS_REST_MATRIX_RESULT_SCHEMA, WORDPRESS_REST_MATRIX_SCHEMA } from "./rest-matrix-contracts.js"
 import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, runtimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
@@ -54,10 +59,42 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     browserSessionProductDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
     browserPreviewBootConfig: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
   },
+  browserSession: {
+    productDto: BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
+    containedSiteStatus: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
+    containedSiteOpen: BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+    previewBootConfig: BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
+  },
+  preview: {
+    lease: PREVIEW_LEASE_SCHEMA,
+  },
   artifact: {
     resultEnvelope: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
     runtimePackageDeclaration: RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA,
     runtimePackageProjection: RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
+    bundleFileManifest: ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
+    browserArtifactPersistenceRef: BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
+  },
+  artifactBundle: {
+    resultEnvelope: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+    fileManifest: ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
+    browserPersistenceRef: BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
+  },
+  taskState: {
+    agentTaskRunResult: AGENT_TASK_RUN_RESULT_SCHEMA,
+    runtimeRunResult: RUNTIME_RUN_RESULT_SCHEMA,
+    agentRuntimeWorkload: AGENT_RUNTIME_WORKLOAD_SCHEMA,
+  },
+  runtimeProvider: {
+    invocationContract: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
+    credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+    credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+    credentialResolution: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  },
+  hostDelegation: {
+    request: HOST_DELEGATION_REQUEST_SCHEMA,
+    result: HOST_DELEGATION_RESULT_SCHEMA,
+    event: HOST_DELEGATION_EVENT_SCHEMA,
   },
   runtimePackage: {
     executionInput: RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA,
@@ -112,7 +149,7 @@ export function runtimeContractManifest(): RuntimeContractManifest {
 }
 
 export function runtimeContractSchemaValues(): RuntimeContractSchema[] {
-  return Object.values(RUNTIME_CONTRACT_SCHEMAS).flatMap((group) => Object.values(group)) as RuntimeContractSchema[]
+  return [...new Set(Object.values(RUNTIME_CONTRACT_SCHEMAS).flatMap((group) => Object.values(group)))] as RuntimeContractSchema[]
 }
 
 export function isRuntimeContractSchema(value: unknown): value is RuntimeContractSchema {

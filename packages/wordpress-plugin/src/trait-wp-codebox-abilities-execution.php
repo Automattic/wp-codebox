@@ -25,7 +25,7 @@ public static function run_agent_task_fanout( array $input ): array|WP_Error {
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_runtime_package( array $input ): array|WP_Error {
-	return ( new WP_Codebox_Agents_API_Adapter() )->run_runtime_package( $input );
+	return WP_Codebox_Runtime_Provider_Registry::invoke( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

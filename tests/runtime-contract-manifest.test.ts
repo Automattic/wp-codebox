@@ -1,8 +1,15 @@
 import assert from "node:assert/strict"
 
 import {
+  AGENT_RUNTIME_WORKLOAD_SCHEMA,
   AGENT_TASK_RUN_RESULT_SCHEMA,
+  ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA,
+  BROWSER_CONTAINED_SITE_OPEN_SCHEMA,
+  BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
+  BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA,
+  BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_RUN_AGENT_TASK_ABILITY,
   CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
@@ -13,9 +20,17 @@ import {
   CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  HOST_DELEGATION_EVENT_SCHEMA,
+  HOST_DELEGATION_REQUEST_SCHEMA,
+  HOST_DELEGATION_RESULT_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PARENT_TOOL_REQUEST_SCHEMA,
   PARENT_TOOL_RESULT_SCHEMA,
+  PREVIEW_LEASE_SCHEMA,
+  PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+  PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+  PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
   RUNTIME_CONTRACT_MANIFEST_SCHEMA,
   RUNTIME_CONTRACT_NORMALIZERS,
   RUNTIME_CONTRACT_SCHEMAS,
@@ -24,6 +39,7 @@ import {
   RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
+  RUNTIME_RUN_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
@@ -46,9 +62,31 @@ assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
+assert.equal(manifest.schemas.runtimeBoundary.previewLease, PREVIEW_LEASE_SCHEMA)
+assert.equal(manifest.schemas.runtimeBoundary.browserSessionProductDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)
+assert.equal(manifest.schemas.browserSession.productDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteStatus, BROWSER_CONTAINED_SITE_STATUS_SCHEMA)
+assert.equal(manifest.schemas.browserSession.containedSiteOpen, BROWSER_CONTAINED_SITE_OPEN_SCHEMA)
+assert.equal(manifest.schemas.browserSession.previewBootConfig, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA)
+assert.equal(manifest.schemas.preview.lease, PREVIEW_LEASE_SCHEMA)
 assert.equal(manifest.schemas.artifact.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(manifest.schemas.artifact.runtimePackageDeclaration, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA)
 assert.equal(manifest.schemas.artifact.runtimePackageProjection, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA)
+assert.equal(manifest.schemas.artifact.bundleFileManifest, ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA)
+assert.equal(manifest.schemas.artifact.browserArtifactPersistenceRef, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA)
+assert.equal(manifest.schemas.artifactBundle.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
+assert.equal(manifest.schemas.artifactBundle.fileManifest, ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA)
+assert.equal(manifest.schemas.artifactBundle.browserPersistenceRef, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA)
+assert.equal(manifest.schemas.taskState.agentTaskRunResult, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(manifest.schemas.taskState.runtimeRunResult, RUNTIME_RUN_RESULT_SCHEMA)
+assert.equal(manifest.schemas.taskState.agentRuntimeWorkload, AGENT_RUNTIME_WORKLOAD_SCHEMA)
+assert.equal(manifest.schemas.runtimeProvider.invocationContract, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
+assert.equal(manifest.schemas.runtimeProvider.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
+assert.equal(manifest.schemas.runtimeProvider.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
+assert.equal(manifest.schemas.runtimeProvider.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
+assert.equal(manifest.schemas.hostDelegation.request, HOST_DELEGATION_REQUEST_SCHEMA)
+assert.equal(manifest.schemas.hostDelegation.result, HOST_DELEGATION_RESULT_SCHEMA)
+assert.equal(manifest.schemas.hostDelegation.event, HOST_DELEGATION_EVENT_SCHEMA)
 assert.equal(manifest.schemas.runtimePackage.executionInput, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA)
 assert.equal(manifest.schemas.runtimePackage.executionResult, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runnerWorkspace.prepareResult, RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA)

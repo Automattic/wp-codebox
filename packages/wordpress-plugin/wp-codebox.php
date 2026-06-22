@@ -51,6 +51,7 @@ require_once __DIR__ . '/src/class-wp-codebox-fanout-aggregation.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-process-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-run-result-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-outcome-classifier.php';
+require_once __DIR__ . '/src/class-wp-codebox-runtime-provider-registry.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
@@ -68,6 +69,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 WP_Codebox_Agents_API_Adapter::register_runtime_profiles();
+WP_Codebox_Agents_API_Adapter::register_runtime_provider();
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();
 

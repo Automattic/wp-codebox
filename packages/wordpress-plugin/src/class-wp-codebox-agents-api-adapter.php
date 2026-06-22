@@ -151,6 +151,23 @@ final class WP_Codebox_Agents_API_Adapter {
 		add_filter( 'wp_codebox_browser_runtime_resolved_tools_filter', array( self::class, 'runtime_resolved_tools_filter' ) );
 	}
 
+	public static function register_runtime_provider(): void {
+		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) ) {
+			return;
+		}
+
+		WP_Codebox_Runtime_Provider_Registry::register(
+			'agents-api-adapter',
+			array( new self(), 'run_runtime_package' ),
+			array(
+				'default'      => true,
+				'label'        => 'Agents API runtime adapter',
+				'kind'         => 'ability-adapter',
+				'capabilities' => array( 'runtime-package' ),
+			)
+		);
+	}
+
 	/** @return array<string,string> */
 	public static function browser_runtime_default_invocation(): array {
 		return array(
