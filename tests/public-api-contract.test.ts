@@ -30,6 +30,7 @@ import {
   RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
+import * as playgroundPublicApi from "../packages/runtime-playground/src/public.js"
 
 const root = new URL("..", import.meta.url)
 
@@ -230,6 +231,13 @@ assert.deepEqual(fuzzSuiteResultEnvelope({
   ],
 }).summary, { total: 2, passed: 1, failed: 1, error: 0, skipped: 0 })
 assert.equal(fuzzSuiteResultEnvelope({ suite: { id: "ability-boundary" } }).schema, FUZZ_SUITE_RESULT_SCHEMA)
+assert.equal(typeof playgroundPublicApi.runWordPressWpCli, "function")
+assert.equal(typeof playgroundPublicApi.runWordPressPhp, "function")
+assert.equal(typeof playgroundPublicApi.requestWordPressRest, "function")
+assert.equal(typeof playgroundPublicApi.runWordPressBrowserAction, "function")
+assert.equal(typeof playgroundPublicApi.probeWordPressBrowser, "function")
+assert.equal(typeof playgroundPublicApi.openWordPressEditor, "function")
+assert.equal(typeof playgroundPublicApi.collectWordPressArtifacts, "function")
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
 assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))

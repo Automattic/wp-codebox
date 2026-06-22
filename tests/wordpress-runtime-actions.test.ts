@@ -8,7 +8,7 @@ import {
   runWordPressPhp,
   runWordPressWpCli,
   type WordPressRuntimeActionEpisode,
-} from "../packages/runtime-core/src/public.js"
+} from "../packages/runtime-playground/src/public.js"
 
 const calls: Array<{ command: string; args: string[]; kind?: string; timeoutMs?: number }> = []
 

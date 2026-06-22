@@ -33,8 +33,10 @@ Use these package entrypoints from external integrations:
   runtime backend.
 - `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
   for creating Playground-backed WordPress runtimes and episodes, running episode
-  actions with lifecycle hooks, collecting runtime/episode artifacts, and reading
-  browser artifact metrics through the published Playground facade.
+  actions with lifecycle hooks, running typed WordPress actions such as WP-CLI,
+  PHP, REST requests, browser probes/actions, and editor opens, collecting
+  runtime/episode artifacts, and reading browser artifact metrics through the
+  published Playground facade.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
@@ -83,7 +85,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
   policy, and command result contracts. Playground-backed WordPress consumers can use
   `createWordPressRuntime()`, `createWordPressEpisode()`, and
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
-  instead of composing core runtime internals directly.
+  instead of composing core runtime internals directly. The same entrypoint also
+  exposes consumer-safe action helpers: `runWordPressWpCli()`,
+  `runWordPressPhp()`, `requestWordPressRest()`, `runWordPressBrowserAction()`,
+  `probeWordPressBrowser()`, and `openWordPressEditor()`.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
