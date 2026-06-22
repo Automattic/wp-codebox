@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { commandArgValue, commandDiagnosticsCaptureArgs, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type ExecutionSpec, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
@@ -486,12 +486,25 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
 }
 
 function defaultRuntimeComponents(): AgentRuntimeComponent[] {
-  return defaultRuntimeComponentPaths()
-    .map((source) => componentFromPath(source, undefined, undefined, "mu-plugin", "component"))
+  return defaultRuntimeComponentSources()
+    .map((component) => componentFromPath(component.source, component.slug, undefined, "mu-plugin", "component"))
 }
 
-function defaultRuntimeComponentPaths(): string[] {
-  return [process.env.WP_CODEBOX_AGENTS_API_PATH, process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? ""]
+function defaultRuntimeComponentSources(): Array<{ source: string; slug?: string }> {
+  const dataMachine = defaultSiblingComponentPath("data-machine", "data-machine.php", process.env.WP_CODEBOX_DATA_MACHINE_PATH)
+  const dataMachineCode = defaultSiblingComponentPath("data-machine-code", "data-machine-code.php", process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH)
+  const agentsApi = defaultAgentsApiPath(dataMachine)
+
+  return uniqueComponentSources([
+    dataMachine ? { source: dataMachine, slug: "data-machine" } : undefined,
+    dataMachineCode ? { source: dataMachineCode, slug: "data-machine-code" } : undefined,
+    agentsApi ? { source: agentsApi, slug: "agents-api" } : undefined,
+    ...configuredRuntimeComponentPaths().map((source) => ({ source })),
+  ])
+}
+
+function configuredRuntimeComponentPaths(): string[] {
+  return [process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? ""]
     .filter(Boolean)
     .join(",")
     .split(/[,:]/)
@@ -499,6 +512,43 @@ function defaultRuntimeComponentPaths(): string[] {
     .filter(Boolean)
     .map((value) => resolve(value))
     .filter((source) => existsSync(source))
+}
+
+function defaultAgentsApiPath(dataMachinePath = ""): string {
+  const explicit = process.env.WP_CODEBOX_AGENTS_API_PATH?.trim()
+  if (explicit) {
+    return explicit
+  }
+  if (dataMachinePath) {
+    return ""
+  }
+
+  return defaultSiblingComponentPath("agents-api", "agents-api.php")
+}
+
+function defaultSiblingComponentPath(slug: string, pluginFile: string, explicit = ""): string {
+  if (explicit.trim()) {
+    return explicit.trim()
+  }
+  return [
+    resolve(process.cwd(), "..", slug),
+    resolve(dirname(process.cwd()), slug),
+  ].find((source) => existsSync(resolve(source, pluginFile))) ?? ""
+}
+
+function uniqueComponentSources(components: Array<{ source: string; slug?: string } | undefined>): Array<{ source: string; slug?: string }> {
+  const seen = new Set<string>()
+  return components.filter((component): component is { source: string; slug?: string } => {
+    if (!component?.source) {
+      return false
+    }
+    const source = resolve(component.source)
+    if (seen.has(source)) {
+      return false
+    }
+    seen.add(source)
+    return true
+  })
 }
 
 function providerPluginSlugs(args: string[]): string[] {

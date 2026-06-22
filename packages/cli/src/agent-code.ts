@@ -138,6 +138,28 @@ function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agen
         return array('success' => true, 'agent' => $agent_slug, 'existing' => true);
     }
 
+    if (class_exists('DataMachine\\Core\\Database\\Agents\\Agents')) {
+        $owner_id = function_exists('get_current_user_id') ? (int) get_current_user_id() : 0;
+        if ($owner_id <= 0) {
+            $owner_id = 1;
+        }
+        $default_config = array_filter(array(
+            'default_provider' => (string) ($agent_input['provider'] ?? ''),
+            'default_model' => (string) ($agent_input['model'] ?? ''),
+        ), static fn($value): bool => '' !== $value);
+        try {
+            $agent_id = (new DataMachine\\Core\\Database\\Agents\\Agents())->create_if_missing(
+                $agent_slug,
+                'WP Codebox Sandbox',
+                $owner_id,
+                $default_config
+            );
+            return array('success' => $agent_id > 0, 'agent' => $agent_slug, 'agent_id' => $agent_id, 'created' => $agent_id > 0, 'runtime' => 'data-machine');
+        } catch (Throwable $e) {
+            return array('success' => false, 'agent' => $agent_slug, 'reason' => 'data_machine_agent_create_failed', 'message' => $e->getMessage());
+        }
+    }
+
     if (!class_exists('WP_Agents_Registry')) {
         return array('success' => false, 'agent' => $agent_slug, 'reason' => 'agent_registry_unavailable');
     }

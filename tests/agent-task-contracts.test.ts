@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
@@ -191,18 +192,28 @@ assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
 
 const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
+const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
+const originalDataMachinePath = process.env.WP_CODEBOX_DATA_MACHINE_PATH
+const originalDataMachineCodePath = process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
 const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 try {
+  const workspaceRoot = join(agentRecipeTemp, "workspace")
+  mkdirSync(workspaceRoot)
+  chdir(workspaceRoot)
+
   const agentsApiSource = join(agentRecipeTemp, "agents-api")
   mkdirSync(agentsApiSource)
   writeFileSync(join(agentsApiSource, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
-  process.env.WP_CODEBOX_AGENTS_API_PATH = agentsApiSource
-  const runtimeEngineSource = join(agentRecipeTemp, "runtime-engine")
-  mkdirSync(runtimeEngineSource)
-  writeFileSync(join(runtimeEngineSource, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
-  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = runtimeEngineSource
+  const dataMachineSource = join(agentRecipeTemp, "data-machine")
+  const bundledAgentsApiSource = join(dataMachineSource, "vendor", "wordpress", "agents-api")
+  mkdirSync(bundledAgentsApiSource, { recursive: true })
+  writeFileSync(join(dataMachineSource, "data-machine.php"), "<?php\n/* Plugin Name: Data Machine */\n")
+  writeFileSync(join(bundledAgentsApiSource, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
+  const dataMachineCodeSource = join(agentRecipeTemp, "data-machine-code")
+  mkdirSync(dataMachineCodeSource)
+  writeFileSync(join(dataMachineCodeSource, "data-machine-code.php"), "<?php\n/* Plugin Name: Data Machine Code */\n")
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
@@ -222,8 +233,12 @@ try {
   }, normalizeTaskInput({ goal: "Verify generic runtime propagation" }), "latest")
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), true)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), true)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), false)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), true)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), true)
 
   const recipe = buildAgentTaskRecipe({
     goal: "Verify extra plugin propagation",
@@ -257,7 +272,8 @@ try {
   assert.equal(agentsApiPlugin?.activate, false)
   assert.equal(agentsApiPlugin?.loadAs, "mu-plugin")
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
-  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "runtime-engine" && component.loadAs === "mu-plugin"), true)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine" && component.loadAs === "mu-plugin"), true)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code" && component.loadAs === "mu-plugin"), true)
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => String(component.mountedPath).includes("/contained-runtime/")), true)
   assert.equal(JSON.stringify(recipe).includes("wp-codebox-default-agent-runtime-substrate"), false)
   assert.equal(JSON.stringify(recipe).includes("wp-codebox-runtime"), false)
@@ -288,10 +304,21 @@ try {
   assert.equal(dryRun.success, true)
   assert.deepEqual(dryRun.plan?.runtime.blueprint, { steps: [] })
 } finally {
+  chdir(originalCwd)
   if (originalAgentsApiPath === undefined) {
     delete process.env.WP_CODEBOX_AGENTS_API_PATH
   } else {
     process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
+  }
+  if (originalDataMachinePath === undefined) {
+    delete process.env.WP_CODEBOX_DATA_MACHINE_PATH
+  } else {
+    process.env.WP_CODEBOX_DATA_MACHINE_PATH = originalDataMachinePath
+  }
+  if (originalDataMachineCodePath === undefined) {
+    delete process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH
+  } else {
+    process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH = originalDataMachineCodePath
   }
   if (originalRuntimeComponentPaths === undefined) {
     delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
