@@ -1205,10 +1205,10 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
-  async runRestRouteInventory(): Promise<string> {
+  async runRestRouteInventory(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runRuntimeInventoryCommand({
-      command: "wordpress.rest-route-inventory",
+      command: spec.command,
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
       runtimeSpec: this.spec,
       schema: "wp-codebox/wordpress-rest-route-inventory/v1",
@@ -1226,6 +1226,18 @@ class PlaygroundRuntime implements Runtime {
       schema: "wp-codebox/wordpress-admin-page-inventory/v1",
       server,
       surface: "admin",
+    })
+  }
+
+  async runDatabaseInventory(): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeInventoryCommand({
+      command: "wordpress.inventory-database",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      schema: "wp-codebox/wordpress-db-inventory/v1",
+      server,
+      surface: "database",
     })
   }
 

@@ -18,6 +18,7 @@ interface PlaygroundCommandRuntime {
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageInventory(spec: ExecutionSpec): Promise<string>
+  runDatabaseInventory(spec: ExecutionSpec): Promise<string>
   runFrontendUrlInventory(spec: ExecutionSpec): Promise<string>
   runAdminPageLoad(spec: ExecutionSpec): Promise<string>
   runFrontendPageLoad(spec: ExecutionSpec): Promise<string>

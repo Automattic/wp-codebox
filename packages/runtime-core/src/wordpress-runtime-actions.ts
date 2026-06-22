@@ -118,6 +118,10 @@ export function inventoryWordPressAdminPages(episode: WordPressRuntimeActionEpis
   return runWordPressCommand(episode, "wordpress.admin-page-inventory", [], options.timeoutMs)
 }
 
+export function inventoryWordPressDatabase(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeInventoryOptions = {}): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.inventory-database", [], options.timeoutMs)
+}
+
 export function inventoryWordPressFrontendUrls(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeInventoryOptions = {}): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.frontend-url-inventory", [], options.timeoutMs)
 }

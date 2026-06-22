@@ -1,7 +1,7 @@
 import { commaListArg } from "./command-args.js"
 
 export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
-export type RuntimeInventorySurface = "rest" | "admin" | "frontend"
+export type RuntimeInventorySurface = "rest" | "admin" | "database" | "frontend"
 
 const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks"] as const satisfies readonly RuntimeDiscoverySurface[]
 
@@ -248,19 +248,24 @@ function runtime_discovery_database(): array {
         $name = (string) $name;
         $base_name = isset($core_names[$name]) ? $core_names[$name] : (str_starts_with($name, $wpdb->prefix) ? substr($name, strlen($wpdb->prefix)) : $name);
         $columns = array();
-        $described = $wpdb->get_results('DESCRIBE ' . $name, ARRAY_A);
+        $quoted_name = runtime_discovery_sql_identifier($name);
+        $described = $wpdb->get_results('DESCRIBE ' . $quoted_name, ARRAY_A);
         foreach ((array) $described as $column) {
             $columns[] = array('name' => (string) ($column['Field'] ?? ''), 'type' => (string) ($column['Type'] ?? ''), 'nullable' => strtoupper((string) ($column['Null'] ?? '')) === 'YES', 'key' => (string) ($column['Key'] ?? ''), 'default' => array_key_exists('Default', $column) && $column['Default'] !== null ? (string) $column['Default'] : null, 'extra' => (string) ($column['Extra'] ?? ''));
         }
         $indexes = array();
-        foreach ((array) $wpdb->get_results('SHOW INDEX FROM ' . $name, ARRAY_A) as $index) {
+        foreach ((array) $wpdb->get_results('SHOW INDEX FROM ' . $quoted_name, ARRAY_A) as $index) {
             $indexes[] = array('name' => (string) ($index['Key_name'] ?? ''), 'column' => (string) ($index['Column_name'] ?? ''), 'unique' => isset($index['Non_unique']) ? ((int) $index['Non_unique'] === 0) : false, 'sequence' => isset($index['Seq_in_index']) ? (int) $index['Seq_in_index'] : null);
         }
         $status_rows = $wpdb->get_results($wpdb->prepare('SHOW TABLE STATUS LIKE %s', $name), ARRAY_A);
-        $status = is_array($status_rows) && isset($status_rows[0]) ? array('engine' => isset($status_rows[0]['Engine']) ? (string) $status_rows[0]['Engine'] : '', 'rows' => isset($status_rows[0]['Rows']) ? (int) $status_rows[0]['Rows'] : null, 'collation' => isset($status_rows[0]['Collation']) ? (string) $status_rows[0]['Collation'] : '') : null;
+        $status = is_array($status_rows) && isset($status_rows[0]) ? array('engine' => isset($status_rows[0]['Engine']) ? (string) $status_rows[0]['Engine'] : '', 'rows' => isset($status_rows[0]['Rows']) ? (int) $status_rows[0]['Rows'] : null, 'collation' => isset($status_rows[0]['Collation']) ? (string) $status_rows[0]['Collation'] : '', 'dataBytes' => isset($status_rows[0]['Data_length']) ? (int) $status_rows[0]['Data_length'] : 0, 'indexBytes' => isset($status_rows[0]['Index_length']) ? (int) $status_rows[0]['Index_length'] : 0, 'totalBytes' => (isset($status_rows[0]['Data_length']) ? (int) $status_rows[0]['Data_length'] : 0) + (isset($status_rows[0]['Index_length']) ? (int) $status_rows[0]['Index_length'] : 0)) : null;
         $tables[] = array('name' => $name, 'baseName' => $base_name, 'classification' => isset($core_names[$name]) ? 'core' : (str_starts_with($name, $wpdb->prefix) ? 'prefixed' : 'external'), 'columns' => $columns, 'indexes' => $indexes, 'status' => $status);
     }
     return array('payload' => array('schema' => 'wp-codebox/wordpress-db-schema-discovery/v1', 'prefix' => $wpdb->prefix, 'tables' => $tables), 'diagnostics' => array());
+}
+
+function runtime_discovery_sql_identifier(string $name): string {
+    return chr(96) . str_replace(chr(96), chr(96) . chr(96), $name) . chr(96);
 }
 
 function runtime_discovery_frontend(): array {
@@ -349,6 +354,35 @@ if ('${surface}' === 'frontend') {
         );
     }
     $runtime_inventory_result['urls'] = $runtime_inventory_urls;
+}
+
+if ('${surface}' === 'database') {
+    $runtime_inventory_tables = array();
+    $runtime_inventory_totals = array('tableCount' => 0, 'rowCount' => 0, 'columnCount' => 0, 'indexCount' => 0, 'dataBytes' => 0, 'indexBytes' => 0, 'totalBytes' => 0);
+    foreach ((array) ($runtime_inventory_payload['tables'] ?? array()) as $runtime_inventory_table) {
+        if (!is_array($runtime_inventory_table)) {
+            continue;
+        }
+        $runtime_inventory_status = is_array($runtime_inventory_table['status'] ?? null) ? $runtime_inventory_table['status'] : array();
+        $runtime_inventory_data_bytes = isset($runtime_inventory_status['dataBytes']) ? (int) $runtime_inventory_status['dataBytes'] : 0;
+        $runtime_inventory_index_bytes = isset($runtime_inventory_status['indexBytes']) ? (int) $runtime_inventory_status['indexBytes'] : 0;
+        $runtime_inventory_row_count = isset($runtime_inventory_status['rows']) ? (int) $runtime_inventory_status['rows'] : 0;
+        $runtime_inventory_table['engine'] = (string) ($runtime_inventory_status['engine'] ?? '');
+        $runtime_inventory_table['rowCount'] = $runtime_inventory_row_count;
+        $runtime_inventory_table['dataBytes'] = $runtime_inventory_data_bytes;
+        $runtime_inventory_table['indexBytes'] = $runtime_inventory_index_bytes;
+        $runtime_inventory_table['totalBytes'] = isset($runtime_inventory_status['totalBytes']) ? (int) $runtime_inventory_status['totalBytes'] : $runtime_inventory_data_bytes + $runtime_inventory_index_bytes;
+        $runtime_inventory_tables[] = $runtime_inventory_table;
+        $runtime_inventory_totals['rowCount'] += $runtime_inventory_table['rowCount'];
+        $runtime_inventory_totals['columnCount'] += count((array) ($runtime_inventory_table['columns'] ?? array()));
+        $runtime_inventory_totals['indexCount'] += count((array) ($runtime_inventory_table['indexes'] ?? array()));
+        $runtime_inventory_totals['dataBytes'] += $runtime_inventory_table['dataBytes'];
+        $runtime_inventory_totals['indexBytes'] += $runtime_inventory_table['indexBytes'];
+        $runtime_inventory_totals['totalBytes'] += $runtime_inventory_table['totalBytes'];
+    }
+    $runtime_inventory_totals['tableCount'] = count($runtime_inventory_tables);
+    $runtime_inventory_result['tables'] = $runtime_inventory_tables;
+    $runtime_inventory_result['totals'] = $runtime_inventory_totals;
 }
 
 echo wp_json_encode($runtime_inventory_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`

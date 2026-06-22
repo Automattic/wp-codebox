@@ -666,7 +666,7 @@ export async function runRuntimeInventoryCommand({
   runtimeSpec: RuntimeCreateSpec
   schema: string
   server: PlaygroundCliServer
-  surface: "rest" | "admin" | "frontend"
+  surface: "rest" | "admin" | "database" | "frontend"
 }): Promise<string> {
   const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
   assertPlaygroundResponseOk(command, response)

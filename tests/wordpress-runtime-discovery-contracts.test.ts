@@ -2,19 +2,21 @@ import assert from "node:assert/strict"
 
 import {
   WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
+  WORDPRESS_DATABASE_INVENTORY_SCHEMA,
   WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
   WORDPRESS_REST_MATRIX_SCHEMA,
   WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   type WordPressAdminPageInventory,
+  type WordPressDatabaseInventory,
   type WordPressFrontendUrlInventory,
   type WordPressRestRouteInventory,
   type WordPressRuntimeDiscoveryResult,
 } from "../packages/runtime-core/src/index.js"
 import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 import { getCommandDefinition, runtimeCommandDefinitions } from "../packages/runtime-core/src/command-registry.js"
-import { runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
+import { runtimeDiscoveryPhpCode, runtimeDiscoverySurfacesFromArgs, runtimeInventoryPhpCode } from "../packages/runtime-playground/src/runtime-discovery-command-handlers.js"
 import { runPhpJson } from "../scripts/test-kit.js"
 
 const result: WordPressRuntimeDiscoveryResult = {
@@ -76,14 +78,38 @@ const frontendInventory: WordPressFrontendUrlInventory = {
   publicQueryVars: [],
   diagnostics: [],
 }
+const databaseInventory: WordPressDatabaseInventory = {
+  schema: WORDPRESS_DATABASE_INVENTORY_SCHEMA,
+  command: "wordpress.inventory-database",
+  status: "ok",
+  prefix: "wp_",
+  tables: [{
+    name: "wp_posts",
+    baseName: "posts",
+    classification: "core",
+    engine: "InnoDB",
+    rowCount: 1,
+    dataBytes: 256,
+    indexBytes: 256,
+    totalBytes: 512,
+    columns: [{ name: "ID", type: "bigint unsigned", nullable: false, key: "PRI", default: null, extra: "auto_increment" }],
+    indexes: [{ name: "PRIMARY", column: "ID", unique: true, sequence: 1 }],
+    status: { engine: "InnoDB", rows: 1, collation: "utf8mb4_unicode_ci", dataBytes: 256, indexBytes: 256, totalBytes: 512 },
+  }],
+  totals: { tableCount: 1, rowCount: 1, columnCount: 1, indexCount: 1, dataBytes: 256, indexBytes: 256, totalBytes: 512 },
+  diagnostics: [],
+}
 
 assert.equal(restInventory.schema, "wp-codebox/wordpress-rest-route-inventory/v1")
 assert.equal(adminInventory.schema, "wp-codebox/wordpress-admin-page-inventory/v1")
+assert.equal(databaseInventory.schema, "wp-codebox/wordpress-db-inventory/v1")
 assert.equal(frontendInventory.schema, "wp-codebox/wordpress-frontend-url-inventory/v1")
 
 const inventoryDefinitions = [
   ["wordpress.rest-route-inventory", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
+  ["wordpress.inventory-rest-routes", "runRestRouteInventory", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA],
   ["wordpress.admin-page-inventory", "runAdminPageInventory", WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA],
+  ["wordpress.inventory-database", "runDatabaseInventory", WORDPRESS_DATABASE_INVENTORY_SCHEMA],
   ["wordpress.frontend-url-inventory", "runFrontendUrlInventory", WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA],
 ] as const
 
@@ -97,6 +123,7 @@ for (const [command, method, schema] of inventoryDefinitions) {
 
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restRouteInventory, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.adminPageInventory, WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.databaseInventory, WORDPRESS_DATABASE_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.frontendUrlInventory, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
@@ -159,6 +186,76 @@ assert.equal(route?.endpoints?.[0]?.args[0]?.description, "Item id")
 assert.deepEqual(route?.endpoints?.[0]?.args[1]?.enum, ["view", "edit"])
 assert.equal(route?.endpoints?.[0]?.args[1]?.defaultPresent, true)
 assert.deepEqual(route?.schema?.properties, ["id", "name"])
+
+const inventoryPhp = runtimeInventoryPhpCode("rest", "wordpress.inventory-rest-routes", WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA).replace(/^<\?php\n/, "")
+const inventoryDiscovered = await runPhpJson<WordPressRestRouteInventory>(`
+function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function rest_get_server() {
+    return new class {
+        public function get_routes() {
+            return array(
+                '/demo/v1/items' => array(
+                    array(
+                        'methods' => array( 'GET' => true ),
+                        'permission_callback' => '__return_true',
+                        'args' => array(),
+                    ),
+                ),
+            );
+        }
+    };
+}
+${inventoryPhp}
+`)
+
+assert.equal(inventoryDiscovered.command, "wordpress.inventory-rest-routes")
+assert.equal(inventoryDiscovered.schema, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
+assert.equal(inventoryDiscovered.routes[0]?.route, "/demo/v1/items")
+
+const databaseInventoryPhp = runtimeInventoryPhpCode("database", "wordpress.inventory-database", WORDPRESS_DATABASE_INVENTORY_SCHEMA).replace(/^<\?php\n/, "")
+const databaseDiscovered = await runPhpJson<WordPressDatabaseInventory>(`
+define( 'ARRAY_A', 'ARRAY_A' );
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+class RuntimeDiscoveryWpdb {
+    public $prefix = 'wp_';
+    public function tables( $scope ) { return array( 'posts', 'options' ); }
+    public function esc_like( $text ) { return addcslashes( $text, '_%\\\\' ); }
+    public function prepare( $query, $value ) { return str_replace( '%s', "'" . str_replace( "'", "''", $value ) . "'", $query ); }
+    public function get_col( $query ) { return array( 'wp_posts', 'wp_wc_orders' ); }
+    public function get_results( $query, $format = null ) {
+        if ( str_starts_with( $query, 'DESCRIBE ' ) ) {
+            return array( array( 'Field' => 'ID', 'Type' => 'bigint unsigned', 'Null' => 'NO', 'Key' => 'PRI', 'Default' => null, 'Extra' => 'auto_increment' ) );
+        }
+        if ( str_starts_with( $query, 'SHOW INDEX FROM ' ) ) {
+            return array( array( 'Key_name' => 'PRIMARY', 'Column_name' => 'ID', 'Non_unique' => '0', 'Seq_in_index' => '1' ) );
+        }
+        if ( str_starts_with( $query, 'SHOW TABLE STATUS LIKE ' ) ) {
+            return array( array( 'Engine' => 'InnoDB', 'Rows' => '12', 'Data_length' => '256', 'Index_length' => '128', 'Collation' => 'utf8mb4_unicode_ci' ) );
+        }
+        return array();
+    }
+}
+$GLOBALS['wpdb'] = new RuntimeDiscoveryWpdb();
+$wpdb = $GLOBALS['wpdb'];
+${databaseInventoryPhp}
+`)
+
+assert.equal(databaseDiscovered.command, "wordpress.inventory-database")
+assert.equal(databaseDiscovered.schema, WORDPRESS_DATABASE_INVENTORY_SCHEMA)
+assert.equal(databaseDiscovered.prefix, "wp_")
+assert.equal(databaseDiscovered.tables[0]?.baseName, "posts")
+assert.equal(databaseDiscovered.tables[0]?.classification, "core")
+assert.equal(databaseDiscovered.tables[1]?.baseName, "wc_orders")
+assert.equal(databaseDiscovered.tables[1]?.classification, "prefixed")
+assert.equal(databaseDiscovered.tables[1]?.columns[0]?.name, "ID")
+assert.equal(databaseDiscovered.tables[1]?.indexes?.[0]?.unique, true)
+assert.equal(databaseDiscovered.tables[1]?.status?.rows, 12)
+assert.equal(databaseDiscovered.tables[1]?.rowCount, 12)
+assert.equal(databaseDiscovered.tables[1]?.dataBytes, 256)
+assert.equal(databaseDiscovered.tables[1]?.indexBytes, 128)
+assert.equal(databaseDiscovered.tables[1]?.totalBytes, 384)
+assert.deepEqual(databaseDiscovered.totals, { tableCount: 2, rowCount: 24, columnCount: 2, indexCount: 2, dataBytes: 512, indexBytes: 256, totalBytes: 768 })
 
 const adminDiscoveryPhp = runtimeDiscoveryPhpCode(["admin"]).replace(/^<\?php\n/, "")
 assert.match(adminDiscoveryPhp, /wp-admin\/menu\.php/)

@@ -1,11 +1,14 @@
 export const WORDPRESS_RUNTIME_DISCOVERY_SCHEMA = "wp-codebox/wordpress-runtime-discovery/v1" as const
 export const WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA = "wp-codebox/wordpress-rest-route-inventory/v1" as const
 export const WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA = "wp-codebox/wordpress-admin-page-inventory/v1" as const
+export const WORDPRESS_DATABASE_INVENTORY_SCHEMA = "wp-codebox/wordpress-db-inventory/v1" as const
 export const WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA = "wp-codebox/wordpress-frontend-url-inventory/v1" as const
 
 export type WordPressRuntimeInventoryCommand =
   | "wordpress.rest-route-inventory"
+  | "wordpress.inventory-rest-routes"
   | "wordpress.admin-page-inventory"
+  | "wordpress.inventory-database"
   | "wordpress.frontend-url-inventory"
 
 export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
@@ -38,7 +41,7 @@ export interface WordPressRestRouteDiscovery {
 
 export interface WordPressRestRouteInventory {
   schema: typeof WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA
-  command: "wordpress.rest-route-inventory"
+  command: "wordpress.rest-route-inventory" | "wordpress.inventory-rest-routes"
   status: "ok" | "unsupported"
   routes: WordPressRestRouteDescriptor[]
   namespaces: string[]
@@ -124,10 +127,35 @@ export interface WordPressDatabaseSchemaDiscovery {
   tables: WordPressDatabaseTableDescriptor[]
 }
 
+export interface WordPressDatabaseInventory {
+  schema: typeof WORDPRESS_DATABASE_INVENTORY_SCHEMA
+  command: "wordpress.inventory-database"
+  status: "ok" | "unsupported"
+  prefix: string
+  tables: WordPressDatabaseTableDescriptor[]
+  totals: WordPressDatabaseInventoryTotals
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+}
+
+export interface WordPressDatabaseInventoryTotals {
+  tableCount: number
+  rowCount: number
+  columnCount: number
+  indexCount: number
+  dataBytes: number
+  indexBytes: number
+  totalBytes: number
+}
+
 export interface WordPressDatabaseTableDescriptor {
   name: string
   baseName: string
   classification: "core" | "prefixed" | "external"
+  engine?: string
+  rowCount?: number
+  dataBytes?: number
+  indexBytes?: number
+  totalBytes?: number
   columns: WordPressDatabaseColumnDescriptor[]
   indexes?: WordPressDatabaseIndexDescriptor[]
   status?: WordPressDatabaseTableStatus | null
@@ -153,6 +181,9 @@ export interface WordPressDatabaseTableStatus {
   engine: string
   rows: number | null
   collation: string
+  dataBytes?: number
+  indexBytes?: number
+  totalBytes?: number
 }
 
 export interface WordPressFrontendRouteDiscovery {

@@ -2,7 +2,7 @@ import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROB
 import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA } from "./wordpress-page-load-contracts.js"
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
-import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -410,6 +410,20 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runRestRouteInventory" },
   },
   {
+    id: "wordpress.inventory-rest-routes",
+    description: "Inventory registered WordPress REST routes for fuzzing seed discovery using rest_get_server()->get_routes().",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-rest-route-inventory/v1 JSON with route, namespace, methods, bounded endpoint permission descriptors, bounded arg/schema descriptors, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, {
+      routes: { type: "array" },
+      namespaces: { type: "array" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.inventory-rest-routes.",
+    recipe: true,
+    handler: { kind: "playground", method: "runRestRouteInventory" },
+  },
+  {
     id: "wordpress.admin-page-inventory",
     description: "Inventory already-loaded WordPress admin menu pages for fuzzing target discovery without crawling the browser UI.",
     acceptedArgs: [],
@@ -423,6 +437,21 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.admin-page-inventory.",
     recipe: true,
     handler: { kind: "playground", method: "runAdminPageInventory" },
+  },
+  {
+    id: "wordpress.inventory-database",
+    description: "Inventory WordPress database tables and bounded schema metadata for fuzzing coverage discovery without reading row data.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-db-inventory/v1 JSON with database prefix, table descriptors, columns, indexes, row/byte totals, best-effort table status, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_DATABASE_INVENTORY_SCHEMA, {
+      prefix: { type: "string" },
+      tables: { type: "array" },
+      totals: { type: "object" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.inventory-database.",
+    recipe: true,
+    handler: { kind: "playground", method: "runDatabaseInventory" },
   },
   {
     id: "wordpress.frontend-url-inventory",

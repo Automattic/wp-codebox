@@ -89,6 +89,53 @@ assert.equal(noExecutor.status, "skipped")
 assert.deepEqual(noExecutor.coverageSummary?.skippedReasons, [{ reason: "fuzz_suite_executor_unavailable", count: 1, caseIds: ["case-skipped"] }])
 assert.equal(noExecutor.cases[0]?.diagnostics[0]?.code, "fuzz_suite_executor_unavailable")
 
+const emptyRequiredArtifacts = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-empty-required-artifacts",
+  cases: [],
+  metadata: {
+    artifacts: { expected: [{ name: "fuzz-report", required: true }] },
+  },
+}))
+assert.equal(emptyRequiredArtifacts.status, "error")
+assert.equal(emptyRequiredArtifacts.success, false)
+assert.deepEqual(emptyRequiredArtifacts.diagnostics.map((diagnostic) => diagnostic.code), [
+  "fuzz_suite_empty_cases_for_declared_contract",
+  "fuzz_suite_required_artifacts_missing",
+])
+
+const emptyCoverageContract = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-empty-coverage",
+  cases: [],
+  metadata: {
+    coverage: { surface_ids: ["rest-api"], operations: ["route-inventory"] },
+  },
+}))
+assert.equal(emptyCoverageContract.status, "error")
+assert.equal(emptyCoverageContract.diagnostics[0]?.code, "fuzz_suite_empty_cases_for_declared_contract")
+
+const declaredOnlyEmpty = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-declared-only-empty",
+  cases: [],
+  metadata: {
+    readiness: { level: "declared" },
+    artifacts: { expected: [{ name: "placeholder-report", required: true }] },
+    coverage: { surface_ids: ["rest-api"] },
+  },
+}))
+assert.equal(declaredOnlyEmpty.status, "passed")
+assert.deepEqual(declaredOnlyEmpty.diagnostics, [])
+
+const blockedEmpty = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-blocked-empty",
+  cases: [],
+  metadata: {
+    generic_primitive: { status: "blocked" },
+    artifacts: { expected: [{ name: "blocked-report", required: true }] },
+  },
+}))
+assert.equal(blockedEmpty.status, "passed")
+assert.deepEqual(blockedEmpty.diagnostics, [])
+
 const runtimeActions: string[] = []
 const runtimeActionResult = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-episode-actions",
