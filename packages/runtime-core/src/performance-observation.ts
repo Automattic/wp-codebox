@@ -60,6 +60,13 @@ export interface PerformanceObservationBrowser {
   admin?: Record<string, unknown>
 }
 
+export interface PerformanceObservationArtifactRef {
+  kind?: string
+  id?: string
+  path?: string
+  digest?: unknown
+}
+
 export interface PerformanceObservation {
   schema: typeof PERFORMANCE_OBSERVATION_SCHEMA
   command?: string
@@ -70,6 +77,7 @@ export interface PerformanceObservation {
   hooks?: PerformanceObservationHooks
   network?: PerformanceObservationNetwork
   browser?: PerformanceObservationBrowser
+  artifactRefs?: PerformanceObservationArtifactRef[]
   metadata?: Record<string, unknown>
 }
 
@@ -84,6 +92,7 @@ export function performanceObservation(input: Omit<PerformanceObservation, "sche
     hooks: input.hooks,
     network: input.network,
     browser: input.browser,
+    artifactRefs: input.artifactRefs,
     metadata: input.metadata,
   })
 }

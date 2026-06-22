@@ -32,6 +32,9 @@ export function restRequestPhpCode(input: RestRequestCommandInput): string {
   const userSessionMetadata = input.userSession?.metadata
   return `define( 'REST_REQUEST', true );
 $wp_codebox_started_at = microtime( true );
+$wp_codebox_observation_started_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
+$wp_codebox_start_memory = memory_get_usage( true );
+$wp_codebox_query_start = isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries ) ? count( $GLOBALS['wpdb']->queries ) : 0;
 $wp_codebox_method = ${JSON.stringify(input.method)};
 $wp_codebox_path = ${JSON.stringify(input.path)};
 $wp_codebox_headers = json_decode( ${JSON.stringify(JSON.stringify(input.headers))}, true );
@@ -79,6 +82,67 @@ $wp_codebox_response = rest_do_request( $wp_codebox_request );
 $wp_codebox_server = rest_get_server();
 $wp_codebox_data = $wp_codebox_server->response_to_data( $wp_codebox_response, false );
 $wp_codebox_finished_at = microtime( true );
+$wp_codebox_observation_finished_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
+$wp_codebox_end_memory = memory_get_usage( true );
+$wp_codebox_queries = array();
+$wp_codebox_query_count = 0;
+$wp_codebox_query_total_ms = 0.0;
+if ( isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries ) ) {
+    foreach ( array_slice( $GLOBALS['wpdb']->queries, $wp_codebox_query_start ) as $wp_codebox_query ) {
+        $wp_codebox_sql = is_array( $wp_codebox_query ) && isset( $wp_codebox_query[0] ) ? (string) $wp_codebox_query[0] : '';
+        if ( '' === $wp_codebox_sql ) {
+            continue;
+        }
+        $wp_codebox_query_count++;
+        $wp_codebox_elapsed_ms = is_array( $wp_codebox_query ) && isset( $wp_codebox_query[1] ) ? round( ( (float) $wp_codebox_query[1] ) * 1000, 3 ) : null;
+        if ( null !== $wp_codebox_elapsed_ms ) {
+            $wp_codebox_query_total_ms += $wp_codebox_elapsed_ms;
+        }
+        $wp_codebox_fingerprint = preg_replace( '/\\s+/', ' ', trim( $wp_codebox_sql ) );
+        $wp_codebox_fingerprint = preg_replace( "/'(?:''|[^'])*'/", "'?'", $wp_codebox_fingerprint );
+        $wp_codebox_fingerprint = preg_replace( '/\\b\\d+(?:\\.\\d+)?\\b/', '?', $wp_codebox_fingerprint );
+        $wp_codebox_key = hash( 'sha256', $wp_codebox_fingerprint );
+        if ( ! isset( $wp_codebox_queries[ $wp_codebox_key ] ) ) {
+            $wp_codebox_queries[ $wp_codebox_key ] = array(
+                'fingerprint' => $wp_codebox_fingerprint,
+                'count' => 0,
+                'sampleMs' => $wp_codebox_elapsed_ms,
+                'totalTimeMs' => 0,
+                'caller' => is_array( $wp_codebox_query ) && isset( $wp_codebox_query[2] ) ? substr( (string) $wp_codebox_query[2], 0, 240 ) : null,
+            );
+        }
+        $wp_codebox_queries[ $wp_codebox_key ]['count']++;
+        if ( null !== $wp_codebox_elapsed_ms ) {
+            $wp_codebox_queries[ $wp_codebox_key ]['totalTimeMs'] = round( $wp_codebox_queries[ $wp_codebox_key ]['totalTimeMs'] + $wp_codebox_elapsed_ms, 3 );
+        }
+    }
+}
+$wp_codebox_fingerprints = array_values( $wp_codebox_queries );
+$wp_codebox_repeated_queries = array_values( array_filter( $wp_codebox_fingerprints, static function ( $wp_codebox_query ) {
+    return isset( $wp_codebox_query['count'] ) && $wp_codebox_query['count'] > 1;
+} ) );
+$wp_codebox_performance = array(
+    'schema' => 'wp-codebox/performance-observation/v1',
+    'command' => 'wordpress.rest-request',
+    'target' => $wp_codebox_route,
+    'timing' => array(
+        'startedAt' => $wp_codebox_observation_started_at,
+        'finishedAt' => $wp_codebox_observation_finished_at,
+        'durationMs' => round( ( $wp_codebox_finished_at - $wp_codebox_started_at ) * 1000, 3 ),
+    ),
+    'memory' => array(
+        'startBytes' => $wp_codebox_start_memory,
+        'endBytes' => $wp_codebox_end_memory,
+        'deltaBytes' => $wp_codebox_end_memory - $wp_codebox_start_memory,
+        'peakBytes' => memory_get_peak_usage( true ),
+    ),
+    'database' => array(
+        'queryCount' => $wp_codebox_query_count,
+        'totalTimeMs' => round( $wp_codebox_query_total_ms, 3 ),
+        'fingerprints' => $wp_codebox_fingerprints,
+        'repeatedQueries' => $wp_codebox_repeated_queries,
+    ),
+);
 
 echo wp_json_encode( array(
     'command' => 'wordpress.rest-request',
@@ -93,6 +157,7 @@ echo wp_json_encode( array(
     'timing' => array(
         'duration_ms' => (int) round( ( $wp_codebox_finished_at - $wp_codebox_started_at ) * 1000 ),
     ),
+    'performance' => $wp_codebox_performance,
     'diagnostics' => (object) array(),
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
 }
