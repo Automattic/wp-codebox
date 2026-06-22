@@ -24,6 +24,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-backend.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
+require_once __DIR__ . '/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 
 final class WP_Codebox_Abilities {
@@ -329,13 +330,13 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/run-wordpress-workload',
 				array(
 					'label'               => 'Run WordPress Workload',
-					'description'         => 'Expose the public wp-codebox/wordpress-workload-run/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'description'         => 'Run a safe recipe-backed WordPress workload and return step results, diagnostics, and artifact references without accepting raw PHP or shell input.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::wordpress_workload_run_request_schema(),
 					'output_schema'       => self::wordpress_workload_run_result_schema(),
 					'execute_callback'    => array( self::class, 'run_wordpress_workload' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload', 'safe_stub' => true ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
 				)
 			);
 

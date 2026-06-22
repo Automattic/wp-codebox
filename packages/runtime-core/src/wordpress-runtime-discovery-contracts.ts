@@ -117,7 +117,10 @@ export interface WordPressDatabaseSchemaDiscovery {
 export interface WordPressDatabaseTableDescriptor {
   name: string
   baseName: string
+  classification: "core" | "prefixed" | "external"
   columns: WordPressDatabaseColumnDescriptor[]
+  indexes?: WordPressDatabaseIndexDescriptor[]
+  status?: WordPressDatabaseTableStatus | null
 }
 
 export interface WordPressDatabaseColumnDescriptor {
@@ -127,6 +130,19 @@ export interface WordPressDatabaseColumnDescriptor {
   key: string
   default: string | null
   extra: string
+}
+
+export interface WordPressDatabaseIndexDescriptor {
+  name: string
+  column: string
+  unique: boolean
+  sequence: number | null
+}
+
+export interface WordPressDatabaseTableStatus {
+  engine: string
+  rows: number | null
+  collation: string
 }
 
 export interface WordPressFrontendRouteDiscovery {

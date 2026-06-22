@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { fuzzSuiteContract, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { fuzzSuiteContract, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -14,7 +14,11 @@ const result = await runFuzzSuite(fuzzSuiteContract({
     { id: "case-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET", params: { context: "view" } } },
     { id: "case-ability", target: { kind: "ability", id: "example/echo" }, input: { input: { message: "hello" }, expectedResultSchema: "example/result" } },
     { id: "case-runtime-action", target: { kind: "runtime-action" }, input: { type: "rest_request", path: "/wp/v2/status", method: "GET" } },
-    { id: "case-runtime-action-unsupported", target: { kind: "runtime-action" }, input: { type: "browser", operation: "capture" } },
+    { id: "case-runtime-action-browser", target: { kind: "runtime-action" }, input: { type: "browser", operation: "navigate", url: "/sample-page/", capture: ["console", "screenshot"] } },
+    { id: "case-runtime-action-admin", target: { kind: "runtime-action" }, input: { type: "admin_page", path: "plugins.php", capture_diagnostics: ["php-notices"] } },
+    { id: "case-runtime-action-page", target: { kind: "runtime-action" }, input: { type: "page", path: "/sample-page/", query: { preview: true } } },
+    { id: "case-runtime-action-editor", target: { kind: "runtime-action" }, input: { type: "editor_open", target: "post-new", post_type: "page", capture: ["editor-state"] } },
+    { id: "case-runtime-action-unsupported", target: { kind: "runtime-action" }, input: { type: "filesystem", operation: "list" } },
   ],
 }), {
   executor: async (spec) => {
@@ -38,21 +42,34 @@ assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.suite.id, "suite-001")
 assert.equal(result.status, "failed")
 assert.equal(result.success, false)
-assert.deepEqual(result.summary, { total: 7, passed: 5, failed: 1, error: 0, skipped: 1 })
-assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request"])
+assert.deepEqual(result.summary, { total: 11, passed: 9, failed: 1, error: 0, skipped: 1 })
+assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
 assert.deepEqual(executed[3], { command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET", "params-json={\"context\":\"view\"}"], method: "GET", path: "/wp/v2/types" })
 assert.deepEqual(executed[4], { command: "wordpress.ability", args: ["name=example/echo", "input={\"message\":\"hello\"}", "expected-result-schema=example/result"] })
 assert.deepEqual(executed[5], { command: "wordpress.rest-request", args: ["path=/wp/v2/status", "method=GET"], method: "GET", path: "/wp/v2/status" })
+assert.deepEqual(executed[6], { command: "wordpress.browser-actions", args: ['steps-json=[{"kind":"navigate","url":"/sample-page/"}]', "capture=console,screenshot"] })
+assert.deepEqual(executed[7], { command: "wordpress.admin-page-load", args: ["path=plugins.php", "capture-diagnostics=php-notices"] })
+assert.deepEqual(executed[8], { command: "wordpress.frontend-page-load", args: ["path=/sample-page/", "query-json={\"preview\":true}"] })
+assert.deepEqual(executed[9], { command: "wordpress.editor-open", args: ["target=post-new", "post-type=page", "capture=editor-state"] })
 assert.equal(result.cases[0]?.status, "passed")
 assert.equal(result.cases[0]?.artifactRefs?.[0]?.path, "/artifacts/exec-1.json")
 assert.equal(result.cases[1]?.status, "failed")
 assert.equal(result.cases[1]?.diagnostics[0]?.code, "fuzz_suite_command_failed")
-assert.equal(result.cases[6]?.status, "skipped")
-assert.equal(result.cases[6]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
-assert.equal(result.artifactRefs.length, 6)
+assert.equal(result.cases[10]?.status, "skipped")
+assert.equal(result.cases[10]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.artifactRefs.length, 10)
 assert.equal((result.cases[0]?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "case-pass")
+
+const plannedEditor = planFuzzSuiteCaseExecutionSpec({
+  suite: fuzzSuiteContract({ id: "planner", cases: [] }),
+  case: { id: "editor", target: { kind: "runtime-action" }, input: { type: "editor_open", target: "site" } },
+  caseIndex: 0,
+})
+assert.equal(plannedEditor.status, "supported")
+assert.deepEqual(plannedEditor.spec, { command: "wordpress.editor-open", args: ["target=site"] })
+assert.equal(plannedEditor.replayMetadata.caseId, "editor")
 
 const noExecutor = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-002",

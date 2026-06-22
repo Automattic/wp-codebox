@@ -40,19 +40,7 @@ public static function run_wordpress_workload( array $input ): array|WP_Error {
 		return new WP_Error( 'wp_codebox_wordpress_workload_unsafe_input', 'wp-codebox/run-wordpress-workload does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
 	}
 
-	return self::unsupported_public_runtime_envelope(
-		'wp-codebox/wordpress-workload-run-result/v1',
-		'unsupported',
-		'wp_codebox_wordpress_workload_runner_unavailable',
-		'The WordPress workload ability contract is registered, but no safe workload runner is available in the WordPress plugin yet.',
-		array(
-			'request'   => array(
-				'schema' => (string) ( $input['schema'] ?? 'wp-codebox/wordpress-workload-run/v1' ),
-			),
-			'artifacts' => array(),
-			'metadata'  => array( 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
-		)
-	);
+	return ( new WP_Codebox_WordPress_Workload_Runner() )->run( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -204,7 +192,56 @@ private static function fuzz_suite_runtime_action_step( array $input ): array {
 			'args'    => self::fuzz_suite_args_from_map( array( 'command' => $input['command'] ?? null ) ),
 		);
 	}
+	if ( 'browser' === $type ) {
+		return array(
+			'command' => 'wordpress.browser-actions',
+			'args'    => self::fuzz_suite_browser_action_args( $input ),
+		);
+	}
+	if ( 'browser_probe' === $type ) {
+		return array(
+			'command' => 'wordpress.browser-probe',
+			'args'    => self::fuzz_suite_args_from_map( array( 'url' => $input['url'] ?? null, 'wait-for' => $input['wait_for'] ?? $input['waitFor'] ?? null, 'duration' => $input['duration'] ?? null, 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ), 'viewport' => $input['viewport'] ?? null ) ),
+		);
+	}
+	if ( 'editor_open' === $type ) {
+		return array(
+			'command' => 'wordpress.editor-open',
+			'args'    => self::fuzz_suite_args_from_map( array( 'target' => $input['target'] ?? null, 'post-id' => $input['post_id'] ?? $input['postId'] ?? null, 'post-type' => $input['post_type'] ?? $input['postType'] ?? null, 'url' => $input['url'] ?? null, 'wait-selector' => $input['wait_selector'] ?? $input['waitSelector'] ?? null, 'wait-timeout' => isset( $input['timeout_ms'] ) ? ( (string) $input['timeout_ms'] . 'ms' ) : ( isset( $input['timeoutMs'] ) ? ( (string) $input['timeoutMs'] . 'ms' ) : null ), 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ) ) ),
+		);
+	}
+	if ( 'admin_page' === $type || 'page' === $type ) {
+		return array(
+			'command' => 'admin_page' === $type ? 'wordpress.admin-page-load' : 'wordpress.frontend-page-load',
+			'args'    => self::fuzz_suite_args_from_map( array( 'path' => $input['path'] ?? null, 'url' => $input['url'] ?? null, 'method' => $input['method'] ?? null, 'query-json' => $input['query'] ?? null, 'body-json' => $input['body'] ?? null, 'user' => $input['user'] ?? null, 'session' => $input['session'] ?? null, 'capture-diagnostics' => self::fuzz_suite_csv_arg( $input['capture_diagnostics'] ?? $input['captureDiagnostics'] ?? null ) ) ),
+		);
+	}
 	return array( 'command' => 'wordpress.runtime-action', 'args' => self::fuzz_suite_args_from_map( array( 'type' => $type ) ) );
+}
+
+/** @param array<string,mixed> $input Runtime browser action input. @return string[] */
+private static function fuzz_suite_browser_action_args( array $input ): array {
+	$operation = (string) ( $input['operation'] ?? '' );
+	$step = array_filter(
+		array(
+			'kind'     => 'wait' === $operation ? 'waitFor' : $operation,
+			'url'      => $input['url'] ?? null,
+			'selector' => $input['selector'] ?? null,
+			'text'     => $input['text'] ?? null,
+			'value'    => $input['value'] ?? null,
+			'key'      => $input['key'] ?? null,
+			'duration' => $input['duration'] ?? null,
+			'waitFor'  => $input['wait_for'] ?? $input['waitFor'] ?? null,
+			'capture'  => 'capture' === $operation && is_array( $input['capture'] ?? null ) ? $input['capture'] : null,
+		),
+		static fn( mixed $value ): bool => null !== $value && '' !== $value
+	);
+
+	return self::fuzz_suite_args_from_map( array( 'url' => ( isset( $input['url'] ) && 'navigate' !== $operation ) ? $input['url'] : null, 'steps-json' => array( $step ), 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ) ) );
+}
+
+private static function fuzz_suite_csv_arg( mixed $value ): ?string {
+	return is_array( $value ) && ! empty( $value ) ? implode( ',', array_map( 'strval', $value ) ) : null;
 }
 
 /** @param array<string,mixed> $values Values. @return string[] */

@@ -36,7 +36,9 @@ import {
   runtimeInventoryPhpCode,
   runtimeDiscoveryPhpCode,
   runtimeDiscoverySurfacesFromArgs,
+  pluginSetupInputFromArgs,
   themeCheckRunCode,
+  themeSetupInputFromArgs,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -432,6 +434,108 @@ export async function runPluginStateCommand({
   return response.text
 }
 
+export async function runPluginSetupCommand({
+  runWpCliArgv,
+  server,
+  spec,
+}: {
+  runWpCliArgv: RunWpCliCommand
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  if (!server.playground.writeFile) {
+    throw new Error("wordpress.plugin-setup requires a Playground backend with writeFile support")
+  }
+
+  const input = pluginSetupInputFromArgs(spec.args ?? [])
+  const operations: Array<{ operation: string; exitCode: number; stdout: string; stderr: string }> = []
+  const errors: Array<{ code: string; message: string; exitCode?: number }> = []
+
+  if (input.action === "install") {
+    const installArgs = ["plugin", "install", input.slug as string, ...(input.activate ? [input.network ? "--activate-network" : "--activate"] : [])]
+    const install = await runWpCliArgv(server, installArgs)
+    operations.push(operationResult("plugin-install", install))
+    if ((install.exitCode ?? 0) !== 0) {
+      errors.push({ code: "plugin-install-failed", message: cleanWpCliOutput(install.text).trim() || `Plugin install failed for ${input.slug}.`, exitCode: install.exitCode })
+    }
+  }
+
+  const list = await runWpCliArgv(server, ["plugin", "list", "--format=json", "--fields=name,status,update,version,title"])
+  operations.push(operationResult("plugin-list", list))
+  if ((list.exitCode ?? 0) !== 0) {
+    errors.push({ code: "plugin-list-failed", message: cleanWpCliOutput(list.text).trim() || "Plugin list failed.", exitCode: list.exitCode })
+  }
+
+  const plugins = parseWpCliJsonList(cleanWpCliOutput(list.text))
+  return `${JSON.stringify({
+    schema: "wp-codebox/wordpress-plugin-setup/v1",
+    command: "wordpress.plugin-setup",
+    status: errors.length === 0 ? "ok" : "error",
+    action: input.action,
+    target: input.slug ? { slug: input.slug } : null,
+    activate: input.activate,
+    network: input.network,
+    plugins,
+    operations,
+    errors,
+    artifactRefs: [],
+  }, null, 2)}\n`
+}
+
+export async function runThemeSetupCommand({
+  runWpCliArgv,
+  server,
+  spec,
+}: {
+  runWpCliArgv: RunWpCliCommand
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  if (!server.playground.writeFile) {
+    throw new Error("wordpress.theme-setup requires a Playground backend with writeFile support")
+  }
+
+  const input = themeSetupInputFromArgs(spec.args ?? [])
+  const operations: Array<{ operation: string; exitCode: number; stdout: string; stderr: string }> = []
+  const errors: Array<{ code: string; message: string; exitCode?: number }> = []
+
+  if (input.action === "install") {
+    const install = await runWpCliArgv(server, ["theme", "install", input.slug as string, ...(input.activate ? ["--activate"] : [])])
+    operations.push(operationResult("theme-install", install))
+    if ((install.exitCode ?? 0) !== 0) {
+      errors.push({ code: "theme-install-failed", message: cleanWpCliOutput(install.text).trim() || `Theme install failed for ${input.slug}.`, exitCode: install.exitCode })
+    }
+  }
+
+  if (input.action === "switch") {
+    const activate = await runWpCliArgv(server, ["theme", "activate", input.slug as string])
+    operations.push(operationResult("theme-activate", activate))
+    if ((activate.exitCode ?? 0) !== 0) {
+      errors.push({ code: "theme-switch-failed", message: cleanWpCliOutput(activate.text).trim() || `Theme switch failed for ${input.slug}.`, exitCode: activate.exitCode })
+    }
+  }
+
+  const list = await runWpCliArgv(server, ["theme", "list", "--format=json", "--fields=name,status,update,version,title"])
+  operations.push(operationResult("theme-list", list))
+  if ((list.exitCode ?? 0) !== 0) {
+    errors.push({ code: "theme-list-failed", message: cleanWpCliOutput(list.text).trim() || "Theme list failed.", exitCode: list.exitCode })
+  }
+
+  const themes = parseWpCliJsonList(cleanWpCliOutput(list.text))
+  return `${JSON.stringify({
+    schema: "wp-codebox/wordpress-theme-setup/v1",
+    command: "wordpress.theme-setup",
+    status: errors.length === 0 ? "ok" : "error",
+    action: input.action,
+    target: input.slug ? { slug: input.slug } : null,
+    activate: input.activate,
+    themes,
+    operations,
+    errors,
+    artifactRefs: [],
+  }, null, 2)}\n`
+}
+
 export async function runThemeCheckCommand({
   artifactRoot,
   runPlaygroundCommand,
@@ -470,6 +574,24 @@ export async function runThemeCheckCommand({
   return {
     artifact: await writeThemeCheckArtifacts(artifactRoot, theme, raw, normalized),
     output: `${JSON.stringify(normalized, null, 2)}\n`,
+  }
+}
+
+function operationResult(operation: string, response: PlaygroundRunResponse): { operation: string; exitCode: number; stdout: string; stderr: string } {
+  return {
+    operation,
+    exitCode: response.exitCode ?? 0,
+    stdout: cleanWpCliOutput(response.text).trim(),
+    stderr: response.errors?.trim() ?? "",
+  }
+}
+
+function parseWpCliJsonList(output: string): unknown[] {
+  try {
+    const value = JSON.parse(output.trim() || "[]")
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
   }
 }
 

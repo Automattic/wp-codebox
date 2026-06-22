@@ -3,7 +3,7 @@
  * Plugin Name: WP Codebox
  * Plugin URI: https://github.com/Automattic/wp-codebox
  * Description: Secure coding environments inside WordPress. WordPress ability surface for launching disposable WP Codebox Playground sandboxes that can't touch your host site.
- * Version: 0.8.5
+ * Version: 0.9.0
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Automattic
@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'WP_CODEBOX_PLUGIN_VERSION', '0.8.5' );
+define( 'WP_CODEBOX_PLUGIN_VERSION', '0.9.0' );
 define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -52,6 +52,7 @@ require_once __DIR__ . '/src/class-wp-codebox-agent-process-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-run-result-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-outcome-classifier.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-provider-registry.php';
+require_once __DIR__ . '/src/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';

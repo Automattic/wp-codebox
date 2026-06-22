@@ -48,6 +48,20 @@ export interface FuzzSuiteCaseExecutionInput {
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
 }
 
+export interface FuzzSuiteCaseExecutionSpecPlanInput {
+  suite: FuzzSuiteContract
+  case: FuzzSuiteCase
+  caseIndex: number
+  target?: FuzzSuiteTargetRef
+  targetAdapters?: FuzzSuiteTargetAdapterRegistry | readonly FuzzSuiteTargetAdapter[]
+  supportedTargetKinds?: readonly string[]
+}
+
+export interface FuzzSuiteCaseExecutionSpecPlan extends FuzzSuiteTargetAdapterResolution {
+  target?: FuzzSuiteTargetRef
+  replayMetadata: Record<string, unknown>
+}
+
 const DEFAULT_SUPPORTED_TARGET_KINDS = ["ability", "command", "http", "rest", "runtime", "runtime-action"]
 
 export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteRunOptions = {}) {
@@ -58,33 +72,19 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
   const supportedTargetKinds = new Set(options.supportedTargetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
 
   for (const [index, fuzzCase] of suite.cases.entries()) {
-    const target = fuzzCase.target ?? suite.target
-    const replayMetadata = fuzzSuiteReplayMetadata(suite, fuzzCase, index, target)
-    if (!target || !supportedTargetKinds.has(target.kind)) {
-      const diagnostic = fuzzSuiteUnsupportedDiagnostic(fuzzCase, target)
-      diagnostics.push(diagnostic)
+    const plan = planFuzzSuiteCaseExecutionSpec({ suite, case: fuzzCase, caseIndex: index, targetAdapters: adapterRegistry, supportedTargetKinds: [...supportedTargetKinds] })
+    const target = plan.target
+    const replayMetadata = plan.replayMetadata
+    if (plan.status === "unsupported" || !plan.spec) {
+      const planDiagnostics = plan.diagnostics ?? []
+      diagnostics.push(...planDiagnostics)
       cases.push({
         id: fuzzCase.id,
         status: "skipped",
         success: false,
         target,
-        diagnostics: [diagnostic],
-        metadata: stripUndefined({ replay: replayMetadata }),
-      })
-      continue
-    }
-
-    const adapterResolution = adapterRegistry.resolve({ suite, case: fuzzCase, caseIndex: index, target })
-    const adapterDiagnostics = adapterResolution.diagnostics ?? []
-    if (adapterResolution.status === "unsupported" || !adapterResolution.spec) {
-      diagnostics.push(...adapterDiagnostics)
-      cases.push({
-        id: fuzzCase.id,
-        status: "skipped",
-        success: false,
-        target,
-        diagnostics: adapterDiagnostics,
-        metadata: stripUndefined({ replay: replayMetadata, adapter: adapterResolution.metadata }),
+        diagnostics: planDiagnostics,
+        metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }),
       })
       continue
     }
@@ -110,7 +110,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
     }
 
     try {
-      const spec = adapterResolution.spec
+      const spec = plan.spec
       const execution = await execute(spec)
       const status = execution.exitCode === 0 ? "passed" : "failed"
       const caseDiagnostics = execution.exitCode === 0 ? [] : [{
@@ -133,7 +133,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           input: fuzzCase.input,
           description: fuzzCase.description,
           caseMetadata: fuzzCase.metadata,
-          adapter: adapterResolution.metadata,
+          adapter: plan.metadata,
           replay: { ...replayMetadata, executionId: execution.id, command: spec },
           execution: {
             id: execution.id,
@@ -175,6 +175,20 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       runner: "wp-codebox/fuzz-suite-runner/v1",
     }),
   })
+}
+
+export function planFuzzSuiteCaseExecutionSpec(input: FuzzSuiteCaseExecutionSpecPlanInput): FuzzSuiteCaseExecutionSpecPlan {
+  const target = input.target ?? input.case.target ?? input.suite.target
+  const replayMetadata = fuzzSuiteReplayMetadata(input.suite, input.case, input.caseIndex, target)
+  const supportedTargetKinds = new Set(input.supportedTargetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
+
+  if (!target || !supportedTargetKinds.has(target.kind)) {
+    const diagnostic = fuzzSuiteUnsupportedDiagnostic(input.case, target)
+    return { status: "unsupported", target, replayMetadata, diagnostics: [diagnostic] }
+  }
+
+  const adapterRegistry = normalizeFuzzSuiteTargetAdapterRegistry(input.targetAdapters)
+  return { target, replayMetadata, ...adapterRegistry.resolve({ suite: input.suite, case: input.case, caseIndex: input.caseIndex, target }) }
 }
 
 function normalizeFuzzSuiteExecutor(executor: FuzzSuiteRunOptions["executor"]): ((spec: ExecutionSpec) => Promise<ExecutionResult>) | undefined {
@@ -405,6 +419,65 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "browser") {
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.browser-actions",
+            args: runtimeBrowserActionArgs(input.payload),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.browser-actions" },
+        }
+      }
+
+      if (input.payload.type === "browser_probe") {
+        const url = stringField(input.payload, "url")
+        if (!url) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "Expected browser_probe runtime-action input url.", { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.browser-probe",
+            args: [
+              `url=${url}`,
+              optionalStringArg("wait-for", input.payload.wait_for ?? input.payload.waitFor),
+              optionalStringArg("duration", input.payload.duration),
+              csvArg("capture", input.payload.capture),
+              optionalStringArg("viewport", input.payload.viewport),
+            ].filter((arg): arg is string => Boolean(arg)),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.browser-probe" },
+        }
+      }
+
+      if (input.payload.type === "editor_open") {
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command: "wordpress.editor-open",
+            args: runtimeEditorOpenArgs(input.payload),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.editor-open" },
+        }
+      }
+
+      if (input.payload.type === "admin_page" || input.payload.type === "page") {
+        const command = input.payload.type === "admin_page" ? "wordpress.admin-page-load" : "wordpress.frontend-page-load"
+        return {
+          status: "supported",
+          spec: stripUndefined({
+            command,
+            args: runtimePageLoadArgs(input.payload),
+            timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+          }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: command },
+        }
+      }
+
       return unsupportedTargetAdapterResolution(fuzzCase, target, `Runtime-action type ${input.payload.type} needs an episode-aware executor and is not supported by this command-backed runner.`, { adapterKind: "runtime-action", actionType: input.payload.type })
     },
   }
@@ -510,6 +583,61 @@ function optionalStringArg(name: string, value: unknown): string | undefined {
 
 function optionalNumberArg(name: string, value: unknown): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? `${name}=${value}` : undefined
+}
+
+function csvArg(name: string, value: unknown): string | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") && value.length > 0 ? `${name}=${value.join(",")}` : undefined
+}
+
+function runtimeBrowserActionArgs(input: Record<string, unknown>): string[] {
+  const action: Record<string, unknown> = { kind: input.operation === "wait" ? "waitFor" : input.operation }
+  for (const key of ["url", "selector", "text", "value", "key", "duration"] as const) {
+    if (typeof input[key] === "string") {
+      action[key] = input[key]
+    }
+  }
+  if (typeof input.wait_for === "string") {
+    action.waitFor = input.wait_for
+  } else if (typeof input.waitFor === "string") {
+    action.waitFor = input.waitFor
+  }
+  if (input.operation === "capture" && Array.isArray(input.capture)) {
+    action.capture = input.capture
+  }
+  return [
+    typeof input.url === "string" && input.operation !== "navigate" ? `url=${input.url}` : undefined,
+    `steps-json=${JSON.stringify([action])}`,
+    csvArg("capture", input.capture),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function runtimeEditorOpenArgs(input: Record<string, unknown>): string[] {
+  return [
+    optionalStringArg("target", input.target),
+    optionalNumberArg("post-id", input.post_id ?? input.postId),
+    optionalStringArg("post-type", input.post_type ?? input.postType),
+    optionalStringArg("url", input.url),
+    optionalStringArg("wait-selector", input.wait_selector ?? input.waitSelector),
+    durationMsArg("wait-timeout", input.timeout_ms ?? input.timeoutMs),
+    csvArg("capture", input.capture),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function durationMsArg(name: string, value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? `${name}=${value}ms` : undefined
+}
+
+function runtimePageLoadArgs(input: Record<string, unknown>): string[] {
+  return [
+    optionalStringArg("path", input.path),
+    optionalStringArg("url", input.url),
+    optionalStringArg("method", input.method),
+    jsonArg("query-json", input.query),
+    input.body === undefined ? undefined : `body-json=${JSON.stringify(input.body)}`,
+    optionalStringArg("user", input.user),
+    optionalStringArg("session", input.session),
+    csvArg("capture-diagnostics", input.capture_diagnostics ?? input.captureDiagnostics),
+  ].filter((arg): arg is string => Boolean(arg))
 }
 
 function runtimeActionTimeoutMs(input: Record<string, unknown>, fallback: number | undefined): number | undefined {

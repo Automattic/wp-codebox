@@ -43,6 +43,11 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @param array<string,mixed> $input @return array<string,mixed> */
+	public static function run_wordpress_workload( array $input ): array {
+		return self::record( 'run_wordpress_workload', 'wp-codebox/wordpress-workload-run-result/v1', $input );
+	}
+
+	/** @param array<string,mixed> $input @return array<string,mixed> */
 	public static function run_runtime_package( array $input ): array {
 		return self::record( 'run_runtime_package', 'wp-codebox/runtime-package-result/v1', $input );
 	}
@@ -112,6 +117,7 @@ $expected_methods = array(
 	'run_agent_task_batch',
 	'run_agent_task_fanout',
 	'run_runtime_task',
+	'run_wordpress_workload',
 	'run_runtime_package',
 	'create_browser_session',
 	'create_browser_task_contract',
@@ -175,6 +181,7 @@ foreach ( $runner_workspace_abilities as $ability_name => $expected ) {
 
 $public_abilities = array(
 	'wp-codebox/run-runtime-task' => array( 'method' => 'run_runtime_task', 'schema' => 'wp-codebox/runtime-task-result/v1' ),
+	'wp-codebox/run-wordpress-workload' => array( 'method' => 'run_wordpress_workload', 'schema' => 'wp-codebox/wordpress-workload-run-result/v1' ),
 	'wp-codebox/run-runtime-package' => array( 'method' => 'run_runtime_package', 'schema' => 'wp-codebox/runtime-package-result/v1' ),
 	'wp-codebox/create-browser-task-contract' => array( 'method' => 'create_browser_task_contract', 'schema' => 'wp-codebox/browser-task-contract/v1' ),
 	'wp-codebox/create-task-contract' => array( 'method' => 'create_browser_task_contract', 'schema' => 'wp-codebox/browser-task-contract/v1' ),

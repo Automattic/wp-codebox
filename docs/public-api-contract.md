@@ -9,8 +9,9 @@ Codebox APIs to assemble and run sandboxes.
 
 Use these package entrypoints from external integrations:
 
-- `@automattic/wp-codebox-core`: broad compatibility barrel for existing
-  consumers. New integrations should use a focused entrypoint below.
+- `@automattic/wp-codebox-core`: compatibility-only broad barrel for existing
+  consumers. New integrations should use a focused entrypoint below; new helper
+  additions belong in `public` or a lifecycle subpath, not the root barrel.
 - `@automattic/wp-codebox-core/public`: curated public facade for runtime,
   task/package, runner workspace, tool bridge, parent tool bridge, browser,
   artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
@@ -21,6 +22,9 @@ Use these package entrypoints from external integrations:
   and schema identifiers without importing backend adapter bindings.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
   export-link, diagnostics, and partial-discovery helpers.
+- `@automattic/wp-codebox-core/run-results`: task, command, browser, artifact,
+  recipe, and fuzz result DTO helpers for orchestrators that need result shapes
+  without importing the broad root or full public facade.
 - `@automattic/wp-codebox-core/recipe-builders`: typed recipe construction
   helpers.
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
@@ -75,10 +79,11 @@ backend systems internally, while public docs and schemas present Codebox-owned
 ability names, schemas, and facades to callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
-`./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
-`./agent-task-recipe`, `./runtime-presets`, `./playground/public`, and
-`./cli/recipe-secret-env` for local consumers in this repo. It intentionally does
-not mirror the monorepo-only `./internals` helper entrypoint.
+`./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,
+`./recipe-builders`, `./run-results`, `./agent-task-recipe`,
+`./runtime-presets`, `./playground/public`, and `./cli/recipe-secret-env` for
+local consumers in this repo. It intentionally does not mirror the monorepo-only
+`./internals` helper entrypoint.
 
 ## Contract Areas
 
@@ -93,7 +98,13 @@ The stable public surface is grouped by lifecycle area rather than by product:
   exposes consumer-safe action helpers: `runWordPressWpCli()`,
   `runWordPressPhp()`, `requestWordPressRest()`, `runWordPressBrowserAction()`,
   `probeWordPressBrowser()`, `openWordPressEditor()`,
-  `wordpressAdminPageLoadAction()`, and `wordpressFrontendPageLoadAction()`.
+  `openWordPressAdminPage()`, `visitWordPressPage()`, discovery/inventory
+  helpers, CRUD/DB read helpers, in-process `loadWordPressAdminPage()` and
+  `loadWordPressFrontendPage()` helpers, `executeWordPressRestMatrix()`,
+  `executeFuzzSuite()`, `wordpressAdminPageLoadAction()`, and
+  `wordpressFrontendPageLoadAction()`. `openWordPressAdminPage()` keeps browser
+  probe semantics; use the `load*Page()` helpers for the in-process page-load
+  command contracts.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
@@ -135,8 +146,8 @@ The stable public surface is grouped by lifecycle area rather than by product:
   where WordPress exposes it, redirects, notices/errors, optional query/performance
   observations, and a JSON artifact ref. These commands intentionally use a light
   in-process WordPress load path; browser-heavy probes remain available through
-  browser commands when a caller explicitly needs DOM, screenshot, console, or
-  network evidence.
+  browser commands and `openWordPressAdminPage()` when a caller explicitly needs
+  DOM, screenshot, console, or network evidence.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
@@ -151,6 +162,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
+- **Run results:** normalized task, terminal, command, browser, recipe summary,
+  artifact handoff, and fuzz result DTOs that orchestrators can import from
+  `@automattic/wp-codebox-core/run-results`.
 - **Inspect:** command registry metadata, JSON Schema factories, CLI `schema` and
   `commands` output, and recipe validation descriptors.
 
@@ -226,6 +240,26 @@ workspace operation names. Public callers use the Codebox ability ids and
 request/result schemas while the adapter config maps each operation to its
 integration-provided backend ability. See `docs/runner-workspace-backend-contract.md`.
 Those adapter bindings are not part of `runtimeContractManifest()`.
+
+## Homeboy Extensions Migration
+
+Homeboy Extensions and other dist/dynamic package loaders should import the
+narrowest Codebox entrypoint that matches the runtime object they need. This
+keeps packaged helpers stable when the broad root barrel continues to exist for
+compatibility but stops being the place where new public helpers accumulate.
+
+| Current import pressure | Use instead | Notes |
+| --- | --- | --- |
+| Root package import for command names, schema ids, or ability metadata | `@automattic/wp-codebox-core/contracts` | Use `runtimeContractManifest()` and command contract helpers without backend adapter exports. |
+| Root package import for artifact refs, export links, bundle verification, or apply/materialization handoff | `@automattic/wp-codebox-core/artifacts` | Artifact helpers stay grouped by evidence and handoff lifecycle. |
+| Root package import for runtime package, phpunit, or bench recipe assembly | `@automattic/wp-codebox-core/recipe-builders` | Recipe construction helpers are public without pulling the full runtime barrel. |
+| Root package import for task, command, browser, recipe, artifact, or fuzz result DTOs | `@automattic/wp-codebox-core/run-results` | Result projection helpers are stable for orchestrators and dist loaders. |
+| Workspace-local mirror import during package development | `./core/contracts`, `./core/artifacts`, `./recipe-builders`, or `./run-results` | Workspace mirrors exist for this repo's local consumers; published consumers should use package names. |
+
+The root barrel remains published so existing integrations keep working. Treat it
+as compatibility-only: new Homeboy Extensions call sites should choose one of the
+focused entrypoints above, and new Codebox helpers should be added to the focused
+owner module that matches their lifecycle area.
 
 ## Internal Entry Point
 

@@ -1,6 +1,6 @@
 {
   "name": "@automattic/wp-codebox-core",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,6 +20,10 @@
     "./artifacts": {
       "types": "./dist/artifacts.d.ts",
       "import": "./dist/artifacts.js"
+    },
+    "./run-results": {
+      "types": "./dist/run-results.d.ts",
+      "import": "./dist/run-results.js"
     },
     "./internals": {
       "types": "./dist/internals.d.ts",

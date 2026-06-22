@@ -22,6 +22,7 @@ import {
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
 } from "./runner-workspace-publication.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_DB_OPERATION_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
@@ -134,6 +135,10 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     frontendUrlInventory: WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
     restMatrix: WORDPRESS_REST_MATRIX_SCHEMA,
     restMatrixResult: WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
+  },
+  wordpressDb: {
+    operation: WORDPRESS_DB_OPERATION_SCHEMA,
+    result: WORDPRESS_DB_RESULT_SCHEMA,
   },
   wordpressRuntime: {
     workloadRun: WORDPRESS_WORKLOAD_RUN_SCHEMA,
