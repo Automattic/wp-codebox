@@ -1,4 +1,5 @@
 import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA } from "./wordpress-page-load-contracts.js"
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
@@ -421,6 +422,44 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.frontend-url-inventory.",
     recipe: true,
     handler: { kind: "playground", method: "runFrontendUrlInventory" },
+  },
+  {
+    id: "wordpress.admin-page-load",
+    description: "Load a WordPress admin target in-process and report stable status, screen/page identity, redirects, notices, errors, performance observations, and artifact refs without requiring a browser.",
+    acceptedArgs: [
+      { name: "path", description: "Admin path relative to wp-admin, such as index.php or edit.php?post_type=page. Defaults to index.php.", format: "admin path" },
+      { name: "url", description: "Optional admin URL or path. Relative paths are resolved under wp-admin/.", format: "path or URL" },
+      { name: "method", description: "HTTP method for the synthetic request; defaults to GET.", format: "GET|POST" },
+      { name: "query-json", description: "Optional query parameters merged into the target URL.", format: "JSON object" },
+      { name: "body-json", description: "Optional request body parameters for POST-like loads.", format: "JSON object" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before loading the admin page.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before loading the admin page.", format: "user session name" },
+      { name: "capture-diagnostics", description: "Opt-in comma-separated bounded diagnostics capture. Currently supports wpdb-queries.", format: "comma-separated enum" },
+    ],
+    outputShape: "wp-codebox/wordpress-page-load-result/v1 JSON with admin target, status, resolved screen/page identity, redirects, notices, errors, optional performance observation, and artifact refs.",
+    outputSchema: { id: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA, jsonSchema: WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA },
+    policyRequirement: "Runtime policy commands must include wordpress.admin-page-load.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminPageLoad" },
+  },
+  {
+    id: "wordpress.frontend-page-load",
+    description: "Load a WordPress frontend target in-process and report stable status, resolved queried-object identity, redirects, errors, performance observations, and artifact refs without requiring a browser.",
+    acceptedArgs: [
+      { name: "path", description: "Frontend path relative to home URL. Defaults to /.", format: "frontend path" },
+      { name: "url", description: "Optional frontend URL or path.", format: "path or URL" },
+      { name: "method", description: "HTTP method for the synthetic request; defaults to GET.", format: "GET|POST" },
+      { name: "query-json", description: "Optional query parameters merged into the target URL.", format: "JSON object" },
+      { name: "body-json", description: "Optional request body parameters for POST-like loads.", format: "JSON object" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before loading the frontend page.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before loading the frontend page.", format: "user session name" },
+      { name: "capture-diagnostics", description: "Opt-in comma-separated bounded diagnostics capture. Currently supports wpdb-queries.", format: "comma-separated enum" },
+    ],
+    outputShape: "wp-codebox/wordpress-page-load-result/v1 JSON with frontend target, status, resolved queried-object/page identity, redirects, errors, optional performance observation, and artifact refs.",
+    outputSchema: { id: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA, jsonSchema: WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA },
+    policyRequirement: "Runtime policy commands must include wordpress.frontend-page-load.",
+    recipe: true,
+    handler: { kind: "playground", method: "runFrontendPageLoad" },
   },
   {
     id: "wordpress.crud-operation",

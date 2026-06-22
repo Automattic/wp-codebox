@@ -6,11 +6,15 @@ import {
   createWordPressEpisode,
   createWordPressRuntime,
   runWordPressEpisodeActions,
+  wordpressAdminPageLoadAction,
+  wordpressFrontendPageLoadAction,
 } from "../packages/runtime-playground/src/public.js"
 
 assert.equal(typeof createWordPressRuntime, "function")
 assert.equal(typeof createWordPressEpisode, "function")
 assert.equal(typeof runWordPressEpisodeActions, "function")
+assert.equal(typeof wordpressAdminPageLoadAction, "function")
+assert.equal(typeof wordpressFrontendPageLoadAction, "function")
 assert.equal(typeof collectWordPressRuntimeArtifacts, "function")
 assert.equal(typeof collectWordPressEpisodeArtifacts, "function")
 assert.equal(typeof collectBrowserArtifactMetrics, "function")
@@ -68,5 +72,14 @@ assert.equal(results[1]?.execution.command, "wordpress.browser-probe")
 const artifactBundle = { id: "bundle", directory: "artifacts/runtime", contentDigest: "digest", createdAt: "2026-01-01T00:00:00.000Z" }
 assert.equal(await collectWordPressRuntimeArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
 assert.equal(await collectWordPressEpisodeArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
+
+assert.deepEqual(wordpressAdminPageLoadAction({ path: "edit.php?post_type=page", user: "admin", captureDiagnostics: ["wpdb-queries"] }), {
+  command: "wordpress.admin-page-load",
+  args: ["path=edit.php?post_type=page", "user=admin", "capture-diagnostics=wpdb-queries"],
+})
+assert.deepEqual(wordpressFrontendPageLoadAction({ path: "/sample-page/", query: { preview: true } }), {
+  command: "wordpress.frontend-page-load",
+  args: ["path=/sample-page/", "query-json={\"preview\":true}"],
+})
 
 console.log("wordpress runtime public facade ok")

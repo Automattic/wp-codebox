@@ -22,6 +22,8 @@ import {
   normalizePhpCode,
   normalizePluginCheckOutput,
   normalizeThemeCheckOutput,
+  pageLoadInputFromArgs,
+  pageLoadPhpCode,
   phpunitRunCode,
   pluginStateInputFromArgs,
   pluginStatePhpCode,
@@ -547,6 +549,46 @@ export async function runRuntimeInventoryCommand({
   const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
   assertPlaygroundResponseOk(command, response)
   return response.text
+}
+
+export async function runPageLoadCommand({
+  artifactRoot,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+  surface,
+}: {
+  artifactRoot: string
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+  surface: "admin" | "frontend"
+}): Promise<string> {
+  const input = pageLoadInputFromArgs(spec.args ?? [], surface)
+  input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
+  const response = await runPlaygroundCommand(input.command, server, { code: bootstrapPhpCode(runtimeSpec, pageLoadPhpCode(input), []) })
+  assertPlaygroundResponseOk(input.command, response)
+  const result = JSON.parse(cleanWpCliOutput(response.text)) as Record<string, unknown>
+  const artifact = await writePageLoadResultArtifact(artifactRoot, input.command, result)
+  result.artifactRefs = [...(Array.isArray(result.artifactRefs) ? result.artifactRefs : []), artifact]
+  return `${JSON.stringify(result, null, 2)}\n`
+}
+
+async function writePageLoadResultArtifact(artifactRoot: string, command: string, result: Record<string, unknown>): Promise<{ path: string; kind: string; contentType: string; sha256: string; metadata: Record<string, unknown> }> {
+  const artifactPath = `files/commands/${command.replace(/[^a-z0-9.-]+/gi, "-")}-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.json`
+  const absolutePath = join(artifactRoot, artifactPath)
+  const contents = `${JSON.stringify(result, null, 2)}\n`
+  await mkdir(dirname(absolutePath), { recursive: true })
+  await writeFile(absolutePath, contents)
+  return {
+    path: artifactPath,
+    kind: "wordpress-page-load-result",
+    contentType: "application/json",
+    sha256: createHash("sha256").update(contents).digest("hex"),
+    metadata: { command, schema: result.schema ?? null },
+  }
 }
 
 export async function runHttpRequestCommand({

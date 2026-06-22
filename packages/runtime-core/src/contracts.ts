@@ -2,3 +2,4 @@
 export * from "./browser-probe-contract.js"
 export * from "./command-registry.js"
 export * from "./runtime-contract-manifest.js"
+export * from "./wordpress-page-load-contracts.js"

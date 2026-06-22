@@ -1,0 +1,201 @@
+import { argValue, commaListArg, jsonObjectArg } from "./command-args.js"
+import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
+
+export type PageLoadSurface = "admin" | "frontend"
+
+export interface PageLoadCommandInput {
+  command: "wordpress.admin-page-load" | "wordpress.frontend-page-load"
+  surface: PageLoadSurface
+  method: string
+  path: string
+  query: Record<string, unknown>
+  body: Record<string, unknown>
+  captureDiagnostics: string[]
+  userSession?: WordPressUserSessionResolution
+}
+
+export function pageLoadInputFromArgs(args: string[], surface: PageLoadSurface): PageLoadCommandInput {
+  const url = argValue(args, "url")?.trim()
+  const path = url || argValue(args, "path")?.trim() || (surface === "admin" ? "index.php" : "/")
+  return {
+    command: surface === "admin" ? "wordpress.admin-page-load" : "wordpress.frontend-page-load",
+    surface,
+    method: (argValue(args, "method")?.trim() || "GET").toUpperCase(),
+    path,
+    query: jsonObjectArg(args, "query-json"),
+    body: jsonObjectArg(args, "body-json"),
+    captureDiagnostics: commaListArg(args, "capture-diagnostics"),
+  }
+}
+
+export function pageLoadPhpCode(input: PageLoadCommandInput): string {
+  const userSessionMetadata = input.userSession?.metadata
+  return `$wp_codebox_page_load_started_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
+$wp_codebox_page_load_start_time = microtime(true);
+$wp_codebox_page_load_start_memory = memory_get_usage(true);
+$wp_codebox_page_load_query_start = isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries) ? count($GLOBALS['wpdb']->queries) : 0;
+$wp_codebox_page_load_command = ${JSON.stringify(input.command)};
+$wp_codebox_page_load_surface = ${JSON.stringify(input.surface)};
+$wp_codebox_page_load_method = ${JSON.stringify(input.method)};
+$wp_codebox_page_load_path = ${JSON.stringify(input.path)};
+$wp_codebox_page_load_query = json_decode(${JSON.stringify(JSON.stringify(input.query))}, true);
+$wp_codebox_page_load_body = json_decode(${JSON.stringify(JSON.stringify(input.body))}, true);
+$wp_codebox_page_load_capture = json_decode(${JSON.stringify(JSON.stringify(input.captureDiagnostics))}, true);
+$wp_codebox_page_load_user_session = json_decode(${JSON.stringify(JSON.stringify(userSessionMetadata ?? null))}, true);
+$wp_codebox_page_load_notices = array();
+$wp_codebox_page_load_errors = array();
+$wp_codebox_page_load_redirect = null;
+$wp_codebox_page_load_headers = array();
+
+${input.userSession ? wordpressFixtureUserPhpCode(input.userSession.user) : ""}
+
+set_error_handler(static function($severity, $message, $file, $line) use (&$wp_codebox_page_load_notices) {
+    $wp_codebox_page_load_notices[] = array('channel' => 'php', 'message' => (string) $message, 'severity' => ($severity & (E_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR)) ? 'error' : 'warning', 'metadata' => array('file' => (string) $file, 'line' => (int) $line));
+    return false;
+});
+
+add_filter('wp_redirect', static function($location, $status) use (&$wp_codebox_page_load_redirect) {
+    $wp_codebox_page_load_redirect = array('location' => (string) $location, 'status' => (int) $status, 'source' => 'wp_redirect');
+    return false;
+}, 999, 2);
+add_action('doing_it_wrong_run', static function($function_name, $message, $version) use (&$wp_codebox_page_load_notices) {
+    $wp_codebox_page_load_notices[] = array('channel' => 'doing_it_wrong', 'message' => (string) $message, 'severity' => 'warning', 'metadata' => array('function' => (string) $function_name, 'version' => (string) $version));
+}, 10, 3);
+add_action('deprecated_function_run', static function($function_name, $replacement, $version) use (&$wp_codebox_page_load_notices) {
+    $wp_codebox_page_load_notices[] = array('channel' => 'deprecated', 'message' => (string) $function_name, 'severity' => 'warning', 'metadata' => array('replacement' => (string) $replacement, 'version' => (string) $version));
+}, 10, 3);
+
+$wp_codebox_page_load_parts = parse_url($wp_codebox_page_load_path);
+if (!is_array($wp_codebox_page_load_parts)) {
+    throw new RuntimeException('Page-load target path is invalid.');
+}
+$wp_codebox_page_load_path_only = (string) ($wp_codebox_page_load_parts['path'] ?? $wp_codebox_page_load_path);
+$wp_codebox_page_load_url_query = array();
+if (isset($wp_codebox_page_load_parts['query'])) {
+    parse_str((string) $wp_codebox_page_load_parts['query'], $wp_codebox_page_load_url_query);
+}
+$wp_codebox_page_load_query = array_merge($wp_codebox_page_load_url_query, is_array($wp_codebox_page_load_query) ? $wp_codebox_page_load_query : array());
+$wp_codebox_page_load_body = is_array($wp_codebox_page_load_body) ? $wp_codebox_page_load_body : array();
+
+if ($wp_codebox_page_load_surface === 'admin') {
+    $wp_codebox_page_load_relative_path = preg_replace('#^https?://[^/]+#', '', $wp_codebox_page_load_path_only);
+    $wp_codebox_page_load_relative_path = preg_replace('#^/?wp-admin/#', '', (string) $wp_codebox_page_load_relative_path);
+    $wp_codebox_page_load_relative_path = ltrim((string) $wp_codebox_page_load_relative_path, '/');
+    if ($wp_codebox_page_load_relative_path === '') {
+        $wp_codebox_page_load_relative_path = 'index.php';
+    }
+    $wp_codebox_page_load_request_uri = wp_parse_url(admin_url($wp_codebox_page_load_relative_path), PHP_URL_PATH);
+} else {
+    $wp_codebox_page_load_relative_path = '/' . ltrim((string) $wp_codebox_page_load_path_only, '/');
+    $wp_codebox_page_load_request_uri = $wp_codebox_page_load_relative_path;
+}
+if (!empty($wp_codebox_page_load_query)) {
+    $wp_codebox_page_load_request_uri .= '?' . http_build_query($wp_codebox_page_load_query);
+}
+
+$_SERVER['REQUEST_METHOD'] = $wp_codebox_page_load_method;
+$_SERVER['REQUEST_URI'] = $wp_codebox_page_load_request_uri;
+$_SERVER['SCRIPT_NAME'] = $wp_codebox_page_load_surface === 'admin' ? '/wp-admin/' . $wp_codebox_page_load_relative_path : '/index.php';
+$_SERVER['PHP_SELF'] = $_SERVER['SCRIPT_NAME'];
+$_GET = $wp_codebox_page_load_query;
+$_POST = in_array($wp_codebox_page_load_method, array('POST', 'PUT', 'PATCH'), true) ? $wp_codebox_page_load_body : array();
+$_REQUEST = array_merge($_GET, $_POST);
+
+ob_start();
+try {
+    if ($wp_codebox_page_load_surface === 'admin') {
+        if (!defined('WP_ADMIN')) {
+            define('WP_ADMIN', true);
+        }
+        require_once ABSPATH . 'wp-admin/includes/admin.php';
+        if (!is_user_logged_in()) {
+            $wp_codebox_page_load_redirect = array('location' => wp_login_url($wp_codebox_page_load_request_uri), 'status' => 302, 'source' => 'auth_redirect');
+        } else {
+            do_action('admin_init');
+            $wp_codebox_page_load_hook_suffix = basename($wp_codebox_page_load_relative_path);
+            if (function_exists('set_current_screen')) {
+                set_current_screen($wp_codebox_page_load_hook_suffix === 'index.php' ? 'dashboard' : preg_replace('/\\.php$/', '', $wp_codebox_page_load_hook_suffix));
+            }
+            do_action('current_screen', function_exists('get_current_screen') ? get_current_screen() : null);
+            do_action('load-' . $wp_codebox_page_load_hook_suffix);
+            do_action('admin_notices');
+            do_action('all_admin_notices');
+        }
+    } else {
+        $GLOBALS['wp']->parse_request();
+        $GLOBALS['wp']->query_posts();
+        $GLOBALS['wp']->register_globals();
+        $GLOBALS['wp']->send_headers();
+        do_action('wp');
+        do_action('template_redirect');
+    }
+} catch (Throwable $wp_codebox_page_load_throwable) {
+    $wp_codebox_page_load_errors[] = array('code' => 'page-load-exception', 'message' => $wp_codebox_page_load_throwable->getMessage(), 'severity' => 'error', 'metadata' => array('class' => get_class($wp_codebox_page_load_throwable)));
+}
+$wp_codebox_page_load_buffer = ob_get_clean();
+restore_error_handler();
+
+$wp_codebox_page_load_screen = function_exists('get_current_screen') ? get_current_screen() : null;
+$wp_codebox_page_load_queried = function_exists('get_queried_object') ? get_queried_object() : null;
+$wp_codebox_page_load_identity = array(
+    'url' => $wp_codebox_page_load_surface === 'admin' ? admin_url($wp_codebox_page_load_relative_path) : home_url($wp_codebox_page_load_relative_path),
+    'path' => $wp_codebox_page_load_relative_path,
+    'screenId' => is_object($wp_codebox_page_load_screen) && isset($wp_codebox_page_load_screen->id) ? (string) $wp_codebox_page_load_screen->id : null,
+    'screenBase' => is_object($wp_codebox_page_load_screen) && isset($wp_codebox_page_load_screen->base) ? (string) $wp_codebox_page_load_screen->base : null,
+    'hookSuffix' => isset($wp_codebox_page_load_hook_suffix) ? (string) $wp_codebox_page_load_hook_suffix : null,
+    'adminPage' => $wp_codebox_page_load_surface === 'admin' ? (string) $wp_codebox_page_load_relative_path : null,
+    'postId' => function_exists('is_singular') && is_singular() ? (int) get_queried_object_id() : null,
+    'postType' => function_exists('get_post_type') && get_queried_object_id() ? (string) get_post_type(get_queried_object_id()) : null,
+    'queriedObjectId' => function_exists('get_queried_object_id') ? (int) get_queried_object_id() : null,
+    'queriedObjectType' => is_object($wp_codebox_page_load_queried) ? get_class($wp_codebox_page_load_queried) : null,
+    'template' => function_exists('get_page_template_slug') && get_queried_object_id() ? (string) get_page_template_slug(get_queried_object_id()) : null,
+    'queryVars' => isset($GLOBALS['wp_query']->query_vars) && is_array($GLOBALS['wp_query']->query_vars) ? $GLOBALS['wp_query']->query_vars : array(),
+    'bodyClasses' => function_exists('get_body_class') ? get_body_class() : array(),
+);
+$wp_codebox_page_load_identity = array_filter($wp_codebox_page_load_identity, static fn($value) => $value !== null && $value !== '');
+
+$wp_codebox_page_load_query_count = 0;
+$wp_codebox_page_load_query_time_ms = 0.0;
+$wp_codebox_page_load_query_fingerprints = array();
+if (in_array('wpdb-queries', $wp_codebox_page_load_capture, true) && isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries)) {
+    foreach (array_slice($GLOBALS['wpdb']->queries, $wp_codebox_page_load_query_start) as $wp_codebox_page_load_query_record) {
+        $wp_codebox_page_load_sql = is_array($wp_codebox_page_load_query_record) && isset($wp_codebox_page_load_query_record[0]) ? (string) $wp_codebox_page_load_query_record[0] : '';
+        if ($wp_codebox_page_load_sql === '') {
+            continue;
+        }
+        $wp_codebox_page_load_query_count++;
+        $wp_codebox_page_load_elapsed_ms = is_array($wp_codebox_page_load_query_record) && isset($wp_codebox_page_load_query_record[1]) ? round(((float) $wp_codebox_page_load_query_record[1]) * 1000, 3) : null;
+        if ($wp_codebox_page_load_elapsed_ms !== null) {
+            $wp_codebox_page_load_query_time_ms += $wp_codebox_page_load_elapsed_ms;
+        }
+        $wp_codebox_page_load_fingerprint = preg_replace('/\\s+/', ' ', trim($wp_codebox_page_load_sql));
+        $wp_codebox_page_load_fingerprint = preg_replace("/'(?:''|[^'])*'/", "'?'", $wp_codebox_page_load_fingerprint);
+        $wp_codebox_page_load_fingerprint = preg_replace('/\\b\\d+(?:\\.\\d+)?\\b/', '?', $wp_codebox_page_load_fingerprint);
+        $wp_codebox_page_load_key = hash('sha256', $wp_codebox_page_load_fingerprint);
+        if (!isset($wp_codebox_page_load_query_fingerprints[$wp_codebox_page_load_key])) {
+            $wp_codebox_page_load_query_fingerprints[$wp_codebox_page_load_key] = array('fingerprint' => $wp_codebox_page_load_fingerprint, 'count' => 0, 'sampleMs' => $wp_codebox_page_load_elapsed_ms, 'totalTimeMs' => 0);
+        }
+        $wp_codebox_page_load_query_fingerprints[$wp_codebox_page_load_key]['count']++;
+        if ($wp_codebox_page_load_elapsed_ms !== null) {
+            $wp_codebox_page_load_query_fingerprints[$wp_codebox_page_load_key]['totalTimeMs'] = round($wp_codebox_page_load_query_fingerprints[$wp_codebox_page_load_key]['totalTimeMs'] + $wp_codebox_page_load_elapsed_ms, 3);
+        }
+    }
+}
+$wp_codebox_page_load_finished_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
+$wp_codebox_page_load_status = !empty($wp_codebox_page_load_errors) ? 'error' : ($wp_codebox_page_load_redirect ? 'redirect' : 'ok');
+$wp_codebox_page_load_result = array(
+    'schema' => 'wp-codebox/wordpress-page-load-result/v1',
+    'command' => $wp_codebox_page_load_command,
+    'status' => $wp_codebox_page_load_status,
+    'target' => array('kind' => $wp_codebox_page_load_surface, 'path' => $wp_codebox_page_load_path, 'method' => $wp_codebox_page_load_method, 'query' => $wp_codebox_page_load_query, 'body' => $wp_codebox_page_load_body, 'userSession' => is_array($wp_codebox_page_load_user_session) ? $wp_codebox_page_load_user_session : null),
+    'identity' => $wp_codebox_page_load_identity,
+    'http' => array('status' => $wp_codebox_page_load_redirect ? (int) ($wp_codebox_page_load_redirect['status'] ?? 302) : 200, 'headers' => $wp_codebox_page_load_headers),
+    'redirect' => $wp_codebox_page_load_redirect,
+    'notices' => $wp_codebox_page_load_notices,
+    'errors' => $wp_codebox_page_load_errors,
+    'performance' => array('schema' => 'wp-codebox/performance-observation/v1', 'command' => $wp_codebox_page_load_command, 'target' => $wp_codebox_page_load_path, 'timing' => array('startedAt' => $wp_codebox_page_load_started_at, 'finishedAt' => $wp_codebox_page_load_finished_at, 'durationMs' => round((microtime(true) - $wp_codebox_page_load_start_time) * 1000, 3)), 'memory' => array('startBytes' => $wp_codebox_page_load_start_memory, 'endBytes' => memory_get_usage(true), 'deltaBytes' => memory_get_usage(true) - $wp_codebox_page_load_start_memory, 'peakBytes' => memory_get_peak_usage(true)), 'database' => array('queryCount' => $wp_codebox_page_load_query_count, 'totalTimeMs' => round($wp_codebox_page_load_query_time_ms, 3), 'fingerprints' => array_values($wp_codebox_page_load_query_fingerprints), 'repeatedQueries' => array_values(array_filter(array_values($wp_codebox_page_load_query_fingerprints), static fn($query) => isset($query['count']) && $query['count'] > 1))), 'hooks' => array('timings' => array()), 'network' => array('requests' => 0, 'responses' => 0, 'failures' => 0), 'browser' => array('metrics' => new stdClass(), 'admin' => new stdClass())),
+    'artifactRefs' => array(),
+    'diagnostics' => array('bufferBytes' => strlen((string) $wp_codebox_page_load_buffer), 'capture' => $wp_codebox_page_load_capture),
+);
+echo wp_json_encode($wp_codebox_page_load_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}

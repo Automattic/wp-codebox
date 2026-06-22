@@ -163,6 +163,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./workspace-policy.js",
   "./workspace-preload-artifacts.js",
   "./wordpress-crud-contracts.js",
+  "./wordpress-page-load-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
   "./wordpress-runtime-actions.js",
@@ -172,6 +173,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
   "./command-registry.js",
   "./runtime-contract-manifest.js",
+  "./wordpress-page-load-contracts.js",
 ])
 
 for (const publicEntry of [
@@ -221,6 +223,7 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
+  "./wordpress-page-load-contracts.js",
 ]) {
   assert.ok(publicBarrel.includes(`export * from "${publicModule}"`), `public barrel must export ${publicModule}`)
 }
