@@ -107,6 +107,8 @@ export interface RunPlanExecutorOptions<TWorker extends RunPlanWorkerContract = 
   onWorkerFailed?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   onWorkerSkipped?: (descriptor: RunPlanWorkerDescriptor<TWorker>, result: TResult, index: number) => Promise<void> | void
   createSkippedResult?: (descriptor: RunPlanWorkerDescriptor<TWorker>, dependencies: TResult[]) => TResult
+  createCancelledResult?: (descriptor: RunPlanWorkerDescriptor<TWorker>) => TResult
+  createTimedOutResult?: (descriptor: RunPlanWorkerDescriptor<TWorker>, reason: string) => TResult
 }
 
 export type RunPlanClock = () => Date | string
@@ -143,8 +145,21 @@ export async function executeRunPlan<TWorker extends RunPlanWorkerContract, TRes
   validateRunPlanDependencies(workers)
   const concurrency = normalizeRunPlanConcurrency(plan.concurrency, options)
   const results = await runDependencyAwareConcurrent(workers, concurrency, async (descriptor, index) => {
+    if (descriptor.cancellation.cancelRequested) {
+      const result = options.createCancelledResult?.(descriptor) ?? defaultCancelledRunPlanResult(descriptor) as TResult
+      await options.onWorkerFailed?.(descriptor, result, index)
+      return result
+    }
+
+    const executionTimeoutMs = runPlanWorkerExecutionTimeoutMs(descriptor, options.clock)
+    if (executionTimeoutMs === 0) {
+      const result = options.createTimedOutResult?.(descriptor, "deadline") ?? defaultTimedOutRunPlanResult(descriptor, "deadline") as TResult
+      await options.onWorkerFailed?.(descriptor, result, index)
+      return result
+    }
+
     await options.onWorkerStarted?.(descriptor, index)
-    const result = await options.adapter.run({ descriptor, index })
+    const result = await runPlanWorkerWithTimeout(options.adapter.run({ descriptor, index }), descriptor, executionTimeoutMs, options)
     if (result.success === true) {
       await options.onWorkerCompleted?.(descriptor, result, index)
     } else {
@@ -333,6 +348,22 @@ export function runPlanCancellationMetadata(source: Record<string, unknown>): Ru
   }
 }
 
+export function runPlanWorkerExecutionTimeoutMs(descriptor: RunPlanWorkerDescriptor, clock?: RunPlanClock): number | undefined {
+  const limits: number[] = []
+  if (descriptor.timeoutSeconds) {
+    limits.push(descriptor.timeoutSeconds * 1000)
+  }
+  if (descriptor.cancellation.deadline) {
+    const deadlineMs = Date.parse(descriptor.cancellation.deadline)
+    const nowMs = Date.parse(runPlanClockIso(clock))
+    if (Number.isFinite(deadlineMs) && Number.isFinite(nowMs)) {
+      limits.push(Math.max(0, deadlineMs - nowMs))
+    }
+  }
+
+  return limits.length > 0 ? Math.min(...limits) : undefined
+}
+
 export function safeRunPlanPathSegment(value: unknown): string {
   const segment = stringValue(value)
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(segment)) {
@@ -365,6 +396,43 @@ function defaultSkippedRunPlanResult<TWorker extends RunPlanWorkerContract, TRes
     status: "skipped",
     error: { code: "dependency-skipped", message: `Run plan worker ${descriptor.id} skipped because a dependency did not complete successfully.` },
     dependencies: dependencies.map((dependency) => ({ workerId: dependency.workerId, status: dependency.status, success: dependency.success })),
+  } as unknown as TResult
+}
+
+function runPlanWorkerWithTimeout<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(operation: Promise<TResult>, descriptor: RunPlanWorkerDescriptor<TWorker>, timeoutMs: number | undefined, options: RunPlanExecutorOptions<TWorker, TResult>): Promise<TResult> {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) {
+    return operation
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      resolve(options.createTimedOutResult?.(descriptor, "timeout") ?? defaultTimedOutRunPlanResult(descriptor, "timeout") as TResult)
+    }, Math.max(0, Math.round(timeoutMs)))
+    operation.then((result) => {
+      clearTimeout(timeout)
+      resolve(result)
+    }).catch((error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+  })
+}
+
+function defaultCancelledRunPlanResult<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(descriptor: RunPlanWorkerDescriptor<TWorker>): TResult {
+  return {
+    workerId: descriptor.id,
+    success: false,
+    status: "cancelled",
+    error: { code: "worker-cancelled", message: descriptor.cancellation.reason || `Run plan worker ${descriptor.id} was cancelled before execution.` },
+  } as unknown as TResult
+}
+
+function defaultTimedOutRunPlanResult<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(descriptor: RunPlanWorkerDescriptor<TWorker>, reason: string): TResult {
+  return {
+    workerId: descriptor.id,
+    success: false,
+    status: "timed_out",
+    error: { code: "worker-timed-out", message: `Run plan worker ${descriptor.id} exceeded its ${reason}.` },
   } as unknown as TResult
 }
 

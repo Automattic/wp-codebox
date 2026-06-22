@@ -52,6 +52,81 @@ assert.ok(events.indexOf("completed:one") < events.indexOf("started:after-one"),
 assert.ok(!events.includes("started:after-failed"), "failed dependency dependent is never started")
 assert.ok(events.indexOf("skipped:after-failed") < events.indexOf("skipped:after-skipped"), "transitive skip is deterministic")
 
+const successfulRun = await executeRunPlan({
+  concurrency: 1,
+  workers: [{ id: "success", goal: "Complete normally" }],
+}, {
+  adapter: {
+    async run({ descriptor }) {
+      return { workerId: descriptor.id, status: "succeeded", success: true }
+    },
+  },
+})
+assert.equal(successfulRun.success, true)
+assert.deepEqual(successfulRun.counts, { total: 1, completed: 1, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
+
+const timedOutRuns: string[] = []
+const timedOutRun = await executeRunPlan({
+  concurrency: 1,
+  workers: [
+    { id: "slow", goal: "Time out", timeout_seconds: 1 },
+    { id: "after-slow", goal: "Skip after timeout", dependsOn: ["slow"] },
+  ],
+}, {
+  adapter: {
+    async run({ descriptor }) {
+      timedOutRuns.push(descriptor.id)
+      await new Promise((resolve) => setTimeout(resolve, 1100))
+      return { workerId: descriptor.id, status: "succeeded", success: true }
+    },
+  },
+})
+assert.equal(timedOutRun.success, false)
+assert.deepEqual(timedOutRun.counts, { total: 2, completed: 0, failed: 0, skipped: 1, cancelled: 0, timed_out: 1 })
+assert.equal(timedOutRun.workers[0].status, "timed_out")
+assert.equal(timedOutRun.workers[1].status, "skipped")
+assert.deepEqual(timedOutRuns, ["slow"])
+
+const cancelledRuns: string[] = []
+const cancelledRun = await executeRunPlan({
+  concurrency: 1,
+  workers: [
+    { id: "cancelled", goal: "Do not start", cancel_requested: true, cancel_reason: "operator-requested" },
+    { id: "after-cancelled", goal: "Skip after cancellation", dependsOn: ["cancelled"] },
+  ],
+}, {
+  adapter: {
+    async run({ descriptor }) {
+      cancelledRuns.push(descriptor.id)
+      return { workerId: descriptor.id, status: "succeeded", success: true }
+    },
+  },
+})
+assert.equal(cancelledRun.success, false)
+assert.deepEqual(cancelledRun.counts, { total: 2, completed: 0, failed: 0, skipped: 1, cancelled: 1, timed_out: 0 })
+assert.equal(cancelledRun.workers[0].status, "cancelled")
+assert.equal((cancelledRun.workers[0] as { error?: { message?: string } }).error?.message, "operator-requested")
+assert.equal(cancelledRun.workers[1].status, "skipped")
+assert.deepEqual(cancelledRuns, [])
+
+const deadlineRuns: string[] = []
+const deadlineRun = await executeRunPlan({
+  concurrency: 1,
+  workers: [{ id: "expired", goal: "Do not start after deadline", deadline: "2026-03-04T05:06:06.000Z" }],
+}, {
+  adapter: {
+    async run({ descriptor }) {
+      deadlineRuns.push(descriptor.id)
+      return { workerId: descriptor.id, status: "succeeded", success: true }
+    },
+  },
+  clock: () => "2026-03-04T05:06:07.000Z",
+})
+assert.equal(deadlineRun.success, false)
+assert.deepEqual(deadlineRun.counts, { total: 1, completed: 0, failed: 0, skipped: 0, cancelled: 0, timed_out: 1 })
+assert.equal(deadlineRun.workers[0].status, "timed_out")
+assert.deepEqual(deadlineRuns, [])
+
 await assert.rejects(executeRunPlan({ concurrency: 1, workers: [{ id: "missing-goal" }] }, { adapter, requireGoal: true }), /requires goal/)
 await assert.rejects(executeRunPlan({ concurrency: 1, workers: [{ id: "duplicate", goal: "one" }, { id: "duplicate", goal: "two" }] }, { adapter }), /must be unique/)
 await assert.rejects(executeRunPlan({ concurrency: 1, workers: [{ id: "unknown", goal: "one", dependsOn: ["missing"] }] }, { adapter }), /unknown worker/)
