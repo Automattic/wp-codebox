@@ -192,15 +192,27 @@ function runtime_discovery_admin(): array {
 function runtime_discovery_database(): array {
     global $wpdb;
     $tables = array();
-    $candidates = array_values(array_unique(array_map('strval', $wpdb->tables('all'))));
-    foreach ($candidates as $base_name) {
-        $name = $wpdb->prefix . $base_name;
+    $core_tables = array_values(array_unique(array_map('strval', $wpdb->tables('all'))));
+    $core_names = array();
+    foreach ($core_tables as $base_name) {
+        $core_names[$wpdb->prefix . $base_name] = $base_name;
+    }
+    $table_names = $wpdb->get_col($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($wpdb->prefix) . '%'));
+    foreach ((array) $table_names as $name) {
+        $name = (string) $name;
+        $base_name = isset($core_names[$name]) ? $core_names[$name] : (str_starts_with($name, $wpdb->prefix) ? substr($name, strlen($wpdb->prefix)) : $name);
         $columns = array();
         $described = $wpdb->get_results('DESCRIBE ' . $name, ARRAY_A);
         foreach ((array) $described as $column) {
             $columns[] = array('name' => (string) ($column['Field'] ?? ''), 'type' => (string) ($column['Type'] ?? ''), 'nullable' => strtoupper((string) ($column['Null'] ?? '')) === 'YES', 'key' => (string) ($column['Key'] ?? ''), 'default' => array_key_exists('Default', $column) && $column['Default'] !== null ? (string) $column['Default'] : null, 'extra' => (string) ($column['Extra'] ?? ''));
         }
-        $tables[] = array('name' => $name, 'baseName' => $base_name, 'columns' => $columns);
+        $indexes = array();
+        foreach ((array) $wpdb->get_results('SHOW INDEX FROM ' . $name, ARRAY_A) as $index) {
+            $indexes[] = array('name' => (string) ($index['Key_name'] ?? ''), 'column' => (string) ($index['Column_name'] ?? ''), 'unique' => isset($index['Non_unique']) ? ((int) $index['Non_unique'] === 0) : false, 'sequence' => isset($index['Seq_in_index']) ? (int) $index['Seq_in_index'] : null);
+        }
+        $status_rows = $wpdb->get_results($wpdb->prepare('SHOW TABLE STATUS LIKE %s', $name), ARRAY_A);
+        $status = is_array($status_rows) && isset($status_rows[0]) ? array('engine' => isset($status_rows[0]['Engine']) ? (string) $status_rows[0]['Engine'] : '', 'rows' => isset($status_rows[0]['Rows']) ? (int) $status_rows[0]['Rows'] : null, 'collation' => isset($status_rows[0]['Collation']) ? (string) $status_rows[0]['Collation'] : '') : null;
+        $tables[] = array('name' => $name, 'baseName' => $base_name, 'classification' => isset($core_names[$name]) ? 'core' : (str_starts_with($name, $wpdb->prefix) ? 'prefixed' : 'external'), 'columns' => $columns, 'indexes' => $indexes, 'status' => $status);
     }
     return array('payload' => array('schema' => 'wp-codebox/wordpress-db-schema-discovery/v1', 'prefix' => $wpdb->prefix, 'tables' => $tables), 'diagnostics' => array());
 }

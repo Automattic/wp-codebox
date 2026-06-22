@@ -15,9 +15,18 @@ export interface WordPressDbOperation {
   schema: typeof WORDPRESS_DB_OPERATION_SCHEMA
   operation: WordPressDbVerb
   resource?: WordPressDbResourceRef
-  query?: Record<string, unknown>
+  query?: WordPressDbQuery
   options?: Record<string, unknown>
   metadata?: Record<string, unknown>
+}
+
+export interface WordPressDbQuery {
+  table?: string
+  columns?: string[]
+  where?: Record<string, string | number | boolean | null>
+  limit?: number
+  sql?: string
+  [key: string]: unknown
 }
 
 export interface WordPressDbDiagnostic {
@@ -59,7 +68,17 @@ export const WORDPRESS_DB_OPERATION_JSON_SCHEMA = {
         },
       },
     },
-    query: { type: "object", additionalProperties: true },
+    query: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        table: { type: "string", minLength: 1 },
+        columns: { type: "array", items: { type: "string", minLength: 1 } },
+        where: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        sql: { type: "string", minLength: 1 },
+      },
+    },
     options: { type: "object", additionalProperties: true },
     metadata: { type: "object", additionalProperties: true },
   },
@@ -95,7 +114,7 @@ export function normalizeWordPressDbOperation(input: unknown): WordPressDbOperat
     schema: WORDPRESS_DB_OPERATION_SCHEMA,
     operation,
     resource: normalizeOptionalDbResourceRef(value.resource),
-    query: normalizeOptionalObject(value.query, "wordpress.db-operation.query"),
+    query: normalizeOptionalDbQuery(value.query),
     options: normalizeOptionalObject(value.options, "wordpress.db-operation.options"),
     metadata: normalizeOptionalObject(value.metadata, "wordpress.db-operation.metadata"),
   })
@@ -130,6 +149,43 @@ function normalizeDbIdentifiers(input: unknown): WordPressDbResourceRef["identif
     }
     return [key, entry]
   }))
+}
+
+function normalizeOptionalDbQuery(input: unknown): WordPressDbQuery | undefined {
+  if (input === undefined) return undefined
+  const value = requireObject(input, "wordpress.db-operation.query") as Partial<WordPressDbQuery>
+  const where = value.where === undefined ? undefined : normalizeDbScalars(value.where, "wordpress.db-operation.query.where")
+  return stripUndefined({
+    ...value,
+    table: optionalString(value.table, "wordpress.db-operation.query.table"),
+    columns: normalizeOptionalStringList(value.columns, "wordpress.db-operation.query.columns"),
+    where,
+    limit: normalizeOptionalLimit(value.limit),
+    sql: optionalString(value.sql, "wordpress.db-operation.query.sql"),
+  })
+}
+
+function normalizeDbScalars(input: unknown, label: string): Record<string, string | number | boolean | null> {
+  const value = requireObject(input, label)
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean" && entry !== null) {
+      throw new Error(`${label}.${key} must be a scalar value.`)
+    }
+    return [key, entry]
+  }))
+}
+
+function normalizeOptionalStringList(input: unknown, label: string): string[] | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) throw new Error(`${label} must be an array.`)
+  const normalized = input.map((entry, index) => requiredString(entry, `${label}.${index}`))
+  return normalized.length ? normalized : undefined
+}
+
+function normalizeOptionalLimit(input: unknown): number | undefined {
+  if (input === undefined) return undefined
+  if (typeof input !== "number" || !Number.isInteger(input)) throw new Error("wordpress.db-operation.query.limit must be an integer.")
+  return Math.max(1, Math.min(100, input))
 }
 
 function isWordPressDbVerb(value: string): value is WordPressDbVerb {

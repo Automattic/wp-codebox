@@ -216,7 +216,28 @@ function wp_codebox_db_limit( $operation ) {
     return max( 1, min( 100, $limit ) );
 }
 
-function wp_codebox_db_table_name( $operation ) {
+function wp_codebox_db_quote_identifier( $identifier ) {
+    return '\`' . str_replace( '\`', '\`\`', (string) $identifier ) . '\`';
+}
+
+function wp_codebox_db_discovered_tables() {
+    global $wpdb;
+    $core = array();
+    foreach ( array_values( array_unique( array_map( 'strval', $wpdb->tables( 'all' ) ) ) ) as $base_name ) {
+        $core[ $wpdb->prefix . $base_name ] = $base_name;
+    }
+    $tables = array();
+    foreach ( (array) $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix ) . '%' ) ) as $name ) {
+        $name = (string) $name;
+        $base_name = isset( $core[ $name ] ) ? $core[ $name ] : ( str_starts_with( $name, $wpdb->prefix ) ? substr( $name, strlen( $wpdb->prefix ) ) : $name );
+        $table = array( 'name' => $name, 'baseName' => $base_name, 'classification' => isset( $core[ $name ] ) ? 'core' : ( str_starts_with( $name, $wpdb->prefix ) ? 'prefixed' : 'external' ) );
+        $tables[ $name ] = $table;
+        $tables[ $base_name ] = $table;
+    }
+    return $tables;
+}
+
+function wp_codebox_db_resolve_table( $operation ) {
     global $wpdb;
     $resource = isset( $operation['resource'] ) && is_array( $operation['resource'] ) ? $operation['resource'] : array();
     $query = isset( $operation['query'] ) && is_array( $operation['query'] ) ? $operation['query'] : array();
@@ -225,25 +246,34 @@ function wp_codebox_db_table_name( $operation ) {
     if ( $base === '' ) {
         return null;
     }
-    $known = array( 'posts', 'postmeta', 'terms', 'term_taxonomy', 'term_relationships', 'termmeta', 'users', 'usermeta', 'options', 'comments', 'commentmeta', 'links' );
-    if ( ! in_array( $base, $known, true ) ) {
-        return null;
-    }
-    return isset( $wpdb->{$base} ) ? $wpdb->{$base} : $wpdb->prefix . $base;
+    $tables = wp_codebox_db_discovered_tables();
+    return isset( $tables[ $base ] ) ? $tables[ $base ] : ( isset( $tables[ $wpdb->prefix . $base ] ) ? $tables[ $wpdb->prefix . $base ] : null );
 }
 
-function wp_codebox_db_select_columns( $columns ) {
+function wp_codebox_db_table_columns( $table ) {
+    global $wpdb;
+    $columns = array();
+    foreach ( (array) $wpdb->get_results( 'DESCRIBE ' . wp_codebox_db_quote_identifier( $table ), ARRAY_A ) as $column ) {
+        $name = (string) ( $column['Field'] ?? '' );
+        if ( $name !== '' ) {
+            $columns[ $name ] = array( 'name' => $name, 'type' => (string) ( $column['Type'] ?? '' ), 'nullable' => strtoupper( (string) ( $column['Null'] ?? '' ) ) === 'YES', 'key' => (string) ( $column['Key'] ?? '' ), 'default' => array_key_exists( 'Default', $column ) && $column['Default'] !== null ? (string) $column['Default'] : null, 'extra' => (string) ( $column['Extra'] ?? '' ) );
+        }
+    }
+    return $columns;
+}
+
+function wp_codebox_db_select_columns( $columns, $allowed_columns ) {
     if ( ! is_array( $columns ) || count( $columns ) === 0 ) {
-        return '*';
+        return array( 'sql' => '*', 'columns' => array_keys( $allowed_columns ) );
     }
     $safe = array();
     foreach ( $columns as $column ) {
         $column = preg_replace( '/[^A-Za-z0-9_]/', '', (string) $column );
-        if ( $column !== '' ) {
+        if ( $column !== '' && isset( $allowed_columns[ $column ] ) ) {
             $safe[] = $column;
         }
     }
-    return count( $safe ) > 0 ? implode( ', ', $safe ) : '*';
+    return count( $safe ) > 0 ? array( 'sql' => implode( ', ', array_map( 'wp_codebox_db_quote_identifier', $safe ) ), 'columns' => $safe ) : null;
 }
 
 function wp_codebox_emit_db_result( $operation ) {
@@ -259,20 +289,26 @@ function wp_codebox_emit_db_result( $operation ) {
 
         if ( $verb === 'schema' ) {
             $tables = array();
-            $requested = wp_codebox_db_table_name( $operation );
-            $table_names = $requested ? array( $requested ) : $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix ) . '%' ) );
+            $requested = wp_codebox_db_resolve_table( $operation );
+            $table_names = $requested ? array( $requested ) : array_values( array_filter( wp_codebox_db_discovered_tables(), static function ( $table, $key ) { return $table['name'] === $key; }, ARRAY_FILTER_USE_BOTH ) );
             foreach ( $table_names as $table ) {
-                $columns = $wpdb->get_results( 'DESCRIBE ' . $table, ARRAY_A );
-                $tables[] = array( 'name' => $table, 'columns' => $columns );
+                $columns = array_values( wp_codebox_db_table_columns( $table['name'] ) );
+                $indexes = array();
+                foreach ( (array) $wpdb->get_results( 'SHOW INDEX FROM ' . wp_codebox_db_quote_identifier( $table['name'] ), ARRAY_A ) as $index ) {
+                    $indexes[] = array( 'name' => (string) ( $index['Key_name'] ?? '' ), 'column' => (string) ( $index['Column_name'] ?? '' ), 'unique' => isset( $index['Non_unique'] ) ? ( (int) $index['Non_unique'] === 0 ) : false, 'sequence' => isset( $index['Seq_in_index'] ) ? (int) $index['Seq_in_index'] : null );
+                }
+                $status_rows = $wpdb->get_results( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $table['name'] ), ARRAY_A );
+                $status = is_array( $status_rows ) && isset( $status_rows[0] ) ? array( 'engine' => isset( $status_rows[0]['Engine'] ) ? (string) $status_rows[0]['Engine'] : '', 'rows' => isset( $status_rows[0]['Rows']) ? (int) $status_rows[0]['Rows'] : null, 'collation' => isset( $status_rows[0]['Collation'] ) ? (string) $status_rows[0]['Collation'] : '' ) : null;
+                $tables[] = array( 'name' => $table['name'], 'baseName' => $table['baseName'], 'classification' => $table['classification'], 'columns' => $columns, 'indexes' => $indexes, 'status' => $status );
             }
-            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => $tables, 'metadata' => array( 'tableCount' => count( $tables ) ) ) ) );
+            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => $tables, 'metadata' => array( 'tableCount' => count( $tables ), 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'schema' ) ) ) ) );
             return;
         }
 
         if ( $verb === 'query-summary' ) {
             $sql = isset( $query['sql'] ) ? trim( (string) $query['sql'] ) : '';
             if ( $sql === '' ) {
-                wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'item' => array( 'queryCount' => is_array( $wpdb->queries ) ? count( $wpdb->queries ) : null ) ) ) );
+                wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'item' => array( 'queryCount' => is_array( $wpdb->queries ) ? count( $wpdb->queries ) : null ), 'metadata' => array( 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'query-summary' ) ) ) ) );
                 return;
             }
             if ( ! preg_match( '/^(SELECT|SHOW|DESCRIBE|EXPLAIN)\\b/i', $sql ) ) {
@@ -280,17 +316,22 @@ function wp_codebox_emit_db_result( $operation ) {
                 return;
             }
             $rows = $wpdb->get_results( $sql, ARRAY_A );
-            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => array_slice( is_array( $rows ) ? $rows : array(), 0, wp_codebox_db_limit( $operation ) ), 'metadata' => array( 'rowCount' => is_array( $rows ) ? count( $rows ) : 0, 'truncated' => is_array( $rows ) && count( $rows ) > wp_codebox_db_limit( $operation ) ) ) ) );
+            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => array_slice( is_array( $rows ) ? $rows : array(), 0, wp_codebox_db_limit( $operation ) ), 'metadata' => array( 'rowCount' => is_array( $rows ) ? count( $rows ) : 0, 'truncated' => is_array( $rows ) && count( $rows ) > wp_codebox_db_limit( $operation ), 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'query-summary' ) ) ) ) );
             return;
         }
 
         if ( $verb === 'read' ) {
-            $table = wp_codebox_db_table_name( $operation );
+            $table = wp_codebox_db_resolve_table( $operation );
             if ( ! $table ) {
-                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-table', 'DB reads require a known WordPress table base name such as posts, postmeta, options, terms, termmeta, users, or usermeta.' ) );
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-table', 'DB reads require a discovered prefixed WordPress table name or base name.' ) );
                 return;
             }
-            $columns = wp_codebox_db_select_columns( isset( $query['columns'] ) ? $query['columns'] : array() );
+            $allowed_columns = wp_codebox_db_table_columns( $table['name'] );
+            $columns = wp_codebox_db_select_columns( isset( $query['columns'] ) ? $query['columns'] : array(), $allowed_columns );
+            if ( $columns === null ) {
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-column', 'DB reads require selected columns to exist in the discovered table schema.' ) );
+                return;
+            }
             $where = isset( $query['where'] ) && is_array( $query['where'] ) ? $query['where'] : array();
             $clauses = array();
             $values = array();
@@ -299,15 +340,18 @@ function wp_codebox_emit_db_result( $operation ) {
                     continue;
                 }
                 $column = preg_replace( '/[^A-Za-z0-9_]/', '', (string) $column );
-                if ( $column !== '' ) {
-                    $clauses[] = $column . ' = %s';
+                if ( $column !== '' && isset( $allowed_columns[ $column ] ) ) {
+                    $clauses[] = wp_codebox_db_quote_identifier( $column ) . ' = %s';
                     $values[] = (string) $value;
+                } elseif ( $column !== '' ) {
+                    wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-column', 'DB reads require filter columns to exist in the discovered table schema.' ) );
+                    return;
                 }
             }
-            $sql = 'SELECT ' . $columns . ' FROM ' . $table . ( count( $clauses ) ? ' WHERE ' . implode( ' AND ', $clauses ) : '' ) . ' LIMIT %d';
+            $sql = 'SELECT ' . $columns['sql'] . ' FROM ' . wp_codebox_db_quote_identifier( $table['name'] ) . ( count( $clauses ) ? ' WHERE ' . implode( ' AND ', $clauses ) : '' ) . ' LIMIT %d';
             $values[] = wp_codebox_db_limit( $operation );
             $rows = $wpdb->get_results( $wpdb->prepare( $sql, $values ), ARRAY_A );
-            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => is_array( $rows ) ? $rows : array() ) ) );
+            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => is_array( $rows ) ? $rows : array(), 'metadata' => array( 'table' => $table, 'columns' => $columns['columns'], 'limit' => wp_codebox_db_limit( $operation ), 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'read', 'table' => $table['name'] ) ) ) ) );
             return;
         }
 

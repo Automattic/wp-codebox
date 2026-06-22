@@ -478,16 +478,16 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.db-operation",
-    description: "Execute a bounded generic WordPress database operation envelope for schema inspection, safe reads, and query summaries. Generic writes are explicitly rejected by the foundational contract.",
+    description: "Execute a bounded generic WordPress database operation envelope for schema inspection, safe reads, and query summaries across discovered prefixed WordPress tables. Generic writes are explicitly rejected by the foundational contract.",
     acceptedArgs: [
-      { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, query-summary, and guarded write operations.", required: true, format: "JSON object" },
+      { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, query-summary, and guarded write operations. Reads require a discovered prefixed table and described table columns.", required: true, format: "JSON object" },
     ],
-    outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Generic DB writes return status=error with db-write-unsupported.",
+    outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Schema results classify tables as core, prefixed, or external where observable and may include bounded columns, indexes, and status metadata. Generic DB writes return status=error with db-write-unsupported.",
     outputSchema: {
       id: WORDPRESS_DB_RESULT_SCHEMA,
       jsonSchema: WORDPRESS_DB_RESULT_JSON_SCHEMA,
     },
-    policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to known WordPress tables and capped row counts; generic writes are rejected.",
+    policyRequirement: "Runtime policy commands must include wordpress.db-operation. DB reads are bounded to discovered prefixed WordPress tables, allowlisted to described columns, and capped row counts; generic writes are rejected.",
     recipe: true,
     handler: { kind: "playground", method: "runDbOperation" },
   },
