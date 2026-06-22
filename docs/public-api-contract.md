@@ -83,7 +83,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
   policy, and command result contracts. Playground-backed WordPress consumers can use
   `createWordPressRuntime()`, `createWordPressEpisode()`, and
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
-  instead of composing core runtime internals directly.
+  instead of composing core runtime internals directly. The same facade exposes
+  `wordpressAdminPageLoadAction()` and `wordpressFrontendPageLoadAction()` helpers
+  for stable page-load coverage commands.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
@@ -117,6 +119,14 @@ The stable public surface is grouped by lifecycle area rather than by product:
   normalized command diagnostics and performance evidence: elapsed timing, memory
   delta, database query counts/time/fingerprints, repeated-query summaries, hook
   timing placeholders, network counts, and browser/admin metric placeholders.
+- **WordPress page-load coverage:** `wordpress.admin-page-load` and
+  `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
+  with status, target, resolved admin screen or frontend queried-object identity
+  where WordPress exposes it, redirects, notices/errors, optional query/performance
+  observations, and a JSON artifact ref. These commands intentionally use a light
+  in-process WordPress load path; browser-heavy probes remain available through
+  browser commands when a caller explicitly needs DOM, screenshot, console, or
+  network evidence.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. `wp-codebox/fuzz-suite-result/v1`

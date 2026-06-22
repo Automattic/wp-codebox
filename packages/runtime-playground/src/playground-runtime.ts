@@ -19,7 +19,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1147,6 +1147,30 @@ class PlaygroundRuntime implements Runtime {
       runtimeSpec: this.spec,
       schema: "wp-codebox/wordpress-frontend-url-inventory/v1",
       server,
+      surface: "frontend",
+    })
+  }
+
+  async runAdminPageLoad(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runPageLoadCommand({
+      artifactRoot: this.artifactRoot,
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+      surface: "admin",
+    })
+  }
+
+  async runFrontendPageLoad(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runPageLoadCommand({
+      artifactRoot: this.artifactRoot,
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
       surface: "frontend",
     })
   }

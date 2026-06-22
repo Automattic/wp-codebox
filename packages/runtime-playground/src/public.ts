@@ -27,6 +27,17 @@ export interface WordPressRuntimeActionHooks {
   onActionFinish?: (result: RuntimeEpisodeStepResult, index: number) => void | Promise<void>
 }
 
+export interface WordPressPageLoadActionOptions {
+  path?: string
+  url?: string
+  method?: string
+  query?: Record<string, unknown>
+  body?: Record<string, unknown>
+  user?: string
+  session?: string
+  captureDiagnostics?: string[]
+}
+
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
 }
@@ -67,6 +78,14 @@ export async function collectBrowserArtifactMetrics(bundleDirectory: string): Pr
   return browserArtifactMetrics(bundleDirectory)
 }
 
+export function wordpressAdminPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.admin-page-load", args: pageLoadActionArgs(options) }
+}
+
+export function wordpressFrontendPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.frontend-page-load", args: pageLoadActionArgs(options) }
+}
+
 export { browserArtifactMetrics, createPlaygroundRuntimeBackend }
 export type { BrowserArtifactMetricsResult, PlaygroundRuntimeBackendOptions }
 
@@ -75,4 +94,17 @@ function wordPressRuntimeCreateSpec(spec: WordPressRuntimeSpec): RuntimeCreateSp
     ...spec,
     backend: "wordpress-playground",
   }
+}
+
+function pageLoadActionArgs(options: WordPressPageLoadActionOptions): string[] {
+  return [
+    ...(options.path ? [`path=${options.path}`] : []),
+    ...(options.url ? [`url=${options.url}`] : []),
+    ...(options.method ? [`method=${options.method}`] : []),
+    ...(options.query ? [`query-json=${JSON.stringify(options.query)}`] : []),
+    ...(options.body ? [`body-json=${JSON.stringify(options.body)}`] : []),
+    ...(options.user ? [`user=${options.user}`] : []),
+    ...(options.session ? [`session=${options.session}`] : []),
+    ...(options.captureDiagnostics?.length ? [`capture-diagnostics=${options.captureDiagnostics.join(",")}`] : []),
+  ]
 }
