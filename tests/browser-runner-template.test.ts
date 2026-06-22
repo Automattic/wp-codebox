@@ -66,7 +66,7 @@ echo json_encode( array(
 		'provider_request_schema' => str_contains( $runner_php, 'wp-codebox/browser-provider-proxy-request/v1' ),
 		'result_schema' => str_contains( $runner_php, 'wp-codebox/browser-materialization/v1' ),
 		'tool_bridge_policy' => str_contains( $runner_php, "['tool_bridge']['sandbox_tool_policy']" ),
-		'agents_adapter_helper' => str_contains( $runner_php, 'function wp_codebox_browser_runtime_execute_agents_ability' ),
+		'agents_adapter_helper' => str_contains( $runner_php, 'function wp_codebox_browser_runtime_execute_ability' ),
 		'no_embedded_adapter_class' => ! str_contains( $runner_php, 'WP_Codebox_Agents_API_Adapter::' ),
 		'contract_markers' => str_contains( $runner_php, 'WP_CODEBOX_BROWSER_RUNNER_BODY_START' ) && str_contains( $runner_php, 'WP_CODEBOX_BROWSER_RUNNER_BODY_END' ),
 	),
@@ -79,7 +79,7 @@ echo json_encode( array(
 assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
-assert.equal(result.sha256, "b614d82556b6fbff60fb15f126f7b1eb2a864a7ba48dea50c85e5695d0c2b9f0")
+assert.equal(result.sha256, "eafed891f882ec42ce463458ef818ff8b9fdb158d45f5bbecce2e1517136cb61")
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,

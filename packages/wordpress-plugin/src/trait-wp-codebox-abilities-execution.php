@@ -1433,6 +1433,7 @@ private static function compact_browser_materializer_contract_dto( array $contra
 			'preview_ref'      => WP_Codebox_Browser_Task_Builder::browser_preview_ref( $contract ),
 			'artifact_refs'    => WP_Codebox_Browser_Task_Builder::browser_artifact_refs( $contract ),
 			'diagnostics'      => self::compact_browser_contract_diagnostics( $contract ),
+			'executable'       => self::browser_executable_materializer_contract_dto( $contract ),
 			'provenance'       => is_array( $contract['provenance'] ?? null ) ? self::compact_browser_dto_value( $contract['provenance'] ) : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value

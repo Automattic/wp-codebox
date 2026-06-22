@@ -44,8 +44,9 @@ assert.throws(
   /Unsupported runtime backend: missing-backend; known runtime backends: example-backend/,
 )
 
-assert.deepEqual(listCliRuntimeBackendKinds(), ["wordpress-playground"])
+assert.deepEqual(listCliRuntimeBackendKinds(), ["wordpress-playground", "wordpress"])
 assert.equal(resolveCliRuntimeBackend("wordpress-playground").kind, "wordpress-playground")
+assert.equal(resolveCliRuntimeBackend("wordpress").kind, "wordpress-playground")
 assert.equal(listCliRecipeCommandDefinitions().some((command) => command.id === "wordpress.run-php"), true)
 assert.deepEqual(cliRuntimeBackendRecipePolicy().runtimeOverlayLibraries, ["php-ai-client"])
 assert.throws(
@@ -57,7 +58,7 @@ const openSchema = createWorkspaceRecipeJsonSchema()
 assert.deepEqual((openSchema as any).properties.runtime.properties.backend, { type: "string" })
 
 const cliSchema = createWorkspaceRecipeJsonSchema({ runtimeBackendKinds: listCliRuntimeBackendKinds() })
-assert.deepEqual((cliSchema as any).properties.runtime.properties.backend, { enum: ["wordpress-playground"] })
+assert.deepEqual((cliSchema as any).properties.runtime.properties.backend, { enum: ["wordpress-playground", "wordpress"] })
 
 const cliPolicy = cliRuntimeBackendRecipePolicy()
 const cliProviderSchema = createWorkspaceRecipeJsonSchema({

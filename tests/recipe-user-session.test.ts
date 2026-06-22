@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { commandRegistry } from "../packages/runtime-core/src/command-registry.js"
 import { validateWorkspaceRecipeJsonSchema } from "../packages/runtime-core/src/recipe-schema.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/runtime-contracts.js"
+import { abilityPhpCode, abilityPrincipalFromArgs } from "../packages/runtime-playground/src/ability-command-handlers.js"
 import { restRequestPhpCode } from "../packages/runtime-playground/src/rest-request-command-handlers.js"
 import { wordpressFixtureUserPhpCode, wordpressUserSessionFromCommandArgs } from "../packages/runtime-playground/src/wordpress-user-sessions.js"
 
@@ -62,8 +63,29 @@ assert.match(generated, /wp_set_current_user/)
 assert.match(generated, /wp-codebox\/wordpress-user-session\/v1/)
 assert.match(generated, /'userSession' => is_array/)
 
+const ambientAbilityPhp = abilityPhpCode({ name: "example/ability", input: {} })
+assert.doesNotMatch(ambientAbilityPhp, /wp_set_current_user\(\s*1\s*\)/)
+assert.match(ambientAbilityPhp, /'source' => is_array\( \$wp_codebox_ability_user_session \) \? \(string\)/)
+
+const sessionAbilityPhp = abilityPhpCode({ name: "example/ability", input: {}, userSession: resolvedSession })
+assert.match(sessionAbilityPhp, /wp_set_current_user\( \$sandbox_user_id \)/)
+assert.match(sessionAbilityPhp, /wp-codebox\/wordpress-user-session\/v1/)
+assert.match(sessionAbilityPhp, /'principal' => \$wp_codebox_ability_principal/)
+
+const principal = abilityPrincipalFromArgs(["principal={\"userId\":7,\"source\":\"runtime\",\"token\":\"secret\"}"])
+assert.deepEqual(principal, { userId: 7, metadata: { userId: 7, source: "runtime" } })
+const principalAbilityPhp = abilityPhpCode({ name: "example/ability", input: {}, principal })
+assert.match(principalAbilityPhp, /wp_set_current_user\( 7 \)/)
+assert.doesNotMatch(principalAbilityPhp, /secret/)
+
 const restCommand = commandRegistry.find((definition) => definition.id === "wordpress.rest-request")
 assert.ok(restCommand?.acceptedArgs.some((arg) => arg.name === "user"), "rest-request accepts user")
 assert.ok(restCommand?.acceptedArgs.some((arg) => arg.name === "session"), "rest-request accepts session")
+
+const abilityCommand = commandRegistry.find((definition) => definition.id === "wordpress.ability")
+assert.ok(abilityCommand?.acceptedArgs.some((arg) => arg.name === "user"), "ability accepts user")
+assert.ok(abilityCommand?.acceptedArgs.some((arg) => arg.name === "session"), "ability accepts session")
+assert.ok(abilityCommand?.acceptedArgs.some((arg) => arg.name === "principal"), "ability accepts principal")
+assert.ok(abilityCommand?.acceptedArgs.some((arg) => arg.name === "principal-json"), "ability accepts principal-json")
 
 console.log("recipe user session primitive ok")

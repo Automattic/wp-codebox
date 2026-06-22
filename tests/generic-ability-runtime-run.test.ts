@@ -129,11 +129,13 @@ const okEnvelope = abilityResponseToCommandEnvelope(JSON.stringify({
   command: "wordpress.ability",
   status: "ok",
   name: "example/runtime-run",
+  principal: { schema: "wp-codebox/wordpress-ability-principal/v1", source: "principal", userId: 7, roles: ["editor"] },
   result: { schema: "example/result/v1", evidenceEnvelope: { schema: "wp-codebox/evidence-artifact-envelope/v1" } },
 }), "example/runtime-run", {}, "example/result/v1")
 
 assert.equal(okEnvelope.status, "ok")
 assert.equal(okEnvelope.json?.schema, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA)
+assert.deepEqual((okEnvelope.json as Record<string, unknown>).principal, { schema: "wp-codebox/wordpress-ability-principal/v1", source: "principal", userId: 7, roles: ["editor"] })
 assert.deepEqual((okEnvelope.json as Record<string, unknown>).evidenceEnvelope, { schema: "wp-codebox/evidence-artifact-envelope/v1" })
 
 const mismatchEnvelope = abilityResponseToCommandEnvelope(JSON.stringify({

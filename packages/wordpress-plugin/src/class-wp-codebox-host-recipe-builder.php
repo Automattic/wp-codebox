@@ -270,7 +270,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 		}
 
 		return 'mu-plugin' === (string) ( $plugin['loadAs'] ?? '' )
-			? '/wordpress/wp-content/mu-plugins/wp-codebox-runtime/' . $slug
+			? '/wordpress/wp-content/mu-plugins/contained-runtime/' . $slug
 			: '/wordpress/wp-content/plugins/' . $slug;
 	}
 

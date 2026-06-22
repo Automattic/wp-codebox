@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { exitAfterTerminalRecipePhaseFailure } from "../packages/cli/src/commands/recipe-run-output.js"
 
 const originalExit = process.exit
+const originalExitCode = process.exitCode
 let exitCode: string | number | null | undefined
 
 process.exit = ((code?: string | number | null | undefined): never => {
@@ -10,7 +11,7 @@ process.exit = ((code?: string | number | null | undefined): never => {
 }) as typeof process.exit
 
 try {
-  assert.throws(() => exitAfterTerminalRecipePhaseFailure({
+  exitAfterTerminalRecipePhaseFailure({
     success: false,
     schema: "wp-codebox/recipe-run/v1",
     executions: [],
@@ -28,10 +29,12 @@ try {
         phase: "activate_plugins",
       },
     }],
-  }), /process\.exit stub/)
-  assert.equal(exitCode, 1)
+  })
+  assert.equal(exitCode, undefined)
+  assert.equal(process.exitCode, 1)
 
   exitCode = undefined
+  process.exitCode = undefined
   exitAfterTerminalRecipePhaseFailure({
     success: false,
     schema: "wp-codebox/recipe-run/v1",
@@ -39,8 +42,10 @@ try {
     error: { name: "Error", message: "plain failure" },
   })
   assert.equal(exitCode, undefined)
+  assert.equal(process.exitCode, undefined)
 } finally {
   process.exit = originalExit
+  process.exitCode = originalExitCode
 }
 
 console.log("recipe-run-terminal-phase-failure-smoke: ok")
