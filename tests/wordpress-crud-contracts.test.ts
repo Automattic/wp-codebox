@@ -63,6 +63,8 @@ const guardedCreate = normalizeWordPressCrudOperation({
 const crudPhp = wordpressCrudOperationPhpCode(guardedCreate)
 assert.match(crudPhp, /wp_insert_post/)
 assert.match(crudPhp, /wp_insert_term/)
+assert.match(crudPhp, /wp_insert_comment/)
+assert.match(crudPhp, /wp_insert_attachment/)
 assert.match(crudPhp, /wp_insert_user/)
 assert.match(crudPhp, /add_option/)
 assert.match(crudPhp, /add_metadata/)

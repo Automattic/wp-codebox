@@ -10,6 +10,8 @@ Supported resource kinds in the Playground backend:
 
 - `post` through `get_post`, `get_posts`, `wp_insert_post`, `wp_update_post`, and `wp_delete_post`.
 - `term` through `get_term`, `get_terms`, `wp_insert_term`, `wp_update_term`, and `wp_delete_term`.
+- `comment` through `get_comment`, `get_comments`, `wp_insert_comment`, `wp_update_comment`, and `wp_delete_comment`.
+- `attachment` or `media` through attachment posts using `get_post`, `get_posts`, `wp_insert_attachment`, `wp_update_post`, and `wp_delete_attachment`.
 - `user` through `get_user_by`, `get_users`, `wp_insert_user`, `wp_update_user`, and `wp_delete_user`.
 - `option` through `get_option`, bounded option reads, `add_option`, `update_option`, and `delete_option`.
 - `metadata` or `meta` through `get_metadata`, `add_metadata`, `update_metadata`, and `delete_metadata`.
