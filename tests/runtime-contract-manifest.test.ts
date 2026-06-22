@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 
 import {
   AGENT_RUNTIME_WORKLOAD_SCHEMA,
+  AGENT_TASK_RUN_REQUEST_SCHEMA,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
@@ -34,6 +35,7 @@ import {
   PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
   PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
   PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  PROVIDER_RUNTIME_TASK_NAMES,
   PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
   RUNTIME_CONTRACT_MANIFEST_SCHEMA,
   RUNTIME_CONTRACT_NORMALIZERS,
@@ -65,6 +67,7 @@ assert.equal(manifest.version, 1)
 assert.deepEqual(manifest.schemas, RUNTIME_CONTRACT_SCHEMAS)
 assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 
+assert.equal(manifest.schemas.agentTask.runRequest, AGENT_TASK_RUN_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.previewLease, PREVIEW_LEASE_SCHEMA)
@@ -92,6 +95,10 @@ assert.equal(manifest.schemas.runtimeProvider.invocationContract, PROVIDER_RUNTI
 assert.equal(manifest.schemas.runtimeProvider.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
 assert.equal(manifest.schemas.runtimeProvider.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
 assert.equal(manifest.schemas.runtimeProvider.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
+assert.equal(manifest.schemas.providerRuntime.invocationContract, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
+assert.equal(manifest.schemas.providerRuntime.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
+assert.equal(manifest.schemas.providerRuntime.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
+assert.equal(manifest.schemas.providerRuntime.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
 assert.equal(manifest.schemas.hostDelegation.request, HOST_DELEGATION_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.hostDelegation.result, HOST_DELEGATION_RESULT_SCHEMA)
 assert.equal(manifest.schemas.hostDelegation.event, HOST_DELEGATION_EVENT_SCHEMA)
@@ -121,6 +128,9 @@ assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskFanout, CODEBOX_
 assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
+assert.equal(manifest.providerRuntime.schema, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
+assert.deepEqual(manifest.providerRuntime.tasks, PROVIDER_RUNTIME_TASK_NAMES)
+assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 
 const values = runtimeContractSchemaValues()
 assert.equal(new Set(values).size, values.length, "runtime contract schema constants must be unique")

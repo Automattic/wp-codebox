@@ -6,7 +6,7 @@ import { FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA } from "./fuzz-suite-contra
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
 import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
-import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA } from "./provider-runtime-contracts.js"
+import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, providerRuntimeInvocationContract } from "./provider-runtime-contracts.js"
 import { RUNTIME_RUN_RESULT_SCHEMA } from "./run-registry.js"
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { WORDPRESS_REST_MATRIX_RESULT_SCHEMA, WORDPRESS_REST_MATRIX_SCHEMA } from "./rest-matrix-contracts.js"
@@ -27,6 +27,7 @@ import { WORDPRESS_DB_OPERATION_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wor
 import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
+export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/v1" as const
 
 export const CODEBOX_RUN_AGENT_TASK_ABILITY = "wp-codebox/run-agent-task" as const
 export const CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY = "wp-codebox/run-agent-task-batch" as const
@@ -59,6 +60,7 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
 
 export const RUNTIME_CONTRACT_SCHEMAS = {
   agentTask: {
+    runRequest: AGENT_TASK_RUN_REQUEST_SCHEMA,
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
   },
   runtimeBoundary: {
@@ -99,6 +101,12 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     agentRuntimeWorkload: AGENT_RUNTIME_WORKLOAD_SCHEMA,
   },
   runtimeProvider: {
+    invocationContract: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
+    credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
+    credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
+    credentialResolution: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+  },
+  providerRuntime: {
     invocationContract: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
     credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
     credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
@@ -159,6 +167,7 @@ export interface RuntimeContractManifest {
   version: 1
   schemas: typeof RUNTIME_CONTRACT_SCHEMAS
   abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
+  providerRuntime: ReturnType<typeof providerRuntimeInvocationContract>
 }
 
 export function runtimeContractManifest(): RuntimeContractManifest {
@@ -167,6 +176,7 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     version: 1,
     schemas: RUNTIME_CONTRACT_SCHEMAS,
     abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+    providerRuntime: providerRuntimeInvocationContract(),
   }
 }
 
