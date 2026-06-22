@@ -174,7 +174,7 @@ private static function fuzz_suite_target_step( array $case, array $target ): ar
 		'ability' => 'wordpress.ability',
 		default => $entrypoint,
 	};
-	return array( 'command' => $command, 'args' => $args );
+	return array_filter( array( 'command' => $command, 'args' => $args, 'targetKind' => $kind, 'targetId' => $entrypoint ), static fn( mixed $value ): bool => '' !== $value && ! ( is_array( $value ) && empty( $value ) ) );
 }
 
 /** @param array<string,mixed> $input Runtime action input. @return array<string,mixed> */
@@ -190,33 +190,44 @@ private static function fuzz_suite_runtime_action_step( array $input ): array {
 		return array(
 			'command' => 'wordpress.wp-cli',
 			'args'    => self::fuzz_suite_args_from_map( array( 'command' => $input['command'] ?? null ) ),
+			'action'  => $type,
+		);
+	}
+	if ( 'php' === $type ) {
+		return array(
+			'command' => 'wordpress.run-php',
+			'action'  => $type,
 		);
 	}
 	if ( 'browser' === $type ) {
 		return array(
 			'command' => 'wordpress.browser-actions',
 			'args'    => self::fuzz_suite_browser_action_args( $input ),
+			'action'  => $type,
 		);
 	}
 	if ( 'browser_probe' === $type ) {
 		return array(
 			'command' => 'wordpress.browser-probe',
 			'args'    => self::fuzz_suite_args_from_map( array( 'url' => $input['url'] ?? null, 'wait-for' => $input['wait_for'] ?? $input['waitFor'] ?? null, 'duration' => $input['duration'] ?? null, 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ), 'viewport' => $input['viewport'] ?? null ) ),
+			'action'  => $type,
 		);
 	}
 	if ( 'editor_open' === $type ) {
 		return array(
 			'command' => 'wordpress.editor-open',
 			'args'    => self::fuzz_suite_args_from_map( array( 'target' => $input['target'] ?? null, 'post-id' => $input['post_id'] ?? $input['postId'] ?? null, 'post-type' => $input['post_type'] ?? $input['postType'] ?? null, 'url' => $input['url'] ?? null, 'wait-selector' => $input['wait_selector'] ?? $input['waitSelector'] ?? null, 'wait-timeout' => isset( $input['timeout_ms'] ) ? ( (string) $input['timeout_ms'] . 'ms' ) : ( isset( $input['timeoutMs'] ) ? ( (string) $input['timeoutMs'] . 'ms' ) : null ), 'capture' => self::fuzz_suite_csv_arg( $input['capture'] ?? null ) ) ),
+			'action'  => $type,
 		);
 	}
 	if ( 'admin_page' === $type || 'page' === $type ) {
 		return array(
 			'command' => 'admin_page' === $type ? 'wordpress.admin-page-load' : 'wordpress.frontend-page-load',
 			'args'    => self::fuzz_suite_args_from_map( array( 'path' => $input['path'] ?? null, 'url' => $input['url'] ?? null, 'method' => $input['method'] ?? null, 'query-json' => $input['query'] ?? null, 'body-json' => $input['body'] ?? null, 'user' => $input['user'] ?? null, 'session' => $input['session'] ?? null, 'capture-diagnostics' => self::fuzz_suite_csv_arg( $input['capture_diagnostics'] ?? $input['captureDiagnostics'] ?? null ) ) ),
+			'action'  => $type,
 		);
 	}
-	return array( 'command' => 'wordpress.runtime-action', 'args' => self::fuzz_suite_args_from_map( array( 'type' => $type ) ) );
+	return array( 'command' => 'wordpress.runtime-action', 'args' => self::fuzz_suite_args_from_map( array( 'type' => $type ) ), 'action' => $type );
 }
 
 /** @param array<string,mixed> $input Runtime browser action input. @return string[] */
@@ -260,7 +271,16 @@ private static function fuzz_suite_args_from_map( array $values ): array {
 private static function execute_fuzz_suite_step( array $step, array $case, array $suite, string $case_id ): array {
 	$command = (string) ( $step['command'] ?? '' );
 	$args = self::fuzz_suite_parse_args( is_array( $step['args'] ?? null ) ? $step['args'] : array() );
-	$observation = array( 'command' => $command, 'phase' => (string) ( $step['phase'] ?? '' ) );
+	$observation = array_filter(
+		array(
+			'command'    => $command,
+			'phase'      => (string) ( $step['phase'] ?? '' ),
+			'targetKind' => (string) ( $step['targetKind'] ?? '' ),
+			'targetId'   => (string) ( $step['targetId'] ?? '' ),
+			'action'     => (string) ( $step['action'] ?? '' ),
+		),
+		static fn( mixed $value ): bool => '' !== $value
+	);
 
 	try {
 		return match ( $command ) {
@@ -391,21 +411,48 @@ private static function execute_fuzz_suite_workload_step( array $args, string $c
 
 /** @param array<string,mixed> $observation Observation. @return array<string,mixed> */
 private static function fuzz_suite_step_unsupported( string $command, array $observation, string $case_id ): array {
-	return array( 'status' => 'skipped', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_step_unsupported', 'Fuzz suite step is not supported by this runner.', array( 'case_id' => $case_id, 'command' => $command ) ) );
+	$reason = self::fuzz_suite_unsupported_step_reason( $command, $observation );
+	return array( 'status' => 'skipped', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'warning', $reason['code'], $reason['message'], array_filter( array( 'case_id' => $case_id, 'command' => $command, 'target_kind' => $observation['targetKind'] ?? null, 'target_id' => $observation['targetId'] ?? null, 'action' => $observation['action'] ?? null, 'reason' => $reason['reason'] ) ) ) );
+}
+
+/** @param array<string,mixed> $observation Observation. @return array{code:string,message:string,reason:string} */
+private static function fuzz_suite_unsupported_step_reason( string $command, array $observation ): array {
+	if ( in_array( $observation['targetKind'] ?? '', array( 'command', 'runtime' ), true ) ) {
+		return array( 'code' => 'wp_codebox_fuzz_target_command_unsupported', 'reason' => 'target_command_unsupported', 'message' => 'Command and runtime fuzz-suite targets require the runtime command executor; the public PHP fuzz-suite ability records a structured skip.' );
+	}
+
+	$runtime_commands = array(
+		'wordpress.wp-cli'             => array( 'wp_codebox_fuzz_runtime_action_wp_cli_unsupported', 'runtime_action_wp_cli_unsupported', 'Runtime-action type wp_cli requires the runtime command executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.run-php'            => array( 'wp_codebox_fuzz_runtime_action_php_unsupported', 'runtime_action_php_unsupported', 'Runtime-action type php requires raw PHP execution and is not accepted by the public PHP fuzz-suite ability.' ),
+		'wordpress.browser-actions'    => array( 'wp_codebox_fuzz_runtime_action_browser_unsupported', 'runtime_action_browser_unsupported', 'Runtime-action type browser requires the browser runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.browser-probe'      => array( 'wp_codebox_fuzz_runtime_action_browser_probe_unsupported', 'runtime_action_browser_probe_unsupported', 'Runtime-action type browser_probe requires the browser runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.editor-open'        => array( 'wp_codebox_fuzz_runtime_action_editor_open_unsupported', 'runtime_action_editor_open_unsupported', 'Runtime-action type editor_open requires the browser/editor runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.admin-page-load'    => array( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported', 'runtime_action_admin_page_unsupported', 'Runtime-action type admin_page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.frontend-page-load' => array( 'wp_codebox_fuzz_runtime_action_page_unsupported', 'runtime_action_page_unsupported', 'Runtime-action type page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.runtime-action'     => array( 'wp_codebox_fuzz_runtime_action_unsupported', 'runtime_action_unsupported', 'Runtime-action type is not supported by the public PHP fuzz-suite ability.' ),
+	);
+
+	if ( isset( $runtime_commands[ $command ] ) ) {
+		return array( 'code' => $runtime_commands[ $command ][0], 'reason' => $runtime_commands[ $command ][1], 'message' => $runtime_commands[ $command ][2] );
+	}
+
+	return array( 'code' => 'wp_codebox_fuzz_step_unsupported', 'reason' => 'step_unsupported', 'message' => 'Fuzz suite step is not supported by this runner.' );
 }
 
 /** @return array<string,mixed> */
 private static function fuzz_suite_case_result( string $id, string $status, array $diagnostics, array $artifact_refs = array(), array $metadata = array() ): array {
-	return array_filter(
-		array(
+	$result = array(
 			'id'           => $id,
 			'status'       => $status,
 			'success'      => 'passed' === $status,
+			'skipReason'   => 'skipped' === $status ? (string) ( $diagnostics[0]['code'] ?? '' ) : null,
 			'diagnostics'  => $diagnostics,
 			'artifactRefs' => self::dedupe_fuzz_suite_artifact_refs( $artifact_refs ),
 			'metadata'     => $metadata,
-		),
-		static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) )
+		);
+	return array_filter(
+		$result,
+		static fn( mixed $value ): bool => null !== $value && ! ( is_array( $value ) && empty( $value ) )
 	);
 }
 

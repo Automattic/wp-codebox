@@ -73,6 +73,25 @@ manifest intentionally excludes backend handler bindings such as agent execution
 substrate ability names, runtime command handlers, and integration-specific
 filters.
 
+`wp-codebox/run-fuzz-suite` accepts public target kinds `rest`, `http`,
+`ability`, `command`, `runtime`, and `runtime-action`. The WordPress plugin
+ability runs safe in-process `rest`, same-site `http`, and WordPress `ability`
+targets directly. Targets that require the runtime command, browser, editor, or
+page-load executors return `status: "skipped"`, a case-level `skipReason`, and a
+warning diagnostic rather than silently passing without exercising the target.
+Documented skip reason codes are:
+
+- `wp_codebox_fuzz_target_command_unsupported`
+- `wp_codebox_fuzz_runtime_action_wp_cli_unsupported`
+- `wp_codebox_fuzz_runtime_action_php_unsupported`
+- `wp_codebox_fuzz_runtime_action_browser_unsupported`
+- `wp_codebox_fuzz_runtime_action_browser_probe_unsupported`
+- `wp_codebox_fuzz_runtime_action_editor_open_unsupported`
+- `wp_codebox_fuzz_runtime_action_admin_page_unsupported`
+- `wp_codebox_fuzz_runtime_action_page_unsupported`
+- `wp_codebox_fuzz_runtime_action_unsupported`
+- `wp_codebox_fuzz_step_unsupported`
+
 WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 `wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
 backend systems internally, while public docs and schemas present Codebox-owned
