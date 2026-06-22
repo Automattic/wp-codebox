@@ -1,72 +1,95 @@
 # Docs Agent Reusable Workflow
 
-WP Codebox publishes a reusable GitHub Actions workflow for Docs Agent runs:
+WP Codebox publishes a reusable GitHub Actions workflow for product-level agent
+tasks, including Docs Agent runs:
 
 ```yaml
 jobs:
   update-docs:
-    uses: Automattic/wp-codebox/.github/workflows/docs-agent-runner.yml@main
+    uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      recipe_path: .github/docs-agent-recipe.json
-      prompt: ${{ inputs.prompt }}
+      runner_recipe: Automattic/docs-agent@main:ci/docs-agent-runner-recipe.json
+      agent_bundle: bundles/technical-docs-agent
+      workload_id: technical-docs-maintenance-flow
+      workload_label: Run technical Docs Agent
+      component_id: docs-agent-ci-driver
+      target_repo: Automattic/example-target
+      prompt: Refresh the API docs for changed files.
+      writable_paths: README.md,docs/**
+      runner_workspace: |
+        {
+          "enabled": true,
+          "repo": "Automattic/example-target",
+          "clone_url": "https://github.com/Automattic/example-target.git",
+          "branch_prefix": "docs/agent-run",
+          "from": "origin/main"
+        }
+      verification_commands: '[{"command":"npm test","description":"Run docs checks"}]'
+      drift_checks: '[]'
+      output_projections: '{"docs_pr_url":"metadata.engine_data.docs_agent.pr_url"}'
+      expected_artifacts: '["docs_agent_transcript","docs_agent_change_summary"]'
+      artifact_declarations: |
+        [
+          {
+            "schema": "wp-codebox/artifact-declaration/v1",
+            "name": "docs_agent_transcript",
+            "type": "DocsAgentTranscript",
+            "artifact_schema": "docs-agent/transcript/v1",
+            "description": "Machine-readable transcript for the Docs Agent run.",
+            "required": false,
+            "egress": ["artifact", "workflow-output", "review-link"]
+          },
+          {
+            "schema": "wp-codebox/artifact-declaration/v1",
+            "name": "docs_agent_change_summary",
+            "type": "DocsAgentChangeSummary",
+            "artifact_schema": "docs-agent/change-summary/v1",
+            "description": "Reviewable summary of documentation changes.",
+            "required": false,
+            "egress": ["pr-body", "workflow-output", "review-link"]
+          }
+        ]
     secrets: inherit
 ```
 
-Consumers provide a recipe that describes the Docs Agent bundle, target
-repository, runtime policy, verification commands, artifact expectations, and
-output projection. The workflow accepts Codebox recipe fields and returns stable
-run outputs; implementation-specific runtime wiring, workspace adapters,
-plugins, and model setup stay behind the WP Codebox boundary.
+Consumers provide product-level task inputs: the selected runner recipe, agent
+bundle, target repository, workspace publication request, verification commands,
+drift checks, artifact expectations, typed artifact declarations, and output
+projection. The workflow returns stable run outputs; implementation-specific
+runtime wiring, workspace adapters, plugins, and model setup stay behind the WP
+Codebox boundary.
 
-## Recipe Schema
+## Runner Recipe
 
-The recipe schema id is `wp-codebox/docs-agent-runner-recipe/v1`.
+`runner_recipe` is a descriptor for a committed runner recipe, such as
+`Automattic/docs-agent@main:ci/docs-agent-runner-recipe.json`. The recipe stays
+owned by the product workflow. Consumers pass the descriptor and the selected
+`agent_bundle`; they do not pass worker filesystem paths, runtime substrate
+checkout rules, package internals, or private workflow names.
 
 ```json
 {
-  "schema": "wp-codebox/docs-agent-runner-recipe/v1",
-  "targetRepository": "Automattic/agents-api",
-  "prompt": "Refresh the API docs for the changed files.",
-  "docsAgent": {
-    "repository": "https://github.com/Automattic/docs-agent.git",
-    "ref": "main",
-    "bundlePath": "bundles/docs-agent"
-  },
-  "runner": {
-    "verificationCommands": [
-      { "command": "npm test", "description": "Run docs checks" }
-    ]
-  },
-  "policy": {
-    "successRequiresPr": false,
-    "requireAppToken": true,
-    "allowedRepositories": ["Automattic/agents-api", "Automattic/docs-agent"]
-  },
-  "engine": {
-    "key": "docs_agent",
-    "outputMappings": {
-      "docs_pr_url": "metadata.engine_data.docs_agent.pr_url"
-    }
-  },
-  "artifacts": {
-    "transcriptName": "docs-agent-transcript"
-  }
+  "id": "docs-agent/codebox-homeboy-runner",
+  "description": "Docs Agent product-level Codebox runner contract.",
+  "runtime": "wp-codebox",
+  "profile": "docs-agent-runner"
 }
 ```
 
-`recipe_json` may be used instead of `recipe_path` when a caller wants to build
-the recipe in a previous workflow step.
-
 ## Inputs
 
-- `recipe_path`: repository-relative path to a recipe JSON file.
-- `recipe_json`: inline recipe JSON used when `recipe_path` is empty.
-- `prompt`: optional prompt override for the run.
-- `target_repo`: optional `OWNER/REPO` target override.
+- `runner_recipe`: committed runner recipe descriptor.
+- `agent_bundle`: selected agent bundle path in the product repository.
+- `workload_id`, `workload_label`, and `component_id`: caller-owned run labels.
+- `target_repo`: `OWNER/REPO` target repository.
+- `prompt`: task instruction supplied to the agent bundle.
+- `writable_paths`: comma-separated repository paths the agent may edit.
+- `runner_workspace`: JSON workspace publication request.
+- `validation_dependencies`, `verification_commands`, and `drift_checks`: runner-owned validation inputs.
+- `artifact_declarations` and `expected_artifacts`: typed review artifact contract.
+- `output_projections`: JSON object mapping workflow output names to result paths.
 - `run_agent`: set to `false` to record a skipped run.
 - `provider` and `model`: model selection for the recipe owner.
-- `wp_codebox_ref`: WP Codebox ref used for the runtime boundary.
-- `wordpress_version`: WordPress version used by the contained runtime.
 - `dry_run`: validates the runner request without a live agent call.
 
 ## Outputs
@@ -76,8 +99,9 @@ the recipe in a previous workflow step.
 - `transcript_summary`: short transcript label when available.
 - `engine_data_json`: projected recipe outputs as one JSON object.
 - `credential_mode`: credential source selected for the run.
+- `declared_artifacts_json`: typed artifact declarations accepted for the run.
 
-The workflow is intentionally recipe-first. Consumers should model new behavior
-as fields in `wp-codebox/docs-agent-runner-recipe/v1` instead of depending on
+The workflow is intentionally product-input-first. Consumers should model new
+behavior as runner recipe fields or workflow inputs instead of depending on
 worker filesystem paths, runtime internals, package internals, or the private
-workflow that executes the recipe.
+implementation that executes the task.

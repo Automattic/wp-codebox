@@ -1,0 +1,240 @@
+name: Run Agent Task (reusable)
+
+'on':
+  workflow_call:
+    inputs:
+      runner_recipe:
+        description: Codebox runner recipe descriptor, such as OWNER/REPO@ref:path.
+        type: string
+        required: true
+      agent_bundle:
+        description: Repository-relative path to the agent bundle selected by the caller.
+        type: string
+        required: true
+      workload_id:
+        description: Stable workload identifier for this run.
+        type: string
+        default: agent-task
+      workload_label:
+        description: Human-readable workload label for logs and review artifacts.
+        type: string
+        default: Run Agent Task
+      component_id:
+        description: Caller-owned component identifier for traceability.
+        type: string
+        default: agent-task
+      target_repo:
+        description: Target repository in OWNER/REPO format.
+        type: string
+        required: true
+      prompt:
+        description: Task instruction supplied to the selected agent bundle.
+        type: string
+        required: true
+      writable_paths:
+        description: Comma-separated repository paths the agent may edit.
+        type: string
+        default: ""
+      provider:
+        description: Model provider id selected by the caller.
+        type: string
+        default: openai
+      model:
+        description: Model id selected by the caller.
+        type: string
+        default: gpt-5.5
+      runner_workspace:
+        description: JSON runner-owned workspace publication request.
+        type: string
+        default: '{}'
+      validation_dependencies:
+        description: Optional validation dependency install command or descriptor.
+        type: string
+        default: ""
+      context_repositories:
+        description: JSON array of additional repository context descriptors.
+        type: string
+        default: '[]'
+      verification_commands:
+        description: JSON array of verification commands to run after agent changes.
+        type: string
+        default: '[]'
+      drift_checks:
+        description: JSON array of drift checks for generated outputs.
+        type: string
+        default: '[]'
+      workspace_contract_checks:
+        description: JSON object describing workspace contract checks.
+        type: string
+        default: '{}'
+      actions_artifact_downloads:
+        description: JSON array of workflow artifacts to preload into the run.
+        type: string
+        default: '[]'
+      success_requires_pr:
+        description: Whether success requires a published pull request.
+        type: boolean
+        default: false
+      success_completion_outcomes:
+        description: JSON array of accepted non-PR completion outcomes.
+        type: string
+        default: '[]'
+      app_token_repos:
+        description: Comma-separated repositories for app-token scoping.
+        type: string
+        default: ""
+      require_homeboy_app_token:
+        description: Whether the run requires the configured app token.
+        type: boolean
+        default: false
+      allowed_repos:
+        description: JSON array of repositories the run may access.
+        type: string
+        default: '[]'
+      max_turns:
+        description: Maximum agent turns for the run.
+        type: number
+        default: 12
+      step_budget:
+        description: Maximum tool/action steps for the run.
+        type: number
+        default: 16
+      time_budget_ms:
+        description: Run time budget in milliseconds.
+        type: number
+        default: 600000
+      tool_results_key:
+        description: Metadata key for captured tool results.
+        type: string
+        default: tool_results
+      output_projections:
+        description: JSON object mapping workflow output names to result paths.
+        type: string
+        default: '{}'
+      transcript_artifact_name:
+        description: Name for the transcript artifact.
+        type: string
+        default: agent-task-transcript
+      replay_bundle_artifact_name:
+        description: Optional name for the replay bundle artifact.
+        type: string
+        default: ""
+      expected_artifacts:
+        description: JSON array of expected artifact names.
+        type: string
+        default: '[]'
+      artifact_declarations:
+        description: JSON array of typed artifact declarations.
+        type: string
+        default: '[]'
+      callback_data:
+        description: JSON object passed through to the selected runner recipe.
+        type: string
+        default: '{}'
+      run_agent:
+        description: When false, validate and report a skipped run.
+        type: boolean
+        default: true
+      dry_run:
+        description: Validate the task request without starting a live agent run.
+        type: boolean
+        default: false
+    secrets:
+      CODEBOX_RUNNER_APP_ID:
+        required: false
+      CODEBOX_RUNNER_APP_PRIVATE_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      MODEL_PROVIDER_SECRET_1:
+        required: false
+      MODEL_PROVIDER_SECRET_2:
+        required: false
+      MODEL_PROVIDER_SECRET_3:
+        required: false
+      MODEL_PROVIDER_SECRET_4:
+        required: false
+      MODEL_PROVIDER_SECRET_5:
+        required: false
+    outputs:
+      job_status:
+        value: ${{ jobs.run-agent-task.outputs.job_status }}
+      transcript_json:
+        value: ${{ jobs.run-agent-task.outputs.transcript_json }}
+      transcript_summary:
+        value: ${{ jobs.run-agent-task.outputs.transcript_summary }}
+      engine_data_json:
+        value: ${{ jobs.run-agent-task.outputs.engine_data_json }}
+      credential_mode:
+        value: ${{ jobs.run-agent-task.outputs.credential_mode }}
+      declared_artifacts_json:
+        value: ${{ jobs.run-agent-task.outputs.declared_artifacts_json }}
+
+jobs:
+  run-agent-task:
+    runs-on: ubuntu-latest
+    outputs:
+      job_status: ${{ steps.plan.outputs.job_status }}
+      transcript_json: ${{ steps.plan.outputs.transcript_json }}
+      transcript_summary: ${{ steps.plan.outputs.transcript_summary }}
+      engine_data_json: ${{ steps.plan.outputs.engine_data_json }}
+      credential_mode: ${{ steps.plan.outputs.credential_mode }}
+      declared_artifacts_json: ${{ steps.plan.outputs.declared_artifacts_json }}
+    steps:
+      - name: Resolve WP Codebox workflow ref
+        id: workflow-ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: printf 'ref=%s\n' "${WORKFLOW_REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout WP Codebox workflow helpers
+        uses: actions/checkout@v4
+        with:
+          repository: Automattic/wp-codebox
+          ref: ${{ steps.workflow-ref.outputs.ref }}
+          path: .wp-codebox-workflow
+
+      - name: Build Codebox task request
+        id: plan
+        env:
+          RUNNER_RECIPE: ${{ inputs.runner_recipe }}
+          AGENT_BUNDLE: ${{ inputs.agent_bundle }}
+          WORKLOAD_ID: ${{ inputs.workload_id }}
+          WORKLOAD_LABEL: ${{ inputs.workload_label }}
+          COMPONENT_ID: ${{ inputs.component_id }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          PROMPT: ${{ inputs.prompt }}
+          WRITABLE_PATHS: ${{ inputs.writable_paths }}
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+          RUNNER_WORKSPACE: ${{ inputs.runner_workspace }}
+          VALIDATION_DEPENDENCIES: ${{ inputs.validation_dependencies }}
+          CONTEXT_REPOSITORIES: ${{ inputs.context_repositories }}
+          VERIFICATION_COMMANDS: ${{ inputs.verification_commands }}
+          DRIFT_CHECKS: ${{ inputs.drift_checks }}
+          WORKSPACE_CONTRACT_CHECKS: ${{ inputs.workspace_contract_checks }}
+          ACTIONS_ARTIFACT_DOWNLOADS: ${{ inputs.actions_artifact_downloads }}
+          SUCCESS_REQUIRES_PR: ${{ inputs.success_requires_pr }}
+          SUCCESS_COMPLETION_OUTCOMES: ${{ inputs.success_completion_outcomes }}
+          APP_TOKEN_REPOS: ${{ inputs.app_token_repos }}
+          REQUIRE_HOMEBOY_APP_TOKEN: ${{ inputs.require_homeboy_app_token }}
+          ALLOWED_REPOS: ${{ inputs.allowed_repos }}
+          MAX_TURNS: ${{ inputs.max_turns }}
+          STEP_BUDGET: ${{ inputs.step_budget }}
+          TIME_BUDGET_MS: ${{ inputs.time_budget_ms }}
+          TOOL_RESULTS_KEY: ${{ inputs.tool_results_key }}
+          OUTPUT_PROJECTIONS: ${{ inputs.output_projections }}
+          TRANSCRIPT_ARTIFACT_NAME: ${{ inputs.transcript_artifact_name }}
+          REPLAY_BUNDLE_ARTIFACT_NAME: ${{ inputs.replay_bundle_artifact_name }}
+          EXPECTED_ARTIFACTS: ${{ inputs.expected_artifacts }}
+          ARTIFACT_DECLARATIONS: ${{ inputs.artifact_declarations }}
+          CALLBACK_DATA: ${{ inputs.callback_data }}
+          RUN_AGENT: ${{ inputs.run_agent }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node .wp-codebox-workflow/.github/scripts/run-agent-task/build-codebox-task-request.mjs
+
+      - name: Upload Codebox task request
+        uses: actions/upload-artifact@v4
+        with:
+          name: codebox-agent-task-request-${{ github.run_id }}
+          path: .codebox/agent-task-request.json

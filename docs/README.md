@@ -30,8 +30,8 @@ unless this index says otherwise.
   artifacts, runner workspace publication, lifecycle metadata, provider
   overlays, and default sandbox bootstrap expectations.
 - [Docs Agent reusable workflow](./docs-agent-reusable-workflow.md) documents
-  the public `wp-codebox/docs-agent-runner-recipe/v1` GitHub Actions wrapper for
-  recipe-oriented Docs Agent runs.
+  the public `run-agent-task.yml` GitHub Actions wrapper for product-level Docs
+  Agent runs.
 - [Public API contract](./public-api-contract.md) defines stable package
   entrypoints, lifecycle contract areas, inspectable surfaces, Codebox's wrapper
   role around upstream runtime systems, and the limited role of `./internals`.
