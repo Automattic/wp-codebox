@@ -83,6 +83,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         status: "skipped",
         success: false,
         target,
+        skipReason: fuzzSuiteSkipReason(planDiagnostics),
         diagnostics: planDiagnostics,
         metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }),
       })
@@ -103,6 +104,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         status: "skipped",
         success: false,
         target,
+        skipReason: diagnostic.code,
         diagnostics: [diagnostic],
         metadata: stripUndefined({ replay: replayMetadata }),
       })
@@ -514,6 +516,10 @@ function unsupportedInputAdapterResolution(fuzzCase: FuzzSuiteCase, target: Fuzz
     diagnostics: [{ severity: "error", code: "fuzz_suite_input_unsupported", caseId: fuzzCase.id, target, message: `Fuzz suite case ${fuzzCase.id} has unsupported ${target.kind} input. ${message}`, metadata }],
     metadata,
   }
+}
+
+function fuzzSuiteSkipReason(diagnostics: readonly FuzzSuiteDiagnostic[]): string | undefined {
+  return diagnostics[0]?.code ?? diagnostics[0]?.message
 }
 
 function normalizeFuzzSuiteCaseExecutionInput(input: unknown): { valid: true; value: FuzzSuiteCaseExecutionInput } | { valid: false } {

@@ -43,6 +43,14 @@ assert.equal(result.suite.id, "suite-001")
 assert.equal(result.status, "failed")
 assert.equal(result.success, false)
 assert.deepEqual(result.summary, { total: 11, passed: 9, failed: 1, error: 0, skipped: 1 })
+assert.deepEqual(result.coverageSummary, {
+  discovered: 11,
+  generated: 11,
+  executed: 10,
+  skipped: 1,
+  untested: 0,
+  skippedReasons: [{ reason: "fuzz_suite_target_adapter_unsupported", count: 1, caseIds: ["case-runtime-action-unsupported"] }],
+})
 assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
@@ -58,6 +66,7 @@ assert.equal(result.cases[0]?.artifactRefs?.[0]?.path, "/artifacts/exec-1.json")
 assert.equal(result.cases[1]?.status, "failed")
 assert.equal(result.cases[1]?.diagnostics[0]?.code, "fuzz_suite_command_failed")
 assert.equal(result.cases[10]?.status, "skipped")
+assert.equal(result.cases[10]?.skipReason, "fuzz_suite_target_adapter_unsupported")
 assert.equal(result.cases[10]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
 assert.equal(result.artifactRefs.length, 10)
 assert.equal((result.cases[0]?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "case-pass")
@@ -77,6 +86,7 @@ const noExecutor = await runFuzzSuite(fuzzSuiteContract({
   cases: [{ id: "case-skipped" }],
 }))
 assert.equal(noExecutor.status, "skipped")
+assert.deepEqual(noExecutor.coverageSummary?.skippedReasons, [{ reason: "fuzz_suite_executor_unavailable", count: 1, caseIds: ["case-skipped"] }])
 assert.equal(noExecutor.cases[0]?.diagnostics[0]?.code, "fuzz_suite_executor_unavailable")
 
 const restMatrix = wordpressRestMatrixContract({

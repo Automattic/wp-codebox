@@ -56,6 +56,7 @@ export interface FuzzSuiteCaseResult {
   status: FuzzSuiteCaseStatus
   success: boolean
   target?: FuzzSuiteTargetRef
+  skipReason?: string
   diagnostics: FuzzSuiteDiagnostic[]
   artifactRefs?: FuzzSuiteArtifactRef[]
   metadata?: Record<string, unknown>
@@ -69,6 +70,21 @@ export interface FuzzSuiteSummary {
   skipped: number
 }
 
+export interface FuzzSuiteSkippedReasonSummary {
+  reason: string
+  count: number
+  caseIds?: string[]
+}
+
+export interface FuzzSuiteCoverageSummary {
+  discovered: number
+  generated: number
+  executed: number
+  skipped: number
+  untested: number
+  skippedReasons: FuzzSuiteSkippedReasonSummary[]
+}
+
 export interface FuzzSuiteResultEnvelope {
   schema: typeof FUZZ_SUITE_RESULT_SCHEMA
   suite: {
@@ -78,6 +94,7 @@ export interface FuzzSuiteResultEnvelope {
   status: FuzzSuiteCaseStatus
   success: boolean
   summary: FuzzSuiteSummary
+  coverageSummary?: FuzzSuiteCoverageSummary
   cases: FuzzSuiteCaseResult[]
   diagnostics: FuzzSuiteDiagnostic[]
   artifactRefs: FuzzSuiteArtifactRef[]
@@ -106,12 +123,14 @@ export function fuzzSuiteResultEnvelope(input: {
   cases?: FuzzSuiteCaseResult[]
   diagnostics?: FuzzSuiteDiagnostic[]
   artifactRefs?: FuzzSuiteArtifactRef[]
+  coverageSummary?: FuzzSuiteCoverageSummary
   metadata?: Record<string, unknown>
 }): FuzzSuiteResultEnvelope {
   const cases = (input.cases ?? []).map(normalizeCaseResult)
   const diagnostics = input.diagnostics ?? []
   const artifactRefs = dedupeArtifactRefs([...(input.artifactRefs ?? []), ...cases.flatMap((item) => item.artifactRefs ?? [])])
   const summary = summarizeFuzzCases(cases)
+  const coverageSummary = input.coverageSummary ?? summarizeFuzzCoverage({ discovered: fuzzSuiteDiscoveredCount(input.suite, cases.length), cases })
   const status: FuzzSuiteCaseStatus = summary.error > 0 ? "error" : summary.failed > 0 ? "failed" : summary.skipped === summary.total && summary.total > 0 ? "skipped" : "passed"
 
   return stripUndefined({
@@ -120,6 +139,7 @@ export function fuzzSuiteResultEnvelope(input: {
     status,
     success: status === "passed",
     summary,
+    coverageSummary,
     cases,
     diagnostics,
     artifactRefs,
@@ -138,16 +158,52 @@ export function summarizeFuzzCases(cases: readonly Pick<FuzzSuiteCaseResult, "st
   return summary
 }
 
+export function summarizeFuzzCoverage(input: {
+  discovered: number
+  cases: readonly Pick<FuzzSuiteCaseResult, "id" | "status" | "skipReason" | "diagnostics">[]
+}): FuzzSuiteCoverageSummary {
+  const skippedReasons = new Map<string, { count: number; caseIds: string[] }>()
+  let executed = 0
+  let skipped = 0
+
+  for (const item of input.cases) {
+    if (item.status === "skipped") {
+      skipped += 1
+      const reason = item.skipReason ?? item.diagnostics[0]?.code ?? item.diagnostics[0]?.message ?? "unspecified"
+      const existing = skippedReasons.get(reason) ?? { count: 0, caseIds: [] }
+      existing.count += 1
+      existing.caseIds.push(item.id)
+      skippedReasons.set(reason, existing)
+    } else {
+      executed += 1
+    }
+  }
+
+  return {
+    discovered: input.discovered,
+    generated: input.cases.length,
+    executed,
+    skipped,
+    untested: Math.max(input.discovered - input.cases.length, 0),
+    skippedReasons: [...skippedReasons.entries()].map(([reason, value]) => ({ reason, count: value.count, caseIds: value.caseIds })),
+  }
+}
+
 function normalizeCaseResult(input: FuzzSuiteCaseResult): FuzzSuiteCaseResult {
   return stripUndefined({
     id: input.id,
     status: input.status,
     success: input.status === "passed",
     target: input.target,
+    skipReason: input.status === "skipped" ? input.skipReason ?? input.diagnostics?.[0]?.code ?? input.diagnostics?.[0]?.message : undefined,
     diagnostics: input.diagnostics ?? [],
     artifactRefs: input.artifactRefs,
     metadata: input.metadata,
   })
+}
+
+function fuzzSuiteDiscoveredCount(suite: { id: string; version?: string } | FuzzSuiteContract, fallback: number): number {
+  return "cases" in suite && Array.isArray(suite.cases) ? suite.cases.length : fallback
 }
 
 function dedupeArtifactRefs(refs: readonly FuzzSuiteArtifactRef[]): FuzzSuiteArtifactRef[] {
