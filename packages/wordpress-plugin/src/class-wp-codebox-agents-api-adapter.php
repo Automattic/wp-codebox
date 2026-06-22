@@ -8,10 +8,12 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Codebox-owned wrapper around the public Agents API abilities.
+ * Advanced internal adapter around the upstream Agents API abilities.
  *
  * Consumers should depend on this class instead of importing Agents API constants,
  * handler names, or execution principal internals.
+ *
+ * @internal Adapter boundary for WP Codebox runtime integration.
  */
 final class WP_Codebox_Agents_API_Adapter {
 
