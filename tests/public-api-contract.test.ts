@@ -15,10 +15,12 @@ import {
   parentToolBridgeContract,
   performanceObservation,
   runtimePackageExecutionInput,
+  runtimeContractManifest,
   runtimeProfile,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
@@ -179,6 +181,10 @@ assert.match(docs, /Codebox adapter translates from generic Data Machine inputs 
 assert.match(docs, /wp-codebox\/runner-workspace-backend\/v1/)
 assert.match(docs, /backend adapter config schema/)
 assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
+assert.match(docs, /runtimeContractManifest\(\)/)
+assert.match(docs, /wp-codebox\/run-agent-task/)
+assert.match(docs, /wp-codebox\/run-runtime-package/)
+assert.match(docs, /manifest intentionally excludes backend handler bindings/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")
@@ -194,6 +200,10 @@ assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
+assert.equal(typeof runtimeContractManifest, "function")
+assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
+assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
+assert.equal("providerRuntime" in runtimeContractManifest(), false)
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)

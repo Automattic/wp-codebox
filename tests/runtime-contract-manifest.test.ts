@@ -3,16 +3,19 @@ import assert from "node:assert/strict"
 import {
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+  CODEBOX_RUN_AGENT_TASK_ABILITY,
+  CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
+  CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
   CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
+  CODEBOX_RUN_SANDBOX_TASK_ABILITY,
+  CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY,
+  CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PARENT_TOOL_REQUEST_SCHEMA,
   PARENT_TOOL_RESULT_SCHEMA,
-  PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
-  PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
-  PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
-  PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
   RUNTIME_CONTRACT_MANIFEST_SCHEMA,
   RUNTIME_CONTRACT_NORMALIZERS,
   RUNTIME_CONTRACT_SCHEMAS,
@@ -21,8 +24,6 @@ import {
   RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
-  RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
-  RUNNER_WORKSPACE_BACKEND_FILTER,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
@@ -30,7 +31,6 @@ import {
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
   isRuntimeContractSchema,
   normalizeRuntimeContractSchema,
-  providerRuntimeInvocationContract,
   runtimeContractManifest,
   runtimeContractSchemaValues,
 } from "../packages/runtime-core/src/index.js"
@@ -40,17 +40,8 @@ const manifest = runtimeContractManifest()
 assert.equal(manifest.schema, RUNTIME_CONTRACT_MANIFEST_SCHEMA)
 assert.equal(manifest.version, 1)
 assert.deepEqual(manifest.schemas, RUNTIME_CONTRACT_SCHEMAS)
-assert.deepEqual(manifest.abilities, { runRuntimePackage: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY })
-assert.deepEqual(manifest.providerRuntime, providerRuntimeInvocationContract())
-assert.deepEqual(manifest.runnerWorkspaceBackend, {
-  filter: RUNNER_WORKSPACE_BACKEND_FILTER,
-  abilityKeys: RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
-})
+assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 
-assert.equal(manifest.schemas.providerRuntime.invocation, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
-assert.equal(manifest.schemas.providerRuntime.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
-assert.equal(manifest.schemas.providerRuntime.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
-assert.equal(manifest.schemas.providerRuntime.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.artifact.resultEnvelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
@@ -65,20 +56,16 @@ assert.equal(manifest.schemas.runnerWorkspace.publicationResult, RUNNER_WORKSPAC
 assert.equal(manifest.schemas.parentToolBridge.bridge, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(manifest.schemas.parentToolBridge.request, PARENT_TOOL_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.parentToolBridge.result, PARENT_TOOL_RESULT_SCHEMA)
-assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
-assert.deepEqual(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS, [
-  "workspace_adopt",
-  "workspace_show",
-  "workspace_clone",
-  "workspace_worktree_add",
-  "workspace_git_status",
-  "workspace_git_diff",
-  "run_runner_workspace_command",
-  "publish_runner_workspace",
-])
 assert.equal(manifest.schemas.fanoutAggregation.input, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(manifest.schemas.fanoutAggregation.output, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.result, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA)
+assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
+assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
+assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)
+assert.equal(manifest.abilities.agentTask.aliases.runSandboxTask, CODEBOX_RUN_SANDBOX_TASK_ABILITY)
+assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskBatch, CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY)
+assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskFanout, CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY)
+assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY)
 
 const values = runtimeContractSchemaValues()
 assert.equal(new Set(values).size, values.length, "runtime contract schema constants must be unique")
@@ -93,5 +80,6 @@ assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationInput({ plan: { worke
 assert.equal(RUNTIME_CONTRACT_NORMALIZERS.fanoutAggregationOutput({ plan: { workers: [] } }).schema, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 
 assert.doesNotMatch(JSON.stringify(manifest), /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
+assert.doesNotMatch(JSON.stringify(manifest), /agents\/run-runtime-package|wp_codebox_runner_workspace_backend|workspace_worktree_add/i)
 
 console.log("runtime contract manifest ok")

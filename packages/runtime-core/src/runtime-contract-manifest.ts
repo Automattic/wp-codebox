@@ -2,14 +2,11 @@ import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTa
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
-import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, providerRuntimeInvocationContract, type ProviderRuntimeInvocationContract } from "./provider-runtime-contracts.js"
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, runtimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
 import {
   RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
-  RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
-  RUNNER_WORKSPACE_BACKEND_FILTER,
   RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_REQUEST_SCHEMA,
@@ -21,13 +18,30 @@ import { WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discover
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 
-export const RUNTIME_CONTRACT_SCHEMAS = {
-  providerRuntime: {
-    invocation: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
-    credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
-    credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,
-    credentialResolution: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
+export const CODEBOX_RUN_AGENT_TASK_ABILITY = "wp-codebox/run-agent-task" as const
+export const CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY = "wp-codebox/run-agent-task-batch" as const
+export const CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY = "wp-codebox/run-agent-task-fanout" as const
+export const CODEBOX_RUN_SANDBOX_TASK_ABILITY = "wp-codebox/run-sandbox-task" as const
+export const CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY = "wp-codebox/run-sandbox-task-batch" as const
+export const CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY = "wp-codebox/run-sandbox-task-fanout" as const
+
+export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
+  agentTask: {
+    run: CODEBOX_RUN_AGENT_TASK_ABILITY,
+    batch: CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
+    fanout: CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
+    aliases: {
+      runSandboxTask: CODEBOX_RUN_SANDBOX_TASK_ABILITY,
+      runSandboxTaskBatch: CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY,
+      runSandboxTaskFanout: CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
+    },
   },
+  runtimePackage: {
+    run: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
+  },
+} as const
+
+export const RUNTIME_CONTRACT_SCHEMAS = {
   agentTask: {
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
   },
@@ -79,14 +93,7 @@ export interface RuntimeContractManifest {
   schema: typeof RUNTIME_CONTRACT_MANIFEST_SCHEMA
   version: 1
   schemas: typeof RUNTIME_CONTRACT_SCHEMAS
-  abilities: {
-    runRuntimePackage: typeof CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY
-  }
-  providerRuntime: ProviderRuntimeInvocationContract
-  runnerWorkspaceBackend: {
-    filter: typeof RUNNER_WORKSPACE_BACKEND_FILTER
-    abilityKeys: typeof RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS
-  }
+  abilities: typeof CODEBOX_PUBLIC_RUNTIME_ABILITIES
 }
 
 export function runtimeContractManifest(): RuntimeContractManifest {
@@ -94,14 +101,7 @@ export function runtimeContractManifest(): RuntimeContractManifest {
     schema: RUNTIME_CONTRACT_MANIFEST_SCHEMA,
     version: 1,
     schemas: RUNTIME_CONTRACT_SCHEMAS,
-    abilities: {
-      runRuntimePackage: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
-    },
-    providerRuntime: providerRuntimeInvocationContract(),
-    runnerWorkspaceBackend: {
-      filter: RUNNER_WORKSPACE_BACKEND_FILTER,
-      abilityKeys: RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
-    },
+    abilities: CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   }
 }
 
