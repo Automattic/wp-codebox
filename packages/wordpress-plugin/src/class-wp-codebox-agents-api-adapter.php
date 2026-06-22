@@ -134,7 +134,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	}
 
 	public static function register_runtime_profiles(): void {
-		if ( ! function_exists( 'add_filter' ) ) {
+		if ( ! function_exists( 'add_filter' ) || ! self::should_register_adapter() ) {
 			return;
 		}
 
@@ -154,7 +154,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	}
 
 	public static function register_runtime_provider(): void {
-		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) ) {
+		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) || ! self::should_register_adapter() ) {
 			return;
 		}
 
@@ -162,12 +162,29 @@ final class WP_Codebox_Agents_API_Adapter {
 			'agents-api-adapter',
 			array( new self(), 'run_runtime_package' ),
 			array(
-				'default'      => true,
 				'label'        => 'Agents API runtime adapter',
 				'kind'         => 'ability-adapter',
 				'capabilities' => array( 'runtime-package' ),
 			)
 		);
+	}
+
+	public static function register_if_available(): void {
+		self::register_runtime_profiles();
+		self::register_runtime_provider();
+	}
+
+	private static function should_register_adapter(): bool {
+		if ( ( new self() )->is_available( self::RUN_RUNTIME_PACKAGE ) ) {
+			return true;
+		}
+
+		$configured_default = class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) ? WP_Codebox_Runtime_Provider_Registry::default_provider() : '';
+		if ( in_array( $configured_default, array( 'agents-api-adapter', 'agents-api', 'agents-runtime', 'wordpress-agents-api-runtime' ), true ) ) {
+			return true;
+		}
+
+		return function_exists( 'apply_filters' ) && (bool) apply_filters( 'wp_codebox_agents_api_adapter_enabled', false );
 	}
 
 	/** @return array<string,string> */

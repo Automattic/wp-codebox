@@ -32,7 +32,7 @@ final class WP_Codebox_Runtime_Provider_Registry {
 			'metadata' => self::public_metadata( $id, $metadata ),
 		);
 
-		if ( '' === self::$default_provider || true === ( $metadata['default'] ?? false ) ) {
+		if ( true === ( $metadata['default'] ?? false ) ) {
 			self::$default_provider = $id;
 		}
 	}
@@ -46,23 +46,34 @@ final class WP_Codebox_Runtime_Provider_Registry {
 	}
 
 	public static function default_provider(): string {
-		return self::$default_provider;
+		return self::configured_default_provider();
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function invoke( array $input ): array|WP_Error {
 		$provider_id = self::requested_provider_id( $input );
 		if ( '' === $provider_id ) {
-			$provider_id = self::$default_provider;
+			$provider_id = self::configured_default_provider();
 		}
 
-		if ( '' === $provider_id || ! isset( self::$providers[ $provider_id ] ) ) {
+		if ( '' === $provider_id ) {
+			return new WP_Error(
+				'wp_codebox_runtime_provider_default_missing',
+				'No runtime provider was requested and no default runtime provider is configured.',
+				array(
+					'status'              => 500,
+					'available_providers' => array_keys( self::$providers ),
+				)
+			);
+		}
+
+		if ( ! isset( self::$providers[ $provider_id ] ) ) {
 			return new WP_Error(
 				'wp_codebox_runtime_provider_unavailable',
-				'The requested runtime provider is unavailable.',
+				'The requested or configured runtime provider is unavailable.',
 				array(
-					'status' => 500,
-					'provider' => $provider_id,
+					'status'              => 500,
+					'provider'            => $provider_id,
 					'available_providers' => array_keys( self::$providers ),
 				)
 			);
@@ -100,6 +111,15 @@ final class WP_Codebox_Runtime_Provider_Registry {
 	private static function normalize_provider_id( string $id ): string {
 		$id = strtolower( trim( $id ) );
 		return preg_replace( '/[^a-z0-9_-]+/', '-', $id ) ?? '';
+	}
+
+	private static function configured_default_provider(): string {
+		$provider = self::$default_provider;
+		if ( function_exists( 'apply_filters' ) ) {
+			$provider = (string) apply_filters( 'wp_codebox_default_runtime_provider', $provider );
+		}
+
+		return self::normalize_provider_id( $provider );
 	}
 
 	/** @param array<string,mixed> $metadata Provider metadata. @return array<string,mixed> */
