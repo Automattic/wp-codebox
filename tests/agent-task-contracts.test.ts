@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 
@@ -15,6 +15,20 @@ assert.equal(AGENT_TASK_RUN_RESULT_JSON_SCHEMA.properties.schema.const, AGENT_TA
 assert.equal(succeeded.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(succeeded.status, "succeeded")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: succeeded }), 0)
+
+const stableRunRequestInput = normalizeAgentTaskRunCliInput({
+  schema: AGENT_TASK_RUN_REQUEST_SCHEMA,
+  task_id: "stable-run",
+  task_input: {
+    schema: "wp-codebox/task-input/v1",
+    goal: "Run the delegated task.",
+  },
+  artifacts_path: "/tmp/stable-run-artifacts",
+  callback_data: { source: "homeboy" },
+})
+assert.equal(stableRunRequestInput.goal, "Run the delegated task.")
+assert.equal(stableRunRequestInput.artifacts_path, "/tmp/stable-run-artifacts")
+assert.deepEqual(stableRunRequestInput.callback_data, { source: "homeboy" })
 
 const noOp = normalizeAgentTaskRunResult({ success: true, no_op: true }, { exitStatus: 0 })
 assert.equal(noOp.status, "no_op")
