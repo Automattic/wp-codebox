@@ -729,6 +729,9 @@ Supported runtime commands today:
 - `wordpress.theme-setup`: install, switch, or list WordPress.org themes inside the contained runtime; accepts `action=install|switch|list`, `theme=<slug>` or `slug=<slug>`, and optional `activate=true`. Paths, URLs, and package files are rejected.
 - `wordpress.phpunit`: run a mounted plugin's PHPUnit suite; accepts `plugin-slug=<slug>` (or explicit `code`/`code-file`) plus `test-file`, `autoload-file`, `tests-dir`, and `phpunit-xml`.
 - `wordpress.core-phpunit`: run WordPress core's PHPUnit suite against a mounted `wordpress-develop` checkout; accepts `core-root`, `tests-dir`, `phpunit-xml`, `test-file`, `autoload-file`, and `multisite`. **Precondition:** the mounted checkout must already have Composer dev dependencies installed — see below.
+- `wordpress.simulated-admin-page-load` and `wordpress.simulated-frontend-page-load`: simulate admin/frontend page loads in-process. Backward-compatible public aliases `wordpress.admin-page-load` and `wordpress.frontend-page-load` still map to these simulated contracts.
+- `wordpress.server-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` through the live preview HTTP server without a browser. Its performance observation is marked `source=server-http` and `kind=server-page-load`.
+- `wordpress.browser-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` in Playwright by wrapping `wordpress.browser-probe`.
 - `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
 - `wordpress.browser-actions`: boot the live preview, drive it with an ordered interaction script (`steps-json`), assert browser behavior, and capture replay/audit evidence under `files/browser/`.
 

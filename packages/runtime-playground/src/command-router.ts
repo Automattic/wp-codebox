@@ -13,6 +13,7 @@ interface PlaygroundCommandRuntime {
   runCaptureStateBundle(spec: ExecutionSpec): Promise<string>
   runExportReplayPackage(spec: ExecutionSpec): Promise<string>
   runHttpRequest(spec: ExecutionSpec): Promise<string>
+  runServerPageLoad(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
@@ -32,6 +33,7 @@ interface PlaygroundCommandRuntime {
   runThemeSetup(spec: ExecutionSpec): Promise<string>
   runThemeCheck(spec: ExecutionSpec): Promise<string>
   runBrowserProbe(spec: ExecutionSpec): Promise<string>
+  runBrowserPageLoad(spec: ExecutionSpec): Promise<string>
   runHtmlCapture(spec: ExecutionSpec): Promise<string>
   runEditorCanvasProbe(spec: ExecutionSpec): Promise<string>
   runBrowserActions(spec: ExecutionSpec): Promise<string>

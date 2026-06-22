@@ -3,7 +3,7 @@ import type { BackendNeutralArtifactRef } from "./runtime-neutral-contracts.js"
 
 export const WORDPRESS_PAGE_LOAD_RESULT_SCHEMA = "wp-codebox/wordpress-page-load-result/v1" as const
 
-export type WordPressPageLoadCommand = "wordpress.admin-page-load" | "wordpress.frontend-page-load"
+export type WordPressPageLoadCommand = "wordpress.admin-page-load" | "wordpress.frontend-page-load" | "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load" | "wordpress.server-page-load" | "wordpress.browser-page-load"
 export type WordPressPageLoadTargetKind = "admin" | "frontend"
 export type WordPressPageLoadStatus = "ok" | "redirect" | "error"
 
@@ -76,7 +76,7 @@ export const WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA = {
   required: ["schema", "command", "status", "target"],
   properties: {
     schema: { const: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA },
-    command: { enum: ["wordpress.admin-page-load", "wordpress.frontend-page-load"] },
+    command: { enum: ["wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.server-page-load", "wordpress.browser-page-load"] },
     status: { enum: ["ok", "redirect", "error"] },
     target: {
       type: "object",

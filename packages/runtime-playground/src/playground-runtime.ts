@@ -19,7 +19,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand, runThemeSetupCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runServerPageLoadCommand, runThemeCheckCommand, runThemeSetupCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1206,6 +1206,22 @@ class PlaygroundRuntime implements Runtime {
       baseUrl: this.spec.preview?.publicUrl ?? server.serverUrl,
       spec,
     })
+  }
+
+  async runServerPageLoad(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runServerPageLoadCommand({
+      baseUrl: this.spec.preview?.publicUrl ?? server.serverUrl,
+      spec,
+    })
+  }
+
+  async runBrowserPageLoad(spec: ExecutionSpec): Promise<string> {
+    const surface = spec.args?.find((arg) => arg.startsWith("surface="))?.slice("surface=".length) || "frontend"
+    const url = spec.args?.find((arg) => arg.startsWith("url="))?.slice("url=".length)
+    const path = spec.args?.find((arg) => arg.startsWith("path="))?.slice("path=".length) || (surface === "admin" ? "index.php" : "/")
+    const resolved = url || (surface === "admin" ? `/wp-admin/${path.replace(/^\/+/, "")}` : `/${path.replace(/^\/+/, "")}`)
+    return this.runBrowserProbe({ ...spec, command: "wordpress.browser-page-load", args: [`url=${resolved}`, ...(spec.args ?? []).filter((arg) => !arg.startsWith("surface=") && !arg.startsWith("path=") && !arg.startsWith("url="))] })
   }
 
   async runBench(spec: ExecutionSpec): Promise<string> {

@@ -1,6 +1,7 @@
 import { argValue, jsonObjectArg } from "./command-args.js"
 
 export interface HttpRequestCommandInput {
+  command?: "wordpress.http-request" | "wordpress.server-page-load"
   method: string
   url: string
   headers: Record<string, unknown>
@@ -16,6 +17,7 @@ export function httpRequestInputFromArgs(args: string[]): HttpRequestCommandInpu
 
   return {
     method: (argValue(args, "method")?.trim() || "GET").toUpperCase(),
+    command: "wordpress.http-request",
     url,
     headers: jsonObjectArg(args, "headers-json"),
     body: argValue(args, "body"),
@@ -33,7 +35,7 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
   })
   const body = await response.text()
   const output = {
-    command: "wordpress.http-request",
+    command: input.command ?? "wordpress.http-request",
     method: input.method,
     url: input.url,
     resolvedUrl,
@@ -42,6 +44,7 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
     headers: Object.fromEntries(response.headers.entries()),
     bodyBytes: Buffer.byteLength(body),
     timing: { duration_ms: Date.now() - startedAt },
+    performance: { schema: "wp-codebox/performance-observation/v1", command: input.command ?? "wordpress.http-request", target: input.url, source: "server-http", kind: input.command === "wordpress.server-page-load" ? "server-page-load" : "http-request", timing: { durationMs: Date.now() - startedAt }, network: { requests: 1, responses: 1, failures: response.ok ? 0 : 1, transferSizeBytes: Buffer.byteLength(body) } },
     diagnostics: {},
   }
 

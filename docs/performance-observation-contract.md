@@ -4,6 +4,8 @@ WP Codebox captures performance observations for WordPress runtime actions. Obse
 
 Action observations may include a `performance` object with schema `wp-codebox/performance-observation/v1`:
 
+- `source`: where the observation was captured, such as `in-process`, `server-http`, or `browser`.
+- `kind`: what was observed, such as `simulated-page-load`, `server-page-load`, `browser-page-load`, or `rest-request`.
 - `timing`: start, finish, and duration in milliseconds when known.
 - `memory`: PHP or browser memory counters when the runtime exposes them.
 - `database`: query count, total query time, normalized query fingerprints, and repeated-query summaries when `$wpdb->queries` is available.
@@ -14,4 +16,4 @@ Action observations may include a `performance` object with schema `wp-codebox/p
 
 The public WordPress runtime action helpers normalize observations across `wp_cli`, `php`, `rest_request`, `admin_page`, `page`, `browser`, `browser_probe`, and `editor_open` actions. Fields are omitted when the underlying command cannot provide them without changing command behavior.
 
-`wordpress.run-php` captures `$wpdb` diagnostics by default through the existing command diagnostics artifact path. `wordpress.rest-request` emits an inline performance observation in its structured JSON response. Browser-capable actions attach browser artifact references and promote available browser summaries into the shared observation shape.
+`wordpress.run-php` captures `$wpdb` diagnostics by default through the existing command diagnostics artifact path. `wordpress.rest-request` emits an inline `source=in-process` and `kind=rest-request` performance observation in its structured JSON response. Simulated page-load commands emit `source=in-process` and `kind=simulated-page-load`. `wordpress.server-page-load` emits `source=server-http` and `kind=server-page-load`. Browser-capable actions attach browser artifact references and promote available browser summaries into the shared observation shape.

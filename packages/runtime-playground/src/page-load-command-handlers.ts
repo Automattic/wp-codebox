@@ -4,7 +4,7 @@ import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from
 export type PageLoadSurface = "admin" | "frontend"
 
 export interface PageLoadCommandInput {
-  command: "wordpress.admin-page-load" | "wordpress.frontend-page-load"
+  command: "wordpress.admin-page-load" | "wordpress.frontend-page-load" | "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load"
   surface: PageLoadSurface
   method: string
   path: string
@@ -14,11 +14,11 @@ export interface PageLoadCommandInput {
   userSession?: WordPressUserSessionResolution
 }
 
-export function pageLoadInputFromArgs(args: string[], surface: PageLoadSurface): PageLoadCommandInput {
+export function pageLoadInputFromArgs(args: string[], surface: PageLoadSurface, command?: PageLoadCommandInput["command"]): PageLoadCommandInput {
   const url = argValue(args, "url")?.trim()
   const path = url || argValue(args, "path")?.trim() || (surface === "admin" ? "index.php" : "/")
   return {
-    command: surface === "admin" ? "wordpress.admin-page-load" : "wordpress.frontend-page-load",
+    command: command ?? (surface === "admin" ? "wordpress.simulated-admin-page-load" : "wordpress.simulated-frontend-page-load"),
     surface,
     method: (argValue(args, "method")?.trim() || "GET").toUpperCase(),
     path,
@@ -193,7 +193,7 @@ $wp_codebox_page_load_result = array(
     'redirect' => $wp_codebox_page_load_redirect,
     'notices' => $wp_codebox_page_load_notices,
     'errors' => $wp_codebox_page_load_errors,
-    'performance' => array('schema' => 'wp-codebox/performance-observation/v1', 'command' => $wp_codebox_page_load_command, 'target' => $wp_codebox_page_load_path, 'timing' => array('startedAt' => $wp_codebox_page_load_started_at, 'finishedAt' => $wp_codebox_page_load_finished_at, 'durationMs' => round((microtime(true) - $wp_codebox_page_load_start_time) * 1000, 3)), 'memory' => array('startBytes' => $wp_codebox_page_load_start_memory, 'endBytes' => memory_get_usage(true), 'deltaBytes' => memory_get_usage(true) - $wp_codebox_page_load_start_memory, 'peakBytes' => memory_get_peak_usage(true)), 'database' => array('queryCount' => $wp_codebox_page_load_query_count, 'totalTimeMs' => round($wp_codebox_page_load_query_time_ms, 3), 'fingerprints' => array_values($wp_codebox_page_load_query_fingerprints), 'repeatedQueries' => array_values(array_filter(array_values($wp_codebox_page_load_query_fingerprints), static fn($query) => isset($query['count']) && $query['count'] > 1))), 'hooks' => array('timings' => array()), 'network' => array('requests' => 0, 'responses' => 0, 'failures' => 0), 'browser' => array('metrics' => new stdClass(), 'admin' => new stdClass())),
+    'performance' => array('schema' => 'wp-codebox/performance-observation/v1', 'command' => $wp_codebox_page_load_command, 'target' => $wp_codebox_page_load_path, 'source' => 'in-process', 'kind' => 'simulated-page-load', 'timing' => array('startedAt' => $wp_codebox_page_load_started_at, 'finishedAt' => $wp_codebox_page_load_finished_at, 'durationMs' => round((microtime(true) - $wp_codebox_page_load_start_time) * 1000, 3)), 'memory' => array('startBytes' => $wp_codebox_page_load_start_memory, 'endBytes' => memory_get_usage(true), 'deltaBytes' => memory_get_usage(true) - $wp_codebox_page_load_start_memory, 'peakBytes' => memory_get_peak_usage(true)), 'database' => array('queryCount' => $wp_codebox_page_load_query_count, 'totalTimeMs' => round($wp_codebox_page_load_query_time_ms, 3), 'fingerprints' => array_values($wp_codebox_page_load_query_fingerprints), 'repeatedQueries' => array_values(array_filter(array_values($wp_codebox_page_load_query_fingerprints), static fn($query) => isset($query['count']) && $query['count'] > 1))), 'hooks' => array('timings' => array()), 'network' => array('requests' => 0, 'responses' => 0, 'failures' => 0), 'browser' => array('metrics' => new stdClass(), 'admin' => new stdClass())),
     'artifactRefs' => array(),
     'diagnostics' => array('bufferBytes' => strlen((string) $wp_codebox_page_load_buffer), 'capture' => $wp_codebox_page_load_capture),
 );
