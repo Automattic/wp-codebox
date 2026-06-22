@@ -1,4 +1,4 @@
-import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeValidationIssue, RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -10,6 +10,7 @@ export interface RecipeRunOptions {
   runRegistryDirectory?: string
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewLease?: PreviewLease
   previewPort?: number
   previewBind?: string
   previewHoldBlocking: boolean

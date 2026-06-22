@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { captureStdout, printBlueprintValidateHumanOutput, printBootHumanOutput, printHumanOutput } from "../output.js"
-import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
+import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { boot, run, validateBlueprint, type BlueprintValidateOptions, type BootOptions, type RunOptions } from "../runtime-command-wrappers.js"
 import { normalizeSharedMounts, type RuntimePolicy } from "@automattic/wp-codebox-core"
 
@@ -119,6 +119,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
         break
+      case "--preview-lease-json":
+        options.previewLease = parsePreviewLease(value)
+        break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
         break
@@ -184,6 +187,9 @@ async function parseBootOptions(args: string[]): Promise<BootOptions> {
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
         break
+      case "--preview-lease-json":
+        options.previewLease = parsePreviewLease(value)
+        break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
         break
@@ -235,6 +241,9 @@ async function parseBlueprintValidateOptions(args: string[]): Promise<BlueprintV
         break
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-lease-json":
+        options.previewLease = parsePreviewLease(value)
         break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)

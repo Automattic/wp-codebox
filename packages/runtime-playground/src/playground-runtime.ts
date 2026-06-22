@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -46,6 +46,7 @@ import type {
   RuntimeEpisodeTraceRef,
   RuntimeInfo,
   RuntimeCommandResultEnvelope,
+  PreviewLease,
   Snapshot,
   RuntimeCheckpointResult,
   RuntimeCheckpointSpec,
@@ -57,6 +58,34 @@ function id(prefix: string): string {
 
 function commandExitCode(envelope: RuntimeCommandResultEnvelope | undefined): number {
   return envelope?.status === "error" ? 1 : 0
+}
+
+function previewAlignment(publicUrl: string | undefined, siteUrl: string | undefined, localUrl: string, checkedAt: string): PreviewLease["alignment"] {
+  const previewMatchesSite = originsMatch(publicUrl, siteUrl)
+  const previewMatchesLocal = originsMatch(publicUrl, localUrl)
+  return {
+    status: previewMatchesSite === undefined ? "unknown" : (previewMatchesSite ? "aligned" : "misaligned"),
+    checked_at: checkedAt,
+    ...(previewMatchesSite === undefined ? {} : { preview_matches_site: previewMatchesSite }),
+    ...(previewMatchesLocal === undefined ? {} : { preview_matches_local: previewMatchesLocal }),
+    evidence: {
+      publicUrlDeclared: Boolean(publicUrl),
+      siteUrlDeclared: Boolean(siteUrl),
+      localUrlDeclared: Boolean(localUrl),
+    },
+  }
+}
+
+function originsMatch(left: string | undefined, right: string | undefined): boolean | undefined {
+  if (!left || !right) {
+    return undefined
+  }
+
+  try {
+    return new URL(left).origin === new URL(right).origin
+  } catch {
+    return false
+  }
 }
 
 function commandEnvelopeStdout(envelope: RuntimeCommandResultEnvelope): string {
@@ -545,7 +574,7 @@ class PlaygroundRuntime implements Runtime {
 
     try {
       const server = await this.cliServerPromise
-      return this.spec.preview?.publicUrl ?? server.serverUrl
+      return this.spec.preview?.publicUrl ?? this.spec.preview?.lease?.public_url ?? this.spec.preview?.lease?.preview_public_url ?? server.serverUrl
     } catch {
       return undefined
     }
@@ -559,13 +588,16 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     const normalizedHoldSeconds = Math.max(0, Math.floor(holdSeconds))
     const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined
-    const publicUrl = this.spec.preview?.publicUrl
-    const siteUrl = this.spec.preview?.siteUrl
+    const publicUrl = this.spec.preview?.publicUrl ?? this.spec.preview?.lease?.public_url ?? this.spec.preview?.lease?.preview_public_url
+    const siteUrl = this.spec.preview?.siteUrl ?? this.spec.preview?.lease?.site_url ?? publicUrl
+    const lease = this.previewLease(server.serverUrl, publicUrl, siteUrl, createdAt, expiresAt)
 
     const preview: ArtifactPreview = {
       url: publicUrl ?? server.serverUrl,
-      ...(publicUrl ? { publicUrl, localUrl: server.serverUrl } : {}),
+      localUrl: server.serverUrl,
+      ...(publicUrl ? { publicUrl } : {}),
       ...(siteUrl ? { siteUrl } : {}),
+      lease,
       status: normalizedHoldSeconds > 0 ? "available" : "expired-on-completion",
       lifecycle: normalizedHoldSeconds > 0 ? "held-after-run" : "destroyed-on-completion",
       source: publicUrl ? "public-url-override" : "live-playground",
@@ -582,6 +614,39 @@ class PlaygroundRuntime implements Runtime {
       ...previewWithBootstrap,
       reviewerAccess: previewReviewerAccess(previewWithBootstrap),
     }
+  }
+
+  private previewLease(localUrl: string, publicUrl: string | undefined, siteUrl: string | undefined, createdAt: string, expiresAt: string | undefined): PreviewLease {
+    const supplied = this.spec.preview?.lease
+    const previewPublicUrl = publicUrl ?? supplied?.public_url ?? supplied?.preview_public_url
+    const leaseStatus = expiresAt ? "active" : "expired"
+
+    return previewLease({
+      schema: PREVIEW_LEASE_SCHEMA,
+      ...supplied,
+      public_url: previewPublicUrl,
+      preview_public_url: previewPublicUrl,
+      site_url: siteUrl ?? supplied?.site_url,
+      local_url: localUrl,
+      lease: {
+        ...supplied?.lease,
+        status: supplied?.lease?.status ?? leaseStatus,
+        acquired_at: supplied?.lease?.acquired_at ?? createdAt,
+        expires_at: supplied?.lease?.expires_at ?? expiresAt,
+        provider: supplied?.lease?.provider ?? "wp-codebox-runtime-playground",
+      },
+      alignment: supplied?.alignment ?? previewAlignment(publicUrl, siteUrl, localUrl, createdAt),
+      reachability: supplied?.reachability ?? {
+        status: previewPublicUrl ? "unknown" : "reachable",
+        checked_at: createdAt,
+        metadata: { source: previewPublicUrl ? "external-preview-url-not-probed" : "local-preview-server" },
+      },
+      metadata: {
+        ...supplied?.metadata,
+        handoff: "metadata-only",
+        reviewerAccessSafety: previewPublicUrl ? "public-url-declared" : "local-url-not-reviewer-safe",
+      },
+    })
   }
 
   private createReviewerAuthBootstrap(server: PlaygroundCliServer, preview: ArtifactPreview, expiresAt: string, commands: ExecutionResult[]): ArtifactReviewerAuthBootstrap | undefined {

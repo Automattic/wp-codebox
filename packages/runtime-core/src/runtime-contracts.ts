@@ -10,6 +10,7 @@ import type {
   RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
   RUNTIME_EPISODE_TRACE_SCHEMA,
 } from "./runtime-episode-contracts.js"
+import type { PreviewLease, PreviewLeaseLifecycleStatus } from "./runtime-boundary-contracts.js"
 
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 
@@ -64,6 +65,7 @@ export interface RuntimePreviewSpec {
   siteUrl?: string
   port?: number
   bind?: string
+  lease?: PreviewLease
 }
 
 export interface WorkspaceRecipeMount {
@@ -916,6 +918,7 @@ export interface ArtifactPreviewSessionEvidence {
     holdSeconds?: number
     hasPublicUrl: boolean
     hasSiteUrl: boolean
+    lease?: ArtifactPreviewLeaseSummary
     hasReviewerAuthBootstrap?: boolean
     reviewerAccess: ArtifactPreviewReviewerAccess
     blockers?: ArtifactPreviewBlocker[]
@@ -943,6 +946,7 @@ export interface ArtifactPreview {
   localUrl?: string
   publicUrl?: string
   siteUrl?: string
+  lease?: PreviewLease
   status: "available" | "expired-on-completion"
   lifecycle: "held-after-run" | "destroyed-on-completion"
   source: "live-playground" | "public-url-override"
@@ -963,9 +967,24 @@ export interface ArtifactPreviewReviewerAccess {
   openUrl?: string
   targetUrl?: string
   expiresAt?: string
+  lease?: ArtifactPreviewLeaseSummary
   bootstrap?: ArtifactReviewerAuthBootstrap
   blockers?: ArtifactPreviewBlocker[]
   reason?: string
+}
+
+export interface ArtifactPreviewLeaseSummary {
+  schema: "wp-codebox/preview-lease-summary/v1"
+  status: PreviewLeaseLifecycleStatus
+  publicUrl?: string
+  localUrl?: string
+  siteUrl?: string
+  expiresAt?: string
+  owner?: string
+  provider?: string
+  alignmentStatus?: string
+  reachabilityStatus?: string
+  reviewerSafe: boolean
 }
 
 export interface ArtifactReviewerAuthBootstrap {
@@ -1041,6 +1060,7 @@ export interface ArtifactPreviewEvidence {
     createdAt?: string
     expiresAt?: string
     holdSeconds?: number
+    lease?: ArtifactPreviewLeaseSummary
     url: ArtifactPreviewUrlRef
     publicUrl?: ArtifactPreviewUrlRef
     localUrl?: ArtifactPreviewUrlRef

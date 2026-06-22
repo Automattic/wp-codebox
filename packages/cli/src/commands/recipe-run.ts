@@ -5,7 +5,7 @@ import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRuntimeEnvRecord, pa
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
-import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
+import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewLease, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, planWorkspaceRecipe, recipeDryRunSiteSeeds } from "../recipe-dry-run.js"
 import { appendRecipeRuntimeEvidence, collectAndFinalizeFailedRecipeArtifacts, collectRecipeRuntimeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeArtifactEvidenceFailure, recipeReplayStatusOutput, recipeVerifyStepFailure } from "../recipe-evidence.js"
 import { resolveRecipeSecretEnv } from "../recipe-secret-env.js"
@@ -171,7 +171,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
         ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, backendPackage, effectivePreview),
       },
-      preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl),
+      preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl, effectivePreview.lease),
     }
     try {
       const startupStartedAtMs = Date.now()
@@ -628,6 +628,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-lease-json":
+        options.previewLease = parsePreviewLease(value)
         break
       case "--preview-port":
         options.previewPort = parsePreviewPort(value)
@@ -1116,10 +1119,11 @@ function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]):
 
 function effectiveRecipePreview(recipePreview: RuntimePreviewSpec | undefined, options: RecipeRunOptions): RuntimePreviewSpec {
   return stripUndefined({
-    publicUrl: options.previewPublicUrl ?? recipePreview?.publicUrl,
-    siteUrl: recipePreview?.siteUrl,
+    publicUrl: options.previewPublicUrl ?? recipePreview?.publicUrl ?? options.previewLease?.public_url ?? options.previewLease?.preview_public_url,
+    siteUrl: recipePreview?.siteUrl ?? options.previewLease?.site_url,
     port: options.previewPort ?? recipePreview?.port,
     bind: options.previewBind ?? recipePreview?.bind,
+    lease: options.previewLease ?? recipePreview?.lease,
   })
 }
 

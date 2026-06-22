@@ -478,6 +478,10 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "string",
             description: "Optional fixed-port preview proxy bind host or IP. Requires port.",
           },
+          lease: {
+            type: "object",
+            description: "Optional wp-codebox/preview-lease/v1 envelope for external tunnel/public URL handoff metadata. WP Codebox accepts and reports the lease but does not create a tunnel.",
+          },
         },
       },
       runtimeAssets: {

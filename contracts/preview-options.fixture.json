@@ -21,6 +21,10 @@
       "type": "string",
       "format": "uri",
       "description": "Optional public http/https URL reported in preview metadata and passed to the sandbox for site URL alignment."
+    },
+    "preview_lease": {
+      "type": "object",
+      "description": "Optional wp-codebox/preview-lease/v1 envelope for external tunnel/public URL handoff metadata. WP Codebox reports it but does not create the tunnel."
     }
   },
   "cases": [
@@ -32,7 +36,8 @@
         "preview_hold_seconds": 0,
         "preview_port": null,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -48,7 +53,48 @@
         "preview_hold_seconds": 30,
         "preview_port": 45678,
         "preview_bind": "127.0.0.1",
-        "preview_public_url": "https://preview.example.test/session-123/"
+        "preview_public_url": "https://preview.example.test/session-123/",
+        "preview_lease": null
+      }
+    },
+    {
+      "name": "valid lease envelope derives public url",
+      "input": {
+        "preview_lease": {
+          "schema": "wp-codebox/preview-lease/v1",
+          "public_url": "https://preview.example.test/session-lease/",
+          "local_url": "http://127.0.0.1:45678/",
+          "lease": {
+            "status": "active",
+            "expires_at": "2026-06-22T13:00:00.000Z",
+            "provider": "example-tunnel"
+          },
+          "alignment": {
+            "status": "aligned"
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "preview_hold_seconds": 0,
+        "preview_port": null,
+        "preview_bind": null,
+        "preview_public_url": "https://preview.example.test/session-lease/",
+        "preview_lease": {
+          "schema": "wp-codebox/preview-lease/v1",
+          "public_url": "https://preview.example.test/session-lease/",
+          "preview_public_url": "https://preview.example.test/session-lease/",
+          "local_url": "http://127.0.0.1:45678/",
+          "lease": {
+            "status": "active",
+            "expires_at": "2026-06-22T13:00:00.000Z",
+            "provider": "example-tunnel"
+          },
+          "alignment": {
+            "status": "aligned"
+          },
+          "evidence_refs": []
+        }
       }
     },
     {
@@ -61,7 +107,8 @@
         "preview_hold_seconds": 120,
         "preview_port": null,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -74,7 +121,8 @@
         "preview_hold_seconds": 3600,
         "preview_port": null,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -100,7 +148,8 @@
         "preview_hold_seconds": 0,
         "preview_port": 1,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -113,7 +162,8 @@
         "preview_hold_seconds": 0,
         "preview_port": 65535,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -128,7 +178,8 @@
         "preview_hold_seconds": 0,
         "preview_port": null,
         "preview_bind": null,
-        "preview_public_url": null
+        "preview_public_url": null,
+        "preview_lease": null
       }
     },
     {
@@ -188,6 +239,17 @@
       },
       "valid": false,
       "code": "wp_codebox_preview_public_url_invalid"
+    },
+    {
+      "name": "invalid lease schema",
+      "input": {
+        "preview_lease": {
+          "schema": "example/preview-lease/v1",
+          "public_url": "https://preview.example.test/session-lease/"
+        }
+      },
+      "valid": false,
+      "code": "wp_codebox_preview_lease_invalid"
     }
   ]
 }

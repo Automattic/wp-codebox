@@ -283,11 +283,18 @@ export function previewReviewerAccess(preview: {
   status?: unknown
   lifecycle?: unknown
   publicUrl?: unknown
+  localUrl?: unknown
+  siteUrl?: unknown
   url?: unknown
   expiresAt?: unknown
+  lease?: unknown
   reviewerAuthBootstrap?: unknown
   blockers?: unknown
 } | undefined): import("./runtime-contracts.js").ArtifactPreviewReviewerAccess {
+  const lease = normalizedPreviewAccessLease(preview?.lease)
+  const leaseSummary = previewLeaseSummary(lease)
+  const expiresAt = optionalString(preview?.expiresAt, "expiresAt") ?? leaseSummary?.expiresAt
+
   if (!preview || preview.status !== "available" || preview.lifecycle !== "held-after-run") {
     return {
       schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
@@ -295,6 +302,7 @@ export function previewReviewerAccess(preview: {
       outcome: "blocked",
       mode: "none",
       reviewerSafe: false,
+      ...(leaseSummary ? { lease: { ...leaseSummary, reviewerSafe: false } } : {}),
       reason: "preview-not-held",
     }
   }
@@ -310,6 +318,7 @@ export function previewReviewerAccess(preview: {
       openUrl: reviewerAuthBootstrap.bootstrapUrl,
       targetUrl: reviewerAuthBootstrap.redirectUrl,
       expiresAt: reviewerAuthBootstrap.expiresAt,
+      ...(leaseSummary ? { lease: { ...leaseSummary, reviewerSafe: true } } : {}),
       bootstrap: reviewerAuthBootstrap,
     }
   }
@@ -323,12 +332,13 @@ export function previewReviewerAccess(preview: {
       mode: "none",
       reviewerSafe: false,
       blockers,
-      expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(leaseSummary ? { lease: { ...leaseSummary, reviewerSafe: false } } : {}),
       reason: blockers[0]?.code,
     }
   }
 
-  const safeUrl = safeNonLocalPreviewUrl(optionalString(preview.publicUrl, "publicUrl")) ?? safeNonLocalPreviewUrl(optionalString(preview.url, "url"))
+  const safeUrl = safeNonLocalPreviewUrl(optionalString(preview.publicUrl, "publicUrl")) ?? safeNonLocalPreviewUrl(lease?.public_url) ?? safeNonLocalPreviewUrl(lease?.preview_public_url) ?? safeNonLocalPreviewUrl(optionalString(preview.url, "url"))
   if (safeUrl) {
     return {
       schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
@@ -338,7 +348,8 @@ export function previewReviewerAccess(preview: {
       reviewerSafe: true,
       openUrl: safeUrl,
       targetUrl: safeUrl,
-      expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(leaseSummary ? { lease: { ...leaseSummary, reviewerSafe: true } } : {}),
     }
   }
 
@@ -348,12 +359,41 @@ export function previewReviewerAccess(preview: {
     outcome: "local",
     mode: "none",
     reviewerSafe: false,
-    expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(leaseSummary ? { lease: { ...leaseSummary, reviewerSafe: false } } : {}),
     reason: "local-preview-requires-auth-bootstrap-or-public-url",
   }
 }
 
 export const normalizePreviewReviewerAccess = previewReviewerAccess
+
+function normalizedPreviewAccessLease(input: unknown): PreviewLease | undefined {
+  if (input === undefined) {
+    return undefined
+  }
+
+  return previewLease(input)
+}
+
+export function previewLeaseSummary(lease: PreviewLease | undefined): import("./runtime-contracts.js").ArtifactPreviewLeaseSummary | undefined {
+  if (!lease) {
+    return undefined
+  }
+
+  return {
+    schema: "wp-codebox/preview-lease-summary/v1",
+    status: previewLeaseStatus(lease),
+    ...(lease.public_url ? { publicUrl: lease.public_url } : {}),
+    ...(lease.local_url ? { localUrl: lease.local_url } : {}),
+    ...(lease.site_url ? { siteUrl: lease.site_url } : {}),
+    ...(lease.lease?.expires_at ? { expiresAt: lease.lease.expires_at } : {}),
+    ...(lease.lease?.owner ? { owner: lease.lease.owner } : {}),
+    ...(lease.lease?.provider ? { provider: lease.lease.provider } : {}),
+    ...(lease.alignment?.status ? { alignmentStatus: lease.alignment.status } : {}),
+    ...(lease.reachability?.status ? { reachabilityStatus: lease.reachability.status } : {}),
+    reviewerSafe: Boolean(safeNonLocalPreviewUrl(lease.public_url) || safeNonLocalPreviewUrl(lease.preview_public_url)),
+  }
+}
 
 export function browserContainedSiteStatus(input: unknown): BrowserContainedSiteStatus {
   const value = requireObject(input, "Browser contained site status") as Partial<BrowserContainedSiteStatus>

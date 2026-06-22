@@ -20,6 +20,7 @@ final class WP_Codebox_Host_Preview_Args_Builder {
 		$port   = $options['preview_port'];
 		$bind   = $options['preview_bind'];
 		$public = $options['preview_public_url'];
+		$lease  = $options['preview_lease'];
 
 		if ( null !== $port ) {
 			$args .= ' --preview-port ' . escapeshellarg( (string) $port );
@@ -29,6 +30,9 @@ final class WP_Codebox_Host_Preview_Args_Builder {
 		}
 		if ( null !== $public ) {
 			$args .= ' --preview-public-url ' . escapeshellarg( $public );
+		}
+		if ( null !== $lease ) {
+			$args .= ' --preview-lease-json ' . escapeshellarg( wp_json_encode( $lease ) );
 		}
 
 		return $args;

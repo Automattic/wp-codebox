@@ -48,17 +48,22 @@ final class WP_Codebox_Preview_Options {
 				'format'      => 'uri',
 				'description' => 'Optional public http/https URL reported in preview metadata and passed to the sandbox for site URL alignment.',
 			),
+			'preview_lease'        => array(
+				'type'        => 'object',
+				'description' => 'Optional wp-codebox/preview-lease/v1 envelope for external tunnel/public URL handoff metadata. WP Codebox reports it but does not create the tunnel.',
+			),
 		);
 	}
 
-	/** @param array<string,mixed> $input Preview option input. @return array{preview_hold_seconds:int,preview_port:?int,preview_bind:?string,preview_public_url:?string}|WP_Error */
+	/** @param array<string,mixed> $input Preview option input. @return array{preview_hold_seconds:int,preview_port:?int,preview_bind:?string,preview_public_url:?string,preview_lease:?array<string,mixed>}|WP_Error */
 	public static function normalize( array $input ): array|WP_Error {
 		$hold   = self::preview_hold_seconds( $input );
 		$port   = self::preview_port( $input );
 		$bind   = self::preview_bind( $input );
-		$public = self::preview_public_url( $input );
+		$lease  = self::preview_lease( $input );
+		$public = self::preview_public_url( $input, is_array( $lease ) ? $lease : null );
 
-		foreach ( array( $hold, $port, $bind, $public ) as $value ) {
+		foreach ( array( $hold, $port, $bind, $public, $lease ) as $value ) {
 			if ( is_wp_error( $value ) ) {
 				return $value;
 			}
@@ -73,6 +78,7 @@ final class WP_Codebox_Preview_Options {
 			'preview_port'         => $port,
 			'preview_bind'         => $bind,
 			'preview_public_url'   => $public,
+			'preview_lease'        => $lease,
 		);
 	}
 
@@ -156,10 +162,14 @@ final class WP_Codebox_Preview_Options {
 		return $bind;
 	}
 
-	/** @param array<string,mixed> $input Preview option input. */
-	private static function preview_public_url( array $input ): string|WP_Error|null {
+	/**
+	 * @param array<string,mixed>      $input Preview option input.
+	 * @param array<string,mixed>|null $lease Preview lease input.
+	 */
+	private static function preview_public_url( array $input, ?array $lease = null ): string|WP_Error|null {
 		if ( ! array_key_exists( 'preview_public_url', $input ) || '' === trim( (string) $input['preview_public_url'] ) ) {
-			return null;
+			$lease_public = is_array( $lease ) ? ( $lease['public_url'] ?? $lease['preview_public_url'] ?? null ) : null;
+			return is_string( $lease_public ) ? $lease_public : null;
 		}
 
 		$url   = trim( (string) $input['preview_public_url'] );
@@ -169,5 +179,41 @@ final class WP_Codebox_Preview_Options {
 		}
 
 		return $url;
+	}
+
+	/** @param array<string,mixed> $input Preview option input. @return array<string,mixed>|WP_Error|null */
+	private static function preview_lease( array $input ): array|WP_Error|null {
+		if ( ! array_key_exists( 'preview_lease', $input ) || null === $input['preview_lease'] || '' === $input['preview_lease'] ) {
+			return null;
+		}
+
+		$lease = $input['preview_lease'];
+		if ( is_string( $lease ) ) {
+			$decoded = json_decode( $lease, true );
+			if ( ! is_array( $decoded ) ) {
+				return new WP_Error( 'wp_codebox_preview_lease_invalid', 'preview_lease must be a JSON object using wp-codebox/preview-lease/v1.', array( 'status' => 400 ) );
+			}
+			$lease = $decoded;
+		}
+
+		if ( ! is_array( $lease ) || ( $lease['schema'] ?? null ) !== 'wp-codebox/preview-lease/v1' ) {
+			return new WP_Error( 'wp_codebox_preview_lease_invalid', 'preview_lease must use schema wp-codebox/preview-lease/v1.', array( 'status' => 400 ) );
+		}
+
+		$public = $lease['public_url'] ?? $lease['preview_public_url'] ?? null;
+		if ( null !== $public ) {
+			$input['preview_public_url'] = $public;
+			$valid_public = self::preview_public_url( $input );
+			if ( is_wp_error( $valid_public ) ) {
+				return $valid_public;
+			}
+			$lease['public_url']         = $valid_public;
+			$lease['preview_public_url'] = $valid_public;
+		}
+		if ( ! array_key_exists( 'evidence_refs', $lease ) ) {
+			$lease['evidence_refs'] = array();
+		}
+
+		return $lease;
 	}
 }

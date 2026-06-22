@@ -1,3 +1,5 @@
+import { previewLease, type PreviewLease } from "@automattic/wp-codebox-core"
+
 export const PREVIEW_HOLD_DEFAULT_MAX_SECONDS = 3600
 export const PREVIEW_HOLD_MAX_SECONDS = PREVIEW_HOLD_DEFAULT_MAX_SECONDS
 export const PREVIEW_HOLD_HARD_MAX_SECONDS = 24 * 60 * 60
@@ -10,6 +12,7 @@ export interface PreviewOptionsInput {
   preview_port?: unknown
   preview_bind?: unknown
   preview_public_url?: unknown
+  preview_lease?: unknown
 }
 
 export interface PreviewOptions {
@@ -17,6 +20,7 @@ export interface PreviewOptions {
   preview_port: number | null
   preview_bind: string | null
   preview_public_url: string | null
+  preview_lease: PreviewLease | null
 }
 
 export class PreviewOptionError extends Error {
@@ -48,12 +52,17 @@ export const previewInputSchema = {
     format: "uri",
     description: "Optional public http/https URL reported in preview metadata and passed to the sandbox for site URL alignment.",
   },
+  preview_lease: {
+    type: "object",
+    description: "Optional wp-codebox/preview-lease/v1 envelope for external tunnel/public URL handoff metadata. WP Codebox reports it but does not create the tunnel.",
+  },
 } as const
 
 export function normalizePreviewOptions(input: PreviewOptionsInput): PreviewOptions {
   const port = parsePreviewPortValue(input.preview_port)
   const bind = parsePreviewBindValue(input.preview_bind)
-  const publicUrl = parsePreviewPublicUrlValue(input.preview_public_url)
+  const lease = parsePreviewLeaseValue(input.preview_lease)
+  const publicUrl = parsePreviewPublicUrlValue(input.preview_public_url) ?? lease?.public_url ?? lease?.preview_public_url ?? null
 
   if (bind !== null && port === null) {
     throw new PreviewOptionError("wp_codebox_preview_bind_requires_port", "preview_bind requires preview_port.")
@@ -64,6 +73,7 @@ export function normalizePreviewOptions(input: PreviewOptionsInput): PreviewOpti
     preview_port: port,
     preview_bind: bind,
     preview_public_url: publicUrl,
+    preview_lease: lease,
   }
 }
 
@@ -97,6 +107,14 @@ export function parsePreviewPublicUrl(value: unknown): string {
     throw new PreviewOptionError("wp_codebox_preview_public_url_invalid", "--preview-public-url must include a URL")
   }
   return publicUrl
+}
+
+export function parsePreviewLease(value: unknown): PreviewLease {
+  const lease = parsePreviewLeaseValue(value)
+  if (lease === null) {
+    throw new PreviewOptionError("wp_codebox_preview_lease_invalid", "--preview-lease-json must include a wp-codebox/preview-lease/v1 envelope")
+  }
+  return lease
 }
 
 function parsePreviewHoldSecondsValue(value: unknown): number {
@@ -182,4 +200,25 @@ function parsePreviewPublicUrlValue(value: unknown): string | null {
   }
 
   return url.toString()
+}
+
+function parsePreviewLeaseValue(value: unknown): PreviewLease | null {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return null
+  }
+
+  let payload = value
+  if (typeof value === "string") {
+    try {
+      payload = JSON.parse(value)
+    } catch {
+      throw new PreviewOptionError("wp_codebox_preview_lease_invalid", "preview_lease must be a JSON object using wp-codebox/preview-lease/v1.")
+    }
+  }
+
+  try {
+    return previewLease(payload)
+  } catch (error) {
+    throw new PreviewOptionError("wp_codebox_preview_lease_invalid", error instanceof Error ? error.message : "preview_lease must be a valid wp-codebox/preview-lease/v1 envelope.")
+  }
 }

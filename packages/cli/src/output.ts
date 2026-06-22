@@ -213,12 +213,14 @@ function printPreviewAccess(artifacts: ArtifactBundle | undefined): void {
 
   const access = preview.reviewerAccess
   if (access?.openUrl) {
-    console.log(`Preview: ${access.openUrl} (${access.status}, ${access.mode})`)
+    const lease = access.lease ? `, lease=${access.lease.status}, alignment=${access.lease.alignmentStatus ?? "unknown"}, reviewerSafe=${access.lease.reviewerSafe ? "yes" : "no"}` : ""
+    console.log(`Preview: ${access.openUrl} (${access.status}, ${access.mode}${lease})`)
     return
   }
 
   if (access?.reason) {
-    console.log(`Preview: ${access.status} (${access.reason})`)
+    const lease = access.lease ? `, lease=${access.lease.status}, alignment=${access.lease.alignmentStatus ?? "unknown"}, reviewerSafe=${access.lease.reviewerSafe ? "yes" : "no"}` : ""
+    console.log(`Preview: ${access.status} (${access.reason}${lease})`)
     return
   }
 
@@ -315,8 +317,8 @@ export function printHelp(): void {
   wp-codebox preview-lease status (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox preview-lease release (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
-  wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>]
-  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>]
+  wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
+  wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox materialize-replay-package --snapshot <path> --output <dir> [--snapshot-ref <ref>] [--json]
   wp-codebox recipe-run --recipe <path> [options]
@@ -339,6 +341,8 @@ Options:
                     Bind host or IP for a fixed preview proxy port. Requires --preview-port.
   --preview-public-url <url>
                     Public preview URL passed through to run-agent-task/agent-task-run/recipe-run.
+  --preview-lease-json <json>
+                    wp-codebox/preview-lease/v1 envelope to report for external preview handoff metadata.
   --bundle <dir>      Artifact bundle directory for artifact verification/probe commands.
   --source <id>       Default source for artifacts diagnostics normalization.
   --stage <id>        Default stage for artifacts diagnostics normalization.
@@ -404,8 +408,10 @@ Options:
                        Host/IP for the fixed-port WP Codebox preview proxy. Requires --preview-port.
                        Defaults to 127.0.0.1; use 0.0.0.0 only behind trusted network controls.
   --preview-public-url <url>
-                        Public tunnel/proxy URL to report in preview artifacts and pass to Playground as site-url.
-                        Upstream Playground remains loopback-bound; this only changes the WP Codebox proxy bind.
+                         Public tunnel/proxy URL to report in preview artifacts and pass to Playground as site-url.
+                         Upstream Playground remains loopback-bound; this only changes the WP Codebox proxy bind.
+  --preview-lease-json <json>
+                         wp-codebox/preview-lease/v1 envelope for public/local URL, expiry, alignment, and handoff metadata.
   --timeout <duration>  Maximum live recipe-run duration before emitting a structured timeout failure. Defaults to 25m.
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --dry-run            Validate recipe-run and emit a resolved JSON plan without booting Playground or writing temp workspaces.

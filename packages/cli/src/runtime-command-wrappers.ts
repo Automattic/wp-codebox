@@ -1,4 +1,4 @@
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, type ArtifactBundle, type ExecutionResult, type MountSpec, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, type ArtifactBundle, type ExecutionResult, type MountSpec, type PreviewLease, type Runtime, type RuntimeInfo, type RuntimePolicy } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { serializeError } from "./output.js"
@@ -19,6 +19,7 @@ export interface RunOptions {
   blueprint?: unknown
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewLease?: PreviewLease
   previewPort?: number
   previewBind?: string
   json: boolean
@@ -46,6 +47,7 @@ export interface BootOptions {
   blueprint?: unknown
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewLease?: PreviewLease
   previewPort?: number
   previewBind?: string
   json: boolean
@@ -68,6 +70,7 @@ export interface BlueprintValidateOptions {
   policy?: RuntimePolicy
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewLease?: PreviewLease
   previewPort?: number
   previewBind?: string
   json: boolean
@@ -99,22 +102,24 @@ export function runtimeMetadata(artifactsDirectory: string | undefined, wpVersio
   }
 }
 
-export function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined, siteUrl?: string): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string } | undefined {
+export function previewSpec(publicUrl: string | undefined, port: number | undefined, bind: string | undefined, siteUrl?: string, lease?: PreviewLease): { publicUrl?: string; siteUrl?: string; port?: number; bind?: string; lease?: PreviewLease } | undefined {
   if (bind && port === undefined) {
     throw new Error("--preview-bind requires --preview-port because upstream Playground does not expose bind-host control yet")
   }
 
-  if (!publicUrl && !siteUrl && port === undefined && !bind) {
+  if (!publicUrl && !siteUrl && port === undefined && !bind && !lease) {
     return undefined
   }
 
   const localUrl = port === undefined ? undefined : `http://${formatPreviewHost(bind === "0.0.0.0" || !bind ? "127.0.0.1" : bind)}:${port}`
+  const effectivePublicUrl = publicUrl ?? lease?.public_url ?? lease?.preview_public_url
 
   return stripUndefined({
-    publicUrl,
-    siteUrl: siteUrl ?? publicUrl ?? localUrl,
+    publicUrl: effectivePublicUrl,
+    siteUrl: siteUrl ?? lease?.site_url ?? effectivePublicUrl ?? localUrl,
     port,
     bind,
+    lease,
   })
 }
 
@@ -131,6 +136,7 @@ function runMetadata(options: RunOptions): Record<string, unknown> {
       args: options.args,
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
+      previewLease: options.previewLease,
       previewPort: options.previewPort,
       previewBind: options.previewBind,
     }),
@@ -144,6 +150,7 @@ function bootMetadata(options: BootOptions): Record<string, unknown> {
       kind: "cli-boot",
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
+      previewLease: options.previewLease,
       previewPort: options.previewPort,
       previewBind: options.previewBind,
     }),
@@ -158,6 +165,7 @@ function blueprintValidationMetadata(options: BlueprintValidateOptions): Record<
       blueprintPath: options.blueprintPath,
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
+      previewLease: options.previewLease,
       previewPort: options.previewPort,
       previewBind: options.previewBind,
     }),
@@ -183,7 +191,7 @@ export async function run(options: RunOptions): Promise<RunOutput> {
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
         metadata: options.metadata ?? runMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind, undefined, options.previewLease),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -247,7 +255,7 @@ export async function boot(options: BootOptions): Promise<BootOutput> {
         policy: options.policy ?? defaultPolicy,
         artifactsDirectory: options.artifactsDirectory,
         metadata: bootMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind, undefined, options.previewLease),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -310,7 +318,7 @@ export async function validateBlueprint(options: BlueprintValidateOptions): Prom
         policy: options.policy ?? defaultPolicy,
         artifactsDirectory: options.artifactsDirectory,
         metadata: blueprintValidationMetadata(options),
-        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind, undefined, options.previewLease),
       },
       createPlaygroundRuntimeBackend(),
     )

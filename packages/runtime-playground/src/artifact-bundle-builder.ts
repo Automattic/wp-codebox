@@ -39,6 +39,7 @@ import {
   type RuntimeCreateSpec,
   type RuntimeEpisodeTraceRef,
   type RuntimeInfo,
+  previewLeaseSummary,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
 import { normalizeJsonValue, stripUndefined } from "@automattic/wp-codebox-core/internals"
@@ -669,6 +670,7 @@ function buildPreviewEvidence({
       createdAt: preview?.createdAt,
       expiresAt: preview?.expiresAt,
       holdSeconds: preview?.holdSeconds,
+      ...(preview?.lease ? { lease: previewLeaseSummary(preview.lease) } : {}),
       ...(preview?.blockers ? { blockers: preview.blockers } : {}),
       url: safePreviewUrlRef(preview?.url),
       ...(preview?.publicUrl ? { publicUrl: safePreviewUrlRef(preview.publicUrl) } : {}),
@@ -810,6 +812,7 @@ function buildPreviewSessionEvidence({
       holdSeconds: preview.holdSeconds,
       hasPublicUrl: Boolean(preview.publicUrl),
       hasSiteUrl: Boolean(preview.siteUrl),
+      lease: preview.lease ? previewLeaseSummary(preview.lease) : undefined,
       hasReviewerAuthBootstrap: Boolean(preview.reviewerAuthBootstrap),
       reviewerAccess: previewReviewerAccess(preview),
       blockers: preview.blockers,

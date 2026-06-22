@@ -15,6 +15,7 @@ export interface AgentTaskRunOptions {
   previewPort?: string
   previewBind?: string
   previewHoldBlocking?: boolean
+  previewLeaseJson?: string
 }
 
 interface AgentTaskRunOutput {
@@ -121,6 +122,9 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     }
     if (options.previewPublicUrl) {
       recipeRunArgs.push("--preview-public-url", options.previewPublicUrl)
+    }
+    if (options.previewLeaseJson) {
+      recipeRunArgs.push("--preview-lease-json", options.previewLeaseJson)
     }
     capture = await captureOutput(() => runRecipeRunCommand(recipeRunArgs))
     generatedRecipeArtifact = await persistGeneratedRecipeArtifact(artifacts, recipeJson)
@@ -348,7 +352,7 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
     throw new Error(`Unknown agent-task-run option: ${positionals[0]}`)
   }
   for (const name of options.keys()) {
-    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url", "--preview-port", "--preview-bind", "--preview-hold-blocking"].includes(name)) {
+    if (!["--input-file", "--json", "--format", "--preview-hold-seconds", "--preview-public-url", "--preview-port", "--preview-bind", "--preview-hold-blocking", "--preview-lease-json"].includes(name)) {
       throw new Error(`Unknown agent-task-run option: ${name}`)
     }
   }
@@ -364,6 +368,7 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
     previewPort: stringOption(options, "--preview-port"),
     previewBind: stringOption(options, "--preview-bind"),
     previewHoldBlocking: options.get("--preview-hold-blocking") === true,
+    previewLeaseJson: stringOption(options, "--preview-lease-json"),
   }
 }
 
