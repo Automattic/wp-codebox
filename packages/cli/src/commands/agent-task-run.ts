@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -76,7 +76,7 @@ const FAILURE_SNIPPET_CHARS = 4000
 
 export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   const options = parseAgentTaskRunOptions(args)
-  const input = JSON.parse(await readFile(options.inputPath, "utf8")) as AgentTaskRunInput
+  const input = normalizeAgentTaskRunCliInput(JSON.parse(await readFile(options.inputPath, "utf8")))
   const output = await runAgentTask(input, options)
 
   if (options.json) {
@@ -86,6 +86,24 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
 
   process.stdout.write(`${output.status}: ${output.task}\n`)
   return agentTaskRunExitCode(output)
+}
+
+export function normalizeAgentTaskRunCliInput(input: unknown): AgentTaskRunInput {
+  const record = objectRecord(input)
+  if (record?.schema !== AGENT_TASK_RUN_REQUEST_SCHEMA) {
+    return input as AgentTaskRunInput
+  }
+
+  const taskInput = objectRecord(record.task_input)
+  if (!taskInput) {
+    return input as AgentTaskRunInput
+  }
+
+  return stripUndefined({
+    ...taskInput,
+    artifacts_path: record.artifacts_path ?? taskInput.artifacts_path,
+    callback_data: record.callback_data ?? taskInput.callback_data,
+  }) as AgentTaskRunInput
 }
 
 export function agentTaskRunExitCode(output: Pick<AgentTaskRunOutput, "agent_task_run_result" | "success">): number {
@@ -370,6 +388,10 @@ function parseAgentTaskRunOptions(args: string[]): AgentTaskRunOptions {
     previewHoldBlocking: options.get("--preview-hold-blocking") === true,
     previewLeaseJson: stringOption(options, "--preview-lease-json"),
   }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 async function captureOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
