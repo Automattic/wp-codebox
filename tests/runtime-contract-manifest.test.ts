@@ -69,6 +69,7 @@ assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 
 assert.equal(manifest.schemas.agentTask.runRequest, AGENT_TASK_RUN_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(manifest.schemas.agentTask.legacyRunResponse, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.previewLease, PREVIEW_LEASE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.browserSessionProductDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)
@@ -96,6 +97,7 @@ assert.equal(manifest.schemas.runtimeProvider.credentialRequirements, PROVIDER_C
 assert.equal(manifest.schemas.runtimeProvider.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
 assert.equal(manifest.schemas.runtimeProvider.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
 assert.equal(manifest.schemas.providerRuntime.invocationContract, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
+assert.equal(manifest.schemas.providerRuntime.invocation, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
 assert.equal(manifest.schemas.providerRuntime.credentialRequirements, PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA)
 assert.equal(manifest.schemas.providerRuntime.credentialPreflight, PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA)
 assert.equal(manifest.schemas.providerRuntime.credentialResolution, PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA)
@@ -131,6 +133,7 @@ assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_
 assert.equal(manifest.providerRuntime.schema, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA)
 assert.deepEqual(manifest.providerRuntime.tasks, PROVIDER_RUNTIME_TASK_NAMES)
 assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
+assert.equal(manifest.providerRuntime.result_schemas.artifact_result_envelope, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 
 const values = runtimeContractSchemaValues()
 assert.equal(new Set(values).size, values.length, "runtime contract schema constants must be unique")

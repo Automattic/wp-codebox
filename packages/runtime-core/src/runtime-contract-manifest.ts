@@ -62,6 +62,7 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   agentTask: {
     runRequest: AGENT_TASK_RUN_REQUEST_SCHEMA,
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
+    legacyRunResponse: AGENT_TASK_RUN_RESULT_SCHEMA,
   },
   runtimeBoundary: {
     profile: RUNTIME_PROFILE_SCHEMA,
@@ -107,6 +108,7 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     credentialResolution: PROVIDER_CREDENTIAL_RESOLUTION_SCHEMA,
   },
   providerRuntime: {
+    invocation: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
     invocationContract: PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA,
     credentialRequirements: PROVIDER_CREDENTIAL_REQUIREMENTS_SCHEMA,
     credentialPreflight: PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA,

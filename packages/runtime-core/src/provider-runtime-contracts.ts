@@ -35,6 +35,7 @@ export interface ProviderRuntimeInvocationContract {
     workspace_publication: "wp-codebox/runner-workspace-publication-result/v1"
     tool_call_transcript: "wp-codebox/tool-call-transcript/v1"
     evidence_artifact_envelope: "wp-codebox/evidence-artifact-envelope/v1"
+    artifact_result_envelope: "wp-codebox/artifact-result-envelope/v1"
   }
 }
 
@@ -89,6 +90,7 @@ export function providerRuntimeInvocationContract(): ProviderRuntimeInvocationCo
       workspace_publication: "wp-codebox/runner-workspace-publication-result/v1",
       tool_call_transcript: "wp-codebox/tool-call-transcript/v1",
       evidence_artifact_envelope: "wp-codebox/evidence-artifact-envelope/v1",
+      artifact_result_envelope: "wp-codebox/artifact-result-envelope/v1",
     },
   }
 }
