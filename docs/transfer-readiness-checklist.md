@@ -20,8 +20,8 @@ semantics, and apply policy.
 Product control plane
   owns users, jobs, policy, review, PRs, deploys, SSI/BAC semantics
     -> WP Codebox contracts
-      owns runtime policy, Playground lifecycle, mounts, execution, artifacts
-        -> disposable WordPress Playground runtime
+      owns runtime policy, contained runtime lifecycle, mounts, execution, artifacts
+        -> disposable contained WordPress runtime
           loads caller-provided plugins, themes, MU plugins, and agent tools
         <- artifact bundle, preview refs, changed files, provenance
     <- review, apply, export, replay, or discard outside WP Codebox
@@ -34,7 +34,7 @@ Product control plane
 - Runtime inputs and outputs are versioned through documented contracts rather
   than implicit CLI output parsing.
 - Artifact bundles are durable enough for review, replay, and apply decisions
-  after the disposable Playground runtime is gone.
+  after the disposable contained WordPress runtime is gone.
 - Caller-provided extensions are loaded through generic recipe/runtime fields,
   not hard-coded consumer, importer, compiler, or personal project assumptions.
 - Security-sensitive behavior fails closed: tool allow-lists, file path bounds,
@@ -53,8 +53,8 @@ Current workspace packages:
 - `packages/runtime-core` owns backend-agnostic contracts: runtime policy,
   command registry, task input, workspace policy, recipe schemas, artifact
   verification, generic sandbox tool policy, and shared types.
-- `packages/runtime-playground` owns the WordPress Playground backend adapter:
-  Playground boot, command routing, WP-CLI/PHP/browser command runners,
+- `packages/runtime-playground` owns the contained WordPress runtime backend adapter:
+  runtime boot, command routing, WP-CLI/PHP/browser command runners,
   snapshots, observations, mounted-file capture, diagnostics, and artifact bundle
   assembly.
 - `packages/cli` owns operator automation: command parsing, recipe parsing,
@@ -80,8 +80,8 @@ Transfer checklist:
   review UX, or model-evaluation scoring.
 - Keep the WordPress plugin as a parent-site adapter; it should expose abilities
   and host configuration without depending on a specific product database, queue,
-  UI, or Data Machine install. Codebox adapters map generic Data Machine inputs to
-  Codebox contracts internally when that integration is present.
+  UI, or host job-system install. Codebox adapters map host-owned inputs to
+  Codebox contracts internally when an integration is present.
 - Track helper deduplication through issue #344 so shared object/hash/artifact
   helpers move to stable package homes without creating dependency cycles.
 
@@ -93,7 +93,7 @@ The durable lifecycle is:
 task input / recipe / run args
   -> normalize and validate policy
   -> prepare mounts, staged files, plugin/runtime dependencies, site seeds
-  -> create Playground runtime
+  -> create contained WordPress runtime
   -> execute commands, workflow steps, browser actions, or agent task
   -> observe runtime state and collect diagnostics
   -> capture mounted files, diffs, changed files, patch, logs, traces, previews
@@ -162,7 +162,7 @@ Transfer checklist:
   ability input fields; avoid product-specific defaults that assume any caller.
 - Treat browser action results, screenshots, console logs, HTTP observations,
   and generated files as artifacts with redaction and manifest entries.
-- Keep Playground runtime-principal authorization bounded to disposable browser
+- Keep runtime-principal authorization bounded to disposable browser
   runtimes; the generated runner must continue to fail when copied into a normal
   host site.
 - Audit package dependencies and generated browser assets before transfer so the
@@ -209,7 +209,7 @@ Transfer checklist:
 - Workspace policy must keep sandbox writes inside declared writable roots and
   hide configured paths from artifact capture or tool access.
 - Sandbox tools mapped from a parent system must stay on the explicit safe
-  allow-list; parent worktree lifecycle, GitSync, PR mutation, issue mutation,
+  allow-list; parent worktree lifecycle, source sync, PR mutation, issue mutation,
   comments, deploys, cleanup, and apply-back operations remain parent-only.
 - Artifact access must resolve paths under the configured artifact root and reject
   outside-root traversal.
@@ -267,7 +267,7 @@ Transfer checklist:
   checklist.
 - #358: Classify browser runtime and packaging dependencies so transfer reviewers
   can distinguish runtime-critical, browser-only, build-only, generated, and
-  transitive Playground dependencies.
+  transitive runtime backend dependencies.
 
 ## Transfer Review Questions
 

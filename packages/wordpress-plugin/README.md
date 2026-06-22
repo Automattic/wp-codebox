@@ -76,13 +76,12 @@ and `code_file` fields remain rejected on this product ability path.
 
 Runtime orchestrators can pass `agent_bundles` plus a generic `runtime_task`
 payload to run caller-owned bundle logic without injecting PHP code. WP Codebox
-imports each bundle through `wp_agent_import_runtime_bundles` or the
-`wp_agent_runtime_import_bundle` filter, then executes the sandbox-local ability
-named by `runtime_task.ability` with `runtime_task.input`. The runtime owner
-plugin defines that ability contract; WP Codebox only preserves the generic
-transport, task input, status, diagnostics, and evidence refs.
-The `wp_agent_*` hooks are upstream runtime integration seams; consumers should
-treat the `agent_bundles` and `runtime_task` fields as the Codebox contract.
+imports each bundle through its configured runtime adapter, then executes the
+sandbox-local ability named by `runtime_task.ability` with `runtime_task.input`.
+The runtime owner plugin defines that ability contract; WP Codebox only preserves
+the generic transport, task input, status, diagnostics, and evidence refs.
+Internal adapter hooks are not consumer contracts; consumers should treat the
+`agent_bundles` and `runtime_task` fields as the Codebox contract.
 
 ```json
 {
@@ -203,7 +202,7 @@ the same source into `/wordpress/wp-content/plugins/<slug>` or
 mounts are captured in artifact metadata.
 
 For browser review, callers may pass `preview_hold_seconds` to keep the live
-Playground runtime available after artifact capture. The ability response's
+contained WordPress runtime available after artifact capture. The ability response's
 `run.artifacts.preview.url` and the artifact's `files/review.json` `preview`
 field point at the same live URL until the hold window expires. Without a hold
 window, the preview field is still recorded as evidence but marked
@@ -233,7 +232,7 @@ facades: `create-browser-contained-site-session`,
 `boot-browser-contained-site-session`, `preview-boot-ref`, and
 `destroy-browser-contained-site-session`. Those DTOs expose preview leases,
 startup diagnostics, and blueprint hydration refs without returning inline
-Playground blueprints, `prepared_runtime`, or low-level boot URLs as the default
+contained-runtime blueprints, `prepared_runtime`, or low-level boot URLs as the default
 consumer contract.
 
 ## Apply-Back Approval
@@ -340,13 +339,13 @@ Sandbox-safe tool abilities should be an explicit allow-list:
 
 - Workspace read/list/search/edit primitives supplied by the mounted coding
   tools component.
-- Read-only GitHub context primitives: issue, PR, PR file, check/status, tree,
+- Read-only source-host context primitives: issue, PR, PR file, check/status, tree,
   file, and repo list/get abilities.
 
 Parent-only coding-tool abilities include workspace clone/adopt/remove/delete, worktree
-lifecycle and cleanup, git status/log/diff/pull/add/commit/push/rebase/reset, GitSync
-bind/pull/submit/push/policy changes, issue/PR creation or mutation, comments,
-review comments, merges, PR cleanup, GitHub file writes, and code-task creation.
+lifecycle and cleanup, git status/log/diff/pull/add/commit/push/rebase/reset,
+source sync policy changes, issue/PR creation or mutation, comments, review
+comments, merges, PR cleanup, source-host file writes, and code-task creation.
 Those abilities must not be exposed through the sandbox agent bundle. The sandbox
 produces artifact metadata, changed files, patches, and review evidence; the
 parent control plane performs reviewed apply-back, branch pushes, deploys, and PR

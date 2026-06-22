@@ -1,6 +1,6 @@
 # Agent Runtime Contract
 
-WP Codebox exposes a stable, product-neutral sandbox runtime boundary. External orchestrators own queues, retries, promotion, review policy, runner placement, and durable job history. WP Codebox owns disposable WordPress Playground execution, runtime-stack mounting, bounded command execution, artifact capture, and the schemas listed here.
+WP Codebox exposes a stable, product-neutral sandbox runtime boundary. External orchestrators own queues, retries, promotion, review policy, runner placement, and durable job history. WP Codebox owns disposable contained WordPress runtime execution, runtime-stack mounting, bounded command execution, artifact capture, and the schemas listed here.
 
 ## Entry Point
 
@@ -33,12 +33,12 @@ schemas unless explicitly listed as stable Codebox contracts.
   "model": "example-model",
   "provider_plugin_paths": ["/srv/runtime/ai-provider-example"],
   "component_contracts": [
-    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "pluginFile": "agents-api/agents-api.php", "loadAs": "mu-plugin" },
+    { "slug": "agent-runtime", "path": "/srv/runtime/agent-runtime", "pluginFile": "agent-runtime/agent-runtime.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "pluginFile": "caller-runtime/caller-runtime.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "pluginFile": "caller-runtime-tools/caller-runtime-tools.php", "loadAs": "mu-plugin" }
   ],
   "runtime_stack_mounts": [
-    { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
+    { "source": "/srv/runtime/agent-runtime", "target": "/runtime/agent-runtime", "mode": "readonly" }
   ],
   "runtime_overlays": [
     {
@@ -217,7 +217,7 @@ These names are identifiers and contract anchors, not a queue or policy implemen
 
 Parent-site callers may request runtime stack concepts with `runtime_profile`,
 `runtime_profiles`, `runtime_components`, or `runtime_capabilities`. WP Codebox
-ships only generic defaults for the WordPress Playground sandbox, the agent
+ships only generic defaults for the contained WordPress runtime, the agent
 runtime substrate, and provider-plugin mounting. Product runtime stacks are
 registered by integrations with `wp_codebox_runtime_profile_registry`.
 
@@ -234,17 +234,15 @@ in task JSON or artifacts. Provider-specific credential adapters belong in the
 provider or integration package that owns those credentials, not in WP Codebox's
 generic runtime profile defaults.
 
-## Agents API Adapter Boundary
+## Agent Execution Substrate Boundary
 
-WordPress-hosted WP Codebox consumers should call `WP_Codebox_Agents_API_Adapter` when they need the public Agents API abilities used by Codebox runtime flows. The adapter owns the upstream ability names and execution wrapper for:
-
-- `chat()` -> `agents/chat`.
-- `run_task()` -> `agents/run-task`.
-- `run_runtime_package()` -> `agents/run-runtime-package`.
-- `get_task_run()` / `cancel_task_run()` -> task run-control abilities.
-- `get_chat_run()`, `cancel_chat_run()`, `queue_chat_message()`, and `list_chat_run_events()` -> chat run-control abilities.
-
-This is the Codebox-facing adapter contract for upstream Agents API integration. Callers should not import Agents API PHP constants, call handler filters directly, or construct Agents API execution principal classes. Sandbox runtime internals still include a narrow permission bridge for browser runtime principals; that bridge remains private generated code and should not become a consumer API.
+WordPress-hosted WP Codebox consumers should call the Codebox PHP facade or
+`wp-codebox/*` ability names when they need agent runtime flows. Codebox-owned
+adapters map those calls to the configured agent execution substrate internally.
+Callers should not import backend constants, call handler filters directly, or
+construct execution-principal classes from a substrate package. Sandbox runtime
+permission bridges remain private generated code and should not become consumer
+APIs.
 
 ## Heartbeat And Cleanup Metadata
 
@@ -259,7 +257,7 @@ Recipe execution writes run registry records with schema `wp-codebox/run-registr
 
 The recipe output metadata also includes `wp-codebox/run-resource-evidence/v1`, including startup timing, total duration, cleanup evidence, artifact size evidence, phase evidence, and retry-count availability. Orchestrators should use this structured metadata for watchdog, cleanup, and retry decisions instead of scraping human logs.
 
-WP Codebox cleanup covers temporary recipe files, prepared plugin copies, dependency overlays, staged files, input baselines, and Playground teardown. External orchestrators remain responsible for cleanup of their own workspaces, job records, runner leases, remote artifacts, and publication state.
+WP Codebox cleanup covers temporary recipe files, prepared plugin copies, dependency overlays, staged files, input baselines, and contained runtime teardown. External orchestrators remain responsible for cleanup of their own workspaces, job records, runner leases, remote artifacts, and publication state.
 
 ## Provider Plugins And Runtime Overlays
 
@@ -294,12 +292,12 @@ Current exported code covers the entry point, task input normalization, agent-ta
 - Heartbeats are recorded in the run registry, but there is no separate long-running streaming/progress protocol; orchestrators should poll or observe run records/artifacts they own.
 - Retention metadata is represented but not enforced by WP Codebox. External orchestrators own retention execution for their job and runner resources.
 - Provider overlay compatibility is validated by runtime activation and diagnostics, not by provider-specific schema in WP Codebox core.
-- Browser-sandbox agent invocation and provider proxy registration are centralized in `WP_Codebox_Agent_Runtime_Invoker`, but the generated sandbox fragment still has to assemble runtime-principal authorization, bundle import, provider readiness/proxying, and `agents/chat` execution from lower-level WordPress Ability API, Agents API, and PHP AI Client hooks.
+- Browser-sandbox agent invocation and provider proxy registration are centralized in the runtime invoker, while the generated sandbox fragment assembles authorization, bundle import, provider readiness/proxying, and substrate execution through private adapter hooks.
 
 ### Browser-runtime invocation primitive
 
 `generic-ability-runtime-run` is the canonical primitive for callers that need to
-invoke a WordPress ability in a disposable runtime with provider/runtime
+invoke a WordPress ability in a disposable contained runtime with provider/runtime
 components. WP Codebox supplies the runtime invocation payload, component
 contracts, provider plugin contracts, artifact handoff metadata, and the expected
 result schema. Parent control planes supply policy: repository selection,
