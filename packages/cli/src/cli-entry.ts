@@ -8,6 +8,7 @@ import { runRecipeBuildCommand } from "./commands/recipe-build.js"
 import { runRecipeRunCommand, runRecipeValidateCommand } from "./commands/recipe-run.js"
 import { runMaterializeReplayPackageCommand } from "./commands/replay-package.js"
 import { runMcpRenderClientConfigsCommand } from "./commands/mcp.js"
+import { runPreviewLeaseReleaseCommand, runPreviewLeaseStatusCommand } from "./commands/preview-lease.js"
 import { runBootCommand, runRunCommand, runValidateBlueprintCommand } from "./commands/runtime.js"
 import { runRunsArtifactsCommand, runRunsCancelCommand, runRunsStatusCommand } from "./commands/runs.js"
 import { runTargetProvisionCommand } from "./commands/target.js"
@@ -42,6 +43,8 @@ export async function runCli(args: string[]): Promise<number> {
     runsStatus: runRunsStatusCommand,
     runsArtifacts: runRunsArtifactsCommand,
     runsCancel: runRunsCancelCommand,
+    previewLeaseStatus: runPreviewLeaseStatusCommand,
+    previewLeaseRelease: runPreviewLeaseReleaseCommand,
     targetProvision: runTargetProvisionCommand,
     mcpRenderClientConfigs: runMcpRenderClientConfigsCommand,
     commands: runCommandsCommand,

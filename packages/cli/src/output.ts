@@ -312,6 +312,8 @@ export function printHelp(): void {
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
   wp-codebox runs cancel --registry <dir> --run-id <id> [--reason <text>] [--json]
+  wp-codebox preview-lease status (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
+  wp-codebox preview-lease release (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
   wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-public-url <url>]
@@ -368,6 +370,8 @@ Options:
                        Durable run registry directory for recipe-run.
   --registry <dir>    Durable run registry directory for runs lookup commands.
   --run-id <id>       Run ID for runs lookup commands.
+  --lease-id <id>     Preview lease ID for preview-lease status/release.
+  --lease-file <path> Preview lease metadata file for preview-lease status/release.
   --id <id>           Target id for target provision. Defaults to default.
   --kind <kind>       Target kind for target provision. Defaults to generic.
   --artifact-public-url-root <url>
@@ -387,6 +391,7 @@ Options:
   --artifacts <dir>    Artifact root directory.
   --preview-hold-seconds <n>
                        Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
+  --preview-lease     Return after the preview is available while a detached child keeps the runtime alive until released or expired.
   --preview-port <n>   Start Playground on a fixed local port. Defaults to a random available port.
   --preview-bind <host>
                        Host/IP for the fixed-port WP Codebox preview proxy. Requires --preview-port.

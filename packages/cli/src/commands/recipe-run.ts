@@ -22,6 +22,7 @@ import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, printJsonFailureDiagnostic, RecipeRunTimeoutError, RecipeRuntimeCreateError, serializeRecipeRunError, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError } from "./recipe-run-phases.js"
+import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
 import { distributionStartupProbeFailure, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
@@ -31,6 +32,9 @@ const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
+  if (options.previewLease && !options.previewLeaseChild) {
+    return startPreviewLeaseRecipeRun({ args, json: options.json, recipePath: options.recipePath, artifactsDirectory: options.artifactsDirectory, runRegistryDirectory: options.runRegistryDirectory, previewHoldSeconds: options.previewHoldSeconds })
+  }
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
   interruption?.install()
   const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
@@ -298,9 +302,24 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       Object.assign(evidence, previewAgentEvidence)
     }
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
+    if (successfulRecipe && options.previewLeaseChild && options.previewLeaseFile) {
+      await markPreviewLeaseAvailable(options.previewLeaseFile, { runId: runRecord.runId, preview: artifacts.preview, holdSeconds: options.previewHoldSeconds })
+    }
     const activeRuntime = runtime
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
-      await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe && options.previewHoldBlocking ? options.previewHoldSeconds : 0))
+      await awaitRecipe("runtime.release", async () => {
+        try {
+          await releaseRuntime(activeRuntime, successfulRecipe && options.previewHoldBlocking ? options.previewHoldSeconds : 0, async () => {
+            await markPreviewLeaseReleased(options.previewLeaseFile)
+          }, interruption)
+        } catch (error) {
+          if (!options.previewLeaseChild || interruption?.metadata?.reason !== "run-cancellation-request") {
+            throw error
+          }
+          await markPreviewLeaseReleased(options.previewLeaseFile)
+          interruption.clear()
+        }
+      })
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
@@ -355,6 +374,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }),
     })
   } catch (error) {
+    await markPreviewLeaseFailed(options.previewLeaseFile, error)
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
       recipe,
@@ -563,7 +583,7 @@ function normalizeRuntimeEnv(values: Record<string, unknown>): Record<string, st
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
-  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking"]))
+  const parsed = parseCommandOptions(args, new Set(["--json", "--dry-run", "--preview-hold-blocking", "--preview-lease", "--preview-lease-child"]))
   if (parsed.positionals.length > 0) {
     throw new Error(`Invalid argument: ${parsed.positionals[0]}`)
   }
@@ -571,6 +591,8 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     json: parsed.options.get("--json") === true,
     dryRun: parsed.options.get("--dry-run") === true,
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
+    previewLease: parsed.options.get("--preview-lease") === true,
+    previewLeaseChild: parsed.options.get("--preview-lease-child") === true,
     timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
   }
   for (const [name, value] of parsed.options) {
@@ -598,6 +620,12 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--preview-bind":
         options.previewBind = parsePreviewBind(value)
+        break
+      case "--preview-lease-id":
+        options.previewLeaseId = value
+        break
+      case "--preview-lease-file":
+        options.previewLeaseFile = value
         break
       case "--timeout":
         options.timeoutMs = parseRecipeRunTimeoutMs(value)

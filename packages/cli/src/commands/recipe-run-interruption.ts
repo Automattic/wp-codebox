@@ -52,7 +52,7 @@ export function createRecipeInterruptionController(): RecipeInterruptionControll
       for (const signal of signals) {
         process.on(signal, handler)
       }
-      if (initialParentPid > 1) {
+      if (initialParentPid > 1 && process.env.WP_CODEBOX_PREVIEW_LEASE_CHILD !== "1") {
         parentWatcher = setInterval(() => {
           if (process.ppid === 1 || process.ppid !== initialParentPid) {
             parentDisconnectHandler()
