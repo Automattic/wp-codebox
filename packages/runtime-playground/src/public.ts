@@ -50,6 +50,7 @@ export interface WordPressRuntimeActionHooks {
 }
 
 export interface WordPressPageLoadActionOptions {
+  surface?: "admin" | "frontend"
   path?: string
   url?: string
   method?: string
@@ -104,8 +105,24 @@ export function wordpressAdminPageLoadAction(options: WordPressPageLoadActionOpt
   return { command: "wordpress.admin-page-load", args: pageLoadActionArgs(options) }
 }
 
+export function wordpressSimulatedAdminPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.simulated-admin-page-load", args: pageLoadActionArgs(options) }
+}
+
 export function wordpressFrontendPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
   return { command: "wordpress.frontend-page-load", args: pageLoadActionArgs(options) }
+}
+
+export function wordpressSimulatedFrontendPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.simulated-frontend-page-load", args: pageLoadActionArgs(options) }
+}
+
+export function wordpressServerPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.server-page-load", args: pageLoadActionArgs(options) }
+}
+
+export function wordpressBrowserPageLoadAction(options: WordPressPageLoadActionOptions = {}): RuntimeEpisodeActionSpec {
+  return { command: "wordpress.browser-page-load", args: pageLoadActionArgs(options) }
 }
 
 export { browserArtifactMetrics, createPlaygroundRuntimeBackend }
@@ -121,6 +138,7 @@ function wordPressRuntimeCreateSpec(spec: WordPressRuntimeSpec): RuntimeCreateSp
 function pageLoadActionArgs(options: WordPressPageLoadActionOptions): string[] {
   return [
     ...(options.path ? [`path=${options.path}`] : []),
+    ...(options.surface ? [`surface=${options.surface}`] : []),
     ...(options.url ? [`url=${options.url}`] : []),
     ...(options.method ? [`method=${options.method}`] : []),
     ...(options.query ? [`query-json=${JSON.stringify(options.query)}`] : []),

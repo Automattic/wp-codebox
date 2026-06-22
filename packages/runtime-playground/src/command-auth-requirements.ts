@@ -9,6 +9,7 @@ export interface WordPressAdminAuthCommandRequirement {
 const WORDPRESS_ADMIN_AUTH_ARG_COMMANDS = new Set([
   "wordpress.browser-actions",
   "wordpress.browser-probe",
+  "wordpress.browser-page-load",
   "wordpress.browser-scenario",
   "wordpress.visual-compare",
 ])

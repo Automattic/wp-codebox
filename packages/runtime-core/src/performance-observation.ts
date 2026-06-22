@@ -71,6 +71,8 @@ export interface PerformanceObservation {
   schema: typeof PERFORMANCE_OBSERVATION_SCHEMA
   command?: string
   target?: string
+  source?: "in-process" | "server-http" | "browser" | (string & {})
+  kind?: "simulated-page-load" | "server-page-load" | "browser-page-load" | "rest-request" | (string & {})
   timing?: PerformanceObservationTiming
   memory?: PerformanceObservationMemory
   database?: PerformanceObservationDatabase
@@ -86,6 +88,8 @@ export function performanceObservation(input: Omit<PerformanceObservation, "sche
     schema: PERFORMANCE_OBSERVATION_SCHEMA,
     command: input.command,
     target: input.target,
+    source: input.source,
+    kind: input.kind,
     timing: input.timing,
     memory: input.memory,
     database: input.database,

@@ -566,7 +566,7 @@ export async function runPageLoadCommand({
   spec: ExecutionSpec
   surface: "admin" | "frontend"
 }): Promise<string> {
-  const input = pageLoadInputFromArgs(spec.args ?? [], surface)
+  const input = pageLoadInputFromArgs(spec.args ?? [], surface, spec.command as Parameters<typeof pageLoadInputFromArgs>[2])
   input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand(input.command, server, { code: bootstrapPhpCode(runtimeSpec, pageLoadPhpCode(input), []) })
   assertPlaygroundResponseOk(input.command, response)
@@ -599,6 +599,26 @@ export async function runHttpRequestCommand({
   spec: ExecutionSpec
 }): Promise<string> {
   return runHttpRequest(httpRequestInputFromArgs(spec.args ?? []), baseUrl)
+}
+
+export async function runServerPageLoadCommand({
+  baseUrl,
+  spec,
+}: {
+  baseUrl: string
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = httpRequestInputFromArgs(serverPageLoadArgs(spec.args ?? []))
+  input.command = "wordpress.server-page-load"
+  return runHttpRequest(input, baseUrl)
+}
+
+function serverPageLoadArgs(args: string[]): string[] {
+  const surface = (argValue(args, "surface")?.trim() || "frontend").toLowerCase()
+  const url = argValue(args, "url")?.trim()
+  const path = argValue(args, "path")?.trim() || (surface === "admin" ? "index.php" : "/")
+  const resolved = url || (surface === "admin" ? `/wp-admin/${path.replace(/^\/+/, "")}` : `/${path.replace(/^\/+/, "")}`)
+  return [`url=${resolved}`, ...args.filter((arg) => !arg.startsWith("surface=") && !arg.startsWith("path=") && !arg.startsWith("url="))]
 }
 
 export async function runBenchCommand({
