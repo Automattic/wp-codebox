@@ -133,6 +133,45 @@ function wp_codebox_emit_crud_result( $operation ) {
             return;
         }
 
+        if ( $kind === 'comment' ) {
+            if ( $verb === 'read' ) {
+                $comment = get_comment( (int) $id, ARRAY_A );
+                wp_codebox_crud_emit_result( $comment ? wp_codebox_crud_result( $operation, 'ok', array( 'item' => $comment ) ) : wp_codebox_crud_error( $operation, 'not-found', 'Comment not found.' ) );
+                return;
+            }
+            if ( $verb === 'list' ) {
+                $comments = get_comments( array_merge( $query, array( 'number' => wp_codebox_crud_limit( $operation ) ) ) );
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'items' => array_map( static function ( $comment ) { return $comment->to_array(); }, $comments ) ) ) );
+                return;
+            }
+            $comment_data = array_merge( $data, $id ? array( 'comment_ID' => (int) $id ) : array() );
+            $result_id = $verb === 'create' ? wp_insert_comment( $comment_data ) : ( $verb === 'update' ? wp_update_comment( $comment_data ) : wp_delete_comment( (int) $id, ! empty( $query['force'] ) ) );
+            if ( ! $result_id ) throw new RuntimeException( 'Comment operation failed.' );
+            $comment_id = $verb === 'create' ? (int) $result_id : (int) $id;
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_comment( $comment_id, ARRAY_A ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            return;
+        }
+
+        if ( $kind === 'attachment' || $kind === 'media' ) {
+            if ( $verb === 'read' ) {
+                $attachment = get_post( (int) $id, ARRAY_A );
+                wp_codebox_crud_emit_result( $attachment && $attachment['post_type'] === 'attachment' ? wp_codebox_crud_result( $operation, 'ok', array( 'item' => $attachment ) ) : wp_codebox_crud_error( $operation, 'not-found', 'Attachment not found.' ) );
+                return;
+            }
+            if ( $verb === 'list' ) {
+                $attachments = get_posts( array( 'post_type' => 'attachment', 'post_status' => isset( $query['status'] ) ? $query['status'] : 'any', 'numberposts' => wp_codebox_crud_limit( $operation ), 'suppress_filters' => false ) );
+                wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'items' => array_map( static function ( $attachment ) { return $attachment->to_array(); }, $attachments ) ) ) );
+                return;
+            }
+            $attachment_data = array_merge( $data, array( 'post_type' => 'attachment' ), $id ? array( 'ID' => (int) $id ) : array() );
+            $file = isset( $data['file'] ) ? (string) $data['file'] : false;
+            $parent_post_id = isset( $data['post_parent'] ) ? (int) $data['post_parent'] : 0;
+            $result_id = $verb === 'create' ? wp_insert_attachment( $attachment_data, $file, $parent_post_id, true ) : ( $verb === 'update' ? wp_update_post( $attachment_data, true ) : wp_delete_attachment( (int) $id, ! empty( $query['force'] ) ) );
+            if ( is_wp_error( $result_id ) ) throw new RuntimeException( $result_id->get_error_message() );
+            wp_codebox_crud_emit_result( wp_codebox_crud_result( $operation, 'ok', array( 'item' => $verb === 'delete' ? array( 'deleted' => (bool) $result_id ) : get_post( (int) $result_id, ARRAY_A ), 'effects' => array( array( 'kind' => $verb, 'resource' => $resource ) ) ) ) );
+            return;
+        }
+
         if ( $kind === 'user' ) {
             if ( $verb === 'read' ) {
                 $user = get_user_by( 'id', (int) $id );
