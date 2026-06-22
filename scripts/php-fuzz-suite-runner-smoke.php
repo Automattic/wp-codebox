@@ -1,7 +1,23 @@
 <?php
 declare(strict_types=1);
 
-define( 'ABSPATH', __DIR__ . '/../' );
+$wp_codebox_smoke_root = sys_get_temp_dir() . '/wp-codebox-fuzz-smoke-' . getmypid() . '/';
+mkdir( $wp_codebox_smoke_root . 'wp-admin/includes', 0777, true );
+register_shutdown_function(
+	static function () use ( $wp_codebox_smoke_root ): void {
+		@unlink( $wp_codebox_smoke_root . 'wp-admin/menu.php' );
+		@unlink( $wp_codebox_smoke_root . 'wp-admin/includes/admin.php' );
+		@rmdir( $wp_codebox_smoke_root . 'wp-admin/includes' );
+		@rmdir( $wp_codebox_smoke_root . 'wp-admin' );
+		@rmdir( $wp_codebox_smoke_root );
+	}
+);
+file_put_contents( $wp_codebox_smoke_root . 'wp-admin/includes/admin.php', "<?php\n" );
+file_put_contents(
+	$wp_codebox_smoke_root . 'wp-admin/menu.php',
+	"<?php\narray_keys( \$submenu );\n\$menu[2] = array( 'Loaded', 'read', 'loaded.php' );\n\$submenu['loaded.php'][0] = array( 'Loaded child', 'read', 'loaded-child.php' );\n"
+);
+define( 'ABSPATH', $wp_codebox_smoke_root );
 define( 'WP_CONTENT_DIR', __DIR__ );
 
 class WP_Error {
@@ -267,6 +283,29 @@ assert( 'wp_codebox_fuzz_runtime_action_editor_open_unsupported' === $result['ca
 assert( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported' === $result['cases'][15]['skipReason'] );
 assert( 'wp_codebox_fuzz_runtime_action_page_unsupported' === $result['cases'][16]['skipReason'] );
 assert( 'wp_codebox_fuzz_runtime_action_unsupported' === $result['cases'][17]['skipReason'] );
+
+$GLOBALS['menu'] = null;
+$GLOBALS['submenu'] = null;
+$admin_menu_result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
+	array(
+		'schema' => 'wp-codebox/fuzz-suite/v1',
+		'id'     => 'admin-menu-global-suite',
+		'cases'  => array(
+			array(
+				'id'     => 'admin-menu-global-bindings',
+				'phases' => array(
+					'action' => array(
+						array( 'command' => 'wordpress.fuzz-admin-pages', 'args' => array( 'max_pages=2' ) ),
+					),
+				),
+			),
+		),
+	)
+);
+assert( true === $admin_menu_result['success'] );
+assert( 'passed' === $admin_menu_result['cases'][0]['status'] );
+assert( 2 === $admin_menu_result['cases'][0]['metadata']['observations'][0]['target_count'] );
+assert( 'loaded.php' === $admin_menu_result['cases'][0]['metadata']['observations'][0]['payload']['targets'][0]['menuSlug'] );
 
 $unsafe = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 	array(

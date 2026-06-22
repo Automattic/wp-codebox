@@ -428,6 +428,10 @@ private static function fuzz_suite_admin_page_inventory( array $args ): array {
 		if ( ! defined( 'WP_ADMIN' ) ) {
 			define( 'WP_ADMIN', true );
 		}
+		global $menu, $submenu;
+		if ( ! is_array( $submenu ?? null ) ) {
+			$submenu = array();
+		}
 		if ( defined( 'ABSPATH' ) && file_exists( ABSPATH . 'wp-admin/includes/admin.php' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/admin.php';
 		}
