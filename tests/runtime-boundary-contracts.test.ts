@@ -103,8 +103,31 @@ const runtimeAccess = normalizeRuntimeAccess({
 assert.equal(runtimeAccess.schema, "wp-codebox/runtime-access/v1")
 assert.equal(runtimeAccess.preview_url, "https://preview.example.test")
 assert.equal(runtimeAccess.site_url, "https://site.example.test")
+assert.equal(runtimeAccess.local_url, "http://127.0.0.1:8881")
 assert.equal(runtimeAccess.lease?.preview_public_url, "https://preview.example.test")
 assert.equal(runtimeAccess.reviewer_access?.openUrl, "https://preview.example.test")
+
+const localOnlyRuntimeAccess = normalizeRuntimeAccess({
+  schema: RUNTIME_ACCESS_SCHEMA,
+  lease: {
+    schema: PREVIEW_LEASE_SCHEMA,
+    local_url: "http://127.0.0.1:9400/",
+    lease: { status: "active", provider: "local-preview" },
+  },
+})
+assert.equal(localOnlyRuntimeAccess.preview_url, "http://127.0.0.1:9400/")
+assert.equal(localOnlyRuntimeAccess.local_url, "http://127.0.0.1:9400/")
+
+const publicRuntimeAccess = normalizeRuntimeAccess({
+  schema: RUNTIME_ACCESS_SCHEMA,
+  public_url: "https://review.example.test/",
+  lease: {
+    schema: PREVIEW_LEASE_SCHEMA,
+    local_url: "http://127.0.0.1:9400/",
+  },
+})
+assert.equal(publicRuntimeAccess.preview_url, "https://review.example.test/")
+assert.equal(publicRuntimeAccess.local_url, "http://127.0.0.1:9400/")
 
 const containedSiteStatus = browserContainedSiteStatus({
   schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,

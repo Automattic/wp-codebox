@@ -119,6 +119,7 @@ export interface RuntimeAccess {
   preview_url?: string
   public_url?: string
   site_url?: string
+  local_url?: string
   admin_url?: string
   lease?: PreviewLease
   reviewer_access?: Record<string, unknown>
@@ -290,24 +291,28 @@ export function runtimeAccess(input: unknown): RuntimeAccess {
     ?? lease?.public_url
     ?? lease?.preview_public_url
     ?? lease?.site_url
+    ?? optionalString(value.local_url ?? value.localUrl, "runtime_access.local_url")
+    ?? lease?.local_url
   const publicUrl = optionalString(value.public_url ?? value.publicUrl, "runtime_access.public_url")
     ?? optionalString(value.preview_public_url ?? value.previewPublicUrl, "runtime_access.preview_public_url")
     ?? lease?.public_url
     ?? lease?.preview_public_url
   const siteUrl = optionalString(value.site_url ?? value.siteUrl, "runtime_access.site_url") ?? lease?.site_url
+  const localUrl = optionalString(value.local_url ?? value.localUrl, "runtime_access.local_url") ?? lease?.local_url
 
   const access = {
     schema: RUNTIME_ACCESS_SCHEMA,
     preview_url: previewUrl,
     public_url: publicUrl,
     site_url: siteUrl,
+    local_url: localUrl,
     admin_url: optionalString(value.admin_url ?? value.adminUrl, "runtime_access.admin_url"),
     lease,
     reviewer_access: reviewerAccess,
     metadata: normalizeOptionalObject(value.metadata, "runtime_access.metadata"),
   }
-  if (!access.preview_url && !access.public_url && !access.site_url && !access.admin_url && !access.lease && !access.reviewer_access) {
-    throw new Error("Runtime access must include preview_url, public_url, site_url, admin_url, lease, or reviewer_access.")
+  if (!access.preview_url && !access.public_url && !access.site_url && !access.local_url && !access.admin_url && !access.lease && !access.reviewer_access) {
+    throw new Error("Runtime access must include preview_url, public_url, site_url, local_url, admin_url, lease, or reviewer_access.")
   }
   return stripUndefined(access) as RuntimeAccess
 }

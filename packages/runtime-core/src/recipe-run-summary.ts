@@ -248,11 +248,17 @@ function recipeRunRuntimeAccess(result: Record<string, unknown>): RuntimeAccess 
   const previewAccess = objectValue(preview.runtime_access ?? preview.runtimeAccess)
   const value = Object.keys(explicit).length > 0 ? explicit : Object.keys(artifactAccess).length > 0 ? artifactAccess : previewAccess
   const reviewerAccess = objectValue(value.reviewer_access ?? value.reviewerAccess ?? preview.reviewerAccess)
+  const reviewerUrl = stringValue(reviewerAccess.openUrl) || stringValue(reviewerAccess.targetUrl)
+  const publicUrl = stringValue(value.public_url ?? value.publicUrl ?? value.preview_public_url ?? value.previewPublicUrl) || stringValue(outputs.public_url ?? outputs.publicUrl ?? outputs.preview_public_url ?? outputs.previewPublicUrl) || stringValue(preview.publicUrl ?? preview.public_url ?? preview.previewPublicUrl ?? preview.preview_public_url)
+  const siteUrl = stringValue(value.site_url ?? value.siteUrl) || stringValue(outputs.site_url ?? outputs.siteUrl) || stringValue(preview.siteUrl ?? preview.site_url)
+  const directPreviewUrl = stringValue(value.preview_url ?? value.previewUrl) || stringValue(outputs.preview_url ?? outputs.previewUrl) || stringValue(preview.preview_url ?? preview.previewUrl)
+  const fallbackPreviewUrl = directPreviewUrl || (publicUrl || siteUrl || reviewerUrl ? "" : stringValue(preview.url))
   const candidate = stripUndefined({
     schema: RUNTIME_ACCESS_SCHEMA,
-    preview_url: stringValue(value.preview_url ?? value.previewUrl) || stringValue(outputs.preview_url ?? outputs.previewUrl) || stringValue(reviewerAccess.openUrl) || stringValue(reviewerAccess.targetUrl),
-    public_url: stringValue(value.public_url ?? value.publicUrl ?? value.preview_public_url ?? value.previewPublicUrl) || stringValue(outputs.public_url ?? outputs.publicUrl ?? outputs.preview_public_url ?? outputs.previewPublicUrl),
-    site_url: stringValue(value.site_url ?? value.siteUrl) || stringValue(outputs.site_url ?? outputs.siteUrl),
+    preview_url: fallbackPreviewUrl,
+    public_url: publicUrl,
+    site_url: siteUrl,
+    local_url: stringValue(value.local_url ?? value.localUrl) || stringValue(outputs.local_url ?? outputs.localUrl) || stringValue(preview.localUrl ?? preview.local_url),
     admin_url: stringValue(value.admin_url ?? value.adminUrl) || stringValue(outputs.admin_url ?? outputs.adminUrl),
     lease: value.lease ?? preview.lease,
     reviewer_access: Object.keys(reviewerAccess).length > 0 ? reviewerAccess : undefined,

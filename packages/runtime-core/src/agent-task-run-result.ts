@@ -146,15 +146,23 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
 function agentTaskRuntimeAccess(result: Record<string, unknown>): RuntimeAccess | undefined {
   const explicit = objectValue(result.runtime_access)
   const outputs = objectValue(result.outputs)
+  const preview = objectValue(result.preview)
   const source = Object.keys(explicit).length > 0 ? explicit : outputs
+  const reviewerAccess = objectValue(source.reviewer_access ?? source.reviewerAccess ?? preview.reviewerAccess ?? preview.reviewer_access)
+  const reviewerUrl = stringValue(reviewerAccess.openUrl) || stringValue(reviewerAccess.targetUrl)
+  const publicUrl = stringValue(source.public_url ?? source.publicUrl ?? source.preview_public_url ?? source.previewPublicUrl) || stringValue(preview.publicUrl ?? preview.public_url ?? preview.previewPublicUrl ?? preview.preview_public_url)
+  const siteUrl = stringValue(source.site_url ?? source.siteUrl) || stringValue(preview.siteUrl ?? preview.site_url)
+  const directPreviewUrl = stringValue(source.preview_url ?? source.previewUrl) || stringValue(preview.preview_url ?? preview.previewUrl)
+  const fallbackPreviewUrl = directPreviewUrl || (publicUrl || siteUrl || reviewerUrl ? "" : stringValue(preview.url))
   const candidate = stripUndefined({
     schema: RUNTIME_ACCESS_SCHEMA,
-    preview_url: stringValue(source.preview_url ?? source.previewUrl),
-    public_url: stringValue(source.public_url ?? source.publicUrl ?? source.preview_public_url ?? source.previewPublicUrl),
-    site_url: stringValue(source.site_url ?? source.siteUrl),
+    preview_url: fallbackPreviewUrl,
+    public_url: publicUrl,
+    site_url: siteUrl,
+    local_url: stringValue(source.local_url ?? source.localUrl) || stringValue(preview.localUrl ?? preview.local_url),
     admin_url: stringValue(source.admin_url ?? source.adminUrl),
-    lease: source.lease,
-    reviewer_access: Object.keys(objectValue(source.reviewer_access ?? source.reviewerAccess)).length > 0 ? objectValue(source.reviewer_access ?? source.reviewerAccess) : undefined,
+    lease: source.lease ?? preview.lease,
+    reviewer_access: Object.keys(reviewerAccess).length > 0 ? reviewerAccess : undefined,
     metadata: Object.keys(objectValue(source.metadata)).length > 0 ? objectValue(source.metadata) : undefined,
   })
 
