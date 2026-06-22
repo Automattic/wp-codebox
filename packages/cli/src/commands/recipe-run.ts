@@ -32,7 +32,7 @@ const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
-  if (options.previewLease && !options.previewLeaseChild) {
+  if (options.previewLeaseRequested && !options.previewLeaseChild) {
     return startPreviewLeaseRecipeRun({ args, json: options.json, recipePath: options.recipePath, artifactsDirectory: options.artifactsDirectory, runRegistryDirectory: options.runRegistryDirectory, previewHoldSeconds: options.previewHoldSeconds })
   }
   const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
@@ -605,7 +605,7 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
     json: parsed.options.get("--json") === true,
     dryRun: parsed.options.get("--dry-run") === true,
     previewHoldBlocking: parsed.options.get("--preview-hold-blocking") === true,
-    previewLease: parsed.options.get("--preview-lease") === true,
+    previewLeaseRequested: parsed.options.get("--preview-lease") === true,
     previewLeaseChild: parsed.options.get("--preview-lease-child") === true,
     timeoutMs: DEFAULT_RECIPE_RUN_TIMEOUT_MS,
   }

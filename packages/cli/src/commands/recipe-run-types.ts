@@ -14,7 +14,7 @@ export interface RecipeRunOptions {
   previewPort?: number
   previewBind?: string
   previewHoldBlocking: boolean
-  previewLease: boolean
+  previewLeaseRequested: boolean
   previewLeaseChild: boolean
   previewLeaseId?: string
   previewLeaseFile?: string
