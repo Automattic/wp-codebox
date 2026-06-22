@@ -286,6 +286,8 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 		return match ( $command ) {
 			'wordpress.ensure-plugin-active' => self::execute_fuzz_suite_plugin_activation( $args, $observation, $case_id ),
 			'wordpress.inventory-rest-routes', 'wordpress.rest-route-inventory' => self::execute_fuzz_suite_rest_route_inventory( $args, $observation, $case_id ),
+			'wordpress.admin-page-inventory' => self::execute_fuzz_suite_admin_page_inventory( $args, $observation ),
+			'wordpress.fuzz-admin-pages' => self::execute_fuzz_suite_admin_page_fuzz( $args, $observation ),
 			'wordpress.rest-request' => self::execute_fuzz_suite_rest_request( $args, $observation, $case_id ),
 			'wordpress.http-request' => self::execute_fuzz_suite_http_request( $args, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
@@ -359,6 +361,160 @@ private static function execute_fuzz_suite_rest_route_inventory( array $args, ar
 		'namespaces' => $observation['namespaces'],
 	);
 	return array( 'status' => 'passed', 'observation' => $observation );
+}
+
+/** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_admin_page_inventory( array $args, array $observation ): array {
+	$inventory = self::fuzz_suite_admin_page_inventory( $args );
+	$observation['page_count'] = count( $inventory['pages'] );
+	$observation['menu_loaded'] = (bool) $inventory['menuLoaded'];
+	$observation['payload'] = $inventory;
+	return array( 'status' => 'passed', 'observation' => $observation );
+}
+
+/** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_admin_page_fuzz( array $args, array $observation ): array {
+	$inventory = self::fuzz_suite_admin_page_inventory( $args );
+	$max_pages = max( 1, (int) ( $args['max_pages'] ?? 80 ) );
+	$targets = array_slice( $inventory['pages'], 0, $max_pages );
+	$visits = array();
+	$skipped = array();
+	foreach ( $targets as $target ) {
+		$url = (string) ( $target['canonicalUrl'] ?? '' );
+		$skip_reason = self::fuzz_suite_admin_page_skip_reason( $target, $url );
+		if ( null !== $skip_reason ) {
+			$skipped[] = array( 'target' => $target, 'reason' => $skip_reason );
+			continue;
+		}
+		$visits[] = array(
+			'target' => $target,
+			'method' => 'GET',
+			'status' => 'planned',
+			'reason' => 'public PHP fuzz runner records safe admin coverage without issuing browser requests.',
+		);
+	}
+	$payload = array(
+		'schema' => 'wp-codebox/wordpress-admin-page-coverage/v1',
+		'contract' => array(
+			'safety_class' => 'read_only',
+			'command' => 'wordpress.fuzz-admin-pages',
+			'admin_inventory_schema' => $inventory['schema'],
+		),
+		'targets' => $targets,
+		'visits' => $visits,
+		'skipped' => $skipped,
+		'request_logs' => array(),
+		'query_attribution' => array(),
+		'metrics' => array(
+			'target_count' => count( $targets ),
+			'visit_count' => count( $visits ),
+			'skipped_count' => count( $skipped ),
+			'menu_loaded' => (bool) $inventory['menuLoaded'],
+		),
+		'inventory' => $inventory,
+	);
+	$observation['artifact'] = (string) ( $args['artifact'] ?? 'admin_page_coverage' );
+	$observation['target_count'] = count( $targets );
+	$observation['visit_count'] = count( $visits );
+	$observation['skipped_count'] = count( $skipped );
+	$observation['payload'] = $payload;
+	return array( 'status' => 'passed', 'observation' => $observation );
+}
+
+/** @param array<string,string> $args Args. @return array<string,mixed> */
+private static function fuzz_suite_admin_page_inventory( array $args ): array {
+	$diagnostics = array();
+	if ( ( ! isset( $GLOBALS['menu'] ) || ! is_array( $GLOBALS['menu'] ) ) && function_exists( 'is_user_logged_in' ) && is_user_logged_in() ) {
+		if ( ! defined( 'WP_ADMIN' ) ) {
+			define( 'WP_ADMIN', true );
+		}
+		if ( defined( 'ABSPATH' ) && file_exists( ABSPATH . 'wp-admin/includes/admin.php' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/admin.php';
+		}
+		if ( defined( 'ABSPATH' ) && file_exists( ABSPATH . 'wp-admin/menu.php' ) ) {
+			require_once ABSPATH . 'wp-admin/menu.php';
+		}
+	}
+	$menu_loaded = isset( $GLOBALS['menu'] ) && is_array( $GLOBALS['menu'] );
+	if ( ! $menu_loaded ) {
+		$diagnostics[] = array( 'surface' => 'admin', 'code' => 'admin-menu-not-loaded', 'message' => 'The admin menu globals are not populated in this request context.' );
+	}
+	$pages = array();
+	foreach ( (array) ( $GLOBALS['menu'] ?? array() ) as $item ) {
+		if ( is_array( $item ) ) {
+			$pages[] = self::fuzz_suite_admin_page_descriptor( (string) ( $item[2] ?? '' ), (string) ( $item[0] ?? '' ), (string) ( $item[1] ?? '' ) );
+		}
+	}
+	foreach ( (array) ( $GLOBALS['submenu'] ?? array() ) as $parent_slug => $items ) {
+		foreach ( (array) $items as $item ) {
+			if ( is_array( $item ) ) {
+				$pages[] = self::fuzz_suite_admin_page_descriptor( (string) ( $item[2] ?? '' ), (string) ( $item[0] ?? '' ), (string) ( $item[1] ?? '' ), (string) $parent_slug );
+			}
+		}
+	}
+	return array(
+		'schema' => 'wp-codebox/wordpress-admin-page-inventory/v1',
+		'command' => 'wordpress.admin-page-inventory',
+		'status' => $menu_loaded ? 'ok' : 'unsupported',
+		'adminUrl' => function_exists( 'admin_url' ) ? admin_url() : '',
+		'menuLoaded' => $menu_loaded,
+		'user' => self::fuzz_suite_admin_user_context(),
+		'pages' => array_values( array_filter( $pages, static fn( array $page ): bool => '' !== ( $page['menuSlug'] ?? '' ) ) ),
+		'diagnostics' => $diagnostics,
+	);
+}
+
+private static function fuzz_suite_admin_page_descriptor( string $menu_slug, string $title, string $capability, string $parent_slug = '' ): array {
+	$page = array(
+		'menuSlug' => $menu_slug,
+		'pageTitle' => self::fuzz_suite_strip_tags( $title ),
+		'menuTitle' => self::fuzz_suite_strip_tags( $title ),
+		'capability' => $capability,
+		'canAccess' => '' === $capability || ! function_exists( 'current_user_can' ) ? null : current_user_can( $capability ),
+		'canonicalUrl' => self::fuzz_suite_admin_page_url( $menu_slug, $parent_slug ),
+	);
+	if ( '' !== $parent_slug ) {
+		$page['parentSlug'] = $parent_slug;
+	}
+	return $page;
+}
+
+private static function fuzz_suite_admin_page_url( string $menu_slug, string $parent_slug = '' ): string {
+	if ( str_ends_with( $menu_slug, '.php' ) ) {
+		$path = $menu_slug;
+	} elseif ( '' !== $parent_slug && str_ends_with( $parent_slug, '.php' ) ) {
+		$path = add_query_arg( 'page', $menu_slug, $parent_slug );
+	} else {
+		$path = add_query_arg( 'page', $menu_slug, 'admin.php' );
+	}
+	return function_exists( 'admin_url' ) ? admin_url( $path ) : $path;
+}
+
+/** @param array<string,mixed> $target Target. */
+private static function fuzz_suite_admin_page_skip_reason( array $target, string $url ): ?array {
+	if ( false === ( $target['canAccess'] ?? null ) ) {
+		return array( 'code' => 'capability_denied', 'message' => 'The current runtime user cannot access this admin page.', 'capability' => $target['capability'] ?? '' );
+	}
+	foreach ( array( 'action=delete', 'action=install', 'action=update', 'action=activate', 'action=deactivate', '_wpnonce=' ) as $pattern ) {
+		if ( str_contains( $url, $pattern ) ) {
+			return array( 'code' => 'destructive_or_nonce_action', 'message' => 'The admin page URL looks like a mutation or nonce-protected action.', 'pattern' => $pattern );
+		}
+	}
+	return null;
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_admin_user_context(): array {
+	$user = function_exists( 'wp_get_current_user' ) ? wp_get_current_user() : null;
+	return array(
+		'isLoggedIn' => function_exists( 'is_user_logged_in' ) ? is_user_logged_in() : false,
+		'id' => is_object( $user ) && isset( $user->ID ) ? (int) $user->ID : 0,
+		'roles' => is_object( $user ) && isset( $user->roles ) ? array_values( array_map( 'strval', (array) $user->roles ) ) : array(),
+	);
+}
+
+private static function fuzz_suite_strip_tags( string $value ): string {
+	return function_exists( 'wp_strip_all_tags' ) ? wp_strip_all_tags( $value ) : strip_tags( $value );
 }
 
 /** @param string[] $namespace_filter Namespace filters. */
