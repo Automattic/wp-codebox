@@ -1,8 +1,8 @@
 # WP Codebox
 
-**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely — every sandbox is a disposable WordPress Playground that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.
+**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely - every sandbox is a disposable contained WordPress runtime that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.
 
-WordPress has historically lacked a clean scratch space for code execution. Modern dev workflows assume one — Node has `npm install` per project, Python has venvs, containers have ephemeral filesystems. WordPress Playground finally provides that primitive: real WordPress, PHP-in-WASM, fully ephemeral, no host filesystem access except via declared mounts. WP Codebox wraps Playground into a usable runtime contract so any product — WordPress or not — can offer code execution against a real WordPress instance without risking the caller.
+WordPress has historically lacked a clean scratch space for code execution. Modern dev workflows assume one - Node has `npm install` per project, Python has venvs, containers have ephemeral filesystems. WP Codebox provides that primitive as a usable runtime contract: real WordPress, fully ephemeral, no host filesystem access except via declared mounts. Any product - WordPress or not - can offer code execution against a real WordPress instance without risking the caller.
 
 WP Codebox is the runtime boundary for agent-built or workflow-built outputs. It is not the agent framework, the review UI, the deploy system, or the production site mutator. The WordPress plugin in this repo is one optional host adapter (useful when the host *is* a WordPress site); the core CLI/runtime works anywhere `node` can run.
 
@@ -14,7 +14,7 @@ recipe authoring, supported input names, and assertion syntax, see
 ```text
 Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
   -> WP Codebox
-    -> disposable WordPress Playground sandbox
+    -> disposable contained WordPress runtime
       -> mounted inputs, plugins, tools, and optional agent stack
       -> controlled commands or agent task
       -> artifact bundle
@@ -25,12 +25,12 @@ Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
 
 What you can build on top of WP Codebox:
 
-- **Agentic coding against a WordPress site.** Let users describe a change in chat — from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live Playground preview URL, then let the parent control plane review, apply, and open any PR. The contributor never needs shell access.
-- **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated Playground workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model review artifacts. Example implementation: [wp-gym](https://github.com/Automattic/wp-gym).
-- **Long-running terrariums.** Boot a Playground that an agent evolves over time — software, content, configuration — with day-cycle automation driven from CI. See [world-of-wordpress](https://github.com/chubes4/world-of-wordpress).
-- **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via Playground + WordPress import, and post Playground preview links as PR evidence.
+- **Agentic coding against a WordPress site.** Let users describe a change in chat - from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live preview URL, then let the parent control plane review, apply, and open any PR. The contributor never needs shell access.
+- **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated runtime workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model review artifacts. Example implementation: [wp-gym](https://github.com/Automattic/wp-gym).
+- **Long-running terrariums.** Boot a contained WordPress runtime that an agent evolves over time - software, content, configuration - with day-cycle automation driven from CI. See [world-of-wordpress](https://github.com/chubes4/world-of-wordpress).
+- **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via a contained WordPress runtime and WordPress import, and post preview links as PR evidence.
 - **Untrusted patch evaluation.** Plugin and theme authors can accept community-submitted patches, run them in a sandbox, capture artifacts (diffs, test results, screenshots), and review before merging. The reviewing tool can be anything.
-- **"Try it in a sandbox first."** Before installing a plugin, theme, or update on a production site, run it in a disposable Playground and see what happens.
+- **"Try it in a sandbox first."** Before installing a plugin, theme, or update on a production site, run it in a disposable contained WordPress runtime and see what happens.
 - **Reproduction harness for bug reports.** Ship a recipe with an issue so any contributor can replay the bug deterministically in a clean WordPress instance. The replay can be triggered from a CLI, a CI job, or a maintainer's IDE plugin.
 - **Hosting provider integrations.** "Test this change in a sandbox" buttons in admin dashboards or hosting panels.
 - **CI/CD safety net.** Dispatch a sandbox from a GitHub Action or other CI runner to evaluate a PR's runtime behavior against real WordPress before merging.
@@ -43,18 +43,18 @@ What you can build on top of WP Codebox:
 What WP Codebox provides for product use cases:
 
 - Run a PHP or WP-CLI probe against mounted WordPress code.
-- Validate raw WordPress Playground blueprints through the same runtime and artifact contract.
-- Execute a WordPress Ability inside a disposable Playground runtime.
+- Validate raw contained-runtime blueprints through the same runtime and artifact contract.
+- Execute a WordPress Ability inside a disposable contained WordPress runtime.
 - Run repeatable workspace recipes that mount plugins, seed workspaces, and capture outputs.
 - Drive stateful runtime episodes with reset, step, observe, snapshot, artifact, and close operations.
 - Launch sandboxed coding-agent tasks from the CLI or WordPress ability surface.
 - Fan out several task descriptions into separate isolated sandboxes.
-- Produce artifact bundles — patches, diffs, test results, live Playground preview URLs — that a parent product can review, replay, apply, or discard.
+- Produce artifact bundles - patches, diffs, test results, live preview URLs - that a parent product can review, replay, apply, or discard.
 
 ## Browser Site Operations
 
 The WordPress plugin ships a browser runtime helper at
-`window.wpCodeboxBrowser` for product callers that drive a WordPress Playground
+`window.wpCodeboxBrowser` for product callers that drive a contained WordPress runtime
 from the browser. Low-level helpers such as `runPhpRequest`,
 `runWordPressOperation`, `ensureDirectory`, and `writeFile` remain available for
 custom workflows. Prefer the typed site-operation helpers for common safe
@@ -74,13 +74,13 @@ actions because they validate input and return a normalized product envelope:
 Current safe helpers:
 
 - `setFrontendAdminBarVisible(client, { visible, userId? })` toggles the
-  frontend admin bar preference for a Playground user. `visible` must be a
+  frontend admin bar preference for a runtime user. `visible` must be a
   boolean, and `userId` must be a positive integer when supplied.
 - `writeReviewFile(client, { path, content, encoding? })` writes review or
-  artifact notes below the Playground uploads `wp-codebox/reviews` directory.
+  artifact notes below the runtime uploads `wp-codebox/reviews` directory.
   `path` must be a relative path without `.` or `..` segments.
 
-These helpers mutate only the disposable Playground runtime. Parent products
+These helpers mutate only the disposable contained WordPress runtime. Parent products
 remain responsible for reviewing artifacts and deciding whether to apply any
 result outside the sandbox.
 
@@ -223,8 +223,8 @@ Artifact bundles include `metadata.json.provenance.workspace` with:
   recipe provides one.
 
 Sandbox agents may read, write, edit, patch, grep, list, and diff files inside
-the mounted workspace. Read-only GitHub abilities may be exposed for context.
-Push, deploy, worktree lifecycle, GitSync, PR creation, issue mutation, comments,
+the mounted workspace. Read-only source-host abilities may be exposed for context.
+Push, deploy, worktree lifecycle, source sync, PR creation, issue mutation, comments,
 merge, cleanup, and apply-back operations stay parent-only. The sandbox produces
 artifacts; the parent site decides whether and how to apply them.
 
@@ -250,7 +250,7 @@ now have package artifact validation, but publication and release automation are
 still explicit release-manager steps.
 
 - `packages/runtime-core`: backend-agnostic runtime interfaces and shared types.
-- `packages/runtime-playground`: WordPress Playground backend adapter.
+- `packages/runtime-playground`: contained WordPress runtime backend adapter.
 - `packages/cli`: source for the local `wp-codebox` CLI used through `npm run wp-codebox`.
 - `packages/wordpress-plugin`: parent-site WordPress ability surface.
 
@@ -378,7 +378,7 @@ Release checklist:
 
 ## Quick Start
 
-Run PHP inside a disposable WordPress Playground runtime with a local plugin mounted:
+Run PHP inside a disposable contained WordPress runtime with a local plugin mounted:
 
 ```bash
 npm run wp-codebox -- run \
@@ -417,7 +417,7 @@ Expected shape:
 }
 ```
 
-WP Codebox boots Playground lazily on the first command, captures artifacts after execution, and disposes the runtime when the run completes.
+WP Codebox boots the contained WordPress runtime lazily on the first command, captures artifacts after execution, and disposes the runtime when the run completes.
 
 Recipe runs also write a registry entry under the run registry directory
 (`artifacts/runs` by default, or `--run-registry <dir>`). Poll it with
@@ -460,7 +460,7 @@ observe the request through the registry before settling as `cancelled`.
 
 Recipe runs write runtime evidence under `files/runtime-evidence/`. Every recipe
 run includes `run-attestation.json`, a generic attestation with the WP Codebox
-package identity, git commit when available, Playground backend package/version,
+package identity, git commit when available, runtime backend package/version,
 WordPress runtime version, command-policy hash, policy enforcement states,
 references to workspace-policy and artifact-verifier results when configured,
 and redacted secret-envelope metadata.
@@ -480,7 +480,7 @@ more than one hard link. The hard-link check uses the host platform's
 `lstat().nlink` value and fails closed if the link count cannot be determined,
 because a hard-linked file under an allowed root is not independent evidence.
 
-For interactive review, pass `--preview-hold-seconds <duration>` to keep the live Playground server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
+For interactive review, pass `--preview-hold-seconds <duration>` to keep the live preview server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
 
 ```bash
 npm run wp-codebox -- run \
@@ -492,7 +492,7 @@ npm run wp-codebox -- run \
   --json
 ```
 
-The v1 preview is a held live Playground runtime. When `--preview-hold-seconds` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
+The v1 preview is a held live contained WordPress runtime. When `--preview-hold-seconds` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
 For tunnel-first review, reserve the local port in the tunnel command and pass that same port to WP Codebox. `--preview-port <n>` makes WP Codebox expose Playground through a fixed local proxy port instead of reporting Playground's default random port, and `--preview-public-url <url>` reports the tunnel URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`.
 
@@ -760,13 +760,13 @@ It records `files/browser/steps.jsonl` (per-step index, kind, selector, ok/fail,
 ]
 ```
 
-WP Codebox defaults to WordPress `latest` because the agent and AI plugin stacks need the current WordPress runtime surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
+WP Codebox defaults to WordPress `latest` because the agent and AI plugin stacks need the current WordPress runtime surface. Override with `--wp trunk`, `--wp nightly`, or another supported runtime version.
 
-`--preview-port` fixes the local WP Codebox proxy port for tunnel/proxy wiring. Omit it to keep the current random-port behavior from upstream Playground. `--preview-bind` changes that fixed-port proxy bind address and requires `--preview-port`; it does not change the upstream Playground server bind. `--preview-public-url` is metadata and site-url alignment only; it does not make a loopback-only preview reachable without a tunnel/proxy or explicit proxy bind.
+`--preview-port` fixes the local WP Codebox proxy port for tunnel/proxy wiring. Omit it to keep the current random-port behavior from the runtime backend. `--preview-bind` changes that fixed-port proxy bind address and requires `--preview-port`; it does not change the backend server bind. `--preview-public-url` is metadata and site-url alignment only; it does not make a loopback-only preview reachable without a tunnel/proxy or explicit proxy bind.
 
 ### `boot`
 
-Boot a disposable Playground runtime for interactive sandbox review without running a workflow step.
+Boot a disposable contained WordPress runtime for interactive sandbox review without running a workflow step.
 
 ```bash
 npm run wp-codebox -- boot \
@@ -779,13 +779,13 @@ npm run wp-codebox -- boot \
   --json
 ```
 
-`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. `--preview-hold-seconds` uses the same duration syntax and 3600-second maximum as `run --preview-hold-seconds`.
+`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a contained-runtime blueprint JSON file. `--preview-hold-seconds` uses the same duration syntax and 3600-second maximum as `run --preview-hold-seconds`.
 
 The JSON output uses `wp-codebox/boot/v1` and includes runtime information plus the collected artifact bundle. The artifact bundle includes preview metadata, mounted-file capture, diffs, review metadata, and lifecycle logs, but no `execution` object and no fake command entry.
 
 ### `validate-blueprint`
 
-Validate a raw WordPress Playground blueprint through WP Codebox instead of calling `@wp-playground/cli` directly.
+Validate a raw contained-runtime blueprint through WP Codebox instead of calling a backend tool directly.
 
 ```bash
 npm run wp-codebox -- validate-blueprint \
@@ -795,11 +795,11 @@ npm run wp-codebox -- validate-blueprint \
   --json
 ```
 
-`--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. The command boots Playground with that blueprint, captures the normal artifact bundle, and returns `wp-codebox/blueprint-validation/v1` with runtime and artifact paths. Use it in CI when the desired contract is "this blueprint boots and produces reviewable WP Codebox artifacts" rather than a recipe workflow.
+`--blueprint` accepts inline JSON or a path to a contained-runtime blueprint JSON file. The command boots the runtime with that blueprint, captures the normal artifact bundle, and returns `wp-codebox/blueprint-validation/v1` with runtime and artifact paths. Use it in CI when the desired contract is "this blueprint boots and produces reviewable WP Codebox artifacts" rather than a recipe workflow.
 
 ### `recipe validate`
 
-Validate a workspace recipe without launching Playground.
+Validate a workspace recipe without launching a runtime.
 
 ```bash
 npm run wp-codebox -- recipe validate \
@@ -1080,7 +1080,7 @@ Current bundles include:
 
 - `manifest.json`: artifact index with content types and the content digest used for the bundle id.
 - `metadata.json`: runtime, policy, mounts, and caller metadata.
-- `blueprint.after.json`: WordPress Playground replay blueprint. When a runtime-state snapshot is available, this restores the generated WordPress database, active theme/plugin state, and captured `wp-content` files. Otherwise it falls back to a partial write-file replay for captured text files.
+- `blueprint.after.json`: contained-runtime replay blueprint. When a runtime-state snapshot is available, this restores the generated WordPress database, active theme/plugin state, and captured `wp-content` files. Otherwise it falls back to a partial write-file replay for captured text files.
 - `blueprint.after-notes.json`: replay status, captured state summary, limitations, and diagnostic pointers.
 - `files/blueprint.after.partial.json`: diagnostic partial write-file replay retained when `blueprint.after.json` is backed by a runtime-state snapshot.
 - `events.jsonl`, `commands.jsonl`, `observations.jsonl`: runtime evidence streams.
@@ -1107,7 +1107,7 @@ Recipes that import a generated site into a clean runtime can export replay evid
 
 The step writes `files/replay-package/manifest.json`, `blueprint.after.json`, `blueprint.zip`, `blueprint.after-notes.json`, and `files/runtime-snapshot.json` under the runtime artifact root. Its stdout is a `wp-codebox/wordpress-replay-export/v1` envelope with `importMs`, `materializeMs`, `snapshotMs`, `exportMs`, `databaseTables`, `wpContentFiles`, `snapshotBytes`, and `blueprintBytes`. The exported `blueprint.after.json` keeps the runtime snapshot as a referenced package file instead of embedding the full snapshot as one large `runPHP` string.
 
-Existing `wp-codebox/wordpress-runtime-snapshot/v1` files can be turned into the same replay package without a live Playground runtime or the original recipe-run context:
+Existing `wp-codebox/wordpress-runtime-snapshot/v1` files can be turned into the same replay package without a live contained WordPress runtime or the original recipe-run context:
 
 ```bash
 wp-codebox materialize-replay-package \
@@ -1119,7 +1119,7 @@ wp-codebox materialize-replay-package \
 
 The materializer writes `blueprint.after.json`, `blueprint.zip`, `files/runtime-snapshot.json`, `blueprint.after-notes.json`, and `manifest.json`. With `--json`, stdout is a generic `wp-codebox/materialization-result/v1` envelope; the replay-package-specific `wp-codebox/wordpress-replay-export/v1` data is carried as a projection. The generated notes and manifest record source metadata, including the resolved input snapshot path, optional `--snapshot-ref`, and the `wp-codebox materialize-replay-package` command.
 
-Replay packages use a bundled resource for `files/runtime-snapshot.json` so the blueprint and snapshot travel together as one local artifact directory. `blueprint.after.json` is the local/package validation artifact. Public WordPress Playground viewer links must use `blueprint.zip`, because Playground resolves bundled resources from a bundle archive with a root `blueprint.json` entry; a plain JSON URL cannot resolve `files/runtime-snapshot.json`. The manifest therefore records `replayableWordPressSite.publicViewerArtifactPath: "blueprint.zip"`. Use URL resources only when the snapshot is already hosted at a stable, browser-fetchable URL; this avoids shipping the snapshot beside the blueprint, but replay then depends on network access, CORS, URL lifetime, and the full snapshot download at restore time.
+Replay packages use a bundled resource for `files/runtime-snapshot.json` so the blueprint and snapshot travel together as one local artifact directory. `blueprint.after.json` is the local/package validation artifact. Public runtime viewer links must use `blueprint.zip`, because the viewer resolves bundled resources from a bundle archive with a root `blueprint.json` entry; a plain JSON URL cannot resolve `files/runtime-snapshot.json`. The manifest therefore records `replayableWordPressSite.publicViewerArtifactPath: "blueprint.zip"`. Use URL resources only when the snapshot is already hosted at a stable, browser-fetchable URL; this avoids shipping the snapshot beside the blueprint, but replay then depends on network access, CORS, URL lifetime, and the full snapshot download at restore time.
 
 `metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. It also includes `provenance` derived from data WP Codebox already has: task input/context where available, WP Codebox runtime version, WordPress version, mounted component/mount metadata, and agent/provider/model fields passed to the sandbox runner. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
 
@@ -1297,9 +1297,9 @@ already use them and expose `meta.canonical_ability` in ability metadata.
 
 Canonical agent-task execution paths are intentionally split by caller runtime:
 
-- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Codebox sandboxes, mount the configured agent stack, invoke the configured sandbox-local task, and return artifact metadata. The current implementation may use WordPress Playground and upstream runtime abilities such as `agents/chat`; callers should treat those as backend details behind the Codebox contract.
+- Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Codebox sandboxes, mount the configured agent stack, invoke the configured sandbox-local task, and return artifact metadata. Runtime backend and agent execution substrate details stay behind the Codebox contract.
 - Portable CLI execution uses `wp-codebox recipe-run --recipe <path>`. Recipes use the `wp-codebox.agent-sandbox-run` helper step when they need the agent-task bridge; direct `agent-sandbox-run` remains an operator/debug command, not the product API for frontend callers.
-- No-Node/browser execution uses `wp-codebox/create-browser-playground-session`. The host prepares a browser-executable Playground recipe and runner payload; the browser executes `wordpress.run-php` inside Playground instead of requiring host shell or Node access.
+- No-Node/browser execution uses `wp-codebox/create-browser-playground-session`. The host prepares a browser-executable recipe and runner payload; the browser executes `wordpress.run-php` inside the contained runtime instead of requiring host shell or Node access.
 
 All three paths use the same `wp-codebox/task-input/v1` task input contract. Host and browser paths also emit the same `wp-codebox/sandbox-session/v1` session envelope so product callers can correlate prepared browser sessions and completed host runs without transport-specific metadata drift.
 

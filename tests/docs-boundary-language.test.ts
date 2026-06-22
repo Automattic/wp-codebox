@@ -8,6 +8,18 @@ const forbiddenConsumerTerms = [
   /\bStatic Site Importer\b/,
 ]
 
+const forbiddenPublicImplementationTerms = [
+  /\bData Machine\b/,
+  /\bData Machine Code\b/,
+  /\bAgents API\b/,
+  /\bWordPress Playground\b/,
+  /\bgeneric Data Machine inputs\b/,
+  /\bWP_Codebox_Agents_API_Adapter\b/,
+  /\bagents\/[a-z0-9._/-]+/i,
+  /\bGitSync\b/,
+  /\bwp_agent_[a-z0-9_]+\b/,
+]
+
 const genericContractDocs = [
   "docs/architecture.md",
   "docs/recipe-contract.md",
@@ -24,8 +36,11 @@ const genericContractDocs = [
 ]
 
 const publicBoundaryDocs = [
+  "README.md",
   "docs/public-api-contract.md",
   "docs/architecture.md",
+  "docs/agent-runtime-contract.md",
+  "docs/transfer-readiness-checklist.md",
   "docs/parent-tool-bridge-contract.md",
   "packages/cli/README.md",
   "packages/wordpress-plugin/README.md",
@@ -56,25 +71,25 @@ assert.match(exampleConsumerDoc, /^# Example Consumer Boundary Contracts/m)
 assert.match(exampleConsumerDoc, /## Public\/Internal Boundary/)
 assert.match(exampleConsumerDoc, /Consumers compose WP Codebox APIs\./)
 assert.match(exampleConsumerDoc, /Host job, artifact, approval queue, and flow concepts map to Codebox run,\s+artifact, approval, and session contracts\./)
-assert.match(exampleConsumerDoc, /Agents API execution targets and principals map to Codebox task, provider,\s+permission, and runtime-session contracts\./)
+assert.match(exampleConsumerDoc, /Agent execution substrate targets and principals map to Codebox task, provider,\s+permission, and runtime-session contracts\./)
 assert.match(exampleConsumerDoc, /Host workspace lifecycle and source-control workflow details map to\s+Codebox source, workspace, evidence, and apply-back contracts\./)
-assert.match(exampleConsumerDoc, /WordPress Playground boot, filesystem, preview, and PHP\/WP-CLI details map to\s+Codebox runtime, mount, command, preview, and browser-session contracts\./)
+assert.match(exampleConsumerDoc, /Contained WordPress runtime boot, filesystem, preview, and PHP\/WP-CLI details map to\s+Codebox runtime, mount, command, preview, and browser-session contracts\./)
 assert.match(exampleConsumerDoc, /Public schema names, top-level DTO fields, package entrypoints, and docs intended\s+for consumers use Codebox vocabulary\./)
 assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
 assert.match(exampleConsumerDoc, /## Example Consumers/)
 assert.doesNotMatch(exampleConsumerDoc, /data[-_ ]?machine|datamachine/i)
 
 const publicBoundaryText = (await Promise.all(publicBoundaryDocs.map((doc) => readFile(new URL(doc, root), "utf8")))).join("\n")
-assert.match(publicBoundaryText, /Consumers depend on\s+the Codebox ability ids, schemas, package entrypoints, and\s+browser SDK facades/)
-assert.match(publicBoundaryText, /Codebox adapter translates from generic Data Machine inputs into the Codebox\s+task\/recipe\/runtime contracts at the boundary/)
+assert.match(publicBoundaryText, /Consumers depend on\s+the Codebox ability ids, schemas,\s+package entrypoints, and\s+browser SDK facades/)
+assert.match(publicBoundaryText, /Codebox adapter\s+translates from host-owned inputs into the Codebox task\/recipe\/runtime contracts\s+at the boundary/)
 assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
 assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
 assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
 assert.match(publicBoundaryText, /not mirror the monorepo-only `\.\/internals` helper entrypoint/)
-assert.doesNotMatch(publicBoundaryText, /WP_Codebox_Agents_API_Adapter/)
-assert.doesNotMatch(publicBoundaryText, /agents-api\/[a-z0-9._/-]+|agents\/[a-z0-9._/-]+/i)
-assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
+for (const term of forbiddenPublicImplementationTerms) {
+  assert.doesNotMatch(publicBoundaryText, term)
+}
 
 const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")
 assert.match(runnerWorkspaceBackendContract, /^# Runner Workspace Backend Contract/m)

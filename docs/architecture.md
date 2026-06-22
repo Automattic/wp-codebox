@@ -4,22 +4,23 @@ WP Codebox is the portable sandbox boundary for WordPress-compatible
 coding-agent work. It does not fundamentally care whether the parent
 orchestrator runs inside WordPress. It can be driven from a WordPress plugin,
 CLI, CI job, hosted service, or external agent, then start a disposable
-WordPress Playground runtime, mount the target code and agent stack, collect
+contained WordPress runtime, mount the target code and agent stack, collect
 reviewable artifacts, and return those artifacts to the caller for apply or
 discard.
 
-WP Codebox is also the portable integration surface for the current agent runtime
-stack. Data Machine, Agents API, Data Machine Code, and WordPress Playground are
-implementation inputs that Codebox can wrap internally. Consumers should call
-Codebox ability ids, schemas, package entrypoints, browser SDK facades, and CLI
-commands instead of assembling workflows from those upstream APIs directly.
+WP Codebox is also the portable integration surface for WordPress agent runtime
+work. Host job systems, agent execution substrates, workspace backends, and
+contained WordPress runtime backends are implementation inputs that Codebox can
+wrap internally. Consumers should call Codebox ability ids, schemas, package
+entrypoints, browser SDK facades, and CLI commands instead of assembling
+workflows from backend APIs directly.
 
 ```text
 Parent control plane
   owns users, auth, durable jobs, review UX, and apply-back policy
     -> WP Codebox
       owns sandbox lifecycle, mounts, execution policy, and artifact capture
-        -> disposable WordPress Playground runtime
+        -> disposable contained WordPress runtime
           may mount optional agent/tool stacks and providers
           runs controlled commands or sandboxed agent tasks
         <- artifact bundle: patch, changed files, tests, preview, provenance
@@ -43,8 +44,8 @@ definition.
   episodes, snapshots, policies, command metadata, workspace policy, task input,
   and artifact verification.
 - [`packages/runtime-playground`](../packages/runtime-playground/src/index.ts)
-  implements the current `wordpress-playground` backend adapter. It is where
-  Playground boot, mounts, WordPress command execution, preview serving,
+  implements the current contained WordPress runtime backend adapter. It is where
+  runtime boot, mounts, WordPress command execution, preview serving,
   browser probing, snapshots, and artifact capture touch concrete runtime
   behavior.
 - [`packages/cli`](../packages/cli/src/index.ts) is the host-neutral executable
@@ -71,8 +72,9 @@ Host product or automation
 
 The core use case is safe code generation for WordPress products without giving
 the agent production access. A site owner, host application, CI job, automation
-runner, or chat surface can ask for a change; WP Codebox runs the work in
-Playground and returns evidence that the parent product can review.
+runner, or chat surface can ask for a change; WP Codebox runs the work in a
+contained WordPress runtime and returns evidence that the parent product can
+review.
 
 Example control planes include hosted WordPress products, non-WordPress web
 apps, local development tools, chat surfaces, CI jobs, GitHub Actions,
@@ -140,12 +142,12 @@ importers, and hosting-specific auth.
 
 ### `runtime-playground`
 
-`runtime-playground` is the WordPress Playground backend. It may depend on
-Playground behavior, WordPress boot mechanics, WP-CLI/PHP execution details,
+`runtime-playground` is the contained WordPress runtime backend. It may depend on
+runtime behavior, WordPress boot mechanics, WP-CLI/PHP execution details,
 preview servers, and browser tooling. The important modules are:
 
 - [`src/playground-runtime.ts`](../packages/runtime-playground/src/playground-runtime.ts):
-  `PlaygroundRuntimeBackend` and the concrete `Runtime` implementation for
+  the concrete runtime backend and `Runtime` implementation for
   create, mount, execute, observe, snapshot, collect artifacts, and destroy.
 - [`src/command-router.ts`](../packages/runtime-playground/src/command-router.ts):
   maps core command definitions to backend methods.
@@ -154,7 +156,7 @@ preview servers, and browser tooling. The important modules are:
   and checks.
 - [`src/playground-cli-runner.ts`](../packages/runtime-playground/src/playground-cli-runner.ts)
   and [`src/preview-server.ts`](../packages/runtime-playground/src/preview-server.ts):
-  Playground process and preview lifecycle.
+  contained runtime process and preview lifecycle.
 - [`src/runtime-artifact-helpers.ts`](../packages/runtime-playground/src/runtime-artifact-helpers.ts),
   [`src/artifact-bundle-builder.ts`](../packages/runtime-playground/src/artifact-bundle-builder.ts),
   and [`src/artifacts.ts`](../packages/runtime-playground/src/artifacts.ts):
@@ -238,7 +240,7 @@ Examples:
   output formatting in `output.ts`.
 - **New artifact, evidence, or reference helper:** put portable contracts,
   manifest hashing, and verification in `runtime-core`; put captured files,
-  diffs, review summaries, browser evidence, and Playground-specific bundle
+  diffs, review summaries, browser evidence, and backend-specific bundle
   writing in `runtime-playground`; put final CLI run evidence summaries in
   `cli/src/recipe-evidence.ts`.
 - **New WordPress parent-site behavior:** put Abilities, WP-CLI wrappers, host
@@ -298,7 +300,7 @@ destroy()
   -> runtime is no longer usable; artifacts remain durable outside it
 ```
 
-The current Playground implementation records the lifecycle in
+The current contained WordPress runtime implementation records the lifecycle in
 [`PlaygroundRuntime`](../packages/runtime-playground/src/playground-runtime.ts):
 `runtime.created`, `runtime.mounted`, `runtime.command.started`,
 `runtime.command.finished`, `runtime.observed`, `runtime.snapshot.created`,
@@ -360,7 +362,7 @@ runtime state and mounted files
 
 The artifact manifest primitives live in
 [`artifact-manifest.ts`](../packages/runtime-core/src/artifact-manifest.ts).
-The concrete Playground bundle writer lives in
+The concrete runtime backend bundle writer lives in
 [`artifact-bundle-builder.ts`](../packages/runtime-playground/src/artifact-bundle-builder.ts).
 Verification lives in `verifyArtifactBundle()` in
 [`runtime-core/src/index.ts`](../packages/runtime-core/src/index.ts).
@@ -426,8 +428,8 @@ runtime policy says what this run may execute
 backend command router says how an allowed command executes on this backend
 ```
 
-For the Playground backend, [`command-router.ts`](../packages/runtime-playground/src/command-router.ts)
-maps registry entries with `handler.kind === "playground"` to methods on the
+For the contained WordPress runtime backend, [`command-router.ts`](../packages/runtime-playground/src/command-router.ts)
+maps registry entries with backend handler metadata to methods on the
 concrete runtime. Adding a new command usually requires updating the registry,
 the backend router/runner, CLI parsing or recipe validation if needed, and smoke
 coverage. Adding host-specific behavior to the registry is the wrong direction;
@@ -440,7 +442,7 @@ Use this rule when deciding where code belongs:
 - Put backend-agnostic names, schemas, policy checks, artifact contracts,
   command metadata, digest logic, workspace policy, and verification in
   `runtime-core`.
-- Put WordPress Playground boot, preview serving, PHP/WP-CLI mechanics, browser
+- Put contained WordPress runtime boot, preview serving, PHP/WP-CLI mechanics, browser
   automation, runtime snapshot payloads, and backend artifact capture in
   `runtime-playground`.
 - Put command-line argument parsing, local path preparation, recipe dry-run
@@ -482,7 +484,7 @@ refs, and adapter hooks.
 
 WP Codebox owns:
 
-- Disposable Playground lifecycle.
+- Disposable contained WordPress runtime lifecycle.
 - Mount normalization and sandbox workspace layout.
 - Controlled command and agent-task execution.
 - Artifact bundles, provenance, previews, patch surfaces, and replay metadata.

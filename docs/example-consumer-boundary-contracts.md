@@ -9,15 +9,15 @@ fields, package boundaries, or artifact semantics.
 ## Public/Internal Boundary
 
 Consumers compose WP Codebox APIs. WP Codebox owns the stable contracts and maps
-the configured upstream APIs used to run a sandbox into those contracts:
+the configured backend APIs used to run a sandbox into those contracts:
 
 - Host job, artifact, approval queue, and flow concepts map to Codebox run,
   artifact, approval, and session contracts.
-- Agents API execution targets and principals map to Codebox task, provider,
+- Agent execution substrate targets and principals map to Codebox task, provider,
   permission, and runtime-session contracts.
 - Host workspace lifecycle and source-control workflow details map to
   Codebox source, workspace, evidence, and apply-back contracts.
-- WordPress Playground boot, filesystem, preview, and PHP/WP-CLI details map to
+- Contained WordPress runtime boot, filesystem, preview, and PHP/WP-CLI details map to
   Codebox runtime, mount, command, preview, and browser-session contracts.
 
 Public schema names, top-level DTO fields, package entrypoints, and docs intended
@@ -50,7 +50,7 @@ Shape: `wp-codebox/preview-lease/v1`.
 
 - `preview_public_url`: reviewer/public preview URL when leased by a host.
 - `site_url`: canonical WordPress site URL.
-- `local_url`: local browser/Playground URL.
+- `local_url`: local browser/runtime URL.
 - `lease`: lease id, status, provider, owner, and timestamps.
 - `alignment`: evidence that preview, site, and local URLs point at the same
   runtime.
@@ -72,9 +72,9 @@ bounded browser session handoff:
 The DTOs include session identity, task label, target, preview boot config,
 preview lease/alignment data, artifact refs, and readiness signals. They
 intentionally omit raw `task_payload`, raw blueprint bodies, plugin package data,
-`prepared_runtime`, runtime source bundles, low-level Playground boot URLs, and
+`prepared_runtime`, runtime source bundles, low-level runtime boot URLs, and
 secret-like fields. Consumers that need an executable blueprint should follow the
-returned blueprint hydration ref instead of storing inline Playground internals.
+returned blueprint hydration ref instead of storing inline runtime internals.
 
 ## Example Consumers
 

@@ -1,7 +1,7 @@
 # WP Codebox CLI
 
 CLI entrypoint for running disposable WP Codebox sandboxes and collecting
-reviewable artifact bundles. **Secure coding environments inside WordPress** — every command runs against a fresh WordPress Playground instance that can't touch your host site.
+reviewable artifact bundles. **Secure coding environments inside WordPress** - every command runs against a fresh contained WordPress runtime that can't touch your host site.
 
 The CLI is a public Codebox surface. Consumers should use its documented commands
 and JSON outputs rather than importing package internals or depending on upstream
@@ -54,7 +54,7 @@ installs it into a temporary global prefix, and verifies `wp-codebox commands
 ## Discovery
 
 Tooling can discover the stable command and recipe-authoring surface without
-booting WordPress Playground:
+booting a runtime:
 
 ```bash
 wp-codebox commands --json
@@ -85,16 +85,16 @@ These are the supported recipe-builder entrypoints. Callers should not resolve
 
 ## Recipe Planning
 
-- `wp-codebox validate-blueprint --blueprint <json|file> [--json]` boots a raw WordPress Playground blueprint through WP Codebox and captures the normal artifact bundle.
+- `wp-codebox validate-blueprint --blueprint <json|file> [--json]` boots a raw contained-runtime blueprint through WP Codebox and captures the normal artifact bundle.
 - `wp-codebox recipe validate --recipe <path> [--json]` validates recipe shape, paths, commands, and arguments without resolving a full execution plan.
-- `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
-- `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.
+- `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting a runtime, creating temp workspaces, mutating files, or writing artifacts.
+- `wp-codebox recipe-run --recipe <path> [--json]` boots a contained WordPress runtime, mounts inputs, executes workflow steps, and captures artifacts.
 
-Recipes may declare `inputs.siteSeeds` for explicit content/site seed setup. Local `fixture` seeds are executable during normal `recipe-run`: WP Codebox validates the declaration, imports bounded JSON records into the Playground sandbox before workflow steps run, and reports structured results under `output.siteSeeds` with seed name, source, type, action, counts, provenance, deterministic-ID diagnostics, and privacy flags. `parent_site` declarations remain non-executable planning metadata until explicit parent export support lands.
+Recipes may declare `inputs.siteSeeds` for explicit content/site seed setup. Local `fixture` seeds are executable during normal `recipe-run`: WP Codebox validates the declaration, imports bounded JSON records into the sandbox before workflow steps run, and reports structured results under `output.siteSeeds` with seed name, source, type, action, counts, provenance, deterministic-ID diagnostics, and privacy flags. `parent_site` declarations remain non-executable planning metadata until explicit parent export support lands.
 
 Parent-site-derived declarations must stay minimized: each scope needs explicit selectors or `maxRecords`, option scopes must name exact option keys, user scopes must stay anonymized, and parent-site media file copying is rejected. Dry-run output reports only names, selectors, bounds, fixture paths, and privacy flags; run output reports import counts and diagnostics. Neither output includes record bodies, option values, user emails, secrets, uploads, or database rows.
 
 ## Interactive Boot
 
-- `wp-codebox boot [--mount <host>:<vfs>] --preview-hold-seconds <duration> [--json]` boots Playground, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold-seconds`, then tears down and collects artifacts without creating a workflow command.
+- `wp-codebox boot [--mount <host>:<vfs>] --preview-hold-seconds <duration> [--json]` boots a contained WordPress runtime, captures preview/artifact metadata, holds the live preview with the same duration semantics as `run --preview-hold-seconds`, then tears down and collects artifacts without creating a workflow command.
 - `boot` accepts the runtime setup options relevant to interactive previews: `--mount`, `--blueprint <json|file>`, `--wp`, `--artifacts`, `--policy <json|file>`, `--preview-port`, `--preview-bind`, and `--preview-public-url`.

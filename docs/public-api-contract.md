@@ -26,25 +26,25 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
   helpers.
 - `@automattic/wp-codebox-core/runtime-presets`: runtime preset registry helpers.
-- `@automattic/wp-codebox-playground`: advanced backend adapter entrypoint for
-  implementors that need the current WordPress Playground runtime factory and
+- `@automattic/wp-codebox-playground`: advanced runtime backend entrypoint for
+  implementors that need the current contained WordPress runtime factory and
   backend-owned helper types. New consumers should prefer
   `@automattic/wp-codebox-playground/public` unless they are implementing a
   runtime backend.
 - `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
-  for creating Playground-backed WordPress runtimes and episodes, running episode
+  for creating contained WordPress runtimes and episodes, running episode
   actions with lifecycle hooks, running typed WordPress actions such as WP-CLI,
   PHP, REST requests, browser probes/actions, and editor opens, collecting
   runtime/episode artifacts, and reading browser artifact metrics through the
-  published Playground facade.
+  published runtime facade.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
   resolution helpers for CLI consumers that need dry-run summaries or runtime
   environment injection outside the command entrypoint.
 
-Browser Playground sessions that load the WordPress plugin browser runtime also
-publish `window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
+Browser sessions that load the WordPress plugin browser runtime also publish
+`window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
 for product consumers running inside the browser. Legacy top-level
 `window.wpCodeboxBrowser` methods remain available for existing callers.
 
@@ -63,12 +63,13 @@ ability identifiers:
 - `wp-codebox/run-runtime-package`
 
 It also includes compatibility aliases for the `run-sandbox-task` family. The
-manifest intentionally excludes backend handler bindings such as upstream Agents
-API ability names, Playground command handlers, and integration-specific filters.
+manifest intentionally excludes backend handler bindings such as agent execution
+substrate ability names, runtime command handlers, and integration-specific
+filters.
 
 WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 `wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
-upstream systems internally, while public docs and schemas present Codebox-owned
+backend systems internally, while public docs and schemas present Codebox-owned
 ability names, schemas, and facades to callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
@@ -83,7 +84,7 @@ The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
   recipe source package, runtime workload, runtime package execution, runtime
-  policy, and command result contracts. Playground-backed WordPress consumers can use
+  policy, and command result contracts. Contained WordPress runtime consumers can use
   `createWordPressRuntime()`, `createWordPressEpisode()`, and
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
   instead of composing core runtime internals directly. The same entrypoint also
@@ -143,30 +144,30 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Inspect:** command registry metadata, JSON Schema factories, CLI `schema` and
   `commands` output, and recipe validation descriptors.
 
-Current backend references such as Data Machine, Agents API, Data Machine Code,
-or WordPress Playground describe the upstream/runtime adapters WP Codebox uses.
-Consumers depend on the Codebox ability ids, schemas, package entrypoints, and
-browser SDK facades above.
+Current backend references such as host job systems, agent execution substrates,
+workspace backends, or contained WordPress runtime backends describe adapters WP
+Codebox may use internally. Consumers depend on the Codebox ability ids, schemas,
+package entrypoints, and browser SDK facades above.
 
 ## Integration Boundary
 
-WP Codebox is the portable integration surface around the current WordPress agent
-runtime stack:
+WP Codebox is the portable integration surface around WordPress agent runtime
+work:
 
-- Data Machine concepts such as jobs, artifacts, flows, and pending approvals map
-  to Codebox run, artifact, approval, and session contracts before they reach a
-  consumer.
-- Agents API execution targets, principals, and provider mechanics map to Codebox
-  task, permission, provider, and runtime-session contracts.
-- Data Machine Code workspace lifecycle, GitHub workflow, evidence, and apply-back
+- Host job-system concepts such as jobs, artifacts, flows, and pending approvals
+  map to Codebox run, artifact, approval, and session contracts before they reach
+  a consumer.
+- Agent execution substrate targets, principals, and provider mechanics map to
+  Codebox task, permission, provider, and runtime-session contracts.
+- Workspace backend lifecycle, source-control workflow, evidence, and apply-back
   details map to Codebox source, workspace, artifact, and apply contracts.
-- WordPress Playground boot, filesystem, preview, PHP, and WP-CLI details map to
-  Codebox runtime, mount, command, preview, and browser-session contracts.
+- Contained WordPress runtime boot, filesystem, preview, PHP, and WP-CLI details
+  map to Codebox runtime, mount, command, preview, and browser-session contracts.
 
-The dependency direction is one-way: Codebox adapts those upstream systems into
-generic Codebox inputs. If a Data Machine workflow launches a sandbox, the
-Codebox adapter translates from generic Data Machine inputs into the Codebox
-task/recipe/runtime contracts at the boundary.
+The dependency direction is one-way: Codebox adapts host systems into generic
+Codebox inputs. If a host job system launches a sandbox, the Codebox adapter
+translates from host-owned inputs into the Codebox task/recipe/runtime contracts
+at the boundary.
 
 When adding a new public type or helper, place it in the focused owner module and
 export it through `@automattic/wp-codebox-core/public` or the narrowest stable
