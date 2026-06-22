@@ -74,7 +74,7 @@ export function normalizeBrowserStorageStatePayload(payload: unknown, source: "i
   const origins = Array.isArray(stateCandidate.origins) ? stateCandidate.origins : undefined
 
   if (!isRecord(payload)) {
-    diagnostics.push({ code: "storage-state-not-object", severity: "error", message: "storage-state must be a Playwright storageState object or wp-codebox storage-state envelope" })
+    diagnostics.push({ code: "storage-state-not-object", severity: "error", message: "storage-state must be a Playwright storageState object or runtime storage-state envelope" })
   }
   if (!cookies) {
     diagnostics.push({ code: "storage-state-cookies-invalid", severity: "error", message: "storage-state cookies must be an array" })
@@ -163,7 +163,7 @@ if ( ! is_array( $browser_urls ) ) {
     $browser_urls = array();
 }
 $requested_user_id = isset( $fixture_user['userId'] ) ? (int) $fixture_user['userId'] : 0;
-$username = isset( $fixture_user['username'] ) && is_string( $fixture_user['username'] ) && '' !== trim( $fixture_user['username'] ) ? sanitize_user( $fixture_user['username'], true ) : 'wp-codebox-fixture-admin';
+$username = isset( $fixture_user['username'] ) && is_string( $fixture_user['username'] ) && '' !== trim( $fixture_user['username'] ) ? sanitize_user( $fixture_user['username'], true ) : 'sandbox_fixture_admin';
 if ( '' === $username ) {
     throw new RuntimeException( 'Fixture user username is invalid.' );
 }
@@ -172,7 +172,7 @@ if ( ! get_role( $role ) ) {
     throw new RuntimeException( 'Fixture user role does not exist: ' . $role );
 }
 $email = isset( $fixture_user['email'] ) && is_string( $fixture_user['email'] ) && is_email( $fixture_user['email'] ) ? $fixture_user['email'] : $username . '@example.test';
-$display_name = isset( $fixture_user['displayName'] ) && is_string( $fixture_user['displayName'] ) && '' !== trim( $fixture_user['displayName'] ) ? $fixture_user['displayName'] : 'WP Codebox Fixture User';
+$display_name = isset( $fixture_user['displayName'] ) && is_string( $fixture_user['displayName'] ) && '' !== trim( $fixture_user['displayName'] ) ? $fixture_user['displayName'] : 'Sandbox Fixture User';
 $password = isset( $fixture_user['password'] ) && is_string( $fixture_user['password'] ) && '' !== $fixture_user['password'] ? $fixture_user['password'] : wp_generate_password( 32, true, true );
 $created = false;
 $user = $requested_user_id > 0 ? get_user_by( 'id', $requested_user_id ) : get_user_by( 'login', $username );

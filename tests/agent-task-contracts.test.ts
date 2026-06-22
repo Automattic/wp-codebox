@@ -115,6 +115,7 @@ assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run")
 const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
+const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 try {
   const agentsApiSource = join(agentRecipeTemp, "agents-api")
   mkdirSync(agentsApiSource)
@@ -123,7 +124,7 @@ try {
   const runtimeEngineSource = join(agentRecipeTemp, "runtime-engine")
   mkdirSync(runtimeEngineSource)
   writeFileSync(join(runtimeEngineSource, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
-  process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = runtimeEngineSource
+  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = runtimeEngineSource
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
@@ -177,6 +178,9 @@ try {
   assert.equal(agentsApiPlugin?.loadAs, "mu-plugin")
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "runtime-engine" && component.loadAs === "mu-plugin"), true)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => String(component.mountedPath).includes("/contained-runtime/")), true)
+  assert.equal(JSON.stringify(recipe).includes("wp-codebox-default-agent-runtime-substrate"), false)
+  assert.equal(JSON.stringify(recipe).includes("wp-codebox-runtime"), false)
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
   assert.equal(extraPlugins.filter((plugin) => plugin.slug === "test-provider" && plugin.loadAs === "plugin").length, 1)
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
@@ -213,6 +217,11 @@ try {
     delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
   } else {
     process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = originalRuntimeComponentPaths
+  }
+  if (originalContainedRuntimeComponentPaths === undefined) {
+    delete process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
+  } else {
+    process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = originalContainedRuntimeComponentPaths
   }
   rmSync(agentRecipeTemp, { recursive: true, force: true })
 }

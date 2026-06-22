@@ -54,16 +54,16 @@ function saveQueriesBootstrapPhp(args: string[]): string {
 
 function phpFatalDiagnosticPhp(): string {
   return `register_shutdown_function(static function (): void {
-    $wp_codebox_fatal = error_get_last();
-    if (!is_array($wp_codebox_fatal) || !in_array($wp_codebox_fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+    $contained_runtime_fatal = error_get_last();
+    if (!is_array($contained_runtime_fatal) || !in_array($contained_runtime_fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
         return;
     }
     echo "\nWP_CODEBOX_PHP_FATAL_DIAGNOSTIC:" . json_encode(array(
         'schema' => 'wp-codebox/php-fatal-diagnostic/v1',
-        'message' => isset($wp_codebox_fatal['message']) ? (string) $wp_codebox_fatal['message'] : '',
-        'file' => isset($wp_codebox_fatal['file']) ? (string) $wp_codebox_fatal['file'] : '',
-        'line' => isset($wp_codebox_fatal['line']) ? (int) $wp_codebox_fatal['line'] : 0,
-        'type' => isset($wp_codebox_fatal['type']) ? (int) $wp_codebox_fatal['type'] : 0,
+        'message' => isset($contained_runtime_fatal['message']) ? (string) $contained_runtime_fatal['message'] : '',
+        'file' => isset($contained_runtime_fatal['file']) ? (string) $contained_runtime_fatal['file'] : '',
+        'line' => isset($contained_runtime_fatal['line']) ? (int) $contained_runtime_fatal['line'] : 0,
+        'type' => isset($contained_runtime_fatal['type']) ? (int) $contained_runtime_fatal['type'] : 0,
     ), JSON_UNESCAPED_SLASHES) . "\n";
 });`
 }
@@ -82,9 +82,9 @@ function recipeActivePluginBootstrapPhp(spec: RuntimeCreateSpec): string {
     return ""
   }
 
-  return `${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_run_php")}
-$wp_codebox_run_php_active_plugins = json_decode(base64_decode('${Buffer.from(JSON.stringify(plugins), "utf8").toString("base64")}'), true);
-function wp_codebox_run_php_plugin_load_diagnostic(array $plugin, string $error = ''): string {
+  return `${phpRuntimeComponentLifecycleReplayFunction("contained_runtime_run_php")}
+$contained_runtime_run_php_active_plugins = json_decode(base64_decode('${Buffer.from(JSON.stringify(plugins), "utf8").toString("base64")}'), true);
+function contained_runtime_run_php_plugin_load_diagnostic(array $plugin, string $error = ''): string {
     $plugin_file = isset($plugin['pluginFile']) ? (string) $plugin['pluginFile'] : '';
     $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_file;
     $real_plugin_file = realpath($absolute_plugin_file);
@@ -105,31 +105,31 @@ function wp_codebox_run_php_plugin_load_diagnostic(array $plugin, string $error 
         'error' => $error,
     ), JSON_UNESCAPED_SLASHES);
 }
-function wp_codebox_run_php_include_active_plugin(array $plugin): void {
+function contained_runtime_run_php_include_active_plugin(array $plugin): void {
     $plugin_file = isset($plugin['pluginFile']) ? (string) $plugin['pluginFile'] : '';
     if ($plugin_file === '' || str_starts_with($plugin_file, '/') || str_contains($plugin_file, '..') || !str_ends_with($plugin_file, '.php')) {
-        throw new RuntimeException('wordpress.run-php cannot include unsafe recipe plugin file "' . $plugin_file . '". ' . wp_codebox_run_php_plugin_load_diagnostic($plugin, 'unsafe plugin file'));
+        throw new RuntimeException('wordpress.run-php cannot include unsafe recipe plugin file "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, 'unsafe plugin file'));
     }
     $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_file;
     if (!is_file($absolute_plugin_file) || !is_readable($absolute_plugin_file)) {
-        throw new RuntimeException('wordpress.run-php cannot include recipe plugin file "' . $plugin_file . '". ' . wp_codebox_run_php_plugin_load_diagnostic($plugin, 'missing or unreadable plugin file'));
+        throw new RuntimeException('wordpress.run-php cannot include recipe plugin file "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, 'missing or unreadable plugin file'));
     }
-    $lifecycle = wp_codebox_run_php_component_lifecycle_replay_prepare();
+    $lifecycle = contained_runtime_run_php_component_lifecycle_replay_prepare();
     try {
         require_once $absolute_plugin_file;
     } catch (Throwable $e) {
-        throw new RuntimeException('wordpress.run-php failed to include recipe plugin "' . $plugin_file . '". ' . wp_codebox_run_php_plugin_load_diagnostic($plugin, $e->getMessage()), 0, $e);
+        throw new RuntimeException('wordpress.run-php failed to include recipe plugin "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, $e->getMessage()), 0, $e);
     } finally {
-        wp_codebox_run_php_component_lifecycle_replay_complete($lifecycle);
+        contained_runtime_run_php_component_lifecycle_replay_complete($lifecycle);
     }
-    $diagnostic = wp_codebox_run_php_plugin_load_diagnostic($plugin, 'plugin file was not included');
+    $diagnostic = contained_runtime_run_php_plugin_load_diagnostic($plugin, 'plugin file was not included');
     if (strpos($diagnostic, '"included":true') === false) {
         throw new RuntimeException('wordpress.run-php failed to verify included recipe plugin "' . $plugin_file . '". ' . $diagnostic);
     }
 }
-foreach (is_array($wp_codebox_run_php_active_plugins) ? $wp_codebox_run_php_active_plugins : array() as $wp_codebox_run_php_active_plugin) {
-    if (is_array($wp_codebox_run_php_active_plugin)) {
-        wp_codebox_run_php_include_active_plugin($wp_codebox_run_php_active_plugin);
+foreach (is_array($contained_runtime_run_php_active_plugins) ? $contained_runtime_run_php_active_plugins : array() as $contained_runtime_run_php_active_plugin) {
+    if (is_array($contained_runtime_run_php_active_plugin)) {
+        contained_runtime_run_php_include_active_plugin($contained_runtime_run_php_active_plugin);
     }
 }
 `
@@ -209,11 +209,11 @@ function componentManifestPhp(spec: RuntimeCreateSpec): string {
   }
 
   const encoded = Buffer.from(JSON.stringify(manifest), "utf8").toString("base64")
-  return `$wp_codebox_component_manifest = json_decode(base64_decode('${encoded}'), true);
-if (is_array($wp_codebox_component_manifest)) {
-    $GLOBALS['wp_codebox_component_manifest'] = $wp_codebox_component_manifest;
-    if (!defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON')) {
-        define('WP_CODEBOX_COMPONENT_MANIFEST_JSON', json_encode($wp_codebox_component_manifest, JSON_UNESCAPED_SLASHES));
+  return `$contained_runtime_component_manifest = json_decode(base64_decode('${encoded}'), true);
+if (is_array($contained_runtime_component_manifest)) {
+    $GLOBALS['contained_runtime_component_manifest'] = $contained_runtime_component_manifest;
+    if (!defined('CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON')) {
+        define('CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON', json_encode($contained_runtime_component_manifest, JSON_UNESCAPED_SLASHES));
     }
 }
 `

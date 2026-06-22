@@ -1329,7 +1329,7 @@ function componentContractFailures(plugin: PreparedExtraPlugin, phases: RecipePh
 }
 
 function pluginTargetForReport(slug: string, loadAs: string): string {
-  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
+  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/contained-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

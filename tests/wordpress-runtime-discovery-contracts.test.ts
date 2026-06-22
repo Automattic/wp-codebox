@@ -101,6 +101,7 @@ assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMat
 assert.equal(runtimeContractManifest().schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
 
 const discoveryPhp = runtimeDiscoveryPhpCode(["rest"]).replace(/^<\?php\n/, "")
+assert.doesNotMatch(discoveryPhp, /wp_codebox|WP_CODEBOX/)
 const discovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
 function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
 function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }

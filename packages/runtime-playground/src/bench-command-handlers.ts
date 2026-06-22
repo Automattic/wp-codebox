@@ -939,9 +939,9 @@ function wp_codebox_bench_plugin_file_for_slug(string $plugin_slug, string $role
 }
 
 function wp_codebox_bench_manifest_plugin_file_for_slug(string $plugin_slug, string $role): ?string {
-    $manifest = $GLOBALS['wp_codebox_component_manifest'] ?? null;
+    $manifest = $GLOBALS['contained_runtime_component_manifest'] ?? null;
     if (!is_array($manifest)) {
-        $json = defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON') ? WP_CODEBOX_COMPONENT_MANIFEST_JSON : '';
+        $json = defined('CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON') ? CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON : '';
         $decoded = is_string($json) && $json !== '' ? json_decode($json, true) : null;
         $manifest = is_array($decoded) ? $decoded : null;
     }

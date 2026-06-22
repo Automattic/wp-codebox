@@ -21,12 +21,12 @@ export function runtimeDiscoverySurfacesFromArgs(args: string[]): RuntimeDiscove
 
 export function runtimeDiscoveryPhpCode(surfaces: RuntimeDiscoverySurface[]): string {
   return `<?php
-$wp_codebox_runtime_discovery_surfaces = json_decode(base64_decode('${Buffer.from(JSON.stringify(surfaces), "utf8").toString("base64")}'), true);
-if (!is_array($wp_codebox_runtime_discovery_surfaces)) {
+$runtime_discovery_surfaces = json_decode(base64_decode('${Buffer.from(JSON.stringify(surfaces), "utf8").toString("base64")}'), true);
+if (!is_array($runtime_discovery_surfaces)) {
     throw new RuntimeException('wordpress.runtime-discovery received invalid surfaces.');
 }
 
-function wp_codebox_runtime_discovery_diagnostic(string $surface, string $code, string $message, $data = null): array {
+function runtime_discovery_diagnostic(string $surface, string $code, string $message, $data = null): array {
     $diagnostic = array('surface' => $surface, 'code' => $code, 'message' => $message);
     if ($data !== null) {
         $diagnostic['data'] = $data;
@@ -34,11 +34,11 @@ function wp_codebox_runtime_discovery_diagnostic(string $surface, string $code, 
     return $diagnostic;
 }
 
-function wp_codebox_runtime_discovery_rest(): array {
+function runtime_discovery_rest(): array {
     if (!function_exists('rest_get_server')) {
         return array(
             'payload' => array('schema' => 'wp-codebox/wordpress-rest-route-discovery/v1', 'routes' => array(), 'namespaces' => array()),
-            'diagnostics' => array(wp_codebox_runtime_discovery_diagnostic('rest', 'rest-api-unavailable', 'The WordPress REST API server is unavailable.')),
+            'diagnostics' => array(runtime_discovery_diagnostic('rest', 'rest-api-unavailable', 'The WordPress REST API server is unavailable.')),
         );
     }
 
@@ -53,16 +53,16 @@ function wp_codebox_runtime_discovery_rest(): array {
             if (!is_array($handler)) {
                 continue;
             }
-            $endpoint_methods = wp_codebox_runtime_discovery_rest_methods($handler['methods'] ?? array());
+            $endpoint_methods = runtime_discovery_rest_methods($handler['methods'] ?? array());
             $endpoint_args = array();
             foreach ((array) ($handler['args'] ?? array()) as $arg_name => $arg_schema) {
                 $arg_names[] = (string) $arg_name;
-                $endpoint_args[] = wp_codebox_runtime_discovery_rest_arg((string) $arg_name, is_array($arg_schema) ? $arg_schema : array());
+                $endpoint_args[] = runtime_discovery_rest_arg((string) $arg_name, is_array($arg_schema) ? $arg_schema : array());
             }
             $methods = array_merge($methods, $endpoint_methods);
             $endpoints[] = array(
                 'methods' => $endpoint_methods,
-                'permission' => wp_codebox_runtime_discovery_rest_permission($handler),
+                'permission' => runtime_discovery_rest_permission($handler),
                 'args' => $endpoint_args,
             );
         }
@@ -71,7 +71,7 @@ function wp_codebox_runtime_discovery_rest(): array {
             $namespaces[] = $namespace;
         }
         $route_item = array('route' => (string) $route, 'namespace' => $namespace, 'methods' => array_values(array_unique($methods)), 'argNames' => array_values(array_unique($arg_names)), 'endpoints' => $endpoints);
-        $route_schema = wp_codebox_runtime_discovery_rest_schema((array) $handlers);
+        $route_schema = runtime_discovery_rest_schema((array) $handlers);
         if (!empty($route_schema)) {
             $route_item['schema'] = $route_schema;
         }
@@ -81,7 +81,7 @@ function wp_codebox_runtime_discovery_rest(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-rest-route-discovery/v1', 'routes' => $items, 'namespaces' => array_values(array_unique($namespaces))), 'diagnostics' => array());
 }
 
-function wp_codebox_runtime_discovery_rest_methods($methods): array {
+function runtime_discovery_rest_methods($methods): array {
     if (is_string($methods)) {
         return array_values(array_filter(array_map('trim', explode(',', strtoupper($methods)))));
     }
@@ -97,7 +97,7 @@ function wp_codebox_runtime_discovery_rest_methods($methods): array {
     return array_values(array_unique($normalized));
 }
 
-function wp_codebox_runtime_discovery_rest_permission(array $handler): array {
+function runtime_discovery_rest_permission(array $handler): array {
     if (!array_key_exists('permission_callback', $handler)) {
         return array('mode' => 'none');
     }
@@ -105,10 +105,10 @@ function wp_codebox_runtime_discovery_rest_permission(array $handler): array {
     if ($callback === '__return_true') {
         return array('mode' => 'public', 'callbackType' => 'function');
     }
-    return array('mode' => 'callback', 'callbackType' => wp_codebox_runtime_discovery_callback_type($callback));
+    return array('mode' => 'callback', 'callbackType' => runtime_discovery_callback_type($callback));
 }
 
-function wp_codebox_runtime_discovery_callback_type($callback): string {
+function runtime_discovery_callback_type($callback): string {
     if (is_string($callback)) {
         return 'function';
     }
@@ -124,7 +124,7 @@ function wp_codebox_runtime_discovery_callback_type($callback): string {
     return is_callable($callback) ? 'callable' : 'unknown';
 }
 
-function wp_codebox_runtime_discovery_rest_arg(string $name, array $schema): array {
+function runtime_discovery_rest_arg(string $name, array $schema): array {
     $arg = array('name' => $name, 'required' => !empty($schema['required']));
     foreach (array('type', 'format') as $key) {
         if (isset($schema[$key]) && (is_string($schema[$key]) || is_array($schema[$key]))) {
@@ -143,7 +143,7 @@ function wp_codebox_runtime_discovery_rest_arg(string $name, array $schema): arr
     return $arg;
 }
 
-function wp_codebox_runtime_discovery_rest_schema(array $handlers): array {
+function runtime_discovery_rest_schema(array $handlers): array {
     foreach ($handlers as $handler) {
         if (!is_array($handler) || !isset($handler['schema']) || !is_array($handler['schema'])) {
             continue;
@@ -163,12 +163,12 @@ function wp_codebox_runtime_discovery_rest_schema(array $handlers): array {
     return array();
 }
 
-function wp_codebox_runtime_discovery_admin(): array {
+function runtime_discovery_admin(): array {
     $pages = array();
     $diagnostics = array();
     $menu_loaded = isset($GLOBALS['menu']) && is_array($GLOBALS['menu']);
     if (!$menu_loaded) {
-        $diagnostics[] = wp_codebox_runtime_discovery_diagnostic('admin', 'admin-menu-not-loaded', 'The admin menu globals are not populated in this request context.');
+        $diagnostics[] = runtime_discovery_diagnostic('admin', 'admin-menu-not-loaded', 'The admin menu globals are not populated in this request context.');
     }
 
     foreach ((array) ($GLOBALS['menu'] ?? array()) as $item) {
@@ -189,7 +189,7 @@ function wp_codebox_runtime_discovery_admin(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-admin-page-discovery/v1', 'adminUrl' => admin_url(), 'menuLoaded' => $menu_loaded, 'pages' => $pages), 'diagnostics' => $diagnostics);
 }
 
-function wp_codebox_runtime_discovery_database(): array {
+function runtime_discovery_database(): array {
     global $wpdb;
     $tables = array();
     $candidates = array_values(array_unique(array_map('strval', $wpdb->tables('all'))));
@@ -205,7 +205,7 @@ function wp_codebox_runtime_discovery_database(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-db-schema-discovery/v1', 'prefix' => $wpdb->prefix, 'tables' => $tables), 'diagnostics' => array());
 }
 
-function wp_codebox_runtime_discovery_frontend(): array {
+function runtime_discovery_frontend(): array {
     global $wp_rewrite, $wp;
     $rules = is_object($wp_rewrite) ? $wp_rewrite->wp_rewrite_rules() : array();
     $items = array();
@@ -215,7 +215,7 @@ function wp_codebox_runtime_discovery_frontend(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-frontend-route-discovery/v1', 'homeUrl' => home_url('/'), 'permalinkStructure' => (string) get_option('permalink_structure', ''), 'rewriteRules' => $items, 'publicQueryVars' => array_values(array_map('strval', (array) ($wp->public_query_vars ?? array())))), 'diagnostics' => array());
 }
 
-function wp_codebox_runtime_discovery_blocks(): array {
+function runtime_discovery_blocks(): array {
     $blocks = array();
     if (class_exists('WP_Block_Type_Registry')) {
         foreach (WP_Block_Type_Registry::get_instance()->get_all_registered() as $name => $block_type) {
@@ -233,65 +233,65 @@ function wp_codebox_runtime_discovery_blocks(): array {
     return array('payload' => array('schema' => 'wp-codebox/wordpress-block-editor-target-discovery/v1', 'blocks' => $blocks, 'editorPostTypes' => $post_types), 'diagnostics' => array());
 }
 
-$wp_codebox_runtime_discovery_result = array(
+$runtime_discovery_result = array(
     'schema' => 'wp-codebox/wordpress-runtime-discovery/v1',
     'command' => 'wordpress.runtime-discovery',
     'status' => 'ok',
-    'surfaces' => array_values($wp_codebox_runtime_discovery_surfaces),
+    'surfaces' => array_values($runtime_discovery_surfaces),
     'diagnostics' => array(),
 );
 
-foreach ($wp_codebox_runtime_discovery_surfaces as $wp_codebox_runtime_discovery_surface) {
-    $collector = 'wp_codebox_runtime_discovery_' . $wp_codebox_runtime_discovery_surface;
+foreach ($runtime_discovery_surfaces as $runtime_discovery_surface) {
+    $collector = 'runtime_discovery_' . $runtime_discovery_surface;
     if (!function_exists($collector)) {
-        $wp_codebox_runtime_discovery_result['diagnostics'][] = wp_codebox_runtime_discovery_diagnostic((string) $wp_codebox_runtime_discovery_surface, 'surface-unsupported', 'The requested discovery surface is not implemented.');
+        $runtime_discovery_result['diagnostics'][] = runtime_discovery_diagnostic((string) $runtime_discovery_surface, 'surface-unsupported', 'The requested discovery surface is not implemented.');
         continue;
     }
     $collected = $collector();
-    $wp_codebox_runtime_discovery_result[$wp_codebox_runtime_discovery_surface] = $collected['payload'];
-    $wp_codebox_runtime_discovery_result['diagnostics'] = array_merge($wp_codebox_runtime_discovery_result['diagnostics'], $collected['diagnostics']);
+    $runtime_discovery_result[$runtime_discovery_surface] = $collected['payload'];
+    $runtime_discovery_result['diagnostics'] = array_merge($runtime_discovery_result['diagnostics'], $collected['diagnostics']);
 }
 
-echo wp_json_encode($wp_codebox_runtime_discovery_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+echo wp_json_encode($runtime_discovery_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }
 
 export function runtimeInventoryPhpCode(surface: RuntimeInventorySurface, command: string, schema: string): string {
   const payloadKey = surface === "rest" ? "rest" : surface
   return `<?php
-${runtimeDiscoveryPhpCode([surface]).replace(/^<\?php\n/, "").replace(/echo wp_json_encode\(\$wp_codebox_runtime_discovery_result, JSON_PRETTY_PRINT \| JSON_UNESCAPED_SLASHES\);$/, "")}
+${runtimeDiscoveryPhpCode([surface]).replace(/^<\?php\n/, "").replace(/echo wp_json_encode\(\$runtime_discovery_result, JSON_PRETTY_PRINT \| JSON_UNESCAPED_SLASHES\);$/, "")}
 
-$wp_codebox_runtime_inventory_payload = $wp_codebox_runtime_discovery_result['${payloadKey}'] ?? null;
-$wp_codebox_runtime_inventory_diagnostics = (array) ($wp_codebox_runtime_discovery_result['diagnostics'] ?? array());
+$runtime_inventory_payload = $runtime_discovery_result['${payloadKey}'] ?? null;
+$runtime_inventory_diagnostics = (array) ($runtime_discovery_result['diagnostics'] ?? array());
 
-if (!is_array($wp_codebox_runtime_inventory_payload)) {
+if (!is_array($runtime_inventory_payload)) {
     echo wp_json_encode(array(
         'schema' => '${schema}',
         'command' => '${command}',
         'status' => 'unsupported',
-        'diagnostics' => array_merge($wp_codebox_runtime_inventory_diagnostics, array(wp_codebox_runtime_discovery_diagnostic('${surface}', 'inventory-unavailable', 'The requested WordPress inventory is unavailable in this runtime context.'))),
+        'diagnostics' => array_merge($runtime_inventory_diagnostics, array(runtime_discovery_diagnostic('${surface}', 'inventory-unavailable', 'The requested WordPress inventory is unavailable in this runtime context.'))),
     ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     return;
 }
 
-$wp_codebox_runtime_inventory_result = array_merge($wp_codebox_runtime_inventory_payload, array(
+$runtime_inventory_result = array_merge($runtime_inventory_payload, array(
     'schema' => '${schema}',
     'command' => '${command}',
-    'status' => empty($wp_codebox_runtime_inventory_diagnostics) ? 'ok' : 'unsupported',
-    'diagnostics' => $wp_codebox_runtime_inventory_diagnostics,
+    'status' => empty($runtime_inventory_diagnostics) ? 'ok' : 'unsupported',
+    'diagnostics' => $runtime_inventory_diagnostics,
 ));
 
 if ('${surface}' === 'frontend') {
-    $wp_codebox_runtime_inventory_urls = array(array('url' => (string) ($wp_codebox_runtime_inventory_payload['homeUrl'] ?? home_url('/')), 'source' => 'home'));
-    foreach ((array) ($wp_codebox_runtime_inventory_payload['rewriteRules'] ?? array()) as $wp_codebox_runtime_inventory_rule) {
-        $wp_codebox_runtime_inventory_urls[] = array(
-            'url' => home_url('/' . ltrim((string) ($wp_codebox_runtime_inventory_rule['pattern'] ?? ''), '/')),
+    $runtime_inventory_urls = array(array('url' => (string) ($runtime_inventory_payload['homeUrl'] ?? home_url('/')), 'source' => 'home'));
+    foreach ((array) ($runtime_inventory_payload['rewriteRules'] ?? array()) as $runtime_inventory_rule) {
+        $runtime_inventory_urls[] = array(
+            'url' => home_url('/' . ltrim((string) ($runtime_inventory_rule['pattern'] ?? ''), '/')),
             'source' => 'rewrite-rule',
-            'pattern' => (string) ($wp_codebox_runtime_inventory_rule['pattern'] ?? ''),
-            'query' => (string) ($wp_codebox_runtime_inventory_rule['query'] ?? ''),
+            'pattern' => (string) ($runtime_inventory_rule['pattern'] ?? ''),
+            'query' => (string) ($runtime_inventory_rule['query'] ?? ''),
         );
     }
-    $wp_codebox_runtime_inventory_result['urls'] = $wp_codebox_runtime_inventory_urls;
+    $runtime_inventory_result['urls'] = $runtime_inventory_urls;
 }
 
-echo wp_json_encode($wp_codebox_runtime_inventory_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+echo wp_json_encode($runtime_inventory_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }

@@ -9,6 +9,7 @@ const root = mkdtempSync(join(tmpdir(), "wp-codebox-agent-runtime-components-"))
 const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
 const originalRuntimeComponentPaths = process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
+const originalContainedRuntimeComponentPaths = process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
 try {
   const runtimeHost = join(root, "runtime-host")
@@ -32,7 +33,7 @@ try {
   mkdirSync(runtimeTools, { recursive: true })
   writeFileSync(join(runtimeEngine, "runtime-engine.php"), "<?php\n/* Plugin Name: Runtime Engine */\n")
   writeFileSync(join(runtimeTools, "runtime-tools.php"), "<?php\n/* Plugin Name: Runtime Tools */\n")
-  process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = `${runtimeEngine},${runtimeTools}`
+  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = `${runtimeEngine},${runtimeTools}`
   const workspace = join(root, "workspace")
   mkdirSync(workspace, { recursive: true })
   chdir(workspace)
@@ -61,6 +62,11 @@ try {
     delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
   } else {
     process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS = originalRuntimeComponentPaths
+  }
+  if (originalContainedRuntimeComponentPaths === undefined) {
+    delete process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
+  } else {
+    process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = originalContainedRuntimeComponentPaths
   }
   rmSync(root, { recursive: true, force: true })
 }

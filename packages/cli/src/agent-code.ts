@@ -437,7 +437,7 @@ function sandboxToolContract(policy: SandboxToolPolicySnapshot): Record<string, 
 }
 
 function runtimePrincipal(agent: string | undefined, sessionId: string | undefined, mode: string): Record<string, unknown> {
-  const runtimeId = sessionId?.trim() || "wp-codebox-runtime"
+  const runtimeId = sessionId?.trim() || "contained-runtime"
   return {
     acting_user_id: 0,
     effective_agent_id: agent || "wp-codebox-agent",
@@ -666,7 +666,7 @@ function providerPluginResolutionPhp(): string {
     if (file_exists($normal_path)) {
         return array('path' => $normal_path, 'load_as' => 'plugin');
     }
-    $mu_path = WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $plugin;
+    $mu_path = WPMU_PLUGIN_DIR . '/contained-runtime/' . $plugin;
     if (file_exists($mu_path)) {
         return array('path' => $mu_path, 'load_as' => 'mu-plugin');
     }
@@ -743,7 +743,7 @@ function wp_codebox_provider_plugin_entry_by_header(string $slug): ?string {
     // matches the entry file (e.g. a Lab workspace synced under a uniquified
     // <slug>-<hash>-<uuid> directory). Fall back to the single top-level *.php
     // file declaring a WordPress plugin header.
-    foreach (array(WP_PLUGIN_DIR . '/' . $slug, WPMU_PLUGIN_DIR . '/wp-codebox-runtime/' . $slug) as $dir) {
+    foreach (array(WP_PLUGIN_DIR . '/' . $slug, WPMU_PLUGIN_DIR . '/contained-runtime/' . $slug) as $dir) {
         if (!is_dir($dir)) {
             continue;
         }

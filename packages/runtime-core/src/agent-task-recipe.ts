@@ -182,13 +182,13 @@ function defaultRuntimeComponentPlugins(): WorkspaceRecipeExtraPlugin[] {
       pluginFile: entrypoint.pluginFile,
       activate: false,
       loadAs: "mu-plugin" as const,
-      metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
+      metadata: { source: "contained-runtime-default-agent-substrate" },
     }
   })
 }
 
 function defaultRuntimeComponentPaths(): string[] {
-  return (process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+  return (process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
     .split(/[,:]/)
     .map((value) => value.trim())
     .filter(Boolean)
@@ -276,7 +276,7 @@ function stripEmptyContractFields(value: Record<string, unknown>): Record<string
 
 function componentMountedPath(slug: string, loadAs: "plugin" | "mu-plugin"): string {
   return loadAs === "mu-plugin"
-    ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}`
+    ? `/wordpress/wp-content/mu-plugins/contained-runtime/${slug}`
     : `/wordpress/wp-content/plugins/${slug}`
 }
 
@@ -441,7 +441,7 @@ function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): Sand
     schema: "wp-codebox/sandbox-tool-policy/v1",
     version: 1,
     tools: [{ id: "deny-all", runtime_tool_id: "deny-all", execution_location: "parent", transport_visibility: "hidden", allowed: false, runtime: { environment: "control_plane", capability_scope: "control_plane" } }],
-    metadata: { source: "wp-codebox.agent-task-run.default-deny" },
+    metadata: { source: "contained-runtime.agent-task-run.default-deny" },
   }
 }
 

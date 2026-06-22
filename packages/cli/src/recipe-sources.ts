@@ -1279,7 +1279,7 @@ export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): strin
 
 export function pluginTarget(slug: string, loadAs: PreparedExtraPlugin["loadAs"]): string {
   if (loadAs === "mu-plugin") {
-    return `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}`
+    return `/wordpress/wp-content/mu-plugins/contained-runtime/${slug}`
   }
 
   return `/wordpress/wp-content/plugins/${slug}`
@@ -1332,14 +1332,14 @@ export function installMuPluginsCode(extraPlugins: PreparedExtraPlugin[]): strin
   }
 
   return `$plugins = ${JSON.stringify(muPlugins)};
-$runtime_dir = WPMU_PLUGIN_DIR . '/wp-codebox-runtime';
+$runtime_dir = WPMU_PLUGIN_DIR . '/contained-runtime';
 if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
     throw new RuntimeException('Could not create mu-plugins directory.');
 }
 if (!is_dir($runtime_dir)) {
     throw new RuntimeException('WP Codebox runtime mu-plugin directory is not mounted.');
 }
-$loader = WPMU_PLUGIN_DIR . '/wp-codebox-runtime-loader.php';
+$loader = WPMU_PLUGIN_DIR . '/contained-runtime-loader.php';
 $lines = array(
     '<?php',
     '/**',
@@ -1358,7 +1358,7 @@ foreach ($plugins as $plugin) {
     if (!file_exists($plugin_file)) {
         throw new RuntimeException(sprintf('WP Codebox runtime mu-plugin is not mounted: %s', $plugin));
     }
-    $lines[] = "require_once WPMU_PLUGIN_DIR . '/wp-codebox-runtime/" . str_replace("'", "\\'", $plugin) . "';";
+    $lines[] = "require_once WPMU_PLUGIN_DIR . '/contained-runtime/" . str_replace("'", "\\'", $plugin) . "';";
 }
 if (false === file_put_contents($loader, implode("\\n", $lines) . "\\n")) {
     throw new RuntimeException('Could not write WP Codebox runtime mu-plugin loader.');

@@ -487,9 +487,9 @@ function pg_fire_runtime_abilities_ready(): void {
     if (!function_exists('do_action')) {
         return;
     }
-    do_action('wp_codebox_runtime_abilities_ready');
+    do_action('contained_runtime_abilities_ready');
     if (function_exists('did_action')) {
-        pg_log('NOTICE:runtime ability lifecycle ready: wp_abilities_api_categories_init=' . did_action('wp_abilities_api_categories_init') . '; wp_abilities_api_init=' . did_action('wp_abilities_api_init') . '; wp_codebox_runtime_abilities_ready=' . did_action('wp_codebox_runtime_abilities_ready'));
+        pg_log('NOTICE:runtime ability lifecycle ready: wp_abilities_api_categories_init=' . did_action('wp_abilities_api_categories_init') . '; wp_abilities_api_init=' . did_action('wp_abilities_api_init') . '; contained_runtime_abilities_ready=' . did_action('contained_runtime_abilities_ready'));
     }
 }
 
@@ -576,9 +576,9 @@ function pg_resolve_runtime_cwd(string $cwd, string $plugin_path): string {
 }
 
 function pg_manifest_component_entry(string $plugin_slug): ?array {
-    $manifest = $GLOBALS['wp_codebox_component_manifest'] ?? null;
+    $manifest = $GLOBALS['contained_runtime_component_manifest'] ?? null;
     if (!is_array($manifest)) {
-        $json = defined('WP_CODEBOX_COMPONENT_MANIFEST_JSON') ? WP_CODEBOX_COMPONENT_MANIFEST_JSON : '';
+        $json = defined('CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON') ? CONTAINED_RUNTIME_COMPONENT_MANIFEST_JSON : '';
         $decoded = is_string($json) && $json !== '' ? json_decode($json, true) : null;
         $manifest = is_array($decoded) ? $decoded : null;
     }

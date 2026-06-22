@@ -73,49 +73,47 @@ export function wordpressUserSessionFromCommandArgs(args: string[], runtimeSpec:
 
 export function wordpressFixtureUserPhpCode(user: WordPressFixtureUserSpec): string {
   return `
-$wp_codebox_fixture_user = json_decode( ${JSON.stringify(JSON.stringify(user))}, true );
-if ( ! is_array( $wp_codebox_fixture_user ) ) {
-    $wp_codebox_fixture_user = array();
+$sandbox_fixture_user = json_decode( ${JSON.stringify(JSON.stringify(user))}, true );
+if ( ! is_array( $sandbox_fixture_user ) ) {
+    $sandbox_fixture_user = array();
 }
-$wp_codebox_requested_user_id = isset( $wp_codebox_fixture_user['userId'] ) ? (int) $wp_codebox_fixture_user['userId'] : 0;
-$wp_codebox_username = isset( $wp_codebox_fixture_user['username'] ) && is_string( $wp_codebox_fixture_user['username'] ) && '' !== trim( $wp_codebox_fixture_user['username'] ) ? sanitize_user( $wp_codebox_fixture_user['username'], true ) : sanitize_user( (string) ( $wp_codebox_fixture_user['name'] ?? 'wp-codebox-fixture-user' ), true );
-if ( '' === $wp_codebox_username ) {
+$sandbox_requested_user_id = isset( $sandbox_fixture_user['userId'] ) ? (int) $sandbox_fixture_user['userId'] : 0;
+$sandbox_username = isset( $sandbox_fixture_user['username'] ) && is_string( $sandbox_fixture_user['username'] ) && '' !== trim( $sandbox_fixture_user['username'] ) ? sanitize_user( $sandbox_fixture_user['username'], true ) : sanitize_user( (string) ( $sandbox_fixture_user['name'] ?? 'sandbox_fixture_user' ), true );
+if ( '' === $sandbox_username ) {
     throw new RuntimeException( 'Fixture user username is invalid.' );
 }
-$wp_codebox_role = isset( $wp_codebox_fixture_user['role'] ) && is_string( $wp_codebox_fixture_user['role'] ) && '' !== trim( $wp_codebox_fixture_user['role'] ) ? sanitize_key( $wp_codebox_fixture_user['role'] ) : 'administrator';
-if ( ! get_role( $wp_codebox_role ) ) {
-    throw new RuntimeException( 'Fixture user role does not exist: ' . $wp_codebox_role );
+$sandbox_role = isset( $sandbox_fixture_user['role'] ) && is_string( $sandbox_fixture_user['role'] ) && '' !== trim( $sandbox_fixture_user['role'] ) ? sanitize_key( $sandbox_fixture_user['role'] ) : 'administrator';
+if ( ! get_role( $sandbox_role ) ) {
+    throw new RuntimeException( 'Fixture user role does not exist: ' . $sandbox_role );
 }
-$wp_codebox_email = isset( $wp_codebox_fixture_user['email'] ) && is_string( $wp_codebox_fixture_user['email'] ) && is_email( $wp_codebox_fixture_user['email'] ) ? $wp_codebox_fixture_user['email'] : $wp_codebox_username . '@example.test';
-$wp_codebox_display_name = isset( $wp_codebox_fixture_user['displayName'] ) && is_string( $wp_codebox_fixture_user['displayName'] ) && '' !== trim( $wp_codebox_fixture_user['displayName'] ) ? $wp_codebox_fixture_user['displayName'] : $wp_codebox_username;
-$wp_codebox_password = isset( $wp_codebox_fixture_user['password'] ) && is_string( $wp_codebox_fixture_user['password'] ) && '' !== $wp_codebox_fixture_user['password'] ? $wp_codebox_fixture_user['password'] : wp_generate_password( 32, true, true );
-$wp_codebox_user_created = false;
-$wp_codebox_user = $wp_codebox_requested_user_id > 0 ? get_user_by( 'id', $wp_codebox_requested_user_id ) : get_user_by( 'login', $wp_codebox_username );
-if ( ! $wp_codebox_user && $wp_codebox_requested_user_id <= 0 ) {
-    $wp_codebox_user_id = wp_insert_user(
+$sandbox_email = isset( $sandbox_fixture_user['email'] ) && is_string( $sandbox_fixture_user['email'] ) && is_email( $sandbox_fixture_user['email'] ) ? $sandbox_fixture_user['email'] : $sandbox_username . '@example.test';
+$sandbox_display_name = isset( $sandbox_fixture_user['displayName'] ) && is_string( $sandbox_fixture_user['displayName'] ) && '' !== trim( $sandbox_fixture_user['displayName'] ) ? $sandbox_fixture_user['displayName'] : $sandbox_username;
+$sandbox_password = isset( $sandbox_fixture_user['password'] ) && is_string( $sandbox_fixture_user['password'] ) && '' !== $sandbox_fixture_user['password'] ? $sandbox_fixture_user['password'] : wp_generate_password( 32, true, true );
+$sandbox_user = $sandbox_requested_user_id > 0 ? get_user_by( 'id', $sandbox_requested_user_id ) : get_user_by( 'login', $sandbox_username );
+if ( ! $sandbox_user && $sandbox_requested_user_id <= 0 ) {
+    $sandbox_user_id = wp_insert_user(
         array(
-            'user_login'   => $wp_codebox_username,
-            'user_email'   => $wp_codebox_email,
-            'user_pass'    => $wp_codebox_password,
-            'display_name' => $wp_codebox_display_name,
-            'role'         => $wp_codebox_role,
+            'user_login'   => $sandbox_username,
+            'user_email'   => $sandbox_email,
+            'user_pass'    => $sandbox_password,
+            'display_name' => $sandbox_display_name,
+            'role'         => $sandbox_role,
         )
     );
-    if ( is_wp_error( $wp_codebox_user_id ) ) {
-        throw new RuntimeException( 'Fixture user creation failed: ' . $wp_codebox_user_id->get_error_message() );
+    if ( is_wp_error( $sandbox_user_id ) ) {
+        throw new RuntimeException( 'Fixture user creation failed: ' . $sandbox_user_id->get_error_message() );
     }
-    $wp_codebox_user_created = true;
-    $wp_codebox_user = get_user_by( 'id', (int) $wp_codebox_user_id );
+    $sandbox_user = get_user_by( 'id', (int) $sandbox_user_id );
 }
-if ( ! $wp_codebox_user ) {
+if ( ! $sandbox_user ) {
     throw new RuntimeException( 'Fixture user could not be resolved.' );
 }
-$wp_codebox_user_id = (int) $wp_codebox_user->ID;
-$wp_codebox_wp_user = new WP_User( $wp_codebox_user_id );
-if ( ! in_array( $wp_codebox_role, (array) $wp_codebox_wp_user->roles, true ) ) {
-    $wp_codebox_wp_user->add_role( $wp_codebox_role );
+$sandbox_user_id = (int) $sandbox_user->ID;
+$sandbox_wp_user = new WP_User( $sandbox_user_id );
+if ( ! in_array( $sandbox_role, (array) $sandbox_wp_user->roles, true ) ) {
+    $sandbox_wp_user->add_role( $sandbox_role );
 }
-wp_set_current_user( $wp_codebox_user_id );`
+wp_set_current_user( $sandbox_user_id );`
 }
 
 function wordpressUserSessionResolution(source: "user" | "session", name: string, user: Record<string, unknown>, artifacts: unknown[]): WordPressUserSessionResolution {

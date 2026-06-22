@@ -491,7 +491,7 @@ function defaultRuntimeComponents(): AgentRuntimeComponent[] {
 }
 
 function defaultRuntimeComponentPaths(): string[] {
-  return (process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+  return (process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
     .split(/[,:]/)
     .map((value) => value.trim())
     .filter(Boolean)
@@ -555,7 +555,7 @@ function providerPluginContracts(args: string[]): Array<{ slug: string; pluginFi
 }
 
 function pluginTarget(slug: string, loadAs: ComponentLoadMode): string {
-  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/wp-codebox-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
+  return loadAs === "mu-plugin" ? `/wordpress/wp-content/mu-plugins/contained-runtime/${slug}` : `/wordpress/wp-content/plugins/${slug}`
 }
 
 function parseTaskList(raw: string): string[] {

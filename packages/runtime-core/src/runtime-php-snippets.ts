@@ -91,7 +91,7 @@ function ${abilityNames}(): array {
     return is_array($abilities) ? array_values(array_map('strval', array_keys($abilities))) : array();
 }
 function ${prepare}(): array {
-    $hooks = array('plugins_loaded', 'init', 'wp_abilities_api_categories_init', 'wp_abilities_api_init', 'wp_codebox_runtime_abilities_ready');
+    $hooks = array('plugins_loaded', 'init', 'wp_abilities_api_categories_init', 'wp_abilities_api_init', 'contained_runtime_abilities_ready');
     $state = array('hooks' => array(), 'abilities_before' => ${abilityNames}());
     foreach ($hooks as $hook_name) {
         $state['hooks'][$hook_name] = array(
@@ -128,14 +128,14 @@ export function phpRuntimeComponentLifecycleActionReplayFunction(functionName: s
     do_action('init');
     do_action('wp_abilities_api_categories_init');
     do_action('wp_abilities_api_init');
-    do_action('wp_codebox_runtime_abilities_ready');
+    do_action('contained_runtime_abilities_ready');
 
     return array(
         'plugins_loaded' => function_exists('did_action') ? did_action('plugins_loaded') : null,
         'init' => function_exists('did_action') ? did_action('init') : null,
         'wp_abilities_api_categories_init' => function_exists('did_action') ? did_action('wp_abilities_api_categories_init') : null,
         'wp_abilities_api_init' => function_exists('did_action') ? did_action('wp_abilities_api_init') : null,
-        'wp_codebox_runtime_abilities_ready' => function_exists('did_action') ? did_action('wp_codebox_runtime_abilities_ready') : null,
+        'contained_runtime_abilities_ready' => function_exists('did_action') ? did_action('contained_runtime_abilities_ready') : null,
     );
 }`
 }

@@ -3,7 +3,7 @@ import { commandRegistry } from "../packages/runtime-core/src/command-registry.j
 import { validateWorkspaceRecipeJsonSchema } from "../packages/runtime-core/src/recipe-schema.js"
 import type { RuntimeCreateSpec } from "../packages/runtime-core/src/runtime-contracts.js"
 import { restRequestPhpCode } from "../packages/runtime-playground/src/rest-request-command-handlers.js"
-import { wordpressUserSessionFromCommandArgs } from "../packages/runtime-playground/src/wordpress-user-sessions.js"
+import { wordpressFixtureUserPhpCode, wordpressUserSessionFromCommandArgs } from "../packages/runtime-playground/src/wordpress-user-sessions.js"
 
 const recipe = {
   schema: "wp-codebox/workspace-recipe/v1",
@@ -44,6 +44,10 @@ assert.equal(resolvedUser?.metadata.redactionRequired, false)
 
 assert.throws(() => wordpressUserSessionFromCommandArgs(["session=missing"], runtimeSpec), /Unknown WordPress recipe user session/)
 assert.throws(() => wordpressUserSessionFromCommandArgs(["user=missing"], runtimeSpec), /Unknown WordPress recipe fixture user/)
+
+const fixtureUserPhp = wordpressFixtureUserPhpCode({ role: "administrator" })
+assert.match(fixtureUserPhp, /sandbox_fixture_user/)
+assert.doesNotMatch(fixtureUserPhp, /wp_codebox|WP_CODEBOX|wp-codebox-fixture/)
 
 const generated = restRequestPhpCode({
   method: "GET",

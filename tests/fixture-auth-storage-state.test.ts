@@ -21,7 +21,8 @@ const php = wordpressFixtureUserStorageStatePhpCode({
 })
 
 assert.match(php, /wp-codebox\/browser-auth-storage-state\/v1/)
-assert.match(php, /wp-codebox-fixture-admin/)
+assert.match(php, /sandbox_fixture_admin/)
+assert.doesNotMatch(php, /wp_codebox|WP_CODEBOX|wp-codebox-fixture|WP Codebox Fixture/)
 assert.match(php, /wp_insert_user/)
 assert.match(php, /WP_Session_Tokens::get_instance/)
 assert.match(php, /storageState/)
