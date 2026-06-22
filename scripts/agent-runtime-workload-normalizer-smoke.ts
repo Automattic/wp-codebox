@@ -1,4 +1,4 @@
-import { normalizeAgentRuntimeWorkload } from "@automattic/wp-codebox-core"
+import { legacyAgentRuntimeWorkloadNormalizerAdapters, normalizeAgentRuntimeWorkload } from "@automattic/wp-codebox-core"
 
 const canonicalEnvelope = normalizeAgentRuntimeWorkload({
   schema: "wp-codebox/agent-runtime-workload/v1",
@@ -23,7 +23,7 @@ const explicitEnvelope = normalizeAgentRuntimeWorkload({
     scenarios: [{ id: "explicit" }],
   },
   stdout: JSON.stringify({ success: false, outputs: { report_path: "legacy/report.json" } }),
-})
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters })
 assertEqual(explicitEnvelope.success, true, "explicit envelope wins over legacy extraction")
 assertEqual(explicitEnvelope.outputs.report_path, "runtime/report.json", "explicit envelope output is used")
 assertEqual(explicitEnvelope.scenarios[0]?.id, "explicit", "explicit envelope scenario is used")
@@ -34,7 +34,7 @@ const legacyBundleRun = normalizeAgentRuntimeWorkload({
   bundle: { bundle_slug: "site-build" },
   outputs: { preview_url: "https://example.test/preview" },
   workflow: { steps: [{ id: "generate" }, { id: "verify" }] },
-}, { compatMode: true, requiredOutputs: { preview_url: "outputs.preview_url" } })
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters, requiredOutputs: { preview_url: "outputs.preview_url" } })
 assertEqual(legacyBundleRun.schema, "wp-codebox/agent-runtime-workload/v1", "legacy bundle run emits canonical schema")
 assertEqual(legacyBundleRun.success, true, "legacy bundle run succeeds")
 assertEqual(legacyBundleRun.outputs.preview_url, "https://example.test/preview", "legacy bundle outputs are preserved")
@@ -53,7 +53,7 @@ const stdoutWrapper = normalizeAgentRuntimeWorkload({
       },
     }),
   }),
-}, { compatMode: true, workloadId: "stdout-agent", toolRecorders: [{ name: "pull_request_url", path: "outputs.pull_request_url" }] })
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters, workloadId: "stdout-agent", toolRecorders: [{ name: "pull_request_url", path: "outputs.pull_request_url" }] })
 assertEqual(stdoutWrapper.success, true, "stdout wrapper succeeds")
 assertEqual(stdoutWrapper.outputs.pull_request_url, "https://github.com/Automattic/wp-codebox/pull/1", "stdout wrapper output is normalized")
 assertEqual(stdoutWrapper.scenarios[0]?.id, "stdout-agent", "stdout wrapper workload id is used")
@@ -77,13 +77,13 @@ const recipeRun = normalizeAgentRuntimeWorkload({
       },
     },
   },
-}, { compatMode: true })
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters })
 assertEqual(recipeRun.success, true, "recipe-run nested agent task result succeeds")
 assertEqual(recipeRun.outputs.report_path, "runtime-evidence/report.json", "recipe-run nested outputs are normalized")
 
 const failedScenario = normalizeAgentRuntimeWorkload({
   scenarios: [{ id: "failed", metadata: { error: "runtime adapter failed" } }],
-}, { compatMode: true })
+}, { normalizerAdapters: legacyAgentRuntimeWorkloadNormalizerAdapters })
 assertEqual(failedScenario.success, false, "scenario metadata error fails workload")
 assertEqual(failedScenario.diagnostics.some((diagnostic) => diagnostic.message === "runtime adapter failed"), true, "scenario metadata error is surfaced")
 

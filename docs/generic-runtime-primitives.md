@@ -7,6 +7,7 @@ product or job system.
 
 - TypeScript implementations live in `packages/runtime-core/src/artifact-storage.ts`,
   `packages/runtime-core/src/browser-session-origin.ts`, and
+  `packages/runtime-core/src/runtime-neutral-contracts.ts`, and
   `packages/runtime-core/src/materialization-contracts.ts`, and
   `packages/runtime-core/src/evidence-artifact-envelope.ts`, and
   `packages/runtime-core/src/runtime-overlay-bundle.ts`, and
@@ -17,7 +18,8 @@ product or job system.
   `packages/runtime-core/src/wordpress-workload-primitives.ts`.
 - Coverage lives in `tests/generic-primitives.test.ts` and
   `tests/command-agent-run.test.ts`, plus
-  `tests/wordpress-workload-primitives.test.ts` for workload helpers.
+  `tests/wordpress-workload-primitives.test.ts` for workload helpers and
+  `tests/runtime-package-execution.test.ts` for runtime package execution.
 - `npm run check` runs that coverage through the smoke manifest `core` group.
 
 ## Artifact Storage
@@ -116,6 +118,28 @@ Recipe schema accepts these bundles through `runtime.overlays[]`:
 }
 ```
 
+## Neutral WordPress Runtime Intent
+
+Recipes can omit `runtime.backend` or set it to `wordpress`. WP Codebox currently
+normalizes that neutral WordPress runtime name to the existing
+`wordpress-playground` backend implementation. The `wordpress-playground` spelling
+is still accepted for existing recipes and low-level compatibility.
+
+`runtime-neutral-contracts.ts` also exports helper-only setup intent types for
+callers that need to describe desired setup before compiling it into recipe
+fields:
+
+- `RuntimeWordPressSetupPlanIntent` groups component and filesystem intent for a
+  WordPress sandbox setup plan.
+- `RuntimeWordPressComponentIntent` describes components such as plugins,
+  mu-plugins, themes, WordPress core, and runtime overlays.
+- `RuntimeWordPressFilesystemIntent` describes intended sandbox filesystem
+  materialization, including target path, mode, and purpose.
+
+These intent types are public documentation helpers. Runtime execution still uses
+the concrete recipe fields such as `inputs.extra_plugins`, `inputs.mounts`,
+`inputs.stagedFiles`, `runtime.stack.mounts`, and `runtime.overlays`.
+
 ## Runtime Profiles
 
 `wp-codebox/runtime-profile/v1` is the caller-facing runtime request/result
@@ -196,12 +220,54 @@ The contract intentionally uses WP Codebox task names and short WP Codebox
 ability names. Downstream product names, backend ability names, and
 orchestration policy stay outside the runtime invocation payload.
 
+## Runtime Package Execution
+
+`wp-codebox/run-runtime-package` is the public WordPress ability for executing a
+runtime package. Callers should use this Codebox-owned ability id, the
+`CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY` constant, or `buildRuntimePackageRunRecipe()`
+instead of coupling to backend adapter ability ids.
+
+The request envelope is `wp-codebox/runtime-package-execution-input/v1`:
+
+```json
+{
+  "schema": "wp-codebox/runtime-package-execution-input/v1",
+  "runtime_package": "example/runtime-package",
+  "input": { "prompt": "collect evidence" },
+  "artifact_declarations": [
+    {
+      "schema": "wp-codebox/runtime-package-artifact-declaration/v1",
+      "name": "report",
+      "type": "markdown",
+      "direction": "output",
+      "path": "files/report.md",
+      "required": true
+    }
+  ],
+  "output_projections": [
+    {
+      "schema": "wp-codebox/runtime-package-output-projection/v1",
+      "name": "summary",
+      "source": "result.summary",
+      "type": "text"
+    }
+  ],
+  "metadata": {}
+}
+```
+
+Artifact declarations describe typed inputs or outputs the runtime package may
+consume or produce. Output projections describe named caller-facing views over the
+runtime result or artifacts. WP Codebox preserves these generic declarations in
+the runtime package input so downstream systems can remove product-specific
+artifact special-casing while keeping projection policy outside Codebox core.
+
 ## WordPress Workload Primitives
 
 `wordpressAbilityStep()` builds the stable `wordpress.ability` recipe step shape.
 `wordpressWorkloadRunRecipe()` builds a minimal WordPress Playground-backed recipe
-around caller-supplied workload steps without exposing Playground blueprint,
-mount, runPHP, OPFS, or browser-client internals as the public contract.
+around caller-supplied workload steps while returning Codebox runtime descriptors
+for mounts, PHP execution, OPFS use, and browser-client access.
 
 `playgroundPreviewUrl()` emits a `wp-codebox/playground-preview-url/v1` envelope
 for local, public, or secure preview URLs. Callers get the effective URL and

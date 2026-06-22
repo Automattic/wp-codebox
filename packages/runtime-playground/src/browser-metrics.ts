@@ -25,7 +25,7 @@ export interface BrowserArtifactMetricsResult {
   bundleDirectory: string
   hasBrowserMetrics: boolean
   metrics: Record<string, number>
-  artifacts: Record<string, { path: string; kind: "json" | "jsonl" }>
+  artifacts: Record<string, { path: string; kind: "html" | "json" | "jsonl" | "png" }>
 }
 
 export function browserProbeMemorySummary(checkpoints: BrowserProbeCheckpointRecord[]): BrowserProbeMemorySummary {
@@ -405,6 +405,8 @@ export async function browserArtifactMetrics(bundleDirectory: string): Promise<B
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "memory", "memory.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "performance", "performance.json", "json")
   await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "checkpoints", "checkpoints.jsonl", "jsonl")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "html", "snapshot.html", "html")
+  await addBrowserArtifactIfPresent(artifacts, bundleDirectory, "screenshot", "screenshot.png", "png")
 
   let metrics: Record<string, number> = {}
   for (const summaryPath of summaryPaths) {
@@ -458,7 +460,7 @@ async function browserSummaryArtifactPaths(bundleDirectory: string): Promise<str
   return [...paths]
 }
 
-async function addBrowserArtifactIfPresent(artifacts: BrowserArtifactMetricsResult["artifacts"], bundleDirectory: string, name: string, file: string, kind: "json" | "jsonl"): Promise<void> {
+async function addBrowserArtifactIfPresent(artifacts: BrowserArtifactMetricsResult["artifacts"], bundleDirectory: string, name: string, file: string, kind: "html" | "json" | "jsonl" | "png"): Promise<void> {
   const relativePath = `files/browser/${file}`
   try {
     await access(join(bundleDirectory, relativePath))

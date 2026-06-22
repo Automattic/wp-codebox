@@ -14,6 +14,11 @@ contract instead of installing runtime-specific PHP filters or transport details
     "version": 1,
     "tools": []
   },
+  "host_policy": {
+    "schema": "wp-codebox/host-tool-policy/v1",
+    "version": 1,
+    "tools": []
+  },
   "dispatcher": {
     "owner": "wp-codebox",
     "callback": "wp_codebox_browser_runtime_tool_callback",
@@ -30,9 +35,10 @@ contract instead of installing runtime-specific PHP filters or transport details
 ```
 
 The bridge carries the same enforced `sandbox_tool_policy` snapshot used by the
-runtime. WP Codebox exposes tools only when a policy entry is allowed, sandbox
-visible, and runtime-local. Parent-only, hidden, or denied entries remain present
-for diagnostics but are not exposed to the sandbox agent.
+runtime plus a Codebox-owned `host_policy` projection for host/runtime adapters.
+WP Codebox exposes tools only when a policy entry is allowed, sandbox visible,
+and runtime-local. Parent-only, hidden, or denied entries remain present for
+diagnostics but are not exposed to the sandbox agent.
 
 Integration points:
 

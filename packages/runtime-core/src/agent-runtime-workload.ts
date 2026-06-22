@@ -101,16 +101,30 @@ export interface AgentRuntimeWorkloadOptions {
   requiredOutputs?: Record<string, string> | string[]
   toolRecorders?: unknown
   workloadId?: string
+  normalizerAdapters?: AgentRuntimeWorkloadNormalizerAdapter[]
+  /** @deprecated Pass `legacyAgentRuntimeWorkloadNormalizerAdapters` as `normalizerAdapters` instead. */
   compatMode?: boolean
 }
 
-type WorkloadDraft = Omit<AgentRuntimeWorkload, "schema" | "success"> & { success?: boolean }
+export type AgentRuntimeWorkloadDraft = Omit<AgentRuntimeWorkload, "schema" | "success"> & { success?: boolean }
+
+export interface AgentRuntimeWorkloadNormalizerContext {
+  options: AgentRuntimeWorkloadOptions
+  normalizeRaw(raw: unknown): AgentRuntimeWorkloadDraft | undefined
+}
+
+export interface AgentRuntimeWorkloadNormalizerAdapter {
+  name: string
+  normalize(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): AgentRuntimeWorkloadDraft | undefined
+}
+
+type WorkloadDraft = AgentRuntimeWorkloadDraft
 
 export function normalizeAgentRuntimeWorkload(raw: unknown, options: AgentRuntimeWorkloadOptions = {}): AgentRuntimeWorkload {
   const canonicalWorkload = canonicalWorkloadFromRaw(raw, options)
-  const compatMode = options.compatMode === true
   const compatibilityDiagnostics: AgentRuntimeWorkloadDiagnostic[] = []
-  const workload = canonicalWorkload ?? (compatMode ? workloadFromRawCompat(raw, options, compatibilityDiagnostics) : undefined) ?? emptyWorkload(options)
+  const adapters = workloadNormalizerAdapters(options)
+  const workload = canonicalWorkload ?? workloadFromNormalizerAdapters(raw, options, adapters, compatibilityDiagnostics) ?? emptyWorkload(options)
   const toolRecorderOutputs = outputsFromToolRecorders(workload, options.toolRecorders)
   const outputs = { ...workload.outputs, ...toolRecorderOutputs }
   const diagnostics = [...workload.diagnostics, ...compatibilityDiagnostics, ...diagnosticsFromWorkload({ ...workload, outputs }, options)]
@@ -131,67 +145,133 @@ export function normalizeAgentRuntimeWorkload(raw: unknown, options: AgentRuntim
   }
 }
 
-function canonicalWorkloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
-  const parsed = parseJsonEnvelope(raw)
-  const record = objectValue(parsed)
-  if (!record) return undefined
+export const legacyAgentRuntimeWorkloadNormalizerAdapters: AgentRuntimeWorkloadNormalizerAdapter[] = [
+  { name: "runtime-workload-explicit-envelope", normalize: normalizeExplicitEnvelopeField },
+  { name: "runtime-workload-stdout-json", normalize: normalizeStdoutJsonEnvelope },
+  { name: "runtime-workload-nested-canonical", normalize: normalizeNestedCanonicalEnvelope },
+  { name: "runtime-workload-agent-bundle-run", normalize: normalizeLegacyAgentBundleRun },
+  { name: "runtime-workload-scenario-shape", normalize: normalizeScenarioShape },
+  { name: "runtime-workload-single-result-shape", normalize: normalizeSingleResultShape },
+  { name: "runtime-workload-recipe-run-nested-agent-task-result", normalize: normalizeRecipeRunNestedAgentTaskResult },
+  { name: "runtime-workload-execution-stdout", normalize: normalizeExecutionStdout },
+  { name: "runtime-workload-metadata-shape", normalize: normalizeMetadataShape },
+]
 
-  return parseAgentRuntimeWorkloadEnvelope(record, options) ?? workloadFromExplicitEnvelopeField(record, options)
+function canonicalWorkloadFromRaw(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+  return parseAgentRuntimeWorkloadEnvelope(raw, options)
 }
 
-function workloadFromRawCompat(raw: unknown, options: AgentRuntimeWorkloadOptions, diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {
-  const parsed = parseJsonEnvelope(raw)
-  const record = objectValue(parsed)
-  if (!record) return undefined
+function workloadNormalizerAdapters(options: AgentRuntimeWorkloadOptions): AgentRuntimeWorkloadNormalizerAdapter[] {
+  return Array.isArray(options.normalizerAdapters)
+    ? options.normalizerAdapters
+    : options.compatMode === true
+      ? legacyAgentRuntimeWorkloadNormalizerAdapters
+      : []
+}
 
-  const canonical = parseAgentRuntimeWorkloadEnvelope(record, options)
-  if (canonical) return canonical
+function workloadFromNormalizerAdapters(raw: unknown, options: AgentRuntimeWorkloadOptions, adapters: AgentRuntimeWorkloadNormalizerAdapter[], diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {
+  if (adapters.length === 0) return undefined
 
-  const explicitEnvelope = workloadFromExplicitEnvelopeField(record, options)
-  if (explicitEnvelope) return withCompatibilityDiagnostic(explicitEnvelope, diagnostics, "runtime-workload-explicit-envelope")
-
-  const stdout = stringValue(record.stdout)
-  if (stdout) {
-    const stdoutWorkload = workloadFromRawCompat(stdout, options, diagnostics)
-    if (stdoutWorkload && hasSemanticWorkload(stdoutWorkload)) return withCompatibilityDiagnostic(stdoutWorkload, diagnostics, "runtime-workload-stdout-json")
+  const context: AgentRuntimeWorkloadNormalizerContext = {
+    options,
+    normalizeRaw: (candidate) => canonicalWorkloadFromRaw(candidate, options) ?? workloadFromNormalizerAdapters(candidate, options, adapters, diagnostics),
   }
 
-  const direct = objectValue(record.agent_runtime)?.result ?? record.result ?? record
-  const candidate = parseJsonEnvelope(direct)
-  const candidateRecord = objectValue(candidate)
-  if (!candidateRecord) return undefined
-
-  const canonicalCandidate = parseAgentRuntimeWorkloadEnvelope(candidateRecord, options)
-  if (canonicalCandidate) return withCompatibilityDiagnostic(canonicalCandidate, diagnostics, "runtime-workload-nested-canonical")
-
-  if (isLegacyAgentBundleRun(candidateRecord)) return withCompatibilityDiagnostic(workloadFromLegacyAgentBundleRun(candidateRecord, options), diagnostics, "runtime-workload-agent-bundle-run")
-  if (Array.isArray(candidateRecord.scenarios)) return withCompatibilityDiagnostic(workloadFromScenarioWorkload(candidateRecord, options), diagnostics, "runtime-workload-scenario-shape")
-  if (isSingleResultWorkload(candidateRecord)) return withCompatibilityDiagnostic(workloadFromSingleResult(candidateRecord, options), diagnostics, "runtime-workload-single-result-shape")
-
-  const recipeRun = objectValue(candidateRecord.run)
-  const agentTaskResult = objectValue(candidateRecord.agentTaskResult) ?? objectValue(recipeRun?.agentTaskResult) ?? objectValue(candidateRecord.agent_task_result)
-  const nestedRuntime = objectValue(agentTaskResult?.raw)?.agent_runtime
-  const nestedRuntimeRecord = objectValue(nestedRuntime)
-  if (nestedRuntimeRecord?.result) return workloadFromRawCompat({ agent_runtime: nestedRuntimeRecord }, options, diagnostics)
-
-  const executionWorkload = workloadFromExecutions(candidateRecord, options, diagnostics)
-  if (executionWorkload) return withCompatibilityDiagnostic(executionWorkload, diagnostics, "runtime-workload-execution-stdout")
-
-  if (candidateRecord.metadata || candidateRecord.metrics) {
-    return withCompatibilityDiagnostic({
-      outputs: {},
-      scenarios: [scenarioFromRecord(candidateRecord, options)],
-      diagnostics: diagnosticsFromRaw(candidateRecord.diagnostics),
-      artifacts: artifactsFromRaw(candidateRecord.artifacts),
-      metadata: objectValue(candidateRecord.metadata) ?? {},
-    }, diagnostics, "runtime-workload-metadata-shape")
+  for (const adapter of adapters) {
+    const workload = adapter.normalize(raw, context)
+    if (hasSemanticWorkload(workload)) return withCompatibilityDiagnostic(workload, diagnostics, adapter.name)
   }
 
   return undefined
 }
 
-function parseAgentRuntimeWorkloadEnvelope(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+function normalizeExplicitEnvelopeField(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const parsed = parseJsonEnvelope(raw)
+  const record = objectValue(parsed)
+  if (!record) return undefined
+
+  return workloadFromExplicitEnvelopeField(record, context.options)
+}
+
+function normalizeStdoutJsonEnvelope(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
   const record = objectValue(parseJsonEnvelope(raw))
+  if (!record) return undefined
+  const stdout = stringValue(record.stdout)
+  if (stdout) {
+    return context.normalizeRaw(stdout)
+  }
+  return undefined
+}
+
+function normalizeNestedCanonicalEnvelope(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const record = objectValue(parseJsonEnvelope(raw))
+  if (!record) return undefined
+  const direct = objectValue(record.agent_runtime)?.result ?? record.result ?? record
+  const candidate = parseJsonEnvelope(direct)
+  const candidateRecord = objectValue(candidate)
+  if (!candidateRecord) return undefined
+
+  return parseAgentRuntimeWorkloadEnvelope(candidateRecord, context.options)
+}
+
+function normalizeLegacyAgentBundleRun(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const record = candidateRecordFromRaw(raw)
+  return record && isLegacyAgentBundleRun(record) ? workloadFromLegacyAgentBundleRun(record, context.options) : undefined
+}
+
+function normalizeScenarioShape(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const record = candidateRecordFromRaw(raw)
+  return record && Array.isArray(record.scenarios) ? workloadFromScenarioWorkload(record, context.options) : undefined
+}
+
+function normalizeSingleResultShape(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const record = candidateRecordFromRaw(raw)
+  return record && isSingleResultWorkload(record) ? workloadFromSingleResult(record, context.options) : undefined
+}
+
+function normalizeRecipeRunNestedAgentTaskResult(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const candidateRecord = candidateRecordFromRaw(raw)
+  if (!candidateRecord) return undefined
+
+  const recipeRun = objectValue(candidateRecord.run)
+  const agentTaskResult = objectValue(candidateRecord.agentTaskResult) ?? objectValue(recipeRun?.agentTaskResult) ?? objectValue(candidateRecord.agent_task_result)
+  const nestedRuntime = objectValue(agentTaskResult?.raw)?.agent_runtime
+  const nestedRuntimeRecord = objectValue(nestedRuntime)
+  if (nestedRuntimeRecord?.result) return context.normalizeRaw({ agent_runtime: nestedRuntimeRecord })
+  return undefined
+}
+
+function normalizeExecutionStdout(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const candidateRecord = candidateRecordFromRaw(raw)
+  return candidateRecord ? workloadFromExecutions(candidateRecord, context) : undefined
+}
+
+function normalizeMetadataShape(raw: unknown, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
+  const candidateRecord = candidateRecordFromRaw(raw)
+  if (!candidateRecord) return undefined
+  if (candidateRecord.metadata || candidateRecord.metrics) {
+    return {
+      outputs: {},
+      scenarios: [scenarioFromRecord(candidateRecord, context.options)],
+      diagnostics: diagnosticsFromRaw(candidateRecord.diagnostics),
+      artifacts: artifactsFromRaw(candidateRecord.artifacts),
+      metadata: objectValue(candidateRecord.metadata) ?? {},
+    }
+  }
+
+  return undefined
+}
+
+function candidateRecordFromRaw(raw: unknown): Record<string, unknown> | undefined {
+  const record = objectValue(parseJsonEnvelope(raw))
+  if (!record) return undefined
+
+  const direct = objectValue(record.agent_runtime)?.result ?? record.result ?? record
+  return objectValue(parseJsonEnvelope(direct))
+}
+
+function parseAgentRuntimeWorkloadEnvelope(raw: unknown, options: AgentRuntimeWorkloadOptions): WorkloadDraft | undefined {
+  const record = objectValue(parseStrictJsonEnvelope(raw))
   if (!record || stringValue(record.schema) !== AGENT_RUNTIME_WORKLOAD_SCHEMA) return undefined
 
   const scenarios = arrayObjects(record.scenarios).map((scenario) => normalizeScenario(scenario, options))
@@ -223,12 +303,12 @@ function workloadFromExplicitEnvelopeField(record: Record<string, unknown>, opti
   return undefined
 }
 
-function workloadFromExecutions(record: Record<string, unknown>, options: AgentRuntimeWorkloadOptions, diagnostics: AgentRuntimeWorkloadDiagnostic[]): WorkloadDraft | undefined {
+function workloadFromExecutions(record: Record<string, unknown>, context: AgentRuntimeWorkloadNormalizerContext): WorkloadDraft | undefined {
   const executions = arrayObjects(record.executions).length > 0 ? arrayObjects(record.executions) : arrayObjects(objectValue(record.run)?.executions)
   for (const execution of executions) {
     const stdout = stringValue(execution.stdout)
     if (!stdout) continue
-    const workload = workloadFromRawCompat(stdout, options, diagnostics)
+    const workload = context.normalizeRaw(stdout)
     if (hasSemanticWorkload(workload)) return workload
   }
   return undefined
@@ -471,6 +551,23 @@ function parseJsonEnvelope(value: unknown): unknown {
   return typeof wrapperOutput === "string" ? parseJson(wrapperOutput) ?? parsed : parsed
 }
 
+function parseStrictJsonEnvelope(value: unknown): unknown {
+  if (typeof value !== "string") return value
+  const parsed = parseStrictJson(value)
+  const wrapperOutput = objectValue(parsed)?.output
+  return typeof wrapperOutput === "string" ? parseStrictJson(wrapperOutput) ?? parsed : parsed
+}
+
+function parseStrictJson(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return undefined
+  }
+}
+
 function parseJson(value: string): unknown {
   const trimmed = value.trim()
   if (!trimmed) return undefined
@@ -496,7 +593,7 @@ function isSingleResultWorkload(record: Record<string, unknown>): boolean {
   return Boolean(objectValue(record.outputs) || objectValue(record.output) || Array.isArray(record.diagnostics) || stringValue(record.summary))
 }
 
-function hasSemanticWorkload(workload: WorkloadDraft | undefined): boolean {
+function hasSemanticWorkload(workload: WorkloadDraft | undefined): workload is WorkloadDraft {
   return Boolean(workload && (workload.scenarios.length > 0 || Object.keys(workload.outputs).length > 0))
 }
 

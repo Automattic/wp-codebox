@@ -117,7 +117,7 @@ private static function browser_runner_invocation( array $runner ): array|WP_Err
 	$name = trim( (string) ( $invocation['name'] ?? '' ) );
 	$hook = trim( (string) ( $invocation['hook'] ?? $name ) );
 	if ( 'ability' === $type ) {
-		$name = '' !== $name ? $name : ( class_exists( 'WP_Codebox_Agents_API_Adapter' ) ? WP_Codebox_Agents_API_Adapter::CHAT : 'agents/chat' );
+		$name = '' !== $name ? $name : WP_Codebox_Agents_API_Adapter::default_chat_ability();
 		if ( ! preg_match( '#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $name ) ) {
 			return new WP_Error( 'wp_codebox_browser_invocation_name_invalid', 'Browser runner ability names must use namespace/name form.', array( 'status' => 400 ) );
 		}

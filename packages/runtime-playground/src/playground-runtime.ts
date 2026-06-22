@@ -19,7 +19,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1089,6 +1089,16 @@ class PlaygroundRuntime implements Runtime {
   async runRestRequest(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runRestRequestCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
+  async runRuntimeDiscovery(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeDiscoveryCommand({
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
       runtimeSpec: this.spec,
       server,

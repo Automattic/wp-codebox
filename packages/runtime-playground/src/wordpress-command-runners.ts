@@ -31,6 +31,8 @@ import {
   runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
+  runtimeDiscoveryPhpCode,
+  runtimeDiscoverySurfacesFromArgs,
   themeCheckRunCode,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
@@ -38,7 +40,7 @@ import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playgr
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
-import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
+import { COMMAND_DIAGNOSTICS_ARTIFACT_SCHEMA, PERFORMANCE_OBSERVATION_SCHEMA, commandDiagnosticsCaptureArgs, commandDiagnosticsCaptureSpecFromArgs, createRuntimeCommandResultEnvelope, redactJsonValue, type ExecutionSpec, type MountSpec, type PerformanceObservation, type RuntimeCommandResultEnvelope, type RuntimeCreateSpec, type RuntimeEpisodeTraceRef } from "@automattic/wp-codebox-core"
 import { wordpressUserSessionFromCommandArgs } from "./wordpress-user-sessions.js"
 
 type RunPlaygroundCommand = (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
@@ -110,20 +112,34 @@ interface RunPhpDiagnosticsPayload {
   capture: string[]
   limits: { maxItems: number; maxBytes: number }
   summary: { captured: number; truncated: boolean; bytes: number }
-  wpdbQueries?: Array<{ fingerprint: string; count: number; sampleMs?: number; caller?: string }>
+  performance?: PerformanceObservation
+  wpdbQueries?: Array<{ fingerprint: string; count: number; totalTimeMs?: number; sampleMs?: number; caller?: string }>
 }
 
 function runPhpCommandDiagnosticsPhp(code: string, marker: string, maxItems: number, maxBytes: number): string {
   return `
+$wp_codebox_command_observation_started_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
+$wp_codebox_command_observation_start_time = microtime(true);
+$wp_codebox_command_observation_start_memory = memory_get_usage(true);
 $wp_codebox_command_diagnostics_start = isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries) ? count($GLOBALS['wpdb']->queries) : 0;
 ${code.replace(/^<\?php\s*/, "")}
+$wp_codebox_command_observation_finished_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
+$wp_codebox_command_observation_duration_ms = round((microtime(true) - $wp_codebox_command_observation_start_time) * 1000, 3);
+$wp_codebox_command_observation_end_memory = memory_get_usage(true);
 $wp_codebox_command_diagnostics_queries = array();
+$wp_codebox_command_diagnostics_query_count = 0;
+$wp_codebox_command_diagnostics_query_time_ms = 0.0;
 if (isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries)) {
     $wp_codebox_command_diagnostics_slice = array_slice($GLOBALS['wpdb']->queries, $wp_codebox_command_diagnostics_start);
     foreach ($wp_codebox_command_diagnostics_slice as $wp_codebox_command_diagnostics_query) {
         $wp_codebox_command_diagnostics_sql = is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[0]) ? (string) $wp_codebox_command_diagnostics_query[0] : '';
         if ($wp_codebox_command_diagnostics_sql === '') {
             continue;
+        }
+        $wp_codebox_command_diagnostics_query_count++;
+        $wp_codebox_command_diagnostics_elapsed_ms = is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[1]) ? round(((float) $wp_codebox_command_diagnostics_query[1]) * 1000, 3) : null;
+        if ($wp_codebox_command_diagnostics_elapsed_ms !== null) {
+            $wp_codebox_command_diagnostics_query_time_ms += $wp_codebox_command_diagnostics_elapsed_ms;
         }
         $wp_codebox_command_diagnostics_fingerprint = preg_replace('/\\s+/', ' ', trim($wp_codebox_command_diagnostics_sql));
         $wp_codebox_command_diagnostics_fingerprint = preg_replace("/'(?:''|[^'])*'/", "'?'", $wp_codebox_command_diagnostics_fingerprint);
@@ -133,29 +149,67 @@ if (isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries)) {
             $wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key] = array(
                 'fingerprint' => $wp_codebox_command_diagnostics_fingerprint,
                 'count' => 0,
-                'sampleMs' => is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[1]) ? round(((float) $wp_codebox_command_diagnostics_query[1]) * 1000, 3) : null,
+                'sampleMs' => $wp_codebox_command_diagnostics_elapsed_ms,
+                'totalTimeMs' => 0,
                 'caller' => is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[2]) ? substr((string) $wp_codebox_command_diagnostics_query[2], 0, 240) : null,
             );
         }
         $wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key]['count']++;
+        if ($wp_codebox_command_diagnostics_elapsed_ms !== null) {
+            $wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key]['totalTimeMs'] = round($wp_codebox_command_diagnostics_queries[$wp_codebox_command_diagnostics_key]['totalTimeMs'] + $wp_codebox_command_diagnostics_elapsed_ms, 3);
+        }
     }
 }
+$wp_codebox_command_observation_fingerprints = array_values($wp_codebox_command_diagnostics_queries);
+$wp_codebox_command_observation_repeated_queries = array_values(array_filter($wp_codebox_command_observation_fingerprints, static function ($wp_codebox_command_observation_query) {
+    return isset($wp_codebox_command_observation_query['count']) && $wp_codebox_command_observation_query['count'] > 1;
+}));
 $wp_codebox_command_diagnostics_payload = array(
     'schema' => 'wp-codebox/command-diagnostics/v1',
     'command' => 'wordpress.run-php',
     'capture' => array('wpdb-queries'),
     'limits' => array('maxItems' => ${maxItems}, 'maxBytes' => ${maxBytes}),
     'summary' => array('captured' => 0, 'truncated' => false, 'bytes' => 0),
-    'wpdbQueries' => array_values($wp_codebox_command_diagnostics_queries),
+    'performance' => array(
+        'schema' => '${PERFORMANCE_OBSERVATION_SCHEMA}',
+        'command' => 'wordpress.run-php',
+        'timing' => array(
+            'startedAt' => $wp_codebox_command_observation_started_at,
+            'finishedAt' => $wp_codebox_command_observation_finished_at,
+            'durationMs' => $wp_codebox_command_observation_duration_ms,
+        ),
+        'memory' => array(
+            'startBytes' => $wp_codebox_command_observation_start_memory,
+            'endBytes' => $wp_codebox_command_observation_end_memory,
+            'deltaBytes' => $wp_codebox_command_observation_end_memory - $wp_codebox_command_observation_start_memory,
+            'peakBytes' => memory_get_peak_usage(true),
+        ),
+        'database' => array(
+            'queryCount' => $wp_codebox_command_diagnostics_query_count,
+            'totalTimeMs' => round($wp_codebox_command_diagnostics_query_time_ms, 3),
+            'fingerprints' => $wp_codebox_command_observation_fingerprints,
+            'repeatedQueries' => $wp_codebox_command_observation_repeated_queries,
+        ),
+        'hooks' => array('timings' => array()),
+        'network' => array('requests' => 0, 'responses' => 0, 'failures' => 0),
+        'browser' => array('metrics' => new stdClass(), 'admin' => new stdClass()),
+    ),
+    'wpdbQueries' => $wp_codebox_command_observation_fingerprints,
 );
 $wp_codebox_command_diagnostics_payload['summary']['captured'] = count($wp_codebox_command_diagnostics_payload['wpdbQueries']);
 if (count($wp_codebox_command_diagnostics_payload['wpdbQueries']) > ${maxItems}) {
     $wp_codebox_command_diagnostics_payload['wpdbQueries'] = array_slice($wp_codebox_command_diagnostics_payload['wpdbQueries'], 0, ${maxItems});
+    $wp_codebox_command_diagnostics_payload['performance']['database']['fingerprints'] = $wp_codebox_command_diagnostics_payload['wpdbQueries'];
+    $wp_codebox_command_diagnostics_payload['performance']['database']['repeatedQueries'] = array_values(array_filter($wp_codebox_command_diagnostics_payload['wpdbQueries'], static function ($wp_codebox_command_observation_query) {
+        return isset($wp_codebox_command_observation_query['count']) && $wp_codebox_command_observation_query['count'] > 1;
+    }));
     $wp_codebox_command_diagnostics_payload['summary']['truncated'] = true;
 }
 $wp_codebox_command_diagnostics_json = json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES);
 if (strlen($wp_codebox_command_diagnostics_json) > ${maxBytes}) {
     $wp_codebox_command_diagnostics_payload['wpdbQueries'] = array();
+    $wp_codebox_command_diagnostics_payload['performance']['database']['fingerprints'] = array();
+    $wp_codebox_command_diagnostics_payload['performance']['database']['repeatedQueries'] = array();
     $wp_codebox_command_diagnostics_payload['summary']['truncated'] = true;
     $wp_codebox_command_diagnostics_json = json_encode($wp_codebox_command_diagnostics_payload, JSON_UNESCAPED_SLASHES);
 }
@@ -454,6 +508,23 @@ export async function runRestRequestCommand({
   input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-request", response)
+  return response.text
+}
+
+export async function runRuntimeDiscoveryCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const surfaces = runtimeDiscoverySurfacesFromArgs(spec.args ?? [])
+  const response = await runPlaygroundCommand("wordpress.runtime-discovery", server, { code: bootstrapPhpCode(runtimeSpec, runtimeDiscoveryPhpCode(surfaces), []) })
+  assertPlaygroundResponseOk("wordpress.runtime-discovery", response)
   return response.text
 }
 

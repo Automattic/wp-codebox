@@ -1,6 +1,6 @@
 /**
  * Public WordPress Playground backend adapter for Codebox runtimes. Consumers
- * should call Codebox runtime contracts rather than raw Playground internals.
+ * should call Codebox runtime contracts for Playground-backed execution.
  */
 export { playgroundRuntimeCommandIds } from "./command-router.js"
 export { ArtifactBundleWriter, ManifestedArtifactSet, type ManifestedArtifactFileInput } from "./artifact-bundle-writer.js"
@@ -9,6 +9,7 @@ export { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./bro
 export { browserStorageStateCookieHostSummary, browserStorageStateFromWordPressAuthCookies, normalizeBrowserStorageStatePayload, wordpressFixtureUserStorageStatePhpCode, type BrowserAuthStorageState, type BrowserStorageStateCookie, type BrowserStorageStateImportResult, type BrowserStorageStateImportSummary, type WordPressFixtureUserSpec, type WordPressFixtureUserStorageStateEnvelope } from "./browser-auth-storage-state.js"
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"
 export { PlaygroundRuntimeBackend, createPlaygroundRuntimeBackend, playgroundRuntimeBackendProvider } from "./playground-runtime.js"
+export { collectBrowserArtifactMetrics, collectWordPressEpisodeArtifacts, collectWordPressRuntimeArtifacts, createWordPressEpisode, createWordPressRuntime, runWordPressEpisodeActions, type WordPressEpisodeSpec, type WordPressRuntimeActionHooks, type WordPressRuntimeSpec } from "./public.js"
 export { preflightPhpWasmRuntimeAssets, PhpWasmRuntimeAssetIntegrityError, type PhpWasmRuntimeAssetPreflight, type PhpWasmRuntimeAssetPreflightOptions } from "./php-wasm-preflight.js"
 export { browserPreviewAuthCookieUrls, browserPreviewNetworkPolicySummary, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, browserPreviewOrigins, resolveBrowserPreviewUrl, type BrowserPreviewNetworkPolicy, type BrowserPreviewTopology } from "./browser-preview-routing.js"
 export { applyVfsMountSnapshots, materializePlaygroundMountsFromVfs, type HostMountSnapshot, type MountMaterializationResult, type VfsMountSnapshot } from "./mount-materialization.js"

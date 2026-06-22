@@ -14,6 +14,8 @@ function sanitize_key( $value ) { return strtolower( preg_replace( '/[^a-zA-Z0-9
 $GLOBALS['wp_codebox_test_transients'] = array();
 function get_transient( $key ) { return $GLOBALS['wp_codebox_test_transients'][ $key ] ?? false; }
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
@@ -176,7 +178,12 @@ $product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto(
 		'status' => 'ready',
 		'source_digest' => array( 'algorithm' => 'sha256', 'value' => str_repeat( 'a', 64 ) ),
 	),
-	'artifacts' => array( 'preview_url' => '/?preview=1' ),
+	'artifacts' => array(
+		'preview_url' => '/?preview=1',
+		'files' => array(
+			array( 'path' => 'index.html', 'kind' => 'browser-html', 'sha256' => str_repeat( 'd', 64 ), 'size' => 42, 'content' => 'must-not-leak' ),
+		),
+	),
 ) );
 $nested_primary_product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( array(
 	'success' => true,
@@ -266,6 +273,7 @@ assert.equal(result.local_task.component_contracts[0].slug, "profile-component")
 assert.equal(result.local_task.runtime_overlays[0].slug, "profile-overlay")
 assert.deepEqual(result.local_task.provider_plugin_paths, ["/profile/provider", "/existing/provider"])
 assert.deepEqual(result.local_task.runtime_env, { PROFILE_ENV: "1", EXISTING: "1" })
+assert.equal(result.local_task.runtime_requirements, undefined)
 assert.deepEqual(result.local_task.placement.allowed_targets, ["browser"])
 assert.deepEqual(result.local_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
 assert.equal(result.local_task.browser_runner.invocation.name, "agents/chat")
@@ -304,6 +312,17 @@ assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydrator_abil
 assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
 assert.equal(result.product_session.preview_boot.preview.local_url, "/?preview=1")
+assert.equal(result.product_session.preview_ref.schema, "wp-codebox/browser-preview-ref/v1")
+assert.equal(result.product_session.preview_ref.preview_id, "preview-123")
+assert.equal(result.product_session.preview_ref.session_id, "session-123")
+assert.equal(result.product_session.preview_ref.boot_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.deepEqual(result.product_session.artifact_refs, [{
+  schema: "wp-codebox/browser-artifact-ref/v1",
+  kind: "browser-html",
+  path: "files/browser/index.html",
+  digest: { algorithm: "sha256", value: "d".repeat(64) },
+  size: 42,
+}])
 assert.equal(result.nested_primary_product_session.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.nested_primary_product_session.preview_boot.scope, "nested-session-123")
 assert.equal(result.nested_primary_product_session.preview_boot.client_module_url, "https://example.test/nested-client.js")
@@ -326,5 +345,46 @@ assert.equal(result.recipe_dto.browser.runner_contract.php_footer.type, "generat
 assert.equal(JSON.stringify(result.recipe_dto).includes("must-not-leak"), false)
 assert.equal(JSON.stringify(result.recipe_dto).includes("code="), false)
 assert.equal(JSON.stringify(result.recipe_dto).includes("php_prelude\":\""), false)
+
+const readiness = await runPhpJson<any>(`
+define('ABSPATH', ${rootPath});
+class WP_Error {
+	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
+}
+function is_wp_error( $value ) { return $value instanceof WP_Error; }
+function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
+function apply_filters( $hook, $value, ...$args ) { return $value; }
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-inheritance.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-runtime.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-browser-blueprint.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php`)};
+class WP_Codebox_Readiness_Test_Abilities {
+	use WP_Codebox_Abilities_Inheritance;
+	use WP_Codebox_Abilities_Browser_Runtime;
+	use WP_Codebox_Abilities_Browser_Blueprint;
+	use WP_Codebox_Abilities_Execution;
+}
+$method = new ReflectionMethod( WP_Codebox_Readiness_Test_Abilities::class, 'browser_ready_to_code_signal' );
+$generic = $method->invoke( null, array(
+	'goal' => 'Materialize a static artifact.',
+	'runtime_requirements' => array( 'requires_provider' => false ),
+), array( 'plugins' => array(), 'components' => array() ) );
+$provider = $method->invoke( null, array(
+	'goal' => 'Run an AI coding agent.',
+	'runtime_requirements' => array( 'requires_provider' => true ),
+), array( 'plugins' => array(), 'components' => array() ) );
+echo json_encode( array( 'generic' => $generic, 'provider' => $provider ), JSON_UNESCAPED_SLASHES );
+`)
+
+assert.equal(readiness.generic.emitted, true)
+assert.equal(readiness.generic.requirement_metadata.runtime_requirements.requires_provider, false)
+assert.equal(readiness.generic.requirements.provider_plugin, true)
+assert.equal(readiness.generic.requirements.provider_secret, true)
+assert.deepEqual(readiness.generic.missing, [])
+assert.equal(readiness.provider.emitted, false)
+assert.deepEqual(readiness.provider.missing, ["provider_secret"])
 
 console.log("browser task builder ok")

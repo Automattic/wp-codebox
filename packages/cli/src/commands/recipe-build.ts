@@ -1,8 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { buildGenericAbilityRuntimeRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
+import { buildGenericAbilityRuntimeRunRecipe, buildRuntimePackageRunRecipe, buildWordPressBenchRecipe, buildWordPressPhpunitRecipe, compileRecipeTemplate, type GenericAbilityRuntimeRunOptions, type RecipeTemplateInput, type RuntimePackageRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount, type WorkspaceRecipeStep } from "@automattic/wp-codebox-core"
 
 interface RecipeBuildOptions {
-  recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run"
+  recipeType: "phpunit" | "bench" | "template" | "generic-ability-runtime-run" | "runtime-package-run"
   optionsPath: string
   outputPath?: string
 }
@@ -50,7 +50,7 @@ interface WordPressBenchBuilderOptions {
 
 export async function runRecipeBuildCommand(args: string[]): Promise<number> {
   const options = parseRecipeBuildOptions(args)
-  const builderOptions = JSON.parse(await readFile(options.optionsPath, "utf8")) as WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput | GenericAbilityRuntimeRunOptions
+  const builderOptions = JSON.parse(await readFile(options.optionsPath, "utf8")) as WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput | GenericAbilityRuntimeRunOptions | RuntimePackageRunRecipeOptions
   const recipe = buildRecipe(options.recipeType, builderOptions)
   const json = `${JSON.stringify(recipe, null, 2)}\n`
 
@@ -63,7 +63,7 @@ export async function runRecipeBuildCommand(args: string[]): Promise<number> {
   return 0
 }
 
-function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput | GenericAbilityRuntimeRunOptions): WorkspaceRecipe {
+function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: WordPressPhpunitBuilderOptions | WordPressBenchBuilderOptions | RecipeTemplateInput | GenericAbilityRuntimeRunOptions | RuntimePackageRunRecipeOptions): WorkspaceRecipe {
   switch (recipeType) {
     case "phpunit": {
       const phpunitOptions = options as WordPressPhpunitBuilderOptions
@@ -119,12 +119,14 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
     }
     case "generic-ability-runtime-run":
       return buildGenericAbilityRuntimeRunRecipe(options as GenericAbilityRuntimeRunOptions)
+    case "runtime-package-run":
+      return buildRuntimePackageRunRecipe(options as RuntimePackageRunRecipeOptions)
   }
 }
 
 function parseRecipeBuildOptions(args: string[]): RecipeBuildOptions {
   const recipeType = args.shift()
-  if (recipeType !== "phpunit" && recipeType !== "bench" && recipeType !== "template" && recipeType !== "generic-ability-runtime-run") {
+  if (recipeType !== "phpunit" && recipeType !== "bench" && recipeType !== "template" && recipeType !== "generic-ability-runtime-run" && recipeType !== "runtime-package-run") {
     throw new Error(`Unknown recipe build type: ${recipeType ?? ""}`)
   }
 

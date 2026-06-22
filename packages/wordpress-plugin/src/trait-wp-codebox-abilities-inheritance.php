@@ -32,16 +32,6 @@ private static function browser_inheritance_resolution_payload( array $input ): 
 
 /** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed>|WP_Error */
 private static function browser_input_with_inheritance( array $input, array $inheritance ): array|WP_Error {
-	$provider_credentials = self::browser_provider_credentials( $input, $inheritance );
-	if ( is_wp_error( $provider_credentials ) ) {
-		return $provider_credentials;
-	}
-
-	$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::browser_provider_plugin_paths( $input ), self::browser_inheritance_provider_plugin_paths( $inheritance ) ) ) );
-	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ), self::string_list( $provider_credentials['secret_env'] ?? array() ) ) ) );
-	if ( ! empty( $provider_credentials ) ) {
-		$input['_wp_codebox_provider_credentials'] = $provider_credentials;
-	}
 	if ( class_exists( 'WP_Codebox_Runtime_Profile_Resolver' ) ) {
 		$resolved = WP_Codebox_Runtime_Profile_Resolver::apply_to_input( $input, $inheritance );
 		if ( is_wp_error( $resolved ) ) {
@@ -49,6 +39,21 @@ private static function browser_input_with_inheritance( array $input, array $inh
 		}
 
 		$input = WP_Codebox_Browser_Task_Builder::apply_runtime_profile( $resolved );
+	}
+
+	$input['runtime_requirements'] = self::browser_runtime_requirements( $input, $inheritance );
+	$provider_credentials = array();
+	if ( self::browser_requires_provider( $input, $inheritance ) ) {
+		$provider_credentials = self::browser_provider_credentials( $input, $inheritance );
+		if ( is_wp_error( $provider_credentials ) ) {
+			return $provider_credentials;
+		}
+	}
+
+	$input['provider_plugin_paths'] = array_values( array_unique( array_merge( self::browser_provider_plugin_paths( $input ), self::browser_inheritance_provider_plugin_paths( $inheritance ) ) ) );
+	$input['secret_env']            = array_values( array_unique( array_merge( self::browser_secret_env_names( $input ), self::browser_inheritance_secret_env_names( $inheritance ), self::string_list( $provider_credentials['secret_env'] ?? array() ) ) ) );
+	if ( ! empty( $provider_credentials ) ) {
+		$input['_wp_codebox_provider_credentials'] = $provider_credentials;
 	}
 
 	if ( class_exists( 'WP_Codebox_Runtime_Recipe_Resolver' ) ) {
@@ -61,6 +66,38 @@ private static function browser_input_with_inheritance( array $input, array $inh
 	}
 
 	return $input;
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
+private static function browser_runtime_requirements( array $input, array $inheritance ): array {
+	$requirements = is_array( $input['runtime_requirements'] ?? null ) ? WP_Codebox_Browser_Task_Builder::runtime_requirements( $input['runtime_requirements'] ) : array();
+	if ( array_key_exists( 'requires_provider', $requirements ) ) {
+		return $requirements;
+	}
+
+	return array(
+		'schema'            => 'wp-codebox/runtime-requirements/v1',
+		'requires_provider' => self::browser_has_provider_inputs( $input, $inheritance ),
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance */
+private static function browser_requires_provider( array $input, array $inheritance ): bool {
+	$requirements = self::browser_runtime_requirements( $input, $inheritance );
+	return (bool) ( $requirements['requires_provider'] ?? false );
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance */
+private static function browser_has_provider_inputs( array $input, array $inheritance ): bool {
+	$runtime_profile = is_array( $input['runtime_profile'] ?? null ) ? $input['runtime_profile'] : array();
+	return '' !== trim( (string) ( $input['provider'] ?? '' ) )
+		|| '' !== trim( (string) ( $input['model'] ?? '' ) )
+		|| ! empty( $runtime_profile['provider_plugins'] ?? array() )
+		|| ! empty( array_filter( self::string_list( $runtime_profile['capabilities'] ?? array() ), static fn( string $capability ): bool => str_starts_with( $capability, 'provider.' ) ) )
+		|| ! empty( self::browser_provider_plugin_paths( $input ) )
+		|| ! empty( self::browser_inheritance_provider_plugin_paths( $inheritance ) )
+		|| ! empty( self::browser_secret_env_names( $input ) )
+		|| ! empty( self::browser_inheritance_secret_env_names( $inheritance ) );
 }
 
 /** @param array<string,mixed> $input Ability input. @param array<string,mixed> $task_input Normalized task input. @param array<int,array<string,mixed>> $artifacts Browser artifact specs. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */

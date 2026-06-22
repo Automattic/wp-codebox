@@ -102,17 +102,17 @@ add_filter(
 	// test maps outward to a host ability registry. The host does not parse
 	// Codebox sandbox tool policy schemas.
 	static fn(): array => array(
-		'schema'     => WP_Codebox_Runner_Workspace_Backend::SCHEMA,
-		'id'         => 'fake-runner-workspace-backend',
-		'operations' => array(
-			'workspace_adopt'                => array( 'ability' => 'fake-runner-workspace-backend/workspace-adopt' ),
-			'workspace_show'                 => array( 'ability' => 'fake-runner-workspace-backend/workspace-show' ),
-			'workspace_clone'                => array( 'ability' => 'fake-runner-workspace-backend/workspace-clone' ),
-			'workspace_worktree_add'         => array( 'ability' => 'fake-runner-workspace-backend/workspace-worktree-add' ),
-			'workspace_git_status'           => array( 'ability' => 'fake-runner-workspace-backend/workspace-git-status' ),
-			'workspace_git_diff'             => array( 'ability' => 'fake-runner-workspace-backend/workspace-git-diff' ),
-			'run_runner_workspace_command'   => array( 'ability' => 'fake-runner-workspace-backend/run-runner-workspace-command' ),
-			'publish_runner_workspace'       => array( 'ability' => 'fake-runner-workspace-backend/publish-runner-workspace' ),
+		'schema'    => WP_Codebox_Runner_Workspace_Backend::SCHEMA,
+		'id'        => 'fake-runner-workspace-backend',
+		'abilities' => array(
+			'workspace_adopt'              => 'fake-runner-workspace-backend/workspace-adopt',
+			'workspace_show'               => 'fake-runner-workspace-backend/workspace-show',
+			'workspace_clone'              => 'fake-runner-workspace-backend/workspace-clone',
+			'workspace_worktree_add'       => 'fake-runner-workspace-backend/workspace-worktree-add',
+			'workspace_git_status'         => 'fake-runner-workspace-backend/workspace-git-status',
+			'workspace_git_diff'           => 'fake-runner-workspace-backend/workspace-git-diff',
+			'run_runner_workspace_command' => 'fake-runner-workspace-backend/run-runner-workspace-command',
+			'publish_runner_workspace'     => 'fake-runner-workspace-backend/publish-runner-workspace',
 		),
 	)
 );
@@ -199,10 +199,10 @@ assert_no_backend_leak( $backend_failure, 'backend failure' );
 
 $GLOBALS['wp_codebox_test_filters']['wp_codebox_runner_workspace_backend'] = array(
 	static fn(): array => array(
-		'schema'     => WP_Codebox_Runner_Workspace_Backend::SCHEMA,
-		'id'         => 'fake-runner-workspace-backend',
-		'operations' => array(
-			'run_runner_workspace_command' => array( 'ability' => 'fake-runner-workspace-backend' ),
+		'schema'    => WP_Codebox_Runner_Workspace_Backend::SCHEMA,
+		'id'        => 'fake-runner-workspace-backend',
+		'abilities' => array(
+			'run_runner_workspace_command' => 'fake-runner-workspace-backend',
 		),
 	),
 );

@@ -138,7 +138,7 @@ WP Codebox rejects product ability paths that pass raw `code` or `code_file`. De
 }
 ```
 
-`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. `agent_task_run_result` is the caller-facing `wp-codebox/agent-task-run-result/v1` contract emitted by the CLI and WordPress ability surfaces. Orchestrators should read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, and `agent_task_run_result.metadata` instead of parsing stdout or raw runtime internals. Node consumers can also normalize older or nested envelopes with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`; the package exports `AGENT_TASK_RUN_RESULT_SCHEMA` and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` for contract checks. The normalized envelope groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
+`agent_task_result` is the sandbox semantic result `wp-codebox/agent-task-result/v1`. `agent_task_run_result` is the caller-facing `wp-codebox/agent-task-run-result/v1` contract emitted by the CLI and WordPress ability surfaces. Orchestrators read `agent_task_run_result.status`, `agent_task_run_result.success`, `agent_task_run_result.refs`, and `agent_task_run_result.metadata` as the stable result envelope. Node consumers can also normalize older or nested envelopes with `normalizeAgentTaskRunResult()` from `@automattic/wp-codebox-core` or `wp-codebox-workspace/core`; the package exports `AGENT_TASK_RUN_RESULT_SCHEMA` and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` for contract checks. The normalized envelope groups stable artifact refs into `artifact_bundles`, `changed_files`, `patches`, `transcripts`, `logs`, and `runtimes`, and classifies terminal statuses including `succeeded`, `failed`, `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`.
 
 Failed `agent-task-run` responses include `wp-codebox/agent-task-run-failure-evidence/v1` in `failure_evidence` when available. This block is safe for orchestrators to persist with job failure records and includes phase, command, exit code, redacted stdout/stderr snippets, runtime and sandbox identifiers, artifact references, diagnostics, and serialized error data.
 
@@ -186,9 +186,10 @@ External orchestrators own policy around repository selection, authorization, re
 
 Runner workspace backends are integration-owned. A site that wants these abilities
 to perform real workspace operations must register a backend through the
-`wp_codebox_runner_workspace_backend` filter. If no backend is registered, the
-WP Codebox abilities return an unavailable backend result instead of naming or
-assuming a downstream workspace system.
+`wp_codebox_runner_workspace_backend` filter using the generic
+`wp-codebox/runner-workspace-backend/v1` config shape. If no backend is
+registered, the WP Codebox abilities return an unavailable backend result instead
+of naming or assuming a downstream workspace system.
 
 Preferred ability names for external callers are:
 

@@ -10,7 +10,7 @@ const source = [
 const requiredSnippets = [
   "function wp_codebox_browser_runtime_ability_tool_declarations",
   "function wp_codebox_browser_runtime_resolve_ability_tools",
-  "add_filter( \\'agents_api_resolved_tools\\'",
+  "WP_Codebox_Agents_API_Adapter::legacy_resolved_tools_filter()",
   "apply_filters( \\'wp_codebox_browser_runtime_ability_tools\\'",
   "$task_input[\\'ability_tools\\']",
   "array_merge( $sandbox_tool_ids, $ability_tool_ids )",

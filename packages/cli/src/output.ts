@@ -294,7 +294,7 @@ export function printHelp(): void {
   wp-codebox doctor [--json] [--fix] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox cleanup [--json] [--archive-root <dir>] [--stale-after-seconds <n>]
   wp-codebox workspace-policy check --workspace-root <path> --writable-root <path> [options]
-  wp-codebox recipe build phpunit|bench|template|generic-ability-runtime-run --options <path> [--output <path>]
+  wp-codebox recipe build phpunit|bench|template|generic-ability-runtime-run|runtime-package-run --options <path> [--output <path>]
   wp-codebox recipe validate --recipe <path> [--json]
   wp-codebox bench matrix --matrix <path> [--recipe <path>] [--artifacts <dir>] [--json]
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]

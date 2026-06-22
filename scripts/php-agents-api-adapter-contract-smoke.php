@@ -31,6 +31,21 @@ final class WP_Ability {
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php';
 
+function assert_no_agents_api_schema_leaks( mixed $value, string $path = '$' ): void {
+	if ( is_string( $value ) && ( preg_match( '#^agents-api(?:[./][A-Za-z0-9_-]+)*/v[0-9]+$#', $value ) || preg_match( '#^agents-api\.[A-Za-z0-9_.-]+$#', $value ) ) ) {
+		fwrite( STDERR, "Raw Agents API schema leaked at {$path}: {$value}\n" );
+		exit( 1 );
+	}
+
+	if ( ! is_array( $value ) ) {
+		return;
+	}
+
+	foreach ( $value as $key => $item ) {
+		assert_no_agents_api_schema_leaks( $item, $path . '.' . (string) $key );
+	}
+}
+
 $names = WP_Codebox_Agents_API_Adapter::ability_names();
 assert( 'agents/chat' === $names['chat'] );
 assert( 'agents/run-task' === $names['run_task'] );
@@ -39,20 +54,26 @@ assert( 'agents/get-task-run' === $names['get_task_run'] );
 assert( 'agents/get-chat-run' === $names['get_chat_run'] );
 
 $adapter = new WP_Codebox_Agents_API_Adapter();
-assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::CHAT ) );
+assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() ) );
 
-$GLOBALS['wp_codebox_test_abilities'][ WP_Codebox_Agents_API_Adapter::CHAT ]                = new WP_Ability( array( 'schema' => 'agents-api/chat-result/v1' ) );
-$GLOBALS['wp_codebox_test_abilities'][ WP_Codebox_Agents_API_Adapter::RUN_TASK ]            = new WP_Ability( array( 'schema' => 'agents-api/task-result/v1' ) );
-$GLOBALS['wp_codebox_test_abilities'][ WP_Codebox_Agents_API_Adapter::RUN_RUNTIME_PACKAGE ] = new WP_Ability( array( 'schema' => 'agents-api/runtime-package-result/v1' ) );
-$GLOBALS['wp_codebox_test_abilities'][ WP_Codebox_Agents_API_Adapter::GET_TASK_RUN ]        = new WP_Ability( array( 'status' => 'running' ) );
-$GLOBALS['wp_codebox_test_abilities'][ WP_Codebox_Agents_API_Adapter::GET_CHAT_RUN ]        = new WP_Ability( array( 'status' => 'running' ) );
+$GLOBALS['wp_codebox_test_abilities'][ $names['chat'] ]                = new WP_Ability( array( 'schema' => 'agents-api/chat-result/v1', 'raw' => array( 'schema' => 'agents-api.chat-result' ) ) );
+$GLOBALS['wp_codebox_test_abilities'][ $names['run_task'] ]            = new WP_Ability( array( 'schema' => 'agents-api/task-result/v1' ) );
+$GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ] = new WP_Ability( array( 'schema' => 'agents-api/runtime-package-result/v1' ) );
+$GLOBALS['wp_codebox_test_abilities'][ $names['get_task_run'] ]        = new WP_Ability( array( 'status' => 'running' ) );
+$GLOBALS['wp_codebox_test_abilities'][ $names['get_chat_run'] ]        = new WP_Ability( array( 'status' => 'running' ) );
 
-assert( true === $adapter->is_available( WP_Codebox_Agents_API_Adapter::CHAT ) );
-assert( 'agents-api/chat-result/v1' === $adapter->chat( array( 'message' => 'hello' ) )['schema'] );
-assert( 'agents-api/task-result/v1' === $adapter->run_task( array( 'goal' => 'ship' ) )['schema'] );
-assert( 'agents-api/runtime-package-result/v1' === $adapter->run_runtime_package( array( 'package' => array() ) )['schema'] );
+assert( true === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() ) );
+$chat = $adapter->chat( array( 'message' => 'hello' ) );
+$task = $adapter->run_task( array( 'goal' => 'ship' ) );
+$package = $adapter->run_runtime_package( array( 'package' => array() ) );
+assert( 'wp-codebox/agent-chat-result/v1' === $chat['schema'] );
+assert( 'wp-codebox/agent-task-result/v1' === $task['schema'] );
+assert( 'wp-codebox/runtime-package-result/v1' === $package['schema'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
+assert_no_agents_api_schema_leaks( $chat, 'chat' );
+assert_no_agents_api_schema_leaks( $task, 'task' );
+assert_no_agents_api_schema_leaks( $package, 'package' );
 
 $missing = $adapter->cancel_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) );
 assert( is_wp_error( $missing ) );

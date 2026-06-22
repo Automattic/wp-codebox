@@ -60,9 +60,9 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 			'retryable'   => false,
 			'diagnostics' => array_filter(
 				array(
-					'agents_api_status'      => $has_run_outcome ? $run_status : null,
-					'agents_api_stop_reason' => $has_run_outcome ? $stop_reason : null,
-					'agents_api_completed'   => $has_run_outcome && array_key_exists( 'completed', $run_outcome ) ? (bool) $run_outcome['completed'] : null,
+					'upstream_run_status'      => $has_run_outcome ? $run_status : null,
+					'upstream_run_stop_reason' => $has_run_outcome ? $stop_reason : null,
+					'upstream_run_completed'   => $has_run_outcome && array_key_exists( 'completed', $run_outcome ) ? (bool) $run_outcome['completed'] : null,
 					'pending_runtime_tool'   => $has_run_outcome ? $pending_runtime_tool : null,
 					'max_turns_reached'     => $max_turns_reached,
 				),
@@ -71,7 +71,7 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		);
 
 		if ( $has_run_outcome ) {
-			$outcome['metadata'] = array( 'agents_api' => array( 'run_outcome' => $run_outcome ) );
+			$outcome['metadata'] = array( 'upstream_run' => $this->codebox_run_outcome_dto( $run_outcome ) );
 		}
 
 		if ( $has_artifact_changes && $false_positive ) {
@@ -191,7 +191,17 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		return array();
 	}
 
-	/** @param array<string,mixed> $run_outcome Stable Agents API run outcome. @return array<string,mixed> */
+	/** @param array<string,mixed> $run_outcome Stable upstream run outcome. @return array<string,mixed> */
+	private function codebox_run_outcome_dto( array $run_outcome ): array {
+		$dto = $run_outcome;
+		if ( isset( $dto['schema'] ) ) {
+			$dto['schema'] = 'wp-codebox/upstream-run-outcome/v1';
+		}
+
+		return $dto;
+	}
+
+	/** @param array<string,mixed> $run_outcome Stable upstream run outcome. @return array<string,mixed> */
 	private function agents_api_provider_error_details( array $run_outcome ): array {
 		$provider_error = is_array( $run_outcome['provider_error'] ?? null ) ? $run_outcome['provider_error'] : array();
 		if ( empty( $provider_error ) && is_array( $run_outcome['failure'] ?? null ) ) {

@@ -37,6 +37,10 @@ assert.match(runExternalHttpGuardrailStep, /wp-codebox\/wordpress-external-http-
 assert.match(runExternalHttpGuardrailStep, /wp_codebox_bench_install_external_http_guardrail/)
 assert.match(commandStepRecord, /'schema' => 'wp-codebox\/bench-command-step\/v1'/)
 assert.doesNotMatch(runCommandStep, /\$type === 'ability'/)
+assert.ok(
+  benchRunner.indexOf("$plugins_to_activate[] = $dependency_file") < benchRunner.indexOf("$plugins_to_activate[] = $plugin_file"),
+  "wordpress.bench should activate dependency plugins before the component plugin",
+)
 
 const commandStepHelpers = [
   "wp_codebox_bench_metric_prefix",

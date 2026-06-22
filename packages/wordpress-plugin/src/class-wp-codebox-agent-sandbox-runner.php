@@ -64,18 +64,59 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public function run( array $input ): array|WP_Error {
+		return $this->run_runtime_execution( $input );
+	}
+
+	/**
+	 * Prepare, execute, and normalize a host-side Codebox runtime execution.
+	 *
+	 * This is the public PHP contract for callers that need the same behavior as
+	 * the host agent task ability without shelling out to `wp-codebox recipe-run`.
+	 *
+	 * @param array<string,mixed> $input Ability input.
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function run_runtime_execution( array $input ): array|WP_Error {
 		if ( ! $this->process_runner->shell_available() ) {
 			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
 		}
 
-		$prepared = $this->prepare_agent_task_run( $input );
+		$prepared = $this->prepare_runtime_execution( $input );
 		if ( is_wp_error( $prepared ) ) {
 			return $prepared;
 		}
 
-		$result = $this->process_runner->run_command( (string) $prepared['command'], $prepared['process_secret_env'], (int) $prepared['timeout_seconds'] );
+		return $this->run_prepared_runtime_execution( $prepared );
+	}
 
-		return $this->complete_agent_task_run( $prepared, $result );
+	/**
+	 * Execute and normalize a previously prepared Codebox runtime execution.
+	 *
+	 * @param array<string,mixed> $prepared Prepared runtime execution from prepare_runtime_execution().
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function run_prepared_runtime_execution( array $prepared ): array|WP_Error {
+		if ( ! $this->process_runner->shell_available() ) {
+			return new WP_Error( 'wp_codebox_shell_unavailable', 'Shell execution is not available for WP Codebox.', array( 'status' => 500 ) );
+		}
+
+		$result = $this->execute_runtime( $prepared );
+
+		return $this->normalize_runtime_result( $prepared, $result );
+	}
+
+	/**
+	 * Execute a prepared Codebox runtime command.
+	 *
+	 * @param array<string,mixed> $prepared Prepared runtime execution from prepare_runtime_execution().
+	 * @return array<string,mixed>
+	 */
+	public function execute_runtime( array $prepared ): array {
+		return $this->process_runner->run_command(
+			(string) ( $prepared['command'] ?? '' ),
+			is_array( $prepared['process_secret_env'] ?? null ) ? $prepared['process_secret_env'] : array(),
+			(int) ( $prepared['timeout_seconds'] ?? 0 )
+		);
 	}
 
 	/**
@@ -116,7 +157,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$worker_id      = (string) $worker['id'];
 			$worker_path    = $paths['workers'] . DIRECTORY_SEPARATOR . $worker_id;
 			$worker_input   = $this->fanout_worker_input( $input, $worker, $parent_session_id, $worker_path );
-			$worker_prepare = $this->prepare_agent_task_run( $worker_input );
+			$worker_prepare = $this->prepare_runtime_execution( $worker_input );
 			if ( is_wp_error( $worker_prepare ) ) {
 				$prepared_workers[] = array(
 					'id'         => $worker_id,
@@ -197,7 +238,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
-	private function prepare_agent_task_run( array $input ): array|WP_Error {
+	public function prepare_runtime_execution( array $input ): array|WP_Error {
 		$input = $this->normalize_parent_task_request( $input );
 		if ( is_wp_error( $input ) ) {
 			return $input;
@@ -274,7 +315,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	}
 
 	/** @param array<string,mixed> $prepared Prepared run. @param array<string,mixed> $result Command result. @return array<string,mixed>|WP_Error */
-	private function complete_agent_task_run( array $prepared, array $result ): array|WP_Error {
+	public function normalize_runtime_result( array $prepared, array $result ): array|WP_Error {
 		return $this->run_result_normalizer->normalize(
 			$prepared,
 			$result,
@@ -564,7 +605,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 				$result = $captured['result'];
 
-				$completed = $this->complete_agent_task_run( $worker['prepared'], $result );
+				$completed = $this->normalize_runtime_result( $worker['prepared'], $result );
 				$runs[ (int) $worker['index'] ] = is_wp_error( $completed ) ? $this->result_builder->fanout_worker_error_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) ) : $this->result_builder->fanout_worker_success_result( $worker, $completed, (float) $worker['started_at'], microtime( true ) );
 				$this->write_json_file( (string) $worker['path'] . DIRECTORY_SEPARATOR . 'result.json', $runs[ (int) $worker['index'] ] );
 				$this->append_fanout_event( $fanout_path, array( 'event' => true === ( $runs[ (int) $worker['index'] ]['success'] ?? false ) ? 'worker.completed' : 'worker.failed', 'worker_id' => (string) $worker['id'], 'status' => (string) $runs[ (int) $worker['index'] ]['status'] ) );

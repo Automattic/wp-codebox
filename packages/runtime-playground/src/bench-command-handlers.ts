@@ -1072,13 +1072,13 @@ $plugins_to_activate = array();
 $plugin_roles = array();
 $activated_plugins = array();
 $plugin_file = wp_codebox_bench_plugin_file_for_slug($plugin_slug, 'component');
-$plugins_to_activate[] = $plugin_file;
 $plugin_roles[$plugin_file] = 'component';
 foreach (is_array($dependency_slugs) ? $dependency_slugs : array() as $dependency_slug) {
     $dependency_file = wp_codebox_bench_plugin_file_for_slug((string) $dependency_slug, 'dependency');
     $plugins_to_activate[] = $dependency_file;
     $plugin_roles[$dependency_file] = 'dependency';
 }
+$plugins_to_activate[] = $plugin_file;
 $plugins_to_activate = array_values(array_unique($plugins_to_activate));
 foreach ($plugins_to_activate as $plugin_to_activate) {
     wp_codebox_bench_assert_plugin_autoload_ready($plugin_to_activate);
@@ -1087,22 +1087,7 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
 $pre_plugins_loaded_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('plugins_loaded');
 $pre_init_callbacks = wp_codebox_bench_snapshot_wordpress_hook_callbacks('init');
 
-foreach (array($plugin_file) as $plugin_to_activate) {
-    if (is_plugin_active($plugin_to_activate)) {
-        continue;
-    }
-    $activation = activate_plugin($plugin_to_activate);
-    if (is_wp_error($activation)) {
-        throw new RuntimeException('wordpress.bench failed to activate plugin "' . $plugin_to_activate . '". ' . wp_codebox_bench_plugin_load_diagnostic($plugin_to_activate, $plugin_roles[$plugin_to_activate] ?? 'plugin', $activation->get_error_message()));
-    }
-    $activated_plugins[] = $plugin_to_activate;
-}
-wp_codebox_bench_include_plugin_file($plugin_file, $plugin_roles[$plugin_file] ?? 'component');
-
 foreach ($plugins_to_activate as $plugin_to_activate) {
-    if ($plugin_to_activate === $plugin_file) {
-        continue;
-    }
     if (!is_plugin_active($plugin_to_activate)) {
         $activation = activate_plugin($plugin_to_activate);
         if (is_wp_error($activation)) {

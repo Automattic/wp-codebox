@@ -24,6 +24,117 @@ public static function run_agent_task_fanout( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_runtime_package( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Agents_API_Adapter() )->run_runtime_package( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_runtime_task( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Runtime_Task_Runner() )->run( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_wordpress_workload( array $input ): array|WP_Error {
+	$unsafe = self::unsafe_execution_fields( $input );
+	if ( ! empty( $unsafe ) ) {
+		return new WP_Error( 'wp_codebox_wordpress_workload_unsafe_input', 'wp-codebox/run-wordpress-workload does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
+	}
+
+	return self::unsupported_public_runtime_envelope(
+		'wp-codebox/wordpress-workload-run-result/v1',
+		'unsupported',
+		'wp_codebox_wordpress_workload_runner_unavailable',
+		'The WordPress workload ability contract is registered, but no safe workload runner is available in the WordPress plugin yet.',
+		array(
+			'request'   => array(
+				'schema' => (string) ( $input['schema'] ?? 'wp-codebox/wordpress-workload-run/v1' ),
+			),
+			'artifacts' => array(),
+			'metadata'  => array( 'canonical_ability' => 'wp-codebox/run-wordpress-workload' ),
+		)
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function run_fuzz_suite( array $input ): array|WP_Error {
+	$unsafe = self::unsafe_execution_fields( $input );
+	if ( ! empty( $unsafe ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_suite_unsafe_input', 'wp-codebox/run-fuzz-suite does not accept raw code execution fields.', array( 'status' => 400, 'unsafe_fields' => $unsafe ) );
+	}
+
+	$cases = is_array( $input['cases'] ?? null ) ? $input['cases'] : array();
+	return self::unsupported_public_runtime_envelope(
+		'wp-codebox/fuzz-suite-result/v1',
+		'unsupported',
+		'wp_codebox_fuzz_suite_runner_unavailable',
+		'The fuzz suite ability contract is registered, but no safe fuzz runner is available in the WordPress plugin yet.',
+		array(
+			'suite'        => array_filter(
+				array(
+					'id'      => (string) ( $input['id'] ?? '' ),
+					'version' => (string) ( $input['version'] ?? '' ),
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'summary'      => array( 'total' => count( $cases ), 'passed' => 0, 'failed' => 0, 'error' => 0, 'skipped' => count( $cases ) ),
+			'cases'        => array(),
+			'artifactRefs' => array(),
+			'metadata'     => array( 'canonical_ability' => 'wp-codebox/run-fuzz-suite' ),
+		)
+	);
+}
+
+/** @return array<string,mixed> */
+private static function unsupported_public_runtime_envelope( string $schema, string $status, string $code, string $message, array $extra ): array {
+	return array_merge(
+		array(
+			'success'     => false,
+			'schema'      => $schema,
+			'status'      => $status,
+			'diagnostics' => array(
+				array(
+					'code'     => $code,
+					'severity' => 'error',
+					'message'  => $message,
+				),
+			),
+		),
+		$extra
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return string[] */
+private static function unsafe_execution_fields( array $input ): array {
+	$unsafe = array();
+	foreach ( array( 'command' ) as $field ) {
+		if ( array_key_exists( $field, $input ) ) {
+			$unsafe[] = $field;
+		}
+	}
+	self::collect_unsafe_execution_fields( $input, '', $unsafe );
+
+	return array_values( array_unique( $unsafe ) );
+}
+
+/** @param mixed $value Input value. @param string $path Current input path. @param string[] $unsafe Unsafe path accumulator. */
+private static function collect_unsafe_execution_fields( mixed $value, string $path, array &$unsafe ): void {
+	if ( ! is_array( $value ) ) {
+		return;
+	}
+
+	foreach ( $value as $key => $entry ) {
+		$field = is_string( $key ) ? $key : (string) $key;
+		$next_path = '' === $path ? $field : $path . '.' . $field;
+		if ( in_array( $field, array( 'code', 'php', 'php_code', 'raw_code', 'eval', 'shell' ), true ) ) {
+			$unsafe[] = $next_path;
+			continue;
+		}
+
+		self::collect_unsafe_execution_fields( $entry, $next_path, $unsafe );
+	}
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function request_host_delegation( array $input ): array|WP_Error {
 	return self::execute_host_delegation_request( $input );
 }
@@ -83,7 +194,8 @@ public static function create_browser_playground_session( array $input ): array|
 	}
 	$ready_to_code = self::browser_ready_to_code_signal( $input, $runtime );
 	if ( false === ( $ready_to_code['emitted'] ?? false ) ) {
-		return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
+		$blocked_session = self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
+		return self::browser_session_response_for_input( $blocked_session, $input );
 	}
 
 	$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
@@ -93,7 +205,7 @@ public static function create_browser_playground_session( array $input ): array|
 	}
 	$materialization = self::browser_materialization_contract( $recipe );
 
-	return array(
+	$session = array(
 		'success'          => true,
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
 		'execution'        => 'browser-playground',
@@ -142,6 +254,8 @@ public static function create_browser_playground_session( array $input ): array|
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+
+	return self::browser_session_response_for_input( $session, $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -406,6 +520,54 @@ public static function boot_browser_contained_site_session( array $input ): arra
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function preview_boot_ref( array $input ): array|WP_Error {
+	$boot_result = self::boot_browser_contained_site_session( $input );
+	if ( is_wp_error( $boot_result ) ) {
+		return $boot_result;
+	}
+
+	$boot           = is_array( $boot_result['boot'] ?? null ) ? $boot_result['boot'] : array();
+	$contained_site = is_array( $boot_result['contained_site'] ?? null ) ? $boot_result['contained_site'] : array();
+	$preview_lease  = is_array( $boot_result['preview_lease'] ?? null ) ? $boot_result['preview_lease'] : array();
+	$diagnostics    = is_array( $boot_result['startup_diagnostics'] ?? null ) ? $boot_result['startup_diagnostics'] : array();
+	$blueprint_ref  = is_array( $boot['blueprint_ref'] ?? null ) ? $boot['blueprint_ref'] : array();
+	$preview        = is_array( $boot['preview'] ?? null ) ? $boot['preview'] : $preview_lease;
+
+	$stable_boot = array_filter(
+		array(
+			'schema'        => 'wp-codebox/browser-contained-site-boot/v1',
+			'session_id'    => (string) ( $boot['session_id'] ?? '' ),
+			'site_id'       => (string) ( $boot['site_id'] ?? '' ),
+			'status'        => (string) ( $boot['status'] ?? '' ),
+			'preview'       => $preview,
+			'blueprint_ref' => $blueprint_ref,
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+
+	return array_filter(
+		array(
+			'success'             => true === ( $boot_result['success'] ?? false ),
+			'schema'              => 'wp-codebox/preview-boot-ref/v1',
+			'boot'                => $stable_boot,
+			'blueprint_ref'       => $blueprint_ref,
+			'preview_lease'       => $preview_lease,
+			'startup_diagnostics' => $diagnostics,
+			'compatibility'       => array_filter(
+				array(
+					'contained_site_schema' => (string) ( $contained_site['schema'] ?? '' ),
+					'session_result_schema' => (string) ( $boot_result['schema'] ?? '' ),
+					'legacy_contained_site' => $contained_site,
+					'legacy_session_result' => $boot_result,
+				),
+				static fn( mixed $value ): bool => array() !== $value && '' !== $value
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function destroy_browser_contained_site_session( array $input ): array|WP_Error {
 	$contained_site = self::browser_contained_site_public_input( is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array() );
 	$site_id        = (string) ( $input['site_id'] ?? $contained_site['site_id'] ?? '' );
@@ -442,6 +604,7 @@ public static function hydrate_browser_blueprint_ref( array $input ): array|WP_E
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
+	$input['include_raw_browser_session'] = true;
 	$session = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $session ) ) {
 		return $session;
@@ -510,6 +673,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 private static function prepare_browser_task_contract( array $input ): array|WP_Error {
+	$input['include_raw_browser_session'] = true;
 	$primary = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $primary ) ) {
 		return $primary;
@@ -695,7 +859,7 @@ private static function browser_contract_execution_metrics( array $primary, arra
 	return array_filter(
 		array(
 			'schema'           => 'wp-codebox/execution-metrics/v1',
-			'executor'         => 'wp-codebox/browser-playground',
+			'executor'         => WP_Codebox_Agents_API_Adapter::browser_executor_target_id(),
 			'phase'            => 'contract',
 			'status'           => true === ( $primary['success'] ?? false ) ? 'pending' : (string) ( $primary['status'] ?? 'blocked' ),
 			'execution'        => 'browser-playground',
@@ -1193,6 +1357,27 @@ private static function blocked_browser_playground_session( string $session_id, 
 	);
 }
 
+/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+private static function browser_session_response_for_input( array $session, array $input ): array {
+	$product_dto = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	if ( self::include_raw_browser_session_contract( $input ) ) {
+		$session['product'] = $product_dto;
+		return $session;
+	}
+
+	return $product_dto;
+}
+
+/** @param array<string,mixed> $input Ability input. */
+private static function include_raw_browser_session_contract( array $input ): bool {
+	if ( true === ( $input['include_raw_browser_session'] ?? false ) || true === ( $input['include_internal_browser_session'] ?? false ) ) {
+		return true;
+	}
+
+	$debug = is_array( $input['debug'] ?? null ) ? $input['debug'] : array();
+	return true === ( $debug['include_raw_browser_session'] ?? false );
+}
+
 /** @return array<string,mixed> */
 private static function browser_contained_site_envelope( array $input, string $session_id, array $playground, array $runtime, array $prepared_runtime, string $status ): array {
 	$source_digest = self::browser_contained_site_source_digest( $input, $playground, $runtime, $prepared_runtime );
@@ -1644,9 +1829,11 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 	$inherit      = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
 	$connectors   = array_values( array_filter( array_map( 'strval', is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array() ) ) );
 	$secret_env   = array_values( array_filter( array_map( 'strval', is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array() ) ) );
+	$runtime_requirements = self::browser_runtime_requirements( $input, array( 'connectors' => array(), 'settings' => array() ) );
+	$requires_provider    = (bool) ( $runtime_requirements['requires_provider'] ?? false );
 	$requirements = array(
-		'provider_plugin'   => ! empty( $provider_plugin_paths ) && self::all_paths_ready( $provider_plugin_paths ),
-		'provider_secret'   => ! empty( $connectors ) || ! empty( $secret_env ),
+		'provider_plugin'   => ! $requires_provider || empty( $provider_plugin_paths ) || self::all_paths_ready( $provider_plugin_paths ),
+		'provider_secret'   => ! $requires_provider || ! empty( $connectors ) || ! empty( $secret_env ),
 		'runtime_dependencies' => true,
 	);
 	foreach ( self::browser_ready_to_code_component_requirements( $input, $runtime ) as $name => $ready ) {
@@ -1671,8 +1858,9 @@ private static function browser_ready_to_code_signal( array $input, array $runti
 		'message'      => $emitted ? 'Browser Playground sandbox is ready to code.' : 'Browser Playground sandbox is not ready to code.',
 		'requirements' => $requirements,
 		'requirement_metadata' => array(
-		'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
-		'components'           => self::browser_runtime_component_readiness_metadata( $input, $runtime ),
+			'runtime_requirements'  => $runtime_requirements,
+			'runtime_dependencies' => self::browser_runtime_readiness_metadata( $runtime ),
+			'components'           => self::browser_runtime_component_readiness_metadata( $input, $runtime ),
 		),
 		'missing'      => $missing,
 	);

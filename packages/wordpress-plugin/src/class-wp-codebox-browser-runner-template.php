@@ -711,7 +711,7 @@ $elapsed_ms = max( 0, (int) round( ( microtime( true ) - $started_monotonic ) * 
 
 return array_filter( array(
     "schema" => "wp-codebox/execution-metrics/v1",
-    "executor" => "wp-codebox/browser-playground",
+    "executor" => "' . WP_Codebox_Agents_API_Adapter::browser_executor_target_id() . '",
     "phase" => "execution",
     "status" => $failed ? "error" : "completed",
     "execution" => "browser-playground",
@@ -1131,12 +1131,12 @@ $tool_def = is_array( $request[\'tool_def\'] ?? null ) ? $request[\'tool_def\'] 
 return $handler->handle_tool_call( $parameters, $tool_def );
 }
 
-add_filter( \'agents_api_resolved_tools\', function ( array $tools, $mode, array $context ) {
+add_filter( WP_Codebox_Agents_API_Adapter::legacy_resolved_tools_filter(), function ( array $tools, $mode, array $context ) {
 	unset( $context );
 	return wp_codebox_browser_runtime_merge_ability_tools( $tools, $mode );
 }, 20, 3 );
 
-add_filter( \'wp_agent_runtime_resolved_tools\', function ( array $tools, $mode, array $args ) {
+add_filter( WP_Codebox_Agents_API_Adapter::runtime_resolved_tools_filter(), function ( array $tools, $mode, array $args ) {
 	global $wp_codebox_browser_artifact_environment;
 	$environment = is_array( $wp_codebox_browser_artifact_environment ?? null ) ? $wp_codebox_browser_artifact_environment : array();
 	$root = (string) ( $environment[\'root\'] ?? \'wp-codebox-output/\' );

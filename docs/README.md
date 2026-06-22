@@ -18,6 +18,9 @@ unless this index says otherwise.
 - [Parent tool bridge contract](./parent-tool-bridge-contract.md) defines the
   Codebox-owned host-dispatched tool envelope, request/result schemas, sandbox
   env injection metadata, transcript artifact refs, and failure behavior.
+- [Runner workspace backend contract](./runner-workspace-backend-contract.md)
+  defines the generic backend filter schema behind public runner workspace
+  abilities.
 - [External apply adapter contract](./external-apply-adapter-contract.md)
   documents reviewed artifact apply-back.
 - [Agent fanout contract](./agent-fanout-contract.md) documents generic

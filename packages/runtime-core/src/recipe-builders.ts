@@ -1,7 +1,6 @@
 import type { WorkspaceRecipe, WorkspaceRecipeExtraPlugin, WorkspaceRecipeMount, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { commandArg, commandJsonArg, commandStringListArg } from "./command-codecs.js"
-export { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, type GenericAbilityRuntimeComponentContract, type GenericAbilityRuntimeProviderPluginContract, type GenericAbilityRuntimeRunOptions } from "./generic-ability-runtime-run.js"
-export { buildWordPressWorkloadRunRecipe, playgroundPreviewUrl, wordpressAbilityStep, wordpressWorkloadRunRecipe, PLAYGROUND_PREVIEW_URL_SCHEMA, WORDPRESS_ABILITY_STEP_SCHEMA, WORDPRESS_WORKLOAD_RUN_SCHEMA, type PlaygroundPreviewUrlContract, type PlaygroundPreviewUrlMode, type PlaygroundPreviewUrlOptions, type WordPressAbilityStepOptions, type WordPressWorkloadRunRecipeOptions } from "./wordpress-workload-primitives.js"
+export { buildRuntimePackageRunRecipe, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA, runtimePackageExecutionInput, type RuntimePackageArtifactDeclaration, type RuntimePackageExecutionInput, type RuntimePackageOutputProjection, type RuntimePackageRunRecipeOptions } from "./runtime-package-execution.js"
 import { normalizeSharedMounts } from "./mount-primitives.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 
@@ -50,6 +49,8 @@ export interface WordPressBenchRecipeOptions {
   scenarioIds?: string[]
   lifecycle?: JsonObject
   resetPolicy?: JsonObject
+  prepareSteps?: WorkspaceRecipeStep[]
+  postSteps?: WorkspaceRecipeStep[]
 }
 
 export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = [], options: NormalizeRecipeMountsOptions = {}): WorkspaceRecipeMount[] {
@@ -127,6 +128,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
       mounts: normalizeRecipeMounts(options.mounts, { defaultMode: "readonly" }),
     },
     workflow: {
+      ...(options.prepareSteps && options.prepareSteps.length > 0 ? { before: normalizeRecipeSteps(options.prepareSteps, "prepareSteps") } : {}),
       steps: [{
         command: "wordpress.bench",
         args: [
@@ -142,7 +144,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
           commandJsonArg("lifecycle-json", options.lifecycle ?? {}),
           commandJsonArg("reset-policy-json", options.resetPolicy ?? {}),
         ],
-      }],
+      }, ...normalizeRecipeSteps(options.postSteps ?? [], "postSteps")],
     },
   }
 }

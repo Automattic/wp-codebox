@@ -6,6 +6,26 @@ export const RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA = "wp-codebox/runner-worksp
 export const RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA = "wp-codebox/runner-workspace-capture-result/v1" as const
 export const RUNNER_WORKSPACE_COMMAND_REQUEST_SCHEMA = "wp-codebox/runner-workspace-command-request/v1" as const
 export const RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA = "wp-codebox/runner-workspace-command-result/v1" as const
+export const RUNNER_WORKSPACE_BACKEND_FILTER = "wp_codebox_runner_workspace_backend" as const
+
+export const RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS = [
+  "workspace_adopt",
+  "workspace_show",
+  "workspace_clone",
+  "workspace_worktree_add",
+  "workspace_git_status",
+  "workspace_git_diff",
+  "run_runner_workspace_command",
+  "publish_runner_workspace",
+] as const
+
+export type RunnerWorkspaceBackendAbilityKey = typeof RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS[number]
+
+export interface RunnerWorkspaceBackendConfig {
+  id?: string
+  workspace_root_constant?: string
+  abilities: Partial<Record<RunnerWorkspaceBackendAbilityKey, string>>
+}
 
 export type RunnerWorkspacePublicationRequest = {
   schema?: typeof RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA

@@ -23,6 +23,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-agents-api-executors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-backend.php';
 require_once __DIR__ . '/class-wp-codebox-runner-workspace-adapter.php';
+require_once __DIR__ . '/class-wp-codebox-runtime-task-runner.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 
 final class WP_Codebox_Abilities {
@@ -103,6 +104,15 @@ final class WP_Codebox_Abilities {
 				'permission_callback' => array( self::class, 'can_hydrate_browser_blueprint_ref' ),
 			)
 		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/preview-boot-ref',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_preview_boot_ref' ),
+				'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+			)
+		);
 	}
 
 	public static function can_hydrate_browser_blueprint_ref(): bool {
@@ -128,6 +138,16 @@ final class WP_Codebox_Abilities {
 				'input_hash' => (string) $request->get_param( 'input_hash' ),
 			)
 		);
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_preview_boot_ref( WP_REST_Request $request ): array|WP_Error {
+		$input = $request->get_json_params();
+		if ( ! is_array( $input ) ) {
+			return new WP_Error( 'wp_codebox_preview_boot_ref_payload_invalid', 'Preview boot refs require a JSON object.', array( 'status' => 400 ) );
+		}
+
+		return self::preview_boot_ref( $input );
 	}
 
 	/**
@@ -175,7 +195,7 @@ final class WP_Codebox_Abilities {
 			$site_seed_schema  = self::site_seed_schema();
 			$inherit_schema    = self::inherit_schema();
 			$session_schema    = self::sandbox_session_schema();
-			$browser_session_schema = self::browser_playground_session_schema();
+			$browser_session_schema = self::browser_product_dto_schema();
 			$session_input     = self::sandbox_session_input_schema();
 			$preview_schema    = self::preview_input_schema();
 			$outcome_schema    = self::remediation_outcome_schema();
@@ -231,7 +251,7 @@ final class WP_Codebox_Abilities {
 			);
 			$agent_task_run_result_schema = array(
 				'type'        => 'object',
-				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers. Prefer this over stdout, raw run internals, or legacy status fields.',
+				'description' => 'Stable wp-codebox/agent-task-run-result/v1 envelope for consumers, including status, refs, metadata, and terminal result details.',
 				'properties'  => array(
 					'schema'                 => array( 'type' => 'string', 'const' => 'wp-codebox/agent-task-run-result/v1' ),
 					'status'                 => array( 'type' => 'string' ),
@@ -290,6 +310,48 @@ final class WP_Codebox_Abilities {
 			$run_sandbox_task_ability['description'] = 'Run a bounded task inside an isolated WP Codebox WordPress sandbox and return artifacts.';
 			$run_sandbox_task_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task', 'alias_of' => 'wp-codebox/run-agent-task' );
 			wp_register_ability( 'wp-codebox/run-sandbox-task', $run_sandbox_task_ability );
+
+			wp_register_ability(
+				'wp-codebox/run-runtime-task',
+				array(
+					'label'               => 'Run Runtime Task',
+					'description'         => 'Run a runtime task through the WP Codebox boundary and return a stable wp-codebox result envelope.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runtime_task_request_schema(),
+					'output_schema'       => self::runtime_task_result_schema(),
+					'execute_callback'    => array( self::class, 'run_runtime_task' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-task' ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-wordpress-workload',
+				array(
+					'label'               => 'Run WordPress Workload',
+					'description'         => 'Expose the public wp-codebox/wordpress-workload-run/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::wordpress_workload_run_request_schema(),
+					'output_schema'       => self::wordpress_workload_run_result_schema(),
+					'execute_callback'    => array( self::class, 'run_wordpress_workload' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-wordpress-workload', 'safe_stub' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/run-fuzz-suite',
+				array(
+					'label'               => 'Run Fuzz Suite',
+					'description'         => 'Expose the public wp-codebox/fuzz-suite/v1 contract through WordPress abilities. The current plugin implementation is guarded and returns structured unsupported diagnostics instead of accepting raw code execution.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::fuzz_suite_request_schema(),
+					'output_schema'       => self::fuzz_suite_result_schema(),
+					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'safe_stub' => true ),
+				)
+			);
 
 			$run_agent_task_batch_ability = array(
 					'label'               => 'Run Agent Sandbox Task Batch',
@@ -435,6 +497,43 @@ final class WP_Codebox_Abilities {
 			wp_register_ability( 'wp-codebox/run-sandbox-task-fanout', $run_sandbox_task_fanout_ability );
 
 			wp_register_ability(
+				'wp-codebox/run-runtime-package',
+				array(
+					'label'               => 'Run Runtime Package',
+					'description'         => 'Run a runtime package through the WP Codebox public runtime boundary using the configured backend ability adapter.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'runtime_package' ),
+						'properties' => array(
+							'schema'                => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-package-execution-input/v1' ),
+							'runtime_package'       => array( 'type' => 'string' ),
+							'input'                 => array( 'type' => 'object' ),
+							'expected_result_schema' => array(),
+							'artifact_declarations' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'output_projections'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'metadata'              => array( 'type' => 'object' ),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'schema'       => array( 'type' => 'string' ),
+							'success'      => array( 'type' => 'boolean' ),
+							'status'       => array( 'type' => 'string' ),
+							'result'       => array( 'type' => 'object' ),
+							'artifacts'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'projections'  => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+							'diagnostics' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'run_runtime_package' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-runtime-package', 'backend_adapter' => 'agents-api-runtime-package' ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/request-host-delegation',
 				array(
 					'label'               => 'Request Host Delegation',
@@ -497,7 +596,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-prepare',
 				array(
 					'label'               => 'Prepare Runner Workspace',
-					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Prepare a runner-owned workspace through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_prepare_input_schema(),
 					'output_schema'       => self::runner_workspace_prepare_output_schema(),
@@ -553,7 +652,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-publish',
 				array(
 					'label'               => 'Publish Runner Workspace',
-					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary using the configured publication backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_publication_input_schema(),
 					'output_schema'       => self::runner_workspace_publication_output_schema(),
@@ -581,7 +680,7 @@ final class WP_Codebox_Abilities {
 				'wp-codebox/runner-workspace-capture',
 				array(
 					'label'               => 'Capture Runner Workspace',
-					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary without exposing backend workspace internals to callers.',
+					'description'         => 'Capture runner-owned workspace status and diff metadata through the WP Codebox runner boundary using the configured workspace backend adapter.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => self::runner_workspace_capture_input_schema(),
 					'output_schema'       => self::runner_workspace_capture_output_schema(),

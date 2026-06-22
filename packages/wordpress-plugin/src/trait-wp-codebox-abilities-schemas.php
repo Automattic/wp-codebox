@@ -304,19 +304,13 @@ private static function browser_playground_session_schema(): array {
 				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
+			'preview_boot' => array( 'type' => 'object' ),
+			'preview_ref'  => array( 'type' => 'object' ),
+			'artifact_refs' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'contained_site' => self::browser_contained_site_schema(),
-			'task_input' => self::task_input_schema(),
-			'task_payload' => array( 'type' => 'object' ),
-			'playground' => array( 'type' => 'object' ),
-			'runtime'    => array( 'type' => 'object' ),
-			'site_blueprint_artifact' => array( 'type' => 'object' ),
-			'materialization' => array(
-				'type'        => 'object',
-				'description' => 'Generic browser materialization invocation contract and result capture shape produced by the generated Playground runner.',
-			),
-			'recipe'     => array( 'type' => 'object' ),
 			'signals'    => array( 'type' => 'object' ),
 			'artifacts'  => array( 'type' => 'object' ),
+			'product'    => self::browser_product_dto_schema(),
 		),
 	);
 }
@@ -576,6 +570,171 @@ private static function artifact_apply_input_properties( string $approved_files_
 	);
 }
 
+/** @return array<string,mixed> */
+private static function runtime_task_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'task' ),
+		'properties' => array(
+			'schema'             => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-task-request/v1' ),
+			'task'               => array( 'type' => array( 'string', 'object' ) ),
+			'input'              => array( 'type' => 'object' ),
+			'task_input'         => self::task_input_schema(),
+			'executor'           => array( 'type' => array( 'string', 'object' ) ),
+			'target'             => array( 'type' => array( 'string', 'object' ) ),
+			'target_id'          => array( 'type' => 'string' ),
+			'executor_id'        => array( 'type' => 'string' ),
+			'mode'               => self::string_property_schema(),
+			'agent'              => self::string_property_schema(),
+			'provider'           => self::string_property_schema(),
+			'model'              => self::string_property_schema(),
+			'sandbox_session_id' => self::string_property_schema(),
+			'orchestrator'       => self::object_property_schema(),
+			'metadata'           => self::object_property_schema(),
+			'options'            => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function runtime_task_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'       => array( 'type' => 'boolean' ),
+			'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/runtime-task-result/v1' ),
+			'status'        => array( 'type' => 'string' ),
+			'execution'     => array( 'type' => 'string' ),
+			'task'          => array( 'type' => array( 'string', 'object' ) ),
+			'result'        => array( 'type' => 'object' ),
+			'error'         => array( 'type' => 'object' ),
+			'events'        => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'artifacts'     => array( 'type' => array( 'object', 'array', 'string' ) ),
+			'run'           => array( 'type' => 'object' ),
+			'metadata'      => array( 'type' => 'object' ),
+			'upstream_refs' => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function wordpress_workload_run_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'steps' ),
+		'properties' => array(
+			'schema'               => array( 'type' => 'string', 'const' => 'wp-codebox/wordpress-workload-run/v1' ),
+			'wordpress_version'    => self::string_property_schema( 'WordPress version requested for the disposable Playground workload.' ),
+			'blueprint'            => self::object_property_schema( 'Optional WordPress Playground blueprint object.' ),
+			'preview'              => self::object_property_schema( 'Optional preview settings for the workload.' ),
+			'mounts'               => self::mount_schema(),
+			'runtime_stack_mounts' => self::object_array_property_schema( 'Runtime stack mounts for the disposable workload.' ),
+			'runtime_overlays'     => self::object_array_property_schema( 'Runtime overlays for the disposable workload.' ),
+			'runtime_env'          => self::object_property_schema( 'Non-secret runtime environment values. Secret values must use secret_env names.' ),
+			'secret_env'           => self::string_array_property_schema( 'Parent environment variable names expected by the workload. Values are never accepted in this payload.' ),
+			'staged_files'         => self::object_array_property_schema( 'Explicit staged file descriptors accepted by the recipe runtime.' ),
+			'before'               => self::wordpress_workload_steps_schema(),
+			'steps'                => self::wordpress_workload_steps_schema(),
+			'after'                => self::wordpress_workload_steps_schema(),
+			'metadata'             => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function wordpress_workload_steps_schema(): array {
+	return array(
+		'type'  => 'array',
+		'items' => array(
+			'type'       => 'object',
+			'required'   => array( 'command' ),
+			'properties' => array(
+				'command'      => array( 'type' => 'string' ),
+				'args'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+				'allowFailure' => array( 'type' => 'boolean' ),
+				'advisory'     => array( 'type' => 'boolean' ),
+			),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function wordpress_workload_run_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'     => array( 'type' => 'boolean' ),
+			'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/wordpress-workload-run-result/v1' ),
+			'status'      => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'request'     => self::object_property_schema(),
+			'artifacts'   => self::object_array_property_schema(),
+			'diagnostics' => self::object_array_property_schema(),
+			'metadata'    => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_request_schema(): array {
+	return array(
+		'type'       => 'object',
+		'required'   => array( 'schema', 'id', 'cases' ),
+		'properties' => array(
+			'schema'   => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite/v1' ),
+			'id'       => array( 'type' => 'string' ),
+			'version'  => array( 'type' => 'string' ),
+			'target'   => self::fuzz_suite_target_schema(),
+			'cases'    => array(
+				'type'  => 'array',
+				'items' => array(
+					'type'       => 'object',
+					'required'   => array( 'id' ),
+					'properties' => array(
+						'id'          => array( 'type' => 'string' ),
+						'target'      => self::fuzz_suite_target_schema(),
+						'input'       => array(),
+						'description' => array( 'type' => 'string' ),
+						'metadata'    => self::object_property_schema(),
+					),
+				),
+			),
+			'metadata' => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_target_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'kind'       => array( 'type' => 'string', 'enum' => array( 'ability', 'command', 'http', 'rest', 'runtime' ) ),
+			'id'         => array( 'type' => 'string' ),
+			'entrypoint' => array( 'type' => 'string' ),
+			'label'      => array( 'type' => 'string' ),
+			'metadata'   => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_result_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'      => array( 'type' => 'boolean' ),
+			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite-result/v1' ),
+			'status'       => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'suite'        => self::object_property_schema(),
+			'summary'      => self::object_property_schema(),
+			'cases'        => self::object_array_property_schema(),
+			'diagnostics'  => self::object_array_property_schema(),
+			'artifactRefs' => self::object_array_property_schema(),
+			'metadata'     => self::object_property_schema(),
+		),
+	);
+}
+
 /**
  * Shared host-side sandbox runner input fields used by task, batch, and fanout abilities.
  *
@@ -718,6 +877,15 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'blueprint'               => self::object_property_schema( $detailed ? 'Optional WordPress Playground blueprint for the browser to compile and run.' : '' ),
 		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),
 		'artifact_files'          => $detailed ? self::artifact_files_input_schema() : array( 'type' => 'array' ),
+		'include_raw_browser_session' => array(
+			'type'        => 'boolean',
+			'description' => 'Internal/debug escape hatch for materializers that need the raw browser Playground contract. Public callers should use the default product DTO.',
+			'default'     => false,
+		),
+		'debug'                   => array(
+			'type'        => 'object',
+			'description' => 'Optional debug flags. Set debug.include_raw_browser_session only for internal materializer/debug tooling that needs the raw Playground contract.',
+		),
 	);
 }
 

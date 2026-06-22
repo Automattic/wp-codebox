@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { DEFAULT_CAPTURED_ARTIFACT_MAX_BYTES, DEFAULT_WORDPRESS_VERSION, STRUCTURED_ARTIFACT_INDEX_SCHEMA, artifactFileDigest, artifactManifestFileWithSha256, captureArtifactFile, checkWorkspacePolicy, materializeStructuredArtifactFiles, normalizeAgentTerminalResult, normalizeRuntimeBackendKind, normalizeStructuredArtifacts, refreshArtifactManifestFileSha256s, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest, upsertArtifactManifestFiles, type AgentTerminalResult, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type ArtifactSpec, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type StructuredArtifactRef, type WorkspacePolicyResult, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { verifyArtifactBundle, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core/artifacts"
 import { isPlainObject as isRecord, sha256StableJson, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import type { RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
@@ -1240,13 +1240,13 @@ async function buildRecipeRunAttestation(args: {
   const manifest = JSON.parse(await readFile(args.artifacts.manifestPath, "utf8")) as { runtime?: RuntimeInfo }
   const runtime = manifest.runtime ?? {
     id: "unknown",
-    backend: args.recipe.runtime?.backend ?? "wordpress-playground",
-      environment: {
-        kind: "wordpress",
-        name: args.recipe.runtime?.name ?? "wp-codebox-recipe",
-        version: args.recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
-        phpVersion: args.recipe.runtime?.phpVersion,
-      },
+    backend: normalizeRuntimeBackendKind(args.recipe.runtime?.backend),
+    environment: {
+      kind: "wordpress",
+      name: args.recipe.runtime?.name ?? "wp-codebox-recipe",
+      version: args.recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
+      phpVersion: args.recipe.runtime?.phpVersion,
+    },
     createdAt: args.artifacts.createdAt,
     status: "destroyed" as const,
   }

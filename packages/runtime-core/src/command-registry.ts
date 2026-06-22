@@ -355,6 +355,26 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runRestRequest" },
   },
   {
+    id: "wordpress.runtime-discovery",
+    description: "Discover product-neutral WordPress runtime surfaces using registered WordPress APIs and bounded summaries.",
+    acceptedArgs: [
+      { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks" },
+    ],
+    outputShape: "wp-codebox/wordpress-runtime-discovery/v1 JSON with selected REST routes, admin pages, database schema, frontend rewrite routes, and block/editor target summaries.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-runtime-discovery/v1", {
+      surfaces: { type: "array" },
+      rest: { type: "object" },
+      admin: { type: "object" },
+      database: { type: "object" },
+      frontend: { type: "object" },
+      blocks: { type: "object" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.runtime-discovery.",
+    recipe: true,
+    handler: { kind: "playground", method: "runRuntimeDiscovery" },
+  },
+  {
     id: "wordpress.bench",
     description: "Run plugin benchmark workloads and emit a versioned benchmark results envelope.",
     acceptedArgs: [

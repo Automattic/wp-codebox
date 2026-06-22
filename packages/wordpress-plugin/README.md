@@ -31,15 +31,44 @@ metadata exposes `meta.canonical_ability` for aliases.
 - `wp-codebox/apply-approved-artifact`
 - `wp-codebox/preview-reuse-decision`
 - `wp-codebox/open-or-create-browser-contained-site`
+- `wp-codebox/create-browser-contained-site-session`
+- `wp-codebox/boot-browser-contained-site-session`
+- `wp-codebox/preview-boot-ref`
+- `wp-codebox/destroy-browser-contained-site-session`
 - WP-CLI wrappers under `wp codebox ...`
+
+## PHP Facade
+
+Consumers running inside WordPress can call `WP_Codebox_API` instead of
+depending on ability registration details or lower-level runtime classes. The
+facade only exposes WP Codebox operations and delegates to the same service
+layer as the ability and WP-CLI surfaces:
+
+- `WP_Codebox_API::run_agent_task( $input )`
+- `WP_Codebox_API::create_browser_session( $input )`
+- `WP_Codebox_API::open_or_create_browser_session( $input )`
+- `WP_Codebox_API::list_artifacts( $input )`
+- `WP_Codebox_API::get_artifact( $input )`
+- `WP_Codebox_API::preflight_artifact_apply( $input )`
+- `WP_Codebox_API::stage_artifact_apply( $input )`
+- `WP_Codebox_API::apply_approved_artifact( $input )`
+- `WP_Codebox_API::prepare_runner_workspace( $input )`
+- `WP_Codebox_API::capture_runner_workspace( $input )`
+- `WP_Codebox_API::run_runner_workspace_command( $input )`
+- `WP_Codebox_API::publish_runner_workspace( $input )`
+
+For ability-name-oriented callers, `WP_Codebox_API::execute_ability( $name,
+$input )` accepts supported `wp-codebox/...` ability names and compatibility
+aliases only. Host workspace backends, task runtimes, provider adapters, and
+sandbox implementations connect to the Codebox ability and result contracts
+through configured adapters.
 
 The host task abilities build a private Codebox recipe, boot a disposable
 sandbox runtime, mount the requested runtime components, invoke the configured
 sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
 upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,
-and task runtimes are implementation details of the current runner, not
-consumer-facing API names. The plugin maps those internals to Codebox task,
-runtime, artifact, and apply contracts before returning results to consumers.
+and task runtimes are runner components mapped to Codebox task, runtime,
+artifact, and apply contracts before returning results to consumers.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`
@@ -197,6 +226,15 @@ opening a preview. It returns an explicit `action` such as `hydrate-ref` or
 `create-new`, plus a stable `identity_key`. `open-or-create-browser-contained-site`
 uses that decision to open a reusable contained site when possible and falls back
 to fresh session creation only when the decision requires materialization.
+
+`open-or-create-browser-contained-site` preserves the legacy open/create envelope
+for existing consumers. New product UIs should prefer the contained-site session
+facades: `create-browser-contained-site-session`,
+`boot-browser-contained-site-session`, `preview-boot-ref`, and
+`destroy-browser-contained-site-session`. Those DTOs expose preview leases,
+startup diagnostics, and blueprint hydration refs without returning inline
+Playground blueprints, `prepared_runtime`, or low-level boot URLs as the default
+consumer contract.
 
 ## Apply-Back Approval
 

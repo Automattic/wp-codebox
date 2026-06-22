@@ -3,8 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { runRecipeBuildCommand } from "../packages/cli/src/commands/recipe-build.js"
-import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA } from "../packages/runtime-core/src/index.js"
-import { buildGenericAbilityRuntimeRunRecipe as buildGenericAbilityRuntimeRunRecipeFromStableSubpath } from "../packages/runtime-core/src/recipe-builders.js"
+import { buildGenericAbilityRuntimeRunRecipe, GENERIC_ABILITY_RUNTIME_RUN_RESULT_SCHEMA, PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA, runtimePresetRegistryManifest } from "../packages/runtime-core/src/index.js"
 import { abilityResponseToCommandEnvelope, expectedAbilityResultSchemaFromArgs } from "../packages/runtime-playground/src/commands.js"
 import { withTempDir } from "../scripts/test-kit.js"
 
@@ -81,15 +80,46 @@ await withTempDir("wp-codebox-generic-ability-runtime-run-", async (root) => {
   assert.equal(cliRecipe.inputs.extra_plugins.length, 2)
   assert.equal(cliRecipe.runtime.overlays[0].library, "example-runtime")
 
-  const stableSubpathRecipe = buildGenericAbilityRuntimeRunRecipeFromStableSubpath({ abilityId: "example/runtime-run" })
-  assert.equal(stableSubpathRecipe.workflow.steps[0].command, "wordpress.ability")
-
   const allowedToolsRecipe = buildGenericAbilityRuntimeRunRecipe({ abilityId: "example/runtime-run", allowedTools: ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"] })
   const allowedToolsInputArg = allowedToolsRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("input="))
   assert.ok(allowedToolsInputArg)
   const allowedToolsInput = JSON.parse(allowedToolsInputArg.slice("input=".length))
   assert.deepEqual(allowedToolsInput.runtime_invocation.sandbox_tool_policy.tools.map((tool: { id: string }) => tool.id), ["workspace.read", "workspace.search", "workspace.write", "workspace.edit"])
   assert.deepEqual(allowedToolsInput.runtime_invocation.sandbox_tool_policy.tools.map((tool: { runtime_tool_id: string }) => tool.runtime_tool_id), ["workspace_read", "workspace_search", "workspace_write", "workspace_edit"])
+
+  const presetRecipe = buildGenericAbilityRuntimeRunRecipe({
+    abilityId: "example/runtime-run",
+    abilityInput: { prompt: "Build from preset only." },
+    runtimePresetId: "preset-provider-runtime",
+    runtimePresetRegistry: runtimePresetRegistryManifest({
+      schema: "wp-codebox/runtime-preset-registry/v1",
+      presets: [{
+        id: "preset-provider-runtime",
+        components: [{ source: component, slug: "preset-component", activate: true }],
+        provider: { plugins: [{ source: provider, slug: "preset-provider" }] },
+        requiredEnv: { runtime: ["PRESET_RUNTIME_ENV"], secret: ["PRESET_SECRET"] },
+        modelDefaults: { provider: "preset-provider", model: "preset-model", mode: "sandbox", agent: "preset-agent", maxTurns: 4 },
+        runtimeOverlays: [{ kind: "wordpress-plugin", library: "preset-runtime", source: provider, strategy: "copy" }],
+      }],
+    }),
+  })
+  assert.equal(presetRecipe.inputs?.extra_plugins?.length, 2)
+  assert.deepEqual(presetRecipe.inputs?.secretEnv, ["PRESET_SECRET"])
+  assert.deepEqual(presetRecipe.inputs?.runtimeEnv, { PRESET_RUNTIME_ENV: "" })
+  assert.equal(presetRecipe.inputs?.runtimeDependencyPlan?.schema, "wp-codebox/runtime-dependency-plan/v1")
+  assert.equal(presetRecipe.inputs?.runtimeReadiness?.status, "ready")
+  assert.equal(presetRecipe.inputs?.runtimeDiagnostics?.[0]?.code, "runtime_preset.resolved")
+  const presetInputArg = presetRecipe.workflow.steps[0].args?.find((arg) => arg.startsWith("input="))
+  assert.ok(presetInputArg)
+  const presetInput = JSON.parse(presetInputArg.slice("input=".length))
+  assert.equal(presetInput.provider, "preset-provider")
+  assert.equal(presetInput.model, "preset-model")
+  assert.equal(presetInput.mode, "sandbox")
+  assert.equal(presetInput.agent, "preset-agent")
+  assert.equal(presetInput.prompt, "Build from preset only.")
+  assert.equal(presetInput.runtime_invocation.selection.runtimePresetId, "preset-provider-runtime")
+  assert.equal(presetInput.runtime_invocation.dependency_plan.secret_env[0], "PRESET_SECRET")
+  assert.equal(presetInput.runtime_invocation.readiness.status, "ready")
 })
 
 assert.equal(expectedAbilityResultSchemaFromArgs(["expected-result-schema=\"example/result/v1\""]), "example/result/v1")
