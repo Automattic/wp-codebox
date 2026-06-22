@@ -1,4 +1,5 @@
 import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -373,6 +374,21 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.runtime-discovery.",
     recipe: true,
     handler: { kind: "playground", method: "runRuntimeDiscovery" },
+  },
+  {
+    id: "wordpress.crud-operation",
+    description: "Execute or normalize a product-neutral WordPress CRUD operation envelope for fuzz orchestration. The public contract is generic and backend implementations must keep product-specific logic out of this command.",
+    acceptedArgs: [
+      { name: "operation-json", description: "Inline wp-codebox/wordpress-crud-operation/v1 operation envelope. The runtime normalizes schema, operation, resource, data, query, options, and metadata fields before execution.", required: true, format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Unsupported backends return status=unsupported without applying effects.",
+    outputSchema: {
+      id: WORDPRESS_CRUD_RESULT_SCHEMA,
+      jsonSchema: WORDPRESS_CRUD_RESULT_JSON_SCHEMA,
+    },
+    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed with status=unsupported when generic CRUD execution is unavailable.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCrudOperation" },
   },
   {
     id: "wordpress.bench",
