@@ -16,6 +16,11 @@ assert.equal(succeeded.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(succeeded.status, "succeeded")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: succeeded }), 0)
 
+const succeededWithAccess = normalizeAgentTaskRunResult({ success: true, status: "completed", outputs: { preview_url: "https://preview.example.test", site_url: "https://site.example.test" } }, { exitStatus: 0 })
+assert.equal(succeededWithAccess.runtime_access?.schema, "wp-codebox/runtime-access/v1")
+assert.equal(succeededWithAccess.runtime_access?.preview_url, "https://preview.example.test")
+assert.equal(succeededWithAccess.runtime_access?.site_url, "https://site.example.test")
+
 const stableRunRequestInput = normalizeAgentTaskRunCliInput({
   schema: AGENT_TASK_RUN_REQUEST_SCHEMA,
   task_id: "stable-run",

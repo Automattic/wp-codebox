@@ -38,7 +38,10 @@ assertEqual(success.refs.startup_logs.length, 3, "startup logs are grouped")
 assertEqual(success.refs.changed_files[0]?.path, "/tmp/codebox/bundle-ok/files/changed-files.json", "changed files path is grouped")
 assertEqual(success.refs.logs.some((ref) => ref.path === "/tmp/codebox/bundle-ok/commands.jsonl"), true, "commands jsonl is grouped")
 assertEqual(success.commands[0]?.stdout_tail, "first\nsecond\n", "command stdout tail is exposed")
+assertEqual(success.runtime_access?.schema, "wp-codebox/runtime-access/v1", "runtime access schema is exposed")
+assertEqual(success.runtime_access?.preview_url, "https://example.com/preview", "runtime access preview URL is exposed")
 assertEqual(success.preview?.reviewer_access?.openUrl, "https://example.com/preview", "preview reviewer access is exposed")
+assertEqual(success.preview?.runtime_access?.preview_url, "https://example.com/preview", "preview runtime access is exposed")
 assertEqual(success.metadata.run_id, "run-ok", "run metadata is exposed")
 
 const startupFailure = normalizeRecipeRunSummary({

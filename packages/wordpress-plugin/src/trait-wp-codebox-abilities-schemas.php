@@ -305,6 +305,7 @@ private static function browser_playground_session_schema(): array {
 			),
 			'session'    => array( 'type' => 'object' ),
 			'preview_boot' => array( 'type' => 'object' ),
+			'runtime_access' => array( 'type' => 'object' ),
 			'preview_ref'  => array( 'type' => 'object' ),
 			'artifact_refs' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'contained_site' => self::browser_contained_site_schema(),
@@ -436,6 +437,7 @@ private static function browser_product_dto_schema(): array {
 			'provider'         => array( 'type' => 'string' ),
 			'model'            => array( 'type' => 'string' ),
 			'preview_boot'     => array( 'type' => 'object' ),
+			'runtime_access'   => array( 'type' => 'object' ),
 			'preview_ref'      => array( 'type' => 'object' ),
 			'artifact_refs'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'signals'          => array( 'type' => 'object' ),
@@ -480,6 +482,7 @@ private static function browser_contained_site_schema(): array {
 			'blueprint_ref' => array( 'type' => 'object' ),
 			'preview_boot'  => array( 'type' => 'object' ),
 			'preview_lease' => array( 'type' => 'object' ),
+			'runtime_access' => array( 'type' => 'object' ),
 			'session'       => array( 'type' => 'object' ),
 		),
 	);

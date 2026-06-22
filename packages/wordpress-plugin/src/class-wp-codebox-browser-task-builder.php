@@ -295,6 +295,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'provider'         => (string) ( $session['provider'] ?? '' ),
 				'model'            => (string) ( $session['model'] ?? '' ),
 				'preview_boot'     => self::browser_preview_boot_config( $session ),
+				'runtime_access'   => self::runtime_access_from_session( $session ),
 				'preview_ref'      => self::browser_preview_ref( $session ),
 				'signals'          => self::compact_public_value( $signals ),
 				'artifact_refs'    => self::browser_artifact_refs( $session ),
@@ -618,6 +619,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'blueprint_ref'     => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? (string) $blueprint_ref['ref'] : ( '' !== $legacy_blueprint_ref ? $legacy_blueprint_ref : 'inline-session-blueprint' ),
 				'blueprint_ref_dto' => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? $blueprint_ref : array(),
 				'preview'           => self::preview_lease_from_session( $session ),
+				'runtime_access'    => self::runtime_access_from_session( $session ),
 				'contained_site'    => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'artifacts'         => array_filter(
 					array(
@@ -848,6 +850,39 @@ final class WP_Codebox_Browser_Task_Builder {
 		}
 
 		return $lease;
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	private static function runtime_access_from_session( array $session ): array {
+		if ( is_array( $session['runtime_access'] ?? null ) ) {
+			$access = self::compact_public_value( $session['runtime_access'] );
+			$access['schema'] = 'wp-codebox/runtime-access/v1';
+			return $access;
+		}
+
+		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+		$lease      = self::preview_lease_from_session( $session );
+		$public_url = (string) ( $lease['public_url'] ?? $lease['preview_public_url'] ?? $playground['public_url'] ?? $playground['preview_public_url'] ?? '' );
+		$site_url   = (string) ( $lease['site_url'] ?? $playground['site_url'] ?? $playground['remote_url'] ?? '' );
+		$local_url  = (string) ( $lease['local_url'] ?? $playground['preview_url'] ?? '' );
+		$reviewer_access = is_array( $session['reviewer_access'] ?? null ) ? self::compact_public_value( $session['reviewer_access'] ) : array();
+		$preview_url = (string) ( $session['preview_url'] ?? $playground['preview_url'] ?? '' );
+		if ( '' === $preview_url ) {
+			$preview_url = '' !== $public_url ? $public_url : ( '' !== $site_url ? $site_url : $local_url );
+		}
+
+		return array_filter(
+			array(
+				'schema'          => 'wp-codebox/runtime-access/v1',
+				'preview_url'     => '' !== $public_url ? $public_url : $preview_url,
+				'public_url'      => $public_url,
+				'site_url'        => $site_url,
+				'admin_url'       => (string) ( $session['admin_url'] ?? $playground['admin_url'] ?? '' ),
+				'lease'           => $lease,
+				'reviewer_access' => $reviewer_access,
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
 	}
 
 	private static function compact_public_value( mixed $value, string $key = '' ): mixed {

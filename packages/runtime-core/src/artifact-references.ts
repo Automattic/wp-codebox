@@ -2,7 +2,7 @@ import type { ArtifactBundle, RuntimeEpisodeContentDigest, RuntimeEpisodeTraceRe
 import type { ArtifactFileDigest, ArtifactManifestFile, ArtifactViewerMetadata } from "./artifact-manifest.js"
 import type { RuntimeReferenceManifestArtifactBundleRef, RuntimeReferenceManifestFileRef } from "./runtime-reference.js"
 import { redactJsonValue } from "./redaction.js"
-import { BROWSER_SESSION_PRODUCT_DTO_SCHEMA } from "./runtime-boundary-contracts.js"
+import { BROWSER_SESSION_PRODUCT_DTO_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
 
 export const METADATA_ARTIFACT_PATH = "metadata.json" as const
 export const REVIEW_ARTIFACT_PATH = "files/review.json" as const
@@ -109,6 +109,7 @@ export interface BrowserSessionProductDTO {
   provider?: string
   model?: string
   preview_boot?: Record<string, unknown>
+  runtime_access?: RuntimeAccess
   signals?: Record<string, unknown>
   artifacts?: Record<string, unknown>
   artifact_refs: PublicArtifactRefGroups
@@ -244,11 +245,39 @@ export function normalizeBrowserSessionProductDTO(input: unknown): BrowserSessio
     provider: stringValue(session.provider),
     model: stringValue(session.model),
     preview_boot: publicSessionRecord(session.preview_boot),
+    runtime_access: browserSessionRuntimeAccess(session),
     signals: publicSessionRecord(session.signals),
     artifacts: publicSessionRecord(session.artifacts),
     artifact_refs: publicArtifactRefGroups(session),
     error: publicSessionRecord(session.error),
   }) as BrowserSessionProductDTO
+}
+
+function browserSessionRuntimeAccess(session: Record<string, unknown>): RuntimeAccess | undefined {
+  const explicit = asRecord(session.runtime_access)
+  if (explicit) {
+    try {
+      return normalizeRuntimeAccess(explicit)
+    } catch {
+      return undefined
+    }
+  }
+
+  const previewBoot = asRecord(session.preview_boot)
+  const preview = asRecord(previewBoot?.preview)
+  if (!preview) return undefined
+
+  try {
+    return normalizeRuntimeAccess({
+      preview_url: preview.preview_url ?? preview.previewUrl ?? preview.public_url ?? preview.publicUrl ?? preview.preview_public_url ?? preview.previewPublicUrl,
+      public_url: preview.public_url ?? preview.publicUrl ?? preview.preview_public_url ?? preview.previewPublicUrl,
+      site_url: preview.site_url ?? preview.siteUrl,
+      lease: preview.schema === "wp-codebox/preview-lease/v1" ? preview : undefined,
+      reviewer_access: preview.reviewer_access ?? preview.reviewerAccess,
+    })
+  } catch {
+    return undefined
+  }
 }
 
 export function normalizeArtifactContentType(input: ArtifactReferenceFileInput | undefined, fallback = "application/octet-stream"): string {

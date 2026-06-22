@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, normalizeRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_ACCESS_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, normalizeRuntimeAccess, normalizeRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
@@ -91,6 +91,21 @@ assert.equal(lease.lease?.owner, "runtime-loop")
 assert.equal(previewLeaseStatus(lease), "active")
 assert.equal(previewLeaseStatus({ schema: PREVIEW_LEASE_SCHEMA, local_url: "http://127.0.0.1:8881", lease: { status: "active", expires_at: "2020-01-01T00:00:00.000Z" } }), "expired")
 
+const runtimeAccess = normalizeRuntimeAccess({
+  schema: RUNTIME_ACCESS_SCHEMA,
+  preview_url: "https://preview.example.test",
+  public_url: "https://preview.example.test",
+  site_url: "https://site.example.test",
+  admin_url: "https://site.example.test/wp-admin/",
+  lease,
+  reviewer_access: { schema: "wp-codebox/preview-reviewer-access/v1", status: "ready", openUrl: "https://preview.example.test" },
+})
+assert.equal(runtimeAccess.schema, "wp-codebox/runtime-access/v1")
+assert.equal(runtimeAccess.preview_url, "https://preview.example.test")
+assert.equal(runtimeAccess.site_url, "https://site.example.test")
+assert.equal(runtimeAccess.lease?.preview_public_url, "https://preview.example.test")
+assert.equal(runtimeAccess.reviewer_access?.openUrl, "https://preview.example.test")
+
 const containedSiteStatus = browserContainedSiteStatus({
   schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA,
   success: true,
@@ -130,7 +145,7 @@ assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components:
 assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /public_url/)
 assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable_prepared_runtime", source_digest: { value: "bad" } }), /source_digest/)
 
-const publicContractEnvelopes = [profile, lease, containedSiteStatus, containedSiteOpen]
+const publicContractEnvelopes = [profile, lease, runtimeAccess, containedSiteStatus, containedSiteOpen]
 const forbiddenPublicContractTerms = [
   /data[-_ ]?machine/i,
   /datamachine/i,

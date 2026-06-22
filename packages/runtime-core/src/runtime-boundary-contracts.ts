@@ -1,6 +1,9 @@
+import { stripUndefined } from "./object-utils.js"
+
 export const RUNTIME_PROFILE_SCHEMA = "wp-codebox/runtime-profile/v1" as const
 export const PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
 export const PREVIEW_REVIEWER_ACCESS_SCHEMA = "wp-codebox/preview-reviewer-access/v1" as const
+export const RUNTIME_ACCESS_SCHEMA = "wp-codebox/runtime-access/v1" as const
 export const BROWSER_CONTAINED_SITE_STATUS_SCHEMA = "wp-codebox/browser-contained-site-status/v1" as const
 export const BROWSER_CONTAINED_SITE_OPEN_SCHEMA = "wp-codebox/browser-contained-site-open/v1" as const
 export const BROWSER_SESSION_PRODUCT_DTO_SCHEMA = "wp-codebox/browser-session-product-dto/v1" as const
@@ -111,6 +114,17 @@ export interface PreviewLease {
   metadata?: Record<string, unknown>
 }
 
+export interface RuntimeAccess {
+  schema: typeof RUNTIME_ACCESS_SCHEMA
+  preview_url?: string
+  public_url?: string
+  site_url?: string
+  admin_url?: string
+  lease?: PreviewLease
+  reviewer_access?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
 export type PreviewLeaseLifecycleStatus = "active" | "expired" | "released" | "unknown"
 export type BrowserContainedSiteLifecycleStatus = "recoverable_prepared_runtime" | "current" | "live" | "materialized" | "miss" | "expired" | "blocked" | "disabled" | "incompatible" | "unknown" | (string & {})
 
@@ -129,6 +143,7 @@ export interface BrowserContainedSiteIdentity {
   blueprint_ref?: Record<string, unknown>
   preview_boot?: BrowserPreviewBootConfig
   preview_lease?: PreviewLease
+  runtime_access?: RuntimeAccess
   session?: Record<string, unknown>
   recovery?: Record<string, unknown>
   metadata?: Record<string, unknown>
@@ -159,6 +174,7 @@ export interface BrowserPreviewBootConfig {
   blueprint_ref?: string
   blueprint_ref_dto?: Record<string, unknown>
   preview?: PreviewLease
+  runtime_access?: RuntimeAccess
   contained_site?: Record<string, unknown>
   artifacts?: Record<string, unknown>
   provenance?: Record<string, unknown>
@@ -180,6 +196,7 @@ export interface BrowserSessionProductDto {
   provider?: string
   model?: string
   preview_boot?: BrowserPreviewBootConfig
+  runtime_access?: RuntimeAccess
   signals?: Record<string, unknown>
   artifacts?: Record<string, unknown>
   error?: Record<string, unknown>
@@ -200,6 +217,7 @@ export interface BrowserContainedSiteOpenEnvelope {
   blueprint_ref?: Record<string, unknown>
   preview_boot?: BrowserPreviewBootConfig
   preview_lease?: PreviewLease
+  runtime_access?: RuntimeAccess
   preview_session?: BrowserSessionProductDto
   session?: Record<string, unknown>
   recovery?: Record<string, unknown>
@@ -257,6 +275,45 @@ export function previewLease(input: unknown): PreviewLease {
     throw new Error("Preview lease must include public_url, preview_public_url, site_url, or local_url.")
   }
   return lease
+}
+
+export function runtimeAccess(input: unknown): RuntimeAccess {
+  const value = requireObject(input, "Runtime access") as Partial<RuntimeAccess> & Record<string, unknown>
+  const schema = optionalString(value.schema, "runtime_access.schema")
+  if (schema && schema !== RUNTIME_ACCESS_SCHEMA) throw new Error(`Runtime access schema must be ${RUNTIME_ACCESS_SCHEMA}.`)
+  const lease = value.lease === undefined ? undefined : previewLease(value.lease)
+  const reviewerAccess = normalizeOptionalObject(value.reviewer_access ?? value.reviewerAccess, "runtime_access.reviewer_access")
+  const previewUrl = optionalString(value.preview_url ?? value.previewUrl, "runtime_access.preview_url")
+    ?? optionalString(value.public_url ?? value.publicUrl, "runtime_access.public_url")
+    ?? optionalString(value.site_url ?? value.siteUrl, "runtime_access.site_url")
+    ?? optionalString(reviewerAccess?.openUrl, "runtime_access.reviewer_access.openUrl")
+    ?? lease?.public_url
+    ?? lease?.preview_public_url
+    ?? lease?.site_url
+  const publicUrl = optionalString(value.public_url ?? value.publicUrl, "runtime_access.public_url")
+    ?? optionalString(value.preview_public_url ?? value.previewPublicUrl, "runtime_access.preview_public_url")
+    ?? lease?.public_url
+    ?? lease?.preview_public_url
+  const siteUrl = optionalString(value.site_url ?? value.siteUrl, "runtime_access.site_url") ?? lease?.site_url
+
+  const access = {
+    schema: RUNTIME_ACCESS_SCHEMA,
+    preview_url: previewUrl,
+    public_url: publicUrl,
+    site_url: siteUrl,
+    admin_url: optionalString(value.admin_url ?? value.adminUrl, "runtime_access.admin_url"),
+    lease,
+    reviewer_access: reviewerAccess,
+    metadata: normalizeOptionalObject(value.metadata, "runtime_access.metadata"),
+  }
+  if (!access.preview_url && !access.public_url && !access.site_url && !access.admin_url && !access.lease && !access.reviewer_access) {
+    throw new Error("Runtime access must include preview_url, public_url, site_url, admin_url, lease, or reviewer_access.")
+  }
+  return stripUndefined(access) as RuntimeAccess
+}
+
+export function normalizeRuntimeAccess(input: unknown): RuntimeAccess {
+  return runtimeAccess(input)
 }
 
 export function previewLeaseStatus(input: PreviewLease | unknown, now = new Date()): PreviewLeaseLifecycleStatus {
@@ -433,6 +490,7 @@ export function browserContainedSiteOpenEnvelope(input: unknown): BrowserContain
     blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "blueprint_ref"),
     preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
     preview_lease: value.preview_lease === undefined ? undefined : previewLease(value.preview_lease),
+    runtime_access: value.runtime_access === undefined ? undefined : runtimeAccess(value.runtime_access),
     preview_session: value.preview_session === undefined ? undefined : normalizeBrowserSessionProductDto(value.preview_session),
     session: normalizeOptionalObject(value.session, "session"),
     recovery: normalizeOptionalObject(value.recovery, "recovery"),
@@ -454,6 +512,7 @@ function normalizeContainedSiteIdentity(input: unknown): BrowserContainedSiteIde
     blueprint_ref: normalizeOptionalObject(value.blueprint_ref, "contained_site.blueprint_ref"),
     preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
     preview_lease: value.preview_lease === undefined ? undefined : previewLease(value.preview_lease),
+    runtime_access: value.runtime_access === undefined ? undefined : runtimeAccess(value.runtime_access),
     session: normalizeOptionalObject(value.session, "contained_site.session"),
     recovery: normalizeOptionalObject(value.recovery, "contained_site.recovery"),
     metadata: normalizeOptionalObject(value.metadata, "contained_site.metadata"),
@@ -483,6 +542,7 @@ function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
     blueprint_ref: optionalString(value.blueprint_ref, "preview_boot.blueprint_ref"),
     blueprint_ref_dto: normalizeOptionalObject(value.blueprint_ref_dto, "preview_boot.blueprint_ref_dto"),
     preview: value.preview === undefined ? undefined : previewLease(value.preview),
+    runtime_access: value.runtime_access === undefined ? undefined : runtimeAccess(value.runtime_access),
     contained_site: normalizeOptionalObject(value.contained_site, "preview_boot.contained_site"),
     artifacts: normalizeOptionalObject(value.artifacts, "preview_boot.artifacts"),
     provenance: normalizeOptionalObject(value.provenance, "preview_boot.provenance"),
@@ -520,6 +580,7 @@ function normalizeBrowserSessionProductDto(input: unknown): BrowserSessionProduc
     provider: optionalString(value.provider, "preview_session.provider"),
     model: optionalString(value.model, "preview_session.model"),
     preview_boot: value.preview_boot === undefined ? undefined : normalizePreviewBootConfig(value.preview_boot),
+    runtime_access: value.runtime_access === undefined ? undefined : runtimeAccess(value.runtime_access),
     signals: normalizeOptionalObject(value.signals, "preview_session.signals"),
     artifacts: normalizeOptionalObject(value.artifacts, "preview_session.artifacts"),
     error: normalizeOptionalObject(value.error, "preview_session.error"),

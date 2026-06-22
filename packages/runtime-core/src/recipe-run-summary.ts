@@ -1,6 +1,7 @@
 import { normalizeAgentTaskRunResult, type AgentTaskRunArtifactRef } from "./agent-task-run-result.js"
 import { normalizeBrowserArtifactSummaryRefs } from "./artifact-references.js"
 import { isPlainObject, stripUndefined } from "./object-utils.js"
+import { RUNTIME_ACCESS_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
 
 export const RECIPE_RUN_SUMMARY_SCHEMA = "wp-codebox/recipe-run-summary/v1" as const
 
@@ -15,6 +16,7 @@ export interface RecipeRunSummary {
   diagnostics: Array<Record<string, unknown>>
   artifacts: AgentTaskRunArtifactRef[]
   commands: RecipeRunCommandSummary[]
+  runtime_access?: RuntimeAccess
   preview?: RecipeRunPreviewSummary
   refs: {
     startup_logs: AgentTaskRunArtifactRef[]
@@ -51,6 +53,7 @@ export interface RecipeRunPreviewSummary {
   created_at?: string
   expires_at?: string
   hold_seconds?: number
+  runtime_access?: RuntimeAccess
   reviewer_access?: Record<string, unknown>
 }
 
@@ -67,6 +70,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
   const artifacts = normalizeRecipeRunArtifacts(result, agentTask.artifacts)
   const commands = recipeRunCommandSummaries(result)
   const preview = recipeRunPreviewSummary(result)
+  const runtimeAccess = recipeRunRuntimeAccess(result)
   const summary = failureSummary(result, diagnostics, failedPhase)
 
   return stripUndefined({
@@ -91,6 +95,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
       runtimes: agentTask.refs.runtimes,
     },
     commands,
+    runtime_access: runtimeAccess,
     preview,
     metadata: stripUndefined({
       run_id: stringValue(objectValue(result.run).runId) || stringValue(objectValue(result.run_metadata).run_id) || stringValue(agentTask.metadata.run_id),
@@ -229,8 +234,36 @@ function recipeRunPreviewSummary(result: Record<string, unknown>): RecipeRunPrev
     created_at: stringValue(value.createdAt),
     expires_at: stringValue(value.expiresAt),
     hold_seconds: numberValue(value.holdSeconds),
+    runtime_access: recipeRunRuntimeAccess(result),
     reviewer_access: objectValue(value.reviewerAccess),
   }) as RecipeRunPreviewSummary
+}
+
+function recipeRunRuntimeAccess(result: Record<string, unknown>): RuntimeAccess | undefined {
+  const artifacts = objectValue(result.artifacts)
+  const preview = Object.keys(objectValue(artifacts.preview)).length > 0 ? objectValue(artifacts.preview) : objectValue(objectValue(result.run).preview)
+  const outputs = objectValue(result.outputs)
+  const explicit = objectValue(result.runtime_access)
+  const artifactAccess = objectValue(artifacts.runtime_access)
+  const previewAccess = objectValue(preview.runtime_access ?? preview.runtimeAccess)
+  const value = Object.keys(explicit).length > 0 ? explicit : Object.keys(artifactAccess).length > 0 ? artifactAccess : previewAccess
+  const reviewerAccess = objectValue(value.reviewer_access ?? value.reviewerAccess ?? preview.reviewerAccess)
+  const candidate = stripUndefined({
+    schema: RUNTIME_ACCESS_SCHEMA,
+    preview_url: stringValue(value.preview_url ?? value.previewUrl) || stringValue(outputs.preview_url ?? outputs.previewUrl) || stringValue(reviewerAccess.openUrl) || stringValue(reviewerAccess.targetUrl),
+    public_url: stringValue(value.public_url ?? value.publicUrl ?? value.preview_public_url ?? value.previewPublicUrl) || stringValue(outputs.public_url ?? outputs.publicUrl ?? outputs.preview_public_url ?? outputs.previewPublicUrl),
+    site_url: stringValue(value.site_url ?? value.siteUrl) || stringValue(outputs.site_url ?? outputs.siteUrl),
+    admin_url: stringValue(value.admin_url ?? value.adminUrl) || stringValue(outputs.admin_url ?? outputs.adminUrl),
+    lease: value.lease ?? preview.lease,
+    reviewer_access: Object.keys(reviewerAccess).length > 0 ? reviewerAccess : undefined,
+    metadata: Object.keys(objectValue(value.metadata)).length > 0 ? objectValue(value.metadata) : undefined,
+  })
+
+  try {
+    return normalizeRuntimeAccess(candidate)
+  } catch {
+    return undefined
+  }
 }
 
 function textTail(value: unknown, maxChars = 4_000): string | undefined {

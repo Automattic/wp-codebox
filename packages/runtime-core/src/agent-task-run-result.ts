@@ -1,5 +1,6 @@
 import { isPlainObject, numberValue, objectValue, stringValue, stripUndefined } from "./object-utils.js"
 import { normalizeAgentTerminalResult, type AgentTerminalResult } from "./agent-terminal-result.js"
+import { RUNTIME_ACCESS_SCHEMA, normalizeRuntimeAccess, type RuntimeAccess } from "./runtime-boundary-contracts.js"
 import { normalizeAgentTaskStatus } from "./status-taxonomy.js"
 
 export const AGENT_TASK_RUN_RESULT_SCHEMA = "wp-codebox/agent-task-run-result/v1" as const
@@ -28,6 +29,7 @@ export const AGENT_TASK_RUN_RESULT_JSON_SCHEMA = {
     diagnostics: { type: "array", items: { type: "object" } },
     metadata: { type: "object" },
     terminal_result: { type: "object" },
+    runtime_access: { type: "object" },
     no_op: { type: "object" },
     failure_classification: { type: "string" },
   },
@@ -72,6 +74,7 @@ export interface AgentTaskRunResultSummary {
   diagnostics: Array<Record<string, unknown>>
   metadata: Record<string, unknown>
   terminal_result?: AgentTerminalResult
+  runtime_access?: RuntimeAccess
   no_op: {
     detected: boolean
     reason?: string
@@ -134,9 +137,32 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       failure_evidence: objectValue(result.failure_evidence),
     }),
     terminal_result: terminalResult,
+    runtime_access: agentTaskRuntimeAccess(result),
     no_op: noOp,
     failure_classification: failureClassification || undefined,
   }) as AgentTaskRunResultSummary
+}
+
+function agentTaskRuntimeAccess(result: Record<string, unknown>): RuntimeAccess | undefined {
+  const explicit = objectValue(result.runtime_access)
+  const outputs = objectValue(result.outputs)
+  const source = Object.keys(explicit).length > 0 ? explicit : outputs
+  const candidate = stripUndefined({
+    schema: RUNTIME_ACCESS_SCHEMA,
+    preview_url: stringValue(source.preview_url ?? source.previewUrl),
+    public_url: stringValue(source.public_url ?? source.publicUrl ?? source.preview_public_url ?? source.previewPublicUrl),
+    site_url: stringValue(source.site_url ?? source.siteUrl),
+    admin_url: stringValue(source.admin_url ?? source.adminUrl),
+    lease: source.lease,
+    reviewer_access: Object.keys(objectValue(source.reviewer_access ?? source.reviewerAccess)).length > 0 ? objectValue(source.reviewer_access ?? source.reviewerAccess) : undefined,
+    metadata: Object.keys(objectValue(source.metadata)).length > 0 ? objectValue(source.metadata) : undefined,
+  })
+
+  try {
+    return normalizeRuntimeAccess(candidate)
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeStatus(result: Record<string, unknown>, agentResult: Record<string, unknown>, exitStatus: number, terminalResult?: AgentTerminalResult): AgentTaskRunStatus {
