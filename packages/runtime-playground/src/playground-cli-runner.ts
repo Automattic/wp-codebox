@@ -2,7 +2,7 @@ import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
 import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
-import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { previewLease, type BrowserStartupProgressEvent, type BrowserStartupProgressPhase, type BrowserStartupProgressStatus, type MountSpec, type PreviewLease, type RuntimeCreateSpec, type RuntimePreviewLeaseProvider } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
@@ -145,10 +145,11 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       fixedPreviewPort: spec.preview?.port ?? null,
     })
 
-    const proxiedServer = await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind)
+    const proxiedServer = await withPreviewLeaseProvider(await withPreviewProxy(server, spec.preview?.port ?? 0, spec.preview?.bind), spec)
     emitProgress("preview:ready", "complete", "Preview ready", {
       localUrl: proxiedServer.serverUrl,
       upstreamUrl: server.serverUrl,
+      lease: proxiedServer.previewLease ? previewLeaseDetail(proxiedServer.previewLease) : undefined,
     })
     return proxiedServer
   } catch (error) {
@@ -161,6 +162,85 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     }
 
     throw error
+  }
+}
+
+async function withPreviewLeaseProvider(server: PlaygroundCliServer, spec: RuntimeCreateSpec): Promise<PlaygroundCliServer> {
+  const provider = spec.preview?.leaseProvider
+  if (!provider) {
+    return server
+  }
+
+  let lease: PreviewLease | undefined
+  try {
+    lease = previewLease(await provider.acquire({
+      localUrl: server.serverUrl,
+      requestedPublicUrl: spec.preview?.publicUrl,
+      requestedSiteUrl: spec.preview?.siteUrl,
+      metadata: { backend: spec.backend },
+    }))
+    lease = await probePreviewLease(provider, lease)
+  } catch (error) {
+    if (lease) {
+      await safeReleasePreviewLease(provider, lease, "probe-failed", error)
+    }
+    await server[Symbol.asyncDispose]()
+    throw error
+  }
+
+  return {
+    ...server,
+    previewLease: lease,
+    async [Symbol.asyncDispose]() {
+      try {
+        await safeReleasePreviewLease(provider, lease, "runtime-dispose")
+      } finally {
+        await server[Symbol.asyncDispose]()
+      }
+    },
+  }
+}
+
+async function probePreviewLease(provider: RuntimePreviewLeaseProvider, lease: PreviewLease): Promise<PreviewLease> {
+  const result = await provider.probe?.(lease)
+  if (!result) {
+    return lease
+  }
+
+  const probedLease = previewLease({
+    ...lease,
+    ...(result.lease ?? {}),
+    reachability: result.reachability ?? result.lease?.reachability ?? {
+      status: result.status,
+      checked_at: new Date().toISOString(),
+      ...(result.evidence_refs ? { evidence_refs: result.evidence_refs } : {}),
+      ...(result.metadata ? { metadata: result.metadata } : {}),
+    },
+    evidence_refs: result.evidence_refs ?? result.lease?.evidence_refs ?? lease.evidence_refs,
+  })
+  if (result.status === "unreachable") {
+    throw new PreviewLeaseProbeError(probedLease)
+  }
+
+  return probedLease
+}
+
+async function safeReleasePreviewLease(provider: RuntimePreviewLeaseProvider, lease: PreviewLease, reason: "runtime-dispose" | "probe-failed", error?: unknown): Promise<void> {
+  try {
+    await provider.release?.(lease, {
+      status: error ? "failed" : "released",
+      reason,
+      ...(error ? { error: errorDetail(error) } : {}),
+    })
+  } catch {
+    // Local runtime cleanup must still proceed even if an external lease provider fails release.
+  }
+}
+
+class PreviewLeaseProbeError extends Error {
+  constructor(readonly lease: PreviewLease) {
+    super("Preview lease probe reported unreachable preview.")
+    this.name = "PreviewLeaseProbeError"
   }
 }
 
@@ -357,6 +437,16 @@ function previewDetail(spec: RuntimeCreateSpec): Record<string, unknown> {
     hasSiteUrl: Boolean(spec.preview?.siteUrl),
     hasFixedPort: spec.preview?.port !== undefined,
     bind: spec.preview?.bind ?? null,
+    hasLeaseProvider: Boolean(spec.preview?.leaseProvider),
+  }
+}
+
+function previewLeaseDetail(lease: PreviewLease): Record<string, unknown> {
+  return {
+    provider: lease.lease?.provider ?? null,
+    status: lease.lease?.status ?? null,
+    reachability: lease.reachability?.status ?? null,
+    hasPublicUrl: Boolean(lease.public_url ?? lease.preview_public_url),
   }
 }
 

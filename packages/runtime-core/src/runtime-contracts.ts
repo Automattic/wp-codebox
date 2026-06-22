@@ -10,7 +10,7 @@ import type {
   RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
   RUNTIME_EPISODE_TRACE_SCHEMA,
 } from "./runtime-episode-contracts.js"
-import type { PreviewLease, PreviewLeaseLifecycleStatus } from "./runtime-boundary-contracts.js"
+import type { PreviewLease, PreviewLeaseLifecycleStatus, PreviewReachabilityEvidence } from "./runtime-boundary-contracts.js"
 
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 
@@ -66,6 +66,41 @@ export interface RuntimePreviewSpec {
   port?: number
   bind?: string
   lease?: PreviewLease
+  leaseProvider?: RuntimePreviewLeaseProvider
+}
+
+export interface RuntimePreviewLeaseProvider {
+  acquire(request: RuntimePreviewLeaseAcquireRequest): Promise<PreviewLease> | PreviewLease
+  probe?(lease: PreviewLease): Promise<RuntimePreviewLeaseProbeResult> | RuntimePreviewLeaseProbeResult
+  release?(lease: PreviewLease, request: RuntimePreviewLeaseReleaseRequest): Promise<RuntimePreviewLeaseReleaseResult | void> | RuntimePreviewLeaseReleaseResult | void
+}
+
+export interface RuntimePreviewLeaseAcquireRequest {
+  localUrl: string
+  requestedPublicUrl?: string
+  requestedSiteUrl?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface RuntimePreviewLeaseProbeResult {
+  status: PreviewReachabilityEvidence["status"]
+  lease?: PreviewLease
+  reachability?: PreviewReachabilityEvidence
+  evidence_refs?: Record<string, unknown>[]
+  metadata?: Record<string, unknown>
+}
+
+export interface RuntimePreviewLeaseReleaseRequest {
+  status: Extract<PreviewLeaseLifecycleStatus, "released"> | "failed"
+  reason: "runtime-dispose" | "acquire-failed" | "probe-failed" | "startup-failed" | (string & {})
+  error?: Record<string, unknown>
+}
+
+export interface RuntimePreviewLeaseReleaseResult {
+  status: Extract<PreviewLeaseLifecycleStatus, "released"> | "unknown"
+  released_at?: string
+  evidence_refs?: Record<string, unknown>[]
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeMount {

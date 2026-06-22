@@ -1,5 +1,6 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
+import type { PreviewLease } from "@automattic/wp-codebox-core"
 
 export interface PlaygroundServerRunResponse {
   exitCode?: number
@@ -15,6 +16,7 @@ export interface PlaygroundCliServer {
     writeFile?(path: string, contents: string): Promise<void>
   }
   serverUrl: string
+  previewLease?: PreviewLease
   previewRoutes?: PlaygroundPreviewRouteRegistry
   previewProxyDiagnostics?: PlaygroundPreviewProxyDiagnostics
   [Symbol.asyncDispose](): Promise<void>

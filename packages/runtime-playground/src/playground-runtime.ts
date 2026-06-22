@@ -574,7 +574,7 @@ class PlaygroundRuntime implements Runtime {
 
     try {
       const server = await this.cliServerPromise
-      return this.spec.preview?.publicUrl ?? this.spec.preview?.lease?.public_url ?? this.spec.preview?.lease?.preview_public_url ?? server.serverUrl
+      return this.spec.preview?.publicUrl ?? server.previewLease?.public_url ?? server.previewLease?.preview_public_url ?? this.spec.preview?.lease?.public_url ?? this.spec.preview?.lease?.preview_public_url ?? server.serverUrl
     } catch {
       return undefined
     }
@@ -588,9 +588,10 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     const normalizedHoldSeconds = Math.max(0, Math.floor(holdSeconds))
     const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined
-    const publicUrl = this.spec.preview?.publicUrl ?? this.spec.preview?.lease?.public_url ?? this.spec.preview?.lease?.preview_public_url
-    const siteUrl = this.spec.preview?.siteUrl ?? this.spec.preview?.lease?.site_url ?? publicUrl
-    const lease = this.previewLease(server.serverUrl, publicUrl, siteUrl, createdAt, expiresAt)
+    const activeLease = server.previewLease ?? this.spec.preview?.lease
+    const publicUrl = this.spec.preview?.publicUrl ?? activeLease?.public_url ?? activeLease?.preview_public_url
+    const siteUrl = this.spec.preview?.siteUrl ?? activeLease?.site_url ?? publicUrl
+    const lease = this.previewLease(server.serverUrl, publicUrl, siteUrl, createdAt, expiresAt, activeLease)
 
     const preview: ArtifactPreview = {
       url: publicUrl ?? server.serverUrl,
@@ -616,8 +617,7 @@ class PlaygroundRuntime implements Runtime {
     }
   }
 
-  private previewLease(localUrl: string, publicUrl: string | undefined, siteUrl: string | undefined, createdAt: string, expiresAt: string | undefined): PreviewLease {
-    const supplied = this.spec.preview?.lease
+  private previewLease(localUrl: string, publicUrl: string | undefined, siteUrl: string | undefined, createdAt: string, expiresAt: string | undefined, supplied = this.spec.preview?.lease): PreviewLease {
     const previewPublicUrl = publicUrl ?? supplied?.public_url ?? supplied?.preview_public_url
     const leaseStatus = expiresAt ? "active" : "expired"
 
