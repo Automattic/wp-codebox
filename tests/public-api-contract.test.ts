@@ -34,6 +34,7 @@ import {
   RUNNER_WORKSPACE_BACKEND_FILTER,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
+import * as runResultsApi from "../packages/runtime-core/src/run-results.js"
 import * as playgroundPublicApi from "../packages/runtime-playground/src/public.js"
 
 const root = new URL("..", import.meta.url)
@@ -65,7 +66,9 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./core/public",
   "./core/contracts",
   "./core/artifacts",
+  "./core/run-results",
   "./recipe-builders",
+  "./run-results",
   "./agent-task-recipe",
   "./runtime-presets",
   "./playground",
@@ -79,6 +82,7 @@ assert.deepEqual(exportKeys(corePackage), [
   "./public",
   "./contracts",
   "./artifacts",
+  "./run-results",
   "./internals",
   "./recipe-builders",
   "./agent-task-recipe",
@@ -94,6 +98,7 @@ const pluginReadme = await readFile(new URL("packages/wordpress-plugin/README.md
 const agentsApiAdapter = await readFile(new URL("packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php", root), "utf8")
 const publicBarrel = await readFile(new URL("packages/runtime-core/src/public.ts", root), "utf8")
 const contractsBarrel = await readFile(new URL("packages/runtime-core/src/contracts.ts", root), "utf8")
+const rootBarrel = await readFile(new URL("packages/runtime-core/src/index.ts", root), "utf8")
 const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", root), "utf8")
 
 assert.deepEqual(barrelExportModules(publicBarrel), [
@@ -183,6 +188,7 @@ for (const publicEntry of [
   "@automattic/wp-codebox-core/public",
   "@automattic/wp-codebox-core/contracts",
   "@automattic/wp-codebox-core/artifacts",
+  "@automattic/wp-codebox-core/run-results",
   "@automattic/wp-codebox-core/recipe-builders",
   "@automattic/wp-codebox-core/agent-task-recipe",
   "@automattic/wp-codebox-core/runtime-presets",
@@ -206,6 +212,7 @@ for (const contractArea of [
   "Performance observation",
   "Fuzz suite",
   "Artifacts",
+  "Run results",
   "Inspect",
 ]) {
   assert.match(docs, new RegExp(`\\*\\*${contractArea}:\\*\\*`), `docs must define ${contractArea}`)
@@ -267,6 +274,9 @@ assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this mon
 assert.match(docs, /workspace package does not expose a `\.\/core\/internals` mirror/)
 assert.match(docs, /External\s+integrations use the stable entrypoints listed above/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
+assert.match(docs, /`@automattic\/wp-codebox-core`: compatibility-only broad barrel/)
+assert.match(rootBarrel, /Stable root package barrel kept for existing consumers/)
+assert.match(rootBarrel, /prefer the curated `@automattic\/wp-codebox-core\/public` facade or narrower/)
 assert.match(docs, /WordPress consumers should prefer `WP_Codebox_API`/)
 assert.match(docs, /`wp-codebox\/\*` ability ids/)
 assert.match(docs, /`@automattic\/wp-codebox-playground`: advanced runtime backend entrypoint/)
@@ -278,6 +288,13 @@ assert.match(docs, /wp-codebox\/runner-workspace-backend\/v1/)
 assert.match(docs, /backend adapter config schema/)
 assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
 assert.match(docs, /runtimeContractManifest\(\)/)
+assert.match(docs, /## Homeboy Extensions Migration/)
+assert.match(docs, /Root package import for command names, schema ids, or ability metadata \| `@automattic\/wp-codebox-core\/contracts`/)
+assert.match(docs, /Root package import for artifact refs, export links, bundle verification, or apply\/materialization handoff \| `@automattic\/wp-codebox-core\/artifacts`/)
+assert.match(docs, /Root package import for runtime package, phpunit, or bench recipe assembly \| `@automattic\/wp-codebox-core\/recipe-builders`/)
+assert.match(docs, /Root package import for task, command, browser, recipe, artifact, or fuzz result DTOs \| `@automattic\/wp-codebox-core\/run-results`/)
+assert.match(docs, /The root barrel remains published so existing integrations keep working/)
+assert.match(docs, /Treat it\s+as compatibility-only/)
 assert.match(docs, /wp-codebox\/run-agent-task/)
 assert.match(docs, /wp-codebox\/run-runtime-package/)
 assert.match(docs, /wp-codebox\/run-wordpress-workload/)
@@ -302,6 +319,13 @@ assert.equal(typeof artifactBundleFileManifest, "function")
 assert.equal(typeof normalizeAgentTaskRunResult, "function")
 assert.equal(typeof artifactResultEnvelope, "function")
 assert.equal(typeof normalizeArtifactResultEnvelope, "function")
+assert.equal(typeof runResultsApi.normalizeAgentTaskRunResult, "function")
+assert.equal(typeof runResultsApi.artifactResultEnvelope, "function")
+assert.equal(typeof runResultsApi.normalizeArtifactResultEnvelope, "function")
+assert.equal(typeof runResultsApi.browserRunResultEnvelope, "function")
+assert.equal(typeof runResultsApi.createRuntimeCommandResultEnvelope, "function")
+assert.equal(typeof runResultsApi.normalizeRecipeRunSummary, "function")
+assert.equal(typeof runResultsApi.fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
