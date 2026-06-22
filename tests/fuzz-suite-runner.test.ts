@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { fuzzSuiteContract, runFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { fuzzSuiteContract, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -53,5 +53,33 @@ const noExecutor = await runFuzzSuite(fuzzSuiteContract({
 }))
 assert.equal(noExecutor.status, "skipped")
 assert.equal(noExecutor.cases[0]?.diagnostics[0]?.code, "fuzz_suite_executor_unavailable")
+
+const restMatrix = wordpressRestMatrixContract({
+  id: "rest-matrix-001",
+  cases: [{ id: "get-posts", method: "GET", path: "/wp/v2/posts", params: { per_page: 1 }, headers: { accept: "application/json" }, session: "admin" }],
+})
+const restSuite = wordpressRestMatrixToFuzzSuite(restMatrix)
+assert.equal(restMatrix.schema, "wp-codebox/wordpress-rest-matrix/v1")
+assert.equal(restSuite.target?.kind, "rest")
+assert.equal(restSuite.target?.entrypoint, "wordpress.rest-request")
+assert.deepEqual((restSuite.cases[0]?.input as { args: string[] }).args, [
+  "method=GET",
+  "path=/wp/v2/posts",
+  'headers-json={"accept":"application/json"}',
+  'params-json={"per_page":1}',
+  "session=admin",
+])
+
+const restExecuted: ExecutionSpec[] = []
+const restResult = await runWordPressRestMatrix(restMatrix, {
+  executor: async (spec) => {
+    restExecuted.push(spec)
+    return { id: "rest-exec-1", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "{}", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }
+  },
+})
+assert.equal(restResult.schema, "wp-codebox/wordpress-rest-matrix-result/v1")
+assert.equal(restResult.sourceSchema, "wp-codebox/wordpress-rest-matrix/v1")
+assert.equal(restResult.success, true)
+assert.equal(restExecuted[0]?.command, "wordpress.rest-request")
 
 console.log("fuzz suite runner ok")

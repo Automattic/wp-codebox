@@ -48,25 +48,119 @@ function wp_codebox_runtime_discovery_rest(): array {
     foreach ($routes as $route => $handlers) {
         $methods = array();
         $arg_names = array();
+        $endpoints = array();
         foreach ((array) $handlers as $handler) {
             if (!is_array($handler)) {
                 continue;
             }
-            foreach (array_keys((array) ($handler['methods'] ?? array())) as $method) {
-                $methods[] = strtoupper((string) $method);
-            }
-            foreach (array_keys((array) ($handler['args'] ?? array())) as $arg_name) {
+            $endpoint_methods = wp_codebox_runtime_discovery_rest_methods($handler['methods'] ?? array());
+            $endpoint_args = array();
+            foreach ((array) ($handler['args'] ?? array()) as $arg_name => $arg_schema) {
                 $arg_names[] = (string) $arg_name;
+                $endpoint_args[] = wp_codebox_runtime_discovery_rest_arg((string) $arg_name, is_array($arg_schema) ? $arg_schema : array());
             }
+            $methods = array_merge($methods, $endpoint_methods);
+            $endpoints[] = array(
+                'methods' => $endpoint_methods,
+                'permission' => wp_codebox_runtime_discovery_rest_permission($handler),
+                'args' => $endpoint_args,
+            );
         }
         $namespace = trim(explode('/', trim((string) $route, '/'))[0] ?? '', '/');
         if ($namespace !== '') {
             $namespaces[] = $namespace;
         }
-        $items[] = array('route' => (string) $route, 'namespace' => $namespace, 'methods' => array_values(array_unique($methods)), 'argNames' => array_values(array_unique($arg_names)));
+        $route_item = array('route' => (string) $route, 'namespace' => $namespace, 'methods' => array_values(array_unique($methods)), 'argNames' => array_values(array_unique($arg_names)), 'endpoints' => $endpoints);
+        $route_schema = wp_codebox_runtime_discovery_rest_schema((array) $handlers);
+        if (!empty($route_schema)) {
+            $route_item['schema'] = $route_schema;
+        }
+        $items[] = $route_item;
     }
 
     return array('payload' => array('schema' => 'wp-codebox/wordpress-rest-route-discovery/v1', 'routes' => $items, 'namespaces' => array_values(array_unique($namespaces))), 'diagnostics' => array());
+}
+
+function wp_codebox_runtime_discovery_rest_methods($methods): array {
+    if (is_string($methods)) {
+        return array_values(array_filter(array_map('trim', explode(',', strtoupper($methods)))));
+    }
+    $keys = array_keys((array) $methods);
+    $values = array_values((array) $methods);
+    $raw = array_merge($keys, $values);
+    $normalized = array();
+    foreach ($raw as $method) {
+        if (is_string($method) && $method !== '' && strtoupper($method) === $method) {
+            $normalized[] = $method;
+        }
+    }
+    return array_values(array_unique($normalized));
+}
+
+function wp_codebox_runtime_discovery_rest_permission(array $handler): array {
+    if (!array_key_exists('permission_callback', $handler)) {
+        return array('mode' => 'none');
+    }
+    $callback = $handler['permission_callback'];
+    if ($callback === '__return_true') {
+        return array('mode' => 'public', 'callbackType' => 'function');
+    }
+    return array('mode' => 'callback', 'callbackType' => wp_codebox_runtime_discovery_callback_type($callback));
+}
+
+function wp_codebox_runtime_discovery_callback_type($callback): string {
+    if (is_string($callback)) {
+        return 'function';
+    }
+    if (is_array($callback)) {
+        return 'method';
+    }
+    if ($callback instanceof Closure) {
+        return 'closure';
+    }
+    if (is_object($callback) && is_callable($callback)) {
+        return 'invokable';
+    }
+    return is_callable($callback) ? 'callable' : 'unknown';
+}
+
+function wp_codebox_runtime_discovery_rest_arg(string $name, array $schema): array {
+    $arg = array('name' => $name, 'required' => !empty($schema['required']));
+    foreach (array('type', 'format') as $key) {
+        if (isset($schema[$key]) && (is_string($schema[$key]) || is_array($schema[$key]))) {
+            $arg[$key] = $schema[$key];
+        }
+    }
+    if (isset($schema['enum']) && is_array($schema['enum'])) {
+        $arg['enum'] = array_slice(array_values($schema['enum']), 0, 25);
+    }
+    if (isset($schema['description']) && is_string($schema['description'])) {
+        $arg['description'] = substr(wp_strip_all_tags($schema['description']), 0, 240);
+    }
+    $arg['defaultPresent'] = array_key_exists('default', $schema);
+    $arg['validateCallback'] = array_key_exists('validate_callback', $schema);
+    $arg['sanitizeCallback'] = array_key_exists('sanitize_callback', $schema);
+    return $arg;
+}
+
+function wp_codebox_runtime_discovery_rest_schema(array $handlers): array {
+    foreach ($handlers as $handler) {
+        if (!is_array($handler) || !isset($handler['schema']) || !is_array($handler['schema'])) {
+            continue;
+        }
+        $schema = $handler['schema'];
+        $descriptor = array();
+        foreach (array('title', 'type') as $key) {
+            if (isset($schema[$key]) && (is_string($schema[$key]) || is_array($schema[$key]))) {
+                $descriptor[$key] = $schema[$key];
+            }
+        }
+        if (isset($schema['properties']) && is_array($schema['properties'])) {
+            $descriptor['properties'] = array_slice(array_values(array_map('strval', array_keys($schema['properties']))), 0, 100);
+        }
+        return $descriptor;
+    }
+    return array();
 }
 
 function wp_codebox_runtime_discovery_admin(): array {

@@ -17,6 +17,7 @@ import {
   runtimePackageExecutionInput,
   runtimeContractManifest,
   runtimeProfile,
+  wordpressRestMatrixContract,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
@@ -25,6 +26,7 @@ import {
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
   PERFORMANCE_OBSERVATION_SCHEMA,
+  WORDPRESS_REST_MATRIX_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
@@ -125,6 +127,7 @@ for (const publicModule of [
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
   "./fuzz-suite-contracts.js",
+  "./rest-matrix-contracts.js",
   "./parent-tool-bridge.js",
   "./performance-observation.js",
   "./recipe-builders.js",
@@ -209,6 +212,7 @@ assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
+assert.equal(typeof wordpressRestMatrixContract, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(typeof runtimeContractManifest, "function")
@@ -216,6 +220,7 @@ assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABI
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
 assert.equal("providerRuntime" in runtimeContractManifest(), false)
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+assert.equal(wordpressRestMatrixContract({ id: "public-rest-matrix" }).schema, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)

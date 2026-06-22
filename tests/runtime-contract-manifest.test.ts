@@ -24,6 +24,8 @@ import {
   RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA,
   RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
+  WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
+  WORDPRESS_REST_MATRIX_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_COMMAND_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
@@ -59,6 +61,8 @@ assert.equal(manifest.schemas.parentToolBridge.result, PARENT_TOOL_RESULT_SCHEMA
 assert.equal(manifest.schemas.fanoutAggregation.input, FANOUT_AGGREGATION_INPUT_SCHEMA)
 assert.equal(manifest.schemas.fanoutAggregation.output, FANOUT_AGGREGATION_OUTPUT_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.result, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
 assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)

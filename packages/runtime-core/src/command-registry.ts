@@ -380,7 +380,7 @@ export const commandRegistry = [
     id: "wordpress.rest-route-inventory",
     description: "Inventory registered WordPress REST routes for fuzzing seed discovery using rest_get_server()->get_routes().",
     acceptedArgs: [],
-    outputShape: "wp-codebox/wordpress-rest-route-inventory/v1 JSON with route, namespace, method, argument-name, status, and diagnostic summaries.",
+    outputShape: "wp-codebox/wordpress-rest-route-inventory/v1 JSON with route, namespace, methods, bounded endpoint permission descriptors, bounded arg/schema descriptors, status, and diagnostics.",
     outputSchema: objectEnvelopeSchema(WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, {
       routes: { type: "array" },
       namespaces: { type: "array" },
