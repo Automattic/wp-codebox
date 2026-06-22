@@ -157,6 +157,7 @@
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
+    "test:runtime-command-result-envelope": "tsx tests/runtime-command-result-envelope.test.ts",
     "test:wordpress-runtime-discovery-contracts": "tsx tests/wordpress-runtime-discovery-contracts.test.ts",
     "test:wordpress-block-fuzz-suite": "tsx tests/wordpress-block-fuzz-suite.test.ts",
     "test:runtime-package-execution": "tsx tests/runtime-package-execution.test.ts",

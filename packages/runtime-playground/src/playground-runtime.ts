@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, PREVIEW_LEASE_SCHEMA, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, previewLease, resolveCommandPath, runtimeCommandResultEnvelopeFromOutput, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -93,6 +93,14 @@ function commandEnvelopeStdout(envelope: RuntimeCommandResultEnvelope): string {
     return envelope.stdout
   }
   return envelope.json === undefined ? "" : `${JSON.stringify(envelope.json, null, 2)}\n`
+}
+
+function runtimeCommandTiming(startedAt: string, finishedAt: string): { startedAt: string; finishedAt: string; durationMs: number } {
+  return {
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, new Date(finishedAt).getTime() - new Date(startedAt).getTime()),
+  }
 }
 
 interface ReviewerAuthBootstrapRecord {
@@ -272,19 +280,29 @@ class PlaygroundRuntime implements Runtime {
     this.activeExecutionSignal = abortController.signal
     try {
       const output = await timeoutPlaygroundCommand(executePlaygroundCommand(this, spec, this.hostTools), spec, abortController)
-      const envelope = typeof output === "string" ? undefined : output
+      const finishedAt = now()
+      const envelope = typeof output === "string"
+        ? runtimeCommandResultEnvelopeFromOutput({
+          status: "ok",
+          stdout: output,
+          diagnostics: {
+            command: spec.command,
+            timing: runtimeCommandTiming(startedAt, finishedAt),
+          },
+        })
+        : output
       const result: ExecutionResult = {
         id: commandId,
         command: spec.command,
         args: spec.args ?? [],
         exitCode: commandExitCode(envelope),
-        stdout: typeof output === "string" ? output : commandEnvelopeStdout(output),
+        stdout: commandEnvelopeStdout(envelope),
         stderr: envelope?.stderr ?? "",
-        ...(envelope ? { result: envelope } : {}),
+        result: envelope,
         ...(envelope?.diagnostics !== undefined ? { diagnostics: envelope.diagnostics } : {}),
         ...(envelope?.artifactRefs?.length ? { artifactRefs: envelope.artifactRefs } : {}),
         startedAt,
-        finishedAt: now(),
+        finishedAt,
       }
 
       this.commands.push(result)
