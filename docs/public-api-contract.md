@@ -24,8 +24,11 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
   helpers.
 - `@automattic/wp-codebox-core/runtime-presets`: runtime preset registry helpers.
-- `@automattic/wp-codebox-playground`: the current WordPress Playground runtime
-  backend factory and backend-owned helper types.
+- `@automattic/wp-codebox-playground`: advanced backend adapter entrypoint for
+  implementors that need the current WordPress Playground runtime factory and
+  backend-owned helper types. New consumers should prefer
+  `@automattic/wp-codebox-playground/public` unless they are implementing a
+  runtime backend.
 - `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
   for creating Playground-backed WordPress runtimes and episodes, running episode
   actions with lifecycle hooks, collecting runtime/episode artifacts, and reading
@@ -46,6 +49,11 @@ ability has multiple registered names, new integrations should prefer the
 inspectable `meta.canonical_ability` value. Aliases stay registered for existing
 callers, but docs and schemas should describe the canonical Codebox-owned name
 first.
+
+WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
+`wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
+upstream systems internally, but public docs and schemas should not require
+callers to invoke raw upstream ability names.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,

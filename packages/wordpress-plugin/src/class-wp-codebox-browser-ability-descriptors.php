@@ -25,57 +25,6 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 		$session_input               = $context['session_input'];
 
 		$descriptors = array(
-			'wp-codebox/create-browser-contained-site-session' => array(
-				'label'               => 'Create Browser Contained Site Session',
-				'description'         => 'Create a Codebox-contained browser site session and return product-safe session, preview lease, boot descriptor, and startup diagnostics without requiring consumers to pass Playground boot internals.',
-				'category'            => 'wp-codebox',
-				'input_schema'        => array( 'type' => 'object', 'required' => array( 'goal' ), 'properties' => $browser_session_properties ),
-				'output_schema'       => array( 'type' => 'object' ),
-				'execute_callback'    => array( WP_Codebox_Abilities::class, 'create_browser_contained_site_session' ),
-				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
-				'meta'                => array( 'show_in_rest' => true ),
-			),
-			'wp-codebox/boot-browser-contained-site-session' => array(
-				'label'               => 'Boot Browser Contained Site Session',
-				'description'         => 'Resolve an existing Codebox-contained browser site into a product-safe boot descriptor and startup diagnostics.',
-				'category'            => 'wp-codebox',
-				'input_schema'        => array( 'type' => 'object', 'properties' => array( 'contained_site' => $context['browser_contained_site_schema'], 'site_id' => array( 'type' => 'string' ), 'cache_key' => array( 'type' => 'string' ), 'source_digest' => array( 'type' => array( 'string', 'object' ) ), 'input_hash' => array( 'type' => 'string' ), 'playground' => array( 'type' => 'object' ), 'preview_lease' => array( 'type' => 'object' ) ) ),
-				'output_schema'       => array( 'type' => 'object' ),
-				'execute_callback'    => array( WP_Codebox_Abilities::class, 'boot_browser_contained_site_session' ),
-				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
-				'meta'                => array( 'show_in_rest' => true ),
-			),
-			'wp-codebox/preview-boot-ref' => array(
-				'label'               => 'Preview Boot Ref',
-				'description'         => 'Resolve a Codebox-contained preview into a stable Studio-style boot DTO with boot, blueprint_ref, preview_lease, and startup_diagnostics fields.',
-				'category'            => 'wp-codebox',
-				'input_schema'        => array( 'type' => 'object', 'properties' => array( 'contained_site' => $context['browser_contained_site_schema'], 'site_id' => array( 'type' => 'string' ), 'cache_key' => array( 'type' => 'string' ), 'source_digest' => array( 'type' => array( 'string', 'object' ) ), 'input_hash' => array( 'type' => 'string' ), 'playground' => array( 'type' => 'object' ), 'preview_lease' => array( 'type' => 'object' ) ) ),
-				'output_schema'       => array(
-					'type'       => 'object',
-					'properties' => array(
-						'success'             => array( 'type' => 'boolean' ),
-						'schema'              => array( 'type' => 'string', 'const' => 'wp-codebox/preview-boot-ref/v1' ),
-						'boot'                => array( 'type' => 'object' ),
-						'blueprint_ref'       => array( 'type' => 'object' ),
-						'preview_lease'       => array( 'type' => 'object' ),
-						'startup_diagnostics' => array( 'type' => 'object' ),
-						'compatibility'       => array( 'type' => 'object' ),
-					),
-				),
-				'execute_callback'    => array( WP_Codebox_Abilities::class, 'preview_boot_ref' ),
-				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
-				'meta'                => array( 'show_in_rest' => true ),
-			),
-			'wp-codebox/destroy-browser-contained-site-session' => array(
-				'label'               => 'Destroy Browser Contained Site Session',
-				'description'         => 'Release a Codebox-contained browser site session lease and return a terminal contained-site envelope.',
-				'category'            => 'wp-codebox',
-				'input_schema'        => array( 'type' => 'object', 'properties' => array( 'contained_site' => $context['browser_contained_site_schema'], 'site_id' => array( 'type' => 'string' ), 'source_digest' => array( 'type' => array( 'string', 'object' ) ), 'preview_lease' => array( 'type' => 'object' ) ) ),
-				'output_schema'       => array( 'type' => 'object' ),
-				'execute_callback'    => array( WP_Codebox_Abilities::class, 'destroy_browser_contained_site_session' ),
-				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
-				'meta'                => array( 'show_in_rest' => true ),
-			),
 			'wp-codebox/hydrate-browser-blueprint-ref'      => array(
 				'label'               => 'Hydrate Browser Blueprint Ref',
 				'description'         => 'Resolve a product-safe prepared browser blueprint ref into an executable WordPress Playground blueprint without requiring consumers to store blueprint files.',
