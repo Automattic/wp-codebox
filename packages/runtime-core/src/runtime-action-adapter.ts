@@ -10,7 +10,7 @@ export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-obse
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -95,6 +95,36 @@ export interface RuntimePageAction {
   timeout_ms?: number
 }
 
+export interface RuntimeWordPressPluginSetupAction {
+  type: "wordpress_plugin_setup"
+  action?: "install" | "list"
+  plugin?: string
+  slug?: string
+  activate?: boolean
+  network?: boolean
+  timeout_ms?: number
+}
+
+export interface RuntimeWordPressPluginStateAction {
+  type: "wordpress_plugin_state"
+  action?: "report" | "status" | "activate" | "deactivate"
+  plugin?: string
+  slug?: string
+  file?: string
+  path?: string
+  network?: boolean
+  timeout_ms?: number
+}
+
+export interface RuntimeWordPressThemeSetupAction {
+  type: "wordpress_theme_setup"
+  action?: "install" | "switch" | "list"
+  theme?: string
+  slug?: string
+  activate?: boolean
+  timeout_ms?: number
+}
+
 export interface RuntimeActionAdapterPolicy {
   mounts?: MountSpec[]
   writableRoots?: string[]
@@ -161,6 +191,18 @@ export async function runRuntimeAction(
     return runRuntimePageAction(episode, action)
   }
 
+  if (action.type === "wordpress_plugin_setup") {
+    return runRuntimeMappedCommandAction(episode, action, "wordpress.plugin-setup")
+  }
+
+  if (action.type === "wordpress_plugin_state") {
+    return runRuntimeMappedCommandAction(episode, action, "wordpress.plugin-state")
+  }
+
+  if (action.type === "wordpress_theme_setup") {
+    return runRuntimeMappedCommandAction(episode, action, "wordpress.theme-setup")
+  }
+
   return runRuntimeFilesystemAction(episode, action, policy)
 }
 
@@ -225,6 +267,43 @@ async function runRuntimeWpCliAction(episode: RuntimeEpisode, action: RuntimeWpC
       stepId: step.id,
     },
     artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+async function runRuntimeMappedCommandAction(episode: RuntimeEpisode, action: RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction, command: string): Promise<RuntimeActionObservation> {
+  const step = await episode.step(
+    {
+      kind: "command",
+      command,
+      args: actionArgs(action),
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+    },
+    { type: "command-result" },
+  )
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout: step.execution.stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+function actionArgs(action: object): string[] {
+  return Object.entries(action).flatMap(([key, value]) => {
+    if (value === undefined || key === "type" || key === "timeout_ms") {
+      return []
+    }
+    return [`${key.replace(/_/g, "-")}=${String(value)}`]
   })
 }
 

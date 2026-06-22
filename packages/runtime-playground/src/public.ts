@@ -20,6 +20,9 @@ export {
   runWordPressBrowserAction,
   runWordPressPhp,
   runWordPressWpCli,
+  setWordPressPluginState,
+  setupWordPressPlugin,
+  setupWordPressTheme,
   visitWordPressPage,
   type RuntimeActionObservation,
   type WordPressAdminPageOptions,
@@ -28,9 +31,12 @@ export {
   type WordPressEditorOpenOptions,
   type WordPressPageOptions,
   type WordPressPhpOptions,
+  type WordPressPluginSetupOptions,
+  type WordPressPluginStateOptions,
   type WordPressRestRequestOptions,
   type WordPressRuntimeActionEpisode,
   type WordPressRuntimeArtifactSource,
+  type WordPressThemeSetupOptions,
   type WordPressWpCliOptions,
 } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"

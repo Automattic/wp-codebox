@@ -1,4 +1,4 @@
-import { runRuntimeAction, type RuntimeActionObservation, type RuntimeAdminPageAction, type RuntimeBrowserAction, type RuntimeBrowserProbeAction, type RuntimeEditorOpenAction, type RuntimePageAction, type RuntimePhpAction, type RuntimeRestRequestAction, type RuntimeWpCliAction } from "./runtime-action-adapter.js"
+import { runRuntimeAction, type RuntimeActionObservation, type RuntimeAdminPageAction, type RuntimeBrowserAction, type RuntimeBrowserProbeAction, type RuntimeEditorOpenAction, type RuntimePageAction, type RuntimePhpAction, type RuntimeRestRequestAction, type RuntimeWordPressPluginSetupAction, type RuntimeWordPressPluginStateAction, type RuntimeWordPressThemeSetupAction, type RuntimeWpCliAction } from "./runtime-action-adapter.js"
 import type { ArtifactSpec } from "./artifact-manifest.js"
 import type { ArtifactBundle, Runtime, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode } from "./runtime-contracts.js"
 
@@ -15,6 +15,10 @@ export type WordPressBrowserProbeOptions = Omit<RuntimeBrowserProbeAction, "type
 export type WordPressEditorOpenOptions = Omit<RuntimeEditorOpenAction, "type">
 export type WordPressAdminPageOptions = Omit<RuntimeAdminPageAction, "type">
 export type WordPressPageOptions = Omit<RuntimePageAction, "type">
+
+export type WordPressPluginSetupOptions = Omit<RuntimeWordPressPluginSetupAction, "type">
+export type WordPressPluginStateOptions = Omit<RuntimeWordPressPluginStateAction, "type">
+export type WordPressThemeSetupOptions = Omit<RuntimeWordPressThemeSetupAction, "type">
 
 export function runWordPressWpCli(episode: WordPressRuntimeActionEpisode, command: string | WordPressWpCliOptions): Promise<RuntimeActionObservation> {
   const action = typeof command === "string" ? { command } : command
@@ -48,6 +52,18 @@ export function openWordPressAdminPage(episode: WordPressRuntimeActionEpisode, p
 
 export function visitWordPressPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageOptions): Promise<RuntimeActionObservation> {
   return runRuntimeAction(episode as RuntimeEpisode, { type: "page", ...page })
+}
+
+export function setupWordPressPlugin(episode: WordPressRuntimeActionEpisode, options: WordPressPluginSetupOptions = {}): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_plugin_setup", ...options })
+}
+
+export function setWordPressPluginState(episode: WordPressRuntimeActionEpisode, options: WordPressPluginStateOptions): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_plugin_state", ...options })
+}
+
+export function setupWordPressTheme(episode: WordPressRuntimeActionEpisode, options: WordPressThemeSetupOptions = {}): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_theme_setup", ...options })
 }
 
 export function collectWordPressArtifacts(source: WordPressRuntimeArtifactSource, spec?: ArtifactSpec): Promise<ArtifactBundle> {

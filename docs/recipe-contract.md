@@ -250,6 +250,17 @@ existing command catalog.
 
 ### Plugin State
 
+Use `wordpress.plugin-setup` for bounded plugin installation and inventory in a
+contained runtime. It accepts WordPress.org slugs only; paths, URLs, and package
+files are rejected so callers cannot mutate or read parent-site paths.
+
+```json
+{
+  "command": "wordpress.plugin-setup",
+  "args": ["action=install", "plugin=my-plugin", "activate=true"]
+}
+```
+
 Use `wordpress.plugin-state` when a recipe or runtime caller needs structured
 WordPress plugin state instead of shelling out to `wp plugin` directly. The
 command accepts a plugin slug, plugin file, or plugin path and can report,
@@ -266,6 +277,19 @@ The result uses the `wp-codebox/wordpress-plugin-state/v1` schema and includes
 the requested action, resolved target identity, before/after active plugin
 lists, network-active plugin lists where multisite is available, multisite
 support notes, diagnostics, errors, and `artifactRefs`.
+
+Use `wordpress.theme-setup` for bounded theme installation, switching, and
+inventory in a contained runtime:
+
+```json
+{
+  "command": "wordpress.theme-setup",
+  "args": ["action=switch", "theme=twentytwentysix"]
+}
+```
+
+The plugin/theme setup result schemas include the requested action, target slug,
+current inventory, operation diagnostics, errors, and `artifactRefs`.
 
 ## Runtime Checkpoints
 

@@ -6,6 +6,9 @@ import {
   createWordPressEpisode,
   createWordPressRuntime,
   runWordPressEpisodeActions,
+  setWordPressPluginState,
+  setupWordPressPlugin,
+  setupWordPressTheme,
   wordpressAdminPageLoadAction,
   wordpressFrontendPageLoadAction,
 } from "../packages/runtime-playground/src/public.js"
@@ -13,6 +16,9 @@ import {
 assert.equal(typeof createWordPressRuntime, "function")
 assert.equal(typeof createWordPressEpisode, "function")
 assert.equal(typeof runWordPressEpisodeActions, "function")
+assert.equal(typeof setupWordPressPlugin, "function")
+assert.equal(typeof setWordPressPluginState, "function")
+assert.equal(typeof setupWordPressTheme, "function")
 assert.equal(typeof wordpressAdminPageLoadAction, "function")
 assert.equal(typeof wordpressFrontendPageLoadAction, "function")
 assert.equal(typeof collectWordPressRuntimeArtifacts, "function")

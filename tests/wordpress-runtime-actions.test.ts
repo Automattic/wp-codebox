@@ -8,6 +8,9 @@ import {
   runWordPressBrowserAction,
   runWordPressPhp,
   runWordPressWpCli,
+  setWordPressPluginState,
+  setupWordPressPlugin,
+  setupWordPressTheme,
   visitWordPressPage,
   type WordPressRuntimeActionEpisode,
 } from "../packages/runtime-playground/src/public.js"
@@ -53,6 +56,9 @@ await probeWordPressBrowser(fakeEpisode, { url: "/", wait_for: "load", capture: 
 await openWordPressEditor(fakeEpisode, { target: "post-new", post_type: "post", capture: ["editor-state"] })
 const adminObservation = await openWordPressAdminPage(fakeEpisode, { path: "plugins.php", capture: ["html"] })
 const pageObservation = await visitWordPressPage(fakeEpisode, { path: "/sample-page/", capture: ["html"] })
+await setupWordPressPlugin(fakeEpisode, { action: "list" })
+await setWordPressPluginState(fakeEpisode, { action: "activate", plugin: "query-monitor" })
+await setupWordPressTheme(fakeEpisode, { action: "list" })
 
 assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.wp-cli",
@@ -63,6 +69,9 @@ assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.editor-open",
   "wordpress.browser-probe",
   "wordpress.browser-probe",
+  "wordpress.plugin-setup",
+  "wordpress.plugin-state",
+  "wordpress.theme-setup",
 ])
 assert.deepEqual(calls[0]?.args, ["command=option get siteurl"])
 assert.ok(calls[1]?.args.includes("code=echo get_bloginfo('name');"))

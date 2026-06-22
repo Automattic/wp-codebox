@@ -562,6 +562,29 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runPluginCheck" },
   },
   {
+    id: "wordpress.plugin-setup",
+    description: "Install or list WordPress.org plugins inside the disposable WordPress runtime using bounded slug-only setup primitives.",
+    acceptedArgs: [
+      { name: "action", description: "Plugin setup action. Defaults to list.", format: "install|list" },
+      { name: "plugin", description: "WordPress.org plugin slug. Required for install; paths, URLs, and package files are rejected.", format: "slug" },
+      { name: "slug", description: "WordPress.org plugin slug. Used when plugin is omitted.", format: "slug" },
+      { name: "activate", description: "Activate after install inside the contained runtime.", format: "boolean" },
+      { name: "network", description: "Use network activation when activate=true on multisite runtimes.", format: "boolean" },
+    ],
+    outputShape: "wp-codebox/wordpress-plugin-setup/v1 JSON with command, action, target slug, installed plugin list, operation diagnostics, errors, and artifactRefs.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-plugin-setup/v1", {
+      action: { type: "string" },
+      target: { type: ["object", "null"] },
+      plugins: { type: "array" },
+      operations: { type: "array" },
+      errors: { type: "array" },
+      artifactRefs: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.plugin-setup.",
+    recipe: true,
+    handler: { kind: "playground", method: "runPluginSetup" },
+  },
+  {
     id: "wordpress.plugin-state",
     description: "Report, activate, or deactivate an installed WordPress plugin by slug, plugin file, or plugin path using WordPress plugin APIs and a structured result envelope.",
     acceptedArgs: [
@@ -606,6 +629,28 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.core-phpunit.",
     recipe: true,
     handler: { kind: "playground", method: "runCorePhpunit" },
+  },
+  {
+    id: "wordpress.theme-setup",
+    description: "Install, switch, or list WordPress.org themes inside the disposable WordPress runtime using bounded slug-only setup primitives.",
+    acceptedArgs: [
+      { name: "action", description: "Theme setup action. Defaults to list.", format: "install|switch|list" },
+      { name: "theme", description: "WordPress.org theme slug. Required for install and switch; paths, URLs, and package files are rejected.", format: "slug" },
+      { name: "slug", description: "WordPress.org theme slug. Used when theme is omitted.", format: "slug" },
+      { name: "activate", description: "Switch to the theme after install inside the contained runtime.", format: "boolean" },
+    ],
+    outputShape: "wp-codebox/wordpress-theme-setup/v1 JSON with command, action, target slug, installed theme list, operation diagnostics, errors, and artifactRefs.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-theme-setup/v1", {
+      action: { type: "string" },
+      target: { type: ["object", "null"] },
+      themes: { type: "array" },
+      operations: { type: "array" },
+      errors: { type: "array" },
+      artifactRefs: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.theme-setup.",
+    recipe: true,
+    handler: { kind: "playground", method: "runThemeSetup" },
   },
   {
     id: "wordpress.theme-check",

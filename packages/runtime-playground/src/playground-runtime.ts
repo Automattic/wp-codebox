@@ -19,7 +19,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPageLoadCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginSetupCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand, runThemeSetupCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1048,6 +1048,15 @@ class PlaygroundRuntime implements Runtime {
     })
   }
 
+  async runPluginSetup(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runPluginSetupCommand({
+      runWpCliArgv: (targetServer, argv) => this.runWpCliArgv(targetServer, argv),
+      server,
+      spec,
+    })
+  }
+
   async runCrudOperation(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const operation = wordpressCrudOperationFromArgs(spec.args ?? [])
@@ -1076,6 +1085,15 @@ class PlaygroundRuntime implements Runtime {
     })
     this.themeChecks.push(result.artifact)
     return result.output
+  }
+
+  async runThemeSetup(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runThemeSetupCommand({
+      runWpCliArgv: (targetServer, argv) => this.runWpCliArgv(targetServer, argv),
+      server,
+      spec,
+    })
   }
 
   private async runWpCliCommand(server: PlaygroundCliServer, argv: string[]): Promise<PlaygroundRunResponse> {

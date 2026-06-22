@@ -26,8 +26,10 @@ interface PlaygroundCommandRuntime {
   runBench(spec: ExecutionSpec): Promise<string>
   runPhpunit(spec: ExecutionSpec): Promise<string>
   runPluginCheck(spec: ExecutionSpec): Promise<string>
+  runPluginSetup(spec: ExecutionSpec): Promise<string>
   runPluginState(spec: ExecutionSpec): Promise<string>
   runCorePhpunit(spec: ExecutionSpec): Promise<string>
+  runThemeSetup(spec: ExecutionSpec): Promise<string>
   runThemeCheck(spec: ExecutionSpec): Promise<string>
   runBrowserProbe(spec: ExecutionSpec): Promise<string>
   runHtmlCapture(spec: ExecutionSpec): Promise<string>
