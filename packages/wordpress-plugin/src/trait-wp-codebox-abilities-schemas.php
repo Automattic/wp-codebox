@@ -304,19 +304,13 @@ private static function browser_playground_session_schema(): array {
 				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
+			'preview_boot' => array( 'type' => 'object' ),
+			'preview_ref'  => array( 'type' => 'object' ),
+			'artifact_refs' => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'contained_site' => self::browser_contained_site_schema(),
-			'task_input' => self::task_input_schema(),
-			'task_payload' => array( 'type' => 'object' ),
-			'playground' => array( 'type' => 'object' ),
-			'runtime'    => array( 'type' => 'object' ),
-			'site_blueprint_artifact' => array( 'type' => 'object' ),
-			'materialization' => array(
-				'type'        => 'object',
-				'description' => 'Generic browser materialization invocation contract and result capture shape produced by the generated Playground runner.',
-			),
-			'recipe'     => array( 'type' => 'object' ),
 			'signals'    => array( 'type' => 'object' ),
 			'artifacts'  => array( 'type' => 'object' ),
+			'product'    => self::browser_product_dto_schema(),
 		),
 	);
 }
@@ -883,6 +877,15 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'blueprint'               => self::object_property_schema( $detailed ? 'Optional WordPress Playground blueprint for the browser to compile and run.' : '' ),
 		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),
 		'artifact_files'          => $detailed ? self::artifact_files_input_schema() : array( 'type' => 'array' ),
+		'include_raw_browser_session' => array(
+			'type'        => 'boolean',
+			'description' => 'Internal/debug escape hatch for materializers that need the raw browser Playground contract. Public callers should use the default product DTO.',
+			'default'     => false,
+		),
+		'debug'                   => array(
+			'type'        => 'object',
+			'description' => 'Optional debug flags. Set debug.include_raw_browser_session only for internal materializer/debug tooling that needs the raw Playground contract.',
+		),
 	);
 }
 

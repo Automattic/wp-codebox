@@ -194,7 +194,8 @@ public static function create_browser_playground_session( array $input ): array|
 	}
 	$ready_to_code = self::browser_ready_to_code_signal( $input, $runtime );
 	if ( false === ( $ready_to_code['emitted'] ?? false ) ) {
-		return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
+		$blocked_session = self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
+		return self::browser_session_response_for_input( $blocked_session, $input );
 	}
 
 	$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
@@ -204,7 +205,7 @@ public static function create_browser_playground_session( array $input ): array|
 	}
 	$materialization = self::browser_materialization_contract( $recipe );
 
-	return array(
+	$session = array(
 		'success'          => true,
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
 		'execution'        => 'browser-playground',
@@ -253,6 +254,8 @@ public static function create_browser_playground_session( array $input ): array|
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+
+	return self::browser_session_response_for_input( $session, $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -601,6 +604,7 @@ public static function hydrate_browser_blueprint_ref( array $input ): array|WP_E
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
+	$input['include_raw_browser_session'] = true;
 	$session = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $session ) ) {
 		return $session;
@@ -669,6 +673,7 @@ public static function create_browser_task_contract( array $input ): array|WP_Er
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 private static function prepare_browser_task_contract( array $input ): array|WP_Error {
+	$input['include_raw_browser_session'] = true;
 	$primary = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $primary ) ) {
 		return $primary;
@@ -1350,6 +1355,27 @@ private static function blocked_browser_playground_session( string $session_id, 
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+}
+
+/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+private static function browser_session_response_for_input( array $session, array $input ): array {
+	$product_dto = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	if ( self::include_raw_browser_session_contract( $input ) ) {
+		$session['product'] = $product_dto;
+		return $session;
+	}
+
+	return $product_dto;
+}
+
+/** @param array<string,mixed> $input Ability input. */
+private static function include_raw_browser_session_contract( array $input ): bool {
+	if ( true === ( $input['include_raw_browser_session'] ?? false ) || true === ( $input['include_internal_browser_session'] ?? false ) ) {
+		return true;
+	}
+
+	$debug = is_array( $input['debug'] ?? null ) ? $input['debug'] : array();
+	return true === ( $debug['include_raw_browser_session'] ?? false );
 }
 
 /** @return array<string,mixed> */

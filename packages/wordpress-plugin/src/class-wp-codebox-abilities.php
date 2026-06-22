@@ -194,7 +194,7 @@ final class WP_Codebox_Abilities {
 			$site_seed_schema  = self::site_seed_schema();
 			$inherit_schema    = self::inherit_schema();
 			$session_schema    = self::sandbox_session_schema();
-			$browser_session_schema = self::browser_playground_session_schema();
+			$browser_session_schema = self::browser_product_dto_schema();
 			$session_input     = self::sandbox_session_input_schema();
 			$preview_schema    = self::preview_input_schema();
 			$outcome_schema    = self::remediation_outcome_schema();

@@ -180,7 +180,12 @@ $product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto(
 		'status' => 'ready',
 		'source_digest' => array( 'algorithm' => 'sha256', 'value' => str_repeat( 'a', 64 ) ),
 	),
-	'artifacts' => array( 'preview_url' => '/?preview=1' ),
+	'artifacts' => array(
+		'preview_url' => '/?preview=1',
+		'files' => array(
+			array( 'path' => 'index.html', 'kind' => 'browser-html', 'sha256' => str_repeat( 'd', 64 ), 'size' => 42, 'content' => 'must-not-leak' ),
+		),
+	),
 ) );
 $nested_primary_product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( array(
 	'success' => true,
@@ -309,6 +314,17 @@ assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydrator_abil
 assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
 assert.equal(result.product_session.preview_boot.preview.local_url, "/?preview=1")
+assert.equal(result.product_session.preview_ref.schema, "wp-codebox/browser-preview-ref/v1")
+assert.equal(result.product_session.preview_ref.preview_id, "preview-123")
+assert.equal(result.product_session.preview_ref.session_id, "session-123")
+assert.equal(result.product_session.preview_ref.boot_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.deepEqual(result.product_session.artifact_refs, [{
+  schema: "wp-codebox/browser-artifact-ref/v1",
+  kind: "browser-html",
+  path: "files/browser/index.html",
+  digest: { algorithm: "sha256", value: "d".repeat(64) },
+  size: 42,
+}])
 assert.equal(result.nested_primary_product_session.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.nested_primary_product_session.preview_boot.scope, "nested-session-123")
 assert.equal(result.nested_primary_product_session.preview_boot.client_module_url, "https://example.test/nested-client.js")

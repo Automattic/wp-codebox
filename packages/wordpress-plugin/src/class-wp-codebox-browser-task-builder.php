@@ -295,8 +295,10 @@ final class WP_Codebox_Browser_Task_Builder {
 				'provider'         => (string) ( $session['provider'] ?? '' ),
 				'model'            => (string) ( $session['model'] ?? '' ),
 				'preview_boot'     => self::browser_preview_boot_config( $session ),
+				'preview_ref'      => self::browser_preview_ref( $session ),
 				'signals'          => self::compact_public_value( $signals ),
 				'artifacts'        => is_array( $session['artifacts'] ?? null ) ? self::compact_public_value( $session['artifacts'] ) : array(),
+				'artifact_refs'    => self::browser_artifact_refs( $session ),
 				'error'            => is_array( $session['error'] ?? null ) ? self::compact_public_value( $session['error'] ) : array(),
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
@@ -322,6 +324,61 @@ final class WP_Codebox_Browser_Task_Builder {
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
 	public static function safe_browser_session_dto( array $session ): array {
 		return self::product_browser_session_dto( $session );
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	public static function browser_preview_ref( array $session ): array {
+		$contained_site = is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array();
+		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+		$preview_boot = self::browser_preview_boot_config( $session );
+		$preview = is_array( $preview_boot['preview'] ?? null ) ? $preview_boot['preview'] : array();
+
+		return array_filter(
+			array(
+				'schema'     => 'wp-codebox/browser-preview-ref/v1',
+				'id'         => (string) ( $contained_site['preview_id'] ?? '' ),
+				'preview_id' => (string) ( $contained_site['preview_id'] ?? '' ),
+				'session_id' => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? $contained_site['session_id'] ?? '' ),
+				'site_id'    => (string) ( $contained_site['site_id'] ?? '' ),
+				'scope'      => (string) ( $preview_boot['scope'] ?? $contained_site['session_id'] ?? '' ),
+				'url'        => (string) ( $preview['preview_public_url'] ?? $preview['local_url'] ?? '' ),
+				'boot_ref'   => (string) ( $preview_boot['blueprint_ref'] ?? '' ),
+			),
+			static fn( string $value ): bool => '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<int,array<string,mixed>> */
+	public static function browser_artifact_refs( array $session ): array {
+		$artifacts = is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array();
+		$files = is_array( $artifacts['files'] ?? null ) ? $artifacts['files'] : array();
+		$refs = array();
+		foreach ( $files as $file ) {
+			if ( ! is_array( $file ) ) {
+				continue;
+			}
+
+			$path = trim( (string) ( $file['path'] ?? '' ) );
+			$refs[] = array_filter(
+				array(
+					'schema' => 'wp-codebox/browser-artifact-ref/v1',
+					'kind'   => (string) ( $file['kind'] ?? 'browser-artifact' ),
+					'path'   => '' !== $path ? 'files/browser/' . ltrim( $path, '/' ) : '',
+					'digest' => self::browser_artifact_digest_ref( $file['sha256'] ?? null ),
+					'size'   => isset( $file['size'] ) ? (int) $file['size'] : null,
+				),
+				static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
+			);
+		}
+
+		return array_values( array_filter( $refs ) );
+	}
+
+	private static function browser_artifact_digest_ref( mixed $digest ): array {
+		$value = is_array( $digest ) ? (string) ( $digest['value'] ?? '' ) : (string) $digest;
+		$value = trim( $value );
+
+		return '' !== $value ? array( 'algorithm' => is_array( $digest ) ? (string) ( $digest['algorithm'] ?? 'sha256' ) : 'sha256', 'value' => $value ) : array();
 	}
 
 	/** @param array<string,mixed> $profile Runtime profile input. @return array<string,mixed> */
