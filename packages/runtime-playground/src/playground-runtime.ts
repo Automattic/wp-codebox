@@ -19,7 +19,7 @@ import { startPlaygroundCliServer, type PlaygroundCliModule } from "./playground
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runHttpRequestCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runPluginStateCommand, runRestRequestCommand, runRuntimeDiscoveryCommand, runRuntimeInventoryCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
@@ -1103,6 +1103,42 @@ class PlaygroundRuntime implements Runtime {
       runtimeSpec: this.spec,
       server,
       spec,
+    })
+  }
+
+  async runRestRouteInventory(): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeInventoryCommand({
+      command: "wordpress.rest-route-inventory",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      schema: "wp-codebox/wordpress-rest-route-inventory/v1",
+      server,
+      surface: "rest",
+    })
+  }
+
+  async runAdminPageInventory(): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeInventoryCommand({
+      command: "wordpress.admin-page-inventory",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      schema: "wp-codebox/wordpress-admin-page-inventory/v1",
+      server,
+      surface: "admin",
+    })
+  }
+
+  async runFrontendUrlInventory(): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRuntimeInventoryCommand({
+      command: "wordpress.frontend-url-inventory",
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      schema: "wp-codebox/wordpress-frontend-url-inventory/v1",
+      server,
+      surface: "frontend",
     })
   }
 

@@ -31,6 +31,7 @@ import {
   runHttpRequest,
   restRequestInputFromArgs,
   restRequestPhpCode,
+  runtimeInventoryPhpCode,
   runtimeDiscoveryPhpCode,
   runtimeDiscoverySurfacesFromArgs,
   themeCheckRunCode,
@@ -525,6 +526,26 @@ export async function runRuntimeDiscoveryCommand({
   const surfaces = runtimeDiscoverySurfacesFromArgs(spec.args ?? [])
   const response = await runPlaygroundCommand("wordpress.runtime-discovery", server, { code: bootstrapPhpCode(runtimeSpec, runtimeDiscoveryPhpCode(surfaces), []) })
   assertPlaygroundResponseOk("wordpress.runtime-discovery", response)
+  return response.text
+}
+
+export async function runRuntimeInventoryCommand({
+  command,
+  runPlaygroundCommand,
+  runtimeSpec,
+  schema,
+  server,
+  surface,
+}: {
+  command: string
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  schema: string
+  server: PlaygroundCliServer
+  surface: "rest" | "admin" | "frontend"
+}): Promise<string> {
+  const response = await runPlaygroundCommand(command, server, { code: bootstrapPhpCode(runtimeSpec, runtimeInventoryPhpCode(surface, command, schema), []) })
+  assertPlaygroundResponseOk(command, response)
   return response.text
 }
 

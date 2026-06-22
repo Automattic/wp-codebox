@@ -1,4 +1,12 @@
 export const WORDPRESS_RUNTIME_DISCOVERY_SCHEMA = "wp-codebox/wordpress-runtime-discovery/v1" as const
+export const WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA = "wp-codebox/wordpress-rest-route-inventory/v1" as const
+export const WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA = "wp-codebox/wordpress-admin-page-inventory/v1" as const
+export const WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA = "wp-codebox/wordpress-frontend-url-inventory/v1" as const
+
+export type WordPressRuntimeInventoryCommand =
+  | "wordpress.rest-route-inventory"
+  | "wordpress.admin-page-inventory"
+  | "wordpress.frontend-url-inventory"
 
 export type WordPressRuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
 
@@ -28,6 +36,15 @@ export interface WordPressRestRouteDiscovery {
   namespaces: string[]
 }
 
+export interface WordPressRestRouteInventory {
+  schema: typeof WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA
+  command: "wordpress.rest-route-inventory"
+  status: "ok" | "unsupported"
+  routes: WordPressRestRouteDescriptor[]
+  namespaces: string[]
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+}
+
 export interface WordPressRestRouteDescriptor {
   route: string
   namespace: string
@@ -40,6 +57,16 @@ export interface WordPressAdminPageDiscovery {
   adminUrl: string
   menuLoaded: boolean
   pages: WordPressAdminPageDescriptor[]
+}
+
+export interface WordPressAdminPageInventory {
+  schema: typeof WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA
+  command: "wordpress.admin-page-inventory"
+  status: "ok" | "unsupported"
+  adminUrl: string
+  menuLoaded: boolean
+  pages: WordPressAdminPageDescriptor[]
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
 }
 
 export interface WordPressAdminPageDescriptor {
@@ -77,6 +104,25 @@ export interface WordPressFrontendRouteDiscovery {
   permalinkStructure: string
   rewriteRules: WordPressRewriteRuleDescriptor[]
   publicQueryVars: string[]
+}
+
+export interface WordPressFrontendUrlInventory {
+  schema: typeof WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA
+  command: "wordpress.frontend-url-inventory"
+  status: "ok" | "unsupported"
+  homeUrl: string
+  permalinkStructure: string
+  urls: WordPressFrontendUrlDescriptor[]
+  rewriteRules: WordPressRewriteRuleDescriptor[]
+  publicQueryVars: string[]
+  diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+}
+
+export interface WordPressFrontendUrlDescriptor {
+  url: string
+  source: "home" | "rewrite-rule"
+  pattern?: string
+  query?: string
 }
 
 export interface WordPressRewriteRuleDescriptor {

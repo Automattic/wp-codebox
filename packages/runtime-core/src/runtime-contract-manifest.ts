@@ -17,7 +17,7 @@ import {
   RUNNER_WORKSPACE_PUBLICATION_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
 } from "./runner-workspace-publication.js"
-import { WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 
@@ -69,6 +69,9 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   },
   wordpressRuntimeDiscovery: {
     result: WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
+    restRouteInventory: WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
+    adminPageInventory: WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
+    frontendUrlInventory: WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   },
 } as const
 

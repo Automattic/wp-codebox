@@ -1,6 +1,7 @@
 import { commaListArg } from "./command-args.js"
 
 export type RuntimeDiscoverySurface = "rest" | "admin" | "database" | "frontend" | "blocks"
+export type RuntimeInventorySurface = "rest" | "admin" | "frontend"
 
 const runtimeDiscoverySurfaces = ["rest", "admin", "database", "frontend", "blocks"] as const satisfies readonly RuntimeDiscoverySurface[]
 
@@ -158,4 +159,45 @@ foreach ($wp_codebox_runtime_discovery_surfaces as $wp_codebox_runtime_discovery
 }
 
 echo wp_json_encode($wp_codebox_runtime_discovery_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+export function runtimeInventoryPhpCode(surface: RuntimeInventorySurface, command: string, schema: string): string {
+  const payloadKey = surface === "rest" ? "rest" : surface
+  return `<?php
+${runtimeDiscoveryPhpCode([surface]).replace(/^<\?php\n/, "").replace(/echo wp_json_encode\(\$wp_codebox_runtime_discovery_result, JSON_PRETTY_PRINT \| JSON_UNESCAPED_SLASHES\);$/, "")}
+
+$wp_codebox_runtime_inventory_payload = $wp_codebox_runtime_discovery_result['${payloadKey}'] ?? null;
+$wp_codebox_runtime_inventory_diagnostics = (array) ($wp_codebox_runtime_discovery_result['diagnostics'] ?? array());
+
+if (!is_array($wp_codebox_runtime_inventory_payload)) {
+    echo wp_json_encode(array(
+        'schema' => '${schema}',
+        'command' => '${command}',
+        'status' => 'unsupported',
+        'diagnostics' => array_merge($wp_codebox_runtime_inventory_diagnostics, array(wp_codebox_runtime_discovery_diagnostic('${surface}', 'inventory-unavailable', 'The requested WordPress inventory is unavailable in this runtime context.'))),
+    ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    return;
+}
+
+$wp_codebox_runtime_inventory_result = array_merge($wp_codebox_runtime_inventory_payload, array(
+    'schema' => '${schema}',
+    'command' => '${command}',
+    'status' => empty($wp_codebox_runtime_inventory_diagnostics) ? 'ok' : 'unsupported',
+    'diagnostics' => $wp_codebox_runtime_inventory_diagnostics,
+));
+
+if ('${surface}' === 'frontend') {
+    $wp_codebox_runtime_inventory_urls = array(array('url' => (string) ($wp_codebox_runtime_inventory_payload['homeUrl'] ?? home_url('/')), 'source' => 'home'));
+    foreach ((array) ($wp_codebox_runtime_inventory_payload['rewriteRules'] ?? array()) as $wp_codebox_runtime_inventory_rule) {
+        $wp_codebox_runtime_inventory_urls[] = array(
+            'url' => home_url('/' . ltrim((string) ($wp_codebox_runtime_inventory_rule['pattern'] ?? ''), '/')),
+            'source' => 'rewrite-rule',
+            'pattern' => (string) ($wp_codebox_runtime_inventory_rule['pattern'] ?? ''),
+            'query' => (string) ($wp_codebox_runtime_inventory_rule['query'] ?? ''),
+        );
+    }
+    $wp_codebox_runtime_inventory_result['urls'] = $wp_codebox_runtime_inventory_urls;
+}
+
+echo wp_json_encode($wp_codebox_runtime_inventory_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }

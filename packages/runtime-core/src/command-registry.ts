@@ -1,4 +1,5 @@
 import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -361,7 +362,7 @@ export const commandRegistry = [
       { name: "surface", description: "Comma-separated surfaces to include. Defaults to all supported surfaces.", format: "rest,admin,database,frontend,blocks" },
     ],
     outputShape: "wp-codebox/wordpress-runtime-discovery/v1 JSON with selected REST routes, admin pages, database schema, frontend rewrite routes, and block/editor target summaries.",
-    outputSchema: objectEnvelopeSchema("wp-codebox/wordpress-runtime-discovery/v1", {
+    outputSchema: objectEnvelopeSchema(WORDPRESS_RUNTIME_DISCOVERY_SCHEMA, {
       surfaces: { type: "array" },
       rest: { type: "object" },
       admin: { type: "object" },
@@ -373,6 +374,51 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.runtime-discovery.",
     recipe: true,
     handler: { kind: "playground", method: "runRuntimeDiscovery" },
+  },
+  {
+    id: "wordpress.rest-route-inventory",
+    description: "Inventory registered WordPress REST routes for fuzzing seed discovery using rest_get_server()->get_routes().",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-rest-route-inventory/v1 JSON with route, namespace, method, argument-name, status, and diagnostic summaries.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, {
+      routes: { type: "array" },
+      namespaces: { type: "array" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.rest-route-inventory.",
+    recipe: true,
+    handler: { kind: "playground", method: "runRestRouteInventory" },
+  },
+  {
+    id: "wordpress.admin-page-inventory",
+    description: "Inventory already-loaded WordPress admin menu pages for fuzzing target discovery without crawling the browser UI.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-admin-page-inventory/v1 JSON with admin URL, menu load status, page descriptors, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, {
+      adminUrl: { type: "string" },
+      menuLoaded: { type: "boolean" },
+      pages: { type: "array" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.admin-page-inventory.",
+    recipe: true,
+    handler: { kind: "playground", method: "runAdminPageInventory" },
+  },
+  {
+    id: "wordpress.frontend-url-inventory",
+    description: "Inventory known frontend URL seeds from WordPress home URL and rewrite rules without running a browser crawler.",
+    acceptedArgs: [],
+    outputShape: "wp-codebox/wordpress-frontend-url-inventory/v1 JSON with home URL, URL seed descriptors, rewrite rules, public query vars, status, and diagnostics.",
+    outputSchema: objectEnvelopeSchema(WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, {
+      homeUrl: { type: "string" },
+      urls: { type: "array" },
+      rewriteRules: { type: "array" },
+      publicQueryVars: { type: "array" },
+      diagnostics: { type: "array" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.frontend-url-inventory.",
+    recipe: true,
+    handler: { kind: "playground", method: "runFrontendUrlInventory" },
   },
   {
     id: "wordpress.bench",

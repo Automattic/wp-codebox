@@ -15,6 +15,9 @@ interface PlaygroundCommandRuntime {
   runHttpRequest(spec: ExecutionSpec): Promise<string>
   runRestRequest(spec: ExecutionSpec): Promise<string>
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
+  runRestRouteInventory(spec: ExecutionSpec): Promise<string>
+  runAdminPageInventory(spec: ExecutionSpec): Promise<string>
+  runFrontendUrlInventory(spec: ExecutionSpec): Promise<string>
   runAbility(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runBench(spec: ExecutionSpec): Promise<string>
   runPhpunit(spec: ExecutionSpec): Promise<string>

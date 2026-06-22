@@ -17,3 +17,11 @@ Returned surfaces:
 - `blocks`: registered block types and generic editor-capable post type targets.
 
 The contract is intentionally descriptive. Consumers should apply product-specific assertions outside WP Codebox.
+
+## Fuzzing Inventory Commands
+
+The inventory commands expose narrower public contracts for fuzzing target discovery. They do not crawl browsers or infer product behavior; they return structured WordPress inventory that the runtime can read in-process, with diagnostics when a surface is unavailable in the current request context.
+
+- `wordpress.rest-route-inventory` returns `wp-codebox/wordpress-rest-route-inventory/v1` with registered REST route descriptors and namespaces.
+- `wordpress.admin-page-inventory` returns `wp-codebox/wordpress-admin-page-inventory/v1` with already-loaded admin menu descriptors. If admin menu globals are unavailable, `status` remains structured and diagnostics include `admin-menu-not-loaded`.
+- `wordpress.frontend-url-inventory` returns `wp-codebox/wordpress-frontend-url-inventory/v1` with home URL, rewrite-rule URL seeds, rewrite rules, and public query vars. This is a seed list, not a crawler result.
