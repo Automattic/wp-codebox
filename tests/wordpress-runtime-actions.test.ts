@@ -1,10 +1,20 @@
 import assert from "node:assert/strict"
 import {
   collectWordPressArtifacts,
+  discoverWordPressRuntime,
+  executeFuzzSuite,
+  executeWordPressRestMatrix,
+  inventoryWordPressAdminPages,
+  inventoryWordPressFrontendUrls,
+  inventoryWordPressRestRoutes,
+  loadWordPressAdminPage,
+  loadWordPressFrontendPage,
   openWordPressAdminPage,
   openWordPressEditor,
   probeWordPressBrowser,
+  readWordPressDatabase,
   requestWordPressRest,
+  runWordPressCrudOperation,
   runWordPressBrowserAction,
   runWordPressPhp,
   runWordPressWpCli,
@@ -53,6 +63,14 @@ await probeWordPressBrowser(fakeEpisode, { url: "/", wait_for: "load", capture: 
 await openWordPressEditor(fakeEpisode, { target: "post-new", post_type: "post", capture: ["editor-state"] })
 const adminObservation = await openWordPressAdminPage(fakeEpisode, { path: "plugins.php", capture: ["html"] })
 const pageObservation = await visitWordPressPage(fakeEpisode, { path: "/sample-page/", capture: ["html"] })
+await discoverWordPressRuntime(fakeEpisode, { surfaces: ["rest", "admin"], timeoutMs: 1000 })
+await inventoryWordPressRestRoutes(fakeEpisode)
+await inventoryWordPressAdminPages(fakeEpisode)
+await inventoryWordPressFrontendUrls(fakeEpisode)
+await runWordPressCrudOperation(fakeEpisode, { operation: "read", resource: { kind: "post", type: "page", id: 42 } })
+await readWordPressDatabase(fakeEpisode, { resource: { table: "posts", identifiers: { ID: 42 } }, query: { limit: 1 } })
+await loadWordPressAdminPage(fakeEpisode, { path: "edit.php?post_type=page", user: "admin", captureDiagnostics: ["wpdb-queries"] })
+await loadWordPressFrontendPage(fakeEpisode, { path: "/sample-page/", query: { preview: true } })
 
 assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.wp-cli",
@@ -63,6 +81,14 @@ assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.editor-open",
   "wordpress.browser-probe",
   "wordpress.browser-probe",
+  "wordpress.runtime-discovery",
+  "wordpress.rest-route-inventory",
+  "wordpress.admin-page-inventory",
+  "wordpress.frontend-url-inventory",
+  "wordpress.crud-operation",
+  "wordpress.db-operation",
+  "wordpress.admin-page-load",
+  "wordpress.frontend-page-load",
 ])
 assert.deepEqual(calls[0]?.args, ["command=option get siteurl"])
 assert.ok(calls[1]?.args.includes("code=echo get_bloginfo('name');"))
@@ -74,8 +100,44 @@ assert.ok(calls[4]?.args.includes("url=/"))
 assert.ok(calls[5]?.args.includes("target=post-new"))
 assert.ok(calls[6]?.args.includes("url=/wp-admin/plugins.php"))
 assert.ok(calls[7]?.args.includes("url=/sample-page/"))
+assert.deepEqual(calls[8], { command: "wordpress.runtime-discovery", args: ["surface=rest,admin"], kind: "command", timeoutMs: 1000 })
+assert.deepEqual(calls[9]?.args, [])
+assert.deepEqual(calls[10]?.args, [])
+assert.deepEqual(calls[11]?.args, [])
+assert.equal(JSON.parse(calls[12]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(JSON.parse(calls[12]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.equal(JSON.parse(calls[13]?.args[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
+assert.equal(JSON.parse(calls[13]?.args[0]?.replace("operation-json=", "") ?? "{}").operation, "read")
+assert.deepEqual(calls[14]?.args, ["path=edit.php?post_type=page", "user=admin", "capture-diagnostics=wpdb-queries"])
+assert.deepEqual(calls[15]?.args, ["path=/sample-page/", "query-json={\"preview\":true}"])
 assert.equal(adminObservation.performance?.schema, "wp-codebox/performance-observation/v1")
 assert.equal(pageObservation.performance?.target, "/sample-page/")
+
+const executor = async (spec: { command: string; args?: string[] }) => ({
+  id: `${spec.command}:execution`,
+  command: spec.command,
+  args: spec.args ?? [],
+  exitCode: 0,
+  stdout: "ok",
+  stderr: "",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  finishedAt: "2026-01-01T00:00:00.000Z",
+})
+const fuzzResult = await executeFuzzSuite({
+  schema: "wp-codebox/fuzz-suite/v1",
+  id: "public-facade-suite",
+  target: { kind: "command", entrypoint: "wordpress.wp-cli" },
+  cases: [{ id: "siteurl", input: { args: ["command=option get siteurl"] } }],
+}, { executor })
+assert.equal(fuzzResult.success, true)
+
+const restMatrixResult = await executeWordPressRestMatrix({
+  schema: "wp-codebox/wordpress-rest-matrix/v1",
+  id: "public-facade-rest-matrix",
+  cases: [{ id: "types", method: "GET", path: "/wp/v2/types" }],
+}, { executor })
+assert.equal(restMatrixResult.schema, "wp-codebox/wordpress-rest-matrix-result/v1")
+assert.equal(restMatrixResult.success, true)
 
 const artifactBundle = { id: "bundle", directory: "artifacts/runtime", contentDigest: "digest", createdAt: "2026-01-01T00:00:00.000Z" }
 assert.equal(await collectWordPressArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)

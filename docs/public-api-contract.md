@@ -93,7 +93,13 @@ The stable public surface is grouped by lifecycle area rather than by product:
   exposes consumer-safe action helpers: `runWordPressWpCli()`,
   `runWordPressPhp()`, `requestWordPressRest()`, `runWordPressBrowserAction()`,
   `probeWordPressBrowser()`, `openWordPressEditor()`,
-  `wordpressAdminPageLoadAction()`, and `wordpressFrontendPageLoadAction()`.
+  `openWordPressAdminPage()`, `visitWordPressPage()`, discovery/inventory
+  helpers, CRUD/DB read helpers, in-process `loadWordPressAdminPage()` and
+  `loadWordPressFrontendPage()` helpers, `executeWordPressRestMatrix()`,
+  `executeFuzzSuite()`, `wordpressAdminPageLoadAction()`, and
+  `wordpressFrontendPageLoadAction()`. `openWordPressAdminPage()` keeps browser
+  probe semantics; use the `load*Page()` helpers for the in-process page-load
+  command contracts.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
@@ -135,8 +141,8 @@ The stable public surface is grouped by lifecycle area rather than by product:
   where WordPress exposes it, redirects, notices/errors, optional query/performance
   observations, and a JSON artifact ref. These commands intentionally use a light
   in-process WordPress load path; browser-heavy probes remain available through
-  browser commands when a caller explicitly needs DOM, screenshot, console, or
-  network evidence.
+  browser commands and `openWordPressAdminPage()` when a caller explicitly needs
+  DOM, screenshot, console, or network evidence.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
