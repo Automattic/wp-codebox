@@ -491,7 +491,9 @@ function defaultRuntimeComponents(): AgentRuntimeComponent[] {
 }
 
 function defaultRuntimeComponentPaths(): string[] {
-  return (process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+  return [process.env.WP_CODEBOX_AGENTS_API_PATH, process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? ""]
+    .filter(Boolean)
+    .join(",")
     .split(/[,:]/)
     .map((value) => value.trim())
     .filter(Boolean)

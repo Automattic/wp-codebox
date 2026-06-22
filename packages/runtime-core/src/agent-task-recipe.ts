@@ -190,6 +190,10 @@ function defaultRuntimeComponentPlugins(): WorkspaceRecipeExtraPlugin[] {
 
 function defaultRuntimeComponentPaths(): string[] {
   return [
+    ...(process.env.WP_CODEBOX_AGENTS_API_PATH ?? "")
+    .split(/[,:]/)
+    .map((value) => value.trim())
+    .filter(Boolean),
     ...(process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
     .split(/[,:]/)
     .map((value) => value.trim())
