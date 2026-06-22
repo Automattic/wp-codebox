@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, join, resolve } from "node:path"
-import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, parseCommandAgentRunRequest, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
+import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, commandAgentRunResultJson, createCommandAgentRunResult, createHostToolRegistry, createRuntimeCommandResultEnvelope, createUnsupportedWordPressCrudResult, normalizeWordPressCrudOperation, parseCommandAgentRunRequest, resolveCommandPath, runtimeEpisodeDigest } from "@automattic/wp-codebox-core"
 import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { recipeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
@@ -11,7 +11,7 @@ import { browserWordPressDiagnosticProvider, isBrowserCommandArtifactError, runB
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { firstCommandWordPressAdminAuthRequirement } from "./command-auth-requirements.js"
-import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
+import { argValue, cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { observeHttpResponse as observeHttpResponseArtifact, observeWordPressState as observeWordPressStateArtifact } from "./observation-artifacts.js"
 import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -1046,6 +1046,15 @@ class PlaygroundRuntime implements Runtime {
       server,
       spec,
     })
+  }
+
+  async runCrudOperation(spec: ExecutionSpec): Promise<string> {
+    const rawOperation = argValue(spec.args ?? [], "operation-json")
+    if (!rawOperation) {
+      throw new Error("wordpress.crud-operation requires operation-json=<wp-codebox/wordpress-crud-operation/v1 JSON object>")
+    }
+    const operation = normalizeWordPressCrudOperation(JSON.parse(rawOperation))
+    return `${JSON.stringify(createUnsupportedWordPressCrudResult(operation), null, 2)}\n`
   }
 
   async runThemeCheck(spec: ExecutionSpec): Promise<string> {

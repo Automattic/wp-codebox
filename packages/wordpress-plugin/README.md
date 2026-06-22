@@ -39,10 +39,10 @@ metadata exposes `meta.canonical_ability` for aliases.
 
 ## PHP Facade
 
-Consumers running inside WordPress can call `WP_Codebox_API` instead of
-depending on ability registration details or lower-level runtime classes. The
-facade only exposes WP Codebox operations and delegates to the same service
-layer as the ability and WP-CLI surfaces:
+Consumers running inside WordPress should prefer `WP_Codebox_API` instead of
+depending on ability registration details, upstream task runtimes, or lower-level
+runtime classes. The facade only exposes WP Codebox operations and delegates to
+the same service layer as the `wp-codebox/*` ability and WP-CLI surfaces:
 
 - `WP_Codebox_API::run_agent_task( $input )`
 - `WP_Codebox_API::create_browser_session( $input )`

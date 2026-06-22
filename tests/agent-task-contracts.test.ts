@@ -71,6 +71,11 @@ assert.equal(agentSandboxRun.acceptedArgs.some((arg) => arg.name === "code"), fa
 assert.equal(agentSandboxRun.acceptedArgs.some((arg) => arg.name === "code-file"), false)
 assert.deepEqual(agentSandboxRun.requiresPolicyCommands, ["wordpress.run-php", "wordpress.wp-cli"])
 
+const wordpressBench = catalog.commands.find((command) => command.id === "wordpress.bench")
+assert.ok(wordpressBench, "catalog includes wordpress.bench")
+const workloadsJsonArg = wordpressBench.acceptedArgs.find((arg) => arg.name === "workloads-json")
+assert.match(workloadsJsonArg?.description ?? "", /rest-db-query-profiler/)
+
 assert.deepEqual(effectivePolicyCommands("wp-codebox.agent-sandbox-run"), ["wordpress.run-php", "wordpress.wp-cli"])
 assert.deepEqual(effectivePolicyCommands("custom.wrapper", [
   {

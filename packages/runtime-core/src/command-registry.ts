@@ -1,4 +1,5 @@
 import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS } from "./browser-probe-contract.js"
+import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -375,6 +376,21 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runRuntimeDiscovery" },
   },
   {
+    id: "wordpress.crud-operation",
+    description: "Execute or normalize a product-neutral WordPress CRUD operation envelope for fuzz orchestration. The public contract is generic and backend implementations must keep product-specific logic out of this command.",
+    acceptedArgs: [
+      { name: "operation-json", description: "Inline wp-codebox/wordpress-crud-operation/v1 operation envelope. The runtime normalizes schema, operation, resource, data, query, options, and metadata fields before execution.", required: true, format: "JSON object" },
+    ],
+    outputShape: "wp-codebox/wordpress-crud-result/v1 JSON with command, status, normalized operation, optional item/items, effects, diagnostics, errors, artifactRefs, and metadata. Unsupported backends return status=unsupported without applying effects.",
+    outputSchema: {
+      id: WORDPRESS_CRUD_RESULT_SCHEMA,
+      jsonSchema: WORDPRESS_CRUD_RESULT_JSON_SCHEMA,
+    },
+    policyRequirement: "Runtime policy commands must include wordpress.crud-operation. Backend implementations must fail closed with status=unsupported when generic CRUD execution is unavailable.",
+    recipe: true,
+    handler: { kind: "playground", method: "runCrudOperation" },
+  },
+  {
     id: "wordpress.bench",
     description: "Run plugin benchmark workloads and emit a versioned benchmark results envelope.",
     acceptedArgs: [
@@ -385,7 +401,7 @@ export const commandRegistry = [
       { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
       { name: "bootstrap-files-json", description: "Component-relative bootstrap file fallbacks; the first existing file is loaded before workloads execute.", format: "JSON array" },
-      { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, and rest-request mechanics.", format: "JSON array" },
+      { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, rest-request, rest-db-query-profiler, db-inventory, and external-http-guardrail mechanics.", format: "JSON array" },
       { name: "scenario-ids-json", description: "Optional selected benchmark scenario ids. Filters both discovered tests/bench workloads and explicit workloads by id.", format: "JSON array" },
       { name: "lifecycle-json", description: "Generic benchmark lifecycle hooks keyed by setup, prepare, warmup, measure, or teardown. Hook entries use the same php/ability/wp-cli step format as configured workloads.", format: "JSON object" },
       { name: "reset-policy-json", description: "Explicit benchmark reset policy. Supports betweenIterations and betweenScenarios modes: none or object-cache.", format: "JSON object" },
