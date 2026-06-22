@@ -29,6 +29,9 @@ unless this index says otherwise.
   documents the stable orchestrator-facing agent-task CLI, schema boundary,
   artifacts, runner workspace publication, lifecycle metadata, provider
   overlays, and default sandbox bootstrap expectations.
+- [Docs Agent reusable workflow](./docs-agent-reusable-workflow.md) documents
+  the public `wp-codebox/docs-agent-runner-recipe/v1` GitHub Actions wrapper for
+  recipe-oriented Docs Agent runs.
 - [Public API contract](./public-api-contract.md) defines stable package
   entrypoints, lifecycle contract areas, inspectable surfaces, Codebox's wrapper
   role around upstream runtime systems, and the limited role of `./internals`.
