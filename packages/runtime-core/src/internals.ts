@@ -5,6 +5,7 @@
  */
 export * from "./benchmark-substrate.js"
 export * from "./fanout-aggregation.js"
+export * from "./fanout-execution.js"
 export * from "./object-utils.js"
 export * from "./prepared-source-staging.js"
 export * from "./redaction.js"

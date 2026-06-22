@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, sep } from "node:path"
-import { commandArgValue, createRunPlanEvent, executeRunPlan, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanClock, type RunPlanWorkerAdapter, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
-import { agentTaskStatusSucceeded, aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
+import { commandArgValue, createRunPlanEvent, executeFanoutRequest, FANOUT_EVENT_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanClock, type RunPlanWorkerAdapter, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
+import { agentTaskStatusSucceeded, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
 const MAX_FANOUT_CONCURRENCY = 8
@@ -61,7 +61,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
 
   const clock = fanoutClock(request, options.clock)
   const sessionId = options.sessionId || stringValue(request.session_id) || stringValue(request.orchestrator?.session_id) || stringValue(request.orchestrator?.request_id) || `fanout-${Date.now()}`
-  const concurrency = normalizeRunPlanConcurrency(request.concurrency, { maxConcurrency: MAX_FANOUT_CONCURRENCY, concurrencyMode: "clamp" })
+  const concurrency = Math.max(1, Math.min(MAX_FANOUT_CONCURRENCY, Math.floor(Number(request.concurrency) || 1)))
   const fanoutRoot = join(options.artifactRoot, "fanout")
   const workersRoot = join(fanoutRoot, "workers")
   const aggregateRoot = join(fanoutRoot, "aggregate")
@@ -72,29 +72,18 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   await mkdir(workersRoot, { recursive: true })
   await mkdir(aggregateFinalRoot, { recursive: true })
 
-  const workers = normalizeRunPlanWorkerDescriptors(request.workers, { defaultAgent: stringValue(request.agent), requireGoal: true })
-
-  const plan = {
-    schema: FANOUT_PLAN_SCHEMA,
-    session_id: sessionId,
-    concurrency,
-    orchestrator: request.orchestrator ?? {},
-    workers: workers.map((descriptor) => ({
-      id: descriptor.id,
-      agent: descriptor.agent,
-      goal: descriptor.goal,
-      artifact_namespace: descriptor.artifactNamespace,
-      depends_on: descriptor.dependsOn,
-    })),
-  }
-  await writeJson(planPath, plan)
-  await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 }, clock)
-
-  const execution = await executeRunPlan({ workers: request.workers, concurrency }, {
+  const fanout = await executeFanoutRequest(request, {
     adapter: agentTaskFanoutWorkerAdapter(request, { ...options, workersRoot, sessionId }),
     defaultAgent: stringValue(request.agent),
     requireGoal: true,
+    maxConcurrency: MAX_FANOUT_CONCURRENCY,
+    concurrencyMode: "clamp",
     clock,
+    finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
+    onFanoutStarted: async ({ workers, plan }) => {
+      await writeJson(planPath, plan)
+      await emitEvent(eventsPath, { event: "fanout.started", total: workers.length, active: 0, completed: 0, failed: 0, cancelled: 0 }, clock)
+    },
     onWorkerStarted: (worker) => emitEvent(eventsPath, { event: "worker.started", worker_id: worker.id }, clock),
     onWorkerCompleted: (worker, result) => emitEvent(eventsPath, { event: "worker.completed", worker_id: worker.id, status: result.status }, clock),
     onWorkerFailed: (worker, result) => emitEvent(eventsPath, { event: "worker.failed", worker_id: worker.id, status: result.status }, clock),
@@ -103,32 +92,17 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
       await emitEvent(eventsPath, { event: "worker.skipped", worker_id: worker.id, status: result.status }, clock)
     },
     createSkippedResult: (worker, dependencies) => agentTaskSkippedFanoutWorkerResult(worker, sessionId, dependencies),
+    onAggregationStarted: ({ workers, workerResultRefs }) => emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResultRefs.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResultRefs.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResultRefs.filter((worker) => worker.status === "skipped").length }, clock),
+    onAggregationCompleted: async (aggregate) => {
+      await writeJson(join(aggregateRoot, "result.json"), aggregate)
+      await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
+      await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status }, clock)
+    },
   })
-  const workerResults: AgentFanoutWorkerResult[] = execution.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
+  const workerResults: AgentFanoutWorkerResult[] = fanout.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
 
-  await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResults.filter((worker) => worker.status === "skipped").length }, clock)
-  const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
-    plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
-    policy: stringValue(request.aggregation?.policy) || "fail",
-    aggregator: request.aggregation,
-    workerResultRefs: workerResults.map((worker) => ({
-      workerId: worker.worker_id,
-      status: worker.status,
-      required: worker.required,
-      resultRef: worker.result_ref,
-      artifactRefs: worker.artifact_refs,
-      error: worker.error,
-    })),
-  })
-  const aggregate = aggregateFanoutOutputs(aggregationInput, {
-    finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
-  })
-  await writeJson(join(aggregateRoot, "result.json"), aggregate)
-  await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
-  await emitEvent(eventsPath, { event: "aggregation.completed", status: aggregate.status }, clock)
-
-  const counts = execution.counts
-  const success = aggregate.status === "succeeded"
+  const counts = fanout.counts
+  const success = fanout.success
   const result: AgentFanoutExecutionResult = {
     schema: FANOUT_RESULT_SCHEMA,
     status: success ? "completed" : "failed",
@@ -143,8 +117,8 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
         artifact_refs: worker.artifact_refs,
       })),
     },
-    concurrency,
-    plan,
+    concurrency: fanout.concurrency,
+    plan: fanout.plan as unknown as Record<string, unknown>,
     artifacts: {
       root: fanoutRoot,
       plan: "fanout/plan.json",
@@ -155,7 +129,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
       final: "aggregate/final/result.json",
     },
     workers: workerResults,
-    aggregate,
+    aggregate: fanout.aggregate,
     counts,
     events_path: eventsPath,
     result_path: resultPath,

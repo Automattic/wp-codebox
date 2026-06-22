@@ -92,6 +92,7 @@
     "test:runtime-neutral-contracts": "tsx tests/runtime-neutral-contracts.test.ts",
     "test:run-registry": "tsx tests/run-registry.test.ts",
     "test:run-plan-executor": "tsx tests/run-plan-executor.test.ts",
+    "test:fanout-execution": "tsx tests/fanout-execution.test.ts",
     "test:agent-fanout-executor": "tsx tests/agent-fanout-executor.test.ts",
     "test:fanout-aggregation-contract-parity": "tsx tests/fanout-aggregation-contract-parity.test.ts",
     "test:runtime-php-snippets": "tsx tests/runtime-php-snippets.test.ts",
