@@ -155,7 +155,6 @@ export type RunnerWorkspaceCommandRequest = RunnerWorkspaceIdentity & {
   timeout_seconds?: number
   env?: Record<string, string>
   context?: Record<string, unknown>
-  allow_local_fallback?: boolean
 }
 
 export type RunnerWorkspaceCommandResult = {

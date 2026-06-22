@@ -88,7 +88,7 @@ function assert_same_contract( mixed $expected, mixed $actual, string $label ): 
 
 function assert_no_backend_leak( mixed $value, string $label ): void {
 	$json = json_encode( $value, JSON_UNESCAPED_SLASHES );
-	if ( ! is_string( $json ) || str_contains( $json, 'datamachine-code' ) ) {
+	if ( ! is_string( $json ) || str_contains( $json, 'private-runner' ) ) {
 		fwrite( STDERR, $label . " leaked backend identifiers.\nActual: " . json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT ) . "\n" );
 		exit( 1 );
 	}
@@ -167,14 +167,16 @@ assert_same_contract( 'completed', $command['status'], 'command status' );
 $GLOBALS['wp_codebox_test_abilities']['fake-runner-workspace-backend/workspace-git-status'] = new class() {
 	public function execute( array $input ): WP_Error {
 		unset( $input );
-		return new WP_Error( 'datamachine-code/workspace-git-status', 'datamachine-code/workspace-git-status exploded', array( 'ability' => 'datamachine-code/workspace-git-status' ) );
+		return new WP_Error( 'private-runner/workspace-git-status', 'private-runner/workspace-git-status exploded', array( 'ability' => 'private-runner/workspace-git-status' ) );
 	}
 };
 
 $failure = WP_Codebox_Abilities::capture_runner_workspace( array( 'workspace' => 'wp-codebox@task' ) );
 assert_same_contract( false, $failure['success'], 'failure success' );
-assert_same_contract( 'Runner workspace backend operation failed.', $failure['error']['message'], 'public error redacts backend ability slug' );
-assert_same_contract( false, array_key_exists( 'ability', $failure['error']['data'] ?? array() ), 'public error removes backend ability key' );
+assert_same_contract( 'backend_error', $failure['failure_type'], 'wp error failure type' );
+assert_same_contract( 'wp_codebox_runner_workspace_backend_error', $failure['error']['code'], 'wp error code is Codebox-owned' );
+assert_same_contract( 'Runner workspace backend operation failed.', $failure['error']['message'], 'wp error message is stable' );
+assert_same_contract( 'workspace_git_status', $failure['error']['operation'], 'wp error includes public operation' );
 assert_no_backend_leak( $failure, 'wp error failure' );
 
 $GLOBALS['wp_codebox_test_abilities']['fake-runner-workspace-backend/run-runner-workspace-command'] = new class() {
@@ -182,11 +184,11 @@ $GLOBALS['wp_codebox_test_abilities']['fake-runner-workspace-backend/run-runner-
 		unset( $input );
 		return array(
 			'success'      => false,
-			'failure_type' => 'datamachine-code/run-runner-workspace-command',
+			'failure_type' => 'private-runner/run-runner-workspace-command',
 			'error'        => array(
-				'code'    => 'datamachine-code/run-runner-workspace-command',
-				'message' => 'datamachine-code/run-runner-workspace-command failed',
-				'data'    => array( 'backend_ability' => 'datamachine-code/run-runner-workspace-command' ),
+				'code'    => 'private-runner/run-runner-workspace-command',
+				'message' => 'private-runner/run-runner-workspace-command failed',
+				'data'    => array( 'backend_ability' => 'private-runner/run-runner-workspace-command' ),
 			),
 		);
 	}
@@ -195,7 +197,28 @@ $GLOBALS['wp_codebox_test_abilities']['fake-runner-workspace-backend/run-runner-
 $backend_failure = WP_Codebox_Abilities::run_runner_workspace_command( array( 'workspace' => 'wp-codebox@task', 'repo' => 'wp-codebox', 'command' => 'php -l file.php' ) );
 assert_same_contract( false, $backend_failure['success'], 'backend failure success' );
 assert_same_contract( 'backend_failed', $backend_failure['failure_type'], 'backend failure type is generic' );
+assert_same_contract( 'wp_codebox_runner_workspace_backend_error', $backend_failure['error']['code'], 'backend failure code is Codebox-owned' );
+assert_same_contract( 'Runner workspace backend operation failed.', $backend_failure['error']['message'], 'backend failure message is stable' );
+assert_same_contract( 'run_runner_workspace_command', $backend_failure['error']['operation'], 'backend failure includes public operation' );
 assert_no_backend_leak( $backend_failure, 'backend failure' );
+
+$GLOBALS['wp_codebox_test_filters']['wp_codebox_runner_workspace_backend'] = array( static fn(): array => array() );
+$GLOBALS['wp_codebox_ability_lookups'] = array();
+
+$unavailable = WP_Codebox_Abilities::run_runner_workspace_command(
+	array(
+		'workspace'      => 'wp-codebox@task',
+		'workspace_path' => __DIR__,
+		'repo'           => 'wp-codebox',
+		'command'        => 'php -r "exit(7);"',
+	)
+);
+assert_same_contract( false, $unavailable['success'], 'unavailable success' );
+assert_same_contract( 'unavailable', $unavailable['status'], 'unavailable status' );
+assert_same_contract( 'backend_unavailable', $unavailable['failure_type'], 'unavailable failure type' );
+assert_same_contract( 'wp_codebox_runner_workspace_backend_unavailable', $unavailable['error']['code'], 'unavailable error code' );
+assert_same_contract( array(), $GLOBALS['wp_codebox_ability_lookups'], 'missing backend does not execute local fallback or ability lookup' );
+assert_no_backend_leak( $unavailable, 'unavailable failure' );
 
 $GLOBALS['wp_codebox_test_filters']['wp_codebox_runner_workspace_backend'] = array(
 	static fn(): array => array(

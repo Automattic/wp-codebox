@@ -114,6 +114,6 @@ assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_prepa
 assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_capture_output_schema"), /'backend'/)
 assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_command_output_schema"), /'backend'/)
 assert.doesNotMatch(phpFunctionBlock(runnerWorkspacePhp, "runner_workspace_publication_output_schema"), /'backend'/)
-assert.match(runnerWorkspacePhp, /sanitize_runner_workspace_public_error/)
+assert.doesNotMatch(runnerWorkspacePhp, /sanitize_runner_workspace_public_error|redact_runner_workspace_backend_slugs/)
 
 console.log("provider runtime contracts ok")
