@@ -71,6 +71,9 @@ assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mappi
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
 assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
 assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
+assert.match(publicBoundaryText, /not mirror the monorepo-only `\.\/internals` helper entrypoint/)
+assert.doesNotMatch(publicBoundaryText, /WP_Codebox_Agents_API_Adapter/)
+assert.doesNotMatch(publicBoundaryText, /agents-api\/[a-z0-9._/-]+|agents\/[a-z0-9._/-]+/i)
 assert.doesNotMatch(publicBoundaryText, /Data Machine (?:must|should) (?:understand|parse|validate|emit) (?:WP )?Codebox/)
 
 const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")
@@ -79,6 +82,9 @@ assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-back
 assert.match(runnerWorkspaceBackendContract, /External callers use WP Codebox runner workspace\s+abilities and result schemas/)
 assert.match(runnerWorkspaceBackendContract, /Those names are adapter inputs\s+for the stable Codebox runner workspace operation ids/)
 assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-prepare`/)
+assert.match(runnerWorkspaceBackendContract, /`workspace_worktree_add`/)
+assert.match(runnerWorkspaceBackendContract, /`run_runner_workspace_command`/)
+assert.match(runnerWorkspaceBackendContract, /`publish_runner_workspace`/)
 assert.doesNotMatch(runnerWorkspaceBackendContract, /datamachine|data[-_ ]?machine|homeboy/i)
 
 const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")

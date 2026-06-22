@@ -138,7 +138,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'timeout_seconds'     => array( 'type' => 'integer', 'minimum' => 1, 'maximum' => 600 ),
 				'env'                 => array( 'type' => 'object' ),
 				'context'             => array( 'type' => 'object' ),
-				'allow_local_fallback' => array( 'type' => 'boolean', 'default' => false ),
 			),
 		);
 	}
@@ -343,10 +342,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			return self::normalize_runner_workspace_command_result( $result, $normalized, $backend_input );
 		}
 
-		if ( true === ( $input['allow_local_fallback'] ?? false ) && '' !== $normalized['workspace_path'] && is_dir( $normalized['workspace_path'] ) ) {
-			return self::run_local_runner_workspace_command( $command, $normalized, $backend_input );
-		}
-
 		return self::runner_workspace_operation_failure(
 			'command',
 			(string) $backend['failure_type'],
@@ -433,8 +428,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => false,
 				'schema'       => 'wp-codebox/runner-workspace-prepare-result/v1',
 				'status'       => $status,
-				'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
-				'error'        => self::sanitize_runner_workspace_public_error( $error ),
+				'failure_type' => $failure_type,
+				'error'        => $error,
 				'repo'         => (string) ( $input['repo'] ?? '' ),
 				'branch'       => (string) ( $input['branch'] ?? '' ),
 				'capabilities' => array( 'capture' => false, 'command' => false, 'publish' => false ),
@@ -615,8 +610,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'success'      => false,
 				'schema'       => 'wp-codebox/runner-workspace-publication-result/v1',
 				'status'       => $status,
-				'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
-				'error'        => self::sanitize_runner_workspace_public_error( $error ),
+				'failure_type' => $failure_type,
+				'error'        => $error,
 				'workspace'    => array_filter( array( 'handle' => (string) ( $input['workspace'] ?? '' ), 'path' => (string) ( $input['workspace_path'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
 				'branch'       => array_filter( array( 'base' => (string) ( $input['base'] ?? '' ), 'head' => (string) ( $input['head'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
 				'reused'       => false,
@@ -628,29 +623,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		);
 	}
 
-	/** @param array<string,mixed> $error Raw backend or adapter error. @return array<string,mixed> */
-	private static function sanitize_runner_workspace_public_error( array $error ): array {
-		$sanitized = array();
-		foreach ( $error as $key => $value ) {
-			if ( in_array( $key, array( 'result', 'input', 'backend', 'ability', 'ability_name', 'backend_ability' ), true ) ) {
-				continue;
-			}
-
-			if ( is_array( $value ) ) {
-				$sanitized[ $key ] = self::sanitize_runner_workspace_public_error( $value );
-				continue;
-			}
-
-			$sanitized[ $key ] = is_string( $value ) ? self::redact_runner_workspace_backend_slugs( $value ) : $value;
-		}
-
-		return array_filter( $sanitized, static fn( mixed $value ): bool => array() !== $value && null !== $value );
-	}
-
-	private static function redact_runner_workspace_backend_slugs( string $value ): string {
-		return preg_replace( '#\bdatamachine-code(?:/[a-z0-9._/-]+)?#i', 'runner workspace backend', $value ) ?? $value;
-	}
-
 	/** @param array<string,mixed> $input Normalized input. @param array<string,mixed> $extra Extra response fields. @return array<string,mixed> */
 	private static function runner_workspace_operation_failure( string $operation, string $failure_type, array $error, string $status, array $input, array $extra = array() ): array {
 		return array_filter(
@@ -659,8 +631,8 @@ trait WP_Codebox_Abilities_Runner_Publication {
 					'success'      => false,
 					'schema'       => 'command' === $operation ? 'wp-codebox/runner-workspace-command-result/v1' : 'wp-codebox/runner-workspace-capture-result/v1',
 					'status'       => $status,
-					'failure_type' => self::redact_runner_workspace_backend_slugs( $failure_type ),
-					'error'        => self::sanitize_runner_workspace_public_error( $error ),
+					'failure_type' => $failure_type,
+					'error'        => $error,
 					'workspace'    => self::runner_workspace_identity_result( $input ),
 				),
 				$extra
@@ -699,41 +671,6 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'workspace'   => self::runner_workspace_identity_result( $input ),
 			),
 			static fn( mixed $value ): bool => '' !== $value && null !== $value
-		);
-	}
-
-	/** @param array<string,mixed> $input Normalized input. @param array<string,mixed> $command_input Command input. @return array<string,mixed> */
-	private static function run_local_runner_workspace_command( string $command, array $input, array $command_input ): array {
-		$result = WP_Codebox_Managed_Host_Command::run(
-			array(
-				'command'           => WP_Codebox_Managed_Host_Command::split_command_line( $command ),
-				'cwd'               => (string) $input['workspace_path'],
-				'allowed_cwd_roots' => array( (string) $input['workspace_path'] ),
-				'timeout_seconds'   => max( 1, min( 600, (int) ( $command_input['timeout_seconds'] ?? 120 ) ) ),
-				'env'               => is_array( $command_input['env'] ?? null ) ? $command_input['env'] : array(),
-			)
-		);
-
-		if ( is_wp_error( $result ) ) {
-			return self::runner_workspace_operation_failure(
-				'command',
-				'local_command_unavailable',
-				array( 'code' => $result->get_error_code(), 'message' => $result->get_error_message(), 'data' => $result->get_error_data() ),
-				'unavailable',
-				$input
-			);
-		}
-
-		return self::normalize_runner_workspace_command_result(
-			array(
-				'success'    => (bool) $result['success'],
-				'exit_code'  => (int) $result['exit_code'],
-				'stdout'     => (string) $result['stdout'],
-				'stderr'     => (string) $result['stderr'],
-				'elapsed_ms' => (float) $result['elapsed_ms'],
-			),
-			$input,
-			$command_input
 		);
 	}
 

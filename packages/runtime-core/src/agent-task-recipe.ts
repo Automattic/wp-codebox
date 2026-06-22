@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
@@ -170,23 +170,6 @@ function defaultAgentRuntimeComponentPlugins(componentPlugins: WorkspaceRecipeEx
     }
   }
 
-  if (!existingSlugs.has("agents-api")) {
-    const bundledAgentsApiPath = [...componentPlugins, ...callerExtraPlugins, ...defaults]
-      .map((component) => agentsApiPathFromRuntimeComponent(component))
-      .find(Boolean)
-    const agentsApiPath = bundledAgentsApiPath || defaultAgentsApiPath()
-    if (agentsApiPath) {
-      defaults.push({
-        source: agentsApiPath,
-        slug: "agents-api",
-        pluginFile: "agents-api/agents-api.php",
-        activate: false,
-        loadAs: "mu-plugin",
-        metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
-      })
-    }
-  }
-
   return defaults
 }
 
@@ -211,41 +194,6 @@ function defaultRuntimeComponentPaths(): string[] {
     .filter(Boolean)
     .map((value) => resolve(value))
     .filter((source) => existsSync(source))
-}
-
-function agentsApiPathFromRuntimeComponent(component: WorkspaceRecipeExtraPlugin): string {
-  return [
-    join(component.source, "vendor", "wordpress", "agents-api"),
-    join(component.source, "vendor", "automattic", "agents-api"),
-  ].find((candidate) => existsSync(join(candidate, "agents-api.php"))) ?? ""
-}
-
-function defaultAgentsApiPath(): string {
-  const explicit = [process.env.WP_CODEBOX_AGENTS_API_PATH, process.env.AGENTS_API_PATH]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .map((value) => resolve(value))
-    .find(isAgentsApiPluginRoot)
-
-  if (explicit) {
-    return explicit
-  }
-
-  const candidates: string[] = []
-  let current = resolve(process.cwd())
-  for (let depth = 0; depth < 6; depth++) {
-    candidates.push(join(current, "agents-api"), join(dirname(current), "agents-api"))
-    const parent = dirname(current)
-    if (parent === current) {
-      break
-    }
-    current = parent
-  }
-
-  return candidates.find(isAgentsApiPluginRoot) ?? ""
-}
-
-function isAgentsApiPluginRoot(candidate: string): boolean {
-  return existsSync(join(candidate, "agents-api.php"))
 }
 
 export function componentManifestForRuntimePlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {

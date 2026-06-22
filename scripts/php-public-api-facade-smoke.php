@@ -79,10 +79,10 @@ foreach ( $expected_methods as $method ) {
 	expect( $reflection->getMethod( $method )->isPublic(), 'API method is not public: ' . $method );
 }
 
-$blocked = WP_Codebox_API::execute_ability( 'datamachine-code/workspace-show', array() );
+$blocked = WP_Codebox_API::execute_ability( 'external-backend/workspace-show', array() );
 expect( $blocked instanceof WP_Error, 'Expected non-wp-codebox ability names to be rejected.' );
 expect( 'wp_codebox_api_ability_not_supported' === $blocked->get_error_code(), 'Expected unsupported ability error code.' );
-expect( ! str_contains( json_encode( $blocked->get_error_data(), JSON_UNESCAPED_SLASHES ) ?: '', 'datamachine-code' ), 'Unsupported ability errors must not echo backend ability names.' );
+expect( ! str_contains( json_encode( $blocked->get_error_data(), JSON_UNESCAPED_SLASHES ) ?: '', 'external-backend' ), 'Unsupported ability errors must not echo backend ability names.' );
 
 $runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-prepare' => array( 'method' => 'prepare_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-prepare-result/v1' ),

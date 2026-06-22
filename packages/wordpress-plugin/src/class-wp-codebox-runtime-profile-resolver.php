@@ -183,12 +183,11 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			'codebox-agent-runtime' => array(
 				'id'                     => 'codebox-agent-runtime',
 				'label'                  => 'WP Codebox agent runtime',
-				'aliases'                => array( 'agents-api', 'agent-runtime', 'wordpress-agent-runtime' ),
-				'capabilities'           => array( 'codebox.agent-runtime', 'agents.runtime' ),
+				'aliases'                => array( 'agent-runtime', 'wordpress-agent-runtime' ),
+				'capabilities'           => array( 'codebox.agent-runtime' ),
 				'public_capabilities'    => array( 'codebox.agent-runtime' ),
 				'requires'                => array( 'wordpress-playground' ),
-				'components'              => array( array( 'slug' => 'agents-api' ) ),
-				'placement_capabilities' => array( 'agents.runtime' ),
+				'placement_capabilities' => array( 'codebox.agent-runtime' ),
 			),
 			'provider-openai' => array(
 				'id'               => 'provider-openai',

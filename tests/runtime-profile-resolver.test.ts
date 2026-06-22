@@ -26,11 +26,11 @@ class WP_Error {
 }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function wp_json_encode( $value, $flags = 0 ) { return json_encode( $value, $flags ); }
-class WP_Codebox_Agents_API_Adapter {
-	public static function default_chat_ability(): string { return 'agents/chat'; }
-}
 function apply_filters( $hook, $value, ...$args ) {
 	if ( 'wp_codebox_runtime_profile_registry' === $hook ) {
+		if ( class_exists( 'WP_Codebox_Agents_API_Adapter' ) ) {
+			$value = WP_Codebox_Agents_API_Adapter::runtime_profile_registry( $value );
+		}
 		$value['content-runtime'] = array(
 			'id' => 'content-runtime',
 			'label' => 'Content runtime',
@@ -108,13 +108,13 @@ assert.equal(result.input.runtime_profile.readiness.checks.dependencies, true)
 assert.equal(result.input.runtime_profile.diagnostics[0].code, "runtime_profile.resolved")
 assert.equal(result.input.runtime_profile.diagnostics[0].severity, "info")
 assert.equal(result.input.runtime_profile.provenance.owner, "wp-codebox")
-assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playground", "browser.preview", "agents.runtime"])
+assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playground", "browser.preview", "codebox.agent-runtime", "agents.runtime"])
 assert.equal(result.input.runtime.resolved_profile.schema, "wp-codebox/runtime-profile-resolution/v1")
-assert.equal(result.input.runtime.resolved_profile.summary.profiles, 5)
+assert.equal(result.input.runtime.resolved_profile.summary.profiles, 6)
 assert.deepEqual(result.input.runtime.resolved_profile.capabilities, ["wordpress.playground", "browser.preview", "codebox.agent-runtime", "agents.runtime", "content.runtime", "workspace.runtime", "provider.openai"])
 assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "workspace-runtime")?.aliases?.[0], "coding-agent-runtime")
 assert.equal(result.input.runtime.resolved_profile.profiles.some((profile) => profile.id === "agents-api"), false)
-assert.deepEqual(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.internal?.provides, ["codebox.agent-runtime", "agents.runtime"])
+assert.deepEqual(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.internal?.provides, ["codebox.agent-runtime"])
 assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.aliases?.includes("agents-api"), false)
 assert.deepEqual(result.unresolved.runtime.components.map((component) => component.slug), ["repo-local-component"])
 

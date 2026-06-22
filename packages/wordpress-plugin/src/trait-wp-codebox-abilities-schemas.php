@@ -724,7 +724,7 @@ private static function fuzz_suite_result_schema(): array {
 		'properties' => array(
 			'success'      => array( 'type' => 'boolean' ),
 			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite-result/v1' ),
-			'status'       => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'status'       => array( 'type' => 'string', 'enum' => array( 'passed', 'failed', 'error', 'skipped', 'unsupported' ) ),
 			'suite'        => self::object_property_schema(),
 			'summary'      => self::object_property_schema(),
 			'cases'        => self::object_array_property_schema(),

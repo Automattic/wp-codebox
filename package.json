@@ -20,10 +20,6 @@
       "types": "./packages/runtime-core/dist/artifacts.d.ts",
       "import": "./packages/runtime-core/dist/artifacts.js"
     },
-    "./core/internals": {
-      "types": "./packages/runtime-core/dist/internals.d.ts",
-      "import": "./packages/runtime-core/dist/internals.js"
-    },
     "./recipe-builders": {
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"
@@ -78,6 +74,7 @@
     "test:agent-task-contracts": "tsx tests/agent-task-contracts.test.ts",
     "test:agent-runtime-workload-normalizers": "tsx tests/agent-runtime-workload-normalizers.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
+    "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
@@ -123,6 +120,7 @@
     "test:php-agents-api-adapter-contract": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-agents-api-adapter-contract-smoke.php",
     "test:php-public-api-facade": "php scripts/php-public-api-facade-smoke.php",
     "test:php-runtime-task-runner": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-runtime-task-runner-smoke.php",
+    "test:php-fuzz-suite-runner": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-fuzz-suite-runner-smoke.php",
     "test:php-browser-contained-site-contract": "php scripts/php-browser-contained-site-contract-smoke.php",
     "test:php-artifact-import-idempotency": "php scripts/php-artifact-import-idempotency-smoke.php",
     "test:php-browser-runtime-local-package": "php scripts/php-browser-runtime-local-package-smoke.php",

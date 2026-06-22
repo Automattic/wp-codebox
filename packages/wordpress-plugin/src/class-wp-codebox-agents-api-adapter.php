@@ -10,8 +10,9 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Advanced internal adapter around the upstream Agents API abilities.
  *
- * Consumers should depend on this class instead of importing Agents API constants,
- * handler names, or execution principal internals.
+ * Internal runtime code uses this adapter instead of importing Agents API
+ * constants, handler names, or execution principal internals. Consumers should
+ * call WP_Codebox_API or wp-codebox/* abilities.
  *
  * @internal Adapter boundary for WP Codebox runtime integration.
  */
@@ -130,6 +131,49 @@ final class WP_Codebox_Agents_API_Adapter {
 		foreach ( self::EXECUTE_TASK_FILTERS as $hook => $accepted_args ) {
 			add_filter( $hook, $execute_callback, 10, $accepted_args );
 		}
+	}
+
+	public static function register_runtime_profiles(): void {
+		if ( ! function_exists( 'add_filter' ) ) {
+			return;
+		}
+
+		add_filter( 'wp_codebox_runtime_profile_registry', array( self::class, 'runtime_profile_registry' ) );
+		add_filter( 'wp_codebox_browser_runtime_default_invocation', array( self::class, 'browser_runtime_default_invocation' ) );
+		add_filter( 'wp_codebox_browser_runtime_default_ability', array( self::class, 'default_chat_ability' ) );
+		add_filter( 'wp_codebox_browser_runtime_ability_names', array( self::class, 'ability_names' ) );
+		add_filter( 'wp_codebox_browser_runtime_bundle_import_function', array( self::class, 'import_runtime_bundles_function' ) );
+		add_filter( 'wp_codebox_browser_runtime_bundle_import_filter', array( self::class, 'runtime_bundle_import_filter' ) );
+		add_filter( 'wp_codebox_browser_runtime_bundle_importer_paths', array( self::class, 'runtime_bundle_importer_paths' ) );
+		add_filter( 'wp_codebox_browser_runtime_principal_permission_filter', array( self::class, 'chat_runtime_principal_permission_filter' ) );
+		add_filter( 'wp_codebox_browser_runtime_executor_target', array( self::class, 'browser_executor_target_id' ) );
+		add_filter( 'wp_codebox_browser_runtime_legacy_resolved_tools_filter', array( self::class, 'legacy_resolved_tools_filter' ) );
+		add_filter( 'wp_codebox_browser_runtime_resolved_tools_filter', array( self::class, 'runtime_resolved_tools_filter' ) );
+	}
+
+	/** @return array<string,string> */
+	public static function browser_runtime_default_invocation(): array {
+		return array(
+			'type' => 'ability',
+			'name' => self::default_chat_ability(),
+		);
+	}
+
+	/** @param array<string,array<string,mixed>> $registry Runtime profile registry. @return array<string,array<string,mixed>> */
+	public static function runtime_profile_registry( array $registry ): array {
+		$registry['agents-api-adapter'] = array(
+			'id'                     => 'agents-api-adapter',
+			'label'                  => 'Agents API runtime adapter',
+			'aliases'                => array( 'agents-api', 'agents-runtime', 'wordpress-agents-api-runtime' ),
+			'capabilities'           => array( 'agents.runtime' ),
+			'public_capabilities'    => array( 'codebox.agent-runtime' ),
+			'requires'                => array( 'codebox-agent-runtime' ),
+			'components'              => array( array( 'slug' => 'agents-api' ) ),
+			'placement_capabilities' => array( 'agents.runtime' ),
+			'provenance'             => array( 'adapter' => self::class ),
+		);
+
+		return $registry;
 	}
 
 	/** @param array<string,mixed> $task_input_schema Codebox task input schema. @return array<string,mixed> */

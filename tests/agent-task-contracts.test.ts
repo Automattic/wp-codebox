@@ -136,10 +136,19 @@ try {
   const artifactsPath = join(agentRecipeTemp, "artifacts")
   mkdirSync(artifactsPath)
 
+  const genericRecipe = buildAgentTaskRecipe({
+    goal: "Verify generic runtime propagation",
+    artifacts_path: artifactsPath,
+    provider_plugin_paths: [providerSource],
+  }, normalizeTaskInput({ goal: "Verify generic runtime propagation" }), "latest")
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), false)
+
   const recipe = buildAgentTaskRecipe({
     goal: "Verify extra plugin propagation",
     artifacts_path: artifactsPath,
     provider_plugin_paths: [providerSource],
+    component_contracts: [{ slug: "agents-api", source: agentsApiSource, pluginFile: "agents-api/agents-api.php", loadAs: "mu-plugin" }],
     extra_plugins: [{
       source: bridgeSource,
       slug: "agent-runtime-tool-bridge",
@@ -162,14 +171,10 @@ try {
     }],
   }, normalizeTaskInput({ goal: "Verify extra plugin propagation" }), "latest")
   const extraPlugins = recipe.inputs?.extra_plugins ?? []
-  assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agents-api"), {
-    source: agentsApiSource,
-    slug: "agents-api",
-    pluginFile: "agents-api/agents-api.php",
-    activate: false,
-    loadAs: "mu-plugin",
-    metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
-  })
+  const agentsApiPlugin = extraPlugins.find((plugin) => plugin.slug === "agents-api")
+  assert.equal(agentsApiPlugin?.pluginFile, "agents-api/agents-api.php")
+  assert.equal(agentsApiPlugin?.activate, false)
+  assert.equal(agentsApiPlugin?.loadAs, "mu-plugin")
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "runtime-engine" && component.loadAs === "mu-plugin"), true)
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)

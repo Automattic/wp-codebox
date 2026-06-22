@@ -21,10 +21,7 @@ try {
   const mounts = agentRuntimeMounts(options)
   const agentsApiMount = mounts.find((mount) => mount.metadata?.slug === "agents-api")
 
-  assert.equal(agentsApiMount?.source, agentsApi)
-  assert.equal(agentsApiMount?.target, "/wordpress/wp-content/mu-plugins/wp-codebox-runtime/agents-api")
-  assert.equal(agentsApiMount?.metadata?.pluginFile, "agents-api/agents-api.php")
-  assert.equal(agentsApiMount?.metadata?.loadAs, "mu-plugin")
+  assert.equal(agentsApiMount, undefined)
 
   const defaultAgentsApi = join(root, "agents-api")
   mkdirSync(defaultAgentsApi, { recursive: true })
@@ -42,8 +39,7 @@ try {
   const defaultMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
   const defaultMount = defaultMounts
     .find((mount) => mount.metadata?.slug === "agents-api")
-  assertSamePath(defaultMount?.source, defaultAgentsApi)
-  assert.equal(defaultMount?.target, "/wordpress/wp-content/mu-plugins/wp-codebox-runtime/agents-api")
+  assert.equal(defaultMount, undefined)
   assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-engine")?.source, runtimeEngine)
   assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "runtime-tools")?.source, runtimeTools)
 

@@ -134,6 +134,9 @@ final class WP_Codebox_Browser_Task_Builder {
 		$session_id = trim( (string) ( $input['sandbox_session_id'] ?? $input['session_id'] ?? $defaults['sandbox_session_id'] ?? $defaults['session_id'] ?? '' ) );
 		$scope      = trim( (string) ( $input['playground']['scope'] ?? $defaults['playground']['scope'] ?? $session_id ) );
 
+		$default_invocation = function_exists( 'apply_filters' )
+			? apply_filters( 'wp_codebox_browser_runtime_default_invocation', array( 'type' => 'task', 'hook' => 'wp_codebox_browser_runtime_task' ), $input, $defaults )
+			: array( 'type' => 'task', 'hook' => 'wp_codebox_browser_runtime_task' );
 		$generic_defaults = array(
 			'mode'       => 'sandbox',
 			'placement'  => self::browser_execution_placement(),
@@ -156,10 +159,7 @@ final class WP_Codebox_Browser_Task_Builder {
 			'browser_runner' => array(
 				'task_path'   => '/tmp/wp-codebox-browser-task.json',
 				'result_path' => '/tmp/wp-codebox-browser-result.json',
-				'invocation'  => array(
-					'type' => 'ability',
-					'name' => WP_Codebox_Agents_API_Adapter::default_chat_ability(),
-				),
+				'invocation'  => is_array( $default_invocation ) ? $default_invocation : array( 'type' => 'task', 'hook' => 'wp_codebox_browser_runtime_task' ),
 			),
 		);
 
