@@ -32,6 +32,15 @@ const timeout = normalizeAgentTaskRunResult({
 assert.equal(timeout.status, "timeout")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: timeout }), 1)
 
+const failedBeforeArtifacts = normalizeAgentTaskRunResult({ success: false, status: "failed", summary: "Runtime failed before artifact capture." }, { exitStatus: 1 })
+assert.equal(failedBeforeArtifacts.status, "failed")
+assert.equal(failedBeforeArtifacts.success, false)
+assert.deepEqual(failedBeforeArtifacts.refs.artifact_bundles, [])
+
+const malformedProviderOutput = normalizeAgentTaskRunResult({ success: false, status: "failed", diagnostics: [{ code: "wp-codebox.output.invalid-json", message: "Invalid JSON" }] }, { exitStatus: 0 })
+assert.equal(malformedProviderOutput.status, "failed")
+assert.equal(malformedProviderOutput.diagnostics[0].code, "wp-codebox.output.invalid-json")
+
 const failedExit = normalizeAgentTaskRunResult({ success: true, status: "completed" }, { exitStatus: 1 })
 assert.equal(failedExit.status, "failed")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: failedExit }), 1)
@@ -63,6 +72,12 @@ const normalizedWithArtifactEnvelope = normalizeAgentTaskRunResult({
 assert.equal(normalizedWithArtifactEnvelope.refs.artifact_bundles[0].path, "artifacts/run-1")
 assert.equal(normalizedWithArtifactEnvelope.refs.transcripts[0].kind, "codebox-transcript")
 assert.equal(ARTIFACT_RESULT_ENVELOPE_SCHEMA, "wp-codebox/artifact-result-envelope/v1")
+
+const normalizedWithEvidenceBundle = normalizeAgentTaskRunResult({
+  success: true,
+  evidence_refs: [{ id: "evidence-1", path: "artifacts/run-1/evidence.json", sha256: "abc" }],
+}, { exitStatus: 0 })
+assert.equal(normalizedWithEvidenceBundle.refs.evidence_bundles[0].kind, "codebox-evidence-bundle")
 
 const catalog = commandCatalogOutput()
 const agentSandboxRun = catalog.commands.find((command) => command.id === "wp-codebox.agent-sandbox-run")

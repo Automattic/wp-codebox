@@ -232,6 +232,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 				'transcripts'      => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-transcript' ) ),
 				'logs'             => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-runtime-log', 'codebox-command-log' ) ),
 				'runtimes'         => $this->artifact_refs_by_kind( $artifacts, array( 'codebox-runtime' ) ),
+				'evidence_bundles' => $this->artifact_refs_by_kind( $artifacts, array( 'evidence-bundle', 'codebox-evidence-bundle' ) ),
 			),
 			'diagnostics' => array_values( array_filter( $diagnostics, 'is_array' ) ),
 			'metadata'    => array_filter(
@@ -273,7 +274,22 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 	/** @param array<string,mixed> $response @param array<string,mixed> $agent_result @param array<string,mixed> $run @return array<int,array<string,mixed>> */
 	private function agent_task_run_artifacts( array $response, array $agent_result, array $run ): array {
 		$artifacts = array();
-		$root      = (string) ( $agent_result['artifacts']['directory'] ?? $response['artifacts'] ?? '' );
+		foreach ( is_array( $response['artifacts'] ?? null ) ? $response['artifacts'] : array() as $artifact ) {
+			if ( is_array( $artifact ) ) {
+				$this->append_artifact_ref( $artifacts, $artifact );
+			}
+		}
+		foreach ( is_array( $response['evidence_refs'] ?? null ) ? $response['evidence_refs'] : array() as $evidence_ref ) {
+			if ( is_array( $evidence_ref ) ) {
+				$this->append_artifact_ref( $artifacts, array_merge( array( 'kind' => 'codebox-evidence-bundle' ), $evidence_ref ) );
+			}
+		}
+		foreach ( is_array( $run['evidence_refs'] ?? null ) ? $run['evidence_refs'] : array() as $evidence_ref ) {
+			if ( is_array( $evidence_ref ) ) {
+				$this->append_artifact_ref( $artifacts, array_merge( array( 'kind' => 'codebox-evidence-bundle' ), $evidence_ref ) );
+			}
+		}
+		$root      = (string) ( $agent_result['artifacts']['directory'] ?? ( is_string( $response['artifacts'] ?? null ) ? $response['artifacts'] : '' ) );
 		$this->append_artifact_ref( $artifacts, array( 'id' => basename( $root ), 'kind' => 'codebox-artifact-bundle', 'path' => $root ) );
 		$this->append_agent_artifact_ref( $artifacts, 'codebox-changed-files', $root, is_array( $agent_result['changedFiles'] ?? null ) ? $agent_result['changedFiles'] : array() );
 		$this->append_agent_artifact_ref( $artifacts, 'codebox-patch', $root, is_array( $agent_result['patch'] ?? null ) ? $agent_result['patch'] : array() );

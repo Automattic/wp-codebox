@@ -22,6 +22,7 @@ export const AGENT_TASK_RUN_RESULT_JSON_SCHEMA = {
         transcripts: { type: "array", items: { type: "object" } },
         logs: { type: "array", items: { type: "object" } },
         runtimes: { type: "array", items: { type: "object" } },
+        evidence_bundles: { type: "array", items: { type: "object" } },
       },
     },
     diagnostics: { type: "array", items: { type: "object" } },
@@ -66,6 +67,7 @@ export interface AgentTaskRunResultSummary {
     transcripts: AgentTaskRunArtifactRef[]
     logs: AgentTaskRunArtifactRef[]
     runtimes: AgentTaskRunArtifactRef[]
+    evidence_bundles: AgentTaskRunArtifactRef[]
   }
   diagnostics: Array<Record<string, unknown>>
   metadata: Record<string, unknown>
@@ -112,6 +114,7 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
       transcripts: artifacts.filter((artifact) => artifact.kind === "codebox-transcript"),
       logs: artifacts.filter((artifact) => artifact.kind === "codebox-runtime-log" || artifact.kind === "codebox-command-log"),
       runtimes: artifacts.filter((artifact) => artifact.kind === "codebox-runtime"),
+      evidence_bundles: artifacts.filter((artifact) => artifact.kind === "evidence-bundle" || artifact.kind === "codebox-evidence-bundle"),
     },
     diagnostics: [...arrayObjects(result.diagnostics), ...compatibilityDiagnostics, ...(terminalResult?.diagnostics ?? [])],
     metadata: stripUndefined({
@@ -196,6 +199,10 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   appendUniqueArtifact(artifacts, stripUndefined({ id: runtimeLogPath ? "codebox-runtime-log" : "", kind: "codebox-runtime-log", path: runtimeLogPath }))
   const commandsLogPath = stringValue(objectValue(result.artifacts).commandsLogPath)
   appendUniqueArtifact(artifacts, stripUndefined({ id: commandsLogPath ? "codebox-command-log" : "", kind: "codebox-command-log", path: commandsLogPath }))
+
+  for (const evidenceRef of arrayObjects(result.evidence_refs)) {
+    appendUniqueArtifact(artifacts, artifactFromResultArtifact({ kind: "codebox-evidence-bundle", ...evidenceRef }))
+  }
 
   const runtime = runtimeRecord(result, compatMode, diagnostics)
   appendUniqueArtifact(artifacts, stripUndefined({

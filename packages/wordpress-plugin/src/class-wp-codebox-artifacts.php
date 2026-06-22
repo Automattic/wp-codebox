@@ -1508,6 +1508,7 @@ final class WP_Codebox_Artifacts {
 				'status'         => $status,
 				'artifactBundle' => $artifact_ref,
 				'artifactRefs'   => array( $artifact_ref ),
+				'evidenceRefs'   => is_array( $input['evidenceRefs'] ?? null ) ? $input['evidenceRefs'] : ( is_array( $input['evidence_refs'] ?? null ) ? $input['evidence_refs'] : array() ),
 				'verification'   => $verification,
 				'result'         => array(
 					'artifact_id'    => (string) $bundle['id'],

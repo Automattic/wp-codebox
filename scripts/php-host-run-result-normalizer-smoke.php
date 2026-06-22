@@ -74,10 +74,13 @@ smoke_assert( false === $timeout['agent_task_run_result']['success'], 'timeout c
 smoke_assert( 'timeout' === $timeout['agent_task_run_result']['status'], 'timeout canonical result status is timeout' );
 smoke_assert( 'wp_codebox_run_timeout' === $timeout['error']['code'], 'timeout error code is preserved' );
 
-$invalid_json = $normalizer->normalize( $prepared, array( 'exit_code' => 0, 'output' => 'not-json' ), $adapters );
+$prepared_without_artifacts = array_merge( $prepared, array( 'artifacts' => '' ) );
+$invalid_json = $normalizer->normalize( $prepared_without_artifacts, array( 'exit_code' => 0, 'output' => 'not-json' ), $adapters );
 smoke_assert( is_array( $invalid_json ) && ! is_wp_error( $invalid_json ), 'invalid JSON returns result envelope' );
 smoke_assert( 'wp_codebox_json_invalid' === $invalid_json['error']['code'], 'invalid JSON error code is preserved' );
 smoke_assert( 'invalid_json' === $invalid_json['error']['failure_classification'], 'invalid JSON classification is preserved' );
+smoke_assert( 'wp-codebox/agent-task-run-result/v1' === $invalid_json['agent_task_run_result']['schema'], 'invalid JSON includes canonical result schema' );
+smoke_assert( array() === $invalid_json['agent_task_run_result']['refs']['artifact_bundles'], 'failure before artifacts has no artifact bundle refs' );
 
 $non_zero = $normalizer->normalize( $prepared, array( 'exit_code' => 2, 'output' => '{"agentResult":{}}' ), $adapters );
 smoke_assert( is_array( $non_zero ) && ! is_wp_error( $non_zero ), 'non-zero exit returns result envelope' );
@@ -88,7 +91,7 @@ $success = $normalizer->normalize(
 	$prepared,
 	array(
 		'exit_code' => 0,
-		'output'    => '{"agentResult":{"artifacts":{"directory":"/tmp/wp-codebox-artifacts"},"summary":"Changed one file","changedFiles":{"artifact":"files/changed-files.json","count":1},"patch":{"artifact":"files/patch.diff","bytes":10},"transcript":{"artifact":"files/transcript.json"}},"runtime":{"id":"runtime-1","status":"destroyed"}}',
+		'output'    => '{"agentResult":{"artifacts":{"directory":"/tmp/wp-codebox-artifacts"},"summary":"Changed one file","changedFiles":{"artifact":"files/changed-files.json","count":1},"patch":{"artifact":"files/patch.diff","bytes":10},"transcript":{"artifact":"files/transcript.json"}},"evidence_refs":[{"id":"evidence-1","path":"/tmp/wp-codebox-artifacts/evidence.json"}],"runtime":{"id":"runtime-1","status":"destroyed"}}',
 	),
 	$adapters
 );
@@ -98,5 +101,6 @@ smoke_assert( 'succeeded' === $success['agent_task_run_result']['status'], 'succ
 smoke_assert( true === $success['agent_task_run_result']['success'], 'success canonical result is successful' );
 smoke_assert( 1 === $success['agent_task_run_result']['metadata']['changed_files_count'], 'success canonical result includes changed file count' );
 smoke_assert( 'codebox-patch' === $success['agent_task_run_result']['refs']['patches'][0]['kind'], 'success canonical result includes patch ref' );
+smoke_assert( 'codebox-evidence-bundle' === $success['agent_task_run_result']['refs']['evidence_bundles'][0]['kind'], 'success canonical result includes evidence bundle ref' );
 
 echo "host run result normalizer smoke passed\n";

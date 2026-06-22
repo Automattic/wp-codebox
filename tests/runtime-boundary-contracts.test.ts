@@ -71,15 +71,22 @@ assert.deepEqual(runtimeProfilePreflight({ schema: RUNTIME_PROFILE_SCHEMA, compo
 
 const lease = previewLease({
   schema: PREVIEW_LEASE_SCHEMA,
-  preview_public_url: "https://preview.example.test",
+  public_url: "https://preview.example.test",
   site_url: "https://site.example.test",
   local_url: "http://127.0.0.1:8881",
-  lease: { id: "lease-1", status: "active", provider: "preview-service" },
+  lease: { id: "lease-1", status: "active", provider: "preview-service", owner: "runtime-loop" },
+  reachability: { status: "reachable", http_status: 200, probes: [{ kind: "http", status: "passed" }], evidence_refs: [{ kind: "probe-log", path: "files/probe.json" }] },
   alignment: { status: "aligned", preview_matches_site: true, preview_matches_local: true },
+  evidence_refs: [{ kind: "preview-evidence", path: "files/browser/summary.json" }],
 })
 
 assert.equal(lease.schema, "wp-codebox/preview-lease/v1")
+assert.equal(lease.public_url, "https://preview.example.test")
+assert.equal(lease.preview_public_url, "https://preview.example.test")
+assert.equal(lease.local_url, "http://127.0.0.1:8881")
+assert.equal(lease.reachability?.status, "reachable")
 assert.equal(lease.alignment?.status, "aligned")
+assert.equal(lease.lease?.owner, "runtime-loop")
 assert.equal(previewLeaseStatus(lease), "active")
 assert.equal(previewLeaseStatus({ schema: PREVIEW_LEASE_SCHEMA, local_url: "http://127.0.0.1:8881", lease: { status: "active", expires_at: "2020-01-01T00:00:00.000Z" } }), "expired")
 
@@ -119,7 +126,7 @@ assert.equal(containedSiteOpen.schema, "wp-codebox/browser-contained-site-open/v
 assert.equal(containedSiteOpen.preview_session?.status, "recoverable_prepared_runtime")
 
 assert.throws(() => runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [{ kind: "component" }] }), /slug/)
-assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /preview_public_url/)
+assert.throws(() => previewLease({ schema: PREVIEW_LEASE_SCHEMA }), /public_url/)
 assert.throws(() => browserContainedSiteStatus({ schema: BROWSER_CONTAINED_SITE_STATUS_SCHEMA, success: true, site_id: "site-1", status: "recoverable_prepared_runtime", source_digest: { value: "bad" } }), /source_digest/)
 
 const publicContractEnvelopes = [profile, lease, containedSiteStatus, containedSiteOpen]

@@ -13,6 +13,7 @@ export interface ArtifactResultEnvelopeBase {
   success: boolean
   artifactBundle?: MaterializationArtifactRef
   artifactRefs: MaterializationArtifactRef[]
+  evidenceRefs: MaterializationArtifactRef[]
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   diagnostics: MaterializationDiagnostic[]
@@ -49,6 +50,7 @@ export function artifactDiagnosticsResultEnvelope(input: {
   diagnosticOptions?: ArtifactDiagnosticNormalizerOptions
   artifactBundle?: MaterializationArtifactRef
   artifactRefs?: MaterializationArtifactRef[]
+  evidenceRefs?: MaterializationArtifactRef[]
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   metadata?: Record<string, unknown>
@@ -61,6 +63,7 @@ export function artifactDiagnosticsResultEnvelope(input: {
     status: input.status,
     artifactBundle: input.artifactBundle,
     artifactRefs: input.artifactRefs,
+    evidenceRefs: input.evidenceRefs,
     verification: input.verification,
     result: stripUndefined({
       ...input.result,
@@ -78,6 +81,7 @@ export function artifactResultEnvelope(input: {
   status?: ArtifactResultStatus
   artifactBundle?: MaterializationArtifactRef
   artifactRefs?: MaterializationArtifactRef[]
+  evidenceRefs?: MaterializationArtifactRef[]
   verification?: Record<string, unknown>
   result?: Record<string, unknown>
   diagnostics?: MaterializationDiagnostic[]
@@ -87,6 +91,7 @@ export function artifactResultEnvelope(input: {
 }): ArtifactResultEnvelope {
   const status = input.status ?? (input.error ? "failed" : "created")
   const artifactRefs = normalizeArtifactRefs([...(input.artifactBundle ? [input.artifactBundle] : []), ...(input.artifactRefs ?? [])])
+  const evidenceRefs = normalizeArtifactRefs(input.evidenceRefs ?? [])
   const diagnostics = input.diagnostics ?? []
   const base = stripUndefined({
     schema: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
@@ -95,6 +100,7 @@ export function artifactResultEnvelope(input: {
     success: status === "created" || status === "existing" || status === "updated",
     artifactBundle: input.artifactBundle,
     artifactRefs,
+    evidenceRefs,
     verification: input.verification,
     result: input.result,
     diagnostics,
@@ -134,6 +140,7 @@ export function normalizeArtifactResultEnvelope(input: unknown, fallbackOperatio
       status: artifactResultStatus(record.status),
       artifactBundle: materializationArtifactRef(record.artifactBundle),
       artifactRefs: Array.isArray(record.artifactRefs) ? record.artifactRefs.map(materializationArtifactRef).filter(isDefined) : [],
+      evidenceRefs: Array.isArray(record.evidenceRefs) ? record.evidenceRefs.map(materializationArtifactRef).filter(isDefined) : [],
       verification: asRecord(record.verification),
       result: asRecord(record.result),
       diagnostics: Array.isArray(record.diagnostics) ? record.diagnostics.map(materializationDiagnostic).filter(isDefined) : [],
@@ -149,6 +156,7 @@ export function normalizeArtifactResultEnvelope(input: unknown, fallbackOperatio
     status: result.success === false ? "failed" : undefined,
     artifactBundle: materializationArtifactRef(result.artifactBundle ?? result.artifact_bundle ?? result.artifact_ref),
     artifactRefs: Array.isArray(result.artifactRefs) ? result.artifactRefs.map(materializationArtifactRef).filter(isDefined) : [],
+    evidenceRefs: Array.isArray(result.evidenceRefs) ? result.evidenceRefs.map(materializationArtifactRef).filter(isDefined) : [],
     verification: asRecord(result.verification),
     result,
     error: result.success === false ? errorObject(result.error) ?? "Artifact operation failed." : undefined,
