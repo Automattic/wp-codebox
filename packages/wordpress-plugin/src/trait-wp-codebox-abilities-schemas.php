@@ -317,6 +317,11 @@ private static function browser_playground_session_schema(): array {
 
 /** @return array<string,mixed> */
 private static function browser_materializer_contract_schema(): array {
+	return self::browser_product_dto_schema();
+}
+
+/** @return array<string,mixed> */
+private static function browser_internal_materializer_contract_schema(): array {
 	return array(
 		'type'       => 'object',
 		'properties' => array(
@@ -351,6 +356,11 @@ private static function browser_materializer_contract_schema(): array {
 
 /** @return array<string,mixed> */
 private static function browser_task_contract_schema(): array {
+	return self::browser_product_dto_schema();
+}
+
+/** @return array<string,mixed> */
+private static function browser_internal_task_contract_schema(): array {
 	return array(
 		'type'       => 'object',
 		'properties' => array(
@@ -405,7 +415,7 @@ private static function browser_task_phase_kinds(): array {
 private static function browser_product_dto_schema(): array {
 	return array(
 		'type'        => 'object',
-		'description' => 'Compact product-facing browser task/session DTO for durable product records and REST responses. It preserves runner fields used by runBrowserSessionRecipe while omitting raw runtime plugin payloads, source paths, inline content, and secret values.',
+		'description' => 'Compact product-facing browser task/session DTO for durable product records and REST responses. It exposes stable ids, preview refs, artifact refs, status, and compact diagnostics while omitting raw playground, runtime, recipe, task payload, sandbox path, and implementation diagnostic contracts.',
 		'properties'  => array(
 			'success'          => array( 'type' => 'boolean' ),
 			'schema'           => array( 'type' => 'string' ),
@@ -414,17 +424,25 @@ private static function browser_product_dto_schema(): array {
 			'execution'        => array( 'type' => 'string' ),
 			'execution_scope'  => array( 'type' => 'string' ),
 			'permission_model' => array( 'type' => 'string' ),
+			'status'           => array( 'type' => 'string' ),
+			'session_id'       => array( 'type' => 'string' ),
 			'session'          => array( 'type' => 'object' ),
 			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => array( 'type' => 'object' ),
 			'phases'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
-			'task_input'       => array( 'type' => 'object' ),
-			'task_payload'     => array( 'type' => 'object' ),
-			'materialization'  => array( 'type' => 'object' ),
-			'playground'       => array( 'type' => 'object' ),
-			'recipe'           => array( 'type' => 'object' ),
-			'artifacts'        => array( 'type' => 'object' ),
+			'task'             => array( 'type' => 'string' ),
+			'target'           => array( 'type' => 'object' ),
+			'agent'            => array( 'type' => 'string' ),
+			'provider'         => array( 'type' => 'string' ),
+			'model'            => array( 'type' => 'string' ),
+			'preview_boot'     => array( 'type' => 'object' ),
+			'preview_ref'      => array( 'type' => 'object' ),
+			'artifact_refs'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+			'signals'          => array( 'type' => 'object' ),
+			'error'            => array( 'type' => 'object' ),
+			'diagnostics'      => array( 'type' => 'object' ),
 			'execution_metrics' => array( 'type' => 'object' ),
+			'provenance'       => array( 'type' => 'object' ),
 		),
 	);
 }

@@ -297,7 +297,6 @@ final class WP_Codebox_Browser_Task_Builder {
 				'preview_boot'     => self::browser_preview_boot_config( $session ),
 				'preview_ref'      => self::browser_preview_ref( $session ),
 				'signals'          => self::compact_public_value( $signals ),
-				'artifacts'        => is_array( $session['artifacts'] ?? null ) ? self::compact_public_value( $session['artifacts'] ) : array(),
 				'artifact_refs'    => self::browser_artifact_refs( $session ),
 				'error'            => is_array( $session['error'] ?? null ) ? self::compact_public_value( $session['error'] ) : array(),
 			),
@@ -622,7 +621,6 @@ final class WP_Codebox_Browser_Task_Builder {
 				'contained_site'    => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'artifacts'         => array_filter(
 					array(
-						'base_path'   => (string) ( $playground['artifact_base_path'] ?? '' ),
 						'base_url'    => (string) ( $playground['artifact_base_url'] ?? '' ),
 						'preview_url' => (string) ( $playground['preview_url'] ?? '' ),
 					),
@@ -836,7 +834,7 @@ final class WP_Codebox_Browser_Task_Builder {
 	}
 
 	private static function compact_public_value( mixed $value, string $key = '' ): mixed {
-		if ( in_array( $key, array( 'task_payload', 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'blueprint', 'fallback_blueprint', 'runtime', 'prepared_runtime', 'prepared', 'plugins' ), true ) ) {
+		if ( in_array( $key, array( 'task_payload', 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'blueprint', 'fallback_blueprint', 'runtime', 'prepared_runtime', 'prepared', 'plugins', 'artifact_base_path', 'base_path', 'task_path', 'result_path', 'event_stream_path', 'capture_paths', 'materialization_result_path' ), true ) ) {
 			return null;
 		}
 		if ( class_exists( 'WP_Codebox_Redaction_Policy' ) && WP_Codebox_Redaction_Policy::key_should_redact( 'public_session_dto', $key ) ) {

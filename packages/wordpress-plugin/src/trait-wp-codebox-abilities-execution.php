@@ -956,6 +956,7 @@ public static function hydrate_browser_blueprint_ref( array $input ): array|WP_E
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
+	$return_raw = self::include_raw_browser_contract( $input, 'materializer' );
 	$input['include_raw_browser_session'] = true;
 	$session = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $session ) ) {
@@ -982,7 +983,7 @@ public static function create_browser_materializer_contract( array $input ): arr
 		);
 		$contract['compact'] = self::compact_browser_materializer_contract_dto( $contract );
 
-		return $contract;
+		return $return_raw ? $contract : $contract['compact'];
 	}
 
 	$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
@@ -1010,17 +1011,45 @@ public static function create_browser_materializer_contract( array $input ): arr
 	);
 	$contract['compact'] = self::compact_browser_materializer_contract_dto( $contract );
 
-	return $contract;
+	return $return_raw ? $contract : $contract['compact'];
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_task_contract( array $input ): array|WP_Error {
+	$return_raw = self::include_raw_browser_contract( $input, 'task' );
 	$contract = self::prepare_browser_task_contract( $input );
-	if ( is_wp_error( $contract ) || true !== ( $input['execute_phases'] ?? false ) ) {
+	if ( is_wp_error( $contract ) ) {
 		return $contract;
 	}
+	if ( true === ( $input['execute_phases'] ?? false ) ) {
+		$contract = self::execute_browser_task_phases( $contract );
+		if ( is_wp_error( $contract ) ) {
+			return $contract;
+		}
+	}
 
-	return self::execute_browser_task_phases( $contract );
+	return $return_raw ? $contract : ( is_array( $contract['compact'] ?? null ) ? $contract['compact'] : self::compact_browser_task_contract_dto( $contract ) );
+}
+
+/** @param array<string,mixed> $input Ability input. */
+private static function include_raw_browser_contract( array $input, string $contract ): bool {
+	if ( true === ( $input['include_internal_browser_contract'] ?? false ) || true === ( $input['include_raw_browser_contract'] ?? false ) ) {
+		return true;
+	}
+
+	if ( 'materializer' === $contract && true === ( $input['include_raw_browser_materializer_contract'] ?? false ) ) {
+		return true;
+	}
+
+	if ( 'task' === $contract && true === ( $input['include_raw_browser_task_contract'] ?? false ) ) {
+		return true;
+	}
+
+	$debug = is_array( $input['debug'] ?? null ) ? $input['debug'] : array();
+	return true === ( $debug['include_internal_browser_contract'] ?? false )
+		|| true === ( $debug['include_raw_browser_contract'] ?? false )
+		|| ( 'materializer' === $contract && true === ( $debug['include_raw_browser_materializer_contract'] ?? false ) )
+		|| ( 'task' === $contract && true === ( $debug['include_raw_browser_task_contract'] ?? false ) );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -1296,16 +1325,29 @@ private static function compact_browser_materializer_contract_dto( array $contra
 			'session_id'       => (string) ( $contract['session_id'] ?? '' ),
 			'authorization'    => is_array( $contract['authorization'] ?? null ) ? self::compact_browser_dto_value( $contract['authorization'] ) : array(),
 			'task'             => is_array( $contract['task_input'] ?? null ) ? (string) ( $contract['task_input']['goal'] ?? '' ) : '',
-			'executable'       => self::browser_executable_materializer_contract_dto( $contract ),
-			'materialization'  => is_array( $contract['materialization'] ?? null ) ? self::compact_browser_dto_value( $contract['materialization'] ) : array(),
-			'recipe'           => is_array( $contract['recipe'] ?? null ) ? self::compact_browser_recipe_dto( $contract['recipe'] ) : array(),
 			'preview_boot'     => WP_Codebox_Browser_Task_Builder::browser_preview_boot_config( $contract ),
-			'playground'       => is_array( $contract['playground'] ?? null ) ? self::compact_browser_playground_dto( $contract['playground'] ) : array(),
-			'artifacts'        => is_array( $contract['artifacts'] ?? null ) ? self::compact_browser_dto_value( $contract['artifacts'] ) : array(),
+			'preview_ref'      => WP_Codebox_Browser_Task_Builder::browser_preview_ref( $contract ),
+			'artifact_refs'    => WP_Codebox_Browser_Task_Builder::browser_artifact_refs( $contract ),
+			'diagnostics'      => self::compact_browser_contract_diagnostics( $contract ),
 			'provenance'       => is_array( $contract['provenance'] ?? null ) ? self::compact_browser_dto_value( $contract['provenance'] ) : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
+}
+
+/** @param array<string,mixed> $contract Browser contract. @return array<string,mixed> */
+private static function compact_browser_contract_diagnostics( array $contract ): array {
+	$diagnostics = array();
+	if ( is_array( $contract['signals'] ?? null ) ) {
+		$diagnostics['signals'] = self::compact_browser_dto_value( $contract['signals'] );
+	}
+	if ( is_array( $contract['execution_metrics'] ?? null ) ) {
+		$metrics = self::compact_browser_dto_value( $contract['execution_metrics'] );
+		unset( $metrics['payload_bytes'], $metrics['diagnostics_refs'] );
+		$diagnostics['execution_metrics'] = $metrics;
+	}
+
+	return array_filter( $diagnostics, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 }
 
 /** @param array<string,mixed> $contract Browser materializer contract. @return array<string,mixed> */
@@ -1419,7 +1461,7 @@ private static function compact_browser_dto_value( mixed $value, string $key = '
 }
 
 private static function compact_browser_dto_key_should_omit( string $key ): bool {
-	return in_array( $key, array( 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'plugins', 'runtime' ), true );
+	return in_array( $key, array( 'pluginData', 'source', 'content', 'content_base64', 'bundle', 'plugins', 'runtime', 'artifact_base_path', 'base_path', 'task_path', 'result_path', 'event_stream_path', 'capture_paths', 'materialization_result_path' ), true );
 }
 
 private static function compact_browser_dto_key_should_redact( string $key ): bool {
@@ -1493,6 +1535,7 @@ private static function prepare_browser_task_contract_phases( array $input, arra
 		if ( empty( $phase_input['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
 			$phase_input['sandbox_session_id'] = (string) $session_envelope['id'];
 		}
+		$phase_input['include_internal_browser_contract'] = true;
 
 		$contract = self::create_browser_materializer_contract( $phase_input );
 		if ( is_wp_error( $contract ) ) {

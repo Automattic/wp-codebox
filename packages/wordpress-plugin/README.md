@@ -15,6 +15,8 @@ metadata exposes `meta.canonical_ability` for aliases.
 - `wp-codebox/run-agent-task-batch`
 - `wp-codebox/run-agent-task-fanout`
 - `wp-codebox/create-browser-playground-session`
+- `wp-codebox/create-browser-materializer-contract`
+- `wp-codebox/create-browser-task-contract`
 - `wp-codebox/browser-connector-request`
 - `wp-codebox/prepare`
 - `wp-codebox/capture`
@@ -73,6 +75,12 @@ artifact, and apply contracts before returning results to consumers.
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
 `allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`
 and `code_file` fields remain rejected on this product ability path.
+
+Browser session, materializer, and task contract abilities return compact public
+DTOs by default. Those DTOs expose stable session ids, contained-site and preview
+refs, preview URLs, artifact refs, status, and compact diagnostics. Raw
+Playground/runtime contracts, recipes, task payloads, sandbox paths, and
+implementation diagnostics stay behind explicit internal/debug raw-contract flags.
 
 Runtime orchestrators can pass `agent_bundles` plus a generic `runtime_task`
 payload to run caller-owned bundle logic without injecting PHP code. WP Codebox

@@ -103,7 +103,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
   product payload validation.
 - **Browser task and contained site:** browser interaction, callback, probe,
   review bridge, session origin, artifact lifecycle, result shape, and runtime
-  boundary contracts.
+  boundary contracts. Public WordPress abilities return compact browser/session
+  product DTOs by default; executable Playground recipes, runtime payloads,
+  sandbox paths, and implementation diagnostics are internal/debug contracts.
 - **Browser SDK:** `window.wpCodeboxBrowser.v1.info()` reports SDK version,
   capability strings, and global names; `normalizeError()` returns
   `wp-codebox/browser-sdk-error/v1`; `result()` wraps async browser operations in

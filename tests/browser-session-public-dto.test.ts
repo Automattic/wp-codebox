@@ -52,9 +52,21 @@ $input = array(
 $public = WP_Codebox_Abilities::create_browser_playground_session( $input );
 $raw = WP_Codebox_Abilities::create_browser_playground_session( $input + array( 'include_raw_browser_session' => true ) );
 $materializer = WP_Codebox_Abilities::create_browser_materializer_contract( $input );
+$raw_materializer = WP_Codebox_Abilities::create_browser_materializer_contract( $input + array( 'include_raw_browser_materializer_contract' => true ) );
+$task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input );
+$raw_task_contract = WP_Codebox_Abilities::create_browser_task_contract( $input + array( 'include_raw_browser_task_contract' => true ) );
 
-echo json_encode( array( 'public' => $public, 'raw' => $raw, 'materializer' => $materializer ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'public' => $public, 'raw' => $raw, 'materializer' => $materializer, 'raw_materializer' => $raw_materializer, 'task_contract' => $task_contract, 'raw_task_contract' => $raw_task_contract ), JSON_UNESCAPED_SLASHES );
 `)
+
+function assertPublicDtoDoesNotExposeInternals(value: unknown) {
+  const encoded = JSON.stringify(value)
+  assert.equal(encoded.includes("must-not-leak"), false)
+  assert.equal(encoded.includes("/wordpress/"), false, encoded)
+  for (const key of ["playground", "runtime", "recipe", "task_payload", "executable", "materialization"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(value as Record<string, unknown>, key), false, `${key} must not be exposed`)
+  }
+}
 
 assert.equal(result.public.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.public.source_schema, "wp-codebox/browser-playground-session/v1")
@@ -76,14 +88,30 @@ assert.equal(result.public.playground, undefined)
 assert.equal(result.public.recipe, undefined)
 assert.equal(result.public.task_payload, undefined)
 assert.equal(JSON.stringify(result.public).includes("must-not-leak"), false)
+assert.equal(result.public.preview_boot.artifacts.base_path, undefined)
+assertPublicDtoDoesNotExposeInternals(result.public)
 
 assert.equal(result.raw.schema, "wp-codebox/browser-playground-session/v1")
 assert.equal(result.raw.product.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(Array.isArray(result.raw.playground.blueprint.steps), true)
 assert.equal(result.raw.recipe.runtime.backend, "wordpress-playground")
 
-assert.equal(result.materializer.schema, "wp-codebox/browser-materializer-contract/v1")
-assert.equal(Array.isArray(result.materializer.playground.blueprint.steps), true)
-assert.equal(result.materializer.compact.schema, "wp-codebox/browser-materializer-product-dto/v1")
+assert.equal(result.materializer.schema, "wp-codebox/browser-materializer-product-dto/v1")
+assert.equal(result.materializer.source_schema, "wp-codebox/browser-materializer-contract/v1")
+assert.equal(result.materializer.preview_ref.schema, "wp-codebox/browser-preview-ref/v1")
+assert.deepEqual(result.materializer.artifact_refs, result.public.artifact_refs)
+assertPublicDtoDoesNotExposeInternals(result.materializer)
+
+assert.equal(result.raw_materializer.schema, "wp-codebox/browser-materializer-contract/v1")
+assert.equal(Array.isArray(result.raw_materializer.playground.blueprint.steps), true)
+assert.equal(result.raw_materializer.compact.schema, "wp-codebox/browser-materializer-product-dto/v1")
+
+assert.equal(result.task_contract.schema, "wp-codebox/browser-task-product-dto/v1")
+assert.equal(result.task_contract.primary.schema, "wp-codebox/browser-session-product-dto/v1")
+assertPublicDtoDoesNotExposeInternals(result.task_contract)
+
+assert.equal(result.raw_task_contract.schema, "wp-codebox/browser-task-contract/v1")
+assert.equal(result.raw_task_contract.compact.schema, "wp-codebox/browser-task-product-dto/v1")
+assert.equal(Array.isArray(result.raw_task_contract.primary.playground.blueprint.steps), true)
 
 console.log("browser session public dto ok")
