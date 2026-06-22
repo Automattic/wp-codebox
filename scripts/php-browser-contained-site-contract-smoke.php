@@ -116,10 +116,12 @@ $open = WP_Codebox_Abilities::open_browser_contained_site(
 		'cache_key'     => 'studio-native-preview',
 		'source_digest' => $source_digest,
 		'playground'    => array(
-			'preview_public_url' => 'https://preview.example.test',
+			'public_url'         => 'https://preview.example.test',
 			'site_url'           => 'https://preview.example.test/wp',
 			'local_url'          => 'http://localhost:8881/preview',
-			'lease'              => array( 'status' => 'active' ),
+			'lease'              => array( 'status' => 'active', 'owner' => 'php-smoke' ),
+			'reachability'       => array( 'status' => 'reachable', 'http_status' => 200, 'probes' => array( array( 'kind' => 'http' ) ) ),
+			'evidence_refs'      => array( array( 'kind' => 'probe-log', 'path' => 'files/probe.json' ) ),
 		),
 	)
 );
@@ -132,7 +134,11 @@ expect( 'prepared_runtime' === $open['reuse_level'], 'Expected open reuse_level=
 expect( false === $open['requires_materialization'], 'Expected open not to require materialization.' );
 expect( isset( $open['preview_boot']['blueprint_ref_dto']['hydration_endpoint'] ), 'Expected preview boot hydration endpoint.' );
 expect( 'wp-codebox/preview-lease/v1' === $open['preview_lease']['schema'], 'Expected preview lease DTO.' );
+expect( 'https://preview.example.test' === $open['preview_lease']['public_url'], 'Expected canonical public preview URL.' );
+expect( 'http://localhost:8881/preview' === $open['preview_lease']['local_url'], 'Expected local preview URL to remain distinct.' );
 expect( 'active' === $open['preview_lease']['lease']['status'], 'Expected active preview lease.' );
+expect( 'php-smoke' === $open['preview_lease']['lease']['owner'], 'Expected lease owner evidence.' );
+expect( 'reachable' === $open['preview_lease']['reachability']['status'], 'Expected reachability evidence.' );
 expect( 'browser-contained-site:studio-native-preview:' . $source_digest === $open['recovery_handle'], 'Expected stable open recovery handle.' );
 expect( 'reuse_prepared_runtime' === $open['contained_site']['open_mode'], 'Expected contained site lifecycle fields.' );
 

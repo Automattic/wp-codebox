@@ -30,14 +30,20 @@ export interface BrowserContainedSite {
 
 export interface BrowserPreviewLease {
   schema: typeof BROWSER_CONTAINED_SITE_PREVIEW_LEASE_SCHEMA
+  public_url?: string
   preview_public_url?: string
   site_url?: string
   local_url?: string
   lease?: {
     status?: "active" | "released" | "expired" | "unknown" | string
     expires_at?: string
+    owner?: string
+    owner_id?: string
   }
+  reachability?: Record<string, unknown>
   alignment?: Record<string, unknown>
+  evidence_refs?: Record<string, unknown>[]
+  provenance?: Record<string, unknown>
 }
 
 export interface BrowserContainedSiteBootDescriptor {

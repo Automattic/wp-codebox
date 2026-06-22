@@ -341,7 +341,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'session_id' => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? $contained_site['session_id'] ?? '' ),
 				'site_id'    => (string) ( $contained_site['site_id'] ?? '' ),
 				'scope'      => (string) ( $preview_boot['scope'] ?? $contained_site['session_id'] ?? '' ),
-				'url'        => (string) ( $preview['preview_public_url'] ?? $preview['local_url'] ?? '' ),
+				'url'        => (string) ( $preview['public_url'] ?? $preview['preview_public_url'] ?? $preview['local_url'] ?? '' ),
 				'boot_ref'   => (string) ( $preview_boot['blueprint_ref'] ?? '' ),
 			),
 			static fn( string $value ): bool => '' !== $value
@@ -796,7 +796,7 @@ final class WP_Codebox_Browser_Task_Builder {
 			}
 		}
 
-		if ( 'active' === $status || ! empty( $lease['preview_public_url'] ) || ! empty( $lease['site_url'] ) || ! empty( $lease['local_url'] ) ) {
+		if ( 'active' === $status || ! empty( $lease['public_url'] ) || ! empty( $lease['preview_public_url'] ) || ! empty( $lease['site_url'] ) || ! empty( $lease['local_url'] ) ) {
 			return 'active';
 		}
 
@@ -806,33 +806,50 @@ final class WP_Codebox_Browser_Task_Builder {
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
 	private static function preview_lease_from_session( array $session ): array {
 		if ( 'wp-codebox/preview-lease/v1' === (string) ( $session['schema'] ?? '' ) ) {
-			return self::compact_public_value( $session );
+			return self::canonical_preview_lease( self::compact_public_value( $session ) );
 		}
 
 		if ( is_array( $session['preview_boot']['preview'] ?? null ) ) {
-			return self::compact_public_value( $session['preview_boot']['preview'] );
+			return self::canonical_preview_lease( self::compact_public_value( $session['preview_boot']['preview'] ) );
 		}
 
 		if ( is_array( $session['preview'] ?? null ) && 'wp-codebox/preview-lease/v1' === (string) ( $session['preview']['schema'] ?? '' ) ) {
-			return self::compact_public_value( $session['preview'] );
+			return self::canonical_preview_lease( self::compact_public_value( $session['preview'] ) );
 		}
 
 		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
 		$lease      = is_array( $playground['lease'] ?? null ) ? $playground['lease'] : ( is_array( $session['preview_lease'] ?? null ) ? $session['preview_lease'] : array() );
 		$alignment  = is_array( $playground['alignment'] ?? null ) ? $playground['alignment'] : array( 'status' => 'unknown' );
+		$public_url = (string) ( $playground['public_url'] ?? $playground['preview_public_url'] ?? $session['public_url'] ?? $session['preview_public_url'] ?? '' );
+		$reachability = is_array( $playground['reachability'] ?? null ) ? $playground['reachability'] : ( is_array( $session['reachability'] ?? null ) ? $session['reachability'] : array() );
+		$evidence_refs = is_array( $playground['evidence_refs'] ?? null ) ? $playground['evidence_refs'] : ( is_array( $session['evidence_refs'] ?? null ) ? $session['evidence_refs'] : array() );
 
-		return array_filter(
+		return self::canonical_preview_lease( array_filter(
 			array(
 				'schema'             => 'wp-codebox/preview-lease/v1',
-				'preview_public_url' => (string) ( $playground['preview_public_url'] ?? $session['preview_public_url'] ?? '' ),
+				'public_url'         => $public_url,
+				'preview_public_url' => $public_url,
 				'site_url'           => (string) ( $playground['site_url'] ?? $playground['remote_url'] ?? '' ),
 				'local_url'          => (string) ( $playground['local_url'] ?? $playground['preview_url'] ?? '' ),
 				'lease'              => self::compact_public_value( $lease ),
+				'reachability'       => self::compact_public_value( $reachability ),
 				'alignment'          => self::compact_public_value( $alignment ),
+				'evidence_refs'      => self::compact_public_value( $evidence_refs ),
 				'provenance'         => is_array( $playground['provenance'] ?? null ) ? self::compact_public_value( $playground['provenance'] ) : array(),
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
-		);
+		) );
+	}
+
+	/** @param array<string,mixed> $lease Preview lease DTO. @return array<string,mixed> */
+	private static function canonical_preview_lease( array $lease ): array {
+		$public_url = (string) ( $lease['public_url'] ?? $lease['preview_public_url'] ?? '' );
+		if ( '' !== $public_url ) {
+			$lease['public_url'] = $public_url;
+			$lease['preview_public_url'] = $public_url;
+		}
+
+		return $lease;
 	}
 
 	private static function compact_public_value( mixed $value, string $key = '' ): mixed {

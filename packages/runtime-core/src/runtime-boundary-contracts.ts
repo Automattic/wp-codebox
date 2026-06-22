@@ -74,6 +74,7 @@ export interface PreviewLeaseMetadata {
   acquired_at?: string
   expires_at?: string
   owner?: string
+  owner_id?: string
   provider?: string
   provenance?: Record<string, unknown>
 }
@@ -86,13 +87,25 @@ export interface PreviewAlignmentEvidence {
   evidence?: Record<string, unknown>
 }
 
+export interface PreviewReachabilityEvidence {
+  status: "reachable" | "unreachable" | "unknown" | (string & {})
+  checked_at?: string
+  http_status?: number
+  probes?: Record<string, unknown>[]
+  evidence_refs?: Record<string, unknown>[]
+  metadata?: Record<string, unknown>
+}
+
 export interface PreviewLease {
   schema: typeof PREVIEW_LEASE_SCHEMA
+  public_url?: string
   preview_public_url?: string
   site_url?: string
   local_url?: string
   lease?: PreviewLeaseMetadata
+  reachability?: PreviewReachabilityEvidence
   alignment?: PreviewAlignmentEvidence
+  evidence_refs?: Record<string, unknown>[]
   provenance?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
@@ -220,19 +233,23 @@ export function runtimeProfile(input: unknown): RuntimeProfile {
 
 export function previewLease(input: unknown): PreviewLease {
   const value = requireObject(input, "Preview lease") as Partial<PreviewLease>
+  const publicUrl = optionalString(value.public_url, "public_url") ?? optionalString(value.preview_public_url, "preview_public_url")
   if (value.schema !== PREVIEW_LEASE_SCHEMA) throw new Error(`Preview lease schema must be ${PREVIEW_LEASE_SCHEMA}.`)
   const lease: PreviewLease = {
     schema: PREVIEW_LEASE_SCHEMA,
-    preview_public_url: optionalString(value.preview_public_url, "preview_public_url"),
+    public_url: publicUrl,
+    preview_public_url: publicUrl,
     site_url: optionalString(value.site_url, "site_url"),
     local_url: optionalString(value.local_url, "local_url"),
     lease: value.lease === undefined ? undefined : (normalizeOptionalObject(value.lease, "Preview lease metadata") as PreviewLeaseMetadata),
+    reachability: value.reachability === undefined ? undefined : normalizeReachability(value.reachability),
     alignment: value.alignment === undefined ? undefined : normalizeAlignment(value.alignment),
+    evidence_refs: normalizeObjectList(value.evidence_refs, "Preview lease evidence_refs"),
     provenance: normalizeOptionalObject(value.provenance, "Preview lease provenance"),
     metadata: normalizeOptionalObject(value.metadata, "Preview lease metadata"),
   }
-  if (!lease.preview_public_url && !lease.site_url && !lease.local_url) {
-    throw new Error("Preview lease must include preview_public_url, site_url, or local_url.")
+  if (!lease.public_url && !lease.site_url && !lease.local_url) {
+    throw new Error("Preview lease must include public_url, preview_public_url, site_url, or local_url.")
   }
   return lease
 }
@@ -248,7 +265,7 @@ export function previewLeaseStatus(input: PreviewLease | unknown, now = new Date
     if (!Number.isNaN(expires) && expires <= now.getTime()) return "expired"
   }
 
-  if (declaredStatus === "active" || lease.preview_public_url || lease.site_url || lease.local_url) return "active"
+  if (declaredStatus === "active" || lease.public_url || lease.preview_public_url || lease.site_url || lease.local_url) return "active"
   if (declaredStatus === "expired") return "expired"
   return "unknown"
 }
@@ -348,6 +365,18 @@ function normalizePreviewBootConfig(input: unknown): BrowserPreviewBootConfig {
     contained_site: normalizeOptionalObject(value.contained_site, "preview_boot.contained_site"),
     artifacts: normalizeOptionalObject(value.artifacts, "preview_boot.artifacts"),
     provenance: normalizeOptionalObject(value.provenance, "preview_boot.provenance"),
+  }
+}
+
+function normalizeReachability(input: unknown): PreviewReachabilityEvidence {
+  const value = requireObject(input, "Preview reachability") as Partial<PreviewReachabilityEvidence>
+  return {
+    status: (optionalString(value.status, "reachability.status") ?? "unknown") as PreviewReachabilityEvidence["status"],
+    checked_at: optionalString(value.checked_at, "reachability.checked_at"),
+    http_status: typeof value.http_status === "number" ? value.http_status : undefined,
+    probes: normalizeObjectList(value.probes, "reachability.probes"),
+    evidence_refs: normalizeObjectList(value.evidence_refs, "reachability.evidence_refs"),
+    metadata: normalizeOptionalObject(value.metadata, "reachability.metadata"),
   }
 }
 
