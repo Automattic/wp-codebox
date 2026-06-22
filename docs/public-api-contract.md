@@ -68,13 +68,14 @@ API ability names, Playground command handlers, and integration-specific filters
 
 WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 `wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
-upstream systems internally, but public docs and schemas should not require
-callers to invoke raw upstream ability names.
+upstream systems internally, while public docs and schemas present Codebox-owned
+ability names, schemas, and facades to callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
 `./agent-task-recipe`, `./runtime-presets`, `./playground/public`, and
-`./cli/recipe-secret-env` for local consumers in this repo.
+`./cli/recipe-secret-env` for local consumers in this repo. It intentionally does
+not mirror the monorepo-only `./internals` helper entrypoint.
 
 ## Contract Areas
 
@@ -209,9 +210,10 @@ Those adapter bindings are not part of `runtimeContractManifest()`.
 ## Internal Entry Point
 
 `@automattic/wp-codebox-core/internals` exists for this monorepo's package split
-and may be used by tests, the CLI, and backend packages in this repository.
-External integrations use the stable entrypoints listed above. Symbols exported
-only through `./internals` may change or move between package releases.
+and may be used by tests, the CLI, and backend packages in this repository. The
+workspace package does not expose a `./core/internals` mirror. External
+integrations use the stable entrypoints listed above. Symbols exported only
+through `./internals` may change or move between package releases.
 
 Keep `./internals` intentionally small. If an internal helper becomes useful to
 external consumers, move the consumer-safe contract into the focused public owner

@@ -20,10 +20,6 @@
       "types": "./packages/runtime-core/dist/artifacts.d.ts",
       "import": "./packages/runtime-core/dist/artifacts.js"
     },
-    "./core/internals": {
-      "types": "./packages/runtime-core/dist/internals.d.ts",
-      "import": "./packages/runtime-core/dist/internals.js"
-    },
     "./recipe-builders": {
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"

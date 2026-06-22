@@ -63,7 +63,6 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./core/public",
   "./core/contracts",
   "./core/artifacts",
-  "./core/internals",
   "./recipe-builders",
   "./agent-task-recipe",
   "./runtime-presets",
@@ -83,6 +82,8 @@ assert.deepEqual(exportKeys(corePackage), [
   "./agent-task-recipe",
   "./runtime-presets",
 ])
+assert.equal(exportKeys(rootPackage).some((key) => key.includes("internals")), false, "workspace package must not mirror internal package entrypoints")
+assert.equal(exportKeys(corePackage).filter((key) => key.includes("internals")).length, 1, "core package internals entrypoint must stay quarantined to the package split")
 
 assert.deepEqual(exportKeys(playgroundPackage), [".", "./public"])
 
@@ -260,7 +261,8 @@ for (const internalExport of [
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
-assert.match(docs, /External integrations use the stable entrypoints listed above/)
+assert.match(docs, /workspace package does not expose a `\.\/core\/internals` mirror/)
+assert.match(docs, /External\s+integrations use the stable entrypoints listed above/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
 assert.match(docs, /WordPress consumers should prefer `WP_Codebox_API`/)
 assert.match(docs, /`wp-codebox\/\*` ability ids/)
@@ -280,7 +282,11 @@ assert.match(pluginReadme, /Consumers running inside WordPress should prefer `WP
 assert.match(pluginReadme, /`wp-codebox\/\*` ability/)
 assert.match(agentsApiAdapter, /Advanced internal adapter around the upstream Agents API abilities/)
 assert.match(agentsApiAdapter, /@internal Adapter boundary for WP Codebox runtime integration/)
-assert.doesNotMatch(docs + pluginReadme, /agents\/[a-z0-9._/-]+|datamachine-code\/[a-z0-9._/-]+/i)
+assert.match(agentsApiAdapter, /Consumers should[\s*]+call WP_Codebox_API or wp-codebox\/\* abilities/)
+assert.doesNotMatch(agentsApiAdapter, /Consumers should depend on this class/)
+assert.doesNotMatch(docs + pluginReadme, /agents\/[a-z0-9._/-]+|agents-api\/[a-z0-9._/-]+|datamachine-code\/[a-z0-9._/-]+/i)
+assert.doesNotMatch(docs + pluginReadme, /WP_Codebox_Agents_API_Adapter/)
+assert.doesNotMatch(docs + pluginReadme, /call raw upstream ability names|invoke raw upstream ability names/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")
