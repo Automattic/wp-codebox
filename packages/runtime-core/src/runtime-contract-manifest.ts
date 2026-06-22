@@ -33,9 +33,6 @@ export const AGENT_TASK_RUN_REQUEST_SCHEMA = "wp-codebox/agent-task-run-request/
 export const CODEBOX_RUN_AGENT_TASK_ABILITY = "wp-codebox/run-agent-task" as const
 export const CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY = "wp-codebox/run-agent-task-batch" as const
 export const CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY = "wp-codebox/run-agent-task-fanout" as const
-export const CODEBOX_RUN_SANDBOX_TASK_ABILITY = "wp-codebox/run-sandbox-task" as const
-export const CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY = "wp-codebox/run-sandbox-task-batch" as const
-export const CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY = "wp-codebox/run-sandbox-task-fanout" as const
 export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-workload" as const
 export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
 
@@ -44,11 +41,6 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
     run: CODEBOX_RUN_AGENT_TASK_ABILITY,
     batch: CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
     fanout: CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
-    aliases: {
-      runSandboxTask: CODEBOX_RUN_SANDBOX_TASK_ABILITY,
-      runSandboxTaskBatch: CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY,
-      runSandboxTaskFanout: CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
-    },
   },
   runtimePackage: {
     run: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,

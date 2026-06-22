@@ -10,7 +10,8 @@ for (const ability of ["wp-codebox/run-wordpress-workload", "wp-codebox/run-fuzz
   assert.match(abilitiesPhp, new RegExp(`'canonical_ability'\\s*=>\\s*'${ability}'`), `${ability} must mark its canonical id`)
 }
 
-assert.match(abilitiesPhp, /'wp-codebox\/run-wordpress-workload'[\s\S]*'safe_stub'\s*=>\s*true/, "WordPress workload remains a guarded stub")
+assert.match(abilitiesPhp, /'wp-codebox\/run-wordpress-workload'[\s\S]{0,700}'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_wordpress_workload'\s*\)/, "WordPress workload is implemented by the public ability")
+assert.doesNotMatch(abilitiesPhp, /'wp-codebox\/run-wordpress-workload'[\s\S]{0,700}'safe_stub'\s*=>\s*true/, "WordPress workload is implemented and must not be marked as a safe stub")
 assert.doesNotMatch(abilitiesPhp, /'wp-codebox\/run-fuzz-suite'[\s\S]{0,700}'safe_stub'\s*=>\s*true/, "Fuzz suite is implemented and must not be marked as a safe stub")
 
 assert.match(schemasPhp, /'const'\s*=>\s*'wp-codebox\/wordpress-workload-run\/v1'/)
@@ -25,7 +26,7 @@ assert.match(executionPhp, /unsafe_execution_fields/)
 assert.match(executionPhp, /collect_unsafe_execution_fields/)
 assert.match(executionPhp, /'code', 'php', 'php_code', 'raw_code', 'eval', 'shell'/)
 assert.match(executionPhp, /array\( 'command' \)/)
-assert.match(executionPhp, /wp_codebox_wordpress_workload_runner_unavailable/)
+assert.match(executionPhp, /new WP_Codebox_WordPress_Workload_Runner\(\)/)
 assert.match(executionPhp, /execute_fuzz_suite_case/)
 assert.match(executionPhp, /wordpress\.rest-request/)
 assert.match(executionPhp, /wordpress\.http-request/)
