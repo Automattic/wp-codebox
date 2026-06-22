@@ -26,13 +26,19 @@ Input uses `wp-codebox/wordpress-db-operation/v1` through `operation-json=<json>
 
 Foundational supported operations:
 
-- `schema` lists known WordPress table schemas using `SHOW TABLES` and `DESCRIBE`.
-- `read` performs bounded reads against known WordPress table base names only, with scalar equality filters and a maximum limit of 100 rows.
+- `schema` lists discovered prefixed WordPress tables using `SHOW TABLES`, classifies tables as `core`, `prefixed`, or `external` where observable, and includes bounded column, index, and table-status metadata when available.
+- `read` performs bounded reads against discovered prefixed WordPress table names or base names, allowlists selected and filtered columns against `DESCRIBE`, supports scalar equality filters, and caps results at 100 rows.
 - `query-summary` summarizes the current `$wpdb` query count or runs bounded read-only `SELECT`, `SHOW`, `DESCRIBE`, or `EXPLAIN` SQL.
 
 DB write guardrails:
 
 - `write` returns `status=error` with `db-write-unsupported`.
 - Generic DB writes are intentionally not implemented; callers should use `wordpress.crud-operation` with explicit write approval for bounded WordPress core API writes.
+
+Read guardrails:
+
+- Tables must be present in the current runtime's discovered prefixed table inventory.
+- Requested `columns` and `where` keys must exist in the discovered table schema.
+- Result metadata includes minimal attribution for the DB command, operation, table, selected columns, and applied limit.
 
 Both commands return versioned result envelopes and are available from the public core facade.
