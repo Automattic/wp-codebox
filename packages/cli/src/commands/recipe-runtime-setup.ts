@@ -71,6 +71,28 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
+  for (const [index, mount] of (recipe.distribution?.sourceMounts ?? []).entries()) {
+    const source = resolve(recipeDirectory, mount.source)
+    await awaitRecipe(`distribution.source-mount[${index}]:${mount.target}`, runtime.mount({
+      type: await recipeMountType(source, mount.type),
+      source,
+      target: mount.target,
+      mode: mount.mode ?? "readonly",
+      metadata: {
+        kind: "distribution-source-mount",
+        index,
+        ...(mount.role ? { role: mount.role } : {}),
+        ...(mount.ref ? { ref: mount.ref } : {}),
+        ...(mount.metadata ?? {}),
+      },
+    }))
+    interruption?.throwIfInterrupted()
+  }
+
+  if (recipe.distribution) {
+    phaseTracker.complete("apply_distribution", distributionRuntimeData(recipe))
+  }
+
   for (const overlay of overlays) {
     await awaitRecipe(`runtime.overlay.mount:${overlay.target}`, runtime.mount({
       type: overlay.type,
@@ -280,6 +302,38 @@ function phasePluginActivationData(activatedPlugins: PreparedExtraPlugin[]): Rec
   return {
     count: activatedPlugins.length,
     plugins: activatedPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile })),
+  }
+}
+
+function distributionRuntimeData(recipe: WorkspaceRecipe): Record<string, unknown> {
+  const distribution = recipe.distribution
+  if (!distribution) {
+    return { applied: [], unsupported: [] }
+  }
+
+  const applied = [
+    ...(Object.keys(distribution.env ?? {}).length > 0 ? [{ field: "env", action: "runtimeEnv+bootstrap", count: Object.keys(distribution.env ?? {}).length }] : []),
+    ...(Object.keys(distribution.constants ?? {}).length > 0 ? [{ field: "constants", action: "bootstrap", count: Object.keys(distribution.constants ?? {}).length }] : []),
+    ...((distribution.sourceMounts ?? []).map((mount, index) => ({ field: `sourceMounts[${index}]`, action: "mounted", target: mount.target, mode: mount.mode ?? "readonly" }))),
+    ...((distribution.setupArtifacts ?? []).map((artifact, index) => ({ field: `setupArtifacts[${index}]`, action: "applied-by-run_distribution_setup_artifacts", name: artifact.name, type: artifact.type }))),
+    ...((distribution.startupProbes ?? []).map((probe, index) => ({ field: `startupProbes[${index}]`, action: "applied-by-run_distribution_startup_probes", name: probe.name, type: probe.type }))),
+  ]
+  const unsupported = [
+    ...(distribution.wordpress.root ? [{ field: "wordpress.root", reason: "runtime WordPress root selection is still controlled by runtime.assets.wordpressDirectory" }] : []),
+    ...(distribution.wordpress.config ? [{ field: "wordpress.config", reason: "custom wp-config file declarations are not applied by this runtime subset" }] : []),
+    ...(distribution.wordpress.bootstrap && distribution.wordpress.bootstrap !== "standard" ? [{ field: "wordpress.bootstrap", reason: "custom/external bootstrap modes are not applied by this runtime subset" }] : []),
+    ...(distribution.wordpress.bootstrapFile ? [{ field: "wordpress.bootstrapFile", reason: "custom bootstrap files are not applied by this runtime subset" }] : []),
+    ...((distribution.serviceFakes ?? []).map((fake, index) => ({ field: `serviceFakes[${index}]`, reason: `service fake '${fake.name}' is declaration-only` }))),
+    ...((distribution.routeAliases ?? []).map((alias, index) => ({ field: `routeAliases[${index}]`, reason: `route alias '${alias.name ?? alias.path ?? alias.host ?? index}' is declaration-only` }))),
+    ...((distribution.artifacts ?? []).map((artifact, index) => ({ field: `artifacts[${index}]`, reason: `distribution artifact '${artifact.path}' is not collected by this runtime subset` }))),
+    ...((distribution.safety?.allowedHosts ?? []).map((host, index) => ({ field: `safety.allowedHosts[${index}]`, reason: `network host '${host}' is not enforced by this runtime subset` }))),
+    ...((distribution.safety?.secretEnv ?? []).map((name, index) => ({ field: `safety.secretEnv[${index}]`, reason: `distribution secret env '${name}' is not resolved by this runtime subset` }))),
+  ]
+
+  return {
+    name: distribution.name,
+    applied,
+    unsupported,
   }
 }
 

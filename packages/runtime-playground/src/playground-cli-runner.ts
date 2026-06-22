@@ -12,6 +12,7 @@ import { basename, dirname, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
 import * as PlaygroundStorage from "@wp-playground/storage"
 import { resolveWordPressRelease } from "@wp-playground/wordpress"
+import { phpEnvAssignments, phpWpConfigDefineAssignments } from "./php-snippets.js"
 
 export interface PlaygroundCliModule {
   runCLI(options: {
@@ -68,7 +69,7 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     })
     const wordpressDirectory = spec.environment.assets?.wordpressDirectory
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
-    const bootstrapIniEntries = pluginRuntimeBootstrapPhpIniEntries(spec)
+    const bootstrapIniEntries = runtimeBootstrapPhpIniEntries(spec)
     const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
@@ -164,11 +165,11 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 }
 
 export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}): boolean {
-  return !options.cliModule && Boolean(spec.environment.assets?.wordpressDirectory) && Boolean(pluginRuntimeBootstrapPhpIniEntries(spec))
+  return !options.cliModule && Boolean(spec.environment.assets?.wordpressDirectory) && Boolean(runtimeBootstrapPhpIniEntries(spec))
 }
 
 async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string } | undefined> {
-  const iniEntries = pluginRuntimeBootstrapPhpIniEntries(spec)
+  const iniEntries = runtimeBootstrapPhpIniEntries(spec)
   if (!iniEntries) {
     return undefined
   }
@@ -178,9 +179,18 @@ async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promi
   await mkdir(join(directory, "mu-plugins"), { recursive: true })
   await mkdir(join(directory, "preload"), { recursive: true })
   await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
-  await writeFile(join(directory, "auto_prepend_file.php"), "<?php\n", "utf8")
+  await writeFile(join(directory, "auto_prepend_file.php"), runtimeAutoPrependPhp(spec), "utf8")
 
   return { hostPath: directory, vfsPath: "/internal/shared" }
+}
+
+function runtimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  const entries = pluginRuntimeBootstrapPhpIniEntries(spec) ?? {}
+  if (Object.keys(entries).length === 0 && !distributionBootstrapPhp(spec)) {
+    return undefined
+  }
+
+  return entries
 }
 
 function pluginRuntimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
@@ -239,6 +249,45 @@ function phpIniContent(entries: Record<string, string>): string {
   }
 
   return `${lines.join("\n")}\n`
+}
+
+function runtimeAutoPrependPhp(spec: RuntimeCreateSpec): string {
+  return `<?php\n${distributionBootstrapPhp(spec)}`
+}
+
+function distributionBootstrapPhp(spec: RuntimeCreateSpec): string {
+  const distribution = recipeDistribution(spec)
+  if (!distribution) {
+    return ""
+  }
+
+  const lines = [
+    phpEnvAssignments(distributionEnv(distribution.env)),
+    phpWpConfigDefineAssignments(distribution.constants ?? {}),
+  ].filter(Boolean)
+
+  return lines.length > 0 ? `${lines.join("")}\n` : ""
+}
+
+function recipeDistribution(spec: RuntimeCreateSpec): { env?: Record<string, unknown>; constants?: Record<string, unknown> } | undefined {
+  const recipe = spec.metadata?.recipe
+  if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)) {
+    return undefined
+  }
+
+  const distribution = (recipe as { distribution?: unknown }).distribution
+  return distribution && typeof distribution === "object" && !Array.isArray(distribution) ? distribution as { env?: Record<string, unknown>; constants?: Record<string, unknown> } : undefined
+}
+
+function distributionEnv(values: Record<string, unknown> | undefined): Record<string, unknown> {
+  const env: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(values ?? {})) {
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+      env[name] = value === null ? "" : String(value)
+    }
+  }
+
+  return env
 }
 
 function playgroundCliBlueprint(spec: RuntimeCreateSpec): unknown {
