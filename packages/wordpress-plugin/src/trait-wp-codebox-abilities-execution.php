@@ -286,6 +286,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 		return match ( $command ) {
 			'wordpress.ensure-plugin-active' => self::execute_fuzz_suite_plugin_activation( $args, $observation, $case_id ),
 			'wordpress.inventory-rest-routes', 'wordpress.rest-route-inventory' => self::execute_fuzz_suite_rest_route_inventory( $args, $observation, $case_id ),
+			'wordpress.inventory-database' => self::execute_fuzz_suite_database_inventory( $args, $observation, $case_id ),
 			'wordpress.admin-page-inventory' => self::execute_fuzz_suite_admin_page_inventory( $args, $observation ),
 			'wordpress.fuzz-admin-pages' => self::execute_fuzz_suite_admin_page_fuzz( $args, $observation ),
 			'wordpress.rest-request' => self::execute_fuzz_suite_rest_request( $args, $observation, $case_id ),
@@ -517,6 +518,116 @@ private static function fuzz_suite_admin_user_context(): array {
 		'id' => is_object( $user ) && isset( $user->ID ) ? (int) $user->ID : 0,
 		'roles' => is_object( $user ) && isset( $user->roles ) ? array_values( array_map( 'strval', (array) $user->roles ) ) : array(),
 	);
+}
+
+/** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_database_inventory( array $args, array $observation, string $case_id ): array {
+	global $wpdb;
+	if ( ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+		return array( 'status' => 'skipped', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_database_unavailable', 'WordPress database connection is not available.', array( 'case_id' => $case_id ) ) );
+	}
+
+	$prefix = isset( $wpdb->prefix ) ? (string) $wpdb->prefix : '';
+	$tables = self::fuzz_suite_database_tables( $wpdb, $prefix );
+	$totals = array(
+		'tableCount'  => count( $tables ),
+		'rowCount'    => (int) array_sum( array_map( static fn( array $table ): int => (int) ( $table['rowCount'] ?? 0 ), $tables ) ),
+		'columnCount' => (int) array_sum( array_map( static fn( array $table ): int => count( (array) ( $table['columns'] ?? array() ) ), $tables ) ),
+		'indexCount'  => (int) array_sum( array_map( static fn( array $table ): int => count( (array) ( $table['indexes'] ?? array() ) ), $tables ) ),
+		'dataBytes'   => (int) array_sum( array_map( static fn( array $table ): int => (int) ( $table['dataBytes'] ?? 0 ), $tables ) ),
+		'indexBytes'  => (int) array_sum( array_map( static fn( array $table ): int => (int) ( $table['indexBytes'] ?? 0 ), $tables ) ),
+		'totalBytes'  => (int) array_sum( array_map( static fn( array $table ): int => (int) ( $table['totalBytes'] ?? 0 ), $tables ) ),
+	);
+
+	$observation['artifact'] = (string) ( $args['artifact'] ?? 'db_inventory' );
+	$observation['table_count'] = $totals['tableCount'];
+	$observation['payload'] = array(
+		'schema'      => 'wp-codebox/wordpress-database-inventory/v1',
+		'command'     => 'wordpress.inventory-database',
+		'status'      => 'ok',
+		'prefix'      => $prefix,
+		'tables'      => $tables,
+		'totals'      => $totals,
+		'diagnostics' => array(),
+	);
+	return array( 'status' => 'passed', 'observation' => $observation );
+}
+
+/** @return array<int,array<string,mixed>> */
+private static function fuzz_suite_database_tables( object $wpdb, string $prefix ): array {
+	$tables = array();
+	foreach ( self::fuzz_suite_database_query_rows( $wpdb, 'SHOW TABLE STATUS' ) as $status ) {
+		$name = (string) ( $status['Name'] ?? '' );
+		if ( '' === $name ) {
+			continue;
+		}
+		$data_bytes = (int) ( $status['Data_length'] ?? 0 );
+		$index_bytes = (int) ( $status['Index_length'] ?? 0 );
+		$tables[] = array(
+			'name'           => $name,
+			'baseName'       => self::fuzz_suite_database_base_table_name( $name, $prefix ),
+			'classification' => self::fuzz_suite_database_table_classification( $name, $prefix ),
+			'engine'         => (string) ( $status['Engine'] ?? '' ),
+			'rowCount'       => (int) ( $status['Rows'] ?? 0 ),
+			'dataBytes'      => $data_bytes,
+			'indexBytes'     => $index_bytes,
+			'totalBytes'     => $data_bytes + $index_bytes,
+			'columns'        => self::fuzz_suite_database_columns( $wpdb, $name ),
+			'indexes'        => self::fuzz_suite_database_indexes( $wpdb, $name ),
+			'status'         => array(
+				'engine'     => (string) ( $status['Engine'] ?? '' ),
+				'rows'       => isset( $status['Rows'] ) ? (int) $status['Rows'] : null,
+				'collation'  => (string) ( $status['Collation'] ?? '' ),
+				'dataBytes'  => $data_bytes,
+				'indexBytes' => $index_bytes,
+				'totalBytes' => $data_bytes + $index_bytes,
+			),
+		);
+	}
+	return $tables;
+}
+
+/** @return array<int,array<string,mixed>> */
+private static function fuzz_suite_database_columns( object $wpdb, string $table ): array {
+	return array_values( array_map( static fn( array $row ): array => array(
+		'name'     => (string) ( $row['Field'] ?? '' ),
+		'type'     => (string) ( $row['Type'] ?? '' ),
+		'nullable' => 'YES' === strtoupper( (string) ( $row['Null'] ?? '' ) ),
+		'key'      => (string) ( $row['Key'] ?? '' ),
+		'default'  => array_key_exists( 'Default', $row ) && null !== $row['Default'] ? (string) $row['Default'] : null,
+		'extra'    => (string) ( $row['Extra'] ?? '' ),
+	), self::fuzz_suite_database_query_rows( $wpdb, 'DESCRIBE ' . self::fuzz_suite_database_identifier( $table ) ) ) );
+}
+
+/** @return array<int,array<string,mixed>> */
+private static function fuzz_suite_database_indexes( object $wpdb, string $table ): array {
+	return array_values( array_map( static fn( array $row ): array => array(
+		'name'     => (string) ( $row['Key_name'] ?? '' ),
+		'column'   => (string) ( $row['Column_name'] ?? '' ),
+		'unique'   => '0' === (string) ( $row['Non_unique'] ?? '1' ),
+		'sequence' => isset( $row['Seq_in_index'] ) ? (int) $row['Seq_in_index'] : null,
+	), self::fuzz_suite_database_query_rows( $wpdb, 'SHOW INDEX FROM ' . self::fuzz_suite_database_identifier( $table ) ) ) );
+}
+
+/** @return array<int,array<string,mixed>> */
+private static function fuzz_suite_database_query_rows( object $wpdb, string $query ): array {
+	$rows = $wpdb->get_results( $query, defined( 'ARRAY_A' ) ? ARRAY_A : 'ARRAY_A' );
+	return is_array( $rows ) ? array_values( array_filter( $rows, 'is_array' ) ) : array();
+}
+
+private static function fuzz_suite_database_identifier( string $name ): string {
+	return '`' . str_replace( '`', '``', $name ) . '`';
+}
+
+private static function fuzz_suite_database_base_table_name( string $name, string $prefix ): string {
+	return '' !== $prefix && str_starts_with( $name, $prefix ) ? substr( $name, strlen( $prefix ) ) : $name;
+}
+
+private static function fuzz_suite_database_table_classification( string $name, string $prefix ): string {
+	if ( '' !== $prefix && str_starts_with( $name, $prefix ) ) {
+		return in_array( self::fuzz_suite_database_base_table_name( $name, $prefix ), array( 'commentmeta', 'comments', 'links', 'options', 'postmeta', 'posts', 'term_relationships', 'term_taxonomy', 'termmeta', 'terms', 'usermeta', 'users' ), true ) ? 'core' : 'prefixed';
+	}
+	return 'external';
 }
 
 private static function fuzz_suite_strip_tags( string $value ): string {
