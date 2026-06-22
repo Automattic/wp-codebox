@@ -29,7 +29,7 @@ const genericContractDocs = [
   "docs/external-apply-adapter-contract.md",
   "docs/agent-fanout-contract.md",
   "docs/agent-runtime-contract.md",
-  "docs/public-api-contract.md",
+  "docs/agent-task-reusable-workflow.md",
   "docs/generic-runtime-primitives.md",
   "docs/portable-wp-codebox.md",
   "docs/benchmark-contract.md",
@@ -86,7 +86,7 @@ assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mappi
 assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
 assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
 assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
-assert.match(publicBoundaryText, /not mirror the monorepo-only `\.\/internals` helper entrypoint/)
+assert.match(publicBoundaryText, /not mirror the monorepo-only\s+`\.\/internals` helper entrypoint/)
 for (const term of forbiddenPublicImplementationTerms) {
   assert.doesNotMatch(publicBoundaryText, term)
 }

@@ -29,6 +29,9 @@ unless this index says otherwise.
   documents the stable orchestrator-facing agent-task CLI, schema boundary,
   artifacts, runner workspace publication, lifecycle metadata, provider
   overlays, and default sandbox bootstrap expectations.
+- [Agent task reusable workflow](./agent-task-reusable-workflow.md) documents
+  the public `run-agent-task.yml` GitHub Actions wrapper for product-level agent
+  tasks.
 - [Public API contract](./public-api-contract.md) defines stable package
   entrypoints, lifecycle contract areas, inspectable surfaces, Codebox's wrapper
   role around upstream runtime systems, and the limited role of `./internals`.
