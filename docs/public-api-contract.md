@@ -148,6 +148,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
   in-process WordPress load path; browser-heavy probes remain available through
   browser commands and `openWordPressAdminPage()` when a caller explicitly needs
   DOM, screenshot, console, or network evidence.
+- **WordPress admin discovery:** `wordpress.runtime-discovery` and
+  `wordpress.admin-page-inventory` expose admin pages with canonical admin URLs,
+  declared capabilities, current-user access checks, and current-user role context
+  for authenticated runtime fuzzing. When the request context has not populated
+  WordPress admin menu globals yet, discovery performs the standard admin menu
+  bootstrap before reporting an unsupported empty menu.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,

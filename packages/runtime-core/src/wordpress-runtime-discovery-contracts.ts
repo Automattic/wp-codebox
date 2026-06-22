@@ -87,6 +87,7 @@ export interface WordPressAdminPageDiscovery {
   schema: "wp-codebox/wordpress-admin-page-discovery/v1"
   adminUrl: string
   menuLoaded: boolean
+  user?: WordPressAdminDiscoveryUserContext
   pages: WordPressAdminPageDescriptor[]
 }
 
@@ -96,8 +97,15 @@ export interface WordPressAdminPageInventory {
   status: "ok" | "unsupported"
   adminUrl: string
   menuLoaded: boolean
+  user?: WordPressAdminDiscoveryUserContext
   pages: WordPressAdminPageDescriptor[]
   diagnostics: WordPressRuntimeDiscoveryDiagnostic[]
+}
+
+export interface WordPressAdminDiscoveryUserContext {
+  isLoggedIn: boolean
+  id: number
+  roles: string[]
 }
 
 export interface WordPressAdminPageDescriptor {
@@ -105,6 +113,8 @@ export interface WordPressAdminPageDescriptor {
   pageTitle: string
   menuTitle: string
   capability: string
+  canAccess?: boolean | null
+  canonicalUrl?: string
   parentSlug?: string
 }
 

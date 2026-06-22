@@ -61,6 +61,7 @@ const adminInventory: WordPressAdminPageInventory = {
   status: "unsupported",
   adminUrl: "https://example.com/wp-admin/",
   menuLoaded: false,
+  user: { isLoggedIn: false, id: 0, roles: [] },
   pages: [],
   diagnostics: [],
 }
@@ -158,5 +159,43 @@ assert.equal(route?.endpoints?.[0]?.args[0]?.description, "Item id")
 assert.deepEqual(route?.endpoints?.[0]?.args[1]?.enum, ["view", "edit"])
 assert.equal(route?.endpoints?.[0]?.args[1]?.defaultPresent, true)
 assert.deepEqual(route?.schema?.properties, ["id", "name"])
+
+const adminDiscoveryPhp = runtimeDiscoveryPhpCode(["admin"]).replace(/^<\?php\n/, "")
+assert.match(adminDiscoveryPhp, /wp-admin\/menu\.php/)
+const adminDiscovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
+class WP_User {
+    public $ID = 7;
+    public $roles = array( 'administrator' );
+}
+function is_user_logged_in() { return true; }
+function wp_get_current_user() { return new WP_User(); }
+function current_user_can( $capability ) { return in_array( $capability, array( 'read', 'manage_options' ), true ); }
+function admin_url( $path = '' ) { return 'https://example.com/wp-admin/' . ltrim( $path, '/' ); }
+function wp_strip_all_tags( $text ) { return strip_tags( $text ); }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+$GLOBALS['menu'] = array(
+    array( 'Dashboard', 'read', 'index.php' ),
+    array( 'Demo Plugin', 'manage_options', 'demo-plugin' ),
+);
+$GLOBALS['submenu'] = array(
+    'tools.php' => array(
+        array( 'Import Demo', 'import', 'demo-import' ),
+    ),
+);
+${adminDiscoveryPhp}
+`)
+
+assert.equal(adminDiscovered.admin?.menuLoaded, true)
+assert.equal(adminDiscovered.admin?.user?.id, 7)
+assert.deepEqual(adminDiscovered.admin?.user?.roles, ["administrator"])
+const dashboardPage = adminDiscovered.admin?.pages.find((page) => page.menuSlug === "index.php")
+assert.equal(dashboardPage?.canonicalUrl, "https://example.com/wp-admin/index.php")
+assert.equal(dashboardPage?.canAccess, true)
+const pluginPage = adminDiscovered.admin?.pages.find((page) => page.menuSlug === "demo-plugin")
+assert.equal(pluginPage?.canonicalUrl, "https://example.com/wp-admin/admin.php?page=demo-plugin")
+assert.equal(pluginPage?.canAccess, true)
+const importPage = adminDiscovered.admin?.pages.find((page) => page.menuSlug === "demo-import")
+assert.equal(importPage?.canonicalUrl, "https://example.com/wp-admin/tools.php?page=demo-import")
+assert.equal(importPage?.canAccess, false)
 
 console.log("wordpress runtime discovery contracts ok")

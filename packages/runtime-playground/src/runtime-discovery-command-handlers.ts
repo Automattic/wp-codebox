@@ -166,27 +166,73 @@ function runtime_discovery_rest_schema(array $handlers): array {
 function runtime_discovery_admin(): array {
     $pages = array();
     $diagnostics = array();
+    if ((!isset($GLOBALS['menu']) || !is_array($GLOBALS['menu'])) && is_user_logged_in()) {
+        if (!defined('WP_ADMIN')) {
+            define('WP_ADMIN', true);
+        }
+        if (defined('ABSPATH') && file_exists(ABSPATH . 'wp-admin/includes/admin.php')) {
+            require_once ABSPATH . 'wp-admin/includes/admin.php';
+        }
+        if (defined('ABSPATH') && file_exists(ABSPATH . 'wp-admin/menu.php')) {
+            require_once ABSPATH . 'wp-admin/menu.php';
+        }
+    }
     $menu_loaded = isset($GLOBALS['menu']) && is_array($GLOBALS['menu']);
     if (!$menu_loaded) {
         $diagnostics[] = runtime_discovery_diagnostic('admin', 'admin-menu-not-loaded', 'The admin menu globals are not populated in this request context.');
     }
 
+    $current_user = function_exists('wp_get_current_user') ? wp_get_current_user() : null;
+    $user_context = array(
+        'isLoggedIn' => function_exists('is_user_logged_in') ? is_user_logged_in() : false,
+        'id' => is_object($current_user) && isset($current_user->ID) ? (int) $current_user->ID : 0,
+        'roles' => is_object($current_user) && isset($current_user->roles) ? array_values(array_map('strval', (array) $current_user->roles)) : array(),
+    );
+
     foreach ((array) ($GLOBALS['menu'] ?? array()) as $item) {
         if (!is_array($item)) {
             continue;
         }
-        $pages[] = array('menuSlug' => (string) ($item[2] ?? ''), 'pageTitle' => wp_strip_all_tags((string) ($item[0] ?? '')), 'menuTitle' => wp_strip_all_tags((string) ($item[0] ?? '')), 'capability' => (string) ($item[1] ?? ''));
+        $pages[] = runtime_discovery_admin_page((string) ($item[2] ?? ''), (string) ($item[0] ?? ''), (string) ($item[1] ?? ''));
     }
     foreach ((array) ($GLOBALS['submenu'] ?? array()) as $parent_slug => $items) {
         foreach ((array) $items as $item) {
             if (!is_array($item)) {
                 continue;
             }
-            $pages[] = array('menuSlug' => (string) ($item[2] ?? ''), 'pageTitle' => wp_strip_all_tags((string) ($item[0] ?? '')), 'menuTitle' => wp_strip_all_tags((string) ($item[0] ?? '')), 'capability' => (string) ($item[1] ?? ''), 'parentSlug' => (string) $parent_slug);
+            $pages[] = runtime_discovery_admin_page((string) ($item[2] ?? ''), (string) ($item[0] ?? ''), (string) ($item[1] ?? ''), (string) $parent_slug);
         }
     }
 
-    return array('payload' => array('schema' => 'wp-codebox/wordpress-admin-page-discovery/v1', 'adminUrl' => admin_url(), 'menuLoaded' => $menu_loaded, 'pages' => $pages), 'diagnostics' => $diagnostics);
+    return array('payload' => array('schema' => 'wp-codebox/wordpress-admin-page-discovery/v1', 'adminUrl' => admin_url(), 'menuLoaded' => $menu_loaded, 'user' => $user_context, 'pages' => $pages), 'diagnostics' => $diagnostics);
+}
+
+function runtime_discovery_admin_page(string $menu_slug, string $title, string $capability, string $parent_slug = ''): array {
+    $page = array(
+        'menuSlug' => $menu_slug,
+        'pageTitle' => wp_strip_all_tags($title),
+        'menuTitle' => wp_strip_all_tags($title),
+        'capability' => $capability,
+        'canAccess' => $capability === '' ? null : current_user_can($capability),
+        'canonicalUrl' => runtime_discovery_admin_page_url($menu_slug, $parent_slug),
+    );
+    if ($parent_slug !== '') {
+        $page['parentSlug'] = $parent_slug;
+    }
+    return $page;
+}
+
+function runtime_discovery_admin_page_url(string $menu_slug, string $parent_slug = ''): string {
+    if ($menu_slug === '') {
+        return admin_url();
+    }
+    if (strpos($menu_slug, '.php') !== false) {
+        return admin_url($menu_slug);
+    }
+    if ($parent_slug !== '' && strpos($parent_slug, '.php') !== false) {
+        return admin_url($parent_slug . '?page=' . rawurlencode($menu_slug));
+    }
+    return admin_url('admin.php?page=' . rawurlencode($menu_slug));
 }
 
 function runtime_discovery_database(): array {
