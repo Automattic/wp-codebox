@@ -651,6 +651,7 @@ private static function wordpress_workload_run_request_schema(): array {
 			'runtime_env'          => self::object_property_schema( 'Non-secret runtime environment values. Secret values must use secret_env names.' ),
 			'secret_env'           => self::string_array_property_schema( 'Parent environment variable names expected by the workload. Values are never accepted in this payload.' ),
 			'staged_files'         => self::object_array_property_schema( 'Explicit staged file descriptors accepted by the recipe runtime.' ),
+			'artifacts'            => self::object_array_property_schema( 'Artifact refs declared by the safe recipe runtime.' ),
 			'before'               => self::wordpress_workload_steps_schema(),
 			'steps'                => self::wordpress_workload_steps_schema(),
 			'after'                => self::wordpress_workload_steps_schema(),
@@ -683,8 +684,9 @@ private static function wordpress_workload_run_result_schema(): array {
 		'properties' => array(
 			'success'     => array( 'type' => 'boolean' ),
 			'schema'      => array( 'type' => 'string', 'const' => 'wp-codebox/wordpress-workload-run-result/v1' ),
-			'status'      => array( 'type' => 'string', 'enum' => array( 'unsupported' ) ),
+			'status'      => array( 'type' => 'string', 'enum' => array( 'completed', 'failed', 'skipped', 'unsupported' ) ),
 			'request'     => self::object_property_schema(),
+			'steps'       => self::object_array_property_schema(),
 			'artifacts'   => self::object_array_property_schema(),
 			'diagnostics' => self::object_array_property_schema(),
 			'metadata'    => self::object_property_schema(),
