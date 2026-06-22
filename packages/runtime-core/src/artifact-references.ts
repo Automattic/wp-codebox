@@ -266,14 +266,21 @@ function browserSessionRuntimeAccess(session: Record<string, unknown>): RuntimeA
   const previewBoot = asRecord(session.preview_boot)
   const preview = asRecord(previewBoot?.preview)
   if (!preview) return undefined
+  const reviewerAccess = asRecord(preview.reviewer_access) ?? asRecord(preview.reviewerAccess)
+  const reviewerUrl = stringValue(reviewerAccess?.openUrl) || stringValue(reviewerAccess?.targetUrl)
+  const publicUrl = stringValue(preview.public_url ?? preview.publicUrl ?? preview.preview_public_url ?? preview.previewPublicUrl)
+  const siteUrl = stringValue(preview.site_url ?? preview.siteUrl)
+  const directPreviewUrl = stringValue(preview.preview_url ?? preview.previewUrl)
+  const fallbackPreviewUrl = directPreviewUrl || (publicUrl || siteUrl || reviewerUrl ? "" : stringValue(preview.url))
 
   try {
     return normalizeRuntimeAccess({
-      preview_url: preview.preview_url ?? preview.previewUrl ?? preview.public_url ?? preview.publicUrl ?? preview.preview_public_url ?? preview.previewPublicUrl,
-      public_url: preview.public_url ?? preview.publicUrl ?? preview.preview_public_url ?? preview.previewPublicUrl,
-      site_url: preview.site_url ?? preview.siteUrl,
+      preview_url: fallbackPreviewUrl,
+      public_url: publicUrl,
+      site_url: siteUrl,
+      local_url: preview.local_url ?? preview.localUrl,
       lease: preview.schema === "wp-codebox/preview-lease/v1" ? preview : undefined,
-      reviewer_access: preview.reviewer_access ?? preview.reviewerAccess,
+      reviewer_access: reviewerAccess,
     })
   } catch {
     return undefined

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
@@ -20,6 +20,50 @@ const succeededWithAccess = normalizeAgentTaskRunResult({ success: true, status:
 assert.equal(succeededWithAccess.runtime_access?.schema, "wp-codebox/runtime-access/v1")
 assert.equal(succeededWithAccess.runtime_access?.preview_url, "https://preview.example.test")
 assert.equal(succeededWithAccess.runtime_access?.site_url, "https://site.example.test")
+
+const previewLease = {
+  schema: PREVIEW_LEASE_SCHEMA,
+  local_url: "http://127.0.0.1:9400/",
+  lease: { status: "active", provider: "preview-runtime" },
+}
+
+const agentPreviewAccess = normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  preview: {
+    url: "https://preview.example.test/",
+    localUrl: "http://127.0.0.1:9400/",
+    lease: previewLease,
+  },
+}, { exitStatus: 0 })
+assert.equal(agentPreviewAccess.runtime_access?.preview_url, "https://preview.example.test/")
+assert.equal(agentPreviewAccess.runtime_access?.local_url, "http://127.0.0.1:9400/")
+assert.equal(agentPreviewAccess.runtime_access?.lease?.local_url, "http://127.0.0.1:9400/")
+
+const agentLocalLeaseAccess = normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  preview: { localUrl: "http://127.0.0.1:9400/", lease: previewLease },
+}, { exitStatus: 0 })
+assert.equal(agentLocalLeaseAccess.runtime_access?.preview_url, "http://127.0.0.1:9400/")
+assert.equal(agentLocalLeaseAccess.runtime_access?.local_url, "http://127.0.0.1:9400/")
+
+const recipePreviewAccess = normalizeRecipeRunSummary({
+  success: true,
+  status: "completed",
+  run: {
+    preview: {
+      url: "https://preview.example.test/",
+      localUrl: "http://127.0.0.1:9400/",
+      publicUrl: "https://review.example.test/",
+      lease: previewLease,
+    },
+  },
+}, { exitStatus: 0 })
+assert.equal(recipePreviewAccess.runtime_access?.preview_url, "https://review.example.test/")
+assert.equal(recipePreviewAccess.runtime_access?.public_url, "https://review.example.test/")
+assert.equal(recipePreviewAccess.runtime_access?.local_url, "http://127.0.0.1:9400/")
+assert.equal(recipePreviewAccess.preview?.runtime_access?.lease?.local_url, "http://127.0.0.1:9400/")
 
 const stableRunRequestInput = normalizeAgentTaskRunCliInput({
   schema: AGENT_TASK_RUN_REQUEST_SCHEMA,
