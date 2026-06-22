@@ -157,7 +157,7 @@ const artifactBundle = { id: "bundle", directory: "artifacts/runtime", contentDi
 assert.equal(await collectWordPressArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
 
 const beforeFuzzCalls = calls.length
-const fuzzResult = await runFuzzSuite(fuzzSuiteContract({
+const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
   id: "wordpress-episode-runtime-actions",
   target: { kind: "runtime-action" },
   cases: [
@@ -169,8 +169,8 @@ const fuzzResult = await runFuzzSuite(fuzzSuiteContract({
 }), {
   runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(fakeEpisode),
 })
-assert.equal(fuzzResult.status, "passed")
-assert.deepEqual(fuzzResult.summary, { total: 4, passed: 4, failed: 0, error: 0, skipped: 0 })
+assert.equal(runtimeActionFuzzResult.status, "passed")
+assert.deepEqual(runtimeActionFuzzResult.summary, { total: 4, passed: 4, failed: 0, error: 0, skipped: 0 })
 assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-actions",
   "wordpress.editor-open",
