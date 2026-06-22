@@ -6,6 +6,7 @@ import { promoteBrowserMetricsToBenchResults } from "./browser-metrics.js"
 import { writePluginCheckArtifacts, writeThemeCheckArtifacts, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
 import {
   abilityInputFromArgs,
+  abilityPrincipalFromArgs,
   abilityResponseToCommandEnvelope,
   abilityPhpCode,
   expectedAbilityResultSchemaFromArgs,
@@ -612,8 +613,13 @@ export async function runAbilityCommand({
   }
 
   const input = abilityInputFromArgs(spec.args ?? [])
+  const userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
+  const principal = abilityPrincipalFromArgs(spec.args ?? [])
+  if (userSession && principal) {
+    throw new Error("wordpress.ability accepts either user/session or principal, not both")
+  }
   const expectedResultSchema = expectedAbilityResultSchemaFromArgs(spec.args ?? [])
-  const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode(name, input)) })
+  const response = await runPlaygroundCommand("wordpress.ability", server, { code: bootstrapAbilityPhpCode(runtimeSpec, abilityPhpCode({ name, input, userSession, principal })) })
   assertPlaygroundResponseOk("wordpress.ability", response)
   return abilityResponseToCommandEnvelope(cleanWpCliOutput(response.text), name, input, expectedResultSchema)
 }

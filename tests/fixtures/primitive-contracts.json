@@ -424,7 +424,7 @@
         {
           "slug": "demo-mu",
           "source": "/workspace/mu",
-          "mountedPath": "/wordpress/wp-content/mu-plugins/wp-codebox-runtime/demo-mu",
+          "mountedPath": "/wordpress/wp-content/mu-plugins/contained-runtime/demo-mu",
           "entrypoint": "demo-mu/demo-mu.php",
           "pluginFile": "demo-mu/demo-mu.php",
           "loadAs": "mu-plugin",
