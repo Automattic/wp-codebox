@@ -175,6 +175,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./wordpress-db-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
+  "./wordpress-block-fuzz-suite.js",
   "./wordpress-runtime-actions.js",
 ])
 
