@@ -146,6 +146,8 @@ final class WP_Codebox_Agents_API_Adapter {
 		add_filter( 'wp_codebox_browser_runtime_bundle_import_filter', array( self::class, 'runtime_bundle_import_filter' ) );
 		add_filter( 'wp_codebox_browser_runtime_bundle_importer_paths', array( self::class, 'runtime_bundle_importer_paths' ) );
 		add_filter( 'wp_codebox_browser_runtime_principal_permission_filter', array( self::class, 'chat_runtime_principal_permission_filter' ) );
+		add_filter( 'wp_codebox_browser_runtime_invocation_input', array( self::class, 'browser_runtime_invocation_input' ), 10, 4 );
+		add_filter( 'wp_codebox_browser_runtime_principal_permission', array( self::class, 'browser_runtime_principal_permission' ), 10, 4 );
 		add_filter( 'wp_codebox_browser_runtime_executor_target', array( self::class, 'browser_executor_target_id' ) );
 		add_filter( 'wp_codebox_browser_runtime_legacy_resolved_tools_filter', array( self::class, 'legacy_resolved_tools_filter' ) );
 		add_filter( 'wp_codebox_browser_runtime_resolved_tools_filter', array( self::class, 'runtime_resolved_tools_filter' ) );
@@ -174,6 +176,66 @@ final class WP_Codebox_Agents_API_Adapter {
 			'type' => 'ability',
 			'name' => self::default_chat_ability(),
 		);
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @param array<string,mixed> $payload Browser payload. @param array<string,mixed> $invocation Runtime invocation. @return array<string,mixed> */
+	public static function browser_runtime_invocation_input( array $input, array $payload, array $invocation, string $session_id ): array {
+		if ( 'ability' !== (string) ( $invocation['type'] ?? 'ability' ) ) {
+			return $input;
+		}
+
+		$ability_name = (string) ( $invocation['name'] ?? '' );
+		if ( '' === $ability_name || ! in_array( $ability_name, self::ability_names(), true ) ) {
+			return $input;
+		}
+
+		$agent = sanitize_key( (string) ( $payload['agent'] ?? $input['agent'] ?? 'wp-codebox-sandbox' ) );
+		$input['principal'] = array(
+			'acting_user_id'     => 0,
+			'effective_agent_id' => $agent,
+			'auth_source'        => 'runtime',
+			'request_context'    => 'runtime',
+			'token_id'           => null,
+			'request_metadata'   => array(
+				'source'             => 'wp-codebox',
+				'mode'               => 'browser-playground',
+				'codebox_session_id' => $session_id,
+			),
+			'workspace_id'       => 'wp-codebox',
+			'client_id'          => 'wp-codebox-browser-runner',
+			'audience_id'        => $session_id,
+			'audience_claims'    => array(
+				'runtime_type' => 'wordpress-playground',
+			),
+			'owner_type'         => 'runtime',
+			'owner_key'          => $session_id,
+		);
+
+		$input['client_context']['source'] = 'peer-agent';
+		$input['client_context']['peer_agent_call'] = true;
+
+		return $input;
+	}
+
+	/** @param array<string,mixed> $permission_input Permission input. */
+	public static function browser_runtime_principal_permission( bool $allowed, mixed $principal, array $permission_input, string $session_id ): bool {
+		if ( ! class_exists( 'AgentsAPI\\AI\\WP_Agent_Execution_Principal' ) || ! $principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal ) {
+			return $allowed;
+		}
+		if ( 'runtime' !== $principal->auth_source || 'runtime' !== $principal->request_context ) {
+			return $allowed;
+		}
+		if ( 'wp-codebox-browser-runner' !== $principal->client_id || 'wp-codebox' !== $principal->workspace_id || 'runtime' !== $principal->owner_type ) {
+			return $allowed;
+		}
+		if ( $session_id !== $principal->audience_id || $session_id !== $principal->owner_key ) {
+			return $allowed;
+		}
+		if ( 'wordpress-playground' !== (string) ( $principal->audience_claims['runtime_type'] ?? '' ) ) {
+			return $allowed;
+		}
+
+		return 'wp-codebox' === (string) ( $permission_input['principal']['workspace_id'] ?? '' ) && 'wp-codebox-browser-runner' === (string) ( $permission_input['principal']['client_id'] ?? '' );
 	}
 
 	/** @param array<string,array<string,mixed>> $registry Runtime profile registry. @return array<string,array<string,mixed>> */

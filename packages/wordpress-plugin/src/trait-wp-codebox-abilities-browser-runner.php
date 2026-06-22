@@ -296,7 +296,7 @@ if ( null !== $event_sink ) {
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
 
 /* WP_CODEBOX_BROWSER_RUNNER_BODY_START */
-$runtime_invocation = wp_codebox_browser_runtime_invoke_agent_task( $payload, $invocation, $input, $session_id, $wp_codebox_is_playground, $wp_codebox_playground_root );
+$runtime_invocation = wp_codebox_browser_runtime_invoke( $payload, $invocation, $input, $session_id, $wp_codebox_is_playground, $wp_codebox_playground_root );
 $response = $runtime_invocation[\'response\'] ?? null;
 $agent_bundle_imports = is_array( $runtime_invocation[\'agent_bundle_imports\'] ?? null ) ? $runtime_invocation[\'agent_bundle_imports\'] : array();
 $runtime_invocation_preflight = is_array( $runtime_invocation[\'preflight\'] ?? null ) ? $runtime_invocation[\'preflight\'] : array();

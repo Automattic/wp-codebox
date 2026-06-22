@@ -214,40 +214,17 @@ $user_id = (int) ( $payload['user_id'] ?? ( function_exists( 'get_current_user_i
 return $user_id > 0 ? $user_id : 1;
 }
 
-function wp_codebox_browser_runtime_agent_principal( string $agent, string $session_id ): array {
-return array(
-	'acting_user_id' => 0,
-	'effective_agent_id' => $agent,
-	'auth_source' => 'runtime',
-	'request_context' => 'runtime',
-	'token_id' => null,
-	'request_metadata' => array(
-		'source' => 'wp-codebox',
-		'mode' => 'browser-playground',
-		'codebox_session_id' => $session_id,
-	),
-	'workspace_id' => 'wp-codebox',
-	'client_id' => 'wp-codebox-browser-runner',
-	'audience_id' => $session_id,
-	'audience_claims' => array(
-		'runtime_type' => 'wordpress-playground',
-	),
-	'owner_type' => 'runtime',
-	'owner_key' => $session_id,
-);
-}
-
-function wp_codebox_browser_runtime_agents_ability_names(): array {
+function wp_codebox_browser_runtime_ability_names(): array {
 $names = function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_runtime_ability_names', array() ) : array();
 return is_array( $names ) ? $names : array();
 }
 
-function wp_codebox_browser_runtime_agents_ability_exists( string $ability_name ): bool {
+function wp_codebox_browser_runtime_ability_exists( string $ability_name ): bool {
 return '' !== $ability_name && function_exists( 'wp_get_ability' ) && wp_get_ability( $ability_name ) instanceof WP_Ability;
 }
 
-function wp_codebox_browser_runtime_execute_agents_ability( string $ability_name, array $input ) {
-if ( ! wp_codebox_browser_runtime_agents_ability_exists( $ability_name ) ) {
+function wp_codebox_browser_runtime_execute_ability( string $ability_name, array $input ) {
+if ( ! wp_codebox_browser_runtime_ability_exists( $ability_name ) ) {
 	return new WP_Error( 'wp_codebox_browser_ability_unavailable', 'The requested ability is not available inside the Playground site.', array( 'ability' => $ability_name ) );
 }
 
@@ -283,11 +260,9 @@ $base_input = array(
 		'key' => $session_id,
 		'label' => 'WP Codebox Browser Playground',
 	),
-	'principal' => wp_codebox_browser_runtime_agent_principal( $agent, $session_id ),
 	'client_context' => array(
-		'source' => 'peer-agent',
+		'source' => 'wp-codebox-browser-runner',
 		'client_name' => 'wp-codebox-browser-runner',
-		'peer_agent_call' => true,
 		'caller_session_id' => $session_id,
 		'task_input' => $payload['task_input'] ?? array(),
 		'runtime_tools' => $runtime_tool_declarations,
@@ -308,7 +283,8 @@ if ( ! empty( $allowed_tool_ids ) ) {
 	}
 }
 
-return array_replace_recursive( $base_input, is_array( $invocation['input'] ?? null ) ? $invocation['input'] : array() );
+$input = array_replace_recursive( $base_input, is_array( $invocation['input'] ?? null ) ? $invocation['input'] : array() );
+return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_runtime_invocation_input', $input, $payload, $invocation, $session_id, $runtime_tool_declarations, $ability_tools, $allowed_tool_ids, $sandbox_tool_ids ) : $input;
 }
 
 function wp_codebox_browser_runtime_import_agent_bundles( array $bundle_specs ): array {
@@ -434,10 +410,10 @@ if ( empty( $preflight['error'] ) && 'task' === $invocation_type ) {
 	}
 }
 if ( empty( $preflight['error'] ) && 'task' !== $invocation_type ) {
-	$ability_names = wp_codebox_browser_runtime_agents_ability_names();
+	$ability_names = wp_codebox_browser_runtime_ability_names();
 	$ability_name = (string) ( $invocation['name'] ?? $ability_names['chat'] ?? '' );
 	$preflight['ability'] = $ability_name;
-	if ( ! wp_codebox_browser_runtime_agents_ability_exists( $ability_name ) ) {
+	if ( ! wp_codebox_browser_runtime_ability_exists( $ability_name ) ) {
 		$preflight['error'] = new WP_Error( 'wp_codebox_browser_ability_unavailable', 'The requested ability is not available inside the Playground site.', array( 'ability' => $ability_name ) );
 	}
 }
@@ -446,25 +422,10 @@ return $preflight;
 }
 
 function wp_codebox_browser_runtime_principal_permission( bool $allowed, $principal, array $permission_input, string $session_id ): bool {
-if ( ! $principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal ) {
-	return $allowed;
-}
-if ( 'runtime' !== $principal->auth_source || 'runtime' !== $principal->request_context ) {
-	return $allowed;
-}
-if ( 'wp-codebox-browser-runner' !== $principal->client_id || 'wp-codebox' !== $principal->workspace_id || 'runtime' !== $principal->owner_type ) {
-	return $allowed;
-}
-if ( $session_id !== $principal->audience_id || $session_id !== $principal->owner_key ) {
-	return $allowed;
-}
-if ( 'wordpress-playground' !== (string) ( $principal->audience_claims['runtime_type'] ?? '' ) ) {
-	return $allowed;
-}
-return 'wp-codebox' === (string) ( $permission_input['principal']['workspace_id'] ?? '' ) && 'wp-codebox-browser-runner' === (string) ( $permission_input['principal']['client_id'] ?? '' );
+return function_exists( 'apply_filters' ) ? (bool) apply_filters( 'wp_codebox_browser_runtime_principal_permission', $allowed, $principal, $permission_input, $session_id ) : $allowed;
 }
 
-function wp_codebox_browser_runtime_invoke_agent_task( array $payload, array $invocation, array $input, string $session_id, bool $is_playground, string $playground_root ): array {
+function wp_codebox_browser_runtime_invoke( array $payload, array $invocation, array $input, string $session_id, bool $is_playground, string $playground_root ): array {
 $agent_bundle_imports = wp_codebox_browser_runtime_import_agent_bundles( is_array( $payload['agent_bundles'] ?? null ) ? $payload['agent_bundles'] : array() );
 $preflight = wp_codebox_browser_runtime_preflight( $payload, $invocation, $input, $agent_bundle_imports, $is_playground, $playground_root );
 $response = $preflight['error'] ?? null;
@@ -480,8 +441,8 @@ if ( null === $response ) {
 		if ( 'task' === (string) ( $invocation['type'] ?? 'ability' ) ) {
 			$response = apply_filters( (string) ( $invocation['hook'] ?? $invocation['name'] ?? '' ), null, $input, $payload );
 		} else {
-			$ability_names = wp_codebox_browser_runtime_agents_ability_names();
-			$response = wp_codebox_browser_runtime_execute_agents_ability( (string) ( $invocation['name'] ?? $ability_names['chat'] ?? '' ), $input );
+			$ability_names = wp_codebox_browser_runtime_ability_names();
+			$response = wp_codebox_browser_runtime_execute_ability( (string) ( $invocation['name'] ?? $ability_names['chat'] ?? '' ), $input );
 		}
 	} catch ( Throwable $exception ) {
 		$response = $exception;
