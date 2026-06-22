@@ -3,7 +3,7 @@ import { stripUndefined } from "./object-utils.js"
 export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
 
-export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | (string & {})
+export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
 export type FuzzSuiteDiagnosticSeverity = "error" | "warning" | "info"
 
