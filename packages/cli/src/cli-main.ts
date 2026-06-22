@@ -6,7 +6,7 @@ export type CliExit = (code: number) => never
 
 const UNSETTLED_COMMAND_MESSAGE = "WP Codebox CLI command did not settle before the Node.js event loop drained."
 
-export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exit: CliExit = process.exit): void {
+export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exit: CliExit = naturalExit): void {
   let settled = false
   const writeStderr = process.stderr.write.bind(process.stderr)
   const handleBeforeExit = () => {
@@ -43,6 +43,11 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli, exi
       exitAfterOutputDrains(1, exit)
     },
   )
+}
+
+function naturalExit(code: number): never {
+  process.exitCode = code
+  return undefined as never
 }
 
 function exitAfterOutputDrains(code: number, exit: CliExit): void {
