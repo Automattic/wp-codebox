@@ -291,6 +291,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 			'wordpress.fuzz-admin-pages' => self::execute_fuzz_suite_admin_page_fuzz( $args, $observation ),
 			'wordpress.rest-request' => self::execute_fuzz_suite_rest_request( $args, $observation, $case_id ),
 			'wordpress.http-request' => self::execute_fuzz_suite_http_request( $args, $observation, $case_id ),
+			'wordpress.trace-browser-coverage' => self::execute_fuzz_suite_browser_coverage( $args, $case, $suite, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
 			'wordpress.collect-workload-result' => self::execute_fuzz_suite_collect_artifact( $args, $case, $observation ),
 			'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => self::execute_fuzz_suite_workload_step( $args, $command, $observation, $case_id ),
@@ -797,6 +798,76 @@ private static function execute_fuzz_suite_http_request( array $args, array $obs
 	return array( 'status' => $code >= 500 ? 'failed' : 'passed', 'observation' => $observation );
 }
 
+/** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_browser_coverage( array $args, array $case, array $suite, array $observation, string $case_id ): array {
+	$targets = self::fuzz_suite_browser_coverage_targets( $args );
+	if ( empty( $targets ) ) {
+		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_browser_coverage_target_missing', 'Browser coverage requires at least one safe same-site path or URL.', array( 'case_id' => $case_id ) ) );
+	}
+
+	$started_at = gmdate( 'Y-m-d\TH:i:s\Z' );
+	$requests = array();
+	$failed = 0;
+	foreach ( $targets as $target ) {
+		$url = self::fuzz_suite_browser_coverage_url( (string) $target['path'] );
+		if ( '' === $url ) {
+			$requests[] = array( 'surface' => $target['surface'], 'path' => $target['path'], 'status' => 'skipped', 'diagnostics' => array( self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_browser_coverage_unsafe_url', 'Browser coverage target is not a safe same-site URL.', array( 'case_id' => $case_id, 'path' => $target['path'] ) ) ) );
+			continue;
+		}
+
+		$response = wp_remote_request( $url, array( 'method' => 'GET', 'timeout' => 15, 'redirection' => 0 ) );
+		if ( is_wp_error( $response ) ) {
+			$failed++;
+			$requests[] = array( 'surface' => $target['surface'], 'path' => $target['path'], 'url' => $url, 'status' => 'failed', 'diagnostics' => array( self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_browser_coverage_request_failed', $response->get_error_message(), array( 'case_id' => $case_id, 'path' => $target['path'] ) ) ) );
+			continue;
+		}
+
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		if ( $status_code >= 500 ) {
+			$failed++;
+		}
+		$requests[] = array_filter(
+			array(
+				'surface'      => $target['surface'],
+				'path'         => $target['path'],
+				'url'          => $url,
+				'status'       => $status_code >= 500 ? 'failed' : 'covered',
+				'http'         => array(
+					'status'      => $status_code,
+					'contentType' => (string) wp_remote_retrieve_header( $response, 'content-type' ),
+					'location'    => (string) wp_remote_retrieve_header( $response, 'location' ),
+				),
+				'bodyBytes'    => strlen( (string) wp_remote_retrieve_body( $response ) ),
+				'diagnostics'  => $status_code >= 500 ? array( self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_browser_coverage_server_error', 'Browser coverage target returned a server error.', array( 'case_id' => $case_id, 'path' => $target['path'], 'status' => $status_code ) ) ) : array(),
+			),
+			static fn( mixed $value ): bool => ! ( '' === $value || ( is_array( $value ) && empty( $value ) ) )
+		);
+	}
+
+	$report = array(
+		'schema'      => 'wp-codebox/browser-request-coverage/v1',
+		'command'     => 'wordpress.trace-browser-coverage',
+		'caseId'      => $case_id,
+		'status'      => $failed > 0 ? 'failed' : 'passed',
+		'generatedAt' => gmdate( 'Y-m-d\TH:i:s\Z' ),
+		'timing'      => array( 'startedAt' => $started_at ),
+		'summary'     => array( 'total' => count( $requests ), 'covered' => count( array_filter( $requests, static fn( array $request ): bool => 'covered' === ( $request['status'] ?? '' ) ) ), 'failed' => $failed, 'skipped' => count( array_filter( $requests, static fn( array $request ): bool => 'skipped' === ( $request['status'] ?? '' ) ) ) ),
+		'coverage'    => array( 'surfaces' => array_values( array_unique( array_map( static fn( array $request ): string => (string) ( $request['surface'] ?? 'frontend' ), $requests ) ) ), 'operations' => array( 'frontend-page-render', 'asset-request-capture', 'xhr-fetch-capture', 'skipped-destructive-action-classification' ), 'requests' => count( $requests ), 'responses' => count( array_filter( $requests, static fn( array $request ): bool => isset( $request['http'] ) ) ), 'failures' => $failed ),
+		'requests'    => $requests,
+		'metadata'    => array( 'suiteId' => (string) ( $suite['id'] ?? '' ), 'runner' => 'wp-codebox/fuzz-suite-runner/v1' ),
+	);
+
+	$artifact_result = self::write_fuzz_suite_browser_coverage_artifact( $report, $case );
+	if ( is_wp_error( $artifact_result ) ) {
+		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', $artifact_result->code, $artifact_result->get_error_message(), array( 'case_id' => $case_id ) ) );
+	}
+
+	$observation['targets'] = count( $targets );
+	$observation['artifact'] = $artifact_result['path'];
+	$observation['status'] = $report['status'];
+	return array( 'status' => $failed > 0 ? 'failed' : 'passed', 'observation' => $observation, 'artifactRefs' => self::fuzz_suite_declared_artifact_refs( $case ) );
+}
+
 /** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
 private static function execute_fuzz_suite_ability( array $args, array $observation, string $case_id ): array {
 	$name = (string) ( $args['name'] ?? '' );
@@ -942,6 +1013,82 @@ private static function dedupe_fuzz_suite_artifact_refs( array $refs ): array {
 		$output[] = $ref;
 	}
 	return $output;
+}
+
+/** @param array<string,string> $args Args. @return array<int,array{surface:string,path:string}> */
+private static function fuzz_suite_browser_coverage_targets( array $args ): array {
+	$surface = self::normalize_fuzz_suite_browser_coverage_surface( (string) ( $args['surface'] ?? 'frontend' ) );
+	$paths = self::csv_fuzz_suite_arg( (string) ( $args['paths'] ?? $args['path'] ?? $args['urls'] ?? $args['url'] ?? '' ) );
+	if ( empty( $paths ) ) {
+		$paths = 'admin' === $surface ? array( '/wp-admin/index.php' ) : array( '/', '/shop/', '/product/', '/cart/', '/checkout/' );
+	}
+
+	$targets = array();
+	foreach ( $paths as $path ) {
+		$target_surface = str_starts_with( $path, '/wp-admin/' ) ? 'admin' : $surface;
+		$targets[] = array( 'surface' => $target_surface, 'path' => $path );
+	}
+	return $targets;
+}
+
+private static function normalize_fuzz_suite_browser_coverage_surface( string $surface ): string {
+	$surface = strtolower( trim( $surface ) );
+	return in_array( $surface, array( 'admin', 'admin_pages', 'wp-admin' ), true ) ? 'admin' : 'frontend';
+}
+
+/** @return string[] */
+private static function csv_fuzz_suite_arg( string $value ): array {
+	return array_values( array_filter( array_map( 'trim', explode( ',', $value ) ), static fn( string $entry ): bool => '' !== $entry ) );
+}
+
+private static function fuzz_suite_browser_coverage_url( string $path ): string {
+	if ( str_contains( $path, "\0" ) ) {
+		return '';
+	}
+	$home = home_url( '/' );
+	if ( preg_match( '#^https?://#i', $path ) ) {
+		$path_host = wp_parse_url( $path, PHP_URL_HOST );
+		$home_host = wp_parse_url( $home, PHP_URL_HOST );
+		return $path_host && $home_host && strtolower( (string) $path_host ) === strtolower( (string) $home_host ) ? $path : '';
+	}
+	if ( ! str_starts_with( $path, '/' ) || str_contains( $path, '..' ) ) {
+		return '';
+	}
+	return home_url( $path );
+}
+
+/** @param array<string,mixed> $report Report. @param array<string,mixed> $case Case. @return array{path:string,bytes:int}|WP_Error */
+private static function write_fuzz_suite_browser_coverage_artifact( array $report, array $case ): array|WP_Error {
+	$refs = self::fuzz_suite_declared_artifact_refs( $case );
+	$ref = $refs[0] ?? null;
+	$relative_path = is_array( $ref ) ? (string) ( $ref['path'] ?? '' ) : '';
+	if ( '' === $relative_path || str_starts_with( $relative_path, '/' ) || str_contains( $relative_path, '..' ) || str_contains( $relative_path, "\0" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_browser_coverage_artifact_path_invalid', 'Browser coverage requires a safe relative declared artifact path.' );
+	}
+
+	$upload_dir = function_exists( 'wp_upload_dir' ) ? wp_upload_dir( null, false ) : array();
+	$base_dir = is_array( $upload_dir ) && ! empty( $upload_dir['basedir'] ) ? (string) $upload_dir['basedir'] : rtrim( WP_CONTENT_DIR, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'uploads';
+	$absolute = rtrim( $base_dir, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
+	$directory = dirname( $absolute );
+	if ( ! self::ensure_fuzz_suite_directory( $directory ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_browser_coverage_artifact_directory_failed', 'Browser coverage could not create the artifact directory.' );
+	}
+
+	$encoded = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+	if ( ! is_string( $encoded ) || false === file_put_contents( $absolute, $encoded . "\n" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_browser_coverage_artifact_write_failed', 'Browser coverage could not write the artifact JSON file.' );
+	}
+	return array( 'path' => $relative_path, 'bytes' => strlen( $encoded ) + 1 );
+}
+
+private static function ensure_fuzz_suite_directory( string $directory ): bool {
+	if ( is_dir( $directory ) ) {
+		return true;
+	}
+	if ( function_exists( 'wp_mkdir_p' ) ) {
+		return (bool) wp_mkdir_p( $directory );
+	}
+	return mkdir( $directory, 0777, true );
 }
 
 /** @return array<string,mixed> */
