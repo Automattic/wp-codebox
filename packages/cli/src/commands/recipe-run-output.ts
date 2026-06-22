@@ -83,7 +83,7 @@ export function exitAfterTerminalRecipePhaseFailure(output: RecipeRunCommandOutp
     return
   }
 
-  process.exit(1)
+  process.exitCode = 1
 }
 
 function hasTerminalRecipePhaseFailure(output: RecipeRunOutput): boolean {
