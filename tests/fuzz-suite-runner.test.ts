@@ -10,7 +10,11 @@ const result = await runFuzzSuite(fuzzSuiteContract({
   cases: [
     { id: "case-pass", input: { args: ["--json"], cwd: "/workspace", timeoutMs: 1000 }, metadata: { source: "fixture" } },
     { id: "case-fail", target: { kind: "runtime", entrypoint: "wordpress.run-php" }, input: ["code=exit(1);"] },
-    { id: "case-unsupported", target: { kind: "http", id: "GET /" }, input: { url: "/" } },
+    { id: "case-http", target: { kind: "http" }, input: { url: "/", method: "GET", expectStatus: 200 } },
+    { id: "case-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET", params: { context: "view" } } },
+    { id: "case-ability", target: { kind: "ability", id: "example/echo" }, input: { input: { message: "hello" }, expectedResultSchema: "example/result" } },
+    { id: "case-runtime-action", target: { kind: "runtime-action" }, input: { type: "rest_request", path: "/wp/v2/status", method: "GET" } },
+    { id: "case-runtime-action-unsupported", target: { kind: "runtime-action" }, input: { type: "browser", operation: "capture" } },
   ],
 }), {
   executor: async (spec) => {
@@ -34,16 +38,20 @@ assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.suite.id, "suite-001")
 assert.equal(result.status, "failed")
 assert.equal(result.success, false)
-assert.deepEqual(result.summary, { total: 3, passed: 1, failed: 1, error: 0, skipped: 1 })
-assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php"])
+assert.deepEqual(result.summary, { total: 7, passed: 5, failed: 1, error: 0, skipped: 1 })
+assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
+assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
+assert.deepEqual(executed[3], { command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET", "params-json={\"context\":\"view\"}"], method: "GET", path: "/wp/v2/types" })
+assert.deepEqual(executed[4], { command: "wordpress.ability", args: ["name=example/echo", "input={\"message\":\"hello\"}", "expected-result-schema=example/result"] })
+assert.deepEqual(executed[5], { command: "wordpress.rest-request", args: ["path=/wp/v2/status", "method=GET"], method: "GET", path: "/wp/v2/status" })
 assert.equal(result.cases[0]?.status, "passed")
 assert.equal(result.cases[0]?.artifactRefs?.[0]?.path, "/artifacts/exec-1.json")
 assert.equal(result.cases[1]?.status, "failed")
 assert.equal(result.cases[1]?.diagnostics[0]?.code, "fuzz_suite_command_failed")
-assert.equal(result.cases[2]?.status, "skipped")
-assert.equal(result.cases[2]?.diagnostics[0]?.code, "fuzz_suite_case_unsupported")
-assert.equal(result.artifactRefs.length, 2)
+assert.equal(result.cases[6]?.status, "skipped")
+assert.equal(result.cases[6]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.artifactRefs.length, 6)
 assert.equal((result.cases[0]?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "case-pass")
 
 const noExecutor = await runFuzzSuite(fuzzSuiteContract({
