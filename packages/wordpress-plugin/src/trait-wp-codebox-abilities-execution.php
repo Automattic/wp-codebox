@@ -482,10 +482,12 @@ private static function fuzz_suite_admin_page_descriptor( string $menu_slug, str
 private static function fuzz_suite_admin_page_url( string $menu_slug, string $parent_slug = '' ): string {
 	if ( str_ends_with( $menu_slug, '.php' ) ) {
 		$path = $menu_slug;
-	} elseif ( '' !== $parent_slug && str_ends_with( $parent_slug, '.php' ) ) {
-		$path = add_query_arg( 'page', $menu_slug, $parent_slug );
+	} elseif ( str_contains( $menu_slug, '.php' ) ) {
+		$path = $menu_slug;
+	} elseif ( '' !== $parent_slug && str_contains( $parent_slug, '.php' ) ) {
+		$path = $parent_slug . '?page=' . rawurlencode( $menu_slug );
 	} else {
-		$path = add_query_arg( 'page', $menu_slug, 'admin.php' );
+		$path = 'admin.php?page=' . rawurlencode( $menu_slug );
 	}
 	return function_exists( 'admin_url' ) ? admin_url( $path ) : $path;
 }

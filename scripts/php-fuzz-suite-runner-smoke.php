@@ -71,11 +71,6 @@ function admin_url( string $path = '' ): string {
 	return 'https://example.test/wp-admin/' . ltrim( $path, '/' );
 }
 
-function add_query_arg( string $key, string $value, string $url ): string {
-	$separator = str_contains( $url, '?' ) ? '&' : '?';
-	return $url . $separator . rawurlencode( $key ) . '=' . rawurlencode( $value );
-}
-
 function current_user_can( string $capability ): bool {
 	return 'denied_cap' !== $capability;
 }
@@ -255,6 +250,7 @@ assert( 'admin-page-coverage' === $result['cases'][5]['id'] );
 assert( 3 === $result['cases'][5]['metadata']['observations'][0]['target_count'] );
 assert( 1 === $result['cases'][5]['metadata']['observations'][0]['skipped_count'] );
 assert( 'wp-codebox/wordpress-admin-page-coverage/v1' === $result['cases'][5]['metadata']['observations'][0]['payload']['schema'] );
+assert( 'https://example.test/wp-admin/edit.php?post_type=product' === $result['cases'][5]['metadata']['observations'][0]['payload']['targets'][1]['canonicalUrl'] );
 assert( 'passed' === $result['cases'][6]['status'] );
 assert( 'passed' === $result['cases'][7]['status'] );
 assert( 'command-target' === $result['cases'][8]['id'] );
