@@ -215,6 +215,8 @@ contained WordPress runtime available after artifact capture. The ability respon
 field point at the same live URL until the hold window expires. Without a hold
 window, the preview field is still recorded as evidence but marked
 `expired-on-completion` because the sandbox is destroyed when the command exits.
+The hold cap defaults to 3600 seconds; operators may raise it with
+`WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS` up to the hard 24-hour ceiling.
 
 Returned artifact metadata includes the runtime manifest, replay blueprint,
 after-state notes, captured readwrite mount index, event streams, and logs. WP

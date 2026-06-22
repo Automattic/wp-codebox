@@ -576,7 +576,9 @@ both files are registered as redaction-required browser artifacts and surfaced
 through `browserEvidence.files`.
 
 `--preview-hold-seconds <duration>` records held-preview lifecycle metadata in the
-artifact bundle and returns after recipe work finishes. Use
+artifact bundle and returns after recipe work finishes. The cap defaults to 3600
+seconds and can be raised by an operator with `WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS`
+up to the hard 24-hour ceiling. Use
 `--preview-hold-blocking` only for operator workflows that need the CLI process
 to keep a live preview server open for the hold duration.
 

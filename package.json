@@ -148,6 +148,7 @@
     "test:fuzz-suite-runner": "tsx tests/fuzz-suite-runner.test.ts",
     "test:wordpress-fuzz-suite-builders": "tsx tests/wordpress-fuzz-suite-builders.test.ts",
     "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
+    "test:preview-options": "tsx tests/preview-options.test.ts",
     "test:evidence-bundle-digest-and-recipe-artifact": "tsx tests/evidence-bundle-digest-and-recipe-artifact.test.ts",
     "test:runtime-overlay-descriptors": "tsx tests/runtime-overlay-descriptors.test.ts",
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",

@@ -330,6 +330,7 @@ Options:
   --input-file <path> Agent task input JSON for run-agent-task/agent-task-run.
   --preview-hold-seconds <n>
                     Keep preview runtimes alive after run-agent-task/agent-task-run/recipe-run.
+                    Max 3600s by default; operators may raise the cap with WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS.
   --preview-hold-blocking
                     Block before releasing held previews after run-agent-task/agent-task-run/recipe-run.
   --preview-port <port>
@@ -396,7 +397,7 @@ Options:
   --snapshot-ref <ref>  Optional external reference for the input snapshot source metadata.
   --artifacts <dir>    Artifact root directory.
   --preview-hold-seconds <n>
-                       Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
+                       Keep the live Playground preview available after a successful run. Accepts seconds, minutes, or hours, e.g. 30s, 15m, or 2h; max 3600s unless WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS raises the cap.
   --preview-lease     Return after the preview is available while a detached child keeps the runtime alive until released or expired.
   --preview-port <n>   Start Playground on a fixed local port. Defaults to a random available port.
   --preview-bind <host>

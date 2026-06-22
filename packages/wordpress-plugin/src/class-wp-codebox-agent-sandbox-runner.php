@@ -921,7 +921,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return WP_Codebox_Path_Policy::clean_host_path( $path );
 	}
 
-	private function preview_hold_seconds( array $input ): int {
+	private function preview_hold_seconds( array $input ): int|WP_Error {
 		return WP_Codebox_Preview_Options::preview_hold_seconds( $input );
 	}
 
@@ -929,8 +929,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $this->preview_args_builder->build( $input );
 	}
 
-	private function preview_hold_arg( array $input ): string {
+	private function preview_hold_arg( array $input ): string|WP_Error {
 		$seconds = $this->preview_hold_seconds( $input );
+		if ( is_wp_error( $seconds ) ) {
+			return $seconds;
+		}
 
 		return $seconds > 0 ? ' --preview-hold-seconds ' . escapeshellarg( (string) $seconds ) : '';
 	}

@@ -480,7 +480,7 @@ more than one hard link. The hard-link check uses the host platform's
 `lstat().nlink` value and fails closed if the link count cannot be determined,
 because a hard-linked file under an allowed root is not independent evidence.
 
-For interactive review, pass `--preview-hold-seconds <duration>` to keep the live preview server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
+For interactive review, pass `--preview-hold-seconds <duration>` to keep the live preview server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details. The hold cap defaults to 3600 seconds; local operators may raise it with `WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS` up to the hard 24-hour ceiling.
 
 ```bash
 npm run wp-codebox -- run \
@@ -785,7 +785,7 @@ npm run wp-codebox -- boot \
   --json
 ```
 
-`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a contained-runtime blueprint JSON file. `--preview-hold-seconds` uses the same duration syntax and 3600-second maximum as `run --preview-hold-seconds`.
+`boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a contained-runtime blueprint JSON file. `--preview-hold-seconds` uses the same duration syntax and operator-configurable cap as `run --preview-hold-seconds`.
 
 The JSON output uses `wp-codebox/boot/v1` and includes runtime information plus the collected artifact bundle. The artifact bundle includes preview metadata, mounted-file capture, diffs, review metadata, and lifecycle logs, but no `execution` object and no fake command entry.
 

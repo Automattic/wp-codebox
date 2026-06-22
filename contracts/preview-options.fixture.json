@@ -5,7 +5,7 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 3600,
-      "description": "Seconds to keep the live Playground preview URL available after capture. Max 3600."
+      "description": "Seconds to keep the live Playground preview URL available after capture. Max 3600 by default; operators may raise the cap with WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS."
     },
     "preview_port": {
       "type": "integer",
@@ -68,6 +68,19 @@
       "name": "hold clamps above maximum",
       "input": {
         "preview_hold_seconds": "7200"
+      },
+      "valid": true,
+      "normalized": {
+        "preview_hold_seconds": 3600,
+        "preview_port": null,
+        "preview_bind": null,
+        "preview_public_url": null
+      }
+    },
+    {
+      "name": "hour preview hold syntax clamps to default cap",
+      "input": {
+        "preview_hold_seconds": "2h"
       },
       "valid": true,
       "normalized": {

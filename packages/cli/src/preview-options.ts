@@ -1,4 +1,7 @@
-export const PREVIEW_HOLD_MAX_SECONDS = 3600
+export const PREVIEW_HOLD_DEFAULT_MAX_SECONDS = 3600
+export const PREVIEW_HOLD_MAX_SECONDS = PREVIEW_HOLD_DEFAULT_MAX_SECONDS
+export const PREVIEW_HOLD_HARD_MAX_SECONDS = 24 * 60 * 60
+export const PREVIEW_HOLD_MAX_SECONDS_ENV = "WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS"
 export const PREVIEW_PORT_MIN = 1
 export const PREVIEW_PORT_MAX = 65535
 
@@ -27,8 +30,8 @@ export const previewInputSchema = {
   preview_hold_seconds: {
     type: "integer",
     minimum: 0,
-    maximum: PREVIEW_HOLD_MAX_SECONDS,
-    description: "Seconds to keep the live Playground preview URL available after capture. Max 3600.",
+    maximum: PREVIEW_HOLD_DEFAULT_MAX_SECONDS,
+    description: `Seconds to keep the live Playground preview URL available after capture. Max ${PREVIEW_HOLD_DEFAULT_MAX_SECONDS} by default; operators may raise the cap with ${PREVIEW_HOLD_MAX_SECONDS_ENV}.`,
   },
   preview_port: {
     type: "integer",
@@ -68,6 +71,10 @@ export function parsePreviewHoldSeconds(value: unknown): number {
   return parsePreviewHoldSecondsValue(value)
 }
 
+export function previewHoldMaxSeconds(source: Record<string, string | undefined> = process.env): number {
+  return parsePreviewHoldMaxSeconds(source[PREVIEW_HOLD_MAX_SECONDS_ENV])
+}
+
 export function parsePreviewPort(value: unknown): number {
   const port = parsePreviewPortValue(value, "--preview-port")
   if (port === null) {
@@ -93,14 +100,34 @@ export function parsePreviewPublicUrl(value: unknown): string {
 }
 
 function parsePreviewHoldSecondsValue(value: unknown): number {
+  const maxSeconds = previewHoldMaxSeconds()
   const raw = String(value).trim()
-  const match = raw.match(/^(\d+)(s|m)?$/)
-  const seconds = match ? Number.parseInt(match[1], 10) * (match[2] === "m" ? 60 : 1) : Number.parseInt(raw, 10)
+  const match = raw.match(/^(\d+)(s|m|h)?$/)
+  const seconds = match ? Number.parseInt(match[1], 10) * (match[2] === "h" ? 3600 : match[2] === "m" ? 60 : 1) : Number.parseInt(raw, 10)
   if (!Number.isFinite(seconds)) {
     return 0
   }
 
-  return Math.max(0, Math.min(PREVIEW_HOLD_MAX_SECONDS, Math.floor(seconds)))
+  return Math.max(0, Math.min(maxSeconds, Math.floor(seconds)))
+}
+
+function parsePreviewHoldMaxSeconds(value: unknown): number {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return PREVIEW_HOLD_DEFAULT_MAX_SECONDS
+  }
+
+  const raw = String(value).trim()
+  const match = raw.match(/^(\d+)(s|m|h)?$/)
+  if (!match) {
+    throw new PreviewOptionError("wp_codebox_preview_hold_max_invalid", `${PREVIEW_HOLD_MAX_SECONDS_ENV} must be a duration such as 3600, 60m, or 4h.`)
+  }
+
+  const seconds = Number.parseInt(match[1], 10) * (match[2] === "h" ? 3600 : match[2] === "m" ? 60 : 1)
+  if (!Number.isSafeInteger(seconds) || seconds < PREVIEW_HOLD_DEFAULT_MAX_SECONDS || seconds > PREVIEW_HOLD_HARD_MAX_SECONDS) {
+    throw new PreviewOptionError("wp_codebox_preview_hold_max_invalid", `${PREVIEW_HOLD_MAX_SECONDS_ENV} must be between ${PREVIEW_HOLD_DEFAULT_MAX_SECONDS} and ${PREVIEW_HOLD_HARD_MAX_SECONDS} seconds.`)
+  }
+
+  return seconds
 }
 
 function parsePreviewPortValue(value: unknown, label = "preview_port"): number | null {
