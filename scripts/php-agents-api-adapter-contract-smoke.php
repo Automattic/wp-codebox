@@ -4,6 +4,12 @@ declare(strict_types=1);
 define( 'ABSPATH', __DIR__ );
 
 $GLOBALS['wp_codebox_test_abilities'] = array();
+$GLOBALS['wp_codebox_test_filters']   = array();
+
+function apply_filters( string $hook_name, mixed $value, mixed ...$args ): mixed {
+	unset( $args );
+	return array_key_exists( $hook_name, $GLOBALS['wp_codebox_test_filters'] ) ? $GLOBALS['wp_codebox_test_filters'][ $hook_name ] : $value;
+}
 
 function is_wp_error( mixed $value ): bool {
 	return $value instanceof WP_Error;
@@ -83,13 +89,22 @@ assert( 'wp_codebox_agents_api_ability_unavailable' === $missing->get_error_code
 WP_Codebox_Agents_API_Adapter::register_runtime_provider();
 $providers = WP_Codebox_Runtime_Provider_Registry::providers();
 assert( isset( $providers['agents-api-adapter'] ) );
-assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 
-$runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
+$missing_default = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
+assert( is_wp_error( $missing_default ) );
+assert( 'wp_codebox_runtime_provider_default_missing' === $missing_default->get_error_code() );
+
+$runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider_id' => 'agents-api-adapter', 'package' => array( 'id' => 'example' ) ) );
 assert( ! is_wp_error( $runtime_package ) );
 assert( 'wp-codebox/runtime-package-result/v1' === $runtime_package['schema'] );
 assert( 'agents-api-adapter' === $runtime_package['runtime_provider']['id'] );
 assert_no_agents_api_schema_leaks( $runtime_package, 'runtime-package-registry' );
+
+$GLOBALS['wp_codebox_test_filters']['wp_codebox_default_runtime_provider'] = 'agents-api-adapter';
+assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
+$default_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
+assert( ! is_wp_error( $default_runtime_package ) );
+assert( 'agents-api-adapter' === $default_runtime_package['runtime_provider']['id'] );
 
 WP_Codebox_Runtime_Provider_Registry::register(
 	'Example Runtime',

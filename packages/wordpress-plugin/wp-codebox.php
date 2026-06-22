@@ -69,8 +69,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once __DIR__ . '/src/class-wp-codebox-cli-command.php';
 }
 
-WP_Codebox_Agents_API_Adapter::register_runtime_profiles();
-WP_Codebox_Agents_API_Adapter::register_runtime_provider();
+add_action( 'plugins_loaded', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();
 
