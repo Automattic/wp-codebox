@@ -1,50 +1,49 @@
-# Docs Agent Reusable Workflow
+# Agent Task Reusable Workflow
 
-WP Codebox publishes a reusable GitHub Actions workflow for product-level agent
-tasks, including Docs Agent runs:
+WP Codebox publishes a reusable GitHub Actions workflow for generic agent tasks:
 
 ```yaml
 jobs:
-  update-docs:
+  run-agent-task:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      runner_recipe: Automattic/docs-agent@main:ci/docs-agent-runner-recipe.json
-      agent_bundle: bundles/technical-docs-agent
-      workload_id: technical-docs-maintenance-flow
-      workload_label: Run technical Docs Agent
-      component_id: docs-agent-ci-driver
+      runner_recipe: Automattic/example-runner@main:ci/runner-recipe.json
+      agent_bundle: bundles/example-agent
+      workload_id: example-maintenance
+      workload_label: Run example maintenance
+      component_id: example-ci-driver
       target_repo: Automattic/example-target
-      prompt: Refresh the API docs for changed files.
+      prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
       runner_workspace: |
         {
           "enabled": true,
           "repo": "Automattic/example-target",
           "clone_url": "https://github.com/Automattic/example-target.git",
-          "branch_prefix": "docs/agent-run",
+          "branch_prefix": "agent/example-run",
           "from": "origin/main"
         }
-      verification_commands: '[{"command":"npm test","description":"Run docs checks"}]'
+      verification_commands: '[{"command":"npm test","description":"Run checks"}]'
       drift_checks: '[]'
-      output_projections: '{"docs_pr_url":"metadata.engine_data.docs_agent.pr_url"}'
-      expected_artifacts: '["docs_agent_transcript","docs_agent_change_summary"]'
+      output_projections: '{"pr_url":"metadata.runner_workspace_publication.url"}'
+      expected_artifacts: '["agent_transcript","agent_change_summary"]'
       artifact_declarations: |
         [
           {
             "schema": "wp-codebox/artifact-declaration/v1",
-            "name": "docs_agent_transcript",
-            "type": "DocsAgentTranscript",
-            "artifact_schema": "docs-agent/transcript/v1",
-            "description": "Machine-readable transcript for the Docs Agent run.",
+            "name": "agent_transcript",
+            "type": "AgentTranscript",
+            "artifact_schema": "agent/transcript/v1",
+            "description": "Machine-readable transcript for the agent task.",
             "required": false,
             "egress": ["artifact", "workflow-output", "review-link"]
           },
           {
             "schema": "wp-codebox/artifact-declaration/v1",
-            "name": "docs_agent_change_summary",
-            "type": "DocsAgentChangeSummary",
-            "artifact_schema": "docs-agent/change-summary/v1",
-            "description": "Reviewable summary of documentation changes.",
+            "name": "agent_change_summary",
+            "type": "AgentChangeSummary",
+            "artifact_schema": "agent/change-summary/v1",
+            "description": "Reviewable summary of changes made by the run.",
             "required": false,
             "egress": ["pr-body", "workflow-output", "review-link"]
           }
@@ -62,19 +61,10 @@ Codebox boundary.
 ## Runner Recipe
 
 `runner_recipe` is a descriptor for a committed runner recipe, such as
-`Automattic/docs-agent@main:ci/docs-agent-runner-recipe.json`. The recipe stays
-owned by the product workflow. Consumers pass the descriptor and the selected
+`Automattic/example-runner@main:ci/runner-recipe.json`. The recipe stays owned by
+the product workflow. Consumers pass the descriptor and the selected
 `agent_bundle`; they do not pass worker filesystem paths, runtime substrate
 checkout rules, package internals, or private workflow names.
-
-```json
-{
-  "id": "docs-agent/codebox-homeboy-runner",
-  "description": "Docs Agent product-level Codebox runner contract.",
-  "runtime": "wp-codebox",
-  "profile": "docs-agent-runner"
-}
-```
 
 ## Inputs
 

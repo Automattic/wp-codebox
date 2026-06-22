@@ -29,7 +29,7 @@ const genericContractDocs = [
   "docs/external-apply-adapter-contract.md",
   "docs/agent-fanout-contract.md",
   "docs/agent-runtime-contract.md",
-  "docs/docs-agent-reusable-workflow.md",
+  "docs/agent-task-reusable-workflow.md",
   "docs/generic-runtime-primitives.md",
   "docs/portable-wp-codebox.md",
   "docs/benchmark-contract.md",
