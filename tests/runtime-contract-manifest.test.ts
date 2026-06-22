@@ -14,12 +14,16 @@ import {
   CODEBOX_RUN_AGENT_TASK_ABILITY,
   CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY,
   CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
+  CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
   CODEBOX_RUN_SANDBOX_TASK_ABILITY,
   CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY,
   CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
+  CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  FUZZ_SUITE_RESULT_SCHEMA,
+  FUZZ_SUITE_SCHEMA,
   HOST_DELEGATION_EVENT_SCHEMA,
   HOST_DELEGATION_REQUEST_SCHEMA,
   HOST_DELEGATION_RESULT_SCHEMA,
@@ -47,6 +51,7 @@ import {
   RUNNER_WORKSPACE_PREPARE_RESULT_SCHEMA,
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
   WORDPRESS_RUNTIME_DISCOVERY_SCHEMA,
+  WORDPRESS_WORKLOAD_RUN_SCHEMA,
   isRuntimeContractSchema,
   normalizeRuntimeContractSchema,
   runtimeContractManifest,
@@ -101,6 +106,9 @@ assert.equal(manifest.schemas.fanoutAggregation.output, FANOUT_AGGREGATION_OUTPU
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.result, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.workloadRun, WORDPRESS_WORKLOAD_RUN_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
 assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)
@@ -108,6 +116,8 @@ assert.equal(manifest.abilities.agentTask.aliases.runSandboxTask, CODEBOX_RUN_SA
 assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskBatch, CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskFanout, CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY)
 assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY)
+assert.equal(manifest.abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
+assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
 
 const values = runtimeContractSchemaValues()
 assert.equal(new Set(values).size, values.length, "runtime contract schema constants must be unique")

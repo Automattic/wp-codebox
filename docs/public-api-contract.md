@@ -61,6 +61,8 @@ ability identifiers:
 - `wp-codebox/run-agent-task-batch`
 - `wp-codebox/run-agent-task-fanout`
 - `wp-codebox/run-runtime-package`
+- `wp-codebox/run-wordpress-workload`
+- `wp-codebox/run-fuzz-suite`
 
 It also includes compatibility aliases for the `run-sandbox-task` family. The
 manifest intentionally excludes backend handler bindings such as upstream Agents
@@ -134,9 +136,15 @@ The stable public surface is grouped by lifecycle area rather than by product:
   network evidence.
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
-  endpoint, REST route, or runtime action. `wp-codebox/fuzz-suite-result/v1`
-  reports case status, diagnostics, artifact refs, and suite summary without
-  embedding product-specific Woo, Gutenberg, Jetpack, or Core assertions.
+  endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
+  `command`, `http`, `rest`, `runtime`, and `runtime-action`. Runtime actions use
+  the same public action types as `@automattic/wp-codebox-playground/public` where
+  a runner can execute them directly; command-backed runners map safe
+  `rest_request` actions to `wordpress.rest-request` and `wp_cli` actions to
+  `wordpress.wp-cli`, while episode-only/browser actions remain structured
+  skips. `wp-codebox/fuzz-suite-result/v1` reports case status, diagnostics,
+  artifact refs, and suite summary without embedding product-specific Woo,
+  Gutenberg, Jetpack, or Core assertions.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.

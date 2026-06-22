@@ -22,6 +22,8 @@ import {
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
+  CODEBOX_RUN_FUZZ_SUITE_ABILITY,
+  CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
@@ -278,6 +280,8 @@ assert.match(docs, /adapter config maps each operation to its\s+integration-prov
 assert.match(docs, /runtimeContractManifest\(\)/)
 assert.match(docs, /wp-codebox\/run-agent-task/)
 assert.match(docs, /wp-codebox\/run-runtime-package/)
+assert.match(docs, /wp-codebox\/run-wordpress-workload/)
+assert.match(docs, /wp-codebox\/run-fuzz-suite/)
 assert.match(docs, /manifest intentionally excludes backend handler bindings/)
 assert.match(pluginReadme, /Consumers running inside WordPress should prefer `WP_Codebox_API`/)
 assert.match(pluginReadme, /`wp-codebox\/\*` ability/)
@@ -306,6 +310,11 @@ assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(typeof runtimeContractManifest, "function")
 assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
+assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
+assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp-codebox/wordpress-workload-run/v1")
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal("runnerWorkspaceBackend" in runtimeContractManifest(), false)
 assert.equal("providerRuntime" in runtimeContractManifest(), false)
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)

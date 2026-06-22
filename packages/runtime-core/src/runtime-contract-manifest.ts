@@ -2,6 +2,7 @@ import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTa
 import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
+import { FUZZ_SUITE_RESULT_SCHEMA, FUZZ_SUITE_SCHEMA } from "./fuzz-suite-contracts.js"
 import { HOST_DELEGATION_EVENT_SCHEMA, HOST_DELEGATION_REQUEST_SCHEMA, HOST_DELEGATION_RESULT_SCHEMA } from "./fanout-contracts.js"
 import { ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA, BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA } from "./materialization-contracts.js"
 import { PARENT_TOOL_BRIDGE_SCHEMA, PARENT_TOOL_REQUEST_SCHEMA, PARENT_TOOL_RESULT_SCHEMA } from "./parent-tool-bridge.js"
@@ -21,6 +22,7 @@ import {
   RUNNER_WORKSPACE_PUBLICATION_RESULT_SCHEMA,
 } from "./runner-workspace-publication.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
+import { WORDPRESS_WORKLOAD_RUN_SCHEMA } from "./wordpress-workload-primitives.js"
 
 export const RUNTIME_CONTRACT_MANIFEST_SCHEMA = "wp-codebox/runtime-contract-manifest/v1" as const
 
@@ -30,6 +32,8 @@ export const CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY = "wp-codebox/run-agent-task-
 export const CODEBOX_RUN_SANDBOX_TASK_ABILITY = "wp-codebox/run-sandbox-task" as const
 export const CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY = "wp-codebox/run-sandbox-task-batch" as const
 export const CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY = "wp-codebox/run-sandbox-task-fanout" as const
+export const CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY = "wp-codebox/run-wordpress-workload" as const
+export const CODEBOX_RUN_FUZZ_SUITE_ABILITY = "wp-codebox/run-fuzz-suite" as const
 
 export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   agentTask: {
@@ -44,6 +48,10 @@ export const CODEBOX_PUBLIC_RUNTIME_ABILITIES = {
   },
   runtimePackage: {
     run: CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
+  },
+  wordpressRuntime: {
+    runWorkload: CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
+    runFuzzSuite: CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   },
 } as const
 
@@ -126,6 +134,11 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     frontendUrlInventory: WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
     restMatrix: WORDPRESS_REST_MATRIX_SCHEMA,
     restMatrixResult: WORDPRESS_REST_MATRIX_RESULT_SCHEMA,
+  },
+  wordpressRuntime: {
+    workloadRun: WORDPRESS_WORKLOAD_RUN_SCHEMA,
+    fuzzSuite: FUZZ_SUITE_SCHEMA,
+    fuzzSuiteResult: FUZZ_SUITE_RESULT_SCHEMA,
   },
 } as const
 

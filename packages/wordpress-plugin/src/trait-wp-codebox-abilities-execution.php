@@ -176,6 +176,8 @@ private static function fuzz_suite_target_step( array $case, array $target ): ar
 			$args = self::fuzz_suite_args_from_map( array( 'url' => $input['url'] ?? $input['path'] ?? $entrypoint, 'method' => $input['method'] ?? 'GET', 'headers-json' => $input['headers'] ?? null, 'body' => $input['body'] ?? null ) );
 		} elseif ( 'ability' === $kind ) {
 			$args = self::fuzz_suite_args_from_map( array( 'name' => $entrypoint, 'input' => $input['input'] ?? $input['payload'] ?? null ) );
+		} elseif ( 'runtime-action' === $kind ) {
+			return self::fuzz_suite_runtime_action_step( $input );
 		}
 	}
 	$command = match ( $kind ) {
@@ -185,6 +187,24 @@ private static function fuzz_suite_target_step( array $case, array $target ): ar
 		default => $entrypoint,
 	};
 	return array( 'command' => $command, 'args' => $args );
+}
+
+/** @param array<string,mixed> $input Runtime action input. @return array<string,mixed> */
+private static function fuzz_suite_runtime_action_step( array $input ): array {
+	$type = (string) ( $input['type'] ?? '' );
+	if ( 'rest_request' === $type ) {
+		return array(
+			'command' => 'wordpress.rest-request',
+			'args'    => self::fuzz_suite_args_from_map( array( 'path' => $input['path'] ?? $input['route'] ?? null, 'method' => $input['method'] ?? 'GET', 'params-json' => $input['params'] ?? null, 'headers-json' => $input['headers'] ?? null, 'body-json' => $input['bodyJson'] ?? $input['body_json'] ?? null ) ),
+		);
+	}
+	if ( 'wp_cli' === $type ) {
+		return array(
+			'command' => 'wordpress.wp-cli',
+			'args'    => self::fuzz_suite_args_from_map( array( 'command' => $input['command'] ?? null ) ),
+		);
+	}
+	return array( 'command' => 'wordpress.runtime-action', 'args' => self::fuzz_suite_args_from_map( array( 'type' => $type ) ) );
 }
 
 /** @param array<string,mixed> $values Values. @return string[] */

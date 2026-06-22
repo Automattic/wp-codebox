@@ -708,7 +708,7 @@ private static function fuzz_suite_target_schema(): array {
 	return array(
 		'type'       => 'object',
 		'properties' => array(
-			'kind'       => array( 'type' => 'string', 'enum' => array( 'ability', 'command', 'http', 'rest', 'runtime' ) ),
+			'kind'       => array( 'type' => 'string', 'enum' => array( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' ) ),
 			'id'         => array( 'type' => 'string' ),
 			'entrypoint' => array( 'type' => 'string' ),
 			'label'      => array( 'type' => 'string' ),
