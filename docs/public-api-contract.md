@@ -16,7 +16,9 @@ Use these package entrypoints from external integrations:
   artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
   this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
-  contract metadata used by CLI and orchestrator consumers.
+  contract metadata used by CLI and orchestrator consumers. Use
+  `runtimeContractManifest()` when a consumer needs Codebox-owned ability names
+  and schema identifiers without importing backend adapter bindings.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
   export-link, diagnostics, and partial-discovery helpers.
 - `@automattic/wp-codebox-core/recipe-builders`: typed recipe construction
@@ -49,6 +51,18 @@ ability has multiple registered names, new integrations should prefer the
 inspectable `meta.canonical_ability` value. Aliases stay registered for existing
 callers, but docs and schemas should describe the canonical Codebox-owned name
 first.
+
+The public runtime contract manifest currently publishes these Codebox-owned
+ability identifiers:
+
+- `wp-codebox/run-agent-task`
+- `wp-codebox/run-agent-task-batch`
+- `wp-codebox/run-agent-task-fanout`
+- `wp-codebox/run-runtime-package`
+
+It also includes compatibility aliases for the `run-sandbox-task` family. The
+manifest intentionally excludes backend handler bindings such as upstream Agents
+API ability names, Playground command handlers, and integration-specific filters.
 
 WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 `wp-codebox/*` ability ids for ability-oriented calls. Runtime adapters may use
@@ -150,6 +164,8 @@ Runtime package callers use `wp-codebox/run-runtime-package` or
 `wp-codebox/runtime-package-artifact-declaration/v1`; output projections use
 `wp-codebox/runtime-package-output-projection/v1`. These contracts are generic
 Codebox runtime/package shapes for consumers using the runtime package API.
+Consumers can read the same ids from `runtimeContractManifest().schemas` and
+`runtimeContractManifest().abilities`.
 
 Agent task callers use the `wp-codebox/run-agent-task` ability or
 `wp-codebox agent-task-run --json`. Caller-facing results normalize to
@@ -183,6 +199,7 @@ the `wp_codebox_runner_workspace_backend` filter. The stable backend config is
 workspace operation names. Public callers use the Codebox ability ids and
 request/result schemas while the adapter config maps each operation to its
 integration-provided backend ability. See `docs/runner-workspace-backend-contract.md`.
+Those adapter bindings are not part of `runtimeContractManifest()`.
 
 ## Internal Entry Point
 
