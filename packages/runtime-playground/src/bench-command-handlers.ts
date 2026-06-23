@@ -442,6 +442,11 @@ function wp_codebox_bench_rest_db_query_profile_case_step(array $request_case, i
     return $step;
 }
 
+function wp_codebox_bench_rest_db_query_profile_filter_query($query, array &$captured_queries) {
+    $captured_queries[] = array((string) $query, 0.0, 'query filter');
+    return $query;
+}
+
 function wp_codebox_bench_run_rest_db_query_profiler_step(array $step): array {
     global $wpdb;
 
@@ -480,9 +485,25 @@ function wp_codebox_bench_run_rest_db_query_profiler_step(array $step): array {
                 continue;
             }
             $case_step = wp_codebox_bench_rest_db_query_profile_case_step($request_case, $index);
+            $captured_queries = array();
+            $query_filter = static function ($query) use (&$captured_queries) {
+                return wp_codebox_bench_rest_db_query_profile_filter_query($query, $captured_queries);
+            };
             $before = is_array($wpdb->queries ?? null) ? count($wpdb->queries) : 0;
-            $payload = wp_codebox_bench_run_rest_request_step($case_step);
+            if (function_exists('add_filter')) {
+                add_filter('query', $query_filter, PHP_INT_MAX, 1);
+            }
+            try {
+                $payload = wp_codebox_bench_run_rest_request_step($case_step);
+            } finally {
+                if (function_exists('remove_filter')) {
+                    remove_filter('query', $query_filter, PHP_INT_MAX);
+                }
+            }
             $after_queries = is_array($wpdb->queries ?? null) ? array_slice($wpdb->queries, $before) : array();
+            if (empty($after_queries) && !empty($captured_queries)) {
+                $after_queries = $captured_queries;
+            }
             $summary = wp_codebox_bench_rest_db_query_profile_summary($after_queries);
             $samples = array();
             foreach (array_slice($after_queries, 0, $sample_limit) as $query) {
