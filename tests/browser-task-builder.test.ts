@@ -208,7 +208,10 @@ $GLOBALS['wp_codebox_test_transients']['wp_codebox_browser_prepared_runtime_' . 
 	'input_hash' => str_repeat( 'b', 64 ),
 	'blueprint' => array( 'steps' => array( array( 'step' => 'login' ) ) ),
 );
+$available_blueprint_ref = WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => 'runtime-cache-key', 'input_hash' => str_repeat( 'b', 64 ), 'status' => 'hit' ) );
 $hydrated_blueprint = WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( array( 'ref' => $blueprint_ref['ref'] ) );
+$missing_blueprint = WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( array( 'ref' => 'prepared:missing-runtime:' . str_repeat( 'e', 64 ) ) );
+$missing_blueprint_data = is_wp_error( $missing_blueprint ) ? $missing_blueprint->data : array();
 
 $recipe_dto = WP_Codebox_Browser_Task_Builder::browser_recipe_dto( array(
 	'schema' => 'wp-codebox/workspace-recipe/v1',
@@ -239,7 +242,7 @@ $recipe_dto = WP_Codebox_Browser_Task_Builder::browser_recipe_dto( array(
 	),
 ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'nested_primary_product_session' => $nested_primary_product_session, 'preview_lease_status' => $preview_lease_status, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint, 'recipe_dto' => $recipe_dto ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'nested_primary_product_session' => $nested_primary_product_session, 'preview_lease_status' => $preview_lease_status, 'blueprint_ref' => $blueprint_ref, 'available_blueprint_ref' => $available_blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint, 'missing_blueprint_data' => $missing_blueprint_data, 'recipe_dto' => $recipe_dto ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -309,6 +312,8 @@ assert.equal(result.product_session.preview_boot.contained_site.site_id, "runtim
 assert.equal(result.product_session.preview_boot.blueprint_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
 assert.equal(result.product_session.preview_boot.blueprint_ref_dto.schema, "wp-codebox/browser-blueprint-ref/v1")
 assert.equal(result.product_session.preview_boot.blueprint_ref_dto.ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
+assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydration_status, "expired")
+assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydratable, false)
 assert.equal(result.product_session.preview_boot.blueprint_ref_dto.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
 assert.equal(result.product_session.preview_boot.preview.schema, "wp-codebox/preview-lease/v1")
 assert.equal(result.product_session.preview_boot.preview.preview_public_url, "https://preview.example.test")
@@ -335,8 +340,19 @@ assert.equal(JSON.stringify(result.product_session).includes("must-not-leak"), f
 assert.equal(JSON.stringify(result.product_session).includes('"blueprint":'), false)
 assert.equal(result.blueprint_ref.schema, "wp-codebox/browser-blueprint-ref/v1")
 assert.equal(result.blueprint_ref.ref, `prepared:runtime-cache-key:${"b".repeat(64)}`)
+assert.equal(result.blueprint_ref.hydration_status, "expired")
+assert.equal(result.blueprint_ref.hydratable, false)
+assert.equal(result.available_blueprint_ref.hydration_status, "available")
+assert.equal(result.available_blueprint_ref.hydratable, true)
 assert.equal(result.hydrated_blueprint.schema, "wp-codebox/browser-blueprint-hydration/v1")
 assert.equal(result.hydrated_blueprint.blueprint.steps[0].step, "login")
+assert.equal(result.missing_blueprint_data.status, 409)
+assert.equal(result.missing_blueprint_data.schema, "wp-codebox/browser-blueprint-ref-miss/v1")
+assert.equal(result.missing_blueprint_data.action, "reload-required")
+assert.equal(result.missing_blueprint_data.reload_required, true)
+assert.equal(result.missing_blueprint_data.requires_materialization, true)
+assert.equal(result.missing_blueprint_data.blueprint_ref.hydration_status, "expired")
+assert.equal(result.missing_blueprint_data.blueprint_ref.hydratable, false)
 assert.equal(result.recipe_dto.schema, "wp-codebox/browser-recipe-dto/v1")
 assert.equal(result.recipe_dto.source_schema, "wp-codebox/workspace-recipe/v1")
 assert.equal(result.recipe_dto.runtime.backend, "wordpress-playground")

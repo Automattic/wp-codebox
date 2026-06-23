@@ -15,6 +15,7 @@
 		'browser-runtime:invoke-result',
 		'playground:run-php',
 		'playground:run-recipe',
+		'browser-runtime:validate-materialization',
 		'wordpress:operation',
 		'filesystem:write-file',
 		'filesystem:ensure-directory',
@@ -341,6 +342,7 @@
 		normalizeBrowserRunResult,
 		browserArtifactPersistenceRef,
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
+		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
 		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
@@ -349,6 +351,7 @@
 			browserSessionRecipe: api.browserSessionRecipe,
 			ensureDirectory: api.ensureDirectory,
 			installTheme: api.installTheme,
+			validateBrowserRuntimeMaterialization: api.validateBrowserRuntimeMaterialization,
 			aggregateFanoutOutputs: api.aggregateFanoutOutputs,
 			preparedBrowserRuntimeContract: api.preparedBrowserRuntimeContract,
 			preparedBrowserRuntimeStatus: api.preparedBrowserRuntimeStatus,
@@ -1486,6 +1489,171 @@ try {
 		};
 	};
 
+	const runtimeDependencySpecs = ( session, field ) => {
+		const runtime = session?.runtime && typeof session.runtime === 'object' ? session.runtime : {};
+		return Array.isArray( runtime[ field ] ) ? runtime[ field ].filter( isPlainObject ) : [];
+	};
+
+	const runtimeMaterializationRequest = ( session ) => ( {
+		schema: 'wp-codebox/browser-runtime-materialization-request/v1',
+		plugins: runtimeDependencySpecs( session, 'plugins' ).map( ( plugin ) => ( {
+			slug: String( plugin.slug || '' ),
+			targetFolderName: String( plugin.targetFolderName || plugin.slug || '' ),
+			activate: plugin.activate !== false,
+			required: plugin.required !== false,
+		} ) ).filter( ( plugin ) => plugin.slug || plugin.targetFolderName ),
+		mu_plugins: runtimeDependencySpecs( session, 'mu_plugins' ).map( ( plugin ) => ( {
+			slug: String( plugin.slug || '' ),
+			file: String( plugin.file || ( plugin.slug ? `${ plugin.slug }.php` : '' ) ),
+			required: plugin.required !== false,
+		} ) ).filter( ( plugin ) => plugin.file || plugin.slug ),
+	} );
+
+	const runtimeMaterializationProbePhp = ( request ) => `<?php
+if ( ! defined( 'ABSPATH' ) ) {
+	require_once '/wordpress/wp-load.php';
+}
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+$request = json_decode( base64_decode( '${ base64Json( request ) }' ), true );
+$request = is_array( $request ) ? $request : array();
+$active_plugins = array_map( 'strval', (array) get_option( 'active_plugins', array() ) );
+$mu_plugin_files = array_map( 'basename', glob( WPMU_PLUGIN_DIR . '/*.php' ) ?: array() );
+$dependencies = array();
+$diagnostics = array();
+
+foreach ( is_array( $request['plugins'] ?? null ) ? $request['plugins'] : array() as $plugin ) {
+	$slug = sanitize_key( (string) ( $plugin['slug'] ?? '' ) );
+	$target_folder = sanitize_key( (string) ( $plugin['targetFolderName'] ?? $slug ) );
+	$activate = false !== ( $plugin['activate'] ?? true );
+	$required = false !== ( $plugin['required'] ?? true );
+	$installed_plugins = '' !== $target_folder ? get_plugins( '/' . $target_folder ) : array();
+	$plugin_file = '';
+	foreach ( array_keys( $installed_plugins ) as $file ) {
+		$plugin_file = $target_folder . '/' . $file;
+		break;
+	}
+	$installed = '' !== $plugin_file;
+	$active = $installed && in_array( $plugin_file, $active_plugins, true );
+	$status = $installed ? ( $activate ? ( $active ? 'active' : 'inactive' ) : 'installed' ) : 'missing';
+	$code = '';
+	if ( $required && ! $installed ) {
+		$code = 'wp_codebox_browser_runtime_plugin_missing';
+	} elseif ( $required && $activate && ! $active ) {
+		$code = 'wp_codebox_browser_runtime_plugin_inactive';
+	}
+	$dependency = array_filter( array(
+		'kind' => 'plugin',
+		'slug' => $slug,
+		'targetFolderName' => $target_folder,
+		'required' => $required,
+		'activate' => $activate,
+		'status' => $status,
+		'pluginFile' => $plugin_file,
+		'evidence' => array(
+			'installed' => $installed,
+			'active' => $active,
+		),
+		'code' => $code,
+	), static fn( $value ) => '' !== $value && null !== $value );
+	$dependencies[] = $dependency;
+	if ( '' !== $code ) {
+		$diagnostics[] = array(
+			'code' => $code,
+			'severity' => 'error',
+			'kind' => 'plugin',
+			'slug' => $slug,
+			'targetFolderName' => $target_folder,
+			'pluginFile' => $plugin_file,
+			'message' => 'Required browser runtime plugin is not active.',
+		);
+	}
+}
+
+foreach ( is_array( $request['mu_plugins'] ?? null ) ? $request['mu_plugins'] : array() as $plugin ) {
+	$slug = sanitize_key( (string) ( $plugin['slug'] ?? '' ) );
+	$file = basename( (string) ( $plugin['file'] ?? ( '' !== $slug ? $slug . '.php' : '' ) ) );
+	$required = false !== ( $plugin['required'] ?? true );
+	$materialized = '' !== $file && in_array( $file, $mu_plugin_files, true );
+	$status = $materialized ? 'materialized' : 'missing';
+	$code = $required && ! $materialized ? 'wp_codebox_browser_runtime_mu_plugin_missing' : '';
+	$dependencies[] = array_filter( array(
+		'kind' => 'mu-plugin',
+		'slug' => $slug,
+		'file' => $file,
+		'required' => $required,
+		'status' => $status,
+		'evidence' => array( 'materialized' => $materialized ),
+		'code' => $code,
+	), static fn( $value ) => '' !== $value && null !== $value );
+	if ( '' !== $code ) {
+		$diagnostics[] = array(
+			'code' => $code,
+			'severity' => 'error',
+			'kind' => 'mu-plugin',
+			'slug' => $slug,
+			'file' => $file,
+			'message' => 'Required browser runtime mu-plugin is not materialized.',
+		);
+	}
+}
+
+$success = empty( $diagnostics );
+echo wp_json_encode( array(
+	'schema' => 'wp-codebox/browser-runtime-materialization-result/v1',
+	'success' => $success,
+	'status' => $success ? 'ready' : 'failed',
+	'dependencies' => $dependencies,
+	'diagnostics' => $diagnostics,
+	'error' => $success ? null : array(
+		'code' => 'wp_codebox_browser_runtime_materialization_failed',
+		'message' => 'Browser runtime dependencies failed to materialize.',
+		'diagnostics' => $diagnostics,
+	),
+) );
+`;
+
+	const validateBrowserRuntimeMaterialization = async ( client, session, options = {} ) => {
+		const request = runtimeMaterializationRequest( session );
+		if ( request.plugins.length === 0 && request.mu_plugins.length === 0 ) {
+			return {
+				schema: 'wp-codebox/browser-runtime-materialization-result/v1',
+				success: true,
+				status: 'skipped',
+				dependencies: [],
+				diagnostics: [],
+				error: null,
+			};
+		}
+
+		const result = await runPhpRequest( client, {
+			...options,
+			code: runtimeMaterializationProbePhp( request ),
+			name: options.name || 'codebox-runtime-materialization-probe',
+			expectJson: true,
+		} );
+
+		if ( result?.schema === 'wp-codebox/browser-runtime-materialization-result/v1' ) {
+			return result;
+		}
+
+		return {
+			schema: 'wp-codebox/browser-runtime-materialization-result/v1',
+			success: false,
+			status: 'failed',
+			dependencies: [],
+			diagnostics: [ {
+				code: 'wp_codebox_browser_runtime_validation_invalid_response',
+				severity: 'error',
+				message: 'Browser runtime materialization probe returned an invalid response.',
+				response: result ?? null,
+			} ],
+			error: {
+				code: 'wp_codebox_browser_runtime_validation_invalid_response',
+				message: 'Browser runtime materialization probe returned an invalid response.',
+			},
+		};
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -1552,6 +1720,20 @@ try {
 
 	const runBrowserSessionRecipe = async ( client, session, taskPayload, options = {} ) => {
 		const payload = taskPayload === undefined ? ( session.task_payload ?? session.task_input ?? {} ) : taskPayload;
+		if ( options.validateRuntime !== false ) {
+			const materialization = await validateBrowserRuntimeMaterialization( client, session, {
+				...options,
+				name: options.runtimeValidationName || 'codebox-browser-session-runtime',
+			} );
+			if ( ! materialization.success ) {
+				throw runtimeError(
+					'browser_runtime_materialization',
+					materialization?.error?.code || 'wp_codebox_browser_runtime_materialization_failed',
+					materialization?.error?.message || 'Browser runtime dependencies failed to materialize.',
+					materialization
+				);
+			}
+		}
 		const recipe = browserSessionRecipe( session );
 		const executableRecipe = payload?.agent_bundles && Array.isArray( payload.agent_bundles ) && payload.agent_bundles.length
 			? {
@@ -1912,6 +2094,7 @@ echo wp_json_encode( array(
 		runWordPressOperation,
 		selectPreparedBrowserBlueprint,
 		setFrontendAdminBarVisible,
+		validateBrowserRuntimeMaterialization,
 		writeFile,
 		writeReviewFile,
 	};

@@ -544,6 +544,7 @@ final class WP_Codebox_Browser_Task_Builder {
 		$input_hash = strtolower( trim( (string) ( $prepared['input_hash'] ?? $prepared['hash'] ?? '' ) ) );
 		$ref        = '' !== $cache_key && preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ? 'prepared:' . $cache_key . ':' . $input_hash : '';
 		$endpoint   = '' !== $ref ? self::browser_blueprint_ref_hydration_endpoint( $ref ) : '';
+		$hydration  = self::browser_blueprint_ref_hydration_status( $cache_key, $input_hash );
 
 		return array_filter(
 			array(
@@ -554,12 +555,14 @@ final class WP_Codebox_Browser_Task_Builder {
 				'cache_key'       => $cache_key,
 				'input_hash'      => $input_hash,
 				'status'          => (string) ( $prepared['status'] ?? '' ),
+				'hydration_status' => $hydration['status'],
+				'hydratable'      => $hydration['hydratable'],
 				'hydrator_ability' => 'wp-codebox/hydrate-browser-blueprint-ref',
 				'endpoint'        => $endpoint,
 				'hydration_endpoint' => $endpoint,
 				'session_id'      => (string) ( $session['session']['id'] ?? $session['session_id'] ?? '' ),
 			),
-			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+			static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
 		);
 	}
 
@@ -633,7 +636,11 @@ final class WP_Codebox_Browser_Task_Builder {
 		$transient_key = self::prepared_runtime_transient_key( $cache_key, $input_hash );
 		$artifact      = function_exists( 'get_transient' ) ? get_transient( $transient_key ) : false;
 		if ( ! is_array( $artifact ) || 'wp-codebox/browser-prepared-runtime-artifact/v1' !== ( $artifact['schema'] ?? '' ) || $input_hash !== (string) ( $artifact['input_hash'] ?? '' ) || ! is_array( $artifact['blueprint'] ?? null ) ) {
-			return new WP_Error( 'wp_codebox_browser_blueprint_ref_not_found', 'Browser blueprint ref could not be hydrated from the prepared runtime cache.', array( 'status' => 404, 'ref' => '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash ) );
+			return new WP_Error(
+				'wp_codebox_browser_blueprint_ref_not_found',
+				'Browser blueprint ref could not be hydrated from the prepared runtime cache. Create a new browser session to materialize the site again.',
+				self::browser_blueprint_ref_miss_contract( $cache_key, $input_hash, '' !== $ref ? $ref : 'prepared:' . $cache_key . ':' . $input_hash )
+			);
 		}
 
 		return array(
@@ -1037,6 +1044,42 @@ final class WP_Codebox_Browser_Task_Builder {
 
 	private static function prepared_runtime_transient_key( string $cache_key, string $input_hash ): string {
 		return 'wp_codebox_browser_prepared_runtime_' . substr( hash( 'sha256', $cache_key . ':' . $input_hash ), 0, 24 );
+	}
+
+	/** @return array{status:string,hydratable:bool} */
+	private static function browser_blueprint_ref_hydration_status( string $cache_key, string $input_hash ): array {
+		if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
+			return array( 'status' => 'invalid', 'hydratable' => false );
+		}
+
+		if ( ! function_exists( 'get_transient' ) ) {
+			return array( 'status' => 'unknown', 'hydratable' => true );
+		}
+
+		$artifact = get_transient( self::prepared_runtime_transient_key( $cache_key, $input_hash ) );
+		if ( is_array( $artifact ) && 'wp-codebox/browser-prepared-runtime-artifact/v1' === ( $artifact['schema'] ?? '' ) && $input_hash === (string) ( $artifact['input_hash'] ?? '' ) && is_array( $artifact['blueprint'] ?? null ) ) {
+			return array( 'status' => 'available', 'hydratable' => true );
+		}
+
+		return array( 'status' => 'expired', 'hydratable' => false );
+	}
+
+	/** @return array<string,mixed> */
+	private static function browser_blueprint_ref_miss_contract( string $cache_key, string $input_hash, string $ref ): array {
+		return array(
+			'status'                   => 409,
+			'success'                  => false,
+			'schema'                   => 'wp-codebox/browser-blueprint-ref-miss/v1',
+			'ref'                      => $ref,
+			'cache_key'                => $cache_key,
+			'input_hash'               => $input_hash,
+			'action'                   => 'reload-required',
+			'open_mode'                => 'materialize',
+			'reload_required'          => true,
+			'requires_materialization' => true,
+			'reason'                  => 'prepared-runtime-not-found-or-expired',
+			'blueprint_ref'            => self::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'expired' ) ),
+		);
 	}
 
 	/** @param array<string,mixed> $input Ability or caller input. */
