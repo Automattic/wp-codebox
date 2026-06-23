@@ -7,6 +7,8 @@ export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "run
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
 export type FuzzSuiteDiagnosticSeverity = "error" | "warning" | "info"
 export type FuzzSuiteRunnerMode = "php-in-process" | "runtime-backed" | (string & {})
+export type FuzzSuiteResetMode = "none" | "checkpoint-per-case" | "restore-snapshot"
+export type FuzzSuiteResetStatus = "not-required" | "passed" | "failed" | "unsupported"
 
 export interface FuzzSuiteTargetRef {
   kind: FuzzSuiteTargetKind
@@ -20,7 +22,31 @@ export interface FuzzSuiteCase {
   id: string
   target?: FuzzSuiteTargetRef
   input?: unknown
+  resetPolicy?: FuzzSuiteResetPolicy
+  reset_policy?: FuzzSuiteResetPolicy | string
   description?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteResetPolicy {
+  mode: FuzzSuiteResetMode | (string & {})
+  checkpointName?: string
+  checkpoint_name?: string
+  snapshotRef?: string
+  snapshot_ref?: string
+  fixtureRefs?: string[]
+  fixture_refs?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteCaseResetResult {
+  mode: FuzzSuiteResetMode | (string & {})
+  status: FuzzSuiteResetStatus
+  checkpointName?: string
+  snapshotRef?: string
+  fixtureRefs?: string[]
+  artifactRefs?: FuzzSuiteArtifactRef[]
+  diagnostics?: FuzzSuiteDiagnostic[]
   metadata?: Record<string, unknown>
 }
 
@@ -29,6 +55,8 @@ export interface FuzzSuiteContract {
   id: string
   version?: string
   target?: FuzzSuiteTargetRef
+  resetPolicy?: FuzzSuiteResetPolicy
+  reset_policy?: FuzzSuiteResetPolicy | string
   cases: FuzzSuiteCase[]
   metadata?: Record<string, unknown>
 }
@@ -96,6 +124,7 @@ export interface FuzzSuiteCaseResult {
   status: FuzzSuiteCaseStatus
   success: boolean
   target?: FuzzSuiteTargetRef
+  reset?: FuzzSuiteCaseResetResult
   skipReason?: string
   diagnostics: FuzzSuiteDiagnostic[]
   artifactRefs?: FuzzSuiteArtifactRef[]
@@ -145,6 +174,8 @@ export function fuzzSuiteContract(input: {
   id: string
   version?: string
   target?: FuzzSuiteTargetRef
+  resetPolicy?: FuzzSuiteResetPolicy
+  reset_policy?: FuzzSuiteResetPolicy | string
   cases?: FuzzSuiteCase[]
   metadata?: Record<string, unknown>
 }): FuzzSuiteContract {
@@ -153,6 +184,8 @@ export function fuzzSuiteContract(input: {
     id: input.id,
     version: input.version,
     target: input.target,
+    resetPolicy: input.resetPolicy,
+    reset_policy: input.reset_policy,
     cases: input.cases ?? [],
     metadata: input.metadata,
   })
@@ -168,7 +201,7 @@ export function fuzzSuiteResultEnvelope(input: {
 }): FuzzSuiteResultEnvelope {
   const cases = (input.cases ?? []).map(normalizeCaseResult)
   const diagnostics = [...(input.diagnostics ?? [])]
-  const artifactRefs = dedupeArtifactRefs([...(input.artifactRefs ?? []), ...cases.flatMap((item) => item.artifactRefs ?? [])])
+  const artifactRefs = dedupeArtifactRefs([...(input.artifactRefs ?? []), ...cases.flatMap((item) => [...(item.artifactRefs ?? []), ...(item.reset?.artifactRefs ?? [])])])
   const summary = summarizeFuzzCases(cases)
   const coverageSummary = input.coverageSummary ?? summarizeFuzzCoverage({ discovered: fuzzSuiteDiscoveredCount(input.suite, cases.length), cases })
   const contractDiagnostics = fuzzSuiteContractDiagnostics({ suite: input.suite, cases, artifactRefs, coverageSummary })
@@ -202,6 +235,44 @@ export function fuzzSuiteRequiredRunnerCapabilities(suite: FuzzSuiteContract): s
     ...stringArrayField(metadata, "requiredCapabilities"),
     ...stringArrayField(metadata, "required_capabilities"),
   ])
+}
+
+export function fuzzSuiteCaseResetPolicy(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase): FuzzSuiteResetPolicy {
+  const candidate = fuzzCase.resetPolicy ?? fuzzCase.reset_policy ?? suite.resetPolicy ?? suite.reset_policy
+  return normalizeFuzzSuiteResetPolicy(candidate)
+}
+
+export function normalizeFuzzSuiteResetPolicy(input: unknown): FuzzSuiteResetPolicy {
+  if (typeof input === "string") {
+    return normalizeFuzzSuiteResetPolicyRecord({ mode: input })
+  }
+  if (isRecord(input)) {
+    return normalizeFuzzSuiteResetPolicyRecord(input)
+  }
+  return { mode: "none" }
+}
+
+export function fuzzSuiteResetPolicyDiagnostics(input: unknown, caseId?: string): FuzzSuiteDiagnostic[] {
+  const diagnostics: FuzzSuiteDiagnostic[] = []
+  const policy = normalizeFuzzSuiteResetPolicy(input)
+  if (!isFuzzSuiteResetMode(policy.mode)) {
+    diagnostics.push({
+      severity: "error",
+      code: "fuzz_suite_reset_policy_invalid_mode",
+      caseId,
+      message: `Fuzz suite reset policy mode is not supported: ${String(policy.mode)}.`,
+      metadata: { supportedModes: ["none", "checkpoint-per-case", "restore-snapshot"] },
+    })
+  }
+  if (policy.mode === "restore-snapshot" && !policy.snapshotRef && !policy.snapshot_ref) {
+    diagnostics.push({
+      severity: "error",
+      code: "fuzz_suite_reset_policy_snapshot_ref_required",
+      caseId,
+      message: "Fuzz suite reset policy mode restore-snapshot requires snapshotRef or snapshot_ref.",
+    })
+  }
+  return diagnostics
 }
 
 export function summarizeFuzzCases(cases: readonly Pick<FuzzSuiteCaseResult, "status">[]): FuzzSuiteSummary {
@@ -252,11 +323,29 @@ function normalizeCaseResult(input: FuzzSuiteCaseResult): FuzzSuiteCaseResult {
     status: input.status,
     success: input.status === "passed",
     target: input.target,
+    reset: input.reset,
     skipReason: input.status === "skipped" ? input.skipReason ?? input.diagnostics?.[0]?.code ?? input.diagnostics?.[0]?.message : undefined,
     diagnostics: input.diagnostics ?? [],
     artifactRefs: input.artifactRefs,
     metadata: input.metadata,
   })
+}
+
+function normalizeFuzzSuiteResetPolicyRecord(input: Record<string, unknown>): FuzzSuiteResetPolicy {
+  const fixtureRefs = [...stringArrayField(input, "fixtureRefs"), ...stringArrayField(input, "fixture_refs")]
+  return stripUndefined({
+    mode: typeof input.mode === "string" ? input.mode : "none",
+    checkpointName: typeof input.checkpointName === "string" ? input.checkpointName : undefined,
+    checkpoint_name: typeof input.checkpoint_name === "string" ? input.checkpoint_name : undefined,
+    snapshotRef: typeof input.snapshotRef === "string" ? input.snapshotRef : undefined,
+    snapshot_ref: typeof input.snapshot_ref === "string" ? input.snapshot_ref : undefined,
+    fixtureRefs: fixtureRefs.length > 0 ? fixtureRefs : undefined,
+    metadata: recordField(input, "metadata"),
+  }) as FuzzSuiteResetPolicy
+}
+
+function isFuzzSuiteResetMode(mode: string): mode is FuzzSuiteResetMode {
+  return mode === "none" || mode === "checkpoint-per-case" || mode === "restore-snapshot"
 }
 
 function fuzzSuiteDiscoveredCount(suite: { id: string; version?: string } | FuzzSuiteContract, fallback: number): number {
