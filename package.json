@@ -24,6 +24,10 @@
       "types": "./packages/runtime-core/dist/run-results.d.ts",
       "import": "./packages/runtime-core/dist/run-results.js"
     },
+    "./core/php-snippets": {
+      "types": "./packages/runtime-core/dist/runtime-php-snippets.d.ts",
+      "import": "./packages/runtime-core/dist/runtime-php-snippets.js"
+    },
     "./recipe-builders": {
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"

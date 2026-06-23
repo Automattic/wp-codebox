@@ -25,6 +25,8 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/run-results`: task, command, browser, artifact,
   recipe, and fuzz result DTO helpers for orchestrators that need result shapes
   without importing the broad root or full public facade.
+- `@automattic/wp-codebox-core/php-snippets`: PHP snippet helpers used by
+  runtime backend packages that need to compose Codebox lifecycle/preload PHP.
 - `@automattic/wp-codebox-core/recipe-builders`: typed recipe construction
   helpers.
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
@@ -116,7 +118,7 @@ ability names, schemas, and facades to callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,
-`./recipe-builders`, `./run-results`, `./agent-task-recipe`,
+`./core/php-snippets`, `./recipe-builders`, `./run-results`, `./agent-task-recipe`,
 `./runtime-presets`, `./playground/public`, and `./cli/recipe-secret-env` for
 local consumers in this repo. It intentionally does not mirror the monorepo-only
 `./internals` helper entrypoint.
