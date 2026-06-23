@@ -371,7 +371,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::fuzz_suite_result_schema(),
 					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner_capabilities' => self::fuzz_suite_runner_capabilities_contract(), 'runner_capabilities_schema' => self::fuzz_runner_capabilities_schema() ),
 				)
 			);
 

@@ -1,5 +1,5 @@
 import { stripUndefined } from "./object-utils.js"
-import { RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
+import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
@@ -115,7 +115,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       suite,
       cases: suite.cases.map((fuzzCase) => ({ id: fuzzCase.id, status: "skipped", success: false, target: fuzzCase.target ?? suite.target, skipReason: diagnostic.code, diagnostics: [diagnostic] })),
       diagnostics: [diagnostic],
-      metadata: stripUndefined({ ...options.metadata, sourceSchema: suite.schema, runner: "wp-codebox/fuzz-suite-runner/v1", runnerCapabilities }),
+      metadata: stripUndefined({ ...options.metadata, sourceSchema: suite.schema, runner: "wp-codebox/fuzz-suite-runner/v1", runnerCapabilities: fuzzRunnerCapabilitiesContract(runnerCapabilities, suite) }),
     })
   }
 
@@ -312,7 +312,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       ...options.metadata,
       sourceSchema: suite.schema,
       runner: "wp-codebox/fuzz-suite-runner/v1",
-      runnerCapabilities,
+      runnerCapabilities: fuzzRunnerCapabilitiesContract(runnerCapabilities, suite),
     }),
   })
 }
@@ -755,14 +755,13 @@ function normalizeFuzzSuiteRunnerCapabilities(input: FuzzSuiteRunOptions["runner
     return RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES
   }
   if (Array.isArray(input)) {
-    return { mode: "runtime-backed", capabilities: [...input], targetKinds: DEFAULT_SUPPORTED_TARGET_KINDS }
+    return { schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA, mode: "runtime-backed", capabilities: [...input], targetKinds: DEFAULT_SUPPORTED_TARGET_KINDS, unsupportedRequiredCapabilities: [] }
   }
   return input as FuzzSuiteRunnerCapabilities
 }
 
 function missingRequiredFuzzSuiteCapabilities(suite: FuzzSuiteContract, runnerCapabilities: FuzzSuiteRunnerCapabilities): string[] {
-  const available = new Set([...runnerCapabilities.capabilities, ...runnerCapabilities.targetKinds.map((kind) => `target:${kind}`), ...(runnerCapabilities.runtimeActionTypes ?? []).map((type) => `runtime-action:${type}`)])
-  return fuzzSuiteRequiredRunnerCapabilities(suite).filter((capability) => !available.has(capability))
+  return unsupportedRequiredFuzzRunnerCapabilities(suite, runnerCapabilities)
 }
 
 function requiredCoverageDiagnostics(requireCoverage: boolean | undefined, suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase, diagnostics: readonly FuzzSuiteDiagnostic[]): FuzzSuiteDiagnostic[] {

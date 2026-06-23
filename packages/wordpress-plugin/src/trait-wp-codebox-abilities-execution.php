@@ -56,7 +56,7 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 	}
 
 	$cases = is_array( $input['cases'] ?? null ) ? $input['cases'] : array();
-	$runner_capabilities = self::fuzz_suite_php_runner_capabilities();
+	$runner_capabilities = self::fuzz_suite_php_runner_capabilities( $input );
 	$missing_capabilities = self::fuzz_suite_missing_required_capabilities( $input, $runner_capabilities );
 	if ( self::fuzz_suite_require_coverage( $input ) && ! empty( $missing_capabilities ) ) {
 		$diagnostic = self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported', 'Fuzz suite requires runner capabilities that are not available in PHP in-process mode.', array( 'missing_capabilities' => $missing_capabilities, 'runner_mode' => $runner_capabilities['mode'] ) );
@@ -122,12 +122,29 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 	);
 }
 
-/** @return array<string,mixed> */
-private static function fuzz_suite_php_runner_capabilities(): array {
+/** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
+private static function fuzz_suite_php_runner_capabilities( array $suite = array() ): array {
+	return self::fuzz_suite_runner_capabilities_contract( $suite );
+}
+
+/** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
+private static function fuzz_suite_runner_capabilities_contract( array $suite = array() ): array {
+	$capabilities = array(
+		'schema'                          => 'wp-codebox/fuzz-runner-capabilities/v1',
+		'mode'                            => 'php-in-process',
+		'capabilities'                    => array( 'target:ability', 'target:http', 'target:rest' ),
+		'targetKinds'                     => array( 'ability', 'http', 'rest' ),
+		'unsupportedRequiredCapabilities' => array(),
+	);
+	if ( ! empty( $suite ) ) {
+		$capabilities['unsupportedRequiredCapabilities'] = self::fuzz_suite_missing_required_capabilities( $suite, $capabilities );
+	}
 	return array(
-		'mode'         => 'php-in-process',
-		'capabilities' => array( 'target:ability', 'target:http', 'target:rest' ),
-		'targetKinds'  => array( 'ability', 'http', 'rest' ),
+		'schema'                          => $capabilities['schema'],
+		'mode'                            => $capabilities['mode'],
+		'capabilities'                    => $capabilities['capabilities'],
+		'targetKinds'                     => $capabilities['targetKinds'],
+		'unsupportedRequiredCapabilities' => $capabilities['unsupportedRequiredCapabilities'],
 	);
 }
 
@@ -143,6 +160,12 @@ private static function fuzz_suite_missing_required_capabilities( array $suite, 
 	foreach ( (array) ( $runner_capabilities['targetKinds'] ?? array() ) as $kind ) {
 		$available[ 'target:' . (string) $kind ] = true;
 	}
+	foreach ( (array) ( $runner_capabilities['runtimeActionTypes'] ?? array() ) as $type ) {
+		$available[ 'runtime-action:' . (string) $type ] = true;
+	}
+	foreach ( (array) ( $runner_capabilities['commands'] ?? array() ) as $command ) {
+		$available[ 'command:' . (string) $command ] = true;
+	}
 	return array_values( array_filter( $required, static fn( string $capability ): bool => ! isset( $available[ $capability ] ) ) );
 }
 
@@ -156,6 +179,9 @@ private static function fuzz_suite_required_capabilities( array $suite ): array 
 	}
 	foreach ( is_array( $required['runtimeActionTypes'] ?? null ) ? $required['runtimeActionTypes'] : ( is_array( $required['runtime_action_types'] ?? null ) ? $required['runtime_action_types'] : array() ) as $type ) {
 		$capabilities[] = 'runtime-action:' . (string) $type;
+	}
+	foreach ( ( is_array( $required['commands'] ?? null ) ? $required['commands'] : array() ) as $command ) {
+		$capabilities[] = 'command:' . (string) $command;
 	}
 	return array_values( array_unique( array_filter( $capabilities, static fn( string $capability ): bool => '' !== $capability ) ) );
 }
