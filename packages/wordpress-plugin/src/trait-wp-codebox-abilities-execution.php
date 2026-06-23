@@ -1702,7 +1702,6 @@ public static function create_browser_playground_session( array $input ): array|
 	$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
 	$prepared_runtime = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $blueprint, $playground );
 	$runtime['prepared_runtime'] = $prepared_runtime;
-	$blueprint       = self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint );
 	$contained_site  = self::browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'ready' );
 	$artifacts       = self::browser_artifact_files( $input );
 	if ( is_wp_error( $artifacts ) ) {
