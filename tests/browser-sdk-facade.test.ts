@@ -35,6 +35,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:invoke-result",
     "playground:run-php",
     "playground:run-recipe",
+    "browser-runtime:validate-materialization",
     "wordpress:operation",
     "filesystem:write-file",
     "filesystem:ensure-directory",
@@ -49,7 +50,9 @@ assert.deepEqual(plain(api.v1.info()), {
 
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
+assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
+assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
   code: "demo_error",
@@ -91,6 +94,42 @@ assert.deepEqual(plain(browserRun.artifactRefs), [
   { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
 ])
 assert.equal(api.v1.browserArtifactPersistenceRef(browserRun.result).schema, "wp-codebox/browser-artifact-persistence/ref/v1")
+
+const runtimeSession = {
+  runtime: {
+    plugins: [ { slug: "demo-plugin", targetFolderName: "demo-plugin", activate: true } ],
+    mu_plugins: [ { slug: "demo-mu", file: "demo-mu.php" } ],
+  },
+}
+const readyRuntime = {
+  schema: "wp-codebox/browser-runtime-materialization-result/v1",
+  success: true,
+  status: "ready",
+  dependencies: [ { kind: "plugin", slug: "demo-plugin", status: "active" } ],
+  diagnostics: [],
+  error: null,
+}
+const readyClient = { run: async () => JSON.stringify(readyRuntime) }
+assert.deepEqual(plain(await api.v1.validateBrowserRuntimeMaterialization(readyClient, runtimeSession)), readyRuntime)
+
+const failedRuntime = {
+  schema: "wp-codebox/browser-runtime-materialization-result/v1",
+  success: false,
+  status: "failed",
+  dependencies: [ { kind: "plugin", slug: "demo-plugin", status: "missing", code: "wp_codebox_browser_runtime_plugin_missing" } ],
+  diagnostics: [ { code: "wp_codebox_browser_runtime_plugin_missing", severity: "error", slug: "demo-plugin" } ],
+  error: { code: "wp_codebox_browser_runtime_materialization_failed", message: "Browser runtime dependencies failed to materialize." },
+}
+const failedClient = { run: async () => JSON.stringify(failedRuntime) }
+await assert.rejects(
+  () => api.v1.runBrowserSessionRecipe(failedClient, runtimeSession, {}),
+  (error: any) => {
+    assert.equal(error.code, "wp_codebox_browser_runtime_materialization_failed")
+    assert.equal(error.phase, "browser_runtime_materialization")
+    assert.deepEqual(plain(error.data), failedRuntime)
+    return true
+  },
+)
 
 const canonicalBrowserRun = api.v1.normalizeBrowserRunResult({
   schema: "wp-codebox/browser-run-result/v1",
