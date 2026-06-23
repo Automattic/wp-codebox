@@ -198,6 +198,34 @@ $recipe_run_php_steps = array_values( array_filter( $recipe_steps, static fn( ar
 expect( count( $recipe_run_php_steps ) >= 1, 'Expected browser recipe Blueprint to include the runner runPHP step.' );
 expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to execute the requested invocation.' );
 
+$blueprint_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_blueprint_with_runtime' );
+$local_package_blueprint = $blueprint_method->invoke(
+	null,
+	array( 'steps' => array() ),
+	array(
+		'plugins'    => array(
+			array(
+				'slug'                    => 'runtime-smoke',
+				'url'                     => 'data:application/zip;base64,' . base64_encode( 'PK' ),
+				'activate'                => true,
+				'local_package'           => true,
+				'local_package_fetch_url' => 'http://localhost/runtime-smoke.zip',
+				'sha256'                  => hash( 'sha256', 'PK' ),
+			),
+		),
+		'mu_plugins' => array(),
+		'themes'     => array(),
+		'bootstrap'  => array(),
+	),
+	array()
+);
+$local_package_steps = is_array( $local_package_blueprint['steps'] ?? null ) ? $local_package_blueprint['steps'] : array();
+$local_package_run_php_steps = array_values( array_filter( $local_package_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) ) );
+$local_package_install_plugin_steps = array_values( array_filter( $local_package_steps, static fn( array $step ): bool => 'installPlugin' === ( $step['step'] ?? '' ) ) );
+expect( 1 === count( $local_package_run_php_steps ), 'Expected local package data URL to use a runPHP installer step.' );
+expect( 0 === count( $local_package_install_plugin_steps ), 'Expected local package data URL to avoid installPlugin.' );
+expect( str_contains( (string) ( $local_package_run_php_steps[0]['code'] ?? '' ), 'activate_plugin' ), 'Expected local package runPHP installer to activate the plugin.' );
+
 $function_recipe = $recipe_method->invoke(
 	null,
 	array(
