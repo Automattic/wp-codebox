@@ -307,6 +307,7 @@ private static function execute_fuzz_suite_rest_route_inventory( array $args, ar
 	if ( ! function_exists( 'rest_get_server' ) ) {
 		require_once ABSPATH . WPINC . '/rest-api.php';
 	}
+	self::refresh_fuzz_suite_rest_server();
 	$server = rest_get_server();
 	$routes = $server ? $server->get_routes() : array();
 	$namespace_filter = array_values( array_filter( array_map( 'trim', explode( ',', (string) ( $args['namespaces'] ?? '' ) ) ) ) );
@@ -753,6 +754,7 @@ private static function execute_fuzz_suite_plugin_activation( array $args, array
 			return array( 'status' => 'failed', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_plugin_activation_failed', $result->get_error_message(), array( 'case_id' => $case_id, 'plugin' => $plugin ) ) );
 		}
 	}
+	self::refresh_fuzz_suite_rest_server();
 	$observation['plugin'] = $plugin;
 	return array( 'status' => 'passed', 'observation' => $observation );
 }
@@ -1050,11 +1052,14 @@ private static function ensure_fuzz_suite_rest_routes_registered(): void {
 		return;
 	}
 	$registered = true;
+	self::refresh_fuzz_suite_rest_server();
+}
+
+private static function refresh_fuzz_suite_rest_server(): void {
 	if ( function_exists( 'rest_get_server' ) ) {
+		global $wp_rest_server;
+		$wp_rest_server = null;
 		rest_get_server();
-	}
-	if ( function_exists( 'do_action' ) ) {
-		do_action( 'rest_api_init' );
 	}
 }
 
