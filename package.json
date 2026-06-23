@@ -75,7 +75,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli",
+    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
