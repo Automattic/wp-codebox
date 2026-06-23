@@ -358,6 +358,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 			'wordpress.http-request' => self::execute_fuzz_suite_http_request( $args, $observation, $case_id ),
 			'wordpress.trace-browser-coverage' => self::execute_fuzz_suite_browser_coverage( $args, $case, $suite, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
+			'wordpress.summarize-fuzz-artifacts' => self::execute_fuzz_suite_artifact_summary( $args, $case, $suite, $observation, $case_id ),
 			'wordpress.collect-workload-result' => self::execute_fuzz_suite_collect_artifact( $args, $case, $observation ),
 			'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => self::execute_fuzz_suite_workload_step( $args, $command, $case, $observation, $case_id ),
 			default => self::fuzz_suite_step_unsupported( $command, $observation, $case_id ),
@@ -958,6 +959,50 @@ private static function execute_fuzz_suite_collect_artifact( array $args, array 
 	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs );
 }
 
+/** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_artifact_summary( array $args, array $case, array $suite, array $observation, string $case_id ): array {
+	$refs = self::fuzz_suite_declared_artifact_refs( $case );
+	if ( empty( $refs ) ) {
+		return array( 'status' => 'skipped', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_summary_artifacts_missing', 'Fuzz artifact summary requires declared artifact paths.', array( 'case_id' => $case_id ) ) );
+	}
+
+	$inputs = is_array( $case['inputs'] ?? null ) ? $case['inputs'] : array();
+	$surfaces = array_values( array_map( 'strval', is_array( $inputs['observation_surfaces'] ?? null ) ? $inputs['observation_surfaces'] : array() ) );
+	$budget_keys = array_values( array_map( 'strval', is_array( $inputs['budget_keys'] ?? null ) ? $inputs['budget_keys'] : array() ) );
+	$hotspot_classes = array_values( array_map( 'strval', is_array( $inputs['hotspot_classes'] ?? null ) ? $inputs['hotspot_classes'] : array() ) );
+	$skip_reason_codes = array_values( array_map( 'strval', is_array( $inputs['skip_reason_codes'] ?? null ) ? $inputs['skip_reason_codes'] : array() ) );
+	$summary = array(
+		'schema'                    => 'wp-codebox/fuzz-artifact-summary/v1',
+		'command'                   => 'wordpress.summarize-fuzz-artifacts',
+		'caseId'                    => $case_id,
+		'suiteId'                   => (string) ( $suite['id'] ?? '' ),
+		'surface'                   => (string) ( $args['surface'] ?? '' ),
+		'include'                   => self::csv_fuzz_suite_arg( (string) ( $args['include'] ?? '' ) ),
+		'generatedAt'               => gmdate( 'Y-m-d\TH:i:s\Z' ),
+		'product_budget_comparison' => array_fill_keys( $budget_keys, array( 'status' => 'not_measured', 'observed' => null ) ),
+		'hotspot_classification'    => array_fill_keys( $hotspot_classes, 0 ),
+		'query_attribution_summary' => array( 'source' => (string) ( $inputs['query_attribution_source'] ?? '' ), 'observed' => false ),
+		'connected_state_caveats'   => array_values( array_map( 'strval', is_array( $inputs['states'] ?? null ) ? $inputs['states'] : array() ) ),
+		'surface_rollups'           => array_fill_keys( $surfaces, array( 'status' => 'declared', 'artifact_inputs' => 0 ) ),
+		'budget_status'             => empty( $budget_keys ) ? 'not_declared' : 'not_measured',
+		'artifact_inputs'           => $surfaces,
+		'skip_reason_rollups'       => array_fill_keys( $skip_reason_codes, 0 ),
+		'metadata'                  => array( 'runner' => 'wp-codebox/fuzz-suite-runner/v1' ),
+	);
+
+	$written = array();
+	foreach ( $refs as $ref ) {
+		$result = self::write_fuzz_suite_declared_artifact( $summary, (string) ( $ref['path'] ?? '' ), 'summary' );
+		if ( is_wp_error( $result ) ) {
+			return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', $result->code, $result->get_error_message(), array( 'case_id' => $case_id ) ) );
+		}
+		$written[] = $result;
+	}
+
+	$observation['artifact_count'] = count( $written );
+	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs );
+}
+
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
 private static function execute_fuzz_suite_workload_step( array $args, string $command, array $case, array $observation, string $case_id ): array {
 	$path = (string) ( $args['path'] ?? $args['manifest'] ?? '' );
@@ -1351,6 +1396,27 @@ private static function write_fuzz_suite_workload_artifact( array $report, array
 	$encoded = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 	if ( ! is_string( $encoded ) || false === file_put_contents( $absolute, $encoded . "\n" ) ) {
 		return new WP_Error( 'wp_codebox_fuzz_workload_artifact_write_failed', 'JSON workload could not write the artifact JSON file.' );
+	}
+	return array( 'path' => $relative_path, 'bytes' => strlen( $encoded ) + 1 );
+}
+
+/** @param array<string,mixed> $report Report. @return array{path:string,bytes:int}|WP_Error */
+private static function write_fuzz_suite_declared_artifact( array $report, string $relative_path, string $label ): array|WP_Error {
+	if ( '' === $relative_path || str_starts_with( $relative_path, '/' ) || str_contains( $relative_path, '..' ) || str_contains( $relative_path, "\0" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_' . $label . '_artifact_path_invalid', 'Fuzz artifact summary requires safe relative declared artifact paths.' );
+	}
+
+	$upload_dir = function_exists( 'wp_upload_dir' ) ? wp_upload_dir( null, false ) : array();
+	$base_dir = is_array( $upload_dir ) && ! empty( $upload_dir['basedir'] ) ? (string) $upload_dir['basedir'] : rtrim( WP_CONTENT_DIR, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'uploads';
+	$absolute = rtrim( $base_dir, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
+	$directory = dirname( $absolute );
+	if ( ! self::ensure_fuzz_suite_directory( $directory ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_' . $label . '_artifact_directory_failed', 'Fuzz artifact summary could not create the artifact directory.' );
+	}
+
+	$encoded = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+	if ( ! is_string( $encoded ) || false === file_put_contents( $absolute, $encoded . "\n" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_' . $label . '_artifact_write_failed', 'Fuzz artifact summary could not write the artifact JSON file.' );
 	}
 	return array( 'path' => $relative_path, 'bytes' => strlen( $encoded ) + 1 );
 }
