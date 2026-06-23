@@ -416,6 +416,8 @@ assert( is_file( WP_CONTENT_DIR . '/uploads/summary/performance-summary.json' ) 
 $summary_report = json_decode( file_get_contents( WP_CONTENT_DIR . '/uploads/summary/performance-summary.json' ), true );
 assert( 'wp-codebox/fuzz-artifact-summary/v1' === $summary_report['schema'] );
 assert( 'not_measured' === $summary_report['budget_status'] );
+assert( 'wp-codebox/fuzz-artifact-summary/v1' === $result['cases'][3]['artifactRefs'][0]['payload']['schema'] );
+assert( 'not_measured' === $result['cases'][3]['artifactRefs'][0]['payload']['budget_status'] );
 assert( 'runtime-action-rest' === $result['cases'][4]['id'] );
 assert( 'passed' === $result['cases'][4]['status'] );
 assert( 'wordpress.rest-request' === $result['cases'][4]['metadata']['observations'][0]['command'] );

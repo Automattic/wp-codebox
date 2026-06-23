@@ -991,16 +991,18 @@ private static function execute_fuzz_suite_artifact_summary( array $args, array 
 	);
 
 	$written = array();
+	$refs_with_payload = array();
 	foreach ( $refs as $ref ) {
 		$result = self::write_fuzz_suite_declared_artifact( $summary, (string) ( $ref['path'] ?? '' ), 'summary' );
 		if ( is_wp_error( $result ) ) {
 			return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', $result->code, $result->get_error_message(), array( 'case_id' => $case_id ) ) );
 		}
 		$written[] = $result;
+		$refs_with_payload[] = array_merge( $ref, array( 'payload' => $summary ) );
 	}
 
 	$observation['artifact_count'] = count( $written );
-	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs );
+	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs_with_payload );
 }
 
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
@@ -1298,9 +1300,10 @@ private static function dedupe_fuzz_suite_artifact_refs( array $refs ): array {
 	foreach ( $refs as $ref ) {
 		$key = (string) ( $ref['kind'] ?? '' ) . ':' . (string) ( $ref['path'] ?? '' );
 		if ( isset( $seen[ $key ] ) ) {
+			$output[ $seen[ $key ] ] = array_merge( $output[ $seen[ $key ] ], $ref );
 			continue;
 		}
-		$seen[ $key ] = true;
+		$seen[ $key ] = count( $output );
 		$output[] = $ref;
 	}
 	return $output;
