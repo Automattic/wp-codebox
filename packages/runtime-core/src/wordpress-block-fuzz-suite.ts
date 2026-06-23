@@ -1,7 +1,7 @@
 import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook } from "./fuzz-coverage-plan-contracts.js"
 import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
-import type { WordPressBlockEditorTargetDiscovery, WordPressBlockTypeDescriptor, WordPressEditorPostTypeDescriptor } from "./wordpress-runtime-discovery-contracts.js"
+import type { WordPressBlockAttributeDescriptor, WordPressBlockEditorTargetDiscovery, WordPressBlockTypeDescriptor, WordPressEditorPostTypeDescriptor } from "./wordpress-runtime-discovery-contracts.js"
 
 export interface WordPressBlockFuzzSuiteOptions {
   id?: string
@@ -96,34 +96,40 @@ export function wordpressBlockDiscoveryToCoveragePlan(discovery: WordPressBlockE
 }
 
 function serverRenderCase(block: WordPressBlockTypeDescriptor): FuzzSuiteCase {
+  const attributes = blockAttributeSamples(block)
+  const sampleKind = Object.keys(attributes).length ? "sample-attributes" : "empty-attributes"
+
   return {
-    id: `block-${caseIdPart(block.name)}-server-render-empty-attributes`,
+    id: `block-${caseIdPart(block.name)}-server-render-${sampleKind}`,
     target: { kind: "runtime", entrypoint: "wordpress.run-php" },
     input: {
       args: [
-        `code=${serverRenderPhp(block.name)}`,
+        `code=${serverRenderPhp(block.name, attributes)}`,
         "bootstrap=wordpress",
       ],
     },
-    description: `Render ${block.name} through render_block with empty attributes.`,
-    metadata: blockCaseMetadata(block, "server-render", { emptyAttributes: {} }),
+    description: `Render ${block.name} through render_block with ${sampleKind.replace("-", " ")}.`,
+    metadata: blockCaseMetadata(block, "server-render", { attributes }),
   }
 }
 
 function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor, capture: readonly string[]): FuzzSuiteCase {
+  const attributes = blockAttributeSamples(block)
+  const sampleKind = Object.keys(attributes).length ? "sample-attributes" : "empty-attributes"
+
   return {
-    id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-empty-attributes`,
+    id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-${sampleKind}`,
     target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
     input: {
       args: [
         "target=post-new",
         `post-type=${postType.name}`,
-        `steps-json=${JSON.stringify([{ kind: "insertBlock", name: block.name, attributes: {} }, { kind: "inspectState" }])}`,
+        `steps-json=${JSON.stringify([{ kind: "insertBlock", name: block.name, attributes }, { kind: "inspectState" }])}`,
         `capture=${capture.join(",")}`,
       ],
     },
-    description: `Insert ${block.name} into a new ${postType.name} editor canvas with empty attributes.`,
-    metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {}, editorPostType: postType.name }),
+    description: `Insert ${block.name} into a new ${postType.name} editor canvas with ${sampleKind.replace("-", " ")}.`,
+    metadata: blockCaseMetadata(block, "editor-insert", { attributes, editorPostType: postType.name }),
   }
 }
 
@@ -185,8 +191,46 @@ function selectEditorPostType(postTypes: readonly WordPressEditorPostTypeDescrip
   return postTypes.find((postType) => postType.name === "post") ?? postTypes[0]
 }
 
-function serverRenderPhp(blockName: string): string {
-  return `$block = array('blockName' => ${JSON.stringify(blockName)}, 'attrs' => array(), 'innerBlocks' => array(), 'innerHTML' => '', 'innerContent' => array()); $rendered = render_block($block); if (!is_string($rendered)) { exit(1); }`
+function blockAttributeSamples(block: WordPressBlockTypeDescriptor): Record<string, unknown> {
+  return Object.fromEntries(block.attributes.flatMap((attribute) => {
+    const sample = blockAttributeSample(attribute, block.exampleAttributes?.[attribute.name])
+    return sample === undefined ? [] : [[attribute.name, sample]]
+  }))
+}
+
+function blockAttributeSample(attribute: WordPressBlockAttributeDescriptor, example: unknown): unknown {
+  if (attribute.defaultPresent) {
+    return attribute.default
+  }
+  if (attribute.enum?.length) {
+    return attribute.enum[0]
+  }
+  if (example !== undefined) {
+    return example
+  }
+
+  const type = Array.isArray(attribute.type) ? attribute.type.find((candidate) => candidate !== "null") : attribute.type
+  if (type === "string") {
+    return "sample"
+  }
+  if (type === "integer" || type === "number") {
+    return 1
+  }
+  if (type === "boolean") {
+    return true
+  }
+  if (type === "array") {
+    return []
+  }
+  if (type === "object") {
+    return {}
+  }
+
+  return undefined
+}
+
+function serverRenderPhp(blockName: string, attributes: Record<string, unknown>): string {
+  return `$attributes = json_decode(${JSON.stringify(JSON.stringify(attributes))}, true); if (!is_array($attributes)) { exit(1); } $block = array('blockName' => ${JSON.stringify(blockName)}, 'attrs' => $attributes, 'innerBlocks' => array(), 'innerHTML' => '', 'innerContent' => array()); $rendered = render_block($block); if (!is_string($rendered)) { exit(1); }`
 }
 
 function caseIdPart(value: string): string {

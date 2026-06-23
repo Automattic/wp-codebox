@@ -283,7 +283,33 @@ function runtime_discovery_blocks(): array {
     if (class_exists('WP_Block_Type_Registry')) {
         foreach (WP_Block_Type_Registry::get_instance()->get_all_registered() as $name => $block_type) {
             $supports = is_object($block_type) && is_array($block_type->supports ?? null) ? $block_type->supports : array();
-            $blocks[] = array('name' => (string) $name, 'title' => (string) ($block_type->title ?? ''), 'category' => (string) ($block_type->category ?? ''), 'supportsInserter' => !isset($supports['inserter']) || $supports['inserter'] !== false, 'attributes' => array_values(array_map('strval', array_keys((array) ($block_type->attributes ?? array())))));
+            $attributes = array();
+            foreach ((array) ($block_type->attributes ?? array()) as $attribute_name => $attribute_schema) {
+                $attribute_schema = is_array($attribute_schema) ? $attribute_schema : array();
+                $descriptor = array('name' => (string) $attribute_name);
+                if (isset($attribute_schema['type'])) {
+                    $descriptor['type'] = is_array($attribute_schema['type']) ? array_values(array_map('strval', $attribute_schema['type'])) : (string) $attribute_schema['type'];
+                }
+                if (isset($attribute_schema['enum']) && is_array($attribute_schema['enum'])) {
+                    $descriptor['enum'] = array_map('runtime_discovery_block_attribute_value', array_slice(array_values($attribute_schema['enum']), 0, 25));
+                }
+                if (array_key_exists('default', $attribute_schema)) {
+                    $descriptor['defaultPresent'] = true;
+                    $descriptor['default'] = runtime_discovery_block_attribute_value($attribute_schema['default']);
+                }
+                $attributes[] = $descriptor;
+            }
+
+            $example_attributes = null;
+            if (isset($block_type->example) && is_array($block_type->example) && isset($block_type->example['attributes']) && is_array($block_type->example['attributes'])) {
+                $example_attributes = $block_type->example['attributes'];
+            }
+
+            $descriptor = array('name' => (string) $name, 'title' => (string) ($block_type->title ?? ''), 'category' => (string) ($block_type->category ?? ''), 'supportsInserter' => !isset($supports['inserter']) || $supports['inserter'] !== false, 'attributes' => $attributes);
+            if ($example_attributes !== null) {
+                $descriptor['exampleAttributes'] = runtime_discovery_block_attribute_value($example_attributes);
+            }
+            $blocks[] = $descriptor;
         }
     }
 
@@ -294,6 +320,24 @@ function runtime_discovery_blocks(): array {
     }
 
     return array('payload' => array('schema' => 'wp-codebox/wordpress-block-editor-target-discovery/v1', 'blocks' => $blocks, 'editorPostTypes' => $post_types), 'diagnostics' => array());
+}
+
+function runtime_discovery_block_attribute_value($value, int $depth = 0) {
+    if (is_string($value)) {
+        return substr($value, 0, 200);
+    }
+    if (is_int($value) || is_float($value) || is_bool($value) || $value === null) {
+        return $value;
+    }
+    if (!is_array($value) || $depth >= 2) {
+        return null;
+    }
+
+    $bounded = array();
+    foreach (array_slice($value, 0, 20, true) as $key => $item) {
+        $bounded[$key] = runtime_discovery_block_attribute_value($item, $depth + 1);
+    }
+    return $bounded;
 }
 
 $runtime_discovery_result = array(

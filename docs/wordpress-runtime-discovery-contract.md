@@ -27,12 +27,18 @@ The inventory commands expose narrower public contracts for fuzzing target disco
 - `wordpress.inventory-database` returns `wp-codebox/wordpress-db-inventory/v1` with the database prefix, table descriptors, bounded column descriptors, indexes, row/byte totals, and best-effort table status. It does not read row data.
 - `wordpress.frontend-url-inventory` returns `wp-codebox/wordpress-frontend-url-inventory/v1` with home URL, rewrite-rule URL seeds, rewrite rules, and public query vars. This is a seed list, not a crawler result.
 
+Block descriptors include registered block name, title, category, inserter support, bounded generic attribute schema descriptors, and optional example attributes. Attribute descriptors expose only product-neutral JSON-schema-like fields used for conservative fuzz sample generation: `name`, `type`, `enum` capped to 25 values, `defaultPresent`, and `default`.
+
+`wordpressBlockDiscoveryToFuzzSuite()` generates small valid attribute samples from block attribute defaults, enum values, example attributes, and simple primitive types (`string`, `integer`, `number`, `boolean`, `array`, and `object`). Server-render and editor-insert cases use generated attributes when available and fall back to empty attributes when no safe sample can be derived.
+
 REST route descriptors keep route selection product-neutral. Each route includes:
 
 - `route`, `namespace`, `methods`, and `argNames` for compact target selection.
 - `endpoints[]` with `methods`, `permission`, and `args` descriptors. Permission descriptors report only `public`, `callback`, or `none` plus a callback type such as `function`, `method`, `closure`, or `invokable`; callback names are not part of the public contract.
 - `args[]` with bounded JSON-schema-like fields: `name`, `required`, `type`, `format`, `enum` capped to 25 values, stripped/truncated `description`, `defaultPresent`, `validateCallback`, and `sanitizeCallback`.
 - optional route `schema` with bounded `title`, `type`, and up to 100 property names.
+
+`restRouteInventoryToFuzzSuite()` and `restRouteInventoryToCoveragePlan()` generate concrete executable cases for safe REST methods (`GET`, `HEAD`, and `OPTIONS`) when required route arguments can be represented from the discovered descriptors. Path tokens such as `(?P<id>[\d]+)` are replaced with conservative samples, and required non-path args are passed as request params using enum or type-derived samples. Mutating methods remain planned and require an explicit safe-fixture opt-in before execution.
 
 ## REST Matrix Contract
 

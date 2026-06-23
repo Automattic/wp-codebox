@@ -229,7 +229,16 @@ export interface WordPressBlockTypeDescriptor {
   title: string
   category: string
   supportsInserter: boolean
-  attributes: string[]
+  attributes: WordPressBlockAttributeDescriptor[]
+  exampleAttributes?: Record<string, unknown>
+}
+
+export interface WordPressBlockAttributeDescriptor {
+  name: string
+  type?: string | string[]
+  enum?: Array<string | number | boolean | null>
+  defaultPresent?: boolean
+  default?: unknown
 }
 
 export interface WordPressEditorPostTypeDescriptor {

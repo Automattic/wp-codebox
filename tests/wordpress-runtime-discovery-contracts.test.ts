@@ -295,4 +295,37 @@ const importPage = adminDiscovered.admin?.pages.find((page) => page.menuSlug ===
 assert.equal(importPage?.canonicalUrl, "https://example.com/wp-admin/tools.php?page=demo-import")
 assert.equal(importPage?.canAccess, false)
 
+const blockDiscoveryPhp = runtimeDiscoveryPhpCode(["blocks"]).replace(/^<\?php\n/, "")
+const blocksDiscovered = await runPhpJson<WordPressRuntimeDiscoveryResult>(`
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function admin_url( $path = '' ) { return 'https://example.com/wp-admin/' . ltrim( $path, '/' ); }
+function get_post_types( $args, $output ) {
+    return array( 'post' => (object) array( 'label' => 'Posts', 'rest_base' => 'posts' ) );
+}
+class WP_Block_Type_Registry {
+    public static function get_instance() { return new self(); }
+    public function get_all_registered() {
+        return array(
+            'demo/card' => (object) array(
+                'title' => 'Card',
+                'category' => 'widgets',
+                'supports' => array( 'inserter' => true ),
+                'attributes' => array(
+                    'title' => array( 'type' => 'string', 'default' => 'Hello' ),
+                    'tone' => array( 'type' => 'string', 'enum' => array( 'light', 'dark' ) ),
+                ),
+                'example' => array( 'attributes' => array( 'title' => 'Example title' ) ),
+            ),
+        );
+    }
+}
+${blockDiscoveryPhp}
+`)
+
+const block = blocksDiscovered.blocks?.blocks[0]
+assert.equal(block?.name, "demo/card")
+assert.deepEqual(block?.attributes[0], { name: "title", type: "string", defaultPresent: true, default: "Hello" })
+assert.deepEqual(block?.attributes[1], { name: "tone", type: "string", enum: ["light", "dark"] })
+assert.deepEqual(block?.exampleAttributes, { title: "Example title" })
+
 console.log("wordpress runtime discovery contracts ok")

@@ -1,7 +1,7 @@
 import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook, type FuzzCoveragePlanReason } from "./fuzz-coverage-plan-contracts.js"
 import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
-import type { WordPressAdminPageDescriptor, WordPressAdminPageInventory, WordPressFrontendUrlDescriptor, WordPressFrontendUrlInventory, WordPressRestRouteDescriptor, WordPressRestRouteEndpointDescriptor, WordPressRestRouteInventory } from "./wordpress-runtime-discovery-contracts.js"
+import type { WordPressAdminPageDescriptor, WordPressAdminPageInventory, WordPressFrontendUrlDescriptor, WordPressFrontendUrlInventory, WordPressRestRouteArgDescriptor, WordPressRestRouteDescriptor, WordPressRestRouteEndpointDescriptor, WordPressRestRouteInventory } from "./wordpress-runtime-discovery-contracts.js"
 
 export interface WordPressInventoryFuzzSuiteOptions {
   id?: string
@@ -61,7 +61,7 @@ const FRONTEND_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
 const REST_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
   id: "wordpress.rest-route-parameters",
   label: "WordPress REST route parameter generator",
-  description: "Placeholder hook for consumers that can generate concrete REST path/query/body parameters from discovered route args.",
+  description: "Generates conservative concrete REST path and query parameters from discovered safe-method route args.",
 }
 
 const REST_MUTATING_OPT_IN_HOOK: FuzzCoveragePlanParameterGenerationHook = {
@@ -160,22 +160,23 @@ function restRouteFuzzSuiteCases(route: WordPressRestRouteDescriptor, options: W
 function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number): FuzzSuiteCase {
   const normalizedMethod = method.toUpperCase()
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
-  const concreteRoute = !route.route.includes("(?P<") && requiredArgs.length === 0
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
-  const executable = safeMethod && concreteRoute
+  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : undefined
+  const executable = concreteInput !== undefined
   const safety = stripUndefined({
     executable,
     safeMethod,
     planned: !executable,
     reason: executable ? undefined : safeMethod ? "route_requires_discovered_parameters" : "mutating_rest_method_requires_explicit_opt_in",
     requiredArgs: requiredArgs.length ? requiredArgs : undefined,
+    generatedParameters: concreteInput?.generatedParameters,
   })
 
   return stripUndefined({
     id: `rest-${slugify(normalizedMethod)}-${slugify(route.route)}${endpointIndex === undefined ? "" : `-${endpointIndex}`}`,
     target: executable ? REST_REQUEST_TARGET : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
-    input: executable ? stripUndefined({ method: normalizedMethod, path: route.route, user: options.user, session: options.session }) : undefined,
+    input: concreteInput ? restInputForCase(concreteInput) : undefined,
     metadata: stripUndefined({
       source: "wordpress.rest-route-inventory",
       route: route.route,
@@ -199,9 +200,9 @@ function restRouteCoveragePlanItems(route: WordPressRestRouteDescriptor, options
 function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number): FuzzCoveragePlanItem {
   const normalizedMethod = method.toUpperCase()
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
-  const concreteRoute = !route.route.includes("(?P<") && requiredArgs.length === 0
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
-  const executable = safeMethod && concreteRoute
+  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : undefined
+  const executable = concreteInput !== undefined
   const reason = executable ? undefined : restRouteUntestedReason(safeMethod, requiredArgs)
   const parameterGeneration = executable ? undefined : stripUndefined({
     hook: safeMethod ? REST_PARAMETER_GENERATION_HOOK.id : REST_MUTATING_OPT_IN_HOOK.id,
@@ -212,7 +213,7 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
     id: restRouteCaseId(route.route, normalizedMethod, endpointIndex),
     target: executable ? REST_REQUEST_TARGET : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
-    input: executable ? stripUndefined({ method: normalizedMethod, path: route.route, user: options.user, session: options.session }) : undefined,
+    input: concreteInput ? restInputForCase(concreteInput) : undefined,
     reason,
     parameterGeneration,
     metadata: stripUndefined({
@@ -222,8 +223,120 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
       method: normalizedMethod,
       permission: endpoint?.permission,
       argNames: route.argNames,
+      generatedParameters: concreteInput?.generatedParameters,
     }),
   })
+}
+
+interface ConcreteRestInput {
+  method: string
+  path: string
+  params?: Record<string, unknown>
+  user?: string
+  session?: string
+  generatedParameters?: Record<string, unknown>
+}
+
+function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor): ConcreteRestInput | undefined {
+  const args = endpoint?.args ?? []
+  const pathArgNames = restRoutePathArgNames(route.route)
+  const pathSamples: Record<string, unknown> = {}
+  const querySamples: Record<string, unknown> = {}
+  let path = route.route
+
+  for (const name of pathArgNames) {
+    const arg = args.find((candidate) => candidate.name === name)
+    const sample = restArgSample(arg, restRoutePathPattern(route.route, name))
+    if (sample === undefined || typeof sample === "object") {
+      return undefined
+    }
+    pathSamples[name] = sample
+    path = path.replace(restRoutePathTokenPattern(name), encodeURIComponent(String(sample)))
+  }
+
+  for (const arg of args) {
+    if (!arg.required || pathArgNames.includes(arg.name)) {
+      continue
+    }
+    const sample = restArgSample(arg)
+    if (sample === undefined) {
+      return undefined
+    }
+    querySamples[arg.name] = sample
+  }
+
+  const generatedParameters = stripUndefined({
+    path: Object.keys(pathSamples).length ? pathSamples : undefined,
+    params: Object.keys(querySamples).length ? querySamples : undefined,
+  })
+
+  return stripUndefined({
+    method,
+    path,
+    params: Object.keys(querySamples).length ? querySamples : undefined,
+    user: options.user,
+    session: options.session,
+    generatedParameters: Object.keys(generatedParameters).length ? generatedParameters : undefined,
+  })
+}
+
+function restInputForCase(input: ConcreteRestInput): Record<string, unknown> {
+  return stripUndefined({ method: input.method, path: input.path, params: input.params, user: input.user, session: input.session })
+}
+
+function restRoutePathArgNames(route: string): string[] {
+  return [...route.matchAll(/\(\?P<([^>]+)>[^)]+\)/g)].map((match) => match[1]).filter((name): name is string => Boolean(name))
+}
+
+function restRoutePathPattern(route: string, name: string): string | undefined {
+  return route.match(restRoutePathTokenPattern(name))?.[1]
+}
+
+function restRoutePathTokenPattern(name: string): RegExp {
+  return new RegExp(`\\(\\?P<${escapeRegExp(name)}>([^)]+)\\)`)
+}
+
+function restArgSample(arg: WordPressRestRouteArgDescriptor | undefined, pathPattern?: string): unknown {
+  if (arg?.enum?.length) {
+    return arg.enum[0]
+  }
+
+  const type = Array.isArray(arg?.type) ? arg?.type.find((candidate) => candidate !== "null") : arg?.type
+  if (type === "integer") {
+    return 1
+  }
+  if (type === "number") {
+    return 1
+  }
+  if (type === "boolean") {
+    return true
+  }
+  if (type === "array") {
+    return []
+  }
+  if (type === "object") {
+    return {}
+  }
+
+  if (arg?.format === "date-time") {
+    return "2000-01-01T00:00:00"
+  }
+  if (arg?.format === "date") {
+    return "2000-01-01"
+  }
+  if (arg?.format === "email") {
+    return "sample@example.com"
+  }
+
+  if (pathPattern && /\\d|\[0-9]|\[\\d]/.test(pathPattern)) {
+    return 1
+  }
+
+  return "sample"
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function restRouteUntestedReason(safeMethod: boolean, requiredArgs: string[]): FuzzCoveragePlanReason {

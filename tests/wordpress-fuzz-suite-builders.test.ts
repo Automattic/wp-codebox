@@ -22,6 +22,7 @@ const restInventory: WordPressRestRouteInventory = {
   routes: [
     { route: "/wp/v2/posts", namespace: "wp/v2", methods: ["GET", "POST"], argNames: [], endpoints: [{ methods: ["GET", "POST"], permission: { mode: "public" }, args: [] }] },
     { route: "/wp/v2/posts/(?P<id>[\\d]+)", namespace: "wp/v2", methods: ["GET"], argNames: ["id"], endpoints: [{ methods: ["GET"], permission: { mode: "callback", callbackType: "method" }, args: [{ name: "id", required: true, type: "integer" }] }] },
+    { route: "/demo/v1/search", namespace: "demo/v1", methods: ["GET"], argNames: ["kind"], endpoints: [{ methods: ["GET"], permission: { mode: "public" }, args: [{ name: "kind", required: true, type: "string", enum: ["post", "page"] }] }] },
   ],
   namespaces: ["wp/v2"],
   diagnostics: [],
@@ -32,25 +33,28 @@ assert.equal(restSuite.schema, "wp-codebox/fuzz-suite/v1")
 assert.equal(restSuite.metadata?.sourceSchema, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
 assert.deepEqual(restSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:rest"], targetKinds: ["rest"] })
 assert.equal(restSuite.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual(restSuite.coveragePlan?.summary.caseIds, ["rest-get-wp-v2-posts-0", "rest-post-wp-v2-posts-0", "rest-get-wp-v2-posts-p-id-d-0"])
-assert.equal(restSuite.cases.length, 3)
+assert.deepEqual(restSuite.coveragePlan?.summary.caseIds, ["rest-get-wp-v2-posts-0", "rest-post-wp-v2-posts-0", "rest-get-wp-v2-posts-p-id-d-0", "rest-get-demo-v1-search-0"])
+assert.equal(restSuite.cases.length, 4)
 assert.equal(restSuite.cases[0]?.target?.kind, "rest")
 assert.deepEqual(restSuite.cases[0]?.input, { method: "GET", path: "/wp/v2/posts", session: "admin" })
 assert.equal((restSuite.cases[0]?.metadata?.safety as Record<string, unknown>).executable, true)
 assert.equal(restSuite.cases[1]?.target?.kind, "rest-planned")
 assert.equal((restSuite.cases[1]?.metadata?.safety as Record<string, unknown>).reason, "mutating_rest_method_requires_explicit_opt_in")
-assert.equal(restSuite.cases[2]?.target?.kind, "rest-planned")
-assert.deepEqual((restSuite.cases[2]?.metadata?.safety as Record<string, unknown>).requiredArgs, ["id"])
+assert.equal(restSuite.cases[2]?.target?.kind, "rest")
+assert.deepEqual(restSuite.cases[2]?.input, { method: "GET", path: "/wp/v2/posts/1", session: "admin" })
+assert.deepEqual((restSuite.cases[2]?.metadata?.safety as Record<string, unknown>).generatedParameters, { path: { id: 1 } })
+assert.equal(restSuite.cases[3]?.target?.kind, "rest")
+assert.deepEqual(restSuite.cases[3]?.input, { method: "GET", path: "/demo/v1/search", params: { kind: "post" }, session: "admin" })
 
 const restCoveragePlan = restRouteInventoryToCoveragePlan(restInventory, { session: "admin" })
 assert.equal(restCoveragePlan.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual({ discovered: restCoveragePlan.summary.discovered, generated: restCoveragePlan.summary.generated, executable: restCoveragePlan.summary.executable, executed: restCoveragePlan.summary.executed, skipped: restCoveragePlan.summary.skipped, untested: restCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 1, executed: 0, skipped: 0, untested: 2 })
+assert.deepEqual({ discovered: restCoveragePlan.summary.discovered, generated: restCoveragePlan.summary.generated, executable: restCoveragePlan.summary.executable, executed: restCoveragePlan.summary.executed, skipped: restCoveragePlan.summary.skipped, untested: restCoveragePlan.summary.untested }, { discovered: 4, generated: 4, executable: 3, executed: 0, skipped: 0, untested: 1 })
 assert.deepEqual(restCoveragePlan.summary.targetIds, ["wordpress.rest-request"])
 assert.deepEqual(restCoveragePlan.executable[0]?.input, { method: "GET", path: "/wp/v2/posts", session: "admin" })
+assert.deepEqual(restCoveragePlan.executable[1]?.input, { method: "GET", path: "/wp/v2/posts/1", session: "admin" })
+assert.deepEqual(restCoveragePlan.executable[2]?.input, { method: "GET", path: "/demo/v1/search", params: { kind: "post" }, session: "admin" })
 assert.equal(restCoveragePlan.untested[0]?.reason?.code, "mutating_rest_method_requires_explicit_opt_in")
 assert.equal(restCoveragePlan.untested[0]?.parameterGeneration?.hook, "wordpress.rest-mutating-route-opt-in")
-assert.equal(restCoveragePlan.untested[1]?.reason?.code, "route_requires_discovered_parameters")
-assert.deepEqual(restCoveragePlan.untested[1]?.parameterGeneration?.requiredInputs, ["id"])
 assert.equal(restCoveragePlan.parameterGenerationHooks?.length, 2)
 
 const adminInventory: WordPressAdminPageInventory = {
