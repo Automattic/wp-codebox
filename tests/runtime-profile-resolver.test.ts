@@ -4,7 +4,7 @@ import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 const result = await runPhpJson<{
   default_error: { code: string; data: { errors: Array<{ code: string; profile: string }> } }
   input: {
-    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number }; capabilities: string[]; profiles: Array<{ id: string; aliases?: string[]; internal?: { provides?: string[] } }> } }
+    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number; provider_plugins: number }; capabilities: string[]; profiles: Array<{ id: string; aliases?: string[]; internal?: { provides?: string[] }; provenance?: { source?: string } }> } }
     runtime_profile: {
       schema: string
       capabilities: string[]
@@ -46,6 +46,14 @@ function apply_filters( $hook, $value, ...$args ) {
 			'capabilities' => array( 'workspace.runtime' ),
 			'requires' => array( 'content-agent-runtime' ),
 			'components' => array( array( 'slug' => 'workspace-runtime' ) ),
+		);
+		$value['provider-openai'] = array(
+			'id' => 'provider-openai',
+			'label' => 'OpenAI provider plugin',
+			'aliases' => array( 'openai', 'openai-provider' ),
+			'capabilities' => array( 'provider.openai' ),
+			'provider_plugins' => array( array( 'slug' => 'ai-provider-for-openai', 'activate' => true ) ),
+			'provenance' => array( 'source' => 'provider-package' ),
 		);
 	}
 	return $value;
@@ -112,7 +120,9 @@ assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playg
 assert.equal(result.input.runtime.resolved_profile.schema, "wp-codebox/runtime-profile-resolution/v1")
 assert.equal(result.input.runtime.resolved_profile.summary.profiles, 6)
 assert.deepEqual(result.input.runtime.resolved_profile.capabilities, ["wordpress.playground", "browser.preview", "codebox.agent-runtime", "agents.runtime", "content.runtime", "workspace.runtime", "provider.openai"])
+assert.equal(result.input.runtime.resolved_profile.summary.provider_plugins, 1)
 assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "workspace-runtime")?.aliases?.[0], "coding-agent-runtime")
+assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "provider-openai")?.provenance?.source, "provider-package")
 assert.equal(result.input.runtime.resolved_profile.profiles.some((profile) => profile.id === "agents-api"), false)
 assert.deepEqual(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.internal?.provides, ["codebox.agent-runtime"])
 assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.aliases?.includes("agents-api"), false)

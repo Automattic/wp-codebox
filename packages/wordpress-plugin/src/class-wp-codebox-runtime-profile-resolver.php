@@ -189,20 +189,6 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'requires'                => array( 'wordpress-playground' ),
 				'placement_capabilities' => array( 'codebox.agent-runtime' ),
 			),
-			'provider-openai' => array(
-				'id'               => 'provider-openai',
-				'label'            => 'OpenAI provider plugin',
-				'aliases'          => array( 'openai', 'openai-provider' ),
-				'capabilities'     => array( 'provider.openai' ),
-				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-openai', 'activate' => true ) ),
-			),
-			'provider-claude-code' => array(
-				'id'               => 'provider-claude-code',
-				'label'            => 'Claude Code provider plugin',
-				'aliases'          => array( 'claude-code', 'claude-code-provider' ),
-				'capabilities'     => array( 'provider.claude-code' ),
-				'provider_plugins' => array( array( 'slug' => 'ai-provider-for-claude-code', 'activate' => true ) ),
-			),
 		);
 
 		if ( function_exists( 'apply_filters' ) ) {
