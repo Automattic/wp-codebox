@@ -207,9 +207,12 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
     } else {
       mkdirSync(preparedSource, { recursive: true })
     }
-    const installedSource = installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
-    preserveExistingComposerVendor(join(copySource, sourceSubpath), installedSource)
-    return installedSource
+    const originalPluginSource = join(copySource, sourceSubpath)
+    if (!pathExists(join(preparedPluginSource, "composer.json"))) {
+      preserveExistingComposerVendor(originalPluginSource, preparedPluginSource)
+      return preparedPluginSource
+    }
+    return installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
   }
 
   return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug, "")
@@ -242,7 +245,7 @@ export function composerManagedHostCommandConfig(options: {
 }): ManagedHostCommandConfig {
   return {
     command: "composer",
-    args: options.args ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
+    args: options.args ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
     cwd: options.cwd,
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
@@ -283,7 +286,7 @@ function installComposerDependenciesForSourcePackageSync(source: string, slug: s
   const config = composerManagedHostCommandConfig({
     cwd: source,
     allowedCwdRoots: [allowedRoot],
-    args: composerInstallArgs ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
+    args: composerInstallArgs ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
     label: `hydrate Composer source package ${slug}`,
   })
   const result = spawnSync(config.command, config.args, {
