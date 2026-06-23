@@ -401,10 +401,63 @@ $plugin_file = ${JSON.stringify(pluginFile)};
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 $plugin_dir = dirname($plugin_file);
 $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+$plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
+register_shutdown_function(static function () use ($plugin_file, $plugin_dir, $plugin_autoload, $plugin_package_autoload): void {
+    $fatal = error_get_last();
+    if (!is_array($fatal) || !in_array($fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+        return;
+    }
+
+    $message = isset($fatal['message']) ? (string) $fatal['message'] : '';
+    $missing_class = null;
+    if (preg_match('/Class "([^"]+)" not found/', $message, $matches)) {
+        $missing_class = $matches[1];
+    }
+
+    $classmap = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/composer/autoload_classmap.php';
+    $classmap_entry = null;
+    if (is_string($missing_class) && is_file($classmap)) {
+        $classmap_data = include $classmap;
+        if (is_array($classmap_data) && isset($classmap_data[$missing_class])) {
+            $classmap_entry = (string) $classmap_data[$missing_class];
+        }
+    }
+
+    $included_files = array_map(static fn($file) => realpath($file) ?: $file, get_included_files());
+    echo "\nWP_CODEBOX_PLUGIN_AUTOLOAD_DIAGNOSTIC:" . wp_json_encode(array(
+        'schema' => 'wp-codebox/plugin-autoload-diagnostic/v1',
+        'plugin_file' => $plugin_file,
+        'plugin_dir' => $plugin_dir,
+        'fatal_message' => $message,
+        'missing_class' => $missing_class,
+        'autoload' => array(
+            'path' => $plugin_autoload,
+            'exists' => is_file($plugin_autoload),
+            'readable' => is_readable($plugin_autoload),
+            'included' => in_array(realpath($plugin_autoload) ?: $plugin_autoload, $included_files, true),
+        ),
+        'package_autoload' => array(
+            'path' => $plugin_package_autoload,
+            'exists' => is_file($plugin_package_autoload),
+            'readable' => is_readable($plugin_package_autoload),
+            'included' => in_array(realpath($plugin_package_autoload) ?: $plugin_package_autoload, $included_files, true),
+        ),
+        'classmap' => array(
+            'path' => $classmap,
+            'exists' => is_file($classmap),
+            'readable' => is_readable($classmap),
+            'entry' => $classmap_entry,
+            'entry_exists' => is_string($classmap_entry) ? is_file($classmap_entry) : null,
+        ),
+        'class_exists' => is_string($missing_class) ? array(
+            'without_autoload' => class_exists($missing_class, false),
+            'with_autoload' => class_exists($missing_class, true),
+        ) : null,
+    ), JSON_UNESCAPED_SLASHES) . "\n";
+});
 if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
     require_once $plugin_autoload;
 }
-$plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
 if ('.' !== $plugin_dir && is_file($plugin_package_autoload)) {
     require_once $plugin_package_autoload;
 }
