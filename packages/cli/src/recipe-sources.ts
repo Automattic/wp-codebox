@@ -373,11 +373,15 @@ async function writeComposerInstalledPackageAutoloader(pluginSource: string): Pr
 $wp_codebox_composer_package_classmap = __DIR__ . '/composer/autoload_classmap.php';
 if (is_file($wp_codebox_composer_package_classmap)) {
     spl_autoload_register(static function (string $class) use ($wp_codebox_composer_package_classmap): void {
-        $classmap = require $wp_codebox_composer_package_classmap;
+        static $classmap = null;
+        if (null === $classmap) {
+            $loaded_classmap = require $wp_codebox_composer_package_classmap;
+            $classmap = is_array($loaded_classmap) ? $loaded_classmap : array();
+        }
         if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
             return;
         }
-        require $classmap[$class];
+        require_once $classmap[$class];
     }, true, true);
 }
 `
