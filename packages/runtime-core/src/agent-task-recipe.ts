@@ -471,10 +471,11 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   return contracts.flatMap((contract, index) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
+    const sourceRoot = stringValue(contract.sourceRoot)
     const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
     const sourceSubpath = stringValue(contract.sourceSubpath)
     if (!slug || !source) return []
-    const preparedSource = prepareComponentPluginSource(source, originalSource, sourceSubpath, slug, artifactsRoot)
+    const preparedSource = prepareComponentPluginSource(sourceRoot || source, originalSource || sourceRoot, sourceSubpath, slug, artifactsRoot)
     const entrypoint = resolvePluginEntrypointContract({
       source: preparedSource,
       slug,
@@ -493,6 +494,7 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
           index,
           slug,
           requestedPath: source,
+          sourceRoot: sourceRoot || undefined,
           originalPath: originalSource || undefined,
           sourceSubpath: sourceSubpath || undefined,
           preparedPath: preparedSource,

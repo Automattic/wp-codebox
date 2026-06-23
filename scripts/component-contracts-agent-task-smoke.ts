@@ -13,6 +13,7 @@ try {
   const runtimePlugin = writePlugin(root, "runtime-component", "Runtime Component")
   const dedupePlugin = writePlugin(root, "dedupe-component", "Dedupe Component")
   const requirementsPlugin = writePlugin(root, "requirements-component", "Requirements Component")
+  const monorepo = writeMonorepoPlugin(root, "monorepo-component", "Monorepo Component")
   const artifacts = join(root, "artifacts")
   mkdirSync(artifacts, { recursive: true })
 
@@ -23,6 +24,7 @@ try {
       { slug: "domain-component", path: domainPlugin, loadAs: "plugin", activate: true },
       { slug: "runtime-component", path: runtimePlugin, loadAs: "mu-plugin", activate: false },
       { slug: "dedupe-component", path: dedupePlugin, loadAs: "plugin" },
+      { slug: "monorepo-component", path: monorepo.pluginPath, sourceRoot: monorepo.rootPath, sourceSubpath: monorepo.sourceSubpath, loadAs: "plugin" },
     ],
     runtime_requirements: {
       extra_plugins: [
@@ -34,15 +36,17 @@ try {
 
   const plugins = recipe.inputs?.extra_plugins ?? []
   const componentPlugins = plugins.filter((plugin) => plugin.metadata?.componentContract)
-  assert.equal(componentPlugins.length, 3, "component_contracts should become canonical staged plugin inputs")
+  assert.equal(componentPlugins.length, 4, "component_contracts should become canonical staged plugin inputs")
 
   const domain = componentPlugins.find((plugin) => plugin.slug === "domain-component")
   const runtime = componentPlugins.find((plugin) => plugin.slug === "runtime-component")
   const dedupe = componentPlugins.find((plugin) => plugin.slug === "dedupe-component")
+  const monorepoComponent = componentPlugins.find((plugin) => plugin.slug === "monorepo-component")
   const requirements = plugins.find((plugin) => plugin.slug === "requirements-component")
   assert.ok(domain, "explicit domain component should be staged")
   assert.ok(runtime, "runtime component should coexist with explicit domain component")
   assert.ok(dedupe, "component contract duplicate should remain staged")
+  assert.ok(monorepoComponent, "component contract should stage monorepo source roots")
   assert.ok(requirements, "runtime_requirements.extra_plugins should become recipe extra plugins")
   assert.equal(domain?.loadAs, "plugin")
   assert.equal(domain?.activate, true)
@@ -64,6 +68,12 @@ try {
   assert.equal(runtime?.metadata?.componentContract?.requestedPath, runtimePlugin)
   assert.equal(runtime?.metadata?.componentContract?.preparedPath, runtime?.source)
   assert.equal(runtime?.metadata?.componentContract?.pluginFile, "runtime-component/runtime-component.php")
+  assert.match(String(monorepoComponent?.source), /prepared-plugins\/monorepo-component\/plugins\/monorepo-component$/)
+  assert.equal(monorepoComponent?.metadata?.componentContract?.requestedPath, monorepo.pluginPath)
+  assert.equal(monorepoComponent?.metadata?.componentContract?.sourceRoot, monorepo.rootPath)
+  assert.equal(monorepoComponent?.metadata?.componentContract?.sourceSubpath, monorepo.sourceSubpath)
+  assert.equal(existsSync(join(String(monorepoComponent?.source), "monorepo-component.php")), true)
+  assert.equal(existsSync(join(String(monorepoComponent?.source), "..", "..", "packages", "php", "shared", "composer.json")), true)
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")
@@ -121,6 +131,22 @@ function writePlugin(rootPath: string, slug: string, name: string): string {
 defined( 'ABSPATH' ) || exit;
 `)
   return pluginPath
+}
+
+function writeMonorepoPlugin(rootPath: string, slug: string, name: string): { rootPath: string; pluginPath: string; sourceSubpath: string } {
+  const monorepoRoot = join(rootPath, `${slug}-repo`)
+  const sourceSubpath = join("plugins", slug)
+  const pluginPath = join(monorepoRoot, sourceSubpath)
+  mkdirSync(pluginPath, { recursive: true })
+  mkdirSync(join(monorepoRoot, "packages", "php", "shared"), { recursive: true })
+  writeFileSync(join(monorepoRoot, "packages", "php", "shared", "composer.json"), "{}\n")
+  writeFileSync(join(pluginPath, `${slug}.php`), `<?php
+/**
+ * Plugin Name: ${name}
+ */
+defined( 'ABSPATH' ) || exit;
+`)
+  return { rootPath: monorepoRoot, pluginPath, sourceSubpath }
 }
 
 async function captureStdout(callback: () => Promise<unknown>): Promise<string> {
