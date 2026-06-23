@@ -76,6 +76,7 @@ const restDbQueryProfilerHelpers = [
   "wp_codebox_bench_redact_sql_query",
   "wp_codebox_bench_rest_db_query_profile_summary",
   "wp_codebox_bench_rest_db_query_profile_case_step",
+  "wp_codebox_bench_rest_db_query_profile_filter_query",
   "wp_codebox_bench_run_rest_db_query_profiler_step",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
@@ -158,15 +159,19 @@ class WP_REST_Request {
     public function set_body($body) {}
 }
 class WP_Codebox_Test_REST_Response { public function get_status() { return 200; } }
+define('SAVEQUERIES', false);
+$wp_codebox_test_filters = array();
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1) { global $wp_codebox_test_filters; $wp_codebox_test_filters[$hook][$priority][] = $callback; }
+function remove_filter($hook, $callback, $priority = 10) { global $wp_codebox_test_filters; foreach ($wp_codebox_test_filters[$hook][$priority] ?? array() as $index => $registered_callback) { if ($registered_callback === $callback) { unset($wp_codebox_test_filters[$hook][$priority][$index]); } } }
+function apply_filters($hook, $value) { global $wp_codebox_test_filters; foreach ($wp_codebox_test_filters[$hook] ?? array() as $callbacks) { foreach ($callbacks as $callback) { $value = $callback($value); } } return $value; }
 function is_wp_error($value) { return false; }
 function rest_do_request($request) {
-    global $wpdb;
-    $wpdb->queries[] = array("SELECT * FROM wp_posts WHERE post_title = 'private title' AND ID = 123", 0.002, 'wpdb->get_results');
-    $wpdb->queries[] = array("UPDATE wp_options SET option_value = 'secret' WHERE option_id = 45", 0.003, 'wpdb->query');
+    apply_filters('query', "SELECT * FROM wp_posts WHERE post_title = 'private title' AND ID = 123");
+    apply_filters('query', "UPDATE wp_options SET option_value = 'secret' WHERE option_id = 45");
     return new WP_Codebox_Test_REST_Response();
 }
 function rest_get_server() { return new class { public function response_to_data($response, $embed) { return array('ok' => true); } }; }
-$wpdb = (object) array('queries' => array(), 'save_queries' => false);
+$wpdb = (object) array('save_queries' => false);
 ${restDbQueryProfilerHelpers}
 $payload = wp_codebox_bench_run_rest_db_query_profiler_step(array(
     'type' => 'rest-db-query-profiler',
