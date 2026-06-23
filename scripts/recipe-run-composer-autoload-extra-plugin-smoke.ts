@@ -42,7 +42,7 @@ register_activation_hook( __FILE__, static function (): void {
 	if ( ! is_file( $sibling_package ) ) {
 		throw new RuntimeException( 'Composer path repository WordPress package was not installed.' );
 	}
-	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() + \\Automattic\\WooCommerce\\EmailEditor\\Package::value() );
+	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() + \\WpCodeboxComposerSmoke\\InternalEmailPackage::value() );
 } );
 `)
 
@@ -53,6 +53,19 @@ namespace WpCodeboxComposerSmoke;
 final class Fixture {
 	public static function value(): int {
 		return 992;
+	}
+}
+`)
+
+writeFileSync(resolve(pluginSource, "src", "InternalEmailPackage.php"), `<?php
+
+namespace WpCodeboxComposerSmoke;
+
+final class InternalEmailPackage {
+	public const VERSION = \\Automattic\\WooCommerce\\EmailEditor\\Package::VERSION;
+
+	public static function value(): int {
+		return \\Automattic\\WooCommerce\\EmailEditor\\Package::value();
 	}
 }
 `)
@@ -69,6 +82,8 @@ writeFileSync(resolve(siblingPackageSource, "src", "class-package.php"), `<?php
 namespace Automattic\\WooCommerce\\EmailEditor;
 
 final class Package {
+	public const VERSION = '0.1.0';
+
 	public static function value(): int {
 		return 8;
 	}
