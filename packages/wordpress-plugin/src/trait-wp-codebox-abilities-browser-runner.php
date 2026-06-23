@@ -40,6 +40,13 @@ trait WP_Codebox_Abilities_Browser_Runner {
 
 	$runner_php      = self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation, $captures );
 	$runner_contract = self::browser_agent_runner_contract( $runner_php );
+	$runtime_blueprint = self::browser_playground_blueprint( $blueprint, $playground );
+	$runtime_steps = is_array( $runtime_blueprint['steps'] ?? null ) ? $runtime_blueprint['steps'] : array();
+	$runtime_steps[] = array(
+		'step' => 'runPHP',
+		'code' => $runner_php,
+	);
+	$runtime_blueprint['steps'] = $runtime_steps;
 
 	return array(
 		'schema'   => 'wp-codebox/workspace-recipe/v1',
@@ -47,7 +54,7 @@ trait WP_Codebox_Abilities_Browser_Runner {
 			'backend'   => 'wordpress-playground',
 			'name'      => 'browser-playground',
 			'wp'        => (string) ( $playground['wp'] ?? 'latest' ),
-			'blueprint' => self::browser_playground_blueprint( $blueprint, $playground ),
+			'blueprint' => $runtime_blueprint,
 		),
 		'inputs'   => array(
 			'stagedFiles' => array(

@@ -97,8 +97,11 @@ function expect( bool $condition, string $message ): void {
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-runtime-invoker.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-path-policy.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-runner-template.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
@@ -158,6 +161,42 @@ $rest_blueprint = WP_Codebox_Abilities::rest_browser_blueprint_ref( new WP_REST_
 expect( ! is_wp_error( $rest_blueprint ), 'Expected REST blueprint ref to return a raw Blueprint.' );
 expect( ! isset( $rest_blueprint['success'] ), 'Expected REST blueprint ref to omit the hydration envelope.' );
 expect( isset( $rest_blueprint['steps'] ) && is_array( $rest_blueprint['steps'] ), 'Expected REST blueprint ref to return the Blueprint root.' );
+
+$recipe_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_agent_recipe' );
+$recipe = $recipe_method->invoke(
+	null,
+	array(
+		'goal'               => 'Import a browser artifact.',
+		'target'             => array( 'kind' => 'recipe-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'recipe-smoke-session',
+	array(
+		'task_path'   => '/tmp/recipe-smoke-task.json',
+		'result_path' => '/tmp/recipe-smoke-result.json',
+		'invocation'  => array(
+			'type'  => 'ability',
+			'name'  => 'static-site-importer/import-website-artifact',
+			'input' => array(),
+		),
+	),
+	array(
+		'steps' => array(
+			array(
+				'step'     => 'login',
+				'username' => 'admin',
+				'password' => 'password',
+			),
+		),
+	),
+	array(),
+	array( 'schema' => 'wp-codebox/browser-agent-task-payload/v1' )
+);
+expect( ! is_wp_error( $recipe ), 'Expected browser agent recipe smoke to build.' );
+$recipe_steps = is_array( $recipe['runtime']['blueprint']['steps'] ?? null ) ? $recipe['runtime']['blueprint']['steps'] : array();
+$recipe_run_php_steps = array_values( array_filter( $recipe_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) ) );
+expect( count( $recipe_run_php_steps ) >= 1, 'Expected browser recipe Blueprint to include the runner runPHP step.' );
+expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to execute the requested invocation.' );
 
 $status = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(

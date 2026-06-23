@@ -1693,6 +1693,11 @@ public static function create_browser_playground_session( array $input ): array|
 	if ( is_wp_error( $recipe ) ) {
 		return $recipe;
 	}
+	$recipe_blueprint = is_array( $recipe['runtime']['blueprint'] ?? null ) ? $recipe['runtime']['blueprint'] : $blueprint;
+	if ( is_array( $runtime['prepared_runtime'] ?? null ) ) {
+		self::browser_prepared_runtime_cache_store( $runtime['prepared_runtime'], $recipe_blueprint );
+	}
+	$blueprint = $recipe_blueprint;
 	$materialization = self::browser_materialization_contract( $recipe );
 
 	$session = array(
