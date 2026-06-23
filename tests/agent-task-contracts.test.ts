@@ -74,11 +74,11 @@ const stableRunRequestInput = normalizeAgentTaskRunCliInput({
     goal: "Run the delegated task.",
   },
   artifacts_path: "/tmp/stable-run-artifacts",
-  callback_data: { source: "homeboy" },
+  callback_data: { source: "external-orchestrator" },
 })
 assert.equal(stableRunRequestInput.goal, "Run the delegated task.")
 assert.equal(stableRunRequestInput.artifacts_path, "/tmp/stable-run-artifacts")
-assert.deepEqual(stableRunRequestInput.callback_data, { source: "homeboy" })
+assert.deepEqual(stableRunRequestInput.callback_data, { source: "external-orchestrator" })
 
 const noOp = normalizeAgentTaskRunResult({ success: true, no_op: true }, { exitStatus: 0 })
 assert.equal(noOp.status, "no_op")

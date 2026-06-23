@@ -291,9 +291,9 @@ request/result schemas while the adapter config maps each operation to its
 integration-provided backend ability. See `docs/runner-workspace-backend-contract.md`.
 Those adapter bindings are not part of `runtimeContractManifest()`.
 
-## Homeboy Extensions Migration
+## External Orchestrator Migration
 
-Homeboy Extensions and other dist/dynamic package loaders should import the
+External orchestrators and other dist/dynamic package loaders should import the
 narrowest Codebox entrypoint that matches the runtime object they need. This
 keeps packaged helpers stable when the broad root barrel continues to exist for
 compatibility but stops being the place where new public helpers accumulate.
@@ -307,9 +307,9 @@ compatibility but stops being the place where new public helpers accumulate.
 | Workspace-local mirror import during package development | `./core/contracts`, `./core/artifacts`, `./recipe-builders`, or `./run-results` | Workspace mirrors exist for this repo's local consumers; published consumers should use package names. |
 
 The root barrel remains published so existing integrations keep working. Treat it
-as compatibility-only: new Homeboy Extensions call sites should choose one of the
-focused entrypoints above, and new Codebox helpers should be added to the focused
-owner module that matches their lifecycle area.
+as compatibility-only: new external orchestrator call sites should choose one of
+the focused entrypoints above, and new Codebox helpers should be added to the
+focused owner module that matches their lifecycle area.
 
 ## Internal Entry Point
 

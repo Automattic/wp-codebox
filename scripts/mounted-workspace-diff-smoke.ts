@@ -111,7 +111,7 @@ try {
     "",
   ].join("\n")
   // A readwrite git work tree with no explicit baselineSource diffs against its
-  // committed HEAD, so homeboy-style repo mounts capture the agent's edits
+  // committed HEAD, so orchestrator workspace mounts capture the agent's edits
   // without the caller supplying a filesystem baseline snapshot.
   const gitRepo = join(root, "git-repo")
   await mkdir(gitRepo, { recursive: true })
@@ -135,7 +135,7 @@ try {
       source: gitRepo,
       target: "/workspace/wp-coding-agents",
       mode: "readwrite",
-      metadata: { kind: "homeboy-dmc-workspace", workspace_slug: "wp-coding-agents" },
+      metadata: { kind: "orchestrator-workspace", workspace_slug: "wp-coding-agents" },
     },
   ], new ArtifactRedactor())
   const gitChanged = new Map(gitResult.changedFiles.files.map((file) => [file.relativePath, file]))
@@ -168,7 +168,7 @@ try {
     source: vfsBackedRepo,
     target: "/workspace/vfs-backed-repo",
     mode: "readwrite",
-    metadata: { kind: "homeboy-dmc-workspace", workspace_slug: "vfs-backed-repo" },
+    metadata: { kind: "orchestrator-workspace", workspace_slug: "vfs-backed-repo" },
   }]
 
   const rawPhpTarget = join(root, "raw-php-vfs-target")
