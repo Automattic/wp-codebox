@@ -126,7 +126,7 @@ class WP_Codebox_Test_REST_Response {
 }
 
 function rest_do_request( WP_REST_Request $request ): WP_Codebox_Test_REST_Response {
-	apply_filters( 'query', 'SELECT * FROM wp_posts WHERE post_type = "post"' );
+	apply_filters( 'query', "SELECT * FROM wp_posts WHERE post_type = 'secret-post-type' AND ID = 123" );
 	apply_filters( 'query', 'SELECT option_value FROM wp_options WHERE option_name = "blogname"' );
 	return new WP_Codebox_Test_REST_Response( '/wp/v2/status' === $request->path ? 200 : 404 );
 }
@@ -508,7 +508,8 @@ $workload_report = json_decode( file_get_contents( WP_CONTENT_DIR . '/uploads/wo
 assert( 'wp-codebox/json-workload-result/v1' === $workload_report['schema'] );
 assert( 2 === $workload_report['steps'][1]['observation']['queryCount'] );
 assert( 2 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
-assert( 'SELECT * FROM wp_posts WHERE post_type = "post"' === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID = ?" === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( ! str_contains( wp_json_encode( $workload_report['steps'][1]['requests'][0]['sampledQueries'] ), 'secret-post-type' ) );
 assert( 'closure-external-http-guardrail' === $result['cases'][22]['id'] );
 assert( 'passed' === $result['cases'][22]['status'] );
 assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_type'] );
