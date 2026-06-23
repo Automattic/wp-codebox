@@ -2,8 +2,10 @@
 declare(strict_types=1);
 
 define( 'ABSPATH', __DIR__ );
+defined( 'WEEK_IN_SECONDS' ) || define( 'WEEK_IN_SECONDS', 7 * 24 * 60 * 60 );
 
 $GLOBALS['wp_codebox_test_transient'] = false;
+$GLOBALS['wp_codebox_test_transients'] = array();
 
 final class WP_Error {
 	/** @param array<string,mixed> $data */
@@ -28,8 +30,32 @@ function sanitize_key( string $key ): string {
 }
 
 function get_transient( string $transient ): mixed {
+	if ( array_key_exists( $transient, $GLOBALS['wp_codebox_test_transients'] ) ) {
+		return $GLOBALS['wp_codebox_test_transients'][ $transient ]['value'];
+	}
 	unset( $transient );
 	return $GLOBALS['wp_codebox_test_transient'];
+}
+
+function set_transient( string $transient, mixed $value, int $expiration = 0 ): bool {
+	$GLOBALS['wp_codebox_test_transients'][ $transient ] = array(
+		'value'      => $value,
+		'expiration' => $expiration,
+	);
+
+	return true;
+}
+
+function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false {
+	return json_encode( $value, $flags, $depth );
+}
+
+function wp_generate_uuid4(): string {
+	return '00000000-0000-4000-8000-000000000123';
+}
+
+function wp_parse_url( string $url, int $component = -1 ): mixed {
+	return -1 === $component ? parse_url( $url ) : parse_url( $url, $component );
 }
 
 function fail( string $message ): void {
@@ -43,6 +69,8 @@ function expect( bool $condition, string $message ): void {
 	}
 }
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
@@ -238,5 +266,78 @@ expect( ! is_wp_error( $destroy ), 'Expected destroy facade to return an envelop
 expect( true === $destroy['success'], 'Expected destroy success=true.' );
 expect( 'wp-codebox/browser-contained-site-destroy/v1' === $destroy['schema'], 'Expected destroy schema.' );
 expect( 'released' === $destroy['preview_lease']['lease']['status'], 'Expected released preview lease.' );
+
+$raw_product_session = array(
+	'success'          => true,
+	'schema'           => 'wp-codebox/browser-playground-session/v1',
+	'execution'        => 'browser-playground',
+	'execution_scope'  => 'disposable-playground',
+	'permission_model' => 'runtime-principal',
+	'session'          => array( 'id' => 'product-smoke-session' ),
+	'task_input'       => array(
+		'goal'               => 'Create a disposable preview for smoke testing.',
+		'target'             => array( 'kind' => 'php-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'playground'       => array(
+		'scope'              => 'product-smoke-session',
+		'preview_url'        => '/wp-content/uploads/wp-codebox/artifacts/uploaded-site/index.html',
+		'prepared_runtime'   => array(
+			'schema'     => 'wp-codebox/browser-prepared-runtime/v1',
+			'cache_key'  => 'product-smoke-cache',
+			'input_hash' => $source_digest,
+			'status'     => 'ready',
+		),
+	),
+	'contained_site'   => array(
+		'schema'     => 'wp-codebox/browser-contained-site/v1',
+		'site_id'    => 'product-smoke-cache',
+		'preview_id' => 'preview-product-smoke',
+		'session_id' => 'product-smoke-session',
+		'status'     => 'ready',
+	),
+	'artifacts'        => array(
+		'schema' => 'wp-codebox/browser-artifacts/v1',
+		'files'  => array(
+			array(
+				'path'    => 'uploaded-site/index.html',
+				'kind'    => 'html',
+				'size'    => 16,
+				'sha256'  => str_repeat( 'd', 64 ),
+				'content' => '<h1>Preview</h1>',
+			),
+		),
+	),
+	'signals'          => array(
+		'ready_to_code' => array( 'schema' => 'wp-codebox/signal/v1', 'emitted' => true ),
+	),
+);
+$response_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_session_response_for_input' );
+$product_session = $response_method->invoke( null, $raw_product_session, array() );
+
+expect( ! is_wp_error( $product_session ), 'Expected product browser session DTO.' );
+expect( 'wp-codebox/browser-session-product-dto/v1' === $product_session['schema'], 'Expected product session DTO schema.' );
+expect( true === $product_session['success'], 'Expected product session success=true.' );
+expect( isset( $product_session['preview_boot'] ), 'Expected product session preview boot.' );
+expect( isset( $product_session['preview_ref'] ), 'Expected product session preview ref.' );
+expect( isset( $product_session['preview_lease'] ), 'Expected product session preview lease.' );
+expect( isset( $product_session['preview_reference'] ), 'Expected product session preview reference.' );
+expect( 'wp-codebox/browser-preview-reference/v1' === $product_session['preview_reference']['schema'], 'Expected preview reference schema.' );
+expect( isset( $product_session['blueprint_ref'] ), 'Expected product session blueprint ref.' );
+expect( isset( $product_session['evidence_ref'] ), 'Expected product session evidence ref.' );
+expect( 'wp-codebox/browser-session-evidence-ref/v1' === $product_session['evidence_ref']['schema'], 'Expected evidence ref schema.' );
+expect( ! isset( $product_session['playground'] ), 'Product DTO must not expose raw playground.' );
+expect( ! isset( $product_session['task_payload'] ), 'Product DTO must not expose raw task payload.' );
+
+$evidence_key = 'wp_codebox_browser_session_evidence_' . $product_session['evidence_ref']['id'];
+expect( isset( $GLOBALS['wp_codebox_test_transients'][ $evidence_key ] ), 'Expected evidence transient to be stored.' );
+$evidence = $GLOBALS['wp_codebox_test_transients'][ $evidence_key ]['value'];
+expect( 'wp-codebox/browser-session-evidence/v1' === $evidence['schema'], 'Expected evidence schema.' );
+expect( $product_session['session_id'] === $evidence['session_id'], 'Expected evidence session id.' );
+expect( isset( $evidence['preview_reference'] ), 'Expected evidence preview reference.' );
+expect( false === str_contains( wp_json_encode( $evidence ), '<h1>Preview</h1>' ), 'Evidence must not store raw uploaded content.' );
+
+$executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $product_session );
+expect( $product_session['blueprint_ref'] === $executable_ref, 'Expected executable blueprint ref from product DTO.' );
 
 fwrite( STDOUT, "PHP browser contained site contract smoke passed\n" );

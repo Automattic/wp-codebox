@@ -2437,12 +2437,54 @@ private static function blocked_browser_playground_session( string $session_id, 
 /** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
 private static function browser_session_response_for_input( array $session, array $input ): array {
 	$product_dto = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	$evidence_ref = self::browser_session_evidence_store( $product_dto, $session );
+	if ( ! empty( $evidence_ref ) ) {
+		$product_dto['evidence_ref'] = $evidence_ref;
+	}
 	if ( self::include_raw_browser_session_contract( $input ) ) {
 		$session['product'] = $product_dto;
 		return $session;
 	}
 
 	return $product_dto;
+}
+
+/** @param array<string,mixed> $product_dto Product-safe session DTO. @param array<string,mixed> $session Raw browser session contract. @return array<string,mixed> */
+private static function browser_session_evidence_store( array $product_dto, array $session ): array {
+	if ( ! function_exists( 'set_transient' ) ) {
+		return array();
+	}
+
+	$session_id  = (string) ( $product_dto['session_id'] ?? '' );
+	$evidence_id = 'browser-session-' . substr( hash( 'sha256', $session_id . wp_json_encode( $product_dto ) ), 0, 24 );
+	$ttl         = max( 1, (int) apply_filters( 'wp_codebox_browser_session_evidence_ttl', WEEK_IN_SECONDS, $product_dto, $session ) );
+	$evidence    = array_filter(
+		array(
+			'schema'            => 'wp-codebox/browser-session-evidence/v1',
+			'id'                => $evidence_id,
+			'created_at'        => gmdate( 'c' ),
+			'session_id'        => $session_id,
+			'preview_ref'       => is_array( $product_dto['preview_ref'] ?? null ) ? $product_dto['preview_ref'] : array(),
+			'preview_reference' => is_array( $product_dto['preview_reference'] ?? null ) ? $product_dto['preview_reference'] : array(),
+			'preview_lease'     => is_array( $product_dto['preview_lease'] ?? null ) ? $product_dto['preview_lease'] : array(),
+			'preview_boot'      => is_array( $product_dto['preview_boot'] ?? null ) ? $product_dto['preview_boot'] : array(),
+			'blueprint_ref'     => is_array( $product_dto['blueprint_ref'] ?? null ) ? $product_dto['blueprint_ref'] : array(),
+			'contained_site'    => is_array( $product_dto['contained_site'] ?? null ) ? $product_dto['contained_site'] : array(),
+			'signals'           => is_array( $product_dto['signals'] ?? null ) ? $product_dto['signals'] : array(),
+		),
+		static fn( mixed $value ): bool => '' !== $value && array() !== $value
+	);
+
+	if ( ! set_transient( 'wp_codebox_browser_session_evidence_' . $evidence_id, $evidence, $ttl ) ) {
+		return array();
+	}
+
+	return array(
+		'schema'  => 'wp-codebox/browser-session-evidence-ref/v1',
+		'id'      => $evidence_id,
+		'storage' => 'transient',
+		'ttl'     => $ttl,
+	);
 }
 
 /** @param array<string,mixed> $input Ability input. */
