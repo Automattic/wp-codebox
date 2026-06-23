@@ -498,6 +498,20 @@ final class WP_Codebox_Abilities {
 			wp_register_ability( 'wp-codebox/run-sandbox-task-fanout', $run_sandbox_task_fanout_ability );
 
 			wp_register_ability(
+				'wp-codebox/resolve-runtime-requirements',
+				array(
+					'label'               => 'Resolve Runtime Requirements',
+					'description'         => 'Resolve runtime/provider readiness without creating a session or invoking a runtime package.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'resolve_runtime_requirements' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/resolve-runtime-requirements' ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/run-runtime-package',
 				array(
 					'label'               => 'Run Runtime Package',

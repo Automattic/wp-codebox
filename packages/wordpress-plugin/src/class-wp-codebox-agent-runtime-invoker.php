@@ -32,44 +32,6 @@ final class WP_Codebox_Agent_Runtime_Invoker {
 		return class_exists( 'WP_Codebox_Agents_API_Adapter' ) && ( new WP_Codebox_Agents_API_Adapter() )->is_available( $name );
 	}
 
-	/** @param array{url:string,method:string,headers:array<string,string>,body:string} $prepared Prepared request. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
-	public function authenticate_provider_request( string $provider, array $prepared ): array|WP_Error {
-		if ( ! class_exists( '\WordPress\AiClient\AiClient' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\DTO\Request' ) || ! class_exists( '\WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum' ) ) {
-			return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_unavailable', 'PHP AI Client request authentication is unavailable.', array( 'status' => 500, 'provider' => $provider ) );
-		}
-
-		try {
-			$registry       = \WordPress\AiClient\AiClient::defaultRegistry();
-			$authentication = method_exists( $registry, 'getProviderRequestAuthentication' ) ? $registry->getProviderRequestAuthentication( $provider ) : null;
-			$method_enum    = \WordPress\AiClient\Providers\Http\Enums\HttpMethodEnum::tryFrom( $prepared['method'] );
-			if ( null === $authentication || null === $method_enum ) {
-				return new WP_Error( 'wp_codebox_browser_provider_bridge_php_ai_client_authentication_missing', 'PHP AI Client request authentication is not registered for this provider.', array( 'status' => 403, 'provider' => $provider ) );
-			}
-
-			$auth_request = new \WordPress\AiClient\Providers\Http\DTO\Request( $method_enum, $prepared['url'], $prepared['headers'], $prepared['body'] );
-			$auth_request = $authentication->authenticateRequest( $auth_request );
-
-			return array(
-				'url'     => $auth_request->getUri(),
-				'method'  => $auth_request->getMethod()->value,
-				'headers' => self::flat_headers( $auth_request->getHeaders() ),
-				'body'    => (string) $auth_request->getBody(),
-			);
-		} catch ( Throwable $throwable ) {
-			return new WP_Error( 'wp_codebox_browser_provider_bridge_authentication_failed', $throwable->getMessage(), array( 'status' => 500, 'provider' => $provider, 'type' => get_class( $throwable ) ) );
-		}
-	}
-
-	/** @param array<string,array<int,string>|string> $headers Header lists. @return array<string,string> */
-	private static function flat_headers( array $headers ): array {
-		$flat = array();
-		foreach ( $headers as $name => $values ) {
-			$flat[ (string) $name ] = is_array( $values ) ? implode( ', ', array_map( 'strval', $values ) ) : (string) $values;
-		}
-
-		return $flat;
-	}
-
 	/** Builds the generated PHP provider transport registration fragment. */
 	public static function browser_provider_proxy_php(): string {
 		return '

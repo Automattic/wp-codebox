@@ -56,6 +56,8 @@ require_once __DIR__ . '/src/class-wp-codebox-wordpress-workload-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
+require_once __DIR__ . '/src/class-wp-codebox-browser-provider-auth-strategies.php';
+require_once __DIR__ . '/src/class-wp-codebox-php-ai-client-browser-provider-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-provider-bridge.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-patch-approval-filter.php';
@@ -70,6 +72,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 add_action( 'plugins_loaded', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ), 20 );
+add_action( 'plugins_loaded', array( WP_Codebox_Php_Ai_Client_Browser_Provider_Adapter::class, 'register' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();
 

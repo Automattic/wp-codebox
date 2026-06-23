@@ -28,6 +28,11 @@ public static function run_runtime_package( array $input ): array|WP_Error {
 	return WP_Codebox_Runtime_Provider_Registry::invoke( $input );
 }
 
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+public static function resolve_runtime_requirements( array $input ): array {
+	return WP_Codebox_Runtime_Provider_Registry::resolve_runtime_requirements( $input );
+}
+
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function run_runtime_task( array $input ): array|WP_Error {
 	return ( new WP_Codebox_Runtime_Task_Runner() )->run( $input );
