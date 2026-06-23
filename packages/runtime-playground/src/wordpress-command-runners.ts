@@ -25,6 +25,8 @@ import {
   normalizeThemeCheckOutput,
   pageLoadInputFromArgs,
   pageLoadPhpCode,
+  restPerformanceObservationInputFromArgs,
+  restPerformanceObservationPhpCode,
   phpunitRunCode,
   pluginStateInputFromArgs,
   pluginStatePhpCode,
@@ -645,6 +647,24 @@ export async function runRestRequestCommand({
   input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
   const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
   assertPlaygroundResponseOk("wordpress.rest-request", response)
+  return response.text
+}
+
+export async function runRestPerformanceObservationCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = restPerformanceObservationInputFromArgs(spec.args ?? [])
+  input.userSession = wordpressUserSessionFromCommandArgs(spec.args ?? [], runtimeSpec)
+  const response = await runPlaygroundCommand("wordpress.rest-performance-observation", server, { code: bootstrapPhpCode(runtimeSpec, restPerformanceObservationPhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.rest-performance-observation", response)
   return response.text
 }
 

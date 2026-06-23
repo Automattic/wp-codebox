@@ -193,6 +193,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./command-registry.js",
   "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
+  "./performance-observation.js",
   "./runtime-contract-manifest.js",
   "./wordpress-page-load-contracts.js",
 ])

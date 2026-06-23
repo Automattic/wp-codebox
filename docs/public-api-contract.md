@@ -190,6 +190,12 @@ The stable public surface is grouped by lifecycle area rather than by product:
   normalized command diagnostics and performance evidence: elapsed timing, memory
   delta, database query counts/time/fingerprints, repeated-query summaries, hook
   timing placeholders, network counts, and browser/admin metric placeholders.
+  `wordpress.rest-performance-observation` is the runtime-backed public command for
+  one in-process REST request. It returns the performance observation envelope as
+  the top-level result, including query fingerprints when `$wpdb->queries` is
+  populated and bounded hook hotspot samples from the WordPress `all` hook. It is
+  an upstream observation primitive, not a product-specific fuzz suite or benchmark
+  runner.
 - **WordPress page-load coverage:** `wordpress.admin-page-load` and
   `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
   with `mode: "simulated"`, status, target, resolved admin screen or frontend

@@ -2,6 +2,7 @@ import { BROWSER_PROBE_ACCEPTED_ARGS, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROB
 import { WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA } from "./wordpress-page-load-contracts.js"
 import { WORDPRESS_DB_RESULT_JSON_SCHEMA, WORDPRESS_DB_RESULT_SCHEMA } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_RESULT_JSON_SCHEMA, WORDPRESS_CRUD_RESULT_SCHEMA } from "./wordpress-crud-contracts.js"
+import { PERFORMANCE_OBSERVATION_SCHEMA } from "./performance-observation.js"
 import { WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA, WORDPRESS_DATABASE_INVENTORY_SCHEMA, WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA, WORDPRESS_RUNTIME_DISCOVERY_SCHEMA } from "./wordpress-runtime-discovery-contracts.js"
 
 export type CommandHandlerBinding =
@@ -379,6 +380,32 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.rest-request.",
     recipe: true,
     handler: { kind: "playground", method: "runRestRequest" },
+  },
+  {
+    id: "wordpress.rest-performance-observation",
+    description: "Execute one in-process WordPress REST request and emit a normalized performance observation with DB query fingerprints and hook hotspot samples.",
+    acceptedArgs: [
+      { name: "method", description: "HTTP method for the REST request; defaults to GET.", format: "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS" },
+      { name: "path", description: "REST route path, with or without the /wp-json prefix.", required: true, format: "REST route path" },
+      { name: "params-json", description: "Optional request parameters object.", format: "JSON object" },
+      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before running the REST request.", format: "fixture user name" },
+      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before running the REST request.", format: "user session name" },
+      { name: "query-fingerprint-limit", description: "Maximum distinct query fingerprints to include; defaults to 50.", format: "non-negative integer" },
+      { name: "query-length-limit", description: "Maximum SQL fingerprint length; defaults to 500.", format: "positive integer" },
+      { name: "hook-sample-limit", description: "Maximum hook hotspot rows to include; defaults to 50.", format: "non-negative integer" },
+      { name: "hook-limit", description: "Maximum distinct hooks tracked before truncation; defaults to 500.", format: "positive integer" },
+    ],
+    outputShape: "wp-codebox/performance-observation/v1 JSON with source=in-process, kind=rest-request, timing/memory, database query fingerprints when $wpdb->queries is available, and hook hotspot samples captured through the all hook.",
+    outputSchema: objectEnvelopeSchema(PERFORMANCE_OBSERVATION_SCHEMA, {
+      timing: { type: "object" },
+      memory: { type: "object" },
+      database: { type: "object" },
+      hooks: { type: "object" },
+      metadata: { type: "object" },
+    }),
+    policyRequirement: "Runtime policy commands must include wordpress.rest-performance-observation.",
+    recipe: true,
+    handler: { kind: "playground", method: "runRestPerformanceObservation" },
   },
   {
     id: "wordpress.runtime-discovery",
