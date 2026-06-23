@@ -74,6 +74,8 @@ try {
   assert.equal(monorepoComponent?.metadata?.componentContract?.sourceSubpath, monorepo.sourceSubpath)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "monorepo-component.php")), true)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "..", "..", "packages", "php", "shared", "composer.json")), true)
+  assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "autoload_packages.php")), true)
+  assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "jetpack-autoloader", "class-autoloader.php")), true)
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")
@@ -138,8 +140,11 @@ function writeMonorepoPlugin(rootPath: string, slug: string, name: string): { ro
   const sourceSubpath = join("plugins", slug)
   const pluginPath = join(monorepoRoot, sourceSubpath)
   mkdirSync(pluginPath, { recursive: true })
+  mkdirSync(join(pluginPath, "vendor", "jetpack-autoloader"), { recursive: true })
   mkdirSync(join(monorepoRoot, "packages", "php", "shared"), { recursive: true })
   writeFileSync(join(monorepoRoot, "packages", "php", "shared", "composer.json"), "{}\n")
+  writeFileSync(join(pluginPath, "vendor", "autoload_packages.php"), "<?php // generated package autoloader\n")
+  writeFileSync(join(pluginPath, "vendor", "jetpack-autoloader", "class-autoloader.php"), "<?php // package autoloader runtime\n")
   writeFileSync(join(pluginPath, `${slug}.php`), `<?php
 /**
  * Plugin Name: ${name}

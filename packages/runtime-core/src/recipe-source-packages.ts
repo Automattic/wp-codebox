@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { safeArtifactRelativePath } from "./artifact-paths.js"
@@ -207,10 +207,26 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
     } else {
       mkdirSync(preparedSource, { recursive: true })
     }
-    return installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
+    const installedSource = installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
+    preserveGeneratedPackageAutoloaders(join(copySource, sourceSubpath), installedSource)
+    return installedSource
   }
 
   return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug, "")
+}
+
+function preserveGeneratedPackageAutoloaders(originalPluginSource: string, preparedPluginSource: string): void {
+  const originalVendor = join(originalPluginSource, "vendor")
+  const preparedVendor = join(preparedPluginSource, "vendor")
+  preserveGeneratedPackageAutoloaderPath(originalVendor, preparedVendor, "autoload_packages.php")
+  preserveGeneratedPackageAutoloaderPath(originalVendor, preparedVendor, "jetpack-autoloader")
+}
+
+function preserveGeneratedPackageAutoloaderPath(originalVendor: string, preparedVendor: string, relativePath: string): void {
+  const source = join(originalVendor, relativePath)
+  if (!pathExists(source)) return
+  mkdirSync(preparedVendor, { recursive: true })
+  cpSync(source, join(preparedVendor, relativePath), { recursive: true })
 }
 
 export function composerManagedHostEnv(): Record<string, string> {
