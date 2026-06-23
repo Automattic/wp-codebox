@@ -467,7 +467,7 @@ assert( 'sample' === $result['cases'][6]['metadata']['observations'][0]['namespa
 assert( 'passed' === $result['cases'][7]['status'] );
 assert( 'database-inventory' === $result['cases'][7]['id'] );
 assert( 2 === $result['cases'][7]['metadata']['observations'][0]['table_count'] );
-assert( 'wp-codebox/wordpress-database-inventory/v1' === $result['cases'][7]['metadata']['observations'][0]['payload']['schema'] );
+assert( 'wp-codebox/wordpress-db-inventory/v1' === $result['cases'][7]['metadata']['observations'][0]['payload']['schema'] );
 assert( 'core' === $result['cases'][7]['metadata']['observations'][0]['payload']['tables'][0]['classification'] );
 assert( 'prefixed' === $result['cases'][7]['metadata']['observations'][0]['payload']['tables'][1]['classification'] );
 assert( 'passed' === $result['cases'][8]['status'] );
