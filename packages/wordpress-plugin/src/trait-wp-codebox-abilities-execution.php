@@ -1062,6 +1062,12 @@ private static function summarize_fuzz_suite_observations( array $summary, array
 	$summary['observed_metrics'] = $metrics;
 	if ( array_sum( $metrics ) > 0 ) {
 		$summary['budget_status'] = 'measured';
+		if ( isset( $summary['hotspot_classification']['external-http-attempt'] ) ) {
+			$summary['hotspot_classification']['external-http-attempt'] = $metrics['external_http_attempt_count'];
+		}
+		if ( isset( $summary['hotspot_classification']['asset-bloat'] ) ) {
+			$summary['hotspot_classification']['asset-bloat'] = $metrics['browser_request_count'];
+		}
 		foreach ( $summary['product_budget_comparison'] as $budget_key => $budget ) {
 			$observed = self::fuzz_suite_observed_value_for_budget( (string) $budget_key, $metrics );
 			$budget_value = is_numeric( $product_budgets[ $budget_key ] ?? null ) ? (int) $product_budgets[ $budget_key ] : null;
