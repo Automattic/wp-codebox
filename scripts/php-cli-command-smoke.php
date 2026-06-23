@@ -139,8 +139,9 @@ expect( 'run_fuzz_suite' === $fuzz_suite['call']['method'], 'Fuzz suite command 
 expect( 'php-in-process-suite' === $fuzz_suite['call']['input']['suite']['id'], 'suite flag should decode as JSON object.' );
 expect( 'rest-status' === $fuzz_suite['call']['input']['cases'][0]['id'], 'cases flag should decode as JSON array.' );
 
-$requirements = run_cli_command( 'codebox resolve-runtime-requirements', array(), array( 'runtime' => '{"provider":"local"}', 'capabilities' => 'php-in-process,rest' ) );
+$requirements = run_cli_command( 'codebox resolve-runtime-requirements', array(), array( 'runtime-provider' => 'local', 'capabilities' => 'php-in-process,rest' ) );
 expect( 'resolve_runtime_requirements' === $requirements['call']['method'], 'Requirements command must dispatch through public API.' );
+expect( 'local' === $requirements['call']['input']['runtime_provider'], 'runtime-provider flag should select the runtime provider.' );
 expect( array( 'php-in-process', 'rest' ) === $requirements['call']['input']['capabilities'], 'capabilities flag should parse as a list.' );
 
 $agent_task = run_cli_command( 'codebox run-agent-task', array(), array( 'goal' => 'public facade task' ) );
