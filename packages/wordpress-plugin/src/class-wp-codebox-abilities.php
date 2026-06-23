@@ -315,6 +315,8 @@ final class WP_Codebox_Abilities {
 							'wp'        => array( 'type' => 'string' ),
 							'paths'     => array( 'type' => 'object' ),
 							'artifacts' => array( 'type' => 'string' ),
+							'artifact_result' => array( 'type' => 'object' ),
+							'outputs' => array( 'type' => 'object' ),
 							'agent_task_run_result' => $agent_task_run_result_schema,
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,

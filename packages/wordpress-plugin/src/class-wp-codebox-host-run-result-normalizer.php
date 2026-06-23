@@ -11,6 +11,7 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 
 	private const SCHEMA = 'wp-codebox/agent-task-run/v1';
 	private const RUN_RESULT_SCHEMA = 'wp-codebox/agent-task-run-result/v1';
+	private const ARTIFACT_RESULT_SCHEMA = 'wp-codebox/artifact-result-envelope/v1';
 
 	/**
 	 * @param array<string,mixed> $prepared Prepared run.
@@ -114,6 +115,8 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 		$response['evidence_refs'] = $adapters['evidence_refs']( $response['session'], $decoded );
 		$response['run_metadata']  = $adapters['run_metadata']( $session_id, $input, $wp_version, $decoded );
 		$response['agent_task_run_result'] = $this->agent_task_run_result( $response, $exit_code );
+		$response['artifact_result'] = $this->artifact_result_envelope( $response );
+		$response['outputs'] = array( 'artifact_result' => $response['artifact_result'] );
 
 		return $response;
 	}
@@ -175,8 +178,62 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 		);
 		$response['evidence_refs'] = $adapters['evidence_refs']( $response['session'], $run );
 		$response['agent_task_run_result'] = $this->agent_task_run_result( $response, $exit_code, $message, $failure_classification );
+		$response['artifact_result'] = $this->artifact_result_envelope( $response );
+		$response['outputs'] = array( 'artifact_result' => $response['artifact_result'] );
 
 		return $response;
+	}
+
+	/** @param array<string,mixed> $response Agent task run response. @return array<string,mixed> */
+	private function artifact_result_envelope( array $response ): array {
+		$run_result        = is_array( $response['agent_task_run_result'] ?? null ) ? $response['agent_task_run_result'] : array();
+		$refs              = is_array( $run_result['refs'] ?? null ) ? $run_result['refs'] : array();
+		$artifact_bundles  = is_array( $refs['artifact_bundles'] ?? null ) ? array_values( array_filter( $refs['artifact_bundles'], 'is_array' ) ) : array();
+		$artifacts         = is_array( $run_result['artifacts'] ?? null ) ? array_values( array_filter( $run_result['artifacts'], 'is_array' ) ) : array();
+		$evidence_refs     = is_array( $response['evidence_refs'] ?? null ) ? array_values( array_filter( $response['evidence_refs'], 'is_array' ) ) : array();
+		$diagnostics       = is_array( $response['diagnostics'] ?? null ) ? array_values( array_filter( $response['diagnostics'], 'is_array' ) ) : array();
+		$agent_result      = is_array( $response['agent_result'] ?? null ) ? $response['agent_result'] : array();
+		$agent_task_result = is_array( $response['agent_task_result'] ?? null ) ? $response['agent_task_result'] : array();
+		$success           = true === ( $run_result['success'] ?? false );
+
+		$envelope = array(
+			'schema'       => self::ARTIFACT_RESULT_SCHEMA,
+			'operation'    => 'agent-task-run',
+			'status'       => $success ? 'created' : 'failed',
+			'success'      => $success,
+			'artifactRefs' => $this->dedupe_records( array_merge( $artifact_bundles, $artifacts ) ),
+			'evidenceRefs' => $evidence_refs,
+			'result'       => array_filter(
+				array(
+					'structured_artifacts' => $this->structured_artifacts( $agent_task_result ),
+					'typed_artifacts'      => $this->typed_artifacts( $agent_task_result, is_array( $response['task_input'] ?? null ) ? $response['task_input'] : array() ),
+					'agent_reply'          => $this->agent_reply( $agent_result, $run_result ),
+					'transcript_refs'      => is_array( $refs['transcripts'] ?? null ) ? $refs['transcripts'] : array(),
+					'evidence_refs'        => $evidence_refs,
+					'session'              => is_array( $response['session'] ?? null ) ? $response['session'] : array(),
+				),
+				static fn( mixed $value ): bool => array() !== $value && null !== $value
+			),
+			'diagnostics' => array_map( array( $this, 'artifact_result_diagnostic' ), $diagnostics ),
+			'metadata'    => $this->artifact_result_metadata( $response, $run_result ),
+		);
+
+		if ( isset( $artifact_bundles[0] ) ) {
+			$envelope['artifactBundle'] = $artifact_bundles[0];
+		}
+		if ( ! $success ) {
+			$error = is_array( $response['error'] ?? null ) ? $response['error'] : array();
+			$envelope['error'] = array_filter(
+				array(
+					'name'    => 'WP_Codebox_Agent_Task_Run_Error',
+					'message' => (string) ( $error['message'] ?? $run_result['summary'] ?? 'WP Codebox agent task failed.' ),
+					'code'    => (string) ( $error['code'] ?? '' ),
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			);
+		}
+
+		return $envelope;
 	}
 
 	/**
@@ -339,5 +396,116 @@ final class WP_Codebox_Host_Run_Result_Normalizer {
 			}
 		}
 		$artifacts[] = $artifact;
+	}
+
+	/** @param array<string,mixed> $agent_task_result @return array<int,array<string,mixed>> */
+	private function structured_artifacts( array $agent_task_result ): array {
+		$direct  = is_array( $agent_task_result['structured_artifacts'] ?? null ) ? $agent_task_result['structured_artifacts'] : array();
+		$outputs = is_array( $agent_task_result['outputs'] ?? null ) ? $agent_task_result['outputs'] : array();
+		$nested  = is_array( $outputs['structured_artifacts'] ?? null ) ? $outputs['structured_artifacts'] : array();
+
+		return $this->dedupe_records( array_values( array_filter( array_merge( $direct, $nested ), 'is_array' ) ) );
+	}
+
+	/** @param array<string,mixed> $agent_task_result @param array<string,mixed> $task_input @return array<int,array<string,mixed>> */
+	private function typed_artifacts( array $agent_task_result, array $task_input ): array {
+		$outputs        = is_array( $agent_task_result['outputs'] ?? null ) ? $agent_task_result['outputs'] : array();
+		$direct         = is_array( $agent_task_result['typed_artifacts'] ?? null ) ? $agent_task_result['typed_artifacts'] : array();
+		$from_outputs   = is_array( $outputs['typed_artifacts'] ?? null ) ? $outputs['typed_artifacts'] : array();
+		$runtime_outputs = $this->runtime_outputs( $agent_task_result );
+		$engine_outputs = is_array( $task_input['agent_bundle']['engine_data_outputs'] ?? null ) ? $task_input['agent_bundle']['engine_data_outputs'] : array();
+		$typed          = array_values( array_filter( array_merge( $direct, $from_outputs ), 'is_array' ) );
+
+		foreach ( $runtime_outputs as $name => $payload ) {
+			if ( 'typed_artifacts' === $name || 'structured_artifacts' === $name ) {
+				continue;
+			}
+			if ( ! is_array( $payload ) ) {
+				continue;
+			}
+			$typed[] = array_filter(
+				array(
+					'name'            => (string) $name,
+					'artifact_schema' => is_string( $engine_outputs[ $name ] ?? null ) ? (string) $engine_outputs[ $name ] : '',
+					'payload'         => $payload,
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			);
+		}
+
+		return $this->dedupe_records( $typed );
+	}
+
+	/** @param array<string,mixed> $agent_task_result @return array<string,mixed> */
+	private function runtime_outputs( array $agent_task_result ): array {
+		$raw           = is_array( $agent_task_result['raw'] ?? null ) ? $agent_task_result['raw'] : array();
+		$agent_runtime = is_array( $raw['agent_runtime'] ?? null ) ? $raw['agent_runtime'] : array();
+		$result        = is_array( $agent_runtime['result'] ?? null ) ? $agent_runtime['result'] : array();
+		$outputs       = is_array( $result['outputs'] ?? null ) ? $result['outputs'] : ( is_array( $result['output'] ?? null ) ? $result['output'] : array() );
+
+		return $outputs;
+	}
+
+	/** @param array<string,mixed> $agent_result @param array<string,mixed> $run_result @return array<string,mixed> */
+	private function agent_reply( array $agent_result, array $run_result ): array {
+		return array_filter(
+			array(
+				'text'    => (string) ( $agent_result['reply'] ?? $agent_result['message'] ?? $agent_result['response'] ?? '' ),
+				'summary' => (string) ( $agent_result['summary'] ?? $run_result['summary'] ?? '' ),
+				'status'  => (string) ( $run_result['status'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $diagnostic @return array<string,mixed> */
+	private function artifact_result_diagnostic( array $diagnostic ): array {
+		return array_filter(
+			array(
+				'code'     => (string) ( $diagnostic['code'] ?? $diagnostic['class'] ?? $diagnostic['kind'] ?? 'wp-codebox.agent_task_diagnostic' ),
+				'message'  => (string) ( $diagnostic['message'] ?? 'WP Codebox agent task diagnostic.' ),
+				'severity' => in_array( $diagnostic['severity'] ?? '', array( 'info', 'warning', 'error' ), true ) ? (string) $diagnostic['severity'] : '',
+				'phase'    => (string) ( $diagnostic['phase'] ?? '' ),
+				'metadata' => is_array( $diagnostic['data'] ?? null ) ? $diagnostic['data'] : ( is_array( $diagnostic['metadata'] ?? null ) ? $diagnostic['metadata'] : array() ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $response @param array<string,mixed> $run_result @return array<string,mixed> */
+	private function artifact_result_metadata( array $response, array $run_result ): array {
+		$metadata = is_array( $run_result['metadata'] ?? null ) ? $run_result['metadata'] : array();
+
+		return array_filter(
+			array(
+				'status'       => (string) ( $run_result['status'] ?? '' ),
+				'success'      => true === ( $run_result['success'] ?? false ),
+				'run_id'       => (string) ( $metadata['run_id'] ?? '' ),
+				'run_status'   => (string) ( $metadata['run_status'] ?? '' ),
+				'runtime_id'   => (string) ( $metadata['runtime_id'] ?? '' ),
+				'runtime_status' => (string) ( $metadata['runtime_status'] ?? '' ),
+				'parent_request_schema' => (string) ( $response['run_metadata']['parent_request_schema'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && null !== $value
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $records @return array<int,array<string,mixed>> */
+	private function dedupe_records( array $records ): array {
+		$seen = array();
+		$out  = array();
+		foreach ( $records as $record ) {
+			if ( ! is_array( $record ) || empty( $record ) ) {
+				continue;
+			}
+			$key = function_exists( 'wp_json_encode' ) ? wp_json_encode( $record ) : json_encode( $record );
+			if ( isset( $seen[ (string) $key ] ) ) {
+				continue;
+			}
+			$seen[ (string) $key ] = true;
+			$out[] = $record;
+		}
+
+		return $out;
 	}
 }

@@ -42,10 +42,27 @@ function smoke_assert( bool $condition, string $message ): void {
 	}
 }
 
+function smoke_has_artifact_kind( array $artifacts, string $kind ): bool {
+	foreach ( $artifacts as $artifact ) {
+		if ( is_array( $artifact ) && $kind === (string) ( $artifact['kind'] ?? '' ) ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 $normalizer = new WP_Codebox_Host_Run_Result_Normalizer();
 $prepared   = array(
 	'input'       => array( 'goal' => 'Test task' ),
-	'task_input'  => array( 'goal' => 'Test task' ),
+	'task_input'  => array(
+		'goal'         => 'Test task',
+		'agent_bundle' => array(
+			'engine_data_outputs' => array(
+				'concept_packet' => 'ssi/concept-packet/v1',
+			),
+		),
+	),
 	'task'        => 'Test task',
 	'session_id'  => 'session-1',
 	'paths'       => array(),
@@ -70,6 +87,8 @@ smoke_assert( is_array( $timeout ) && ! is_wp_error( $timeout ), 'timeout return
 smoke_assert( false === $timeout['success'], 'timeout envelope is unsuccessful' );
 smoke_assert( 'timeout' === $timeout['agent_task_status'], 'timeout maps to agent task timeout' );
 smoke_assert( 'wp-codebox/agent-task-run-result/v1' === $timeout['agent_task_run_result']['schema'], 'timeout includes canonical agent task run result schema' );
+smoke_assert( 'wp-codebox/artifact-result-envelope/v1' === $timeout['artifact_result']['schema'], 'timeout includes public artifact result envelope' );
+smoke_assert( 'failed' === $timeout['artifact_result']['status'], 'timeout artifact result is failed' );
 smoke_assert( false === $timeout['agent_task_run_result']['success'], 'timeout canonical result is unsuccessful' );
 smoke_assert( 'timeout' === $timeout['agent_task_run_result']['status'], 'timeout canonical result status is timeout' );
 smoke_assert( 'wp_codebox_run_timeout' === $timeout['error']['code'], 'timeout error code is preserved' );
@@ -80,6 +99,7 @@ smoke_assert( is_array( $invalid_json ) && ! is_wp_error( $invalid_json ), 'inva
 smoke_assert( 'wp_codebox_json_invalid' === $invalid_json['error']['code'], 'invalid JSON error code is preserved' );
 smoke_assert( 'invalid_json' === $invalid_json['error']['failure_classification'], 'invalid JSON classification is preserved' );
 smoke_assert( 'wp-codebox/agent-task-run-result/v1' === $invalid_json['agent_task_run_result']['schema'], 'invalid JSON includes canonical result schema' );
+smoke_assert( 'wp-codebox/artifact-result-envelope/v1' === $invalid_json['outputs']['artifact_result']['schema'], 'invalid JSON exposes public artifact result through outputs' );
 smoke_assert( array() === $invalid_json['agent_task_run_result']['refs']['artifact_bundles'], 'failure before artifacts has no artifact bundle refs' );
 
 $non_zero = $normalizer->normalize( $prepared, array( 'exit_code' => 2, 'output' => '{"agentResult":{}}' ), $adapters );
@@ -91,7 +111,7 @@ $success = $normalizer->normalize(
 	$prepared,
 	array(
 		'exit_code' => 0,
-		'output'    => '{"agentResult":{"artifacts":{"directory":"/tmp/wp-codebox-artifacts"},"summary":"Changed one file","changedFiles":{"artifact":"files/changed-files.json","count":1},"patch":{"artifact":"files/patch.diff","bytes":10},"transcript":{"artifact":"files/transcript.json"}},"evidence_refs":[{"id":"evidence-1","path":"/tmp/wp-codebox-artifacts/evidence.json"}],"runtime":{"id":"runtime-1","status":"destroyed"}}',
+		'output'    => '{"agentResult":{"artifacts":{"directory":"/tmp/wp-codebox-artifacts"},"summary":"Changed one file","changedFiles":{"artifact":"files/changed-files.json","count":1},"patch":{"artifact":"files/patch.diff","bytes":10},"transcript":{"artifact":"files/transcript.json"}},"agentTaskResult":{"raw":{"agent_runtime":{"success":true,"result":{"output":{"concept_packet":{"title":"Stabilized public envelope"}}}}}},"evidence_refs":[{"id":"evidence-1","path":"/tmp/wp-codebox-artifacts/evidence.json"}],"runtime":{"id":"runtime-1","status":"destroyed"}}',
 	),
 	$adapters
 );
@@ -102,5 +122,13 @@ smoke_assert( true === $success['agent_task_run_result']['success'], 'success ca
 smoke_assert( 1 === $success['agent_task_run_result']['metadata']['changed_files_count'], 'success canonical result includes changed file count' );
 smoke_assert( 'codebox-patch' === $success['agent_task_run_result']['refs']['patches'][0]['kind'], 'success canonical result includes patch ref' );
 smoke_assert( 'codebox-evidence-bundle' === $success['agent_task_run_result']['refs']['evidence_bundles'][0]['kind'], 'success canonical result includes evidence bundle ref' );
+smoke_assert( 'wp-codebox/artifact-result-envelope/v1' === $success['artifact_result']['schema'], 'success includes public artifact result envelope' );
+smoke_assert( 'created' === $success['artifact_result']['status'], 'success artifact result status is created' );
+smoke_assert( $success['artifact_result'] === $success['outputs']['artifact_result'], 'public artifact result is exposed as the primary output envelope' );
+smoke_assert( smoke_has_artifact_kind( $success['artifact_result']['artifactRefs'], 'codebox-patch' ), 'artifact result includes patch artifact refs' );
+smoke_assert( 'concept_packet' === $success['artifact_result']['result']['typed_artifacts'][0]['name'], 'artifact result includes concept packet typed artifact' );
+smoke_assert( 'ssi/concept-packet/v1' === $success['artifact_result']['result']['typed_artifacts'][0]['artifact_schema'], 'typed artifact preserves declared concept packet schema' );
+smoke_assert( 'Stabilized public envelope' === $success['artifact_result']['result']['typed_artifacts'][0]['payload']['title'], 'typed artifact preserves runtime output payload' );
+smoke_assert( ! isset( $success['artifact_result']['metadata']['agent_runtime'] ), 'artifact result metadata does not expose private agent runtime internals' );
 
 echo "host run result normalizer smoke passed\n";
