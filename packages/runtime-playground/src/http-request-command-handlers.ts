@@ -2,6 +2,7 @@ import { argValue, jsonObjectArg } from "./command-args.js"
 
 export interface HttpRequestCommandInput {
   command?: "wordpress.http-request" | "wordpress.server-page-load"
+  pageLoadTarget?: { kind: "admin" | "frontend"; path: string }
   method: string
   url: string
   headers: Record<string, unknown>
@@ -34,29 +35,40 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
     body: input.body,
   })
   const body = await response.text()
+  const command = input.command ?? "wordpress.http-request"
+  const status = pageLoadStatusFromHttp(response.status)
   const output = {
-    command: input.command ?? "wordpress.http-request",
+    ...(command === "wordpress.server-page-load" ? {
+      schema: "wp-codebox/wordpress-page-load-result/v1",
+      mode: "server-http",
+    } : {}),
+    command,
     method: input.method,
     url: input.url,
     resolvedUrl,
-    status: response.status,
+    status: command === "wordpress.server-page-load" ? status : response.status,
+    ...(command === "wordpress.server-page-load" ? { statusCode: response.status } : {}),
     statusText: response.statusText,
     headers: Object.fromEntries(response.headers.entries()),
+    ...(command === "wordpress.server-page-load" ? {
+      target: { kind: input.pageLoadTarget?.kind ?? "frontend", path: input.pageLoadTarget?.path ?? input.url, method: input.method },
+      http: { status: response.status, headers: Object.fromEntries(response.headers.entries()) },
+    } : {}),
     bodyBytes: Buffer.byteLength(body),
     timing: { duration_ms: Date.now() - startedAt },
     performance: {
       schema: "wp-codebox/performance-observation/v1",
-      command: input.command ?? "wordpress.http-request",
+      command,
       target: input.url,
       source: "server-http",
-      kind: input.command === "wordpress.server-page-load" ? "server-page-load" : "http-request",
+      kind: command === "wordpress.server-page-load" ? "server-page-load" : "http-request",
       timing: { status: "captured", durationMs: Date.now() - startedAt },
       memory: { status: "unsupported", reason: "server_http_request_runs_outside_php_process" },
       database: { status: "unsupported", reason: "server_http_request_runs_outside_php_process" },
       hooks: { status: "unsupported", reason: "hook_timing_not_instrumented", timings: [] },
       network: { status: "captured", requests: 1, responses: 1, failures: response.ok ? 0 : 1, transferSizeBytes: Buffer.byteLength(body) },
       browser: { status: "unsupported", reason: "not_a_browser_observation" },
-      metadata: { runner: "wp-codebox/runtime-playground", surface: input.command === "wordpress.server-page-load" ? "server-page" : "http" },
+      metadata: { runner: "wp-codebox/runtime-playground", surface: command === "wordpress.server-page-load" ? "server-page" : "http" },
     },
     diagnostics: {},
   }
@@ -66,6 +78,16 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
   }
 
   return `${JSON.stringify(output, null, 2)}\n`
+}
+
+function pageLoadStatusFromHttp(status: number): "ok" | "redirect" | "error" {
+  if (status >= 300 && status < 400) {
+    return "redirect"
+  }
+  if (status >= 400) {
+    return "error"
+  }
+  return "ok"
 }
 
 function optionalStatusArg(args: string[], name: string): number | undefined {

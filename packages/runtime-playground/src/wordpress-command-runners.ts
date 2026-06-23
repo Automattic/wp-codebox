@@ -742,17 +742,23 @@ export async function runServerPageLoadCommand({
   baseUrl: string
   spec: ExecutionSpec
 }): Promise<string> {
-  const input = httpRequestInputFromArgs(serverPageLoadArgs(spec.args ?? []))
+  const args = spec.args ?? []
+  const surface = serverPageLoadSurface(args)
+  const path = argValue(args, "path")?.trim() || (surface === "admin" ? "index.php" : "/")
+  const input = httpRequestInputFromArgs(serverPageLoadArgs(args, surface, path))
   input.command = "wordpress.server-page-load"
+  input.pageLoadTarget = { kind: surface, path }
   return runHttpRequest(input, baseUrl)
 }
 
-function serverPageLoadArgs(args: string[]): string[] {
-  const surface = (argValue(args, "surface")?.trim() || "frontend").toLowerCase()
+function serverPageLoadArgs(args: string[], surface: "admin" | "frontend", path: string): string[] {
   const url = argValue(args, "url")?.trim()
-  const path = argValue(args, "path")?.trim() || (surface === "admin" ? "index.php" : "/")
   const resolved = url || (surface === "admin" ? `/wp-admin/${path.replace(/^\/+/, "")}` : `/${path.replace(/^\/+/, "")}`)
   return [`url=${resolved}`, ...args.filter((arg) => !arg.startsWith("surface=") && !arg.startsWith("path=") && !arg.startsWith("url="))]
+}
+
+function serverPageLoadSurface(args: string[]): "admin" | "frontend" {
+  return argValue(args, "surface")?.trim().toLowerCase() === "admin" ? "admin" : "frontend"
 }
 
 export async function runBenchCommand({

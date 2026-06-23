@@ -25,10 +25,11 @@ assert.equal(simulatedFrontend?.handler.method, "runFrontendPageLoad")
 
 assert.equal(serverPageLoad?.handler.kind, "playground")
 assert.equal(serverPageLoad?.handler.method, "runServerPageLoad")
-assert.match(serverPageLoad?.outputShape ?? "", /source=server-http kind=server-page-load/)
+assert.match(serverPageLoad?.outputShape ?? "", /mode=server-http/)
 
 assert.equal(browserPageLoad?.handler.kind, "playground")
 assert.equal(browserPageLoad?.handler.method, "runBrowserPageLoad")
+assert.equal(browserPageLoad?.outputSchema?.id, "wp-codebox/wordpress-page-load-result/v1")
 assert.equal(browserPageLoad?.validation, undefined)
 
 assert.equal(pageLoadInputFromArgs([], "admin").command, "wordpress.simulated-admin-page-load")

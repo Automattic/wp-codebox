@@ -186,6 +186,7 @@ $wp_codebox_page_load_finished_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
 $wp_codebox_page_load_status = !empty($wp_codebox_page_load_errors) ? 'error' : ($wp_codebox_page_load_redirect ? 'redirect' : 'ok');
 $wp_codebox_page_load_result = array(
     'schema' => 'wp-codebox/wordpress-page-load-result/v1',
+    'mode' => 'simulated',
     'command' => $wp_codebox_page_load_command,
     'status' => $wp_codebox_page_load_status,
     'target' => array('kind' => $wp_codebox_page_load_surface, 'path' => $wp_codebox_page_load_path, 'method' => $wp_codebox_page_load_method, 'query' => $wp_codebox_page_load_query, 'body' => $wp_codebox_page_load_body, 'userSession' => is_array($wp_codebox_page_load_user_session) ? $wp_codebox_page_load_user_session : null),

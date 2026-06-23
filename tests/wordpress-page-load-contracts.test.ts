@@ -6,6 +6,7 @@ import {
 import { getCommandDefinition } from "../packages/runtime-core/src/contracts.js"
 
 const result = wordpressPageLoadResult({
+  mode: "simulated",
   command: "wordpress.frontend-page-load",
   status: "ok",
   target: { kind: "frontend", path: "/hello-world/", method: "GET" },
@@ -21,6 +22,7 @@ const result = wordpressPageLoadResult({
 })
 
 assert.equal(result.schema, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA)
+assert.equal(result.mode, "simulated")
 assert.equal(result.command, "wordpress.frontend-page-load")
 assert.equal(result.status, "ok")
 assert.equal(result.performance?.database?.queryCount, 3)
@@ -36,5 +38,13 @@ const frontendDefinition = getCommandDefinition("wordpress.frontend-page-load")
 assert.equal(frontendDefinition?.outputSchema?.id, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA)
 assert.equal(frontendDefinition?.handler.kind, "playground")
 assert.equal(frontendDefinition?.handler.kind === "playground" ? frontendDefinition.handler.method : undefined, "runFrontendPageLoad")
+
+const serverDefinition = getCommandDefinition("wordpress.server-page-load")
+assert.equal(serverDefinition?.outputSchema?.id, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA)
+assert.match(serverDefinition?.outputShape ?? "", /mode=server-http/)
+
+const browserDefinition = getCommandDefinition("wordpress.browser-page-load")
+assert.equal(browserDefinition?.outputSchema?.id, WORDPRESS_PAGE_LOAD_RESULT_SCHEMA)
+assert.match(browserDefinition?.outputShape ?? "", /mode=browser/)
 
 console.log("wordpress page-load contracts passed")

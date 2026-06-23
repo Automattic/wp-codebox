@@ -180,12 +180,14 @@ The stable public surface is grouped by lifecycle area rather than by product:
   timing placeholders, network counts, and browser/admin metric placeholders.
 - **WordPress page-load coverage:** `wordpress.admin-page-load` and
   `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
-  with status, target, resolved admin screen or frontend queried-object identity
-  where WordPress exposes it, redirects, notices/errors, optional query/performance
-  observations, and a JSON artifact ref. These commands intentionally use a light
-  in-process WordPress load path; browser-heavy probes remain available through
-  browser commands and `openWordPressAdminPage()` when a caller explicitly needs
-  DOM, screenshot, console, or network evidence.
+  with `mode: "simulated"`, status, target, resolved admin screen or frontend
+  queried-object identity where WordPress exposes it, redirects, notices/errors,
+  optional query/performance observations, and a JSON artifact ref. These commands
+  intentionally use a light in-process WordPress load path. `wordpress.server-page-load`
+  returns the same result schema with `mode: "server-http"` for preview-server HTTP
+  requests without browser execution. `wordpress.browser-page-load` returns it with
+  `mode: "browser"` when a caller explicitly needs DOM, screenshot, console, or
+  network evidence.
 - **WordPress admin discovery:** `wordpress.runtime-discovery` and
   `wordpress.admin-page-inventory` expose admin pages with canonical admin URLs,
   declared capabilities, current-user access checks, and current-user role context

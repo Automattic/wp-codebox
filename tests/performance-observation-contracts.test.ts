@@ -37,6 +37,7 @@ const pageLoadCode = pageLoadPhpCode({
   captureDiagnostics: ["wpdb-queries"],
 })
 assert.match(pageLoadCode, /'timing' => array\('status' => 'captured'/)
+assert.match(pageLoadCode, /'mode' => 'simulated'/)
 assert.match(pageLoadCode, /'memory' => array\('status' => 'captured'/)
 assert.match(pageLoadCode, /'status' => \$wp_codebox_page_load_queries_available \? 'captured' : 'uncaptured'/)
 assert.match(pageLoadCode, /'reason' => 'hook_timing_not_instrumented'/)
@@ -57,7 +58,13 @@ globalThis.fetch = async () =>
     headers: { "content-type": "text/plain" },
   })
 try {
-  const httpResult = JSON.parse(await runHttpRequest({ method: "GET", url: "/", headers: {}, body: undefined, expectStatus: undefined, command: "wordpress.server-page-load" }, "https://example.test"))
+  const httpResult = JSON.parse(await runHttpRequest({ method: "GET", url: "/", headers: {}, body: undefined, expectStatus: undefined, command: "wordpress.server-page-load", pageLoadTarget: { kind: "frontend", path: "/" } }, "https://example.test"))
+  assert.equal(httpResult.schema, "wp-codebox/wordpress-page-load-result/v1")
+  assert.equal(httpResult.mode, "server-http")
+  assert.equal(httpResult.status, "ok")
+  assert.equal(httpResult.statusCode, 200)
+  assert.equal(httpResult.target.kind, "frontend")
+  assert.equal(httpResult.http.status, 200)
   assert.equal(httpResult.performance.timing.status, "captured")
   assert.equal(httpResult.performance.network.status, "captured")
   assert.equal(httpResult.performance.database.status, "unsupported")
