@@ -354,9 +354,9 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
 
 async function writeComposerInstalledPackageAutoloader(pluginSource: string): Promise<void> {
   const packageAutoloader = join(pluginSource, "vendor", "autoload_packages.php")
+  const existingPackageAutoloader = await pathIsFile(packageAutoloader)
   if (await pathIsFile(packageAutoloader)) {
     await bridgePackageAutoloaderToComposerAutoload(packageAutoloader)
-    return
   }
 
   const installedPath = join(pluginSource, "vendor", "composer", "installed.json")
@@ -372,9 +372,7 @@ async function writeComposerInstalledPackageAutoloader(pluginSource: string): Pr
 
   const uniqueFiles = [...new Set(classmapFiles)]
   const fileLines = uniqueFiles.map((path) => `    __DIR__ . ${JSON.stringify(`/composer/${path}`)},`).join("\n")
-  await writeFile(packageAutoloader, `<?php
-defined( 'ABSPATH' ) || exit;
-
+  const classmapLoader = `
 $wp_codebox_composer_package_classmap_files = array(
 ${fileLines}
 );
@@ -384,6 +382,18 @@ foreach ($wp_codebox_composer_package_classmap_files as $file) {
         require_once $file;
     }
 }
+`
+  if (existingPackageAutoloader) {
+    const contents = await readFile(packageAutoloader, "utf8")
+    if (!contents.includes("$wp_codebox_composer_package_classmap_files")) {
+      await writeFile(packageAutoloader, `${contents.trimEnd()}\n${classmapLoader}`)
+    }
+    return
+  }
+
+  await writeFile(packageAutoloader, `<?php
+defined( 'ABSPATH' ) || exit;
+${classmapLoader}
 `)
 }
 
