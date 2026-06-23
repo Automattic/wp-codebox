@@ -52,6 +52,10 @@ assert.deepEqual(result.coverageSummary, {
   untested: 0,
   skippedReasons: [{ reason: "fuzz_suite_target_adapter_unsupported", count: 1, caseIds: ["case-runtime-action-unsupported"] }],
 })
+assert.equal(result.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
+assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 12, generated: 12, executable: 12, executed: 11, skipped: 1, untested: 0 })
+assert.deepEqual(result.coveragePlan?.executed.map((item) => item.id), result.cases.filter((item) => item.status !== "skipped").map((item) => item.id))
+assert.equal(result.coveragePlan?.skipped[0]?.reason?.code, "fuzz_suite_target_adapter_unsupported")
 assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })

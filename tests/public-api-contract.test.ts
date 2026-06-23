@@ -191,6 +191,8 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
 assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
   "./command-registry.js",
+  "./fuzz-coverage-plan-contracts.js",
+  "./fuzz-suite-contracts.js",
   "./runtime-contract-manifest.js",
   "./wordpress-page-load-contracts.js",
 ])
@@ -358,6 +360,7 @@ assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABI
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp-codebox/wordpress-workload-run/v1")
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")
