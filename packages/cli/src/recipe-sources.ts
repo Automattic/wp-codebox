@@ -365,27 +365,25 @@ async function writeComposerInstalledPackageAutoloader(pluginSource: string): Pr
   }
   const installed = JSON.parse(await readFile(installedPath, "utf8")) as unknown
   const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
-  const classmapFiles = (await Promise.all(classmapPaths.map((path) => composerInstalledPackageClassmapFiles(pluginSource, path)))).flat()
-  if (classmapFiles.length === 0) {
+  if (classmapPaths.length === 0 || !await pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) {
     return
   }
 
-  const uniqueFiles = [...new Set(classmapFiles)]
-  const fileLines = uniqueFiles.map((path) => `    __DIR__ . ${JSON.stringify(`/composer/${path}`)},`).join("\n")
   const classmapLoader = `
-$wp_codebox_composer_package_classmap_files = array(
-${fileLines}
-);
-
-foreach ($wp_codebox_composer_package_classmap_files as $file) {
-    if (is_file($file)) {
-        require_once $file;
-    }
+$wp_codebox_composer_package_classmap = __DIR__ . '/composer/autoload_classmap.php';
+if (is_file($wp_codebox_composer_package_classmap)) {
+    spl_autoload_register(static function (string $class) use ($wp_codebox_composer_package_classmap): void {
+        $classmap = require $wp_codebox_composer_package_classmap;
+        if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+            return;
+        }
+        require $classmap[$class];
+    }, true, true);
 }
 `
   if (existingPackageAutoloader) {
     const contents = await readFile(packageAutoloader, "utf8")
-    if (!contents.includes("$wp_codebox_composer_package_classmap_files")) {
+    if (!contents.includes("$wp_codebox_composer_package_classmap")) {
       await writeFile(packageAutoloader, `${contents.trimEnd()}\n${classmapLoader}`)
     }
     return
@@ -395,33 +393,6 @@ foreach ($wp_codebox_composer_package_classmap_files as $file) {
 defined( 'ABSPATH' ) || exit;
 ${classmapLoader}
 `)
-}
-
-async function composerInstalledPackageClassmapFiles(pluginSource: string, classmapPath: string): Promise<string[]> {
-  const absolutePath = join(pluginSource, "vendor", "composer", classmapPath)
-  if (await pathIsFile(absolutePath)) {
-    return [classmapPath]
-  }
-  if (!await pathIsDirectory(absolutePath)) {
-    return []
-  }
-  const files: string[] = []
-  await collectPhpFiles(absolutePath, classmapPath.replace(/\/+$/, ""), files)
-  return files
-}
-
-async function collectPhpFiles(directory: string, relativeDirectory: string, files: string[]): Promise<void> {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const absolutePath = join(directory, entry.name)
-    const relativePath = `${relativeDirectory}/${entry.name}`.replace(/^\/+/, "")
-    if (entry.isDirectory()) {
-      await collectPhpFiles(absolutePath, relativePath, files)
-      continue
-    }
-    if (entry.isFile() && entry.name.endsWith(".php")) {
-      files.push(relativePath)
-    }
-  }
 }
 
 async function bridgePackageAutoloaderToComposerAutoload(packageAutoloader: string): Promise<void> {

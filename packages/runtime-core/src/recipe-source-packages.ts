@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { safeArtifactRelativePath } from "./artifact-paths.js"
@@ -239,7 +239,7 @@ export function bridgePackageAutoloaderToComposerAutoload(pluginSource: string):
   const initCall = "Autoloader::init();"
   let bridged = contents.includes(bridge) ? contents : contents.includes(initCall) ? contents.replace(initCall, `${bridge}\n${initCall}`) : `${contents.trimEnd()}\n${bridge}\n`
   const classmapLoader = composerInstalledPackageClassmapLoader(pluginSource)
-  if (classmapLoader && !bridged.includes("$wp_codebox_composer_package_classmap_files")) {
+  if (classmapLoader && !bridged.includes("$wp_codebox_composer_package_classmap")) {
     bridged = `${bridged.trimEnd()}\n${classmapLoader}`
   }
   if (bridged !== contents) {
@@ -258,20 +258,27 @@ function composerInstalledPackageClassmapLoader(pluginSource: string): string {
   if (!pathExists(installedPath)) return ""
   const installed = JSON.parse(readFileSync(installedPath, "utf8")) as unknown
   const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
-  const classmapFiles = classmapPaths.flatMap((path) => composerInstalledPackageClassmapFiles(pluginSource, path))
-  if (classmapFiles.length === 0) return ""
-  const fileLines = [...new Set(classmapFiles)].map((path) => `    __DIR__ . ${JSON.stringify(`/composer/${path}`)},`).join("\n")
+  if (classmapPaths.length === 0 || !pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) return ""
   return `
-$wp_codebox_composer_package_classmap_files = array(
-${fileLines}
-);
-
-foreach ($wp_codebox_composer_package_classmap_files as $file) {
-    if (is_file($file)) {
-        require_once $file;
-    }
+$wp_codebox_composer_package_classmap = __DIR__ . '/composer/autoload_classmap.php';
+if (is_file($wp_codebox_composer_package_classmap)) {
+    spl_autoload_register(static function (string $class) use ($wp_codebox_composer_package_classmap): void {
+        $classmap = require $wp_codebox_composer_package_classmap;
+        if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+            return;
+        }
+        require $classmap[$class];
+    }, true, true);
 }
 `
+}
+
+function pathIsFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile()
+  } catch {
+    return false
+  }
 }
 
 function composerInstalledPackages(installed: unknown): ComposerInstalledPackage[] {
@@ -293,44 +300,6 @@ function composerInstalledPackageClassmapPaths(pkg: ComposerInstalledPackage): s
   return entries
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && !isAbsolute(entry) && !entry.includes(".."))
     .map((entry) => `${pkg["install-path"]!.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}/${entry.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}`)
-}
-
-function composerInstalledPackageClassmapFiles(pluginSource: string, classmapPath: string): string[] {
-  const absolutePath = join(pluginSource, "vendor", "composer", classmapPath)
-  if (pathIsFile(absolutePath)) return [classmapPath]
-  if (!pathIsDirectory(absolutePath)) return []
-  const files: string[] = []
-  collectPhpFiles(absolutePath, classmapPath.replace(/\/+$/, ""), files)
-  return files
-}
-
-function collectPhpFiles(directory: string, relativeDirectory: string, files: string[]): void {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const relativePath = `${relativeDirectory}/${entry.name}`.replace(/^\/+/, "")
-    if (entry.isDirectory()) {
-      collectPhpFiles(join(directory, entry.name), relativePath, files)
-      continue
-    }
-    if (entry.isFile() && entry.name.endsWith(".php")) {
-      files.push(relativePath)
-    }
-  }
-}
-
-function pathIsFile(filePath: string): boolean {
-  try {
-    return statSync(filePath).isFile()
-  } catch {
-    return false
-  }
-}
-
-function pathIsDirectory(filePath: string): boolean {
-  try {
-    return statSync(filePath).isDirectory()
-  } catch {
-    return false
-  }
 }
 
 export function composerManagedHostEnv(): Record<string, string> {
