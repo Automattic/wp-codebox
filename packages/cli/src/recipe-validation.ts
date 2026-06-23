@@ -530,7 +530,7 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
     }
-    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const pluginSource = source.type === "local" ? resolve(recipeDirectory, plugin.source) : undefined
     const pluginMountedSource = source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : undefined

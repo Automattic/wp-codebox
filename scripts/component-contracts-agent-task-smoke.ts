@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildAgentTaskRecipe } from "../packages/runtime-core/src/agent-task-recipe.js"
 import { normalizeTaskInput } from "../packages/runtime-core/src/task-input.js"
+import { prepareRecipeExtraPlugins } from "../packages/cli/src/recipe-sources.js"
 import { runRecipeRunCommand } from "../packages/cli/src/commands/recipe-run.js"
 
 const root = mkdtempSync(join(tmpdir(), "wp-codebox-component-contracts-smoke-"))
@@ -77,6 +78,19 @@ try {
   assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "autoload_packages.php")), true)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "jetpack-autoloader", "class-autoloader.php")), true)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "woocommerce", "email-editor", "src", "class-package.php")), true)
+
+  const preparedMonorepoRecipe = {
+    ...recipe,
+    inputs: {
+      ...recipe.inputs,
+      extra_plugins: plugins.map((plugin) => plugin.slug === "monorepo-component"
+        ? { ...plugin, sourceRoot: monorepo.rootPath, sourceSubpath: monorepo.sourceSubpath }
+        : plugin),
+    },
+  }
+  const preparedPlugins = await prepareRecipeExtraPlugins(preparedMonorepoRecipe, root)
+  const preparedMonorepoPlugin = preparedPlugins.find((plugin) => plugin.slug === "monorepo-component")
+  assert.equal(preparedMonorepoPlugin?.source, monorepoComponent?.source, "prepared monorepo plugin sources should remain authoritative")
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")

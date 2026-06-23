@@ -564,7 +564,7 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   const steps: Array<Promise<RecipeDryRunStep>> = []
   const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
-    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     return {
       source: plugin.source,
       slug,
@@ -657,7 +657,7 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
-    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const source = recipeSource(sourceRoot, plugin.sha256)
     const provenance = recipeSourceProvenance(source, recipeDirectory)

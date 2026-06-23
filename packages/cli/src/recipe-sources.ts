@@ -270,7 +270,7 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   const plugins: PreparedExtraPlugin[] = []
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
-    const sourceRootRef = recipeExtraPluginSourceRoot(plugin)
+    const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256)
     const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
@@ -1376,16 +1376,20 @@ export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): strin
   return basename(resolve(plugin.source))
 }
 
-export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin): string {
-  return plugin.sourceRoot ?? plugin.originalSource ?? plugin.source
+export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory = "."): string {
+  if (plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
+    return plugin.sourceRoot
+  }
+
+  return plugin.originalSource ?? plugin.source
 }
 
 export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
-  if (plugin.sourceSubpath) {
+  if (plugin.sourceSubpath && plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
     return normalizeReviewerSafePath(plugin.sourceSubpath)
   }
 
-  const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+  const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
   if (sourceRoot === plugin.source) {
     return ""
   }
@@ -1396,6 +1400,11 @@ export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugi
   }
 
   return normalizeReviewerSafePath(relativePath)
+}
+
+function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraPlugin, sourceRoot: string, recipeDirectory: string): boolean {
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute(relativePath)
 }
 
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
@@ -1431,7 +1440,7 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
 
   const source = recipeSource(plugin.source, plugin.sha256)
   if (source.type === "local") {
-    const sourceRoot = resolve(recipeDirectory, recipeExtraPluginSourceRoot(plugin))
+    const sourceRoot = resolve(recipeDirectory, recipeExtraPluginSourceRoot(plugin, recipeDirectory))
     const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const pluginSource = sourceSubpath ? join(sourceRoot, sourceSubpath) : resolve(recipeDirectory, plugin.source)
     return resolvePluginEntrypointContract({ source: pluginSource, slug, loadAs: plugin.loadAs }).pluginFile
