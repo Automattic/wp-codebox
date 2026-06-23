@@ -19,6 +19,9 @@ assert.match(workflow, /artifact_declarations:/)
 assert.match(workflow, /output_projections:/)
 assert.match(workflow, /verification_commands:/)
 assert.match(workflow, /drift_checks:/)
+assert.match(workflow, /access_token_repos:/)
+assert.match(workflow, /require_access_token:/)
+assert.doesNotMatch(workflow, /homeboy|require_app_token|require_homeboy_app_token|REQUIRE_HOMEBOY_APP_TOKEN/i)
 assert.doesNotMatch(workflow, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref/i)
 assert.doesNotMatch(workflow, /datamachine-agent-ci|runtime-agent-full-run|Extra-Chill\/homeboy-extensions/)
 assert.doesNotMatch(publicWorkflowSurface, /datamachine|data machine|data-machine|agents api/i)
@@ -30,8 +33,10 @@ assert.match(docs, /Automattic\/wp-codebox\/.github\/workflows\/run-agent-task.y
 assert.match(docs, /runner_recipe/)
 assert.match(docs, /agent_bundle/)
 assert.match(docs, /runner_workspace/)
+assert.match(docs, /access_token_repos/)
+assert.match(docs, /require_access_token/)
 assert.match(docs, /implementation-specific\s+runtime wiring, workspace adapters, plugins, and model setup stay behind the WP\s+Codebox boundary/)
-assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals/i)
+assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
 const outputPath = join(tmp, "github-output.txt")
@@ -63,8 +68,8 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     ACTIONS_ARTIFACT_DOWNLOADS: "[]",
     SUCCESS_REQUIRES_PR: "false",
     SUCCESS_COMPLETION_OUTCOMES: "[]",
-    APP_TOKEN_REPOS: "Automattic/example-target",
-    REQUIRE_HOMEBOY_APP_TOKEN: "true",
+    ACCESS_TOKEN_REPOS: "Automattic/example-target",
+    REQUIRE_ACCESS_TOKEN: "true",
     ALLOWED_REPOS: '["Automattic/example-target"]',
     MAX_TURNS: "12",
     STEP_BUDGET: "16",
@@ -87,8 +92,14 @@ assert.equal(request.runner_recipe, "Automattic/example-runner@abc123:ci/runner-
 assert.equal(request.agent_bundle, "bundles/example-agent")
 assert.equal(request.target_repo, "Automattic/example-target")
 assert.deepEqual(request.verification_commands, [{ command: "npm test", description: "Run checks" }])
+assert.deepEqual(request.access, {
+  access_token_repos: "Automattic/example-target",
+  require_access_token: true,
+  allowed_repos: ["Automattic/example-target"],
+})
 assert.deepEqual(request.outputs.projections, { pr_url: "metadata.runner_workspace_publication.url" })
 assert.deepEqual(request.artifacts.declarations, [{ schema: "wp-codebox/artifact-declaration/v1", name: "agent_transcript" }])
+assert.doesNotMatch(JSON.stringify(request), /homeboy|require_app_token|app_token_repos/i)
 
 const outputs = await readFile(outputPath, "utf8")
 assert.match(outputs, /job_status<<__WP_CODEBOX_OUTPUT__\nskipped\n__WP_CODEBOX_OUTPUT__/)

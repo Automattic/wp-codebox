@@ -26,6 +26,8 @@ jobs:
       verification_commands: '[{"command":"npm test","description":"Run checks"}]'
       drift_checks: '[]'
       output_projections: '{"pr_url":"metadata.runner_workspace_publication.url"}'
+      access_token_repos: Automattic/example-target
+      require_access_token: true
       expected_artifacts: '["agent_transcript","agent_change_summary"]'
       artifact_declarations: |
         [
@@ -76,6 +78,8 @@ checkout rules, package internals, or private workflow names.
 - `writable_paths`: comma-separated repository paths the agent may edit.
 - `runner_workspace`: JSON workspace publication request.
 - `validation_dependencies`, `verification_commands`, and `drift_checks`: runner-owned validation inputs.
+- `access_token_repos`: comma-separated repositories for access-token scoping.
+- `require_access_token`: require the configured access token for the run.
 - `artifact_declarations` and `expected_artifacts`: typed review artifact contract.
 - `output_projections`: JSON object mapping workflow output names to result paths.
 - `run_agent`: set to `false` to record a skipped run.
