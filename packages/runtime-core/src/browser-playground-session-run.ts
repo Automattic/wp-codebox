@@ -95,11 +95,11 @@ export function normalizeBrowserPlaygroundPreviewAccess(...sources: unknown[]): 
   const runtimeAccess = firstRecord(records, "runtime_access")
   const preview = firstRecord(records, "preview")
   const lease = firstRecord(records, "lease") ?? firstRecord([runtimeAccess, preview, reviewerAccess], "lease")
-  const publicUrl = firstString(records, "public_url") ?? firstString(records, "publicUrl") ?? firstString([runtimeAccess, preview, lease], "public_url") ?? firstString([runtimeAccess, preview, lease], "publicUrl")
+  const publicUrl = firstString(records, "public_url") ?? firstString(records, "preview_public_url") ?? firstString(records, "publicUrl") ?? firstString(records, "previewPublicUrl") ?? firstString([runtimeAccess, preview, lease], "public_url") ?? firstString([runtimeAccess, preview, lease], "preview_public_url") ?? firstString([runtimeAccess, preview, lease], "publicUrl") ?? firstString([runtimeAccess, preview, lease], "previewPublicUrl")
   const localUrl = firstString(records, "local_url") ?? firstString(records, "localUrl") ?? firstString([runtimeAccess, preview, lease], "local_url") ?? firstString([runtimeAccess, preview, lease], "localUrl")
   const siteUrl = firstString(records, "site_url") ?? firstString(records, "siteUrl") ?? firstString([runtimeAccess, preview, lease], "site_url") ?? firstString([runtimeAccess, preview, lease], "siteUrl")
   const reviewerUrl = firstString(records, "reviewer_url") ?? firstString(records, "reviewerUrl") ?? firstString([reviewerAccess], "openUrl") ?? publicUrl
-  const reviewerSafe = firstBoolean(records, "safe_for_review") ?? firstBoolean(records, "reviewerSafe") ?? firstBoolean([reviewerAccess], "reviewerSafe") ?? isReviewerSafeUrl(reviewerUrl)
+  const reviewerSafe = isReviewerSafeUrl(reviewerUrl)
   const reachability = reviewerSafe ? "ready" : localUrl ? "local-only" : reviewerUrl || publicUrl ? "blocked" : "unavailable"
 
   return stripUndefined({
@@ -147,14 +147,6 @@ function firstString(records: Array<Record<string, unknown> | undefined>, key: s
   for (const record of records) {
     const value = record?.[key]
     if (typeof value === "string" && value.trim()) return value
-  }
-  return undefined
-}
-
-function firstBoolean(records: Array<Record<string, unknown> | undefined>, key: string): boolean | undefined {
-  for (const record of records) {
-    const value = record?.[key]
-    if (typeof value === "boolean") return value
   }
   return undefined
 }

@@ -75,4 +75,26 @@ assert.equal(localOnly.local_url, "http://127.0.0.1:9400/")
 assert.equal(localOnly.safe_for_review, false)
 assert.equal(localOnly.reachability, "local-only")
 
+const previewPublicUrlOnly = normalizeBrowserPlaygroundPreviewAccess({
+  runtime_access: {
+    lease: {
+      schema: "wp-codebox/preview-lease/v1",
+      preview_public_url: "https://preview-public.example.test/",
+      lease: { status: "active" },
+    },
+  },
+})
+assert.equal(previewPublicUrlOnly.reviewer_url, "https://preview-public.example.test/")
+assert.equal(previewPublicUrlOnly.public_url, "https://preview-public.example.test/")
+assert.equal(previewPublicUrlOnly.safe_for_review, true)
+assert.equal(previewPublicUrlOnly.reachability, "ready")
+
+const unsafeReviewerClaim = normalizeBrowserPlaygroundPreviewAccess({
+  reviewer_url: "http://127.0.0.1:9400/",
+  safe_for_review: true,
+})
+assert.equal(unsafeReviewerClaim.reviewer_url, "http://127.0.0.1:9400/")
+assert.equal(unsafeReviewerClaim.safe_for_review, false)
+assert.equal(unsafeReviewerClaim.reachability, "blocked")
+
 console.log("browser playground session run contract ok")
