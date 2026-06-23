@@ -85,6 +85,21 @@ $package_with_descriptor = $adapter->run_runtime_package(
 	)
 );
 assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) === $package_with_descriptor['received']['package'] );
+
+$workspace_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . getmypid();
+mkdir( $workspace_root . '/bundles/example-agent', 0777, true );
+$package_with_workspace_source = $adapter->run_runtime_package(
+	array(
+		'runtime_package' => 'example-agent',
+		'metadata'        => array( 'runtime_package_descriptor' => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) ),
+		'task_input'      => array(
+			'client_context' => array(
+				'default_workspace' => array( 'target' => $workspace_root ),
+			),
+		),
+	)
+);
+assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $package_with_workspace_source['received']['package'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
 assert_no_agents_api_schema_leaks( $chat, 'chat' );
