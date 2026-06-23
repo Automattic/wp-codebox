@@ -44,7 +44,20 @@ export async function runHttpRequest(input: HttpRequestCommandInput, baseUrl: st
     headers: Object.fromEntries(response.headers.entries()),
     bodyBytes: Buffer.byteLength(body),
     timing: { duration_ms: Date.now() - startedAt },
-    performance: { schema: "wp-codebox/performance-observation/v1", command: input.command ?? "wordpress.http-request", target: input.url, source: "server-http", kind: input.command === "wordpress.server-page-load" ? "server-page-load" : "http-request", timing: { durationMs: Date.now() - startedAt }, network: { requests: 1, responses: 1, failures: response.ok ? 0 : 1, transferSizeBytes: Buffer.byteLength(body) } },
+    performance: {
+      schema: "wp-codebox/performance-observation/v1",
+      command: input.command ?? "wordpress.http-request",
+      target: input.url,
+      source: "server-http",
+      kind: input.command === "wordpress.server-page-load" ? "server-page-load" : "http-request",
+      timing: { status: "captured", durationMs: Date.now() - startedAt },
+      memory: { status: "unsupported", reason: "server_http_request_runs_outside_php_process" },
+      database: { status: "unsupported", reason: "server_http_request_runs_outside_php_process" },
+      hooks: { status: "unsupported", reason: "hook_timing_not_instrumented", timings: [] },
+      network: { status: "captured", requests: 1, responses: 1, failures: response.ok ? 0 : 1, transferSizeBytes: Buffer.byteLength(body) },
+      browser: { status: "unsupported", reason: "not_a_browser_observation" },
+      metadata: { runner: "wp-codebox/runtime-playground", surface: input.command === "wordpress.server-page-load" ? "server-page" : "http" },
+    },
     diagnostics: {},
   }
 

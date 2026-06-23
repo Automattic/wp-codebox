@@ -135,7 +135,8 @@ $wp_codebox_command_observation_end_memory = memory_get_usage(true);
 $wp_codebox_command_diagnostics_queries = array();
 $wp_codebox_command_diagnostics_query_count = 0;
 $wp_codebox_command_diagnostics_query_time_ms = 0.0;
-if (isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries)) {
+$wp_codebox_command_diagnostics_queries_available = isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries);
+if ($wp_codebox_command_diagnostics_queries_available) {
     $wp_codebox_command_diagnostics_slice = array_slice($GLOBALS['wpdb']->queries, $wp_codebox_command_diagnostics_start);
     foreach ($wp_codebox_command_diagnostics_slice as $wp_codebox_command_diagnostics_query) {
         $wp_codebox_command_diagnostics_sql = is_array($wp_codebox_command_diagnostics_query) && isset($wp_codebox_command_diagnostics_query[0]) ? (string) $wp_codebox_command_diagnostics_query[0] : '';
@@ -180,25 +181,30 @@ $wp_codebox_command_diagnostics_payload = array(
         'schema' => '${PERFORMANCE_OBSERVATION_SCHEMA}',
         'command' => 'wordpress.run-php',
         'timing' => array(
+            'status' => 'captured',
             'startedAt' => $wp_codebox_command_observation_started_at,
             'finishedAt' => $wp_codebox_command_observation_finished_at,
             'durationMs' => $wp_codebox_command_observation_duration_ms,
         ),
         'memory' => array(
+            'status' => 'captured',
             'startBytes' => $wp_codebox_command_observation_start_memory,
             'endBytes' => $wp_codebox_command_observation_end_memory,
             'deltaBytes' => $wp_codebox_command_observation_end_memory - $wp_codebox_command_observation_start_memory,
             'peakBytes' => memory_get_peak_usage(true),
         ),
         'database' => array(
+            'status' => $wp_codebox_command_diagnostics_queries_available ? 'captured' : 'uncaptured',
+            'reason' => $wp_codebox_command_diagnostics_queries_available ? null : 'wpdb_queries_unavailable',
             'queryCount' => $wp_codebox_command_diagnostics_query_count,
             'totalTimeMs' => round($wp_codebox_command_diagnostics_query_time_ms, 3),
             'fingerprints' => $wp_codebox_command_observation_fingerprints,
             'repeatedQueries' => $wp_codebox_command_observation_repeated_queries,
         ),
-        'hooks' => array('timings' => array()),
-        'network' => array('requests' => 0, 'responses' => 0, 'failures' => 0),
-        'browser' => array('metrics' => new stdClass(), 'admin' => new stdClass()),
+        'hooks' => array('status' => 'unsupported', 'reason' => 'hook_timing_not_instrumented', 'timings' => array()),
+        'network' => array('status' => 'unsupported', 'reason' => 'php_command_has_no_network_capture'),
+        'browser' => array('status' => 'unsupported', 'reason' => 'not_a_browser_observation'),
+        'metadata' => array('runner' => 'wp-codebox/runtime-playground', 'surface' => 'php-command'),
     ),
     'wpdbQueries' => $wp_codebox_command_observation_fingerprints,
 );

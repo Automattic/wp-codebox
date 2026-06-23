@@ -3,12 +3,16 @@ import { stripUndefined } from "./object-utils.js"
 export const PERFORMANCE_OBSERVATION_SCHEMA = "wp-codebox/performance-observation/v1" as const
 
 export interface PerformanceObservationTiming {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   startedAt?: string
   finishedAt?: string
   durationMs?: number
 }
 
 export interface PerformanceObservationMemory {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   startBytes?: number
   endBytes?: number
   deltaBytes?: number
@@ -31,6 +35,8 @@ export interface PerformanceObservationRepeatedQuerySummary {
 }
 
 export interface PerformanceObservationDatabase {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   queryCount?: number
   totalTimeMs?: number
   fingerprints?: PerformanceObservationQueryFingerprint[]
@@ -45,10 +51,14 @@ export interface PerformanceObservationHookTiming {
 }
 
 export interface PerformanceObservationHooks {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   timings: PerformanceObservationHookTiming[]
 }
 
 export interface PerformanceObservationNetwork {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   requests?: number
   responses?: number
   failures?: number
@@ -56,6 +66,8 @@ export interface PerformanceObservationNetwork {
 }
 
 export interface PerformanceObservationBrowser {
+  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  reason?: string
   metrics?: Record<string, number>
   admin?: Record<string, unknown>
 }
