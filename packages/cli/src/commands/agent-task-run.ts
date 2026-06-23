@@ -122,7 +122,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
   let generatedRecipeArtifact: GeneratedRecipeArtifactRef | undefined
 
   try {
-    const recipe = buildAgentTaskRecipe(input, taskInput, wpVersion)
+    const recipe = buildAgentTaskRecipe({ ...input, artifacts_path: artifacts }, taskInput, wpVersion)
     recipeJson = `${JSON.stringify(recipe, null, 2)}\n`
     await writeFile(recipePath, recipeJson)
     const recipeRunArgs = ["--recipe", recipePath, "--artifacts", artifacts, "--json"]
