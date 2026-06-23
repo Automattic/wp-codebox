@@ -1,10 +1,12 @@
 import {
   createRuntime,
   createRuntimeEpisode,
+  executeFuzzSuite,
   openWordPressAdminPage,
   openWordPressEditor,
   probeWordPressBrowser,
   requestWordPressRest,
+  RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
   runWordPressCrudOperation,
   runWordPressBrowserAction,
   runWordPressPhp,
@@ -12,7 +14,13 @@ import {
   visitWordPressPage,
   type ArtifactBundle,
   type ArtifactSpec,
+  type ExecutionResult,
+  type ExecutionSpec,
+  type FuzzSuiteCommandExecutor,
+  type FuzzSuiteContract,
+  type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
+  type FuzzSuiteRunOptions,
   type ObservationSpec,
   type Runtime,
   type RuntimeCreateSpec,
@@ -93,6 +101,8 @@ export interface WordPressPageLoadActionOptions {
   captureDiagnostics?: string[]
 }
 
+export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runnerCapabilities">
+
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
 }
@@ -165,6 +175,33 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
   }
+}
+
+export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteCommandExecutor {
+  return {
+    async execute(spec: ExecutionSpec): Promise<ExecutionResult> {
+      const step = await episode.step({ kind: "command", ...spec }, { type: "command-result" })
+      return step.execution
+    },
+  }
+}
+
+export function executeWordPressFuzzSuite(
+  episode: Pick<RuntimeEpisode, "step">,
+  suite: FuzzSuiteContract,
+  options: WordPressFuzzSuiteExecutionOptions = {},
+): Promise<FuzzSuiteResultEnvelope> {
+  return executeFuzzSuite(suite, {
+    ...options,
+    executor: createWordPressFuzzSuiteCommandExecutor(episode),
+    runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(episode),
+    runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+    metadata: {
+      ...options.metadata,
+      runnerMode: "runtime-backed",
+      runtimeBackend: "wordpress-playground",
+    },
+  })
 }
 
 export async function collectWordPressRuntimeArtifacts(runtime: Pick<Runtime, "collectArtifacts">, spec?: ArtifactSpec): Promise<ArtifactBundle> {

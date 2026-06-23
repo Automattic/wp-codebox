@@ -88,6 +88,14 @@ mode supports `runtime`, browser/editor/page-load action targets, and the
 caller requests required coverage, pass `requireCoverage: true`; unsupported
 required capabilities fail closed with `status: "error"` instead of looking like a
 successful structured skip.
+
+TypeScript callers running against a contained WordPress runtime episode should use
+`executeWordPressFuzzSuite()` from `@automattic/wp-codebox-playground/public`.
+That helper wires the public fuzz suite contract to the episode command path,
+runtime-action executor, and `RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` so
+orchestrators can distinguish runtime-backed coverage from the WordPress plugin's
+safe PHP in-process mode. Use `createWordPressFuzzSuiteCommandExecutor()` only
+when composing a custom fuzz runner around an existing `RuntimeEpisode`.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`
@@ -187,7 +195,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
   `command`, `http`, `rest`, `runtime`, and `runtime-action`. Runtime actions use
   the same public action types as `@automattic/wp-codebox-playground/public` where
-  a runner can execute them directly; command-backed runners map safe
+  a runner can execute them directly. Runtime-backed TypeScript callers can
+  pass an existing `RuntimeEpisode` to `executeWordPressFuzzSuite()` from
+  `@automattic/wp-codebox-playground/public` for runtime-backed coverage;
+  PHP/plugin callers continue to advertise `php-in-process` capabilities for the
+  safe in-process path. Command-backed runners map safe
   `rest_request` actions to `wordpress.rest-request` and `wp_cli` actions to
   `wordpress.wp-cli`, while episode-only/browser actions remain structured
   skips. `wp-codebox/fuzz-suite-result/v1` reports case status, diagnostics,
