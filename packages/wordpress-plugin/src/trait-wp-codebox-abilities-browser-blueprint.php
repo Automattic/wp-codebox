@@ -61,7 +61,7 @@ private static function browser_blueprint_with_runtime( array $blueprint, array 
 	}
 
 	foreach ( $runtime['plugins'] as $plugin ) {
-		if ( ! empty( $plugin['local_package'] ) && self::browser_plugin_uses_loopback_url( (string) ( $plugin['url'] ?? '' ) ) ) {
+		if ( ! empty( $plugin['local_package'] ) ) {
 			$steps[] = array(
 				'step' => 'runPHP',
 				'code' => self::browser_plugin_install_php( $plugin ),
