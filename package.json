@@ -87,6 +87,7 @@
     "test:agent-runtime-workload-normalizers": "tsx tests/agent-runtime-workload-normalizers.test.ts",
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
+    "test:browser-visual-compare-blocks-engine-adapter": "tsx tests/browser-visual-compare-blocks-engine-adapter.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
     "test:browser-playground-session-run": "tsx tests/browser-playground-session-run.test.ts",
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",

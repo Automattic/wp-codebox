@@ -77,6 +77,7 @@ export interface BrowserArtifactFiles {
   diffScreenshot?: string | string[]
   visualDiff?: string | string[]
   visualExplanation?: string | string[]
+  blocksEngineVisualParity?: string | string[]
   redirectDiagnostics?: string
   wordpressDiagnostics?: string
   summary: string
@@ -165,6 +166,7 @@ export interface BrowserArtifactSummary {
     totalPixels?: number
     dimensionMismatch?: boolean
     explanation?: string
+    blocksEngineVisualParity?: string
   }
   scriptResult?: unknown
   viewport: BrowserProbeViewport | null
@@ -983,6 +985,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
   visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
   visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },
+  blocksEngineVisualParity: { kind: "blocks-engine-visual-parity-report", contentType: "application/json", redact: true },
   redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
   wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },

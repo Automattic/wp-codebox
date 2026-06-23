@@ -91,6 +91,158 @@ interface VisualCompareBaselineDelta {
   }
 }
 
+export interface BlocksEngineVisualParityReport {
+  schema: "blocks-engine/php-transformer/visual-parity-report/v1"
+  status: "pass" | "warning" | "fail" | "unknown"
+  severity: "none" | "info" | "warning" | "error" | "critical"
+  source_render: Record<string, unknown> & { kind: "source" }
+  target_render: Record<string, unknown> & { kind: "target" }
+  viewports: Array<{ id: string; label?: string; width: number; height: number; device_scale_factor?: number; source_screenshot_path?: string; target_screenshot_path?: string; diff_screenshot_path?: string }>
+  matches: Array<{ kind: "generic"; source_selector: string; target_selector: string; confidence: number; viewport_id?: string; selector_evidence?: Record<string, unknown> }>
+  computed_style_deltas?: Array<{ property: string; severity: "none" | "info" | "warning" | "error" | "critical"; viewport_id?: string; source_selector?: string; target_selector?: string; source_value?: unknown; target_value?: unknown; delta?: unknown }>
+  visual_diff?: { available: boolean; mismatch_percent?: number; mismatch_pixels?: number; total_pixels?: number; threshold?: number; diff_screenshot_path?: string; by_viewport?: Array<{ viewport_id: string; mismatch_percent?: number; mismatch_pixels?: number; diff_screenshot_path?: string }> }
+  findings: Array<{ id: string; severity: "none" | "info" | "warning" | "error" | "critical"; category: "visual" | "layout" | "style" | "dom" | "interaction" | "content" | "asset" | "accessibility"; summary: string; viewport_id?: string; visual_diff?: { viewport_id: string; mismatch_percent?: number; mismatch_pixels?: number; diff_screenshot_path?: string }; recommendation_ids?: string[] }>
+  recommendations: Array<{ id: string; priority: "low" | "medium" | "high" | "blocking"; summary: string; rationale?: string; finding_ids?: string[] }>
+  metadata?: Record<string, unknown>
+}
+
+export function blocksEngineVisualParityReportFromVisualCompare(input: {
+  status?: string
+  source?: Record<string, unknown>
+  candidate?: Record<string, unknown>
+  viewport?: BrowserProbeViewport | null
+  files?: Record<string, unknown>
+  comparison?: VisualCompareComparisonMetrics
+  options?: Record<string, unknown>
+  explanation?: VisualCompareExplanation
+  comparisons?: Array<{ name: string; status?: string; source?: Record<string, unknown>; candidate?: Record<string, unknown>; viewport?: BrowserProbeViewport | null; files?: Record<string, unknown>; comparison?: VisualCompareComparisonMetrics }>
+  metrics?: Record<string, unknown>
+  command?: string
+  startedAt?: string
+  finishedAt?: string
+  updatedAt?: string
+}): BlocksEngineVisualParityReport {
+  const comparisons = input.comparisons?.length ? input.comparisons : [{ name: "default", status: input.status, source: input.source, candidate: input.candidate, viewport: input.viewport, files: input.files, comparison: input.comparison }]
+  const completeComparisons = comparisons.filter((comparison) => comparison.comparison)
+  const status = input.status === "identical" ? "pass" : input.status === "different" ? "fail" : input.status === "partial" ? "warning" : input.status === "missing" || input.status === "failed" ? "unknown" : "unknown"
+  const severity = status === "pass" ? "none" : status === "fail" ? "error" : status === "warning" ? "warning" : "info"
+  const first = comparisons[0]
+  const sourceScreenshot = first?.files?.sourceScreenshot
+  const targetScreenshot = first?.files?.candidateScreenshot
+  const diffScreenshot = first?.files?.diffScreenshot
+  const viewports = comparisons.map((comparison, index) => blocksEngineVisualParityViewport(comparison, index)).filter((viewport): viewport is BlocksEngineVisualParityReport["viewports"][number] => Boolean(viewport))
+  const fallbackViewport = viewports.length > 0 ? viewports : [blocksEngineVisualParityViewport({ name: "default", viewport: input.viewport, files: input.files }, 0)].filter((viewport): viewport is BlocksEngineVisualParityReport["viewports"][number] => Boolean(viewport))
+  const findings = completeComparisons.filter((comparison) => (comparison.comparison?.mismatchPixels ?? 0) > 0 || comparison.comparison?.dimensionMismatch).map((comparison, index) => {
+    const viewport = blocksEngineVisualParityViewport(comparison, index)
+    const mismatchPercent = typeof comparison.comparison?.mismatchRatio === "number" ? comparison.comparison.mismatchRatio * 100 : undefined
+    const diffPath = stringFileRef(comparison.files?.diffScreenshot)
+    return {
+      id: `visual-diff-${sanitizeVisualCompareMatrixName(comparison.name || String(index + 1))}`,
+      severity: "error" as const,
+      category: "visual" as const,
+      summary: comparison.comparison?.dimensionMismatch ? "Rendered screenshots differ in dimensions." : "Rendered screenshots contain pixel differences.",
+      ...(viewport ? { viewport_id: viewport.id } : {}),
+      ...(viewport ? { visual_diff: { viewport_id: viewport.id, ...(mismatchPercent !== undefined ? { mismatch_percent: mismatchPercent } : {}), ...(typeof comparison.comparison?.mismatchPixels === "number" ? { mismatch_pixels: comparison.comparison.mismatchPixels } : {}), ...(diffPath ? { diff_screenshot_path: diffPath } : {}) } } : {}),
+      recommendation_ids: ["review-visual-diff"],
+    }
+  })
+  const matches = input.explanation?.selectors?.map((selector) => ({
+    kind: "generic" as const,
+    source_selector: selector.selector,
+    target_selector: selector.selector,
+    confidence: 1,
+    ...(fallbackViewport[0] ? { viewport_id: fallbackViewport[0].id } : {}),
+    selector_evidence: {
+      source_selector: selector.selector,
+      target_selector: selector.selector,
+    },
+  })) ?? []
+
+  return {
+    schema: "blocks-engine/php-transformer/visual-parity-report/v1",
+    status,
+    severity,
+    source_render: blocksEngineVisualParityRender("source", input.source, stringFileRef(sourceScreenshot)),
+    target_render: blocksEngineVisualParityRender("target", input.candidate, stringFileRef(targetScreenshot)),
+    viewports: fallbackViewport,
+    matches,
+    visual_diff: {
+      available: completeComparisons.length > 0,
+      ...(typeof input.comparison?.mismatchRatio === "number" ? { mismatch_percent: input.comparison.mismatchRatio * 100 } : {}),
+      ...(typeof input.comparison?.mismatchPixels === "number" ? { mismatch_pixels: input.comparison.mismatchPixels } : {}),
+      ...(typeof input.comparison?.totalPixels === "number" ? { total_pixels: input.comparison.totalPixels } : {}),
+      ...(typeof input.options?.threshold === "number" ? { threshold: input.options.threshold } : {}),
+      ...(stringFileRef(diffScreenshot) ? { diff_screenshot_path: stringFileRef(diffScreenshot) } : {}),
+      by_viewport: completeComparisons.map((comparison, index) => blocksEngineVisualParityDiffViewport(comparison, index)).filter((viewport): viewport is NonNullable<NonNullable<BlocksEngineVisualParityReport["visual_diff"]>["by_viewport"]>[number] => Boolean(viewport)),
+    },
+    findings,
+    recommendations: findings.length > 0 ? [{ id: "review-visual-diff", priority: "blocking", summary: "Review the visual diff evidence and repair source or target rendering until the parity report passes.", finding_ids: findings.map((finding) => finding.id) }] : [],
+    metadata: {
+      producer: "wp-codebox",
+      source_schema: input.comparisons ? "wp-codebox/visual-compare-matrix/v1" : "wp-codebox/visual-compare/v1",
+      ...(input.command ? { command: input.command } : {}),
+      ...(input.startedAt ? { started_at: input.startedAt } : {}),
+      ...(input.finishedAt ? { finished_at: input.finishedAt } : {}),
+      ...(input.updatedAt ? { updated_at: input.updatedAt } : {}),
+      ...(input.metrics ? { source_metrics: input.metrics } : {}),
+    },
+  }
+}
+
+function blocksEngineVisualParityRender(kind: "source", input?: Record<string, unknown>, screenshotPath?: string): BlocksEngineVisualParityReport["source_render"]
+function blocksEngineVisualParityRender(kind: "target", input?: Record<string, unknown>, screenshotPath?: string): BlocksEngineVisualParityReport["target_render"]
+function blocksEngineVisualParityRender(kind: "source" | "target", input?: Record<string, unknown>, screenshotPath?: string): BlocksEngineVisualParityReport["source_render"] | BlocksEngineVisualParityReport["target_render"] {
+  return {
+    kind,
+    ...(typeof input?.url === "string" ? { url: input.url } : {}),
+    ...(typeof input?.finalUrl === "string" ? { ref: input.finalUrl } : {}),
+    ...(typeof input?.label === "string" ? { renderer: input.label } : {}),
+    ...(typeof input?.screenshot === "string" ? { artifact_path: input.screenshot } : {}),
+    ...(screenshotPath ? { screenshot_path: screenshotPath } : {}),
+  }
+}
+
+function blocksEngineVisualParityViewport(input: { name?: string; viewport?: BrowserProbeViewport | null; files?: Record<string, unknown> }, index: number): BlocksEngineVisualParityReport["viewports"][number] | undefined {
+  const width = input.viewport?.width
+  const height = input.viewport?.height
+  if (typeof width !== "number" || typeof height !== "number") {
+    return undefined
+  }
+  const id = sanitizeVisualCompareMatrixName(input.name || `viewport-${index + 1}`)
+  return {
+    id,
+    width,
+    height,
+    ...(typeof input.viewport?.deviceScaleFactor === "number" ? { device_scale_factor: input.viewport.deviceScaleFactor } : {}),
+    ...(stringFileRef(input.files?.sourceScreenshot) ? { source_screenshot_path: stringFileRef(input.files?.sourceScreenshot) } : {}),
+    ...(stringFileRef(input.files?.candidateScreenshot) ? { target_screenshot_path: stringFileRef(input.files?.candidateScreenshot) } : {}),
+    ...(stringFileRef(input.files?.diffScreenshot) ? { diff_screenshot_path: stringFileRef(input.files?.diffScreenshot) } : {}),
+  }
+}
+
+function blocksEngineVisualParityDiffViewport(input: { name?: string; viewport?: BrowserProbeViewport | null; files?: Record<string, unknown>; comparison?: VisualCompareComparisonMetrics }, index: number): NonNullable<NonNullable<BlocksEngineVisualParityReport["visual_diff"]>["by_viewport"]>[number] | undefined {
+  const viewport = blocksEngineVisualParityViewport(input, index)
+  if (!viewport || !input.comparison) {
+    return undefined
+  }
+  return {
+    viewport_id: viewport.id,
+    ...(typeof input.comparison.mismatchRatio === "number" ? { mismatch_percent: input.comparison.mismatchRatio * 100 } : {}),
+    ...(typeof input.comparison.mismatchPixels === "number" ? { mismatch_pixels: input.comparison.mismatchPixels } : {}),
+    ...(stringFileRef(input.files?.diffScreenshot) ? { diff_screenshot_path: stringFileRef(input.files?.diffScreenshot) } : {}),
+  }
+}
+
+function stringFileRef(value: unknown): string | undefined {
+  if (typeof value === "string" && value) {
+    return value
+  }
+  if (Array.isArray(value) && typeof value[0] === "string" && value[0]) {
+    return value[0]
+  }
+  return undefined
+}
+
 export async function runVisualCompareCommand({
   artifactRoot,
   runtimeSpec,
@@ -335,6 +487,7 @@ async function runVisualComparePairCommand({
     diffScreenshot: `${artifactPathPrefix}/diff.png`,
     visualDiff: `${artifactPathPrefix}/visual-diff.json`,
     ...(explanation ? { visualExplanation: `${artifactPathPrefix}/visual-explanation.json` } : {}),
+    blocksEngineVisualParity: `${artifactPathPrefix}/blocks-engine-visual-parity-report.json`,
     summary: `${artifactPathPrefix}/summary.json`,
   }
   const summary = {
@@ -360,11 +513,14 @@ async function runVisualComparePairCommand({
     comparison,
     ...(baseline ? { baseline } : {}),
   }
-  await artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
+  const blocksEngineVisualParity = blocksEngineVisualParityReportFromVisualCompare({ ...summary, explanation })
+  const summaryWithBlocksEngineVisualParity = { ...summary, blocksEngineVisualParity }
+  await artifactSession.writeJson("visualDiff", "visual-diff.json", summaryWithBlocksEngineVisualParity)
   if (explanation) {
     await artifactSession.writeJson("visualExplanation", "visual-explanation.json", explanation)
   }
-  await artifactSession.writeJson("summary", "summary.json", summary)
+  await artifactSession.writeJson("blocksEngineVisualParity", "blocks-engine-visual-parity-report.json", blocksEngineVisualParity)
+  await artifactSession.writeJson("summary", "summary.json", summaryWithBlocksEngineVisualParity)
 
   const artifact: BrowserArtifact = {
     artifactType: "visual-compare",
@@ -388,6 +544,7 @@ async function runVisualComparePairCommand({
         totalPixels: comparison.totalPixels,
         dimensionMismatch: comparison.dimensionMismatch,
         ...(explanation ? { explanation: files.visualExplanation } : {}),
+        blocksEngineVisualParity: files.blocksEngineVisualParity,
       },
       viewport,
     },
@@ -395,7 +552,7 @@ async function runVisualComparePairCommand({
 
   return {
     artifact,
-    output: `${JSON.stringify(summary, null, 2)}\n`,
+    output: `${JSON.stringify(summaryWithBlocksEngineVisualParity, null, 2)}\n`,
   }
 }
 
@@ -468,6 +625,7 @@ function visualCompareMatrixArtifact(
     preview: firstArtifact?.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
     files: {
       summary: matrixSummary.files.summary,
+      ...(matrixSummary.files.blocksEngineVisualParity ? { blocksEngineVisualParity: matrixSummary.files.blocksEngineVisualParity } : {}),
       visualDiff: visualDiffs,
       sourceScreenshot: sourceScreenshots,
       candidateScreenshot: candidateScreenshots,
@@ -490,6 +648,7 @@ function visualCompareMatrixArtifact(
         totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + (entry.comparison?.totalPixels ?? 0), 0),
         dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison?.dimensionMismatch === true),
         explanation: matrixSummary.files.summary,
+        ...(matrixSummary.files.blocksEngineVisualParity ? { blocksEngineVisualParity: matrixSummary.files.blocksEngineVisualParity } : {}),
       },
       viewport: firstArtifact?.summary.viewport ?? null,
     },
@@ -541,12 +700,13 @@ async function writeVisualCompareMissingInputSummary(input: {
   viewport: BrowserProbeViewport | null
   missingInputs: VisualCompareMissingInput[]
   copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }>
-}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }; summary: VisualCompareMissingInputSummary }> {
+}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; blocksEngineVisualParity: string; summary: string }; summary: VisualCompareMissingInputSummary & { blocksEngineVisualParity: BlocksEngineVisualParityReport } }> {
   const files = {
     sourceScreenshot: input.copiedFiles.sourceScreenshot ?? [],
     candidateScreenshot: input.copiedFiles.candidateScreenshot ?? [],
     diffScreenshot: [],
     visualDiff: `${input.artifactPathPrefix}/visual-diff.json`,
+    blocksEngineVisualParity: `${input.artifactPathPrefix}/blocks-engine-visual-parity-report.json`,
     summary: `${input.artifactPathPrefix}/summary.json`,
   }
   const summary: VisualCompareMissingInputSummary = {
@@ -570,9 +730,12 @@ async function writeVisualCompareMissingInputSummary(input: {
       missingInputs: input.missingInputs,
     },
   }
-  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
-  await input.artifactSession.writeJson("summary", "summary.json", summary)
-  return { files, summary }
+  const blocksEngineVisualParity = blocksEngineVisualParityReportFromVisualCompare(summary)
+  const summaryWithBlocksEngineVisualParity = { ...summary, blocksEngineVisualParity }
+  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summaryWithBlocksEngineVisualParity)
+  await input.artifactSession.writeJson("blocksEngineVisualParity", "blocks-engine-visual-parity-report.json", blocksEngineVisualParity)
+  await input.artifactSession.writeJson("summary", "summary.json", summaryWithBlocksEngineVisualParity)
+  return { files, summary: summaryWithBlocksEngineVisualParity }
 }
 
 async function writeVisualCompareFailureSummary(input: {
@@ -586,12 +749,13 @@ async function writeVisualCompareFailureSummary(input: {
   viewport: BrowserProbeViewport | null
   message: string
   copiedFiles: Partial<{ sourceScreenshot: string; candidateScreenshot: string }>
-}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }; summary: VisualCompareFailureSummary }> {
+}): Promise<{ files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; blocksEngineVisualParity: string; summary: string }; summary: VisualCompareFailureSummary & { blocksEngineVisualParity: BlocksEngineVisualParityReport } }> {
   const files = {
     sourceScreenshot: input.copiedFiles.sourceScreenshot ?? [],
     candidateScreenshot: input.copiedFiles.candidateScreenshot ?? [],
     diffScreenshot: [],
     visualDiff: `${input.artifactPathPrefix}/visual-diff.json`,
+    blocksEngineVisualParity: `${input.artifactPathPrefix}/blocks-engine-visual-parity-report.json`,
     summary: `${input.artifactPathPrefix}/summary.json`,
   }
   const summary: VisualCompareFailureSummary = {
@@ -614,9 +778,12 @@ async function writeVisualCompareFailureSummary(input: {
       message: input.message,
     },
   }
-  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summary)
-  await input.artifactSession.writeJson("summary", "summary.json", summary)
-  return { files, summary }
+  const blocksEngineVisualParity = blocksEngineVisualParityReportFromVisualCompare(summary)
+  const summaryWithBlocksEngineVisualParity = { ...summary, blocksEngineVisualParity }
+  await input.artifactSession.writeJson("visualDiff", "visual-diff.json", summaryWithBlocksEngineVisualParity)
+  await input.artifactSession.writeJson("blocksEngineVisualParity", "blocks-engine-visual-parity-report.json", blocksEngineVisualParity)
+  await input.artifactSession.writeJson("summary", "summary.json", summaryWithBlocksEngineVisualParity)
+  return { files, summary: summaryWithBlocksEngineVisualParity }
 }
 
 function visualCompareMissingInputArtifact(input: {
@@ -624,7 +791,7 @@ function visualCompareMissingInputArtifact(input: {
   candidate: Record<string, unknown>
   preview: ReturnType<typeof browserPreviewRouting>
   viewport: BrowserProbeViewport | null
-  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; blocksEngineVisualParity?: string; summary: string }
   summary: VisualCompareMissingInputSummary
 }): BrowserArtifact {
   return {
@@ -645,6 +812,7 @@ function visualCompareMissingInputArtifact(input: {
       visualCompare: {
         status: input.summary.status,
         explanation: input.files.visualDiff,
+        ...(input.files.blocksEngineVisualParity ? { blocksEngineVisualParity: input.files.blocksEngineVisualParity } : {}),
       },
       viewport: input.viewport,
     },
@@ -656,7 +824,7 @@ function visualCompareFailureArtifact(input: {
   candidate: Record<string, unknown>
   preview: ReturnType<typeof browserPreviewRouting>
   viewport: BrowserProbeViewport | null
-  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; summary: string }
+  files: { sourceScreenshot: string | string[]; candidateScreenshot: string | string[]; diffScreenshot: string | string[]; visualDiff: string; blocksEngineVisualParity?: string; summary: string }
   summary: VisualCompareFailureSummary
 }): BrowserArtifact {
   return {
@@ -677,6 +845,7 @@ function visualCompareFailureArtifact(input: {
       visualCompare: {
         status: input.summary.status,
         explanation: input.files.visualDiff,
+        ...(input.files.blocksEngineVisualParity ? { blocksEngineVisualParity: input.files.blocksEngineVisualParity } : {}),
       },
       viewport: input.viewport,
     },
@@ -767,15 +936,19 @@ async function writeVisualCompareMatrixSummary(
     comparisons: allComparisons,
     files: {
       summary: "files/browser/visual-compare/matrix-summary.json",
+      blocksEngineVisualParity: "files/browser/visual-compare/blocks-engine-visual-parity-report.json",
     },
     ...(!matrixComplete ? {
       preview: entries[0]?.artifact.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
       limitations: ["visual compare matrix was interrupted or an expected input was missing before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports and structured diagnostics for incomplete entries"],
     } : {}),
   }
+  const blocksEngineVisualParity = blocksEngineVisualParityReportFromVisualCompare(matrixSummary)
+  const matrixSummaryWithBlocksEngineVisualParity = { ...matrixSummary, blocksEngineVisualParity }
   const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser/visual-compare", { source: "wordpress.visual-compare", operation: "visual-compare-matrix" })
-  await artifactSession.writeJson("summary", "matrix-summary.json", matrixSummary)
-  return matrixSummary
+  await artifactSession.writeJson("blocksEngineVisualParity", "blocks-engine-visual-parity-report.json", blocksEngineVisualParity)
+  await artifactSession.writeJson("summary", "matrix-summary.json", matrixSummaryWithBlocksEngineVisualParity)
+  return matrixSummaryWithBlocksEngineVisualParity
 }
 
 async function createVisualCompareMatrixFailedEntry(name: string, args: string[], artifactRoot: string, error: unknown): Promise<VisualCompareMatrixFailedEntry> {
@@ -931,7 +1104,7 @@ interface VisualCompareMatrixSummary {
     comparison?: VisualComparePairSummary["comparison"]
     diagnostic?: VisualCompareMatrixFailedEntry["diagnostic"]
   }>
-  files: { summary: string }
+  files: { summary: string; blocksEngineVisualParity?: string }
   preview?: ReturnType<typeof browserPreviewRouting>
   limitations?: string[]
 }
