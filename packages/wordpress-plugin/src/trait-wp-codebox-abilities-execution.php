@@ -991,6 +991,7 @@ private static function execute_fuzz_suite_artifact_summary( array $args, array 
 	$inputs = is_array( $case['inputs'] ?? null ) ? $case['inputs'] : array();
 	$surfaces = array_values( array_map( 'strval', is_array( $inputs['observation_surfaces'] ?? null ) ? $inputs['observation_surfaces'] : array() ) );
 	$budget_keys = array_values( array_map( 'strval', is_array( $inputs['budget_keys'] ?? null ) ? $inputs['budget_keys'] : array() ) );
+	$product_budgets = is_array( $inputs['product_budgets'] ?? null ) ? $inputs['product_budgets'] : array();
 	$hotspot_classes = array_values( array_map( 'strval', is_array( $inputs['hotspot_classes'] ?? null ) ? $inputs['hotspot_classes'] : array() ) );
 	$skip_reason_codes = array_values( array_map( 'strval', is_array( $inputs['skip_reason_codes'] ?? null ) ? $inputs['skip_reason_codes'] : array() ) );
 	$summary = array(
@@ -1001,7 +1002,7 @@ private static function execute_fuzz_suite_artifact_summary( array $args, array 
 		'surface'                   => (string) ( $args['surface'] ?? '' ),
 		'include'                   => self::csv_fuzz_suite_arg( (string) ( $args['include'] ?? '' ) ),
 		'generatedAt'               => gmdate( 'Y-m-d\TH:i:s\Z' ),
-		'product_budget_comparison' => array_fill_keys( $budget_keys, array( 'status' => 'not_measured', 'observed' => null ) ),
+		'product_budget_comparison' => array_fill_keys( $budget_keys, array( 'status' => 'not_measured', 'observed' => null, 'budget' => null ) ),
 		'hotspot_classification'    => array_fill_keys( $hotspot_classes, 0 ),
 		'query_attribution_summary' => array( 'source' => (string) ( $inputs['query_attribution_source'] ?? '' ), 'observed' => false ),
 		'connected_state_caveats'   => array_values( array_map( 'strval', is_array( $inputs['states'] ?? null ) ? $inputs['states'] : array() ) ),
@@ -1011,7 +1012,7 @@ private static function execute_fuzz_suite_artifact_summary( array $args, array 
 		'skip_reason_rollups'       => array_fill_keys( $skip_reason_codes, 0 ),
 		'metadata'                  => array( 'runner' => 'wp-codebox/fuzz-suite-runner/v1' ),
 	);
-	$summary = self::summarize_fuzz_suite_observations( $summary, is_array( $observation['prior_observations'] ?? null ) ? $observation['prior_observations'] : array() );
+	$summary = self::summarize_fuzz_suite_observations( $summary, is_array( $observation['prior_observations'] ?? null ) ? $observation['prior_observations'] : array(), $product_budgets );
 
 	$written = array();
 	$refs_with_payload = array();
@@ -1029,7 +1030,7 @@ private static function execute_fuzz_suite_artifact_summary( array $args, array 
 }
 
 /** @param array<string,mixed> $summary Summary. @param array<int,array<string,mixed>> $observations Observations. @return array<string,mixed> */
-private static function summarize_fuzz_suite_observations( array $summary, array $observations ): array {
+private static function summarize_fuzz_suite_observations( array $summary, array $observations, array $product_budgets = array() ): array {
 	$metrics = array(
 		'request_count' => 0,
 		'query_count' => 0,
@@ -1049,7 +1050,9 @@ private static function summarize_fuzz_suite_observations( array $summary, array
 			$metrics['request_count'] += (int) ( $step['observation']['requestCount'] ?? 0 );
 			$metrics['query_count'] += (int) ( $step['observation']['queryCount'] ?? 0 );
 		}
-		$metrics['browser_request_count'] += (int) ( $payload['summary']['total'] ?? 0 );
+		if ( 'wp-codebox/browser-request-coverage/v1' === ( $payload['schema'] ?? '' ) ) {
+			$metrics['browser_request_count'] += (int) ( $payload['summary']['total'] ?? 0 );
+		}
 		$metrics['admin_target_count'] += (int) ( $payload['metrics']['target_count'] ?? 0 );
 		if ( 'wp-codebox/external-http-guardrail/v1' === ( $payload['schema'] ?? '' ) ) {
 			$metrics['external_http_attempt_count'] += (int) ( $payload['summary']['total'] ?? 0 );
@@ -1061,8 +1064,14 @@ private static function summarize_fuzz_suite_observations( array $summary, array
 		$summary['budget_status'] = 'measured';
 		foreach ( $summary['product_budget_comparison'] as $budget_key => $budget ) {
 			$observed = self::fuzz_suite_observed_value_for_budget( (string) $budget_key, $metrics );
-			$summary['product_budget_comparison'][ $budget_key ] = array( 'status' => null === $observed ? 'not_measured' : 'measured', 'observed' => $observed );
+			$budget_value = is_numeric( $product_budgets[ $budget_key ] ?? null ) ? (int) $product_budgets[ $budget_key ] : null;
+			$status = null === $observed ? 'not_measured' : 'measured';
+			if ( null !== $observed && null !== $budget_value ) {
+				$status = $observed > $budget_value ? 'exceeded' : 'passed';
+			}
+			$summary['product_budget_comparison'][ $budget_key ] = array( 'status' => $status, 'observed' => $observed, 'budget' => $budget_value );
 		}
+		$summary['budget_status'] = count( array_filter( $summary['product_budget_comparison'], static fn( array $entry ): bool => 'exceeded' === ( $entry['status'] ?? '' ) ) ) > 0 ? 'exceeded' : 'measured';
 		foreach ( $summary['surface_rollups'] as $surface => $rollup ) {
 			$summary['surface_rollups'][ $surface ] = array_merge( is_array( $rollup ) ? $rollup : array(), array( 'status' => 'observed', 'artifact_inputs' => count( $observations ) ) );
 		}
