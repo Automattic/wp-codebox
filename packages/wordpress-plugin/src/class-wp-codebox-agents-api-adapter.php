@@ -434,7 +434,53 @@ final class WP_Codebox_Agents_API_Adapter {
 			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
 		}
 
+		$input = self::runtime_package_options_for_agents_api( $input );
+
 		return $this->execute( self::RUN_RUNTIME_PACKAGE, $input );
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
+	private static function runtime_package_options_for_agents_api( array $input ): array {
+		$options        = is_array( $input['options'] ?? null ) ? $input['options'] : array();
+		$workflow_input = is_array( $input['input'] ?? null ) ? $input['input'] : array();
+
+		foreach ( self::runtime_package_option_fields() as $field ) {
+			if ( array_key_exists( $field, $input ) && ! array_key_exists( $field, $options ) ) {
+				$options[ $field ] = $input[ $field ];
+			}
+			if ( array_key_exists( $field, $workflow_input ) && ! array_key_exists( $field, $options ) ) {
+				$options[ $field ] = $workflow_input[ $field ];
+				unset( $workflow_input[ $field ] );
+			}
+		}
+
+		if ( ! empty( $options ) ) {
+			$input['options'] = $options;
+		}
+		if ( isset( $input['input'] ) ) {
+			$input['input'] = $workflow_input;
+		}
+
+		return $input;
+	}
+
+	/** @return array<int,string> */
+	private static function runtime_package_option_fields(): array {
+		return array(
+			'provider',
+			'model',
+			'wait_for_completion',
+			'wait',
+			'step_budget',
+			'time_budget_ms',
+			'required_outputs',
+			'required_artifacts',
+			'engine_data_outputs',
+			'runtime_tools',
+			'ability_tools',
+			'tools',
+			'disable_directives',
+		);
 	}
 
 	/** @param array<string,mixed> $package Package descriptor. @param array<string,mixed> $input Runtime input. @return array<string,mixed> */

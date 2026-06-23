@@ -91,6 +91,9 @@ mkdir( $workspace_root . '/bundles/example-agent', 0777, true );
 $package_with_workspace_source = $adapter->run_runtime_package(
 	array(
 		'runtime_package' => 'example-agent',
+		'provider'        => 'codex',
+		'model'           => 'gpt-5.5',
+		'input'           => array( 'wait_for_completion' => true, 'topic' => 'coffee' ),
 		'metadata'        => array( 'runtime_package_descriptor' => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) ),
 		'task_input'      => array(
 			'client_context' => array(
@@ -100,6 +103,8 @@ $package_with_workspace_source = $adapter->run_runtime_package(
 	)
 );
 assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $package_with_workspace_source['received']['package'] );
+assert( array( 'topic' => 'coffee' ) === $package_with_workspace_source['received']['input'] );
+assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true ) === $package_with_workspace_source['received']['options'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
 assert_no_agents_api_schema_leaks( $chat, 'chat' );
