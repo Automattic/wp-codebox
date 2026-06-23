@@ -1273,9 +1273,26 @@ private static function profile_fuzz_suite_rest_request_queries( array $case, in
 	foreach ( is_array( $case['params'] ?? null ) ? $case['params'] : array() as $key => $value ) {
 		$request->set_param( (string) $key, $value );
 	}
+	$captured_queries = array();
+	$query_filter     = static function ( $query ) use ( &$captured_queries ) {
+		$captured_queries[] = array( (string) $query, 0.0, 'query filter' );
+		return $query;
+	};
 	$before = is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ? count( $wpdb->queries ) : 0;
-	$response = rest_do_request( $request );
+	if ( function_exists( 'add_filter' ) ) {
+		add_filter( 'query', $query_filter, PHP_INT_MAX, 1 );
+	}
+	try {
+		$response = rest_do_request( $request );
+	} finally {
+		if ( function_exists( 'remove_filter' ) ) {
+			remove_filter( 'query', $query_filter, PHP_INT_MAX );
+		}
+	}
 	$after_queries = is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ? array_slice( $wpdb->queries, $before ) : array();
+	if ( empty( $after_queries ) && ! empty( $captured_queries ) ) {
+		$after_queries = $captured_queries;
+	}
 	$queries = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
 	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries );
 }

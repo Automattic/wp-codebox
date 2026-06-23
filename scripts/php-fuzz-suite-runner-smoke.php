@@ -28,12 +28,22 @@ define( 'WP_CONTENT_DIR', __DIR__ );
 define( 'ARRAY_A', 'ARRAY_A' );
 
 function add_filter( string $hook, callable $callback, int $priority = 10, int $accepted_args = 1 ): void {
-	$GLOBALS['wp_codebox_test_filters'][ $hook ][] = array( $callback, $accepted_args );
+	$GLOBALS['wp_codebox_test_filters'][ $hook ][ $priority ][] = array( $callback, $accepted_args );
+}
+
+function remove_filter( string $hook, callable $callback, int $priority = 10 ): void {
+	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ][ $priority ] ?? array() as $index => $filter ) {
+		if ( $filter[0] === $callback ) {
+			unset( $GLOBALS['wp_codebox_test_filters'][ $hook ][ $priority ][ $index ] );
+		}
+	}
 }
 
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
-	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $filter ) {
-		$value = $filter[0]( $value, ...array_slice( $args, 0, (int) $filter[1] - 1 ) );
+	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $filters ) {
+		foreach ( $filters as $filter ) {
+			$value = $filter[0]( $value, ...array_slice( $args, 0, (int) $filter[1] - 1 ) );
+		}
 	}
 	return $value;
 }
@@ -116,11 +126,8 @@ class WP_Codebox_Test_REST_Response {
 }
 
 function rest_do_request( WP_REST_Request $request ): WP_Codebox_Test_REST_Response {
-	global $wpdb;
-	if ( is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ) {
-		$wpdb->queries[] = array( 'SELECT * FROM wp_posts WHERE post_type = "post"', 0.002, 'rest_do_request' );
-		$wpdb->queries[] = array( 'SELECT option_value FROM wp_options WHERE option_name = "blogname"', 0.001, 'rest_do_request' );
-	}
+	apply_filters( 'query', 'SELECT * FROM wp_posts WHERE post_type = "post"' );
+	apply_filters( 'query', 'SELECT option_value FROM wp_options WHERE option_name = "blogname"' );
 	return new WP_Codebox_Test_REST_Response( '/wp/v2/status' === $request->path ? 200 : 404 );
 }
 
