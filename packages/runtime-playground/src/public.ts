@@ -18,6 +18,9 @@ import {
   type ExecutionSpec,
   type FuzzSuiteCommandExecutor,
   type FuzzSuiteContract,
+  type FuzzSuiteArtifactRef,
+  type FuzzSuiteCaseResetResult,
+  type FuzzSuiteResetExecutor,
   type FuzzSuiteResultEnvelope,
   type FuzzSuiteRuntimeActionExecutor,
   type FuzzSuiteRunOptions,
@@ -101,7 +104,7 @@ export interface WordPressPageLoadActionOptions {
   captureDiagnostics?: string[]
 }
 
-export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runnerCapabilities">
+export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "resetExecutor" | "runnerCapabilities">
 
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
@@ -186,8 +189,51 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
   }
 }
 
+export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpisode, "reset" | "step">): FuzzSuiteResetExecutor {
+  let checkpointCreated = false
+  return {
+    async resetFuzzSuiteCase({ suite, case: fuzzCase, caseIndex, policy }): Promise<FuzzSuiteCaseResetResult> {
+      const checkpointName = policy.checkpointName ?? policy.checkpoint_name ?? `${suite.id}-baseline`
+      const fixtureRefs = policy.fixtureRefs ?? policy.fixture_refs
+      if (policy.mode === "checkpoint-per-case") {
+        const artifactRefs: FuzzSuiteArtifactRef[] = []
+        if (!checkpointCreated) {
+          const createStep = await episode.step({
+            kind: "command",
+            command: "wp-codebox.checkpoint-create",
+            args: [
+              `name=${checkpointName}`,
+              `metadata-json=${JSON.stringify({ suiteId: suite.id, caseId: fuzzCase.id, caseIndex, fixtureRefs, ...policy.metadata })}`,
+            ],
+          }, { type: "command-result" })
+          artifactRefs.push(...fuzzSuiteStepArtifactRefs(createStep))
+          checkpointCreated = createStep.execution.exitCode === 0
+          if (!checkpointCreated) {
+            return { mode: policy.mode, status: "failed", checkpointName, fixtureRefs, artifactRefs, diagnostics: [{ severity: "error", code: "fuzz_suite_checkpoint_create_failed", caseId: fuzzCase.id, message: `Checkpoint create failed for fuzz suite ${suite.id}.`, metadata: { executionId: createStep.execution.id, stderr: createStep.execution.stderr } }] }
+          }
+        }
+        const restoreStep = await episode.step({ kind: "command", command: "wp-codebox.checkpoint-restore", args: [`name=${checkpointName}`] }, { type: "command-result" })
+        artifactRefs.push(...fuzzSuiteStepArtifactRefs(restoreStep))
+        return {
+          mode: policy.mode,
+          status: restoreStep.execution.exitCode === 0 ? "passed" : "failed",
+          checkpointName,
+          fixtureRefs,
+          artifactRefs,
+          diagnostics: restoreStep.execution.exitCode === 0 ? [] : [{ severity: "error", code: "fuzz_suite_checkpoint_restore_failed", caseId: fuzzCase.id, message: `Checkpoint restore failed for fuzz suite case ${fuzzCase.id}.`, metadata: { executionId: restoreStep.execution.id, stderr: restoreStep.execution.stderr } }],
+        }
+      }
+      if (policy.mode === "restore-snapshot") {
+        const reset = await episode.reset()
+        return { mode: policy.mode, status: "passed", snapshotRef: policy.snapshotRef ?? policy.snapshot_ref, fixtureRefs, metadata: { resetId: reset.id, runtime: reset.runtime } }
+      }
+      return { mode: "none", status: "not-required" }
+    },
+  }
+}
+
 export function executeWordPressFuzzSuite(
-  episode: Pick<RuntimeEpisode, "step">,
+  episode: Pick<RuntimeEpisode, "reset" | "step">,
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
 ): Promise<FuzzSuiteResultEnvelope> {
@@ -195,12 +241,25 @@ export function executeWordPressFuzzSuite(
     ...options,
     executor: createWordPressFuzzSuiteCommandExecutor(episode),
     runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(episode),
+    resetExecutor: createWordPressFuzzSuiteResetExecutor(episode),
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     metadata: {
       ...options.metadata,
       runnerMode: "runtime-backed",
       runtimeBackend: "wordpress-playground",
     },
+  })
+}
+
+function fuzzSuiteStepArtifactRefs(step: RuntimeEpisodeStepResult): FuzzSuiteArtifactRef[] {
+  return (step.execution.artifactRefs ?? []).flatMap((ref) => {
+    const path = ref.path ?? ref.artifactId ?? ref.id
+    return path ? [{
+      path,
+      kind: ref.kind,
+      sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
+      metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest },
+    }] : []
   })
 }
 

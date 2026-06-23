@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzSuiteContract, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -112,6 +112,44 @@ const skippedCoverageRequired = await runFuzzSuite(fuzzSuiteContract({
 }), { requireCoverage: true })
 assert.equal(skippedCoverageRequired.status, "error")
 assert.equal(skippedCoverageRequired.diagnostics.some((diagnostic) => diagnostic.code === "fuzz_suite_required_coverage_unsupported"), true)
+
+assert.deepEqual(normalizeFuzzSuiteResetPolicy("checkpoint-per-case"), { mode: "checkpoint-per-case" })
+assert.deepEqual(normalizeFuzzSuiteResetPolicy({ mode: "restore-snapshot", snapshot_ref: "artifact:baseline/files/runtime-snapshot.json", fixture_refs: ["fixtures/store.json"] }), {
+  mode: "restore-snapshot",
+  snapshot_ref: "artifact:baseline/files/runtime-snapshot.json",
+  fixtureRefs: ["fixtures/store.json"],
+})
+assert.deepEqual(fuzzSuiteResetPolicyDiagnostics({ mode: "restore-snapshot" }).map((diagnostic) => diagnostic.code), ["fuzz_suite_reset_policy_snapshot_ref_required"])
+assert.deepEqual(fuzzSuiteResetPolicyDiagnostics({ mode: "truncate-database" }).map((diagnostic) => diagnostic.code), ["fuzz_suite_reset_policy_invalid_mode"])
+
+const resetAttempts: string[] = []
+const resetResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-reset-required",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "baseline", fixtureRefs: ["fixtures/store.json"] },
+  target: { kind: "command", id: "inspect-mounted-inputs" },
+  cases: [{ id: "case-reset" }],
+}), {
+  resetExecutor: async ({ policy }) => {
+    resetAttempts.push(policy.mode)
+    return { mode: policy.mode, status: "passed", checkpointName: policy.checkpointName, fixtureRefs: policy.fixtureRefs, artifactRefs: [{ kind: "checkpoint", path: "files/checkpoint.json" }] }
+  },
+  executor: async (spec) => ({ id: "exec-reset", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }),
+})
+assert.equal(resetResult.status, "passed")
+assert.deepEqual(resetAttempts, ["checkpoint-per-case"])
+assert.equal(resetResult.cases[0]?.reset?.status, "passed")
+assert.equal(resetResult.cases[0]?.reset?.checkpointName, "baseline")
+assert.equal(resetResult.artifactRefs[0]?.path, "files/checkpoint.json")
+
+const resetExecutorMissing = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-reset-missing-executor",
+  resetPolicy: { mode: "checkpoint-per-case" },
+  target: { kind: "command", id: "inspect-mounted-inputs" },
+  cases: [{ id: "case-reset-blocked" }],
+}), { executor: async (spec) => ({ id: "exec-skipped", command: spec.command, args: spec.args ?? [], exitCode: 0, stdout: "ok", stderr: "", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }) })
+assert.equal(resetExecutorMissing.status, "error")
+assert.equal(resetExecutorMissing.cases[0]?.reset?.status, "unsupported")
+assert.equal(resetExecutorMissing.cases[0]?.diagnostics[0]?.code, "fuzz_suite_reset_executor_unavailable")
 
 const emptyRequiredArtifacts = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-empty-required-artifacts",
