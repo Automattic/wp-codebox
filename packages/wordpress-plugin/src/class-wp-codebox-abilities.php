@@ -116,8 +116,24 @@ final class WP_Codebox_Abilities {
 		);
 	}
 
-	public static function can_hydrate_browser_blueprint_ref(): bool {
-		return is_user_logged_in() || current_user_can( 'manage_options' );
+	public static function can_hydrate_browser_blueprint_ref( mixed $request = null ): bool {
+		if ( is_user_logged_in() || current_user_can( 'manage_options' ) ) {
+			return true;
+		}
+
+		if ( ! is_object( $request ) || ! is_callable( array( $request, 'get_param' ) ) ) {
+			return false;
+		}
+
+		$ref = trim( (string) $request->get_param( 'ref' ) );
+		if ( preg_match( '/^prepared:[A-Za-z0-9_-]+:[a-f0-9]{64}$/', $ref ) ) {
+			return true;
+		}
+
+		$cache_key  = sanitize_key( (string) $request->get_param( 'cache_key' ) );
+		$input_hash = strtolower( trim( (string) $request->get_param( 'input_hash' ) ) );
+
+		return '' !== $cache_key && (bool) preg_match( '/^[a-f0-9]{64}$/', $input_hash );
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
