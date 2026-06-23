@@ -1445,11 +1445,11 @@ private static function normalize_fuzz_suite_query_sample( mixed $query, int $qu
 
 private static function normalize_fuzz_suite_query_sql( string $sql ): string {
 	$redacted = preg_replace( '/\/\*.*?\*\//s', '/* ? */', $sql );
-	$redacted = preg_replace( '/--[^\r\n]*/', '-- ?', is_string( $redacted ) ? $redacted : $sql );
-	$redacted = preg_replace( '/#[^\r\n]*/', '# ?', is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( "/\\b(?:x|b)'(?:''|[^'])*'/i", "'?'", is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( "/'(?:''|[^'])*'/", "'?'", is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( '/"(?:""|[^"])*"/', '"?"', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/--[^\r\n]*/', '-- ?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/#[^\r\n]*/', '# ?', is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( '/\b0x[0-9a-f]+\b/i', '?', is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( '/\b[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?\b/i', '?', is_string( $redacted ) ? $redacted : $sql );
 	$redacted = preg_replace( '/\s+/', ' ', is_string( $redacted ) ? $redacted : $sql );
