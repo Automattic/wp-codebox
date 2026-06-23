@@ -237,7 +237,9 @@ export function bridgePackageAutoloaderToComposerAutoload(pluginSource: string):
   const bridge = "require_once __DIR__ . '/autoload.php';"
   const contents = readFileSync(packageAutoloader, "utf8")
   if (contents.includes(bridge)) return
-  writeFileSync(packageAutoloader, `${contents.trimEnd()}\n${bridge}\n`)
+  const initCall = "Autoloader::init();"
+  const bridged = contents.includes(initCall) ? contents.replace(initCall, `${bridge}\n${initCall}`) : `${contents.trimEnd()}\n${bridge}\n`
+  writeFileSync(packageAutoloader, bridged)
 }
 
 export function composerManagedHostEnv(): Record<string, string> {

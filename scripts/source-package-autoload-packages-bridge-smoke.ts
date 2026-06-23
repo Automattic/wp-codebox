@@ -19,7 +19,7 @@ try {
   writeFileSync(join(bin, "composer"), `#!/bin/sh
 mkdir -p vendor
 printf "%s\n" "<?php // composer autoload" > vendor/autoload.php
-printf "%s\n" "<?php" "namespace WpCodeboxSmoke;" "require_once __DIR__ . '/jetpack-autoloader/class-autoloader.php';" > vendor/autoload_packages.php
+printf "%s\n" "<?php" "namespace WpCodeboxSmoke;" "require_once __DIR__ . '/jetpack-autoloader/class-autoloader.php';" "Autoloader::init();" > vendor/autoload_packages.php
 mkdir -p vendor/jetpack-autoloader
 printf "%s\n" "<?php // package autoloader" > vendor/jetpack-autoloader/class-autoloader.php
 `, { mode: 0o755 })
@@ -36,7 +36,9 @@ printf "%s\n" "<?php // package autoloader" > vendor/jetpack-autoloader/class-au
 
   const packageAutoloader = join(prepared, "vendor", "autoload_packages.php")
   assert.equal(existsSync(packageAutoloader), true)
-  assert.match(readFileSync(packageAutoloader, "utf8"), /require_once __DIR__ \. '\/autoload\.php';/)
+  const bridgedPackageAutoloader = readFileSync(packageAutoloader, "utf8")
+  assert.match(bridgedPackageAutoloader, /require_once __DIR__ \. '\/autoload\.php';/)
+  assert.ok(bridgedPackageAutoloader.indexOf("require_once __DIR__ . '/autoload.php';") < bridgedPackageAutoloader.indexOf("Autoloader::init();"))
   assert.equal(existsSync(join(pluginSource, "vendor", "autoload_packages.php")), false, "source checkout must not be mutated")
 
   console.log("source-package-autoload-packages-bridge-smoke: ok")
