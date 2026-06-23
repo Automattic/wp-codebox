@@ -121,6 +121,13 @@ WordPress consumers should prefer `WP_Codebox_API` for PHP calls and
 backend systems internally, while public docs and schemas present Codebox-owned
 ability names, schemas, and facades to callers.
 
+WordPress-hosted orchestration that shells through WP-CLI can use the matching
+`wp codebox ...` wrappers for these public operations, including
+`run-runtime-task`, `run-wordpress-workload`, `run-runtime-package`,
+`resolve-runtime-requirements`, and `run-fuzz-suite`. The WP-CLI wrappers parse
+JSON payloads from `--input-json` or `--input-file` and delegate through
+`WP_Codebox_API` rather than backend internals.
+
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,
 `./core/php-snippets`, `./recipe-builders`, `./run-results`, `./agent-task-recipe`,

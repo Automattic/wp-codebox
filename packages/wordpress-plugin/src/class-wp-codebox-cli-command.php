@@ -20,7 +20,13 @@ final class WP_Codebox_CLI_Command {
 		\WP_CLI::add_command( 'codebox artifacts apply', array( $command, 'artifacts_apply' ) );
 		\WP_CLI::add_command( 'codebox browser-session create', array( $command, 'browser_session_create' ) );
 		\WP_CLI::add_command( 'codebox run-agent-task', array( $command, 'run_agent_task' ) );
+		\WP_CLI::add_command( 'codebox run-agent-task-batch', array( $command, 'run_agent_task_batch' ) );
 		\WP_CLI::add_command( 'codebox run-agent-task-fanout', array( $command, 'run_agent_task_fanout' ) );
+		\WP_CLI::add_command( 'codebox run-runtime-task', array( $command, 'run_runtime_task' ) );
+		\WP_CLI::add_command( 'codebox run-wordpress-workload', array( $command, 'run_wordpress_workload' ) );
+		\WP_CLI::add_command( 'codebox run-runtime-package', array( $command, 'run_runtime_package' ) );
+		\WP_CLI::add_command( 'codebox resolve-runtime-requirements', array( $command, 'resolve_runtime_requirements' ) );
+		\WP_CLI::add_command( 'codebox run-fuzz-suite', array( $command, 'run_fuzz_suite' ) );
 	}
 
 	/**
@@ -31,7 +37,7 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function artifacts_list( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_Abilities::list_artifacts( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::list_artifacts( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -41,7 +47,7 @@ final class WP_Codebox_CLI_Command {
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function artifacts_get( array $args, array $assoc_args ): void {
-		$this->emit( WP_Codebox_Abilities::get_artifact( $this->artifact_input( $args, $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::get_artifact( $this->artifact_input( $args, $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -51,7 +57,7 @@ final class WP_Codebox_CLI_Command {
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function artifacts_preflight_apply( array $args, array $assoc_args ): void {
-		$this->emit( WP_Codebox_Abilities::apply_artifact_preflight( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::preflight_artifact_apply( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -61,7 +67,7 @@ final class WP_Codebox_CLI_Command {
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function artifacts_stage_apply( array $args, array $assoc_args ): void {
-		$this->emit( WP_Codebox_Abilities::stage_artifact_apply( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::stage_artifact_apply( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -71,7 +77,7 @@ final class WP_Codebox_CLI_Command {
 	 * @param array<string,mixed> $assoc_args Associated arguments.
 	 */
 	public function artifacts_apply( array $args, array $assoc_args ): void {
-		$this->emit( WP_Codebox_Abilities::apply_approved_artifact( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::apply_approved_artifact( $this->apply_input( $args, $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -82,7 +88,7 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function browser_session_create( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( WP_Codebox_Abilities::create_browser_playground_session( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::create_browser_session( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -93,7 +99,18 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function run_agent_task( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_task( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::run_agent_task( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Run multiple bounded tasks sequentially through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_agent_task_batch( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::run_agent_task_batch( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -104,7 +121,62 @@ final class WP_Codebox_CLI_Command {
 	 */
 	public function run_agent_task_fanout( array $args, array $assoc_args ): void {
 		unset( $args );
-		$this->emit( ( new WP_Codebox_Agent_Runtime_Invoker() )->invoke_host_fanout( $this->input_from_args( $assoc_args ) ), $assoc_args );
+		$this->emit( WP_Codebox_API::run_agent_task_fanout( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Run a public runtime task through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_runtime_task( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::run_runtime_task( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Run a safe WordPress workload through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_wordpress_workload( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::run_wordpress_workload( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Run a runtime package through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_runtime_package( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::run_runtime_package( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Resolve runtime/provider readiness through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function resolve_runtime_requirements( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::resolve_runtime_requirements( $this->input_from_args( $assoc_args ) ), $assoc_args );
+	}
+
+	/**
+	 * Run a public fuzz suite through the public API facade.
+	 *
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associated arguments.
+	 */
+	public function run_fuzz_suite( array $args, array $assoc_args ): void {
+		unset( $args );
+		$this->emit( WP_Codebox_API::run_fuzz_suite( $this->input_from_args( $assoc_args ) ), $assoc_args );
 	}
 
 	/**
@@ -161,11 +233,11 @@ final class WP_Codebox_CLI_Command {
 	}
 
 	private function normalize_value( string $field, mixed $value ): mixed {
-		if ( in_array( $field, array( 'target', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'runtime_env', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target', 'aggregation' ), true ) ) {
+		if ( in_array( $field, array( 'target', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'policy', 'context', 'inherit', 'orchestrator', 'parent_request', 'runtime_task', 'runtime_env', 'playground', 'browser_runner', 'runtime', 'blueprint', 'apply_target', 'aggregation', 'suite', 'package', 'requirements', 'runner_capabilities', 'metadata' ), true ) ) {
 			return $this->json_object( (string) $value, $field );
 		}
 
-		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_state_mounts', 'runtime_config_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files', 'workers', 'dependencies' ), true ) ) {
+		if ( in_array( $field, array( 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'provider_plugin_paths', 'secret_env', 'mounts', 'workspaces', 'runtime_stack_mounts', 'runtime_state_mounts', 'runtime_config_mounts', 'runtime_overlays', 'browser_plugins', 'artifact_files', 'approved_files', 'workers', 'dependencies', 'tasks', 'cases', 'coverage', 'capabilities' ), true ) ) {
 			return $this->json_or_list( (string) $value, $field );
 		}
 
