@@ -294,7 +294,7 @@ function inferredSourceSubpath(source: string, originalSource: string): string {
 }
 
 function installComposerDependenciesForSourcePackageSync(source: string, slug: string, allowedRoot: string, composerInstallArgs?: string[]): string {
-  if (!pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
+  if (!pathExists(join(source, "composer.json"))) {
     return source
   }
 
