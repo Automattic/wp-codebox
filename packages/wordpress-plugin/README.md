@@ -279,7 +279,7 @@ by Abilities:
 - `wp codebox run-runtime-task --input-json='{"goal":"Run the caller-owned runtime task"}' --format=json`
 - `wp codebox run-wordpress-workload --input-file=/path/to/workload.json --format=json`
 - `wp codebox run-runtime-package --input-file=/path/to/runtime-package.json --format=json`
-- `wp codebox resolve-runtime-requirements --runtime='{"provider":"local"}' --format=json`
+- `wp codebox resolve-runtime-requirements --runtime-provider=local --format=json`
 - `wp codebox run-fuzz-suite --input-file=/path/to/fuzz-suite.json --format=json`
 
 Complex task payloads can be passed with `--input-json='{"goal":"..."}'` or
