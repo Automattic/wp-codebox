@@ -194,8 +194,13 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
   "./performance-observation.js",
+  "./rest-matrix-contracts.js",
   "./runtime-contract-manifest.js",
+  "./wordpress-crud-contracts.js",
+  "./wordpress-db-contracts.js",
+  "./wordpress-fuzz-suite-builders.js",
   "./wordpress-page-load-contracts.js",
+  "./wordpress-runtime-discovery-contracts.js",
 ])
 
 for (const publicEntry of [
@@ -307,7 +312,7 @@ assert.match(docs, /backend adapter config schema/)
 assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
 assert.match(docs, /runtimeContractManifest\(\)/)
 assert.match(docs, /## External Orchestrator Migration/)
-assert.match(docs, /Root package import for command names, schema ids, or ability metadata \| `@automattic\/wp-codebox-core\/contracts`/)
+assert.match(docs, /Root package import for command names, schema ids, ability metadata, WordPress runtime discovery, CRUD\/DB contracts, REST matrix\/fuzz suite builders, or performance observation \| `@automattic\/wp-codebox-core\/contracts`/)
 assert.match(docs, /Root package import for artifact refs, export links, bundle verification, or apply\/materialization handoff \| `@automattic\/wp-codebox-core\/artifacts`/)
 assert.match(docs, /Root package import for runtime package, phpunit, or bench recipe assembly \| `@automattic\/wp-codebox-core\/recipe-builders`/)
 assert.match(docs, /Root package import for task, command, browser, recipe, artifact, or fuzz result DTOs \| `@automattic\/wp-codebox-core\/run-results`/)
@@ -345,6 +350,15 @@ assert.equal(typeof runResultsApi.browserRunResultEnvelope, "function")
 assert.equal(typeof runResultsApi.createRuntimeCommandResultEnvelope, "function")
 assert.equal(typeof runResultsApi.normalizeRecipeRunSummary, "function")
 assert.equal(typeof runResultsApi.fuzzSuiteResultEnvelope, "function")
+assert.equal(contractsApi.WORDPRESS_RUNTIME_DISCOVERY_SCHEMA, "wp-codebox/wordpress-runtime-discovery/v1")
+assert.equal(contractsApi.WORDPRESS_CRUD_OPERATION_SCHEMA, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(contractsApi.WORDPRESS_DB_OPERATION_SCHEMA, "wp-codebox/wordpress-db-operation/v1")
+assert.equal(typeof contractsApi.wordpressRestMatrixContract, "function")
+assert.equal(typeof contractsApi.restRouteInventoryToFuzzSuite, "function")
+assert.equal(typeof contractsApi.performanceObservation, "function")
+assert.equal(typeof contractsApi.adminPageInventoryToFuzzSuite, "function")
+assert.equal(typeof contractsApi.normalizeWordPressCrudOperation, "function")
+assert.equal(typeof contractsApi.normalizeWordPressDbOperation, "function")
 assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof normalizeRuntimeProfile, "function")
 assert.equal(typeof normalizeTypedArtifactDTO, "function")

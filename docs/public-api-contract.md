@@ -17,9 +17,12 @@ Use these package entrypoints from external integrations:
   artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
   this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
-  contract metadata used by CLI and orchestrator consumers. Use
-  `runtimeContractManifest()` when a consumer needs Codebox-owned ability names
-  and schema identifiers without importing backend adapter bindings.
+  contract metadata used by CLI and orchestrator consumers. This entrypoint also
+  exposes generic WordPress runtime discovery, CRUD/DB, REST matrix, fuzz-suite
+  builder, page-load, and performance observation contracts for external fuzzing
+  orchestrators. Use `runtimeContractManifest()` when a consumer needs
+  Codebox-owned ability names and schema identifiers without importing backend
+  adapter bindings.
 - `@automattic/wp-codebox-core/artifacts`: artifact verification, apply adapter,
   export-link, diagnostics, and partial-discovery helpers.
 - `@automattic/wp-codebox-core/run-results`: task, command, browser, artifact,
@@ -318,7 +321,7 @@ compatibility but stops being the place where new public helpers accumulate.
 
 | Current import pressure | Use instead | Notes |
 | --- | --- | --- |
-| Root package import for command names, schema ids, or ability metadata | `@automattic/wp-codebox-core/contracts` | Use `runtimeContractManifest()` and command contract helpers without backend adapter exports. |
+| Root package import for command names, schema ids, ability metadata, WordPress runtime discovery, CRUD/DB contracts, REST matrix/fuzz suite builders, or performance observation | `@automattic/wp-codebox-core/contracts` | Use focused generic contracts without backend adapter exports or product-specific fuzzing logic. |
 | Root package import for artifact refs, export links, bundle verification, or apply/materialization handoff | `@automattic/wp-codebox-core/artifacts` | Artifact helpers stay grouped by evidence and handoff lifecycle. |
 | Root package import for runtime package, phpunit, or bench recipe assembly | `@automattic/wp-codebox-core/recipe-builders` | Recipe construction helpers are public without pulling the full runtime barrel. |
 | Root package import for task, command, browser, recipe, artifact, or fuzz result DTOs | `@automattic/wp-codebox-core/run-results` | Result projection helpers are stable for orchestrators and dist loaders. |

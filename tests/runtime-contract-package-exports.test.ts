@@ -19,4 +19,14 @@ assert.equal(contracts.performanceObservation({ command: "wordpress.rest-perform
 assert.equal(typeof phpSnippets.phpRuntimeComponentLifecycleReplayFunction, "function")
 assert.equal(typeof phpSnippets.phpRuntimeRecipePluginPreloadFunction, "function")
 
+assert.equal(contracts.WORDPRESS_RUNTIME_DISCOVERY_SCHEMA, "wp-codebox/wordpress-runtime-discovery/v1")
+assert.equal(contracts.WORDPRESS_CRUD_OPERATION_SCHEMA, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(contracts.WORDPRESS_DB_OPERATION_SCHEMA, "wp-codebox/wordpress-db-operation/v1")
+assert.equal(typeof contracts.wordpressRestMatrixContract, "function")
+assert.equal(typeof contracts.restRouteInventoryToFuzzSuite, "function")
+assert.equal(typeof contracts.performanceObservation, "function")
+assert.equal(typeof contracts.adminPageInventoryToFuzzSuite, "function")
+assert.equal(typeof contracts.normalizeWordPressCrudOperation, "function")
+assert.equal(typeof contracts.normalizeWordPressDbOperation, "function")
+
 console.log("runtime contract package exports ok")
