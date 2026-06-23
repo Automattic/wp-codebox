@@ -720,11 +720,15 @@ private static function fuzz_suite_request_schema(): array {
 		'type'       => 'object',
 		'required'   => array( 'schema', 'id', 'cases' ),
 		'properties' => array(
-			'schema'   => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite/v1' ),
-			'id'       => array( 'type' => 'string' ),
-			'version'  => array( 'type' => 'string' ),
-			'target'   => self::fuzz_suite_target_schema(),
-			'cases'    => array(
+			'schema'          => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite/v1' ),
+			'id'              => array( 'type' => 'string' ),
+			'version'         => array( 'type' => 'string' ),
+			'runnerMode'      => array( 'type' => 'string', 'enum' => array( 'auto', 'php-in-process', 'runtime-backed' ) ),
+			'runner_mode'     => array( 'type' => 'string', 'enum' => array( 'auto', 'php-in-process', 'runtime-backed' ) ),
+			'requireCoverage' => array( 'type' => 'boolean' ),
+			'require_coverage' => array( 'type' => 'boolean' ),
+			'target'          => self::fuzz_suite_target_schema(),
+			'cases'           => array(
 				'type'  => 'array',
 				'items' => array(
 					'type'       => 'object',

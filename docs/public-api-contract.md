@@ -78,11 +78,16 @@ filters.
 `wp-codebox/run-fuzz-suite` accepts public target kinds `rest`, `http`,
 `ability`, `command`, `runtime`, and `runtime-action`. The WordPress plugin
 ability runs safe in-process `rest`, same-site `http`, and WordPress `ability`
-targets directly. Targets that require the runtime command, browser, editor, or
+targets directly. Requests may set `runnerMode` / `runner_mode` to `auto`,
+`php-in-process`, or `runtime-backed`; the WordPress plugin ability only provides
+`php-in-process`, so `runtime-backed` fails closed with `status: "error"` before
+case execution. Targets that require the runtime command, browser, editor, or
 page-load executors return `status: "skipped"`, a case-level `skipReason`, and a
-warning diagnostic rather than silently passing without exercising the target.
-Public suite builders declare `metadata.requiredRunnerCapabilities` so callers
-can choose between PHP in-process mode and runtime-backed mode before execution.
+warning diagnostic in permissive PHP mode rather than silently passing without
+exercising the target. Public suite builders declare
+`metadata.requiredRunnerCapabilities`, and the PHP ability also infers required
+target/runtime-action capabilities from suite targets, so callers can choose
+between PHP in-process mode and runtime-backed mode before execution.
 The public core exports `PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES` and
 `RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` for readiness checks. Runtime-backed
 mode supports `runtime`, browser/editor/page-load action targets, and the

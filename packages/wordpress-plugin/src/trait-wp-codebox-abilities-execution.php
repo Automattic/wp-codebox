@@ -58,24 +58,26 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 	$cases = is_array( $input['cases'] ?? null ) ? $input['cases'] : array();
 	$runner_capabilities = self::fuzz_suite_php_runner_capabilities( $input );
 	$missing_capabilities = self::fuzz_suite_missing_required_capabilities( $input, $runner_capabilities );
+	$requested_runner_mode = self::fuzz_suite_requested_runner_mode( $input );
+	if ( 'php-in-process' !== $requested_runner_mode ) {
+		return self::fuzz_suite_runner_capability_error_result(
+			$input,
+			$cases,
+			$runner_capabilities,
+			self::fuzz_suite_diagnostic(
+				'error',
+				'wp_codebox_fuzz_suite_runner_mode_unavailable',
+				'wp-codebox/run-fuzz-suite runs PHP in-process mode only; use the runtime-backed Codebox runner for browser, editor, page, CRUD, runtime, or runtime-action coverage.',
+				array( 'requested_runner_mode' => $requested_runner_mode, 'available_runner_mode' => $runner_capabilities['mode'], 'missing_capabilities' => $missing_capabilities )
+			)
+		);
+	}
 	if ( self::fuzz_suite_require_coverage( $input ) && ! empty( $missing_capabilities ) ) {
-		$diagnostic = self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported', 'Fuzz suite requires runner capabilities that are not available in PHP in-process mode.', array( 'missing_capabilities' => $missing_capabilities, 'runner_mode' => $runner_capabilities['mode'] ) );
-		$results = array();
-		foreach ( $cases as $index => $case ) {
-			$case_id = is_array( $case ) ? (string) ( $case['id'] ?? $case['case_id'] ?? ( 'case-' . (string) $index ) ) : ( 'case-' . (string) $index );
-			$results[] = self::fuzz_suite_case_result( $case_id, 'skipped', array( $diagnostic ) );
-		}
-
-		return array(
-			'success'      => false,
-			'schema'       => 'wp-codebox/fuzz-suite-result/v1',
-			'status'       => 'error',
-			'suite'        => array_filter( array( 'id' => (string) ( $input['id'] ?? '' ), 'version' => (string) ( $input['version'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
-			'summary'      => self::fuzz_suite_summary( $results ),
-			'cases'        => $results,
-			'diagnostics'  => array( $diagnostic ),
-			'artifactRefs' => array(),
-			'metadata'     => array( 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner' => 'wp-codebox/fuzz-suite-runner/v1', 'runnerCapabilities' => $runner_capabilities ),
+		return self::fuzz_suite_runner_capability_error_result(
+			$input,
+			$cases,
+			$runner_capabilities,
+			self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported', 'Fuzz suite requires runner capabilities that are not available in PHP in-process mode.', array( 'missing_capabilities' => $missing_capabilities, 'runner_mode' => $runner_capabilities['mode'] ) )
 		);
 	}
 	$results = array();
@@ -122,6 +124,27 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 	);
 }
 
+/** @param array<string,mixed> $suite Suite input. @param array<int,mixed> $cases Suite cases. @param array<string,mixed> $runner_capabilities Runner capabilities. @param array<string,mixed> $diagnostic Diagnostic. @return array<string,mixed> */
+private static function fuzz_suite_runner_capability_error_result( array $suite, array $cases, array $runner_capabilities, array $diagnostic ): array {
+	$results = array();
+	foreach ( $cases as $index => $case ) {
+		$case_id = is_array( $case ) ? (string) ( $case['id'] ?? $case['case_id'] ?? ( 'case-' . (string) $index ) ) : ( 'case-' . (string) $index );
+		$results[] = self::fuzz_suite_case_result( $case_id, 'skipped', array( $diagnostic ) );
+	}
+
+	return array(
+		'success'      => false,
+		'schema'       => 'wp-codebox/fuzz-suite-result/v1',
+		'status'       => 'error',
+		'suite'        => array_filter( array( 'id' => (string) ( $suite['id'] ?? '' ), 'version' => (string) ( $suite['version'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
+		'summary'      => self::fuzz_suite_summary( $results ),
+		'cases'        => $results,
+		'diagnostics'  => array( $diagnostic ),
+		'artifactRefs' => array(),
+		'metadata'     => array( 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner' => 'wp-codebox/fuzz-suite-runner/v1', 'runnerCapabilities' => $runner_capabilities ),
+	);
+}
+
 /** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
 private static function fuzz_suite_php_runner_capabilities( array $suite = array() ): array {
 	return self::fuzz_suite_runner_capabilities_contract( $suite );
@@ -153,6 +176,13 @@ private static function fuzz_suite_require_coverage( array $suite ): bool {
 	return true === ( $suite['requireCoverage'] ?? $suite['require_coverage'] ?? false );
 }
 
+/** @param array<string,mixed> $suite Suite input. */
+private static function fuzz_suite_requested_runner_mode( array $suite ): string {
+	$metadata = is_array( $suite['metadata'] ?? null ) ? $suite['metadata'] : array();
+	$mode = (string) ( $suite['runnerMode'] ?? $suite['runner_mode'] ?? $metadata['runnerMode'] ?? $metadata['runner_mode'] ?? 'php-in-process' );
+	return '' === $mode || 'auto' === $mode ? 'php-in-process' : $mode;
+}
+
 /** @param array<string,mixed> $suite Suite input. @param array<string,mixed> $runner_capabilities Runner capabilities. @return string[] */
 private static function fuzz_suite_missing_required_capabilities( array $suite, array $runner_capabilities ): array {
 	$required = self::fuzz_suite_required_capabilities( $suite );
@@ -174,6 +204,7 @@ private static function fuzz_suite_required_capabilities( array $suite ): array 
 	$metadata = is_array( $suite['metadata'] ?? null ) ? $suite['metadata'] : array();
 	$required = is_array( $metadata['requiredRunnerCapabilities'] ?? null ) ? $metadata['requiredRunnerCapabilities'] : ( is_array( $metadata['required_runner_capabilities'] ?? null ) ? $metadata['required_runner_capabilities'] : array() );
 	$capabilities = array_map( 'strval', is_array( $required['capabilities'] ?? null ) ? $required['capabilities'] : array() );
+	$capabilities = array_merge( $capabilities, self::fuzz_suite_declared_target_capabilities( $suite ) );
 	foreach ( is_array( $required['targetKinds'] ?? null ) ? $required['targetKinds'] : ( is_array( $required['target_kinds'] ?? null ) ? $required['target_kinds'] : array() ) as $kind ) {
 		$capabilities[] = 'target:' . (string) $kind;
 	}
@@ -183,6 +214,44 @@ private static function fuzz_suite_required_capabilities( array $suite ): array 
 	foreach ( ( is_array( $required['commands'] ?? null ) ? $required['commands'] : array() ) as $command ) {
 		$capabilities[] = 'command:' . (string) $command;
 	}
+	return array_values( array_unique( array_filter( $capabilities, static fn( string $capability ): bool => '' !== $capability ) ) );
+}
+
+/** @param array<string,mixed> $suite Suite input. @return string[] */
+private static function fuzz_suite_declared_target_capabilities( array $suite ): array {
+	$capabilities = array();
+	$targets = array();
+	if ( is_array( $suite['target'] ?? null ) ) {
+		$targets[] = $suite['target'];
+	}
+	foreach ( is_array( $suite['cases'] ?? null ) ? $suite['cases'] : array() as $case ) {
+		if ( is_array( $case ) && is_array( $case['target'] ?? null ) ) {
+			$targets[] = $case['target'];
+		}
+	}
+
+	foreach ( $targets as $target ) {
+		$kind = (string) ( $target['kind'] ?? '' );
+		if ( '' !== $kind ) {
+			$capabilities[] = 'target:' . $kind;
+		}
+	}
+
+	foreach ( is_array( $suite['cases'] ?? null ) ? $suite['cases'] : array() as $case ) {
+		if ( ! is_array( $case ) ) {
+			continue;
+		}
+		$target = is_array( $case['target'] ?? null ) ? $case['target'] : ( is_array( $suite['target'] ?? null ) ? $suite['target'] : array() );
+		if ( 'runtime-action' !== (string) ( $target['kind'] ?? '' ) ) {
+			continue;
+		}
+		$input = is_array( $case['input'] ?? null ) ? $case['input'] : array();
+		$type = (string) ( $input['type'] ?? '' );
+		if ( '' !== $type ) {
+			$capabilities[] = 'runtime-action:' . $type;
+		}
+	}
+
 	return array_values( array_unique( array_filter( $capabilities, static fn( string $capability ): bool => '' !== $capability ) ) );
 }
 
