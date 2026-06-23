@@ -40,12 +40,23 @@ function remove_filter( string $hook, callable $callback, int $priority = 10 ): 
 }
 
 function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	$GLOBALS['wp_codebox_current_filter'] = $hook;
+	foreach ( $GLOBALS['wp_codebox_test_filters']['all'] ?? array() as $filters ) {
+		foreach ( $filters as $filter ) {
+			$filter[0]();
+		}
+	}
 	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $filters ) {
 		foreach ( $filters as $filter ) {
 			$value = $filter[0]( $value, ...array_slice( $args, 0, (int) $filter[1] - 1 ) );
 		}
 	}
+	$GLOBALS['wp_codebox_current_filter'] = null;
 	return $value;
+}
+
+function current_filter(): string {
+	return (string) ( $GLOBALS['wp_codebox_current_filter'] ?? '' );
 }
 
 class WP_Error {
@@ -253,6 +264,14 @@ file_put_contents(
 					'queryLengthLimit'   => 500,
 					'rest_request_cases' => array(
 						array( 'id' => 'status', 'method' => 'GET', 'path' => '/wp/v2/status', 'params' => array( 'per_page' => 1 ) ),
+					),
+				),
+				array(
+					'type'               => 'hook-hotspot-sampler',
+					'metric-prefix'      => 'wp_hook_hotspot',
+					'sampleLimit'        => 10,
+					'rest_request_cases' => array(
+						array( 'id' => 'status-hooks', 'method' => 'GET', 'path' => '/wp/v2/status', 'params' => array( 'per_page' => 1 ) ),
 					),
 				),
 			),
@@ -510,6 +529,10 @@ assert( 2 === $workload_report['steps'][1]['observation']['queryCount'] );
 assert( 2 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
 assert( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID = ?" === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
 assert( ! str_contains( wp_json_encode( $workload_report['steps'][1]['requests'][0]['sampledQueries'] ), 'secret-post-type' ) );
+assert( 'hook-hotspot-sampler' === $workload_report['steps'][2]['type'] );
+assert( 2 === $workload_report['steps'][2]['observation']['hookCount'] );
+assert( 'query' === $workload_report['steps'][2]['requests'][0]['hookHotspots'][0]['hook'] );
+assert( isset( $workload_report['steps'][2]['requests'][0]['totalElapsedMs'] ) );
 assert( 'closure-external-http-guardrail' === $result['cases'][22]['id'] );
 assert( 'passed' === $result['cases'][22]['status'] );
 assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_type'] );

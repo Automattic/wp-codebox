@@ -1210,6 +1210,7 @@ private static function execute_fuzz_suite_json_workload_run_step( array $step, 
 	$type = (string) ( $step['type'] ?? '' );
 	return match ( $type ) {
 		'php'                    => self::execute_fuzz_suite_json_php_step( $step, $index ),
+		'hook-hotspot-sampler'   => self::execute_fuzz_suite_json_hook_hotspot_sampler_step( $step, $index ),
 		'rest-db-query-profiler' => self::execute_fuzz_suite_json_rest_db_query_profiler_step( $step, $index ),
 		default                  => array( 'type' => $type, 'index' => $index, 'status' => 'skipped', 'diagnostics' => array( self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_workload_step_unsupported', 'JSON workload run step type is not supported by this runner.', array( 'step_index' => $index, 'type' => $type ) ) ) ),
 	};
@@ -1264,6 +1265,34 @@ private static function execute_fuzz_suite_json_rest_db_query_profiler_step( arr
 	);
 }
 
+/** @param array<string,mixed> $step Step. @return array<string,mixed> */
+private static function execute_fuzz_suite_json_hook_hotspot_sampler_step( array $step, int $index ): array {
+	$cases = is_array( $step['rest_request_cases'] ?? null ) ? $step['rest_request_cases'] : array();
+	$requests = array();
+	$failed = 0;
+	foreach ( $cases as $case ) {
+		if ( ! is_array( $case ) ) {
+			continue;
+		}
+		$request_result = self::sample_fuzz_suite_rest_request_hooks( $case, (int) ( $step['sampleLimit'] ?? 50 ), (int) ( $step['hookLimit'] ?? 500 ) );
+		if ( (int) ( $request_result['status'] ?? 0 ) >= 500 ) {
+			++$failed;
+		}
+		$requests[] = $request_result;
+	}
+
+	$total_hooks = array_sum( array_map( static fn( array $request ): int => (int) ( $request['hookCount'] ?? 0 ), $requests ) );
+	return array(
+		'type'        => 'hook-hotspot-sampler',
+		'index'       => $index,
+		'success'     => 0 === $failed,
+		'status'      => 0 === $failed ? 'passed' : 'failed',
+		'observation' => array( 'metricPrefix' => (string) ( $step['metric-prefix'] ?? 'wp_hook_hotspot' ), 'requestCount' => count( $requests ), 'hookCount' => $total_hooks ),
+		'metrics'     => array( (string) ( $step['metric-prefix'] ?? 'wp_hook_hotspot' ) . '.hook_count' => $total_hooks, (string) ( $step['metric-prefix'] ?? 'wp_hook_hotspot' ) . '.request_count' => count( $requests ) ),
+		'requests'    => $requests,
+	);
+}
+
 /** @param array<string,mixed> $case Case. @return array<string,mixed> */
 private static function profile_fuzz_suite_rest_request_queries( array $case, int $sample_limit, int $query_length_limit ): array {
 	global $wpdb;
@@ -1295,6 +1324,73 @@ private static function profile_fuzz_suite_rest_request_queries( array $case, in
 	}
 	$queries = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
 	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries );
+}
+
+/** @param array<string,mixed> $case Case. @return array<string,mixed> */
+private static function sample_fuzz_suite_rest_request_hooks( array $case, int $sample_limit, int $hook_limit ): array {
+	self::ensure_fuzz_suite_rest_routes_registered();
+	$path = (string) ( $case['path'] ?? '' );
+	$request = new WP_REST_Request( strtoupper( (string) ( $case['method'] ?? 'GET' ) ), $path );
+	foreach ( is_array( $case['params'] ?? null ) ? $case['params'] : array() as $key => $value ) {
+		$request->set_param( (string) $key, $value );
+	}
+
+	$started = microtime( true );
+	$samples = array();
+	$hook_count = 0;
+	$truncated = false;
+	$sampler = static function () use ( &$samples, &$hook_count, &$truncated, $hook_limit ): void {
+		if ( ! function_exists( 'current_filter' ) ) {
+			return;
+		}
+		$hook = self::normalize_fuzz_suite_hook_name( (string) current_filter() );
+		if ( '' === $hook ) {
+			return;
+		}
+		++$hook_count;
+		if ( ! isset( $samples[ $hook ] ) && count( $samples ) >= max( 1, $hook_limit ) ) {
+			$truncated = true;
+			return;
+		}
+		$now = microtime( true );
+		if ( ! isset( $samples[ $hook ] ) ) {
+			$samples[ $hook ] = array( 'hook' => $hook, 'count' => 0, 'first' => $now, 'last' => $now, 'callbackCount' => self::fuzz_suite_registered_callback_count( $hook ) );
+		}
+		++$samples[ $hook ]['count'];
+		$samples[ $hook ]['last'] = $now;
+	};
+
+	if ( function_exists( 'add_filter' ) ) {
+		add_filter( 'all', $sampler, PHP_INT_MIN, 0 );
+	}
+	try {
+		$response = rest_do_request( $request );
+	} finally {
+		if ( function_exists( 'remove_filter' ) ) {
+			remove_filter( 'all', $sampler, PHP_INT_MIN );
+		}
+	}
+
+	$hotspots = array_values( array_map( static fn( array $sample ): array => array_filter( array( 'hook' => $sample['hook'], 'count' => (int) $sample['count'], 'elapsedMs' => (int) round( max( 0, ( (float) $sample['last'] - (float) $sample['first'] ) * 1000 ) ), 'callbackCount' => (int) $sample['callbackCount'] ), static fn( mixed $value ): bool => 0 !== $value && '' !== $value ), $samples ) );
+	usort( $hotspots, static fn( array $a, array $b ): int => ( (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 ) ) ?: strcmp( (string) ( $a['hook'] ?? '' ), (string) ( $b['hook'] ?? '' ) ) );
+	$limit = max( 0, $sample_limit );
+	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'hookCount' => $hook_count, 'sampledHookCount' => count( $hotspots ), 'totalElapsedMs' => (int) round( max( 0, ( microtime( true ) - $started ) * 1000 ) ), 'truncated' => $truncated || count( $hotspots ) > $limit, 'hookHotspots' => array_slice( $hotspots, 0, $limit ) );
+}
+
+private static function normalize_fuzz_suite_hook_name( string $hook ): string {
+	$hook = preg_replace( '/[^A-Za-z0-9_\.\-\/]/', '', $hook );
+	return substr( (string) $hook, 0, 120 );
+}
+
+private static function fuzz_suite_registered_callback_count( string $hook ): int {
+	global $wp_filter;
+	$wp_hook = is_array( $wp_filter ?? null ) ? ( $wp_filter[ $hook ] ?? null ) : null;
+	$callbacks = is_object( $wp_hook ) && isset( $wp_hook->callbacks ) && is_array( $wp_hook->callbacks ) ? $wp_hook->callbacks : ( is_array( $wp_hook ) ? $wp_hook : array() );
+	$count = 0;
+	foreach ( $callbacks as $priority_callbacks ) {
+		$count += is_array( $priority_callbacks ) ? count( $priority_callbacks ) : 0;
+	}
+	return $count;
 }
 
 private static function ensure_fuzz_suite_rest_routes_registered(): void {
