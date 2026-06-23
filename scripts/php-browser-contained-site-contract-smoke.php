@@ -198,6 +198,32 @@ $recipe_run_php_steps = array_values( array_filter( $recipe_steps, static fn( ar
 expect( count( $recipe_run_php_steps ) >= 1, 'Expected browser recipe Blueprint to include the runner runPHP step.' );
 expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to execute the requested invocation.' );
 
+$function_recipe = $recipe_method->invoke(
+	null,
+	array(
+		'goal'               => 'Import through a direct runtime function.',
+		'target'             => array( 'kind' => 'function-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'function-smoke-session',
+	array(
+		'task_path'   => '/tmp/function-smoke-task.json',
+		'result_path' => '/tmp/function-smoke-result.json',
+		'invocation'  => array(
+			'type'  => 'function',
+			'name'  => 'static_site_importer_ability_import_website_artifact',
+			'input' => array(),
+		),
+	),
+	array( 'steps' => array() ),
+	array(),
+	array( 'schema' => 'wp-codebox/browser-agent-task-payload/v1' )
+);
+expect( ! is_wp_error( $function_recipe ), 'Expected browser function recipe smoke to build.' );
+$function_code = (string) ( $function_recipe['runtime']['blueprint']['steps'][0]['code'] ?? '' );
+expect( str_contains( $function_code, "'type' => 'function'" ), 'Expected browser recipe to preserve function invocation type.' );
+expect( str_contains( $function_code, 'static_site_importer_ability_import_website_artifact' ), 'Expected browser recipe to preserve direct function invocation name.' );
+
 $status = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(
 		'cache_key'     => 'studio-native-preview',

@@ -364,6 +364,13 @@ if ( empty( $preflight['error'] ) && ! empty( $failed_imports ) ) {
 if ( empty( $preflight['error'] ) && ! $provider_ready ) {
 	$preflight['error'] = new WP_Error( 'wp_codebox_browser_provider_unavailable', 'The browser runtime provider is not ready for sandbox invocation.', array( 'provider' => (string) ( $input['provider'] ?? '' ), 'model' => (string) ( $input['model'] ?? '' ) ) );
 }
+if ( empty( $preflight['error'] ) && 'function' === $invocation_type ) {
+	$function = (string) ( $invocation['name'] ?? '' );
+	$preflight['function'] = $function;
+	if ( '' === $function || ! function_exists( $function ) ) {
+		$preflight['error'] = new WP_Error( 'wp_codebox_browser_function_unavailable', 'The requested function is not available inside the Playground site.', array( 'function' => $function ) );
+	}
+}
 if ( empty( $preflight['error'] ) && 'task' === $invocation_type ) {
 	$hook = (string) ( $invocation['hook'] ?? $invocation['name'] ?? '' );
 	$preflight['hook'] = $hook;
@@ -371,7 +378,7 @@ if ( empty( $preflight['error'] ) && 'task' === $invocation_type ) {
 		$preflight['error'] = new WP_Error( 'wp_codebox_browser_task_unavailable', 'The requested sandbox task hook is not registered inside the Playground site.', array( 'hook' => $hook ) );
 	}
 }
-if ( empty( $preflight['error'] ) && 'task' !== $invocation_type ) {
+if ( empty( $preflight['error'] ) && ! in_array( $invocation_type, array( 'function', 'task' ), true ) ) {
 	$ability_names = wp_codebox_browser_runtime_ability_names();
 	$ability_name = (string) ( $invocation['name'] ?? $ability_names['chat'] ?? '' );
 	$preflight['ability'] = $ability_name;
@@ -400,7 +407,9 @@ if ( null === $response ) {
 		add_filter( $permission_filter_hook, $permission_filter, 999, 3 );
 	}
 	try {
-		if ( 'task' === (string) ( $invocation['type'] ?? 'ability' ) ) {
+		if ( 'function' === (string) ( $invocation['type'] ?? 'ability' ) ) {
+			$response = call_user_func( (string) ( $invocation['name'] ?? '' ), $input );
+		} elseif ( 'task' === (string) ( $invocation['type'] ?? 'ability' ) ) {
 			$response = apply_filters( (string) ( $invocation['hook'] ?? $invocation['name'] ?? '' ), null, $input, $payload );
 		} else {
 			$ability_names = wp_codebox_browser_runtime_ability_names();
