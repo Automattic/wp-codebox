@@ -202,6 +202,8 @@ try {
   const workspaceRoot = join(agentRecipeTemp, "workspace")
   mkdirSync(workspaceRoot)
   chdir(workspaceRoot)
+  delete process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS
+  delete process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
   const agentsApiSource = join(agentRecipeTemp, "agents-api")
   mkdirSync(agentsApiSource)
@@ -225,6 +227,9 @@ try {
   writeFileSync(join(helperSource, "agent-runtime-helper.php"), "<?php\n/* Plugin Name: Agent Runtime Helper */\n")
   const artifactsPath = join(agentRecipeTemp, "artifacts")
   mkdirSync(artifactsPath)
+  process.env.WP_CODEBOX_AGENTS_API_PATH = agentsApiSource
+  process.env.WP_CODEBOX_DATA_MACHINE_PATH = dataMachineSource
+  process.env.WP_CODEBOX_DATA_MACHINE_CODE_PATH = dataMachineCodeSource
 
   const genericRecipe = buildAgentTaskRecipe({
     goal: "Verify generic runtime propagation",
@@ -235,16 +240,16 @@ try {
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), false)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), false)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), true)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), true)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), false)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), false)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), false)
   const genericSandboxStepArgs = genericRecipe.workflow.steps.find((step) => step.command === "wp-codebox.agent-sandbox-run")?.args ?? []
   const genericRuntimeComponentsArg = genericSandboxStepArgs.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
   const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "wordpress-plugin"), true)
-  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), true)
-  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), true)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), false)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), false)
 
   const recipe = buildAgentTaskRecipe({
     goal: "Verify extra plugin propagation",
@@ -278,8 +283,8 @@ try {
   assert.equal(agentsApiPlugin?.activate, false)
   assert.equal(agentsApiPlugin?.loadAs, "mu-plugin")
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
-  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine" && component.loadAs === "mu-plugin"), true)
-  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code" && component.loadAs === "mu-plugin"), true)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), false)
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), false)
   assert.equal(recipe.inputs?.component_manifest?.components.some((component) => String(component.mountedPath).includes("/contained-runtime/")), true)
   assert.equal(JSON.stringify(recipe).includes("wp-codebox-default-agent-runtime-substrate"), false)
   assert.equal(JSON.stringify(recipe).includes("wp-codebox-runtime"), false)
