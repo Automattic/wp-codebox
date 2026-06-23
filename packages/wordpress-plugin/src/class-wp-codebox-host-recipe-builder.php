@@ -40,7 +40,8 @@ final class WP_Codebox_Host_Recipe_Builder {
 		if ( ! $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ) {
 			return new WP_Error( 'wp_codebox_runtime_dependency_plan_invalid', 'Runtime dependency plan resolver must return a WP_Codebox_Runtime_Dependency_Plan.', array( 'status' => 500 ) );
 		}
-		$runtime_task          = $adapters['runtime_task']( $input );
+		$runtime_task       = $adapters['runtime_task']( $input );
+		$component_manifest = self::component_manifest( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() );
 		$steps          = array();
 		foreach ( $task_prompts as $task_prompt ) {
 			$task_input = $adapters['task_input']( array_merge( $input, array( 'goal' => $task_prompt ) ) );
@@ -55,6 +56,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 				'provider=' . $dependency_plan->provider(),
 				'model=' . $dependency_plan->model(),
 				'provider-plugin-slugs=' . implode( ',', $dependency_plan->provider_plugin_slugs() ),
+				'runtime-component-contracts-json=' . $adapters['json_encode']( $component_manifest['components'] ),
 				'sandbox-tool-policy-json=' . $adapters['json_encode']( $task_input['sandbox_tool_policy'] ),
 			);
 			if ( ! empty( $dependency_plan->agent_bundles() ) ) {
@@ -96,8 +98,6 @@ final class WP_Codebox_Host_Recipe_Builder {
 		if ( is_wp_error( $site_seed_payload ) ) {
 			return $site_seed_payload;
 		}
-
-		$component_manifest = self::component_manifest( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() );
 
 		$recipe_inputs = array(
 			'mounts'             => $mounts,
