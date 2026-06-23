@@ -1339,7 +1339,11 @@ private static function refresh_fuzz_suite_rest_server(): void {
 private static function normalize_fuzz_suite_query_sample( mixed $query, int $query_length_limit ): array {
 	$sql = is_array( $query ) ? (string) ( $query[0] ?? '' ) : (string) $query;
 	$time = is_array( $query ) ? (float) ( $query[1] ?? 0 ) : 0.0;
-	return array_filter( array( 'sql' => substr( $sql, 0, max( 0, $query_length_limit ) ), 'time' => $time ), static fn( mixed $value ): bool => '' !== $value && 0.0 !== $value );
+	$redacted = preg_replace( "/'(?:''|[^'])*'/", "'?'", $sql );
+	$redacted = preg_replace( '/\\b\\d+(?:\\.\\d+)?\\b/', '?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/\\s+/', ' ', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = trim( (string) $redacted );
+	return array_filter( array( 'sql' => substr( $redacted, 0, max( 0, $query_length_limit ) ), 'time' => $time ), static fn( mixed $value ): bool => '' !== $value && 0.0 !== $value );
 }
 
 /** @param array<string,mixed> $observation Observation. @return array<string,mixed> */
