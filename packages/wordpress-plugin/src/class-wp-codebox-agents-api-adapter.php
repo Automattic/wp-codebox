@@ -154,7 +154,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	}
 
 	public static function register_runtime_provider(): void {
-		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) || ! self::should_register_adapter() ) {
+		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) ) {
 			return;
 		}
 
@@ -429,7 +429,104 @@ final class WP_Codebox_Agents_API_Adapter {
 			$descriptor       = is_array( $metadata['runtime_package_descriptor'] ?? null ) ? $metadata['runtime_package_descriptor'] : array();
 			$input['package'] = ! empty( $descriptor ) ? $descriptor : array( 'slug' => (string) $input['runtime_package'] );
 		}
+		if ( is_array( $input['package'] ?? null ) ) {
+			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
+		}
+
+		$input = self::runtime_package_options_for_agents_api( $input );
+
 		return $this->execute( self::RUN_RUNTIME_PACKAGE, $input );
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
+	private static function runtime_package_options_for_agents_api( array $input ): array {
+		$options        = is_array( $input['options'] ?? null ) ? $input['options'] : array();
+		$workflow_input = is_array( $input['input'] ?? null ) ? $input['input'] : array();
+
+		foreach ( self::runtime_package_option_fields() as $field ) {
+			if ( array_key_exists( $field, $input ) && ! array_key_exists( $field, $options ) ) {
+				$options[ $field ] = $input[ $field ];
+			}
+			if ( array_key_exists( $field, $workflow_input ) && ! array_key_exists( $field, $options ) ) {
+				$options[ $field ] = $workflow_input[ $field ];
+				unset( $workflow_input[ $field ] );
+			}
+		}
+
+		if ( ! empty( $options ) ) {
+			$input['options'] = $options;
+		}
+		if ( isset( $input['input'] ) ) {
+			$input['input'] = $workflow_input;
+		}
+
+		return $input;
+	}
+
+	/** @return array<int,string> */
+	private static function runtime_package_option_fields(): array {
+		return array(
+			'provider',
+			'model',
+			'wait_for_completion',
+			'wait',
+			'step_budget',
+			'time_budget_ms',
+			'required_outputs',
+			'required_artifacts',
+			'engine_data_outputs',
+			'runtime_tools',
+			'ability_tools',
+			'tools',
+			'disable_directives',
+		);
+	}
+
+	/** @param array<string,mixed> $package Package descriptor. @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
+	private static function package_descriptor_for_runtime( array $package, array $input ): array {
+		$source = isset( $package['source'] ) && is_string( $package['source'] ) ? trim( $package['source'] ) : '';
+		if ( '' === $source || self::is_absolute_package_source( $source ) || file_exists( $source ) ) {
+			return $package;
+		}
+
+		foreach ( self::runtime_workspace_roots( $input ) as $root ) {
+			$candidate = rtrim( $root, '/' ) . '/' . ltrim( $source, '/' );
+			if ( file_exists( $candidate ) ) {
+				$package['source'] = $candidate;
+				return $package;
+			}
+		}
+
+		return $package;
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @return array<int,string> */
+	private static function runtime_workspace_roots( array $input ): array {
+		$contexts = array();
+		foreach ( array( $input, $input['input'] ?? null, $input['task_input'] ?? null ) as $value ) {
+			if ( is_array( $value ) && is_array( $value['client_context'] ?? null ) ) {
+				$contexts[] = $value['client_context'];
+			}
+		}
+
+		$roots = array();
+		foreach ( $contexts as $context ) {
+			if ( isset( $context['default_workspace']['target'] ) && is_string( $context['default_workspace']['target'] ) ) {
+				$roots[] = $context['default_workspace']['target'];
+			}
+
+			foreach ( is_array( $context['sandbox_workspace']['mounts'] ?? null ) ? $context['sandbox_workspace']['mounts'] : array() as $mount ) {
+				if ( is_array( $mount ) && isset( $mount['target'] ) && is_string( $mount['target'] ) ) {
+					$roots[] = $mount['target'];
+				}
+			}
+		}
+
+		return array_values( array_unique( array_filter( $roots, static fn( string $root ): bool => '' !== trim( $root ) ) ) );
+	}
+
+	private static function is_absolute_package_source( string $source ): bool {
+		return str_starts_with( $source, '/' ) || 1 === preg_match( '#^[a-z][a-z0-9+.-]*://#i', $source ) || 1 === preg_match( '#^[A-Za-z]:[\\/]#', $source );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */

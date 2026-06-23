@@ -63,6 +63,14 @@ assert( 'agents/get-chat-run' === $names['get_chat_run'] );
 $adapter = new WP_Codebox_Agents_API_Adapter();
 assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() ) );
 
+WP_Codebox_Agents_API_Adapter::register_runtime_provider();
+$early_providers = WP_Codebox_Runtime_Provider_Registry::providers();
+assert( isset( $early_providers['agents-api-adapter'] ) );
+assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
+$early_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
+assert( is_wp_error( $early_runtime_package ) );
+assert( 'wp_codebox_agents_api_ability_unavailable' === $early_runtime_package->get_error_code() );
+
 $GLOBALS['wp_codebox_test_abilities'][ $names['chat'] ]                = new WP_Ability( array( 'schema' => 'agents-api/chat-result/v1', 'raw' => array( 'schema' => 'agents-api.chat-result' ) ) );
 $GLOBALS['wp_codebox_test_abilities'][ $names['run_task'] ]            = new WP_Ability( array( 'schema' => 'agents-api/task-result/v1' ) );
 $GLOBALS['wp_codebox_test_abilities'][ $names['run_runtime_package'] ] = new WP_Ability( array( 'schema' => 'agents-api/runtime-package-result/v1' ) );
@@ -85,6 +93,26 @@ $package_with_descriptor = $adapter->run_runtime_package(
 	)
 );
 assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) === $package_with_descriptor['received']['package'] );
+
+$workspace_root = sys_get_temp_dir() . '/wp-codebox-runtime-package-' . getmypid();
+mkdir( $workspace_root . '/bundles/example-agent', 0777, true );
+$package_with_workspace_source = $adapter->run_runtime_package(
+	array(
+		'runtime_package' => 'example-agent',
+		'provider'        => 'codex',
+		'model'           => 'gpt-5.5',
+		'input'           => array( 'wait_for_completion' => true, 'topic' => 'coffee' ),
+		'metadata'        => array( 'runtime_package_descriptor' => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) ),
+		'task_input'      => array(
+			'client_context' => array(
+				'default_workspace' => array( 'target' => $workspace_root ),
+			),
+		),
+	)
+);
+assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $package_with_workspace_source['received']['package'] );
+assert( array( 'topic' => 'coffee' ) === $package_with_workspace_source['received']['input'] );
+assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true ) === $package_with_workspace_source['received']['options'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
 assert_no_agents_api_schema_leaks( $chat, 'chat' );

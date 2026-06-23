@@ -207,6 +207,11 @@ final class WP_Codebox_Abilities {
 			return;
 		}
 
+		if ( function_exists( 'did_action' ) && did_action( 'wp_abilities_api_categories_init' ) ) {
+			$register_category();
+			return;
+		}
+
 		add_action( 'wp_abilities_api_categories_init', $register_category );
 	}
 
@@ -922,6 +927,11 @@ final class WP_Codebox_Abilities {
 		};
 
 		if ( function_exists( 'doing_action' ) && doing_action( 'wp_abilities_api_init' ) ) {
+			$register_callback();
+			return;
+		}
+
+		if ( function_exists( 'did_action' ) && did_action( 'wp_abilities_api_init' ) ) {
 			$register_callback();
 			return;
 		}

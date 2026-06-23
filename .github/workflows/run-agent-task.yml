@@ -79,12 +79,12 @@ name: Run Agent Task (reusable)
         description: JSON array of accepted non-PR completion outcomes.
         type: string
         default: '[]'
-      app_token_repos:
-        description: Comma-separated repositories for app-token scoping.
+      access_token_repos:
+        description: Comma-separated repositories for access-token scoping.
         type: string
         default: ""
-      require_homeboy_app_token:
-        description: Whether the run requires the configured app token.
+      require_access_token:
+        description: Whether the run requires the configured access token.
         type: boolean
         default: false
       allowed_repos:
@@ -216,8 +216,8 @@ jobs:
           ACTIONS_ARTIFACT_DOWNLOADS: ${{ inputs.actions_artifact_downloads }}
           SUCCESS_REQUIRES_PR: ${{ inputs.success_requires_pr }}
           SUCCESS_COMPLETION_OUTCOMES: ${{ inputs.success_completion_outcomes }}
-          APP_TOKEN_REPOS: ${{ inputs.app_token_repos }}
-          REQUIRE_HOMEBOY_APP_TOKEN: ${{ inputs.require_homeboy_app_token }}
+          ACCESS_TOKEN_REPOS: ${{ inputs.access_token_repos }}
+          REQUIRE_ACCESS_TOKEN: ${{ inputs.require_access_token }}
           ALLOWED_REPOS: ${{ inputs.allowed_repos }}
           MAX_TURNS: ${{ inputs.max_turns }}
           STEP_BUDGET: ${{ inputs.step_budget }}
