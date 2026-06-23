@@ -631,7 +631,7 @@ private static function execute_fuzz_suite_database_inventory( array $args, arra
 	$observation['artifact'] = (string) ( $args['artifact'] ?? 'db_inventory' );
 	$observation['table_count'] = $totals['tableCount'];
 	$observation['payload'] = array(
-		'schema'      => 'wp-codebox/wordpress-database-inventory/v1',
+		'schema'      => 'wp-codebox/wordpress-db-inventory/v1',
 		'command'     => 'wordpress.inventory-database',
 		'status'      => 'ok',
 		'prefix'      => $prefix,
