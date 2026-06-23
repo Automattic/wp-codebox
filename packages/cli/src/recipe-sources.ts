@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, dirname, join, relative, resolve } from "node:path"
-import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, normalizeReviewerSafePath, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
@@ -270,10 +270,13 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   const plugins: PreparedExtraPlugin[] = []
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
-    const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug, plugin.sha256)
+    const sourceRootRef = recipeExtraPluginSourceRoot(plugin)
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256)
+    const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(resolved, slug, plugin.source)
+    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, plugin.source, resolved.source)
     await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), plugin.source)
     plugins.push({
       source: prepared.source,
@@ -284,14 +287,17 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
       loadAs,
       cleanupPaths: prepared.cleanupPaths,
       provenance: prepared.provenance,
-      metadata: plugin.metadata ?? {},
+      metadata: {
+        ...(plugin.metadata ?? {}),
+        ...(sourceSubpath ? { sourceRoot: sourceRootRef, sourceSubpath } : {}),
+      },
     })
   }
 
   return plugins
 }
 
-async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string): Promise<PreparedExternalSource> {
+async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, copyRoot = prepared.source): Promise<PreparedExternalSource> {
   if (prepared.provenance.kind !== "local") {
     return prepared
   }
@@ -315,8 +321,10 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   }
 
   const stagingRoot = await mkdtemp(join(tmpdir(), `wp-codebox-plugin-${slug}-`))
-  const stagedSource = join(stagingRoot, slug)
-  await cp(prepared.source, stagedSource, { recursive: true })
+  const stagedRoot = join(stagingRoot, slug)
+  await cp(copyRoot, stagedRoot, { recursive: true })
+  const sourceSubpath = relative(copyRoot, prepared.source).replace(/\\/g, "/")
+  const stagedSource = sourceSubpath ? join(stagedRoot, sourceSubpath) : stagedRoot
   try {
     await executeManagedHostCommand({
       ...composerManagedHostCommandConfig({
@@ -1272,6 +1280,28 @@ export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): strin
   return basename(resolve(plugin.source))
 }
 
+export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin): string {
+  return plugin.sourceRoot ?? plugin.originalSource ?? plugin.source
+}
+
+export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
+  if (plugin.sourceSubpath) {
+    return normalizeReviewerSafePath(plugin.sourceSubpath)
+  }
+
+  const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+  if (sourceRoot === plugin.source) {
+    return ""
+  }
+
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return ""
+  }
+
+  return normalizeReviewerSafePath(relativePath)
+}
+
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
   const slug = recipeExtraPluginSlug(plugin)
   return plugin.pluginFile ?? `${slug}/${slug}.php`
@@ -1305,7 +1335,9 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
 
   const source = recipeSource(plugin.source, plugin.sha256)
   if (source.type === "local") {
-    const pluginSource = resolve(recipeDirectory, plugin.source)
+    const sourceRoot = resolve(recipeDirectory, recipeExtraPluginSourceRoot(plugin))
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    const pluginSource = sourceSubpath ? join(sourceRoot, sourceSubpath) : resolve(recipeDirectory, plugin.source)
     return resolvePluginEntrypointContract({ source: pluginSource, slug, loadAs: plugin.loadAs }).pluginFile
   }
 

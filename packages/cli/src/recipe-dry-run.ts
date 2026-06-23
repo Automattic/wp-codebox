@@ -3,7 +3,7 @@ import { fixtureImportDeterministicIdPlan, normalizeRuntimeBackendKind, validate
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { serializeError } from "./output.js"
 import { resolveRecipeSecretEnv, type RecipeSecretEnvSummaryEntry } from "./recipe-secret-env.js"
-import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
+import { composerPackageVendorPath, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, loadWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 import { runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 
@@ -564,6 +564,7 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   const steps: Array<Promise<RecipeDryRunStep>> = []
   const dryRunExtraPlugins = await Promise.all(recipeExtraPlugins(recipe).map(async (plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
     return {
       source: plugin.source,
       slug,
@@ -572,7 +573,7 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
       activate: plugin.activate !== false,
       loadAs: plugin.loadAs ?? "plugin",
       cleanupPaths: [],
-      provenance: recipeSourceProvenance(recipeSource(plugin.source, plugin.sha256), recipeDirectory),
+      provenance: recipeSourceProvenance(recipeSource(sourceRoot, plugin.sha256), recipeDirectory),
     }
   }))
   const muPluginInstallCode = installMuPluginsCode(dryRunExtraPlugins)
@@ -656,11 +657,15 @@ function recipeDryRunWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string
 function recipeDryRunExtraPlugins(recipe: WorkspaceRecipe, recipeDirectory: string): RecipeDryRunExtraPlugin[] {
   return recipeExtraPlugins(recipe).map((plugin) => {
     const slug = recipeExtraPluginSlug(plugin)
-    const source = recipeSource(plugin.source, plugin.sha256)
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    const source = recipeSource(sourceRoot, plugin.sha256)
     const provenance = recipeSourceProvenance(source, recipeDirectory)
     return {
-      source: source.type === "local" ? resolve(recipeDirectory, plugin.source) : source.resolvedUrl,
+      source: source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : source.resolvedUrl,
       sourceRef: plugin.source,
+      sourceRoot,
+      sourceSubpath,
       sourceType: source.type,
       slug,
       target: pluginTarget(slug, plugin.loadAs ?? "plugin"),

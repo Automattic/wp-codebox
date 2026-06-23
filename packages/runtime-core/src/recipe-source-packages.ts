@@ -30,6 +30,7 @@ export interface PreparedRecipeSourcePackageOptions {
   slug: string
   artifactsRoot: string
   originalSource?: string
+  sourceSubpath?: string
   packageRootName?: string
   composerInstallArgs?: string[]
 }
@@ -183,14 +184,16 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
   const packageRootName = options.packageRootName ?? "prepared-source-packages"
   const source = options.source
   const originalSource = options.originalSource || source
+  const sourceSubpath = options.sourceSubpath ? normalizeReviewerSafePath(options.sourceSubpath) : inferredSourceSubpath(source, originalSource)
   if (!source) return source
 
   if (!options.artifactsRoot) {
-    return prepareRecipeSourcePackageWithoutArtifacts(source, originalSource, options.slug)
+    return prepareRecipeSourcePackageWithoutArtifacts(source, originalSource, options.slug, sourceSubpath)
   }
 
   const preparedRoot = preparedSourceRoot(options.artifactsRoot, packageRootName)
   const preparedSource = preparedSourcePath(options.artifactsRoot, packageRootName, options.slug)
+  const preparedPluginSource = sourceSubpath ? join(preparedSource, sourceSubpath) : preparedSource
   const copySource = localSourcePath(originalSource)
   if (pathExists(copySource)) {
     if (resolve(copySource) !== resolve(preparedSource)) {
@@ -204,10 +207,10 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
     } else {
       mkdirSync(preparedSource, { recursive: true })
     }
-    return installComposerDependenciesForSourcePackageSync(preparedSource, options.slug, preparedRoot, options.composerInstallArgs)
+    return installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
   }
 
-  return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug)
+  return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug, "")
 }
 
 export function composerManagedHostEnv(): Record<string, string> {
@@ -239,15 +242,26 @@ export function composerManagedHostCommandConfig(options: {
   }
 }
 
-function prepareRecipeSourcePackageWithoutArtifacts(source: string, originalSource: string, slug: string): string {
+function prepareRecipeSourcePackageWithoutArtifacts(source: string, originalSource: string, slug: string, sourceSubpath: string): string {
   const localSource = localSourcePath(originalSource)
-  if (!pathExists(join(localSource, "composer.json"))) {
-    return pathExists(localSource) ? localSource : source
+  const pluginSource = sourceSubpath ? join(localSource, sourceSubpath) : localSource
+  if (!pathExists(join(pluginSource, "composer.json"))) {
+    return pathExists(pluginSource) ? pluginSource : source
   }
-  if (pathExists(join(localSource, "vendor", "autoload.php"))) {
-    return localSource
+  if (pathExists(join(pluginSource, "vendor", "autoload.php"))) {
+    return pluginSource
   }
   throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
+}
+
+function inferredSourceSubpath(source: string, originalSource: string): string {
+  const localSource = localSourcePath(source)
+  const localOriginalSource = localSourcePath(originalSource)
+  const relativePath = relative(resolve(localOriginalSource), resolve(localSource))
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return ""
+  }
+  return normalizeReviewerSafePath(relativePath)
 }
 
 function installComposerDependenciesForSourcePackageSync(source: string, slug: string, allowedRoot: string, composerInstallArgs?: string[]): string {

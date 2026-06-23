@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { assertFixtureImportDeterministicIdsSupported, assertWorkspaceRecipeJsonSchema, commandArgValue, normalizeRuntimeBackendKind, normalizeRuntimeMountTarget, parseCommandJson, safeArtifactRelativePath, validateBrowserInteractionScript, validateSourcePackage, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { commandValidationDescriptorFor, effectivePolicyCommandsFor, type CommandArgValidationDescriptor } from "@automattic/wp-codebox-core/contracts"
-import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
+import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPluginSourceRoot, recipeExtraPluginSourceSubpath, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { loadConfiguredRuntimeOverlayDescriptors, registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
 
@@ -530,7 +530,10 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
       addIssue("invalid-source", `${path}.source`, error instanceof Error ? error.message : String(error))
       continue
     }
+    const sourceRoot = recipeExtraPluginSourceRoot(plugin)
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
     const pluginSource = source.type === "local" ? resolve(recipeDirectory, plugin.source) : undefined
+    const pluginMountedSource = source.type === "local" ? resolve(recipeDirectory, sourceRoot, sourceSubpath) : undefined
     let slug: string
     try {
       slug = recipeExtraPluginSlug(plugin)
@@ -544,14 +547,17 @@ export async function validateWorkspaceRecipeSemantics(recipe: WorkspaceRecipe, 
     if (pluginSource) {
       await validateExistingDirectory(pluginSource, `${path}.source`, addIssue)
     }
+    if (sourceRoot !== plugin.source) {
+      await validateExistingDirectory(resolve(recipeDirectory, sourceRoot), `${path}.sourceRoot`, addIssue)
+    }
 
     if (!pluginFile.startsWith(`${slug}/`)) {
       addIssue("invalid-plugin-file", `${path}.pluginFile`, `Plugin file must be relative to the mounted plugin slug (${slug}/...).`)
       continue
     }
 
-    if (pluginSource) {
-      await validateExistingFile(join(pluginSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
+    if (pluginMountedSource) {
+      await validateExistingFile(join(pluginMountedSource, pluginFile.slice(slug.length + 1)), `${path}.pluginFile`, addIssue)
     }
   }
 

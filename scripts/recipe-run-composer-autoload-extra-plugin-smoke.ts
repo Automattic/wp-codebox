@@ -7,16 +7,23 @@ import { fileURLToPath } from "node:url"
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const cli = resolve(root, "packages/cli/dist/index.js")
 const artifacts = resolve(root, "artifacts/recipe-run-composer-autoload-extra-plugin-smoke")
-const pluginSource = resolve(artifacts, "source-plugin")
+const monorepoSource = resolve(artifacts, "source-monorepo")
+const pluginSource = resolve(monorepoSource, "plugins", "woocommerce")
+const siblingPackageSource = resolve(monorepoSource, "packages", "php", "email-editor")
 const recipePath = resolve(artifacts, "recipe.json")
 
 rmSync(artifacts, { recursive: true, force: true })
 mkdirSync(resolve(pluginSource, "src"), { recursive: true })
+mkdirSync(resolve(siblingPackageSource, "src"), { recursive: true })
 
 writeFileSync(resolve(pluginSource, "composer.json"), `${JSON.stringify({
   name: "wp-codebox/composer-autoload-smoke",
   autoload: { classmap: ["src/"] },
+  repositories: [{ type: "path", url: "../../packages/php/email-editor", options: { symlink: false } }],
+  require: { "wp-codebox/email-editor-smoke": "*" },
   config: { "allow-plugins": false },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
 }, null, 2)}\n`)
 
 writeFileSync(resolve(pluginSource, "composer-autoload-smoke.php"), `<?php
@@ -35,8 +42,16 @@ register_activation_hook( __FILE__, static function (): void {
 	if ( ! class_exists( \\WpCodeboxComposerSmoke\\Fixture::class ) ) {
 		throw new RuntimeException( 'Composer classmap fixture was not autoloaded.' );
 	}
+	$sibling_package = __DIR__ . '/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php';
+	if ( ! is_file( $sibling_package ) ) {
+		throw new RuntimeException( 'Composer path repository sibling package was not installed.' );
+	}
+	require_once $sibling_package;
+	if ( ! class_exists( \\WpCodeboxEmailEditorSmoke\\SiblingPackage::class ) ) {
+		throw new RuntimeException( 'Composer path repository sibling package was not loadable.' );
+	}
 
-	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() );
+	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() + \\WpCodeboxEmailEditorSmoke\\SiblingPackage::value() );
 } );
 `)
 
@@ -47,6 +62,23 @@ namespace WpCodeboxComposerSmoke;
 final class Fixture {
 	public static function value(): int {
 		return 992;
+	}
+}
+`)
+
+writeFileSync(resolve(siblingPackageSource, "composer.json"), `${JSON.stringify({
+  name: "wp-codebox/email-editor-smoke",
+  autoload: { "psr-4": { "WpCodeboxEmailEditorSmoke\\\\": "src/" } },
+  version: "dev-main",
+}, null, 2)}\n`)
+
+writeFileSync(resolve(siblingPackageSource, "src", "SiblingPackage.php"), `<?php
+
+namespace WpCodeboxEmailEditorSmoke;
+
+final class SiblingPackage {
+	public static function value(): int {
+		return 8;
 	}
 }
 `)
@@ -63,6 +95,8 @@ writeFileSync(recipePath, `${JSON.stringify({
     extra_plugins: [
       {
         source: pluginSource,
+        sourceRoot: monorepoSource,
+        sourceSubpath: "plugins/woocommerce",
         slug: "composer-autoload-smoke",
         pluginFile: "composer-autoload-smoke/composer-autoload-smoke.php",
       },
@@ -73,7 +107,7 @@ writeFileSync(recipePath, `${JSON.stringify({
       {
         command: "wordpress.run-php",
         args: [
-          "code=if (!class_exists('WpCodeboxComposerSmoke\\\\Fixture')) { throw new RuntimeException('autoloaded class missing after plugin boot'); } echo wp_json_encode(array('value' => get_option('wp_codebox_composer_smoke_value'), 'active' => is_plugin_active('composer-autoload-smoke/composer-autoload-smoke.php')));",
+          "code=if (!class_exists('WpCodeboxComposerSmoke\\\\Fixture')) { throw new RuntimeException('autoloaded class missing after plugin boot'); } if (!is_file(WP_PLUGIN_DIR . '/composer-autoload-smoke/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php')) { throw new RuntimeException('path repository package missing after plugin boot'); } if (!class_exists('WpCodeboxEmailEditorSmoke\\\\SiblingPackage')) { require_once WP_PLUGIN_DIR . '/composer-autoload-smoke/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php'; } echo wp_json_encode(array('value' => get_option('wp_codebox_composer_smoke_value'), 'active' => is_plugin_active('composer-autoload-smoke/composer-autoload-smoke.php')));",
         ],
       },
     ],
@@ -100,9 +134,10 @@ const workflowExecution = output.executions.find((execution: { command: string; 
 assert.ok(workflowExecution)
 
 const workflowResult = JSON.parse(workflowExecution.stdout)
-assert.equal(workflowResult.value, "992")
+assert.equal(workflowResult.value, "1000")
 assert.equal(workflowResult.active, true)
 assert.equal(existsSync(resolve(pluginSource, "vendor", "autoload.php")), false, "recipe-run must not mutate the caller plugin checkout")
 assert.equal(existsSync(resolve(pluginSource, "composer.lock")), false, "recipe-run must not write Composer lockfiles into the caller plugin checkout")
+assert.equal(existsSync(resolve(siblingPackageSource, "vendor")), false, "recipe-run must not mutate sibling package checkouts")
 
 console.log("recipe run Composer autoload extra plugin smoke passed")

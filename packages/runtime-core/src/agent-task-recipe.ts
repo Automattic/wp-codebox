@@ -453,6 +453,9 @@ function normalizeAgentTaskExtraPlugins(value: unknown): WorkspaceRecipeExtraPlu
     if (!source) return []
     return [stripUndefined({
       source,
+      sourceRoot: stringValue(entry.sourceRoot) || undefined,
+      sourceSubpath: stringValue(entry.sourceSubpath) || undefined,
+      originalSource: stringValue(entry.originalSource) || undefined,
       slug: stringValue(entry.slug) || undefined,
       pluginFile: stringValue(entry.pluginFile) || undefined,
       activate: typeof entry.activate === "boolean" ? entry.activate : undefined,
@@ -469,8 +472,9 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
     const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
+    const sourceSubpath = stringValue(contract.sourceSubpath)
     if (!slug || !source) return []
-    const preparedSource = prepareComponentPluginSource(source, originalSource, slug, artifactsRoot)
+    const preparedSource = prepareComponentPluginSource(source, originalSource, sourceSubpath, slug, artifactsRoot)
     const entrypoint = resolvePluginEntrypointContract({
       source: preparedSource,
       slug,
@@ -490,6 +494,7 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
           slug,
           requestedPath: source,
           originalPath: originalSource || undefined,
+          sourceSubpath: sourceSubpath || undefined,
           preparedPath: preparedSource,
           pluginFile: entrypoint.pluginFile,
           pluginEntrypointFallback: entrypoint.fallback,
@@ -501,8 +506,8 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   })
 }
 
-function prepareComponentPluginSource(source: string, originalSource: string, slug: string, artifactsRoot: string): string {
-  return prepareRecipeSourcePackageSync({ source, originalSource, slug, artifactsRoot, packageRootName: "prepared-plugins" })
+function prepareComponentPluginSource(source: string, originalSource: string, sourceSubpath: string, slug: string, artifactsRoot: string): string {
+  return prepareRecipeSourcePackageSync({ source, originalSource, sourceSubpath, slug, artifactsRoot, packageRootName: "prepared-plugins" })
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): SandboxToolPolicySnapshot {

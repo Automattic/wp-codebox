@@ -376,6 +376,9 @@ export interface WorkspaceRecipeAgentBundle {
 
 export interface WorkspaceRecipeExtraPlugin {
   source: string
+  sourceRoot?: string
+  sourceSubpath?: string
+  originalSource?: string
   slug?: string
   pluginFile?: string
   activate?: boolean

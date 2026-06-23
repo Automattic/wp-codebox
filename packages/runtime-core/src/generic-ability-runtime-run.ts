@@ -21,6 +21,7 @@ export interface GenericAbilityRuntimeComponentContract {
   loadAs?: ComponentLoadMode
   activate?: boolean
   originalSource?: string
+  sourceSubpath?: string
   metadata?: Record<string, unknown>
 }
 
@@ -219,7 +220,7 @@ function runtimePlugins(contracts: GenericAbilityRuntimeComponentContract[] | un
     const source = stringValue(contract.source)
     if (!source) return []
     const slug = sanitizePluginSlug(stringValue(contract.slug) || slugFromPath(source))
-    const preparedSource = prepareRecipeSourcePackageSync({ source, originalSource: contract.originalSource, slug, artifactsRoot, packageRootName: "prepared-plugins" })
+    const preparedSource = prepareRecipeSourcePackageSync({ source, originalSource: contract.originalSource, sourceSubpath: contract.sourceSubpath, slug, artifactsRoot, packageRootName: "prepared-plugins" })
     const loadAs = contract.loadAs === "mu-plugin" ? "mu-plugin" : "plugin"
     const entrypoint = resolvePluginEntrypointContract({ source: preparedSource, slug, pluginFile: contract.pluginFile, loadAs })
 
