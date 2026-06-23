@@ -5,7 +5,7 @@ const result = await runPhpJson<{
   legacy_adapter_calls: string[]
   recipe: {
     schema: string
-    inputs: { inherit: unknown; secretEnv: string[]; agent_bundles: unknown[]; extra_plugins: unknown[] }
+    inputs: { inherit: unknown; secretEnv: string[]; agent_bundles: unknown[]; extra_plugins: unknown[]; component_manifest: { components: Array<{ slug: string }> } }
     workflow: { steps: Array<{ command: string; args: string[] }> }
     runtime: { overlays: unknown[] }
   }
@@ -146,6 +146,9 @@ assert.ok(result.recipe.workflow.steps[0].args.includes("mode=planned-mode"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("provider=planned-provider"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("model=planned-model"))
 assert.ok(result.recipe.workflow.steps[0].args.includes("provider-plugin-slugs=planned-provider"))
+const runtimeComponentContractsArg = result.recipe.workflow.steps[0].args.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
+const runtimeComponentContracts = JSON.parse(runtimeComponentContractsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
+assert.deepEqual(runtimeComponentContracts.map((component) => component.slug), ["demo-plugin"])
 assert.deepEqual(result.recipe.runtime.overlays, [{ kind: "plugin", library: "demo", strategy: "replace", source: "/overlays/demo" }])
 assert.deepEqual(result.preset_recipe.inputs.secretEnv, ["PRESET_SECRET"])
 assert.deepEqual(result.preset_recipe.inputs.runtimeEnv, { PRESET_RUNTIME_ENV: "1", WP_AGENT_RUNTIME: "1" })

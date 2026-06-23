@@ -113,6 +113,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     `model=${stringValue(input.model)}`,
     `provider-plugin-slugs=${providerSlugs}`,
     `provider-plugin-contracts-json=${JSON.stringify(providerContracts)}`,
+    `runtime-component-contracts-json=${JSON.stringify(componentManifest.components)}`,
     `sandbox-tool-policy-json=${JSON.stringify(sandboxToolPolicy(input, taskInput))}`,
   ]
   if (stringValue(input.session_id)) {
@@ -513,8 +514,10 @@ function prepareComponentPluginSource(source: string, originalSource: string, so
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): SandboxToolPolicySnapshot {
-  const policy = objectValue(input.sandbox_tool_policy) || objectValue(taskInput.sandbox_tool_policy)
-  if (policy) {
+  const inputPolicy = objectValue(input.sandbox_tool_policy) ?? {}
+  const taskPolicy = objectValue(taskInput.sandbox_tool_policy) ?? {}
+  const policy = Object.keys(inputPolicy).length > 0 ? inputPolicy : taskPolicy
+  if (Object.keys(policy).length > 0) {
     return policy as unknown as SandboxToolPolicySnapshot
   }
   return {

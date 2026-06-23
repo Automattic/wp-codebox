@@ -343,11 +343,20 @@ $ability_name = $runtime_task_run ? (string) ($sandbox_runtime_task['ability'] ?
 $ability = empty($sandbox_agent_bundle_import_failures) && function_exists('wp_get_ability') ? wp_get_ability($ability_name) : null;
 $registered_ability_ids = function_exists('wp_get_abilities') ? array_keys(wp_get_abilities()) : array();
 sort($registered_ability_ids);
+$runtime_task_preflight = array(
+    'schema' => 'wp-codebox/runtime-task-ability-preflight/v1',
+    'runtime_task_requested' => $runtime_task_run,
+    'ability' => $ability_name,
+    'registry_available' => function_exists('wp_get_ability'),
+    'available' => null !== $ability && method_exists($ability, 'execute'),
+    'registered_ability_ids' => $registered_ability_ids,
+);
 $sandbox_stack['abilities'] = array(
     'count' => count($registered_ability_ids),
     'ids' => $registered_ability_ids,
     'requested' => $ability_name,
     'requested_available' => null !== $ability,
+    'runtime_task_preflight' => $runtime_task_preflight,
 );
 $agent_input = ${phpStringLiteral(JSON.stringify(input))};
 $decoded_agent_input = json_decode($agent_input, true);
@@ -376,8 +385,9 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
         'agent_runtime' => array(
             'success' => false,
             'error' => array(
-                'code' => $runtime_task_run ? 'runtime_task_ability_unavailable' : 'agents_chat_unavailable',
-                'message' => $runtime_task_run ? 'The requested runtime task ability is not available inside the sandbox.' : 'The canonical agents/chat ability is not available inside the sandbox.',
+                'code' => $runtime_task_run ? 'runtime_task_ability_missing_preflight' : 'agents_chat_unavailable',
+                'message' => $runtime_task_run ? 'The requested runtime task ability failed sandbox readiness preflight.' : 'The canonical agents/chat ability is not available inside the sandbox.',
+                'data' => array('preflight' => $runtime_task_preflight),
             ),
         ),
     );
@@ -534,11 +544,11 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string; pluginFile?: string; loadAs?: string }>): string {
+export function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string; pluginFile?: string; loadAs?: string }>, runtimeComponents: Array<{ slug: string; pluginFile?: string; loadAs?: string }> = []): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
-$plugins = array_merge(array(
+$plugins = array_merge(wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(runtimeComponents))}, true)), array(
     'agents-api/agents-api.php',
 ), wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)));
 

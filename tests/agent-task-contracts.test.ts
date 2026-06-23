@@ -239,6 +239,12 @@ try {
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), true)
+  const genericSandboxStepArgs = genericRecipe.workflow.steps.find((step) => step.command === "wp-codebox.agent-sandbox-run")?.args ?? []
+  const genericRuntimeComponentsArg = genericSandboxStepArgs.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
+  const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "wordpress-plugin"), true)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), true)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), true)
 
   const recipe = buildAgentTaskRecipe({
     goal: "Verify extra plugin propagation",
