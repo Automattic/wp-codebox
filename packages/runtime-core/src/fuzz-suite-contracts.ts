@@ -1,4 +1,5 @@
 import { stripUndefined } from "./object-utils.js"
+import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem } from "./fuzz-coverage-plan-contracts.js"
 
 export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
@@ -59,6 +60,7 @@ export interface FuzzSuiteContract {
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
   cases: FuzzSuiteCase[]
+  coveragePlan?: FuzzCoveragePlanContract
   metadata?: Record<string, unknown>
 }
 
@@ -186,6 +188,7 @@ export interface FuzzSuiteResultEnvelope {
   success: boolean
   summary: FuzzSuiteSummary
   coverageSummary?: FuzzSuiteCoverageSummary
+  coveragePlan?: FuzzCoveragePlanContract
   cases: FuzzSuiteCaseResult[]
   diagnostics: FuzzSuiteDiagnostic[]
   artifactRefs: FuzzSuiteArtifactRef[]
@@ -199,6 +202,7 @@ export function fuzzSuiteContract(input: {
   resetPolicy?: FuzzSuiteResetPolicy
   reset_policy?: FuzzSuiteResetPolicy | string
   cases?: FuzzSuiteCase[]
+  coveragePlan?: FuzzCoveragePlanContract
   metadata?: Record<string, unknown>
 }): FuzzSuiteContract {
   return stripUndefined({
@@ -209,6 +213,7 @@ export function fuzzSuiteContract(input: {
     resetPolicy: input.resetPolicy,
     reset_policy: input.reset_policy,
     cases: input.cases ?? [],
+    coveragePlan: input.coveragePlan,
     metadata: input.metadata,
   })
 }
@@ -219,6 +224,7 @@ export function fuzzSuiteResultEnvelope(input: {
   diagnostics?: FuzzSuiteDiagnostic[]
   artifactRefs?: FuzzSuiteArtifactRef[]
   coverageSummary?: FuzzSuiteCoverageSummary
+  coveragePlan?: FuzzCoveragePlanContract
   metadata?: Record<string, unknown>
 }): FuzzSuiteResultEnvelope {
   const cases = (input.cases ?? []).map(normalizeCaseResult)
@@ -226,6 +232,7 @@ export function fuzzSuiteResultEnvelope(input: {
   const artifactRefs = dedupeArtifactRefs([...(input.artifactRefs ?? []), ...cases.flatMap((item) => [...(item.artifactRefs ?? []), ...(item.reset?.artifactRefs ?? [])])])
   const summary = summarizeFuzzCases(cases)
   const coverageSummary = input.coverageSummary ?? summarizeFuzzCoverage({ discovered: fuzzSuiteDiscoveredCount(input.suite, cases.length), cases })
+  const coveragePlan = input.coveragePlan ?? fuzzSuiteResultCoveragePlan(input.suite, cases)
   const contractDiagnostics = fuzzSuiteContractDiagnostics({ suite: input.suite, cases, artifactRefs, coverageSummary })
   diagnostics.push(...contractDiagnostics)
   const hasRequiredCoverageError = diagnostics.some((diagnostic) => diagnostic.code === "fuzz_suite_required_runner_capabilities_unsupported" || diagnostic.code === "fuzz_suite_required_coverage_unsupported")
@@ -238,6 +245,7 @@ export function fuzzSuiteResultEnvelope(input: {
     success: status === "passed",
     summary,
     coverageSummary,
+    coveragePlan,
     cases,
     diagnostics,
     artifactRefs,
@@ -394,6 +402,50 @@ function normalizeCaseResult(input: FuzzSuiteCaseResult): FuzzSuiteCaseResult {
     diagnostics: input.diagnostics ?? [],
     artifactRefs: input.artifactRefs,
     metadata: input.metadata,
+  })
+}
+
+function fuzzSuiteResultCoveragePlan(suite: { id: string; version?: string } | FuzzSuiteContract, cases: readonly FuzzSuiteCaseResult[]): FuzzCoveragePlanContract | undefined {
+  const basePlan = fuzzSuiteCoveragePlan(suite)
+  const suiteCases = "cases" in suite && Array.isArray(suite.cases) ? suite.cases : []
+  if (basePlan || suiteCases.length > 0 || cases.length > 0) {
+    const baseItems = new Map((basePlan?.generated.length ? basePlan.generated : basePlan?.discovered ?? []).map((item) => [item.id, item]))
+    const generated = basePlan?.generated.length ? basePlan.generated : suiteCases.map(fuzzSuiteCaseCoveragePlanItem)
+    const executed = cases.filter((item) => item.status !== "skipped").map((item) => fuzzSuiteCaseResultCoveragePlanItem(item, baseItems.get(item.id)))
+    const skipped = cases.filter((item) => item.status === "skipped").map((item) => fuzzSuiteCaseResultCoveragePlanItem(item, baseItems.get(item.id)))
+    return fuzzCoveragePlanContract({
+      id: basePlan?.id ?? `${suite.id}-coverage-plan`,
+      version: basePlan?.version ?? suite.version,
+      discovered: basePlan?.discovered ?? generated,
+      generated,
+      executable: basePlan?.executable ?? generated,
+      executed,
+      skipped: [...(basePlan?.skipped ?? []), ...skipped.filter((item) => !basePlan?.skipped.some((baseItem) => baseItem.id === item.id))],
+      untested: basePlan?.untested,
+      parameterGenerationHooks: basePlan?.parameterGenerationHooks,
+      metadata: basePlan?.metadata,
+    })
+  }
+  return undefined
+}
+
+function fuzzSuiteCoveragePlan(suite: { id: string; version?: string } | FuzzSuiteContract): FuzzCoveragePlanContract | undefined {
+  if ("coveragePlan" in suite && suite.coveragePlan?.schema === "wp-codebox/fuzz-coverage-plan/v1") return suite.coveragePlan
+  const metadataCoveragePlan = recordField(fuzzSuiteMetadata(suite), "coveragePlan") ?? recordField(fuzzSuiteMetadata(suite), "coverage_plan")
+  return metadataCoveragePlan?.schema === "wp-codebox/fuzz-coverage-plan/v1" ? metadataCoveragePlan as unknown as FuzzCoveragePlanContract : undefined
+}
+
+function fuzzSuiteCaseCoveragePlanItem(fuzzCase: FuzzSuiteCase): FuzzCoveragePlanItem {
+  return stripUndefined({ id: fuzzCase.id, target: fuzzCase.target, description: fuzzCase.description, input: fuzzCase.input, metadata: fuzzCase.metadata })
+}
+
+function fuzzSuiteCaseResultCoveragePlanItem(result: FuzzSuiteCaseResult, base?: FuzzCoveragePlanItem): FuzzCoveragePlanItem {
+  return stripUndefined({
+    ...base,
+    id: result.id,
+    target: result.target ?? base?.target,
+    reason: result.status === "skipped" ? { code: result.skipReason ?? result.diagnostics[0]?.code ?? "fuzz_suite_case_skipped", message: result.diagnostics[0]?.message ?? `Fuzz suite case ${result.id} was skipped.`, data: result.diagnostics[0]?.metadata } : base?.reason,
+    metadata: stripUndefined({ ...base?.metadata, status: result.status }),
   })
 }
 

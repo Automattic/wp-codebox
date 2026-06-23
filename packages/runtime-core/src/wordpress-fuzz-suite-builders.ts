@@ -76,6 +76,7 @@ export function restRouteInventoryToFuzzSuite(inventory: WordPressRestRouteInven
     version: options.version,
     target: REST_REQUEST_TARGET,
     cases: inventory.routes.flatMap((route) => restRouteFuzzSuiteCases(route, options)),
+    coveragePlan: restRouteInventoryToCoveragePlan(inventory, options),
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, requiredRunnerCapabilities: REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES }),
   })
 }
@@ -86,6 +87,7 @@ export function adminPageInventoryToFuzzSuite(inventory: WordPressAdminPageInven
     version: options.version,
     target: ADMIN_PAGE_LOAD_TARGET,
     cases: inventory.pages.map((page) => adminPageFuzzSuiteCase(page, options)),
+    coveragePlan: adminPageInventoryToCoveragePlan(inventory, options),
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, adminUrl: inventory.adminUrl, menuLoaded: inventory.menuLoaded, requiredRunnerCapabilities: ADMIN_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES }),
   })
 }
@@ -96,6 +98,7 @@ export function frontendUrlInventoryToFuzzSuite(inventory: WordPressFrontendUrlI
     version: options.version,
     target: FRONTEND_PAGE_LOAD_TARGET,
     cases: inventory.urls.map((url) => frontendUrlFuzzSuiteCase(url, inventory.homeUrl, options)),
+    coveragePlan: frontendUrlInventoryToCoveragePlan(inventory, options),
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, homeUrl: inventory.homeUrl, permalinkStructure: inventory.permalinkStructure, requiredRunnerCapabilities: FRONTEND_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES }),
   })
 }

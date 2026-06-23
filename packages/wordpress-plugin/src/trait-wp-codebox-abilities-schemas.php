@@ -738,7 +738,8 @@ private static function fuzz_suite_request_schema(): array {
 					),
 				),
 			),
-			'metadata' => self::object_property_schema(),
+			'coveragePlan' => self::object_property_schema(),
+			'metadata'     => self::object_property_schema(),
 		),
 	);
 }
@@ -762,15 +763,17 @@ private static function fuzz_suite_result_schema(): array {
 	return array(
 		'type'       => 'object',
 		'properties' => array(
-			'success'      => array( 'type' => 'boolean' ),
-			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite-result/v1' ),
-			'status'       => array( 'type' => 'string', 'enum' => array( 'passed', 'failed', 'error', 'skipped', 'unsupported' ) ),
-			'suite'        => self::object_property_schema(),
-			'summary'      => self::object_property_schema(),
-			'cases'        => self::object_array_property_schema(),
-			'diagnostics'  => self::object_array_property_schema(),
-			'artifactRefs' => self::object_array_property_schema(),
-			'metadata'     => self::object_property_schema(),
+			'success'         => array( 'type' => 'boolean' ),
+			'schema'          => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-suite-result/v1' ),
+			'status'          => array( 'type' => 'string', 'enum' => array( 'passed', 'failed', 'error', 'skipped', 'unsupported' ) ),
+			'suite'           => self::object_property_schema(),
+			'summary'         => self::object_property_schema(),
+			'coverageSummary' => self::object_property_schema(),
+			'coveragePlan'    => self::object_property_schema(),
+			'cases'           => self::object_array_property_schema(),
+			'diagnostics'     => self::object_array_property_schema(),
+			'artifactRefs'    => self::object_array_property_schema(),
+			'metadata'        => self::object_property_schema(),
 		),
 	);
 }

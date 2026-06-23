@@ -1,3 +1,4 @@
+import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook } from "./fuzz-coverage-plan-contracts.js"
 import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
 import type { WordPressBlockEditorTargetDiscovery, WordPressBlockTypeDescriptor, WordPressEditorPostTypeDescriptor } from "./wordpress-runtime-discovery-contracts.js"
@@ -15,6 +16,11 @@ const DEFAULT_BLOCK_FUZZ_SUITE_ID = "wordpress-block-discovery"
 const DEFAULT_EDITOR_CAPTURE = ["editor-state", "errors"] as const
 const BLOCK_SERVER_RENDER_CAPABILITIES = ["target:runtime", "runtime"] as const
 const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime", "runtime", "runtime-action:editor_open"] as const
+const BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
+  id: "wordpress.block-attribute-samples",
+  label: "WordPress block attribute sample generator",
+  description: "Placeholder hook for consumers that can generate concrete attribute samples from a discovered block schema.",
+}
 
 export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEditorTargetDiscovery, options: WordPressBlockFuzzSuiteOptions = {}): FuzzSuiteContract {
   const includeServerRender = options.includeServerRender ?? true
@@ -36,6 +42,7 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
     id: options.id ?? DEFAULT_BLOCK_FUZZ_SUITE_ID,
     version: options.version,
     cases,
+    coveragePlan: wordpressBlockDiscoveryToCoveragePlan(discovery, options),
     metadata: stripUndefined({
       sourceSchema: discovery.schema,
       builder: "wp-codebox/wordpress-block-fuzz-suite-builder/v1",
@@ -58,6 +65,32 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
           includeEditorInsert ? "wordpress.editor-open" : undefined,
         ].filter((command): command is string => Boolean(command)),
       }),
+    }),
+  })
+}
+
+export function wordpressBlockDiscoveryToCoveragePlan(discovery: WordPressBlockEditorTargetDiscovery, options: WordPressBlockFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
+  const includeServerRender = options.includeServerRender ?? true
+  const includeEditorInsert = options.includeEditorInsert ?? true
+  const editorPostType = selectEditorPostType(discovery.editorPostTypes, options.editorPostType)
+  const discovered = discovery.blocks.flatMap((block) => blockCoveragePlanItems(block, includeServerRender, includeEditorInsert, editorPostType, options.capture ?? DEFAULT_EDITOR_CAPTURE))
+  const executable = discovered.filter((item) => item.input !== undefined && !item.reason)
+  const untested = discovered.filter((item) => item.reason)
+
+  return fuzzCoveragePlanContract({
+    id: `${options.id ?? DEFAULT_BLOCK_FUZZ_SUITE_ID}-coverage-plan`,
+    version: options.version,
+    discovered,
+    generated: discovered,
+    executable,
+    untested,
+    parameterGenerationHooks: [BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK],
+    metadata: stripUndefined({
+      sourceSchema: discovery.schema,
+      builder: "wp-codebox/wordpress-block-fuzz-suite-builder/v1",
+      blocks: discovery.blocks.length,
+      editorPostTypes: discovery.editorPostTypes.map((postType) => postType.name),
+      editorPostType: includeEditorInsert ? editorPostType?.name : undefined,
     }),
   })
 }
@@ -92,6 +125,42 @@ function editorInsertCase(block: WordPressBlockTypeDescriptor, postType: WordPre
     description: `Insert ${block.name} into a new ${postType.name} editor canvas with empty attributes.`,
     metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {}, editorPostType: postType.name }),
   }
+}
+
+function blockCoveragePlanItems(block: WordPressBlockTypeDescriptor, includeServerRender: boolean, includeEditorInsert: boolean, editorPostType: WordPressEditorPostTypeDescriptor | undefined, capture: readonly string[]): FuzzCoveragePlanItem[] {
+  return [
+    includeServerRender ? serverRenderCoveragePlanItem(block) : undefined,
+    includeEditorInsert ? editorInsertCoveragePlanItem(block, editorPostType, capture) : undefined,
+  ].filter((item): item is FuzzCoveragePlanItem => Boolean(item))
+}
+
+function serverRenderCoveragePlanItem(block: WordPressBlockTypeDescriptor): FuzzCoveragePlanItem {
+  const fuzzCase = serverRenderCase(block)
+  return stripUndefined({ ...fuzzCase, parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
+}
+
+function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor | undefined, capture: readonly string[]): FuzzCoveragePlanItem {
+  if (!postType) {
+    return stripUndefined({
+      id: `block-${caseIdPart(block.name)}-editor-insert-untested`,
+      target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
+      description: `Insert ${block.name} into an editor canvas with empty attributes.`,
+      reason: { code: "block_editor_post_type_unavailable", message: "No discovered editor post type is available for editor-insert fuzz coverage.", data: { unsupportedCapabilities: ["runtime-action:editor_open"] } },
+      parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
+      metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {} }),
+    })
+  }
+  if (!block.supportsInserter) {
+    return stripUndefined({
+      id: `block-${caseIdPart(block.name)}-editor-insert-${caseIdPart(postType.name)}-empty-attributes`,
+      target: { kind: "runtime", entrypoint: "wordpress.editor-actions" },
+      description: `Insert ${block.name} into a new ${postType.name} editor canvas with empty attributes.`,
+      reason: { code: "block_inserter_unsupported", message: "The block does not support inserter-based editor coverage.", data: { unsupportedCapabilities: ["block:inserter"] } },
+      parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
+      metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {}, editorPostType: postType.name }),
+    })
+  }
+  return stripUndefined({ ...editorInsertCase(block, postType, capture), parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
 }
 
 function blockCaseMetadata(block: WordPressBlockTypeDescriptor, operation: string, extra: Record<string, unknown>): Record<string, unknown> {

@@ -23,6 +23,7 @@ import {
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
+  FUZZ_COVERAGE_PLAN_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
   HOST_DELEGATION_EVENT_SCHEMA,
@@ -119,6 +120,7 @@ assert.equal(manifest.schemas.wordpressRuntimeDiscovery.result, WORDPRESS_RUNTIM
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrix, WORDPRESS_REST_MATRIX_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntimeDiscovery.restMatrixResult, WORDPRESS_REST_MATRIX_RESULT_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.workloadRun, WORDPRESS_WORKLOAD_RUN_SCHEMA)
+assert.equal(manifest.schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(manifest.schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
