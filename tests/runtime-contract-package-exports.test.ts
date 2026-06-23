@@ -13,6 +13,9 @@ for (const entrypoint of [core, contracts]) {
   assert.equal(manifest.providerRuntime.tasks.workspaceCommand, "wp-codebox.runner-workspace.command")
 }
 
+assert.equal(contracts.PERFORMANCE_OBSERVATION_SCHEMA, "wp-codebox/performance-observation/v1")
+assert.equal(contracts.performanceObservation({ command: "wordpress.rest-performance-observation" }).schema, "wp-codebox/performance-observation/v1")
+
 assert.equal(typeof phpSnippets.phpRuntimeComponentLifecycleReplayFunction, "function")
 assert.equal(typeof phpSnippets.phpRuntimeRecipePluginPreloadFunction, "function")
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
+import { getCommandDefinition } from "../packages/runtime-core/src/command-registry.js"
 import { performanceObservation } from "../packages/runtime-core/src/performance-observation.js"
 import { runHttpRequest } from "../packages/runtime-playground/src/http-request-command-handlers.js"
 import { pageLoadPhpCode } from "../packages/runtime-playground/src/page-load-command-handlers.js"
+import { restPerformanceObservationInputFromArgs, restPerformanceObservationPhpCode } from "../packages/runtime-playground/src/performance-observation-command-handlers.js"
 import { restRequestPhpCode } from "../packages/runtime-playground/src/rest-request-command-handlers.js"
 
 const observation = performanceObservation({
@@ -26,6 +28,45 @@ assert.equal(observation.hooks?.reason, "hook_timing_not_instrumented")
 assert.equal(observation.network?.reason, "in_process_rest_request")
 assert.equal(observation.browser?.reason, "not_a_browser_observation")
 assert.equal(observation.metadata?.runner, "wp-codebox/runtime-playground")
+
+const hotspotObservation = performanceObservation({
+  command: "wordpress.rest-performance-observation",
+  target: "/wp/v2/status",
+  source: "in-process",
+  kind: "rest-request",
+  database: {
+    status: "captured",
+    queryCount: 3,
+    totalTimeMs: 4.25,
+    fingerprints: [{ fingerprint: "select * from wp_posts where id = ?", count: 2, totalTimeMs: 3.5, sampleMs: 1.75, caller: "WP_Query" }],
+    repeatedQueries: [{ fingerprint: "select * from wp_posts where id = ?", count: 2, totalTimeMs: 3.5, caller: "WP_Query" }],
+  },
+  hooks: { status: "captured", timings: [{ hook: "rest_api_init", count: 2, totalTimeMs: 1.5 }] },
+})
+assert.equal(hotspotObservation.schema, "wp-codebox/performance-observation/v1")
+assert.equal(hotspotObservation.command, "wordpress.rest-performance-observation")
+assert.equal(hotspotObservation.database?.fingerprints?.[0]?.fingerprint, "select * from wp_posts where id = ?")
+assert.equal(hotspotObservation.database?.repeatedQueries?.[0]?.count, 2)
+assert.equal(hotspotObservation.hooks?.timings[0]?.hook, "rest_api_init")
+
+const restObservationDefinition = getCommandDefinition("wordpress.rest-performance-observation")
+assert.equal(restObservationDefinition?.outputSchema?.id, "wp-codebox/performance-observation/v1")
+assert.equal(restObservationDefinition?.handler.kind, "playground")
+assert.equal(restObservationDefinition?.handler.kind === "playground" ? restObservationDefinition.handler.method : undefined, "runRestPerformanceObservation")
+assert.equal(restObservationDefinition?.acceptedArgs.some((arg) => arg.name === "hook-sample-limit"), true)
+
+const restObservationInput = restPerformanceObservationInputFromArgs(["path=/wp-json/wp/v2/status", "method=POST", "params-json={\"context\":\"view\"}", "query-fingerprint-limit=3", "hook-sample-limit=2"])
+assert.equal(restObservationInput.path, "/wp-json/wp/v2/status")
+assert.equal(restObservationInput.method, "POST")
+assert.equal(restObservationInput.queryFingerprintLimit, 3)
+assert.equal(restObservationInput.hookSampleLimit, 2)
+
+const restObservationCode = restPerformanceObservationPhpCode(restObservationInput)
+assert.match(restObservationCode, /'schema' => 'wp-codebox\/performance-observation\/v1'/)
+assert.match(restObservationCode, /'command' => 'wordpress.rest-performance-observation'/)
+assert.match(restObservationCode, /'database' => array\( 'status' => \$wp_codebox_queries_available \? 'captured' : 'uncaptured'/)
+assert.match(restObservationCode, /'hooks' => array\( 'status' => 'captured'/)
+assert.match(restObservationCode, /add_filter\( 'all', \$wp_codebox_hook_sampler, PHP_INT_MIN, 0 \)/)
 
 const pageLoadCode = pageLoadPhpCode({
   command: "wordpress.frontend-page-load",

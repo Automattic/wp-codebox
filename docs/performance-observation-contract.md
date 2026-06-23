@@ -18,6 +18,15 @@ The public WordPress runtime action helpers normalize observations across `wp_cl
 
 `wordpress.run-php` captures `$wpdb` diagnostics by default through the existing command diagnostics artifact path. `wordpress.rest-request` emits an inline `source=in-process` and `kind=rest-request` performance observation in its structured JSON response. Simulated page-load commands emit `source=in-process` and `kind=simulated-page-load`. `wordpress.server-page-load` emits `source=server-http` and `kind=server-page-load`. Browser-capable actions attach browser artifact references and promote available browser summaries into the shared observation shape.
 
+`wordpress.rest-performance-observation` is the public runtime-backed hotspot primitive for one contained WordPress REST request. It runs through the command registry/runtime-playground path and emits a top-level `wp-codebox/performance-observation/v1` envelope rather than a fuzz-suite result. The output includes captured timing and memory, normalized database query fingerprints and repeated-query summaries when `$wpdb->queries` is available, and bounded hook hotspot samples captured through WordPress's `all` hook.
+
+Limitations:
+
+- Database query fingerprints require `$wpdb->queries`, which normally means the runtime has `SAVEQUERIES` enabled or otherwise populates that property. When unavailable, `database.status` is `uncaptured` with `reason: "wpdb_queries_unavailable"`.
+- Hook hotspot rows are samples of hook dispatch frequency and first-to-last observed elapsed time during the request. They are useful for hotspot reporting, but they are not callback-level profiler timings.
+- The command is product-neutral. Callers provide a REST route and optional parameters; product-specific route selection, assertions, and severity policy belong in downstream orchestration.
+- This command is not a benchmark runner and does not claim full production fuzzing coverage.
+
 Page-load commands share the public `wp-codebox/wordpress-page-load-result/v1` result envelope. The top-level `mode` field distinguishes the execution path:
 
 - `mode: "simulated"` is used by `wordpress.simulated-admin-page-load`, `wordpress.simulated-frontend-page-load`, and the backward-compatible `wordpress.admin-page-load` / `wordpress.frontend-page-load` aliases. These synthesize an admin or frontend request inside the WordPress PHP process and can report WordPress identity, redirects, notices, errors, optional `$wpdb` diagnostics, and in-process memory timing.
