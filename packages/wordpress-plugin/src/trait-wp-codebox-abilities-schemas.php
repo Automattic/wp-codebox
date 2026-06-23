@@ -698,6 +698,23 @@ private static function wordpress_workload_run_result_schema(): array {
 }
 
 /** @return array<string,mixed> */
+private static function fuzz_runner_capabilities_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'schema'                          => array( 'type' => 'string', 'const' => 'wp-codebox/fuzz-runner-capabilities/v1' ),
+			'mode'                            => array( 'type' => 'string', 'enum' => array( 'php-in-process', 'runtime-backed' ) ),
+			'capabilities'                    => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'targetKinds'                     => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'runtimeActionTypes'              => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'commands'                        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'unsupportedRequiredCapabilities' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'metadata'                        => self::object_property_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
 private static function fuzz_suite_request_schema(): array {
 	return array(
 		'type'       => 'object',

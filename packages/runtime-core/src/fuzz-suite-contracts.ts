@@ -2,6 +2,7 @@ import { stripUndefined } from "./object-utils.js"
 
 export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
+export const FUZZ_RUNNER_CAPABILITIES_SCHEMA = "wp-codebox/fuzz-runner-capabilities/v1" as const
 
 export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
@@ -62,20 +63,40 @@ export interface FuzzSuiteContract {
 }
 
 export interface FuzzSuiteRunnerCapabilities {
+  schema?: typeof FUZZ_RUNNER_CAPABILITIES_SCHEMA
   mode: FuzzSuiteRunnerMode
   capabilities: string[]
   targetKinds: string[]
   runtimeActionTypes?: string[]
   commands?: string[]
+  unsupportedRequiredCapabilities?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface FuzzRunnerCapabilitiesContract extends FuzzSuiteRunnerCapabilities {
+  schema: typeof FUZZ_RUNNER_CAPABILITIES_SCHEMA
+  unsupportedRequiredCapabilities: string[]
+}
+
+export interface FuzzRunnerRequiredCapabilities {
+  capabilities?: readonly string[]
+  targetKinds?: readonly string[]
+  target_kinds?: readonly string[]
+  runtimeActionTypes?: readonly string[]
+  runtime_action_types?: readonly string[]
+  commands?: readonly string[]
 }
 
 export const PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
+  schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
   mode: "php-in-process",
   capabilities: ["target:ability", "target:http", "target:rest"],
   targetKinds: ["ability", "http", "rest"],
+  unsupportedRequiredCapabilities: [],
 }
 
 export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
+  schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
   mode: "runtime-backed",
   capabilities: [
     "target:ability",
@@ -98,6 +119,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "editor_open", "page", "php", "rest_request", "wp_cli"],
   commands: ["wordpress.ability", "wordpress.admin-page-load", "wordpress.browser-actions", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.editor-open", "wordpress.frontend-page-load", "wordpress.http-request", "wordpress.rest-request", "wordpress.run-php", "wordpress.wp-cli"],
+  unsupportedRequiredCapabilities: [],
 }
 
 export interface FuzzSuiteDiagnostic {
@@ -226,12 +248,52 @@ export function fuzzSuiteResultEnvelope(input: {
 export function fuzzSuiteRequiredRunnerCapabilities(suite: FuzzSuiteContract): string[] {
   const metadata = fuzzSuiteMetadata(suite)
   const required = recordField(metadata, "requiredRunnerCapabilities") ?? recordField(metadata, "required_runner_capabilities")
+  return fuzzRunnerRequiredCapabilities(required, metadata)
+}
+
+export function fuzzRunnerCapabilitiesContract(input: FuzzSuiteRunnerCapabilities, required?: FuzzSuiteContract | FuzzRunnerRequiredCapabilities | readonly string[]): FuzzRunnerCapabilitiesContract {
+  const requiredCapabilities = Array.isArray(required)
+    ? [...required]
+    : isFuzzSuiteContract(required)
+      ? fuzzSuiteRequiredRunnerCapabilities(required)
+      : fuzzRunnerRequiredCapabilities(required)
+
+  return stripUndefined({
+    schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
+    mode: input.mode,
+    capabilities: dedupeStrings(input.capabilities),
+    targetKinds: dedupeStrings(input.targetKinds),
+    runtimeActionTypes: input.runtimeActionTypes ? dedupeStrings(input.runtimeActionTypes) : undefined,
+    commands: input.commands ? dedupeStrings(input.commands) : undefined,
+    unsupportedRequiredCapabilities: unsupportedRequiredFuzzRunnerCapabilities(requiredCapabilities, input),
+    metadata: input.metadata,
+  })
+}
+
+export function unsupportedRequiredFuzzRunnerCapabilities(required: FuzzSuiteContract | FuzzRunnerRequiredCapabilities | readonly string[] | undefined, runnerCapabilities: FuzzSuiteRunnerCapabilities): string[] {
+  const requiredCapabilities = Array.isArray(required)
+    ? [...required]
+    : isFuzzSuiteContract(required)
+      ? fuzzSuiteRequiredRunnerCapabilities(required)
+      : fuzzRunnerRequiredCapabilities(required)
+  const available = new Set([
+    ...runnerCapabilities.capabilities,
+    ...runnerCapabilities.targetKinds.map((kind) => `target:${kind}`),
+    ...(runnerCapabilities.runtimeActionTypes ?? []).map((type) => `runtime-action:${type}`),
+    ...(runnerCapabilities.commands ?? []).map((command) => `command:${command}`),
+  ])
+  return requiredCapabilities.filter((capability) => !available.has(capability))
+}
+
+function fuzzRunnerRequiredCapabilities(required?: FuzzRunnerRequiredCapabilities | unknown, metadata?: Record<string, unknown>): string[] {
+  const requiredRecord = isRecord(required) ? required : undefined
   return dedupeStrings([
-    ...stringArrayField(required, "capabilities"),
-    ...stringArrayField(required, "targetKinds").map((kind) => `target:${kind}`),
-    ...stringArrayField(required, "target_kinds").map((kind) => `target:${kind}`),
-    ...stringArrayField(required, "runtimeActionTypes").map((type) => `runtime-action:${type}`),
-    ...stringArrayField(required, "runtime_action_types").map((type) => `runtime-action:${type}`),
+    ...stringArrayField(requiredRecord, "capabilities"),
+    ...stringArrayField(requiredRecord, "targetKinds").map((kind) => `target:${kind}`),
+    ...stringArrayField(requiredRecord, "target_kinds").map((kind) => `target:${kind}`),
+    ...stringArrayField(requiredRecord, "runtimeActionTypes").map((type) => `runtime-action:${type}`),
+    ...stringArrayField(requiredRecord, "runtime_action_types").map((type) => `runtime-action:${type}`),
+    ...stringArrayField(requiredRecord, "commands").map((command) => `command:${command}`),
     ...stringArrayField(metadata, "requiredCapabilities"),
     ...stringArrayField(metadata, "required_capabilities"),
   ])
@@ -273,6 +335,10 @@ export function fuzzSuiteResetPolicyDiagnostics(input: unknown, caseId?: string)
     })
   }
   return diagnostics
+}
+
+function isFuzzSuiteContract(value: unknown): value is FuzzSuiteContract {
+  return isRecord(value) && value.schema === FUZZ_SUITE_SCHEMA
 }
 
 export function summarizeFuzzCases(cases: readonly Pick<FuzzSuiteCaseResult, "status">[]): FuzzSuiteSummary {

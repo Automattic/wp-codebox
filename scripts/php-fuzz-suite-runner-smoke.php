@@ -508,8 +508,10 @@ assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_
 assert( 'wp-codebox/external-http-guardrail/v1' === $result['cases'][22]['metadata']['observations'][1]['payload']['schema'] );
 assert( 1 === $result['cases'][22]['metadata']['observations'][1]['payload']['summary']['blocked'] );
 assert( str_contains( $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['url'], 'token=[redacted]' ) );
+assert( 'wp-codebox/fuzz-runner-capabilities/v1' === $result['metadata']['runnerCapabilities']['schema'] );
 assert( 'php-in-process' === $result['metadata']['runnerCapabilities']['mode'] );
 assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capabilities'], true ) );
+assert( array() === $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'] );
 
 $required_runtime = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 	array(
@@ -517,7 +519,7 @@ $required_runtime = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 		'id'              => 'required-runtime-suite',
 		'requireCoverage' => true,
 		'target'          => array( 'kind' => 'runtime', 'entrypoint' => 'wordpress.admin-page-load' ),
-		'metadata'        => array( 'requiredRunnerCapabilities' => array( 'capabilities' => array( 'target:runtime', 'runtime' ), 'targetKinds' => array( 'runtime' ) ) ),
+		'metadata'        => array( 'requiredRunnerCapabilities' => array( 'capabilities' => array( 'target:runtime', 'runtime' ), 'targetKinds' => array( 'runtime' ), 'commands' => array( 'wordpress.admin-page-load' ) ) ),
 		'cases'           => array( array( 'id' => 'admin-page', 'input' => array( 'args' => array( 'path=plugins.php' ) ) ) ),
 	)
 );
@@ -526,6 +528,7 @@ assert( false === $required_runtime['success'] );
 assert( 'error' === $required_runtime['status'] );
 assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['diagnostics'][0]['code'] );
 assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['cases'][0]['skipReason'] );
+assert( array( 'target:runtime', 'runtime', 'command:wordpress.admin-page-load' ) === $required_runtime['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'] );
 
 $GLOBALS['menu'] = null;
 $GLOBALS['submenu'] = null;

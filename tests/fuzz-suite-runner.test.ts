@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -104,6 +104,18 @@ assert.equal(requiredRuntimeOnPhpRunner.status, "error")
 assert.equal(requiredRuntimeOnPhpRunner.success, false)
 assert.equal(requiredRuntimeOnPhpRunner.diagnostics[0]?.code, "fuzz_suite_required_runner_capabilities_unsupported")
 assert.equal(requiredRuntimeOnPhpRunner.cases[0]?.skipReason, "fuzz_suite_required_runner_capabilities_unsupported")
+assert.deepEqual((requiredRuntimeOnPhpRunner.metadata?.runnerCapabilities as { unsupportedRequiredCapabilities?: string[] } | undefined)?.unsupportedRequiredCapabilities, ["target:runtime", "runtime", "command:wordpress.admin-page-load"])
+
+const phpCapabilities = fuzzRunnerCapabilitiesContract(PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, {
+  capabilities: ["target:rest", "runtime"],
+  targetKinds: ["rest", "runtime"],
+  runtimeActionTypes: ["browser"],
+  commands: ["wordpress.rest-request"],
+})
+assert.equal(phpCapabilities.schema, "wp-codebox/fuzz-runner-capabilities/v1")
+assert.equal(phpCapabilities.mode, "php-in-process")
+assert.deepEqual(phpCapabilities.targetKinds, ["ability", "http", "rest"])
+assert.deepEqual(phpCapabilities.unsupportedRequiredCapabilities, ["runtime", "target:runtime", "runtime-action:browser", "command:wordpress.rest-request"])
 
 const skippedCoverageRequired = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-required-coverage-skipped",
