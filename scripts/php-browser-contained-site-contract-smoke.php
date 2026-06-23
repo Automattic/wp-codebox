@@ -47,6 +47,15 @@ final class WP_Codebox_Test_Request {
 	}
 }
 
+final class WP_REST_Request {
+	/** @param array<string,mixed> $params */
+	public function __construct( private array $params ) {}
+
+	public function get_param( string $key ): mixed {
+		return $this->params[ $key ] ?? null;
+	}
+}
+
 function get_transient( string $transient ): mixed {
 	if ( array_key_exists( $transient, $GLOBALS['wp_codebox_test_transients'] ) ) {
 		return $GLOBALS['wp_codebox_test_transients'][ $transient ]['value'];
@@ -144,6 +153,11 @@ $GLOBALS['wp_codebox_test_transient'] = array(
 	'created_at'             => '2026-01-02T03:04:05+00:00',
 	'blueprint'              => array( 'steps' => array() ),
 );
+
+$rest_blueprint = WP_Codebox_Abilities::rest_browser_blueprint_ref( new WP_REST_Request( array( 'ref' => 'prepared:studio-native-preview:' . $source_digest ) ) );
+expect( ! is_wp_error( $rest_blueprint ), 'Expected REST blueprint ref to return a raw Blueprint.' );
+expect( ! isset( $rest_blueprint['success'] ), 'Expected REST blueprint ref to omit the hydration envelope.' );
+expect( isset( $rest_blueprint['steps'] ) && is_array( $rest_blueprint['steps'] ), 'Expected REST blueprint ref to return the Blueprint root.' );
 
 $status = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(

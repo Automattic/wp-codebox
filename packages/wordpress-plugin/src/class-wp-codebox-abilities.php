@@ -148,13 +148,18 @@ final class WP_Codebox_Abilities {
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
 	public static function rest_browser_blueprint_ref( WP_REST_Request $request ): array|WP_Error {
-		return self::hydrate_browser_blueprint_ref(
+		$hydration = self::hydrate_browser_blueprint_ref(
 			array(
 				'ref'        => (string) $request->get_param( 'ref' ),
 				'cache_key'  => (string) $request->get_param( 'cache_key' ),
 				'input_hash' => (string) $request->get_param( 'input_hash' ),
 			)
 		);
+		if ( is_wp_error( $hydration ) ) {
+			return $hydration;
+		}
+
+		return is_array( $hydration['blueprint'] ?? null ) ? $hydration['blueprint'] : array();
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
