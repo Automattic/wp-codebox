@@ -17,18 +17,10 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 	public function strict_remediation_outcome( array $task_input ): bool {
 		$target             = is_array( $task_input['target'] ?? null ) ? $task_input['target'] : array();
 		$policy             = is_array( $task_input['policy'] ?? null ) ? $task_input['policy'] : array();
-		$expected_artifacts = is_array( $task_input['expected_artifacts'] ?? null ) ? $task_input['expected_artifacts'] : array();
 
 		foreach ( array( $target['kind'] ?? '', $policy['kind'] ?? '', $policy['outcome_contract'] ?? '', $policy['outcomeContract'] ?? '' ) as $value ) {
 			$value = strtolower( str_replace( '_', '-', trim( (string) $value ) ) );
 			if ( in_array( $value, array( 'audit-remediation', 'agent-sandbox-remediation', 'remediation-outcome' ), true ) ) {
-				return true;
-			}
-		}
-
-		foreach ( $expected_artifacts as $artifact ) {
-			$artifact = strtolower( str_replace( '_', '-', trim( (string) $artifact ) ) );
-			if ( in_array( $artifact, array( 'fix-artifact', 'false-positive-artifact', 'remediation-artifact', 'fix-pr', 'false-positive-pr', 'remediation-pr' ), true ) ) {
 				return true;
 			}
 		}
@@ -44,17 +36,15 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		$stop_reason          = (string) ( $run_outcome['stop_reason'] ?? '' );
 		$max_turns_reached    = $has_run_outcome ? 'max_turns' === $stop_reason : $this->recursive_truthy_key( $run, 'max_turns_reached' );
 		$pending_runtime_tool = $has_run_outcome && ( 'runtime_tool_pending' === $run_status || 'runtime_tool_pending' === $stop_reason );
-		$provider_error       = $has_run_outcome ? $this->agents_api_provider_error_details( $run_outcome ) : $this->provider_error_details( $run, $output );
-		$pr_url                = $this->first_url_for_keys( $run, array( 'pr_url', 'pull_request_url', 'pullRequestUrl' ) );
-		$false_positive_pr_url = $this->first_url_for_keys( $run, array( 'false_positive_pr_url', 'falsePositivePrUrl' ) );
+		$provider_error       = $has_run_outcome ? $this->agents_api_provider_error_details( $run_outcome ) : array();
 		$artifact             = $this->remediation_artifact_details( $run );
 		$has_artifact_changes = ! empty( $artifact['changed_files'] );
-		$false_positive       = $this->remediation_false_positive( $run );
+		$failed               = ( $has_run_outcome && 'failed' === $run_status ) || 0 !== $exit_code;
 
 		$outcome = array(
 			'schema'      => self::REMEDIATION_OUTCOME_SCHEMA,
-			'success'     => true,
-			'kind'        => 'unable_to_remediate',
+			'success'     => ! $failed,
+			'kind'        => $failed ? 'failed' : 'completed',
 			'failure'     => '',
 			'exit_code'   => $exit_code,
 			'retryable'   => false,
@@ -74,43 +64,8 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 			$outcome['metadata'] = array( 'upstream_run' => $this->codebox_run_outcome_dto( $run_outcome ) );
 		}
 
-		if ( $has_artifact_changes && $false_positive ) {
-			$outcome['success']        = true;
-			$outcome['kind']           = 'false_positive_artifact';
-			$outcome['artifact']       = $artifact;
-			$outcome['false_positive'] = true;
-			unset( $outcome['failure'] );
-			return $outcome;
-		}
-
 		if ( $has_artifact_changes ) {
-			$outcome['success']  = true;
-			$outcome['kind']     = 'fix_artifact';
 			$outcome['artifact'] = $artifact;
-			unset( $outcome['failure'] );
-			if ( '' !== $pr_url ) {
-				$outcome['pr_url'] = $pr_url;
-			}
-			if ( '' !== $false_positive_pr_url ) {
-				$outcome['false_positive_pr_url'] = $false_positive_pr_url;
-			}
-			return $outcome;
-		}
-
-		if ( '' !== $false_positive_pr_url ) {
-			$outcome['success']               = true;
-			$outcome['kind']                  = 'false_positive_pr';
-			$outcome['false_positive_pr_url'] = $false_positive_pr_url;
-			unset( $outcome['failure'] );
-			return $outcome;
-		}
-
-		if ( '' !== $pr_url ) {
-			$outcome['success'] = true;
-			$outcome['kind']    = 'fix_pr';
-			$outcome['pr_url']  = $pr_url;
-			unset( $outcome['failure'] );
-			return $outcome;
 		}
 
 		if ( $pending_runtime_tool ) {
@@ -129,20 +84,22 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 			return $outcome;
 		}
 
-		if ( ( $has_run_outcome && 'failed' === $run_status ) || 0 !== $exit_code || ! empty( $provider_error ) ) {
+		if ( ! empty( $provider_error ) ) {
 			$outcome['success']        = false;
 			$outcome['kind']           = 'provider_error';
 			$outcome['failure']        = 'provider_error';
 			$outcome['provider_error'] = $provider_error;
-			$outcome['retryable']      = $has_run_outcome ? (bool) ( $run_outcome['retryable'] ?? true ) : (bool) ( $provider_error['retryable'] ?? true );
+			$outcome['retryable']      = (bool) ( $run_outcome['retryable'] ?? true );
 			return $outcome;
 		}
 
-		if ( $false_positive ) {
-			$outcome['kind']           = 'noop_artifact';
-			$outcome['false_positive'] = true;
+		if ( $failed ) {
+			$outcome['failure']   = 'failed';
+			$outcome['retryable'] = $has_run_outcome ? (bool) ( $run_outcome['retryable'] ?? true ) : true;
+			return $outcome;
 		}
 
+		unset( $outcome['failure'] );
 		return $outcome;
 	}
 
@@ -216,23 +173,6 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		return $provider_error;
 	}
 
-	/** @param array<string,mixed> $run Decoded CLI run output. */
-	private function remediation_false_positive( array $run ): bool {
-		foreach ( array_merge( array( $run ), $this->agent_payloads( $run ) ) as $payload ) {
-			if ( $this->recursive_truthy_key( $payload, 'false_positive' ) || $this->recursive_truthy_key( $payload, 'falsePositive' ) ) {
-				return true;
-			}
-
-			$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $payload, JSON_UNESCAPED_SLASHES ) : json_encode( $payload, JSON_UNESCAPED_SLASHES );
-			$text    = strtolower( is_string( $encoded ) ? $encoded : '' );
-			if ( str_contains( $text, 'false positive' ) || str_contains( $text, 'false_positive' ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
 	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
 	private function remediation_artifact_details( array $run ): array {
 		$artifacts     = is_array( $run['artifacts'] ?? null ) ? $run['artifacts'] : array();
@@ -292,36 +232,6 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		return WP_Codebox_Json::decode_fragment_array( $text );
 	}
 
-	/** @param array<string,mixed> $run Decoded CLI run output. @param string[] $keys */
-	private function first_url_for_keys( array $run, array $keys ): string {
-		foreach ( array_merge( array( $run ), $this->agent_payloads( $run ) ) as $payload ) {
-			$url = $this->recursive_first_string_key( $payload, $keys );
-			if ( '' !== $url && preg_match( '#^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+#', $url ) ) {
-				return $url;
-			}
-		}
-
-		return '';
-	}
-
-	/** @param array<string,mixed> $payload @param string[] $keys */
-	private function recursive_first_string_key( array $payload, array $keys ): string {
-		foreach ( $payload as $key => $value ) {
-			if ( in_array( (string) $key, $keys, true ) && ! is_array( $value ) && '' !== trim( (string) $value ) ) {
-				return trim( (string) $value );
-			}
-
-			if ( is_array( $value ) ) {
-				$nested = $this->recursive_first_string_key( $value, $keys );
-				if ( '' !== $nested ) {
-					return $nested;
-				}
-			}
-		}
-
-		return '';
-	}
-
 	/** @param array<string,mixed> $payload */
 	private function recursive_truthy_key( array $payload, string $needle ): bool {
 		foreach ( $payload as $key => $value ) {
@@ -335,39 +245,5 @@ final class WP_Codebox_Agent_Outcome_Classifier {
 		}
 
 		return false;
-	}
-
-	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
-	private function provider_error_details( array $run, string $output ): array {
-		$payloads = array_merge( array( $run ), $this->agent_payloads( $run ) );
-		$json     = function_exists( 'wp_json_encode' ) ? wp_json_encode( $payloads, JSON_UNESCAPED_SLASHES ) : json_encode( $payloads, JSON_UNESCAPED_SLASHES );
-		$encoded  = strtolower( is_string( $json ) ? $json : '' );
-		$output_l = strtolower( $output );
-		$haystack = $encoded . "\n" . $output_l;
-
-		if ( ! preg_match( '/provider|timeout|timed out|429|rate limit|too many requests|openai|anthropic/', $haystack ) ) {
-			return array();
-		}
-
-		$message = $this->recursive_first_string_key( $run, array( 'message', 'error', 'error_message', 'errorMessage', 'details' ) );
-		if ( '' === $message ) {
-			$message = $this->bound_output( $output );
-		}
-
-		return array_filter(
-			array(
-				'message'   => $this->bound_output( $message ),
-				'retryable' => (bool) preg_match( '/timeout|timed out|429|rate limit|too many requests/', $haystack ),
-			),
-			static fn( mixed $value ): bool => null !== $value && '' !== $value
-		);
-	}
-
-	private function bound_output( string $output ): string {
-		if ( strlen( $output ) <= 4000 ) {
-			return $output;
-		}
-
-		return substr( $output, 0, 4000 );
 	}
 }
