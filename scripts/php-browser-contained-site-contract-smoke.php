@@ -29,6 +29,24 @@ function sanitize_key( string $key ): string {
 	return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', $key ) ?? '' );
 }
 
+function is_user_logged_in(): bool {
+	return false;
+}
+
+function current_user_can( string $capability ): bool {
+	unset( $capability );
+	return false;
+}
+
+final class WP_Codebox_Test_Request {
+	/** @param array<string,mixed> $params */
+	public function __construct( private array $params ) {}
+
+	public function get_param( string $key ): mixed {
+		return $this->params[ $key ] ?? null;
+	}
+}
+
 function get_transient( string $transient ): mixed {
 	if ( array_key_exists( $transient, $GLOBALS['wp_codebox_test_transients'] ) ) {
 		return $GLOBALS['wp_codebox_test_transients'][ $transient ]['value'];
@@ -78,6 +96,10 @@ require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abili
 $source_digest = str_repeat( 'a', 64 );
 $artifact_digest = str_repeat( 'b', 64 );
 $materialization_digest = str_repeat( 'c', 64 );
+
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:' . $source_digest ) ) ), 'Expected public prepared blueprint refs to be hydratable.' );
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'cache_key' => 'studio-native-preview', 'input_hash' => $source_digest ) ) ), 'Expected public prepared blueprint cache key and input hash to be hydratable.' );
+expect( ! WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:not-a-hash' ) ) ), 'Expected malformed public prepared blueprint refs to remain forbidden.' );
 
 $miss = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(
