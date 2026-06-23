@@ -274,6 +274,13 @@ by Abilities:
 - `wp codebox artifacts apply <artifact_id> --approved-files='/path.php' --format=json`
 - `wp codebox browser-session create --goal='Prepare a browser sandbox' --format=json`
 - `wp codebox run-agent-task --goal='Fix the plugin bug' --format=json`
+- `wp codebox run-agent-task-batch --input-file=/path/to/batch.json --format=json`
+- `wp codebox run-agent-task-fanout --input-file=/path/to/fanout.json --format=json`
+- `wp codebox run-runtime-task --input-json='{"goal":"Run the caller-owned runtime task"}' --format=json`
+- `wp codebox run-wordpress-workload --input-file=/path/to/workload.json --format=json`
+- `wp codebox run-runtime-package --input-file=/path/to/runtime-package.json --format=json`
+- `wp codebox resolve-runtime-requirements --runtime='{"provider":"local"}' --format=json`
+- `wp codebox run-fuzz-suite --input-file=/path/to/fuzz-suite.json --format=json`
 
 Complex task payloads can be passed with `--input-json='{"goal":"..."}'` or
 `--input-file=/path/to/input.json`; command-line flags override fields from the
@@ -285,6 +292,12 @@ permission callbacks; shell/WP-CLI access is the permission boundary. The comman
 methods delegate to the same PHP services as Abilities, so validation, artifact
 digest checks, pending-action staging, apply adapters, and runner errors behave
 the same way.
+
+The `run-fuzz-suite` wrapper exposes the same public fuzz-suite contract as
+`WP_Codebox_API::run_fuzz_suite()`. Its WordPress-plugin execution path reports
+PHP in-process runner capabilities and returns structured skips or errors for
+coverage that requires a runtime-backed runner instead of presenting limited
+in-process execution as full product fuzzing.
 
 See [External Apply Adapter Contract](../../docs/external-apply-adapter-contract.md)
 for the parent-control-plane contract. The documented smoke fixture proves that
