@@ -25,6 +25,12 @@ assert.deepEqual(suite.cases.map((fuzzCase) => fuzzCase.id), [
 ])
 assert.equal(suite.metadata?.sourceSchema, "wp-codebox/wordpress-block-editor-target-discovery/v1")
 assert.equal(suite.metadata?.editorPostType, "page")
+assert.deepEqual(suite.metadata?.requiredRunnerCapabilities, {
+  capabilities: ["target:runtime", "runtime", "runtime-action:editor_open"],
+  targetKinds: ["runtime"],
+  runtimeActionTypes: ["editor_open"],
+  commands: ["wordpress.run-php", "wordpress.editor-open"],
+})
 
 const renderCase = suite.cases[0]
 assert.deepEqual(renderCase?.target, { kind: "runtime", entrypoint: "wordpress.run-php" })
@@ -47,6 +53,11 @@ assert.deepEqual(renderOnly.cases.map((fuzzCase) => fuzzCase.id), [
   "block-core-paragraph-server-render-empty-attributes",
   "block-core-template-part-server-render-empty-attributes",
 ])
+assert.deepEqual(renderOnly.metadata?.requiredRunnerCapabilities, {
+  capabilities: ["target:runtime", "runtime"],
+  targetKinds: ["runtime"],
+  commands: ["wordpress.run-php"],
+})
 
 const noEditorTargets = wordpressBlockDiscoveryToFuzzSuite({ ...discovery, editorPostTypes: [] })
 assert.deepEqual(noEditorTargets.cases.map((fuzzCase) => fuzzCase.id), [

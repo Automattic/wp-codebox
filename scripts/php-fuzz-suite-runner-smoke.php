@@ -427,6 +427,24 @@ assert( 'wp-codebox/json-workload-result/v1' === $workload_report['schema'] );
 assert( 2 === $workload_report['steps'][1]['observation']['queryCount'] );
 assert( 2 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
 assert( 'SELECT * FROM wp_posts WHERE post_type = "post"' === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( 'php-in-process' === $result['metadata']['runnerCapabilities']['mode'] );
+assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capabilities'], true ) );
+
+$required_runtime = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
+	array(
+		'schema'          => 'wp-codebox/fuzz-suite/v1',
+		'id'              => 'required-runtime-suite',
+		'requireCoverage' => true,
+		'target'          => array( 'kind' => 'runtime', 'entrypoint' => 'wordpress.admin-page-load' ),
+		'metadata'        => array( 'requiredRunnerCapabilities' => array( 'capabilities' => array( 'target:runtime', 'runtime' ), 'targetKinds' => array( 'runtime' ) ) ),
+		'cases'           => array( array( 'id' => 'admin-page', 'input' => array( 'args' => array( 'path=plugins.php' ) ) ) ),
+	)
+);
+assert( is_array( $required_runtime ) );
+assert( false === $required_runtime['success'] );
+assert( 'error' === $required_runtime['status'] );
+assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['diagnostics'][0]['code'] );
+assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['cases'][0]['skipReason'] );
 
 $GLOBALS['menu'] = null;
 $GLOBALS['submenu'] = null;

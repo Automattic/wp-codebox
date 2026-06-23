@@ -6,6 +6,7 @@ export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as con
 export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
 export type FuzzSuiteDiagnosticSeverity = "error" | "warning" | "info"
+export type FuzzSuiteRunnerMode = "php-in-process" | "runtime-backed" | (string & {})
 
 export interface FuzzSuiteTargetRef {
   kind: FuzzSuiteTargetKind
@@ -30,6 +31,45 @@ export interface FuzzSuiteContract {
   target?: FuzzSuiteTargetRef
   cases: FuzzSuiteCase[]
   metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteRunnerCapabilities {
+  mode: FuzzSuiteRunnerMode
+  capabilities: string[]
+  targetKinds: string[]
+  runtimeActionTypes?: string[]
+  commands?: string[]
+}
+
+export const PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
+  mode: "php-in-process",
+  capabilities: ["target:ability", "target:http", "target:rest"],
+  targetKinds: ["ability", "http", "rest"],
+}
+
+export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
+  mode: "runtime-backed",
+  capabilities: [
+    "target:ability",
+    "target:command",
+    "target:http",
+    "target:rest",
+    "target:runtime",
+    "target:runtime-action",
+    "runtime",
+    "runtime-action:admin_page",
+    "runtime-action:browser",
+    "runtime-action:browser_probe",
+    "runtime-action:crud_operation",
+    "runtime-action:editor_open",
+    "runtime-action:page",
+    "runtime-action:php",
+    "runtime-action:rest_request",
+    "runtime-action:wp_cli",
+  ],
+  targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
+  runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "editor_open", "page", "php", "rest_request", "wp_cli"],
+  commands: ["wordpress.ability", "wordpress.admin-page-load", "wordpress.browser-actions", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.editor-open", "wordpress.frontend-page-load", "wordpress.http-request", "wordpress.rest-request", "wordpress.run-php", "wordpress.wp-cli"],
 }
 
 export interface FuzzSuiteDiagnostic {
@@ -133,7 +173,8 @@ export function fuzzSuiteResultEnvelope(input: {
   const coverageSummary = input.coverageSummary ?? summarizeFuzzCoverage({ discovered: fuzzSuiteDiscoveredCount(input.suite, cases.length), cases })
   const contractDiagnostics = fuzzSuiteContractDiagnostics({ suite: input.suite, cases, artifactRefs, coverageSummary })
   diagnostics.push(...contractDiagnostics)
-  const status: FuzzSuiteCaseStatus = summary.error > 0 || contractDiagnostics.length > 0 ? "error" : summary.failed > 0 ? "failed" : summary.skipped === summary.total && summary.total > 0 ? "skipped" : "passed"
+  const hasRequiredCoverageError = diagnostics.some((diagnostic) => diagnostic.code === "fuzz_suite_required_runner_capabilities_unsupported" || diagnostic.code === "fuzz_suite_required_coverage_unsupported")
+  const status: FuzzSuiteCaseStatus = summary.error > 0 || hasRequiredCoverageError || contractDiagnostics.length > 0 ? "error" : summary.failed > 0 ? "failed" : summary.skipped === summary.total && summary.total > 0 ? "skipped" : "passed"
 
   return stripUndefined({
     schema: FUZZ_SUITE_RESULT_SCHEMA,
@@ -147,6 +188,20 @@ export function fuzzSuiteResultEnvelope(input: {
     artifactRefs,
     metadata: input.metadata,
   })
+}
+
+export function fuzzSuiteRequiredRunnerCapabilities(suite: FuzzSuiteContract): string[] {
+  const metadata = fuzzSuiteMetadata(suite)
+  const required = recordField(metadata, "requiredRunnerCapabilities") ?? recordField(metadata, "required_runner_capabilities")
+  return dedupeStrings([
+    ...stringArrayField(required, "capabilities"),
+    ...stringArrayField(required, "targetKinds").map((kind) => `target:${kind}`),
+    ...stringArrayField(required, "target_kinds").map((kind) => `target:${kind}`),
+    ...stringArrayField(required, "runtimeActionTypes").map((type) => `runtime-action:${type}`),
+    ...stringArrayField(required, "runtime_action_types").map((type) => `runtime-action:${type}`),
+    ...stringArrayField(metadata, "requiredCapabilities"),
+    ...stringArrayField(metadata, "required_capabilities"),
+  ])
 }
 
 export function summarizeFuzzCases(cases: readonly Pick<FuzzSuiteCaseResult, "status">[]): FuzzSuiteSummary {
@@ -303,6 +358,14 @@ function arrayField(source: Record<string, unknown> | undefined, key: string): u
 
 function nonEmptyArrayField(source: Record<string, unknown> | undefined, key: string): boolean {
   return arrayField(source, key).length > 0
+}
+
+function stringArrayField(source: Record<string, unknown> | undefined, key: string): string[] {
+  return arrayField(source, key).filter((item): item is string => typeof item === "string" && item.length > 0)
+}
+
+function dedupeStrings(values: readonly string[]): string[] {
+  return [...new Set(values)]
 }
 
 function booleanField(source: Record<string, unknown> | undefined, key: string): boolean | undefined {

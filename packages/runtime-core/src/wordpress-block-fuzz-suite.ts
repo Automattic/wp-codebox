@@ -13,6 +13,8 @@ export interface WordPressBlockFuzzSuiteOptions {
 
 const DEFAULT_BLOCK_FUZZ_SUITE_ID = "wordpress-block-discovery"
 const DEFAULT_EDITOR_CAPTURE = ["editor-state", "errors"] as const
+const BLOCK_SERVER_RENDER_CAPABILITIES = ["target:runtime", "runtime"] as const
+const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime", "runtime", "runtime-action:editor_open"] as const
 
 export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEditorTargetDiscovery, options: WordPressBlockFuzzSuiteOptions = {}): FuzzSuiteContract {
   const includeServerRender = options.includeServerRender ?? true
@@ -44,6 +46,18 @@ export function wordpressBlockDiscoveryToFuzzSuite(discovery: WordPressBlockEdit
         includeServerRender ? "server-render" : undefined,
         includeEditorInsert ? "editor-insert" : undefined,
       ].filter((operation): operation is string => Boolean(operation)),
+      requiredRunnerCapabilities: stripUndefined({
+        capabilities: [...new Set([
+          ...(includeServerRender ? BLOCK_SERVER_RENDER_CAPABILITIES : []),
+          ...(includeEditorInsert ? BLOCK_EDITOR_INSERT_CAPABILITIES : []),
+        ])],
+        targetKinds: ["runtime"],
+        runtimeActionTypes: includeEditorInsert ? ["editor_open"] : undefined,
+        commands: [
+          includeServerRender ? "wordpress.run-php" : undefined,
+          includeEditorInsert ? "wordpress.editor-open" : undefined,
+        ].filter((command): command is string => Boolean(command)),
+      }),
     }),
   })
 }

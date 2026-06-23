@@ -79,6 +79,15 @@ ability runs safe in-process `rest`, same-site `http`, and WordPress `ability`
 targets directly. Targets that require the runtime command, browser, editor, or
 page-load executors return `status: "skipped"`, a case-level `skipReason`, and a
 warning diagnostic rather than silently passing without exercising the target.
+Public suite builders declare `metadata.requiredRunnerCapabilities` so callers
+can choose between PHP in-process mode and runtime-backed mode before execution.
+The public core exports `PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES` and
+`RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` for readiness checks. Runtime-backed
+mode supports `runtime`, browser/editor/page-load action targets, and the
+`crud_operation` runtime action mapped to `wordpress.crud-operation`. When a
+caller requests required coverage, pass `requireCoverage: true`; unsupported
+required capabilities fail closed with `status: "error"` instead of looking like a
+successful structured skip.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`

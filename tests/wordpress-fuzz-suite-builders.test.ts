@@ -30,6 +30,7 @@ const restInventory: WordPressRestRouteInventory = {
 const restSuite = restRouteInventoryToFuzzSuite(restInventory, { session: "admin" })
 assert.equal(restSuite.schema, "wp-codebox/fuzz-suite/v1")
 assert.equal(restSuite.metadata?.sourceSchema, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
+assert.deepEqual(restSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:rest"], targetKinds: ["rest"] })
 assert.equal(restSuite.cases.length, 3)
 assert.equal(restSuite.cases[0]?.target?.kind, "rest")
 assert.deepEqual(restSuite.cases[0]?.input, { method: "GET", path: "/wp/v2/posts", session: "admin" })
@@ -61,6 +62,7 @@ const adminInventory: WordPressAdminPageInventory = {
 
 const adminSuite = adminPageInventoryToFuzzSuite(adminInventory, { user: "admin" })
 assert.equal(adminSuite.target?.entrypoint, "wordpress.admin-page-load")
+assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.admin-page-load"] })
 assert.deepEqual(adminSuite.cases[0]?.input, { args: ["path=tools.php", "user=admin"] })
 assert.deepEqual(adminSuite.cases[1]?.input, { args: ["path=admin.php?page=demo-settings", "user=admin"] })
 
@@ -82,6 +84,7 @@ const frontendInventory: WordPressFrontendUrlInventory = {
 
 const frontendSuite = frontendUrlInventoryToFuzzSuite(frontendInventory)
 assert.equal(frontendSuite.target?.entrypoint, "wordpress.frontend-page-load")
+assert.deepEqual(frontendSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.frontend-page-load"] })
 assert.deepEqual(frontendSuite.cases[0]?.input, { args: ["path=/hello-world/?preview=true"] })
 assert.equal((frontendSuite.cases[0]?.metadata?.safety as Record<string, unknown>).executable, true)
 
