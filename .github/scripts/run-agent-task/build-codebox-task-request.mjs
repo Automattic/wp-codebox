@@ -65,8 +65,8 @@ const request = {
     completion_outcomes: parseJson("SUCCESS_COMPLETION_OUTCOMES", [], "array"),
   },
   access: {
-    app_token_repos: process.env.APP_TOKEN_REPOS || process.env.TARGET_REPO || "",
-    require_app_token: booleanEnv("REQUIRE_HOMEBOY_APP_TOKEN"),
+    access_token_repos: process.env.ACCESS_TOKEN_REPOS || process.env.TARGET_REPO || "",
+    require_access_token: booleanEnv("REQUIRE_ACCESS_TOKEN"),
     allowed_repos: parseJson("ALLOWED_REPOS", [], "array"),
   },
   limits: {
@@ -97,5 +97,5 @@ output("job_status", status)
 output("transcript_json", request.artifacts.transcript_name)
 output("transcript_summary", `${request.workload.label}: ${status}`)
 output("engine_data_json", JSON.stringify({}))
-output("credential_mode", request.access.require_app_token ? "app-token" : "default")
+output("credential_mode", request.access.require_access_token ? "app-token" : "default")
 output("declared_artifacts_json", JSON.stringify(artifactDeclarations))
