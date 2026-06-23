@@ -57,11 +57,9 @@ Browser sessions that load the WordPress plugin browser runtime also publish
 for product consumers running inside the browser. Legacy top-level
 `window.wpCodeboxBrowser` methods remain available for existing callers.
 
-Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. When an
-ability has multiple registered names, new integrations should prefer the
-inspectable `meta.canonical_ability` value. Aliases stay registered for existing
-callers, but docs and schemas should describe the canonical Codebox-owned name
-first.
+Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
+docs and schemas describe the canonical Codebox-owned names that integrations
+should call directly.
 
 The public runtime contract manifest currently publishes these Codebox-owned
 ability identifiers:
@@ -73,10 +71,9 @@ ability identifiers:
 - `wp-codebox/run-wordpress-workload`
 - `wp-codebox/run-fuzz-suite`
 
-It also includes compatibility aliases for the `run-sandbox-task` family. The
-manifest intentionally excludes backend handler bindings such as agent execution
-substrate ability names, runtime command handlers, and integration-specific
-filters.
+The manifest intentionally excludes backend handler bindings such as agent
+execution substrate ability names, runtime command handlers, legacy aliases, and
+integration-specific filters.
 
 `wp-codebox/run-fuzz-suite` accepts public target kinds `rest`, `http`,
 `ability`, `command`, `runtime`, and `runtime-action`. The WordPress plugin

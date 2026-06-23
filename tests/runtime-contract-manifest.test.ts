@@ -17,9 +17,6 @@ import {
   CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY,
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY,
-  CODEBOX_RUN_SANDBOX_TASK_ABILITY,
-  CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY,
-  CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY,
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FANOUT_AGGREGATION_INPUT_SCHEMA,
   FANOUT_AGGREGATION_OUTPUT_SCHEMA,
@@ -126,9 +123,7 @@ assert.equal(manifest.schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESUL
 assert.equal(manifest.abilities.agentTask.run, CODEBOX_RUN_AGENT_TASK_ABILITY)
 assert.equal(manifest.abilities.agentTask.batch, CODEBOX_RUN_AGENT_TASK_BATCH_ABILITY)
 assert.equal(manifest.abilities.agentTask.fanout, CODEBOX_RUN_AGENT_TASK_FANOUT_ABILITY)
-assert.equal(manifest.abilities.agentTask.aliases.runSandboxTask, CODEBOX_RUN_SANDBOX_TASK_ABILITY)
-assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskBatch, CODEBOX_RUN_SANDBOX_TASK_BATCH_ABILITY)
-assert.equal(manifest.abilities.agentTask.aliases.runSandboxTaskFanout, CODEBOX_RUN_SANDBOX_TASK_FANOUT_ABILITY)
+assert.equal("aliases" in manifest.abilities.agentTask, false)
 assert.equal(manifest.abilities.runtimePackage.run, CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(manifest.abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
