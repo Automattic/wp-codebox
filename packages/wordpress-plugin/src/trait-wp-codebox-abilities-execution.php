@@ -1245,27 +1245,30 @@ private static function execute_fuzz_suite_json_rest_db_query_profiler_step( arr
 		if ( ! is_array( $case ) ) {
 			continue;
 		}
-		$request_result = self::profile_fuzz_suite_rest_request_queries( $case, (int) ( $step['sampleLimit'] ?? 50 ), (int) ( $step['queryLengthLimit'] ?? 500 ) );
+		$request_result = self::profile_fuzz_suite_rest_request_queries( $case, (int) ( $step['sampleLimit'] ?? 50 ), (int) ( $step['queryLengthLimit'] ?? 500 ), (int) ( $step['fingerprintLimit'] ?? 50 ) );
 		if ( (int) ( $request_result['status'] ?? 0 ) >= 500 ) {
 			++$failed;
 		}
 		$requests[] = $request_result;
 	}
 
-	$total_queries = array_sum( array_map( static fn( array $request ): int => (int) ( $request['queryCount'] ?? 0 ), $requests ) );
+	$total_queries        = array_sum( array_map( static fn( array $request ): int => (int) ( $request['queryCount'] ?? 0 ), $requests ) );
+	$query_fingerprints  = self::merge_fuzz_suite_query_fingerprints( $requests, (int) ( $step['fingerprintLimit'] ?? 50 ) );
+	$fingerprint_count   = count( $query_fingerprints );
 	return array(
 		'type'        => 'rest-db-query-profiler',
 		'index'       => $index,
 		'success'     => 0 === $failed,
 		'status'      => 0 === $failed ? 'passed' : 'failed',
-		'observation' => array( 'metricPrefix' => (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ), 'requestCount' => count( $requests ), 'queryCount' => $total_queries ),
-		'metrics'     => array( (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.query_count' => $total_queries, (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.request_count' => count( $requests ) ),
+		'observation' => array( 'metricPrefix' => (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ), 'requestCount' => count( $requests ), 'queryCount' => $total_queries, 'fingerprintCount' => $fingerprint_count ),
+		'metrics'     => array( (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.query_count' => $total_queries, (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.request_count' => count( $requests ), (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.fingerprint_count' => $fingerprint_count ),
 		'requests'    => $requests,
+		'queryFingerprints' => $query_fingerprints,
 	);
 }
 
 /** @param array<string,mixed> $case Case. @return array<string,mixed> */
-private static function profile_fuzz_suite_rest_request_queries( array $case, int $sample_limit, int $query_length_limit ): array {
+private static function profile_fuzz_suite_rest_request_queries( array $case, int $sample_limit, int $query_length_limit, int $fingerprint_limit ): array {
 	global $wpdb;
 	self::ensure_fuzz_suite_rest_routes_registered();
 	$path = (string) ( $case['path'] ?? '' );
@@ -1293,8 +1296,9 @@ private static function profile_fuzz_suite_rest_request_queries( array $case, in
 	if ( empty( $after_queries ) && ! empty( $captured_queries ) ) {
 		$after_queries = $captured_queries;
 	}
-	$queries = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
-	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries );
+	$queries      = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
+	$fingerprints = self::build_fuzz_suite_query_fingerprints( $after_queries, $query_length_limit, $fingerprint_limit );
+	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries, 'queryFingerprints' => $fingerprints );
 }
 
 private static function ensure_fuzz_suite_rest_routes_registered(): void {
@@ -1339,11 +1343,79 @@ private static function refresh_fuzz_suite_rest_server(): void {
 private static function normalize_fuzz_suite_query_sample( mixed $query, int $query_length_limit ): array {
 	$sql = is_array( $query ) ? (string) ( $query[0] ?? '' ) : (string) $query;
 	$time = is_array( $query ) ? (float) ( $query[1] ?? 0 ) : 0.0;
-	$redacted = preg_replace( "/'(?:''|[^'])*'/", "'?'", $sql );
-	$redacted = preg_replace( '/\\b\\d+(?:\\.\\d+)?\\b/', '?', is_string( $redacted ) ? $redacted : $sql );
-	$redacted = preg_replace( '/\\s+/', ' ', is_string( $redacted ) ? $redacted : $sql );
-	$redacted = trim( (string) $redacted );
+	$redacted = self::normalize_fuzz_suite_query_sql( $sql );
 	return array_filter( array( 'sql' => substr( $redacted, 0, max( 0, $query_length_limit ) ), 'time' => $time ), static fn( mixed $value ): bool => '' !== $value && 0.0 !== $value );
+}
+
+private static function normalize_fuzz_suite_query_sql( string $sql ): string {
+	$redacted = preg_replace( '/\/\*.*?\*\//s', '/* ? */', $sql );
+	$redacted = preg_replace( '/--[^\r\n]*/', '-- ?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/#[^\r\n]*/', '# ?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( "/\\b(?:x|b)'(?:''|[^'])*'/i", "'?'", is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( "/'(?:''|[^'])*'/", "'?'", is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/"(?:""|[^"])*"/', '"?"', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/\b0x[0-9a-f]+\b/i', '?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/\b[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?\b/i', '?', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = preg_replace( '/\s+/', ' ', is_string( $redacted ) ? $redacted : $sql );
+	$redacted = trim( (string) $redacted );
+	do {
+		$previous = $redacted;
+		$redacted = (string) preg_replace( '/\bIN\s*\(\s*\?(?:\s*,\s*\?)+\s*\)/i', 'IN (?)', $redacted );
+	} while ( $previous !== $redacted );
+	return $redacted;
+}
+
+/** @param array<int,mixed> $queries Queries. @return array<int,array<string,mixed>> */
+private static function build_fuzz_suite_query_fingerprints( array $queries, int $query_length_limit, int $fingerprint_limit ): array {
+	$groups = array();
+	foreach ( $queries as $query ) {
+		$sql         = is_array( $query ) ? (string) ( $query[0] ?? '' ) : (string) $query;
+		$normalized  = self::normalize_fuzz_suite_query_sql( $sql );
+		$fingerprint = strtolower( $normalized );
+		if ( '' === $fingerprint ) {
+			continue;
+		}
+		if ( ! isset( $groups[ $fingerprint ] ) ) {
+			$groups[ $fingerprint ] = array( 'fingerprint' => substr( $fingerprint, 0, max( 0, $query_length_limit ) ), 'count' => 0, 'examples' => array() );
+		}
+		++$groups[ $fingerprint ]['count'];
+		$example = substr( $normalized, 0, max( 0, $query_length_limit ) );
+		if ( count( $groups[ $fingerprint ]['examples'] ) < 3 && ! in_array( $example, $groups[ $fingerprint ]['examples'], true ) ) {
+			$groups[ $fingerprint ]['examples'][] = $example;
+		}
+	}
+	$fingerprints = array_values( $groups );
+	usort( $fingerprints, static fn( array $a, array $b ): int => ( (int) $b['count'] <=> (int) $a['count'] ) ?: strcmp( (string) $a['fingerprint'], (string) $b['fingerprint'] ) );
+	return array_slice( $fingerprints, 0, max( 0, $fingerprint_limit ) );
+}
+
+/** @param array<int,array<string,mixed>> $requests Requests. @return array<int,array<string,mixed>> */
+private static function merge_fuzz_suite_query_fingerprints( array $requests, int $fingerprint_limit ): array {
+	$groups = array();
+	foreach ( $requests as $request ) {
+		foreach ( is_array( $request['queryFingerprints'] ?? null ) ? $request['queryFingerprints'] : array() as $group ) {
+			if ( ! is_array( $group ) ) {
+				continue;
+			}
+			$fingerprint = (string) ( $group['fingerprint'] ?? '' );
+			if ( '' === $fingerprint ) {
+				continue;
+			}
+			if ( ! isset( $groups[ $fingerprint ] ) ) {
+				$groups[ $fingerprint ] = array( 'fingerprint' => $fingerprint, 'count' => 0, 'examples' => array() );
+			}
+			$groups[ $fingerprint ]['count'] += (int) ( $group['count'] ?? 0 );
+			foreach ( is_array( $group['examples'] ?? null ) ? $group['examples'] : array() as $example ) {
+				$example = (string) $example;
+				if ( count( $groups[ $fingerprint ]['examples'] ) < 3 && '' !== $example && ! in_array( $example, $groups[ $fingerprint ]['examples'], true ) ) {
+					$groups[ $fingerprint ]['examples'][] = $example;
+				}
+			}
+		}
+	}
+	$fingerprints = array_values( $groups );
+	usort( $fingerprints, static fn( array $a, array $b ): int => ( (int) $b['count'] <=> (int) $a['count'] ) ?: strcmp( (string) $a['fingerprint'], (string) $b['fingerprint'] ) );
+	return array_slice( $fingerprints, 0, max( 0, $fingerprint_limit ) );
 }
 
 /** @param array<string,mixed> $observation Observation. @return array<string,mixed> */

@@ -126,7 +126,8 @@ class WP_Codebox_Test_REST_Response {
 }
 
 function rest_do_request( WP_REST_Request $request ): WP_Codebox_Test_REST_Response {
-	apply_filters( 'query', "SELECT * FROM wp_posts WHERE post_type = 'secret-post-type' AND ID = 123" );
+	apply_filters( 'query', "SELECT * FROM wp_posts WHERE post_type = 'secret-post-type' AND ID IN (123, 456)" );
+	apply_filters( 'query', "SELECT * FROM wp_posts WHERE post_type = 'another-secret-post-type' AND ID IN (789, 101112)" );
 	apply_filters( 'query', 'SELECT option_value FROM wp_options WHERE option_name = "blogname"' );
 	return new WP_Codebox_Test_REST_Response( '/wp/v2/status' === $request->path ? 200 : 404 );
 }
@@ -506,10 +507,17 @@ assert( 'array' !== ( $result['cases'][21]['metadata']['observations'][0]['retur
 assert( is_file( WP_CONTENT_DIR . '/uploads/workloads/rest-db-query-profile.json' ) );
 $workload_report = json_decode( file_get_contents( WP_CONTENT_DIR . '/uploads/workloads/rest-db-query-profile.json' ), true );
 assert( 'wp-codebox/json-workload-result/v1' === $workload_report['schema'] );
-assert( 2 === $workload_report['steps'][1]['observation']['queryCount'] );
-assert( 2 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
-assert( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID = ?" === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( 3 === $workload_report['steps'][1]['observation']['queryCount'] );
+assert( 2 === $workload_report['steps'][1]['observation']['fingerprintCount'] );
+assert( 3 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
+assert( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID IN (?)" === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( 2 === $workload_report['steps'][1]['queryFingerprints'][0]['count'] );
+assert( "select * from wp_posts where post_type = '?' and id in (?)" === $workload_report['steps'][1]['queryFingerprints'][0]['fingerprint'] );
+assert( array( "SELECT * FROM wp_posts WHERE post_type = '?' AND ID IN (?)" ) === $workload_report['steps'][1]['queryFingerprints'][0]['examples'] );
+assert( 2 === $workload_report['steps'][1]['requests'][0]['queryFingerprints'][0]['count'] );
 assert( ! str_contains( wp_json_encode( $workload_report['steps'][1]['requests'][0]['sampledQueries'] ), 'secret-post-type' ) );
+assert( ! str_contains( wp_json_encode( $workload_report['steps'][1]['queryFingerprints'] ), 'another-secret-post-type' ) );
+assert( ! str_contains( wp_json_encode( $workload_report['steps'][1]['queryFingerprints'] ), '101112' ) );
 assert( 'closure-external-http-guardrail' === $result['cases'][22]['id'] );
 assert( 'passed' === $result['cases'][22]['status'] );
 assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_type'] );
