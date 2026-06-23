@@ -207,11 +207,11 @@ private static function remediation_outcome_schema(): array {
 			'success'               => array( 'type' => 'boolean' ),
 			'kind'                  => array(
 				'type' => 'string',
-				'enum' => array( 'fix_artifact', 'false_positive_artifact', 'noop_artifact', 'unable_to_remediate', 'fix_pr', 'false_positive_pr', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending' ),
+				'enum' => array( 'completed', 'failed', 'unable_to_remediate', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending' ),
 			),
 			'failure'               => array(
 				'type' => 'string',
-				'enum' => array( 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending', '' ),
+				'enum' => array( 'failed', 'provider_error', 'agent_no_pr_outcome', 'max_turns_exceeded', 'runtime_tool_pending', '' ),
 			),
 			'pr_url'                => array( 'type' => 'string' ),
 			'false_positive_pr_url' => array( 'type' => 'string' ),
