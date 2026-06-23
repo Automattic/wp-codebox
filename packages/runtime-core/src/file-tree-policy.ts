@@ -3,7 +3,7 @@ import { isAbsolute, normalize, relative, sep } from "node:path"
 export type NamedFileTreeSkipPolicy = "prepared-source" | "captured-mount"
 
 const FILE_TREE_SKIP_POLICIES = {
-  "prepared-source": [".git", "node_modules"],
+  "prepared-source": [".git", "node_modules", "vendor"],
   "captured-mount": [".git", "node_modules", "target"],
 } as const satisfies Record<NamedFileTreeSkipPolicy, readonly string[]>
 

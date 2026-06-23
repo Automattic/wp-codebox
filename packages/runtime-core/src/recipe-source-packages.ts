@@ -247,6 +247,7 @@ export function composerManagedHostEnv(): Record<string, string> {
   return {
     ...(home ? { HOME: home } : {}),
     ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
+    COMPOSER_MIRROR_PATH_REPOS: "1",
   }
 }
 
