@@ -420,12 +420,25 @@ function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPl
 }
 
 function dedupeExtraPlugins(plugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {
-  const seen = new Set<string>()
+  const seen = new Map<string, number>()
   const deduped: WorkspaceRecipeExtraPlugin[] = []
   for (const plugin of plugins) {
     const key = `${stringValue(plugin.slug) || slugFromPath(stringValue(plugin.source))}:${plugin.loadAs === "plugin" ? "plugin" : "mu-plugin"}`
-    if (seen.has(key)) continue
-    seen.add(key)
+    const existingIndex = seen.get(key)
+    if (existingIndex !== undefined) {
+      const existing = deduped[existingIndex]
+      deduped[existingIndex] = stripUndefined({
+        ...plugin,
+        ...existing,
+        activate: existing.activate === true || plugin.activate === true ? true : existing.activate ?? plugin.activate,
+        metadata: stripUndefined({
+          ...(isPlainObject(plugin.metadata) ? plugin.metadata : {}),
+          ...(isPlainObject(existing.metadata) ? existing.metadata : {}),
+        }),
+      }) as WorkspaceRecipeExtraPlugin
+      continue
+    }
+    seen.set(key, deduped.length)
     deduped.push(plugin)
   }
   return deduped
