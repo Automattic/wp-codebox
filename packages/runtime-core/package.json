@@ -25,6 +25,10 @@
       "types": "./dist/run-results.d.ts",
       "import": "./dist/run-results.js"
     },
+    "./php-snippets": {
+      "types": "./dist/runtime-php-snippets.d.ts",
+      "import": "./dist/runtime-php-snippets.js"
+    },
     "./internals": {
       "types": "./dist/internals.d.ts",
       "import": "./dist/internals.js"
