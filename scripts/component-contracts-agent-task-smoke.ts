@@ -64,7 +64,7 @@ try {
   assert.equal(domain?.metadata?.componentContract?.pluginFile, "domain-component/domain-component.php")
   assert.equal(existsSync(join(String(domain?.source), ".git")), false, "prepared component source should exclude VCS metadata")
   assert.equal(existsSync(join(String(domain?.source), "node_modules")), false, "prepared component source should exclude Node dependencies")
-  assert.equal(existsSync(join(String(domain?.source), "vendor")), false, "prepared component source should exclude Composer dependencies before hydration")
+  assert.equal(existsSync(join(String(domain?.source), "vendor")), true, "prepared component source should preserve existing Composer dependencies")
   assert.equal(runtime?.metadata?.componentContract?.requestedPath, runtimePlugin)
   assert.equal(runtime?.metadata?.componentContract?.preparedPath, runtime?.source)
   assert.equal(runtime?.metadata?.componentContract?.pluginFile, "runtime-component/runtime-component.php")
@@ -76,6 +76,7 @@ try {
   assert.equal(existsSync(join(String(monorepoComponent?.source), "..", "..", "packages", "php", "shared", "composer.json")), true)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "autoload_packages.php")), true)
   assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "jetpack-autoloader", "class-autoloader.php")), true)
+  assert.equal(existsSync(join(String(monorepoComponent?.source), "vendor", "woocommerce", "email-editor", "src", "class-package.php")), true)
 
   const missingComponentSource = "https://example.com/missing-component.zip"
   const invalidRecipePath = join(root, "invalid-component-recipe.json")
@@ -141,10 +142,12 @@ function writeMonorepoPlugin(rootPath: string, slug: string, name: string): { ro
   const pluginPath = join(monorepoRoot, sourceSubpath)
   mkdirSync(pluginPath, { recursive: true })
   mkdirSync(join(pluginPath, "vendor", "jetpack-autoloader"), { recursive: true })
+  mkdirSync(join(pluginPath, "vendor", "woocommerce", "email-editor", "src"), { recursive: true })
   mkdirSync(join(monorepoRoot, "packages", "php", "shared"), { recursive: true })
   writeFileSync(join(monorepoRoot, "packages", "php", "shared", "composer.json"), "{}\n")
   writeFileSync(join(pluginPath, "vendor", "autoload_packages.php"), "<?php // generated package autoloader\n")
   writeFileSync(join(pluginPath, "vendor", "jetpack-autoloader", "class-autoloader.php"), "<?php // package autoloader runtime\n")
+  writeFileSync(join(pluginPath, "vendor", "woocommerce", "email-editor", "src", "class-package.php"), "<?php // package source\n")
   writeFileSync(join(pluginPath, `${slug}.php`), `<?php
 /**
  * Plugin Name: ${name}
