@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
-import { phpEnvAssignments, phpRuntimeComponentLifecycleReplayFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
+import { phpEnvAssignments, phpRuntimeRecipePluginPreloadFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
 import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
@@ -86,63 +86,11 @@ function recipeActivePluginBootstrapPhp(spec: RuntimeCreateSpec, args: string[])
     return ""
   }
 
-  return `${phpRuntimeComponentLifecycleReplayFunction("contained_runtime_run_php")}
+  return `${phpRuntimeRecipePluginPreloadFunction("contained_runtime_run_php")}
 $contained_runtime_run_php_active_plugins = json_decode(base64_decode('${Buffer.from(JSON.stringify(plugins), "utf8").toString("base64")}'), true);
-function contained_runtime_run_php_plugin_load_diagnostic(array $plugin, string $error = ''): string {
-    $plugin_file = isset($plugin['pluginFile']) ? (string) $plugin['pluginFile'] : '';
-    $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_file;
-    $real_plugin_file = realpath($absolute_plugin_file);
-    $included_files = array_map(static fn($file) => realpath($file) ?: $file, get_included_files());
-    $included = in_array($real_plugin_file ?: $absolute_plugin_file, $included_files, true);
-    return 'diagnostic=' . wp_json_encode(array(
-        'schema' => 'wp-codebox/run-php-plugin-load-diagnostic/v1',
-        'role' => 'active-recipe-plugin',
-        'plugin_slug' => isset($plugin['slug']) ? (string) $plugin['slug'] : dirname($plugin_file),
-        'plugin_file' => $plugin_file,
-        'mounted_path' => isset($plugin['target']) ? (string) $plugin['target'] : WP_PLUGIN_DIR . '/' . dirname($plugin_file),
-        'expected_file_path' => $absolute_plugin_file,
-        'file_exists' => is_file($absolute_plugin_file),
-        'file_readable' => is_readable($absolute_plugin_file),
-        'active' => function_exists('is_plugin_active') ? is_plugin_active($plugin_file) : null,
-        'included' => $included,
-        'wp_plugin_dir' => WP_PLUGIN_DIR,
-        'error' => $error,
-    ), JSON_UNESCAPED_SLASHES);
-}
-function contained_runtime_run_php_include_active_plugin(array $plugin): void {
-    $plugin_file = isset($plugin['pluginFile']) ? (string) $plugin['pluginFile'] : '';
-    if ($plugin_file === '' || str_starts_with($plugin_file, '/') || str_contains($plugin_file, '..') || !str_ends_with($plugin_file, '.php')) {
-        throw new RuntimeException('wordpress.run-php cannot include unsafe recipe plugin file "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, 'unsafe plugin file'));
-    }
-    $absolute_plugin_file = WP_PLUGIN_DIR . '/' . $plugin_file;
-    if (!is_file($absolute_plugin_file) || !is_readable($absolute_plugin_file)) {
-        throw new RuntimeException('wordpress.run-php cannot include recipe plugin file "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, 'missing or unreadable plugin file'));
-    }
-    $plugin_dir = dirname($plugin_file);
-    $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
-    if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
-        require_once $plugin_autoload;
-    }
-    $plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
-    if ('.' !== $plugin_dir && is_file($plugin_package_autoload)) {
-        require_once $plugin_package_autoload;
-    }
-    $lifecycle = contained_runtime_run_php_component_lifecycle_replay_prepare();
-    try {
-        require_once $absolute_plugin_file;
-    } catch (Throwable $e) {
-        throw new RuntimeException('wordpress.run-php failed to include recipe plugin "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, $e->getMessage()), 0, $e);
-    } finally {
-        contained_runtime_run_php_component_lifecycle_replay_complete($lifecycle);
-    }
-    $diagnostic = contained_runtime_run_php_plugin_load_diagnostic($plugin, 'plugin file was not included');
-    if (strpos($diagnostic, '"included":true') === false) {
-        throw new RuntimeException('wordpress.run-php failed to verify included recipe plugin "' . $plugin_file . '". ' . $diagnostic);
-    }
-}
 foreach (is_array($contained_runtime_run_php_active_plugins) ? $contained_runtime_run_php_active_plugins : array() as $contained_runtime_run_php_active_plugin) {
     if (is_array($contained_runtime_run_php_active_plugin)) {
-        contained_runtime_run_php_include_active_plugin($contained_runtime_run_php_active_plugin);
+        contained_runtime_run_php_preload_recipe_plugin($contained_runtime_run_php_active_plugin, true, 'active-recipe-plugin', 'wordpress.run-php');
     }
 }
 `

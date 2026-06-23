@@ -1,7 +1,7 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { phpRuntimeComponentLifecycleReplayFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
@@ -395,72 +395,47 @@ function shouldCopyInputMountBaselineEntry(sourceRoot: string, entry: string): b
 }
 
 function activateExtraPluginCode(plugin: PreparedExtraPlugin): string {
-  const pluginFile = plugin.pluginFile
-  return `${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")}
-$plugin_file = ${JSON.stringify(pluginFile)};
+  const pluginMetadata = {
+    slug: plugin.slug,
+    pluginFile: plugin.pluginFile,
+    target: plugin.target,
+  }
+  const encodedPluginMetadata = Buffer.from(JSON.stringify(pluginMetadata), "utf8").toString("base64")
+  return `${phpRuntimeRecipePluginPreloadFunction("wp_codebox_activate_plugin")}
+$plugin = json_decode(base64_decode('${encodedPluginMetadata}'), true);
+if (!is_array($plugin)) {
+    throw new RuntimeException('Could not decode recipe plugin activation metadata.');
+}
+$plugin_file = ${JSON.stringify(plugin.pluginFile)};
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
-$plugin_dir = dirname($plugin_file);
-$plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
-$plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
-register_shutdown_function(static function () use ($plugin_file, $plugin_dir, $plugin_autoload, $plugin_package_autoload): void {
+register_shutdown_function(static function () use ($plugin, $plugin_file): void {
     $fatal = error_get_last();
     if (!is_array($fatal) || !in_array($fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
         return;
     }
-
-    $message = isset($fatal['message']) ? (string) $fatal['message'] : '';
-    $missing_class = null;
+    $diagnostic = wp_codebox_activate_plugin_recipe_plugin_preload_diagnostic($plugin, 'activation-recipe-plugin', isset($fatal['message']) ? (string) $fatal['message'] : '');
+    $message = $diagnostic['error'];
     if (preg_match('/Class "([^"]+)" not found/', $message, $matches)) {
-        $missing_class = $matches[1];
-    }
-
-    $classmap = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/composer/autoload_classmap.php';
-    $classmap_entry = null;
-    if (is_string($missing_class) && is_file($classmap)) {
-        $classmap_data = include $classmap;
-        if (is_array($classmap_data) && isset($classmap_data[$missing_class])) {
-            $classmap_entry = (string) $classmap_data[$missing_class];
+        $diagnostic['missing_class'] = $matches[1];
+        $classmap = $diagnostic['classmap']['path'];
+        if (is_string($classmap) && is_file($classmap)) {
+            $classmap_data = include $classmap;
+            if (is_array($classmap_data) && isset($classmap_data[$diagnostic['missing_class']])) {
+                $diagnostic['classmap']['entry'] = (string) $classmap_data[$diagnostic['missing_class']];
+                $diagnostic['classmap']['entry_exists'] = is_file($diagnostic['classmap']['entry']);
+            }
         }
+        $diagnostic['class_exists'] = array(
+            'without_autoload' => class_exists($diagnostic['missing_class'], false),
+            'with_autoload' => class_exists($diagnostic['missing_class'], true),
+        );
     }
-
-    $included_files = array_map(static fn($file) => realpath($file) ?: $file, get_included_files());
-    echo "\nWP_CODEBOX_PLUGIN_AUTOLOAD_DIAGNOSTIC:" . wp_json_encode(array(
-        'schema' => 'wp-codebox/plugin-autoload-diagnostic/v1',
-        'plugin_file' => $plugin_file,
-        'plugin_dir' => $plugin_dir,
+    echo "\nWP_CODEBOX_PLUGIN_PRELOAD_DIAGNOSTIC:" . wp_json_encode(array(
+        ...$diagnostic,
         'fatal_message' => $message,
-        'missing_class' => $missing_class,
-        'autoload' => array(
-            'path' => $plugin_autoload,
-            'exists' => is_file($plugin_autoload),
-            'readable' => is_readable($plugin_autoload),
-            'included' => in_array(realpath($plugin_autoload) ?: $plugin_autoload, $included_files, true),
-        ),
-        'package_autoload' => array(
-            'path' => $plugin_package_autoload,
-            'exists' => is_file($plugin_package_autoload),
-            'readable' => is_readable($plugin_package_autoload),
-            'included' => in_array(realpath($plugin_package_autoload) ?: $plugin_package_autoload, $included_files, true),
-        ),
-        'classmap' => array(
-            'path' => $classmap,
-            'exists' => is_file($classmap),
-            'readable' => is_readable($classmap),
-            'entry' => $classmap_entry,
-            'entry_exists' => is_string($classmap_entry) ? is_file($classmap_entry) : null,
-        ),
-        'class_exists' => is_string($missing_class) ? array(
-            'without_autoload' => class_exists($missing_class, false),
-            'with_autoload' => class_exists($missing_class, true),
-        ) : null,
     ), JSON_UNESCAPED_SLASHES) . "\n";
 });
-if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
-    require_once $plugin_autoload;
-}
-if ('.' !== $plugin_dir && is_file($plugin_package_autoload)) {
-    require_once $plugin_package_autoload;
-}
+wp_codebox_activate_plugin_preload_recipe_plugin($plugin, false, 'activation-recipe-plugin', 'recipe-runtime-setup activate_plugin');
 if (is_plugin_active($plugin_file)) {
     deactivate_plugins($plugin_file, true, false);
 }

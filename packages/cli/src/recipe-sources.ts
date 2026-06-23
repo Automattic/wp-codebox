@@ -334,6 +334,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       }),
       cwd: stagedSource,
     })
+    await writeComposerInstalledPackageAutoloader(stagedSource)
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
     const detail = error instanceof Error && "stderr" in error && typeof error.stderr === "string" && error.stderr.trim() ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
@@ -349,6 +350,90 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       localPathCategory: "temporary-composer-autoload",
     },
   }
+}
+
+async function writeComposerInstalledPackageAutoloader(pluginSource: string): Promise<void> {
+  const packageAutoloader = join(pluginSource, "vendor", "autoload_packages.php")
+  if (await pathIsFile(packageAutoloader)) {
+    await bridgePackageAutoloaderToComposerAutoload(packageAutoloader)
+    return
+  }
+
+  const installedPath = join(pluginSource, "vendor", "composer", "installed.json")
+  if (!await pathIsFile(installedPath)) {
+    return
+  }
+  const installed = JSON.parse(await readFile(installedPath, "utf8")) as unknown
+  const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
+  const classmapFiles = (await Promise.all(classmapPaths.map((path) => composerInstalledPackageClassmapFiles(pluginSource, path)))).flat()
+  if (classmapFiles.length === 0) {
+    return
+  }
+
+  const uniqueFiles = [...new Set(classmapFiles)]
+  const fileLines = uniqueFiles.map((path) => `    __DIR__ . ${JSON.stringify(`/composer/${path}`)},`).join("\n")
+  await writeFile(packageAutoloader, `<?php
+defined( 'ABSPATH' ) || exit;
+
+$wp_codebox_composer_package_classmap_files = array(
+${fileLines}
+);
+
+foreach ($wp_codebox_composer_package_classmap_files as $file) {
+    if (is_file($file)) {
+        require_once $file;
+    }
+}
+`)
+}
+
+async function composerInstalledPackageClassmapFiles(pluginSource: string, classmapPath: string): Promise<string[]> {
+  const absolutePath = join(pluginSource, "vendor", "composer", classmapPath)
+  if (await pathIsFile(absolutePath)) {
+    return [classmapPath]
+  }
+  if (!await pathIsDirectory(absolutePath)) {
+    return []
+  }
+  const files: string[] = []
+  await collectPhpFiles(absolutePath, classmapPath.replace(/\/+$/, ""), files)
+  return files
+}
+
+async function collectPhpFiles(directory: string, relativeDirectory: string, files: string[]): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolutePath = join(directory, entry.name)
+    const relativePath = `${relativeDirectory}/${entry.name}`.replace(/^\/+/, "")
+    if (entry.isDirectory()) {
+      await collectPhpFiles(absolutePath, relativePath, files)
+      continue
+    }
+    if (entry.isFile() && entry.name.endsWith(".php")) {
+      files.push(relativePath)
+    }
+  }
+}
+
+async function bridgePackageAutoloaderToComposerAutoload(packageAutoloader: string): Promise<void> {
+  const bridge = "require_once __DIR__ . '/autoload.php';"
+  const contents = await readFile(packageAutoloader, "utf8")
+  if (contents.includes(bridge)) {
+    return
+  }
+  const initCall = "Autoloader::init();"
+  const bridged = contents.includes(initCall) ? contents.replace(initCall, `${bridge}\n${initCall}`) : `${contents.trimEnd()}\n${bridge}\n`
+  await writeFile(packageAutoloader, bridged)
+}
+
+function composerInstalledPackageClassmapPaths(pkg: ComposerInstalledPackage): string[] {
+  if (typeof pkg["install-path"] !== "string") {
+    return []
+  }
+  const classmap = pkg.autoload?.classmap
+  const entries = Array.isArray(classmap) ? classmap : typeof classmap === "string" ? [classmap] : []
+  return entries
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && !isAbsolute(entry) && !entry.includes(".."))
+    .map((entry) => `${pkg["install-path"]!.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}/${entry.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}`)
 }
 
 export async function prepareRecipeDependencyOverlays(recipe: WorkspaceRecipe, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[]): Promise<PreparedDependencyOverlay[]> {
@@ -913,7 +998,8 @@ function escapeRegExp(value: string): string {
 
 interface ComposerInstalledPackage {
   name: string
-  autoload?: { "psr-4"?: Record<string, string | string[]> }
+  "install-path"?: string
+  autoload?: { "psr-4"?: Record<string, string | string[]>; classmap?: string | string[] }
 }
 
 function composerInstalledPackages(installed: unknown): ComposerInstalledPackage[] {

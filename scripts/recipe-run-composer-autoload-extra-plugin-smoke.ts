@@ -20,8 +20,9 @@ writeFileSync(resolve(pluginSource, "composer.json"), `${JSON.stringify({
   name: "wp-codebox/composer-autoload-smoke",
   autoload: { classmap: ["src/"] },
   repositories: [{ type: "path", url: "../../packages/php/email-editor", options: { symlink: false } }],
-  require: { "wp-codebox/email-editor-smoke": "*" },
-  config: { "allow-plugins": false },
+  require: { "composer/installers": "^1.9", "woocommerce/email-editor": "*" },
+  config: { "allow-plugins": { "composer/installers": true } },
+  extra: { "installer-paths": { "packages/{$name}": ["woocommerce/email-editor"] } },
   "minimum-stability": "dev",
   "prefer-stable": true,
 }, null, 2)}\n`)
@@ -37,16 +38,11 @@ register_activation_hook( __FILE__, static function (): void {
 	if ( ! class_exists( \\WpCodeboxComposerSmoke\\Fixture::class ) ) {
 		throw new RuntimeException( 'Composer classmap fixture was not autoloaded.' );
 	}
-	$sibling_package = __DIR__ . '/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php';
+	$sibling_package = __DIR__ . '/packages/email-editor/src/class-package.php';
 	if ( ! is_file( $sibling_package ) ) {
-		throw new RuntimeException( 'Composer path repository sibling package was not installed.' );
+		throw new RuntimeException( 'Composer path repository WordPress package was not installed.' );
 	}
-	require_once $sibling_package;
-	if ( ! class_exists( \\WpCodeboxEmailEditorSmoke\\SiblingPackage::class ) ) {
-		throw new RuntimeException( 'Composer path repository sibling package was not loadable.' );
-	}
-
-	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() + \\WpCodeboxEmailEditorSmoke\\SiblingPackage::value() );
+	update_option( 'wp_codebox_composer_smoke_value', \\WpCodeboxComposerSmoke\\Fixture::value() + \\Automattic\\WooCommerce\\EmailEditor\\Package::value() );
 } );
 `)
 
@@ -62,16 +58,17 @@ final class Fixture {
 `)
 
 writeFileSync(resolve(siblingPackageSource, "composer.json"), `${JSON.stringify({
-  name: "wp-codebox/email-editor-smoke",
-  autoload: { "psr-4": { "WpCodeboxEmailEditorSmoke\\\\": "src/" } },
+  name: "woocommerce/email-editor",
+  type: "wordpress-plugin",
+  autoload: { classmap: ["src/"] },
   version: "dev-main",
 }, null, 2)}\n`)
 
-writeFileSync(resolve(siblingPackageSource, "src", "SiblingPackage.php"), `<?php
+writeFileSync(resolve(siblingPackageSource, "src", "class-package.php"), `<?php
 
-namespace WpCodeboxEmailEditorSmoke;
+namespace Automattic\\WooCommerce\\EmailEditor;
 
-final class SiblingPackage {
+final class Package {
 	public static function value(): int {
 		return 8;
 	}
@@ -102,7 +99,7 @@ writeFileSync(recipePath, `${JSON.stringify({
       {
         command: "wordpress.run-php",
         args: [
-          "code=if (!class_exists('WpCodeboxComposerSmoke\\\\Fixture')) { throw new RuntimeException('autoloaded class missing after plugin boot'); } if (!is_file(WP_PLUGIN_DIR . '/composer-autoload-smoke/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php')) { throw new RuntimeException('path repository package missing after plugin boot'); } if (!class_exists('WpCodeboxEmailEditorSmoke\\\\SiblingPackage')) { require_once WP_PLUGIN_DIR . '/composer-autoload-smoke/vendor/wp-codebox/email-editor-smoke/src/SiblingPackage.php'; } echo wp_json_encode(array('value' => get_option('wp_codebox_composer_smoke_value'), 'active' => is_plugin_active('composer-autoload-smoke/composer-autoload-smoke.php')));",
+          "code=if (!class_exists('WpCodeboxComposerSmoke\\\\Fixture')) { throw new RuntimeException('autoloaded class missing after plugin boot'); } if (!is_file(WP_PLUGIN_DIR . '/composer-autoload-smoke/packages/email-editor/src/class-package.php')) { throw new RuntimeException('path repository WordPress package missing after plugin boot'); } if (!class_exists('Automattic\\\\WooCommerce\\\\EmailEditor\\\\Package')) { throw new RuntimeException('path repository WordPress package class missing after plugin boot'); } echo wp_json_encode(array('value' => get_option('wp_codebox_composer_smoke_value'), 'active' => is_plugin_active('composer-autoload-smoke/composer-autoload-smoke.php')));",
         ],
       },
     ],

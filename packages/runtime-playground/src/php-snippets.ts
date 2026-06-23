@@ -1,6 +1,6 @@
 import { isSafeEnvName } from "./commands.js"
 
-export { phpRuntimeComponentLifecycleReplayFunction } from "@automattic/wp-codebox-core"
+export { phpRuntimeComponentLifecycleReplayFunction, phpRuntimeRecipePluginPreloadFunction } from "@automattic/wp-codebox-core"
 
 export type PhpScalar = string | number | boolean | null
 
