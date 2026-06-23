@@ -555,7 +555,26 @@ assert( str_contains( $result['cases'][22]['metadata']['observations'][1]['paylo
 assert( 'wp-codebox/fuzz-runner-capabilities/v1' === $result['metadata']['runnerCapabilities']['schema'] );
 assert( 'php-in-process' === $result['metadata']['runnerCapabilities']['mode'] );
 assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capabilities'], true ) );
-assert( array() === $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'] );
+assert( in_array( 'target:runtime-action', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
+assert( in_array( 'target:runtime', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
+assert( in_array( 'runtime-action:browser', $result['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
+
+$runtime_backed_request = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
+	array(
+		'schema'     => 'wp-codebox/fuzz-suite/v1',
+		'id'         => 'runtime-backed-request-suite',
+		'runnerMode' => 'runtime-backed',
+		'target'     => array( 'kind' => 'runtime-action' ),
+		'cases'      => array( array( 'id' => 'browser-page', 'input' => array( 'type' => 'browser', 'url' => '/sample-page/' ) ) ),
+	)
+);
+assert( is_array( $runtime_backed_request ) );
+assert( false === $runtime_backed_request['success'] );
+assert( 'error' === $runtime_backed_request['status'] );
+assert( 'wp_codebox_fuzz_suite_runner_mode_unavailable' === $runtime_backed_request['diagnostics'][0]['code'] );
+assert( 'wp_codebox_fuzz_suite_runner_mode_unavailable' === $runtime_backed_request['cases'][0]['skipReason'] );
+assert( 'runtime-backed' === $runtime_backed_request['diagnostics'][0]['metadata']['requested_runner_mode'] );
+assert( in_array( 'runtime-action:browser', $runtime_backed_request['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'], true ) );
 
 $required_runtime = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 	array(
