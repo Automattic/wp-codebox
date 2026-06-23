@@ -55,6 +55,8 @@ export interface AgentTaskRunInput {
   artifacts_path?: string
   wp?: string
   component_contracts?: Array<Record<string, unknown>>
+  runtime_requirements?: Record<string, unknown>
+  runtimeRequirements?: Record<string, unknown>
   verify_steps?: WorkspaceRecipe["workflow"]["after"]
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
@@ -408,9 +410,12 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
 }
 
 function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPlugin[] {
+  const runtimeRequirements = objectValue(input.runtime_requirements) || objectValue(input.runtimeRequirements)
   return [
     ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extra_plugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extraPlugins),
   ]
 }
 

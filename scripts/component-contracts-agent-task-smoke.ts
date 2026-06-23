@@ -11,6 +11,7 @@ const root = mkdtempSync(join(tmpdir(), "wp-codebox-component-contracts-smoke-")
 try {
   const domainPlugin = writePlugin(root, "domain-component", "Domain Component")
   const runtimePlugin = writePlugin(root, "runtime-component", "Runtime Component")
+  const requirementsPlugin = writePlugin(root, "requirements-component", "Requirements Component")
   const artifacts = join(root, "artifacts")
   mkdirSync(artifacts, { recursive: true })
 
@@ -21,6 +22,11 @@ try {
       { slug: "domain-component", path: domainPlugin, loadAs: "plugin", activate: true },
       { slug: "runtime-component", path: runtimePlugin, loadAs: "mu-plugin", activate: false },
     ],
+    runtime_requirements: {
+      extra_plugins: [
+        { slug: "requirements-component", source: requirementsPlugin, pluginFile: "requirements-component/requirements-component.php", loadAs: "plugin", activate: true },
+      ],
+    },
   }, normalizeTaskInput({ goal: "verify component contract staging" }), "latest")
 
   const plugins = recipe.inputs?.extra_plugins ?? []
@@ -29,12 +35,17 @@ try {
 
   const domain = componentPlugins.find((plugin) => plugin.slug === "domain-component")
   const runtime = componentPlugins.find((plugin) => plugin.slug === "runtime-component")
+  const requirements = plugins.find((plugin) => plugin.slug === "requirements-component")
   assert.ok(domain, "explicit domain component should be staged")
   assert.ok(runtime, "runtime component should coexist with explicit domain component")
+  assert.ok(requirements, "runtime_requirements.extra_plugins should become recipe extra plugins")
   assert.equal(domain?.loadAs, "plugin")
   assert.equal(domain?.activate, true)
   assert.equal(runtime?.loadAs, "mu-plugin")
   assert.equal(runtime?.activate, false)
+  assert.equal(requirements?.loadAs, "plugin")
+  assert.equal(requirements?.activate, true)
+  assert.equal(requirements?.pluginFile, "requirements-component/requirements-component.php")
   assert.match(String(domain?.source), /prepared-plugins\/domain-component$/)
   assert.match(String(runtime?.source), /prepared-plugins\/runtime-component$/)
   assert.equal(domain?.metadata?.componentContract?.requestedPath, domainPlugin)
