@@ -107,4 +107,58 @@ assert.equal(runResult.terminal_result?.status, "succeeded")
 assert.equal(runResult.status, "succeeded")
 assert.equal(runResult.success, true)
 
+const completionSucceededRunResult = normalizeAgentTaskRunResult({
+  schema: "wp-codebox/agent-task-run/v1",
+  success: false,
+  status: "failed",
+  terminal_result: {
+    schema: "wp-codebox/agent-terminal-result/v1",
+    terminal: true,
+    status: "incomplete",
+    success: false,
+    evidence_refs: [],
+  },
+  completion_outcome: {
+    schema: "wp-codebox/sandbox-completion-outcome/v1",
+    status: "succeeded",
+    summary: "Agent sandbox produced artifacts.",
+  },
+}, { compatMode: true })
+assert.equal(completionSucceededRunResult.terminal_result?.status, "succeeded")
+assert.equal(completionSucceededRunResult.status, "succeeded")
+assert.equal(completionSucceededRunResult.success, true)
+
+const partialNoOpRunResult = normalizeAgentTaskRunResult({
+  schema: "wp-codebox/agent-task-run/v1",
+  success: false,
+  status: "failed",
+  terminal_result: {
+    schema: "wp-codebox/agent-terminal-result/v1",
+    terminal: true,
+    status: "incomplete",
+    success: false,
+    failure_classification: "incomplete",
+    evidence_refs: [],
+  },
+  agentResult: {
+    summary: "Agent sandbox completed successfully without actionable file changes.",
+  },
+  no_op: {
+    detected: true,
+    reason: "no_file_changes",
+    changed_files_count: 0,
+    patch_bytes: 0,
+  },
+  completion_outcome: {
+    schema: "wp-codebox/sandbox-completion-outcome/v1",
+    status: "partial",
+    summary: "Agent sandbox completed successfully without actionable file changes.",
+    blockers: [],
+    riskNotes: ["no_file_changes"],
+  },
+}, { compatMode: true })
+assert.equal(partialNoOpRunResult.status, "no_op")
+assert.equal(partialNoOpRunResult.success, true)
+assert.equal(partialNoOpRunResult.failure_classification, undefined)
+
 console.log("agent terminal result contract smoke passed")

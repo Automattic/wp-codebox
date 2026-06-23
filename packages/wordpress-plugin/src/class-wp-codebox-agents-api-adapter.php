@@ -165,6 +165,7 @@ final class WP_Codebox_Agents_API_Adapter {
 				'label'        => 'Agents API runtime adapter',
 				'kind'         => 'ability-adapter',
 				'capabilities' => array( 'runtime-package' ),
+				'default'      => true,
 			)
 		);
 	}
@@ -423,6 +424,11 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function run_runtime_package( array $input ): array|WP_Error {
+		if ( ! isset( $input['package'] ) && isset( $input['runtime_package'] ) ) {
+			$metadata         = is_array( $input['metadata'] ?? null ) ? $input['metadata'] : array();
+			$descriptor       = is_array( $metadata['runtime_package_descriptor'] ?? null ) ? $metadata['runtime_package_descriptor'] : array();
+			$input['package'] = ! empty( $descriptor ) ? $descriptor : array( 'slug' => (string) $input['runtime_package'] );
+		}
 		return $this->execute( self::RUN_RUNTIME_PACKAGE, $input );
 	}
 

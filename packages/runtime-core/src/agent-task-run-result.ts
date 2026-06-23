@@ -98,11 +98,16 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
   const completionOutcome = completionOutcomeRecord(result, compatMode, compatibilityDiagnostics)
   const runMetadata = objectValue(result.run_metadata)
   const patch = objectValue(agentResult.patch)
-  const terminalResult = terminalResultRecord(result, agentResult, compatMode, compatibilityDiagnostics)
+  const terminalResult = terminalResultForCompletion(
+    terminalResultRecord(result, agentResult, compatMode, compatibilityDiagnostics),
+    completionOutcome,
+  )
   const status = normalizeStatus(result, agentResult, exitStatus, terminalResult)
   const artifacts = normalizeArtifacts(result, agentResult, completionOutcome, compatMode, compatibilityDiagnostics)
   const noOp = noOpMetadata(result, agentResult)
-  const failureClassification = stringValue(result.failure_classification) || terminalResult?.failure_classification || failureClassificationForStatus(status)
+  const failureClassification = status === "succeeded" || status === "no_op"
+    ? ""
+    : stringValue(result.failure_classification) || terminalResult?.failure_classification || failureClassificationForStatus(status)
 
   return stripUndefined({
     schema: AGENT_TASK_RUN_RESULT_SCHEMA,
@@ -174,14 +179,16 @@ function agentTaskRuntimeAccess(result: Record<string, unknown>): RuntimeAccess 
 }
 
 function normalizeStatus(result: Record<string, unknown>, agentResult: Record<string, unknown>, exitStatus: number, terminalResult?: AgentTerminalResult): AgentTaskRunStatus {
+  const noOp = noOpMetadata(result, agentResult)
   if (terminalResult) {
     if (terminalResult.status === "max_turns") return "timeout"
+    if (terminalResult.status === "incomplete" && noOp.detected) return "no_op"
     if (terminalResult.status === "incomplete") return "failed"
     const terminalStatus = normalizeAgentTaskStatus({ status: terminalResult.status, success: terminalResult.success })
     if (terminalStatus === "succeeded" || terminalStatus === "failed" || terminalStatus === "no_op" || terminalStatus === "timeout" || terminalStatus === "provider_error" || terminalStatus === "unable_to_remediate") return terminalStatus
   }
 
-  if (noOpMetadata(result, agentResult).detected) return "no_op"
+  if (noOp.detected) return "no_op"
   return normalizeAgentTaskStatus({
     status: result.status,
     success: result.success,
@@ -273,11 +280,17 @@ function artifactFromAgentResult(id: string, kind: string, root: string, metadat
 }
 
 function noOpMetadata(result: Record<string, unknown>, agentResult: Record<string, unknown>): AgentTaskRunResultSummary["no_op"] {
+  const explicitNoOp = objectValue(result.no_op)
   const changedFilesCount = numberValue(objectValue(agentResult.changedFiles).count)
+    ?? numberValue(explicitNoOp.changed_files_count)
+    ?? numberValue(explicitNoOp.changedFilesCount)
   const patchBytes = numberValue(objectValue(agentResult.patch).bytes)
-  const reason = stringValue(agentResult.noOpReason) || stringValue(result.no_op_reason)
+    ?? numberValue(explicitNoOp.patch_bytes)
+    ?? numberValue(explicitNoOp.patchBytes)
+  const reason = stringValue(agentResult.noOpReason) || stringValue(result.no_op_reason) || stringValue(explicitNoOp.reason)
   const detected = result.outcome === "no_op"
     || result.no_op === true
+    || explicitNoOp.detected === true
     || (result.success === true && Boolean(reason) && changedFilesCount === 0 && patchBytes === 0)
 
   return stripUndefined({ detected, reason, changed_files_count: changedFilesCount, patch_bytes: patchBytes })
@@ -328,6 +341,21 @@ function terminalResultRecord(result: Record<string, unknown>, agentResult: Reco
     }
   }
   return undefined
+}
+
+function terminalResultForCompletion(terminalResult: AgentTerminalResult | undefined, completionOutcome: Record<string, unknown>): AgentTerminalResult | undefined {
+  if (stringValue(completionOutcome.status) !== "succeeded") return terminalResult
+  if (terminalResult?.success === true && terminalResult.status === "succeeded") return terminalResult
+  if (terminalResult && terminalResult.status !== "incomplete" && terminalResult.status !== "unknown") return terminalResult
+
+  return {
+    schema: "wp-codebox/agent-terminal-result/v1",
+    terminal: true,
+    status: "succeeded",
+    success: true,
+    source: terminalResult?.source ?? "canonical",
+    evidence_refs: terminalResult?.evidence_refs ?? [],
+  }
 }
 
 function failureClassificationForStatus(status: AgentTaskRunStatus): AgentTaskRunFailureClassification | "" {

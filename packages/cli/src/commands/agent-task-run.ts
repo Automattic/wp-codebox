@@ -161,7 +161,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const recipeSuccess = Boolean(run.success) && (!hasAgentBundle || workload.success)
     const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
     const terminalResult = terminalResultFromRun(run, agentTaskResult)
-    const completionOutcome = objectValue(run.completionOutcome) || objectValue(artifactsRecord.completionOutcome) || {}
+    const completionOutcome = objectValue(run.completionOutcome) || objectValue(run.completion_outcome) || objectValue(artifactsRecord.completionOutcome) || objectValue(artifactsRecord.completion_outcome) || {}
     const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
     const normalizedRunResult = normalizeAgentTaskRunResult({
       ...run,
