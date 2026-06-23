@@ -128,6 +128,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./browser-callback-contracts.js",
   "./browser-interaction.js",
   "./browser-probe-contract.js",
+  "./browser-playground-session-run.js",
   "./browser-result-shapes.js",
   "./browser-run-result.js",
   "./browser-review-bridge.js",
