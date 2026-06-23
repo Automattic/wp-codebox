@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { safeArtifactRelativePath } from "./artifact-paths.js"
@@ -30,6 +30,7 @@ export interface PreparedRecipeSourcePackageOptions {
   slug: string
   artifactsRoot: string
   originalSource?: string
+  sourceSubpath?: string
   packageRootName?: string
   composerInstallArgs?: string[]
 }
@@ -183,14 +184,16 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
   const packageRootName = options.packageRootName ?? "prepared-source-packages"
   const source = options.source
   const originalSource = options.originalSource || source
+  const sourceSubpath = options.sourceSubpath ? normalizeReviewerSafePath(options.sourceSubpath) : inferredSourceSubpath(source, originalSource)
   if (!source) return source
 
   if (!options.artifactsRoot) {
-    return prepareRecipeSourcePackageWithoutArtifacts(source, originalSource, options.slug)
+    return prepareRecipeSourcePackageWithoutArtifacts(source, originalSource, options.slug, sourceSubpath)
   }
 
   const preparedRoot = preparedSourceRoot(options.artifactsRoot, packageRootName)
   const preparedSource = preparedSourcePath(options.artifactsRoot, packageRootName, options.slug)
+  const preparedPluginSource = sourceSubpath ? join(preparedSource, sourceSubpath) : preparedSource
   const copySource = localSourcePath(originalSource)
   if (pathExists(copySource)) {
     if (resolve(copySource) !== resolve(preparedSource)) {
@@ -204,10 +207,103 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
     } else {
       mkdirSync(preparedSource, { recursive: true })
     }
-    return installComposerDependenciesForSourcePackageSync(preparedSource, options.slug, preparedRoot, options.composerInstallArgs)
+    const originalPluginSource = join(copySource, sourceSubpath)
+    if (!pathExists(join(preparedPluginSource, "composer.json"))) {
+      preserveExistingComposerVendor(originalPluginSource, preparedPluginSource)
+      return preparedPluginSource
+    }
+    const installedSource = installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
+    bridgePackageAutoloaderToComposerAutoload(installedSource)
+    return installedSource
   }
 
-  return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug)
+  return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug, "")
+}
+
+function preserveExistingComposerVendor(originalPluginSource: string, preparedPluginSource: string): void {
+  const originalVendor = join(originalPluginSource, "vendor")
+  const preparedVendor = join(preparedPluginSource, "vendor")
+  if (!pathExists(originalVendor)) return
+  rmSync(preparedVendor, { recursive: true, force: true })
+  mkdirSync(preparedPluginSource, { recursive: true })
+  cpSync(originalVendor, preparedVendor, { recursive: true })
+}
+
+export function bridgePackageAutoloaderToComposerAutoload(pluginSource: string): void {
+  const packageAutoloader = join(pluginSource, "vendor", "autoload_packages.php")
+  const composerAutoloader = join(pluginSource, "vendor", "autoload.php")
+  if (!pathExists(packageAutoloader) || !pathExists(composerAutoloader)) return
+
+  const bridge = "require_once __DIR__ . '/autoload.php';"
+  const contents = readFileSync(packageAutoloader, "utf8")
+  const initCall = "Autoloader::init();"
+  let bridged = contents.includes(bridge) ? contents : contents.includes(initCall) ? contents.replace(initCall, `${bridge}\n${initCall}`) : `${contents.trimEnd()}\n${bridge}\n`
+  const classmapLoader = composerInstalledPackageClassmapLoader(pluginSource)
+  if (classmapLoader && !bridged.includes("$wp_codebox_composer_package_classmap")) {
+    bridged = `${bridged.trimEnd()}\n${classmapLoader}`
+  }
+  if (bridged !== contents) {
+    writeFileSync(packageAutoloader, bridged)
+  }
+}
+
+interface ComposerInstalledPackage {
+  name: string
+  "install-path"?: string
+  autoload?: { classmap?: string | string[] }
+}
+
+function composerInstalledPackageClassmapLoader(pluginSource: string): string {
+  const installedPath = join(pluginSource, "vendor", "composer", "installed.json")
+  if (!pathExists(installedPath)) return ""
+  const installed = JSON.parse(readFileSync(installedPath, "utf8")) as unknown
+  const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
+  if (classmapPaths.length === 0 || !pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) return ""
+  return `
+$wp_codebox_composer_package_classmap = __DIR__ . '/composer/autoload_classmap.php';
+if (is_file($wp_codebox_composer_package_classmap)) {
+    spl_autoload_register(static function (string $class) use ($wp_codebox_composer_package_classmap): void {
+        static $classmap = null;
+        if (null === $classmap) {
+            $loaded_classmap = require $wp_codebox_composer_package_classmap;
+            $classmap = is_array($loaded_classmap) ? $loaded_classmap : array();
+        }
+        if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+            return;
+        }
+        require_once $classmap[$class];
+    }, true, true);
+}
+`
+}
+
+function pathIsFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile()
+  } catch {
+    return false
+  }
+}
+
+function composerInstalledPackages(installed: unknown): ComposerInstalledPackage[] {
+  if (Array.isArray(installed)) return installed.filter(isComposerInstalledPackage)
+  if (installed && typeof installed === "object" && Array.isArray((installed as { packages?: unknown }).packages)) {
+    return (installed as { packages: unknown[] }).packages.filter(isComposerInstalledPackage)
+  }
+  return []
+}
+
+function isComposerInstalledPackage(value: unknown): value is ComposerInstalledPackage {
+  return Boolean(value) && typeof value === "object" && typeof (value as { name?: unknown }).name === "string"
+}
+
+function composerInstalledPackageClassmapPaths(pkg: ComposerInstalledPackage): string[] {
+  if (typeof pkg["install-path"] !== "string") return []
+  const classmap = pkg.autoload?.classmap
+  const entries = Array.isArray(classmap) ? classmap : typeof classmap === "string" ? [classmap] : []
+  return entries
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && !isAbsolute(entry) && !entry.includes(".."))
+    .map((entry) => `${pkg["install-path"]!.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}/${entry.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}`)
 }
 
 export function composerManagedHostEnv(): Record<string, string> {
@@ -215,6 +311,7 @@ export function composerManagedHostEnv(): Record<string, string> {
   return {
     ...(home ? { HOME: home } : {}),
     ...(process.env.COMPOSER_HOME ? { COMPOSER_HOME: process.env.COMPOSER_HOME } : home ? { COMPOSER_HOME: join(home, ".composer") } : {}),
+    COMPOSER_MIRROR_PATH_REPOS: "1",
   }
 }
 
@@ -228,7 +325,7 @@ export function composerManagedHostCommandConfig(options: {
 }): ManagedHostCommandConfig {
   return {
     command: "composer",
-    args: options.args ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
+    args: options.args ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
     cwd: options.cwd,
     env: composerManagedHostEnv(),
     allowedCwdRoots: options.allowedCwdRoots,
@@ -239,26 +336,37 @@ export function composerManagedHostCommandConfig(options: {
   }
 }
 
-function prepareRecipeSourcePackageWithoutArtifacts(source: string, originalSource: string, slug: string): string {
+function prepareRecipeSourcePackageWithoutArtifacts(source: string, originalSource: string, slug: string, sourceSubpath: string): string {
   const localSource = localSourcePath(originalSource)
-  if (!pathExists(join(localSource, "composer.json"))) {
-    return pathExists(localSource) ? localSource : source
+  const pluginSource = sourceSubpath ? join(localSource, sourceSubpath) : localSource
+  if (!pathExists(join(pluginSource, "composer.json"))) {
+    return pathExists(pluginSource) ? pluginSource : source
   }
-  if (pathExists(join(localSource, "vendor", "autoload.php"))) {
-    return localSource
+  if (pathExists(join(pluginSource, "vendor", "autoload.php"))) {
+    return pluginSource
   }
   throw new Error(`Plugin ${slug} requires Composer dependencies but no artifacts directory is available for staging.`)
 }
 
+function inferredSourceSubpath(source: string, originalSource: string): string {
+  const localSource = localSourcePath(source)
+  const localOriginalSource = localSourcePath(originalSource)
+  const relativePath = relative(resolve(localOriginalSource), resolve(localSource))
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return ""
+  }
+  return normalizeReviewerSafePath(relativePath)
+}
+
 function installComposerDependenciesForSourcePackageSync(source: string, slug: string, allowedRoot: string, composerInstallArgs?: string[]): string {
-  if (!pathExists(join(source, "composer.json")) || pathExists(join(source, "vendor", "autoload.php"))) {
+  if (!pathExists(join(source, "composer.json"))) {
     return source
   }
 
   const config = composerManagedHostCommandConfig({
     cwd: source,
     allowedCwdRoots: [allowedRoot],
-    args: composerInstallArgs ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts", "--no-plugins"],
+    args: composerInstallArgs ?? ["install", "--no-dev", "--prefer-dist", "--no-interaction", "--no-progress", "--no-scripts"],
     label: `hydrate Composer source package ${slug}`,
   })
   const result = spawnSync(config.command, config.args, {

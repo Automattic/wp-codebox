@@ -30,6 +30,9 @@ const restInventory: WordPressRestRouteInventory = {
 const restSuite = restRouteInventoryToFuzzSuite(restInventory, { session: "admin" })
 assert.equal(restSuite.schema, "wp-codebox/fuzz-suite/v1")
 assert.equal(restSuite.metadata?.sourceSchema, WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA)
+assert.deepEqual(restSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:rest"], targetKinds: ["rest"] })
+assert.equal(restSuite.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
+assert.deepEqual(restSuite.coveragePlan?.summary.caseIds, ["rest-get-wp-v2-posts-0", "rest-post-wp-v2-posts-0", "rest-get-wp-v2-posts-p-id-d-0"])
 assert.equal(restSuite.cases.length, 3)
 assert.equal(restSuite.cases[0]?.target?.kind, "rest")
 assert.deepEqual(restSuite.cases[0]?.input, { method: "GET", path: "/wp/v2/posts", session: "admin" })
@@ -41,7 +44,8 @@ assert.deepEqual((restSuite.cases[2]?.metadata?.safety as Record<string, unknown
 
 const restCoveragePlan = restRouteInventoryToCoveragePlan(restInventory, { session: "admin" })
 assert.equal(restCoveragePlan.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual(restCoveragePlan.summary, { discovered: 3, generated: 3, executable: 1, skipped: 0, untested: 2 })
+assert.deepEqual({ discovered: restCoveragePlan.summary.discovered, generated: restCoveragePlan.summary.generated, executable: restCoveragePlan.summary.executable, executed: restCoveragePlan.summary.executed, skipped: restCoveragePlan.summary.skipped, untested: restCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 1, executed: 0, skipped: 0, untested: 2 })
+assert.deepEqual(restCoveragePlan.summary.targetIds, ["wordpress.rest-request"])
 assert.deepEqual(restCoveragePlan.executable[0]?.input, { method: "GET", path: "/wp/v2/posts", session: "admin" })
 assert.equal(restCoveragePlan.untested[0]?.reason?.code, "mutating_rest_method_requires_explicit_opt_in")
 assert.equal(restCoveragePlan.untested[0]?.parameterGeneration?.hook, "wordpress.rest-mutating-route-opt-in")
@@ -61,11 +65,12 @@ const adminInventory: WordPressAdminPageInventory = {
 
 const adminSuite = adminPageInventoryToFuzzSuite(adminInventory, { user: "admin" })
 assert.equal(adminSuite.target?.entrypoint, "wordpress.admin-page-load")
+assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.admin-page-load"] })
 assert.deepEqual(adminSuite.cases[0]?.input, { args: ["path=tools.php", "user=admin"] })
 assert.deepEqual(adminSuite.cases[1]?.input, { args: ["path=admin.php?page=demo-settings", "user=admin"] })
 
 const adminCoveragePlan = adminPageInventoryToCoveragePlan(adminInventory, { user: "admin" })
-assert.deepEqual(adminCoveragePlan.summary, { discovered: 3, generated: 3, executable: 2, skipped: 1, untested: 0 })
+assert.deepEqual({ discovered: adminCoveragePlan.summary.discovered, generated: adminCoveragePlan.summary.generated, executable: adminCoveragePlan.summary.executable, executed: adminCoveragePlan.summary.executed, skipped: adminCoveragePlan.summary.skipped, untested: adminCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 2, executed: 0, skipped: 1, untested: 0 })
 assert.equal(adminCoveragePlan.skipped[0]?.reason?.code, "admin_page_capability_denied")
 
 const frontendInventory: WordPressFrontendUrlInventory = {
@@ -82,11 +87,12 @@ const frontendInventory: WordPressFrontendUrlInventory = {
 
 const frontendSuite = frontendUrlInventoryToFuzzSuite(frontendInventory)
 assert.equal(frontendSuite.target?.entrypoint, "wordpress.frontend-page-load")
+assert.deepEqual(frontendSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.frontend-page-load"] })
 assert.deepEqual(frontendSuite.cases[0]?.input, { args: ["path=/hello-world/?preview=true"] })
 assert.equal((frontendSuite.cases[0]?.metadata?.safety as Record<string, unknown>).executable, true)
 
 const frontendCoveragePlan = frontendUrlInventoryToCoveragePlan(frontendInventory)
-assert.deepEqual(frontendCoveragePlan.summary, { discovered: 2, generated: 2, executable: 2, skipped: 0, untested: 0 })
+assert.deepEqual({ discovered: frontendCoveragePlan.summary.discovered, generated: frontendCoveragePlan.summary.generated, executable: frontendCoveragePlan.summary.executable, executed: frontendCoveragePlan.summary.executed, skipped: frontendCoveragePlan.summary.skipped, untested: frontendCoveragePlan.summary.untested }, { discovered: 2, generated: 2, executable: 2, executed: 0, skipped: 0, untested: 0 })
 assert.equal(frontendCoveragePlan.executable[1]?.metadata?.pattern, "^sample-page/?$")
 
 console.log("wordpress fuzz suite builders ok")

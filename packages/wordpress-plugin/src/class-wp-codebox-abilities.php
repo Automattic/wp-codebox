@@ -116,8 +116,24 @@ final class WP_Codebox_Abilities {
 		);
 	}
 
-	public static function can_hydrate_browser_blueprint_ref(): bool {
-		return is_user_logged_in() || current_user_can( 'manage_options' );
+	public static function can_hydrate_browser_blueprint_ref( mixed $request = null ): bool {
+		if ( is_user_logged_in() || current_user_can( 'manage_options' ) ) {
+			return true;
+		}
+
+		if ( ! is_object( $request ) || ! is_callable( array( $request, 'get_param' ) ) ) {
+			return false;
+		}
+
+		$ref = trim( (string) $request->get_param( 'ref' ) );
+		if ( preg_match( '/^prepared:[A-Za-z0-9_-]+:[a-f0-9]{64}$/', $ref ) ) {
+			return true;
+		}
+
+		$cache_key  = sanitize_key( (string) $request->get_param( 'cache_key' ) );
+		$input_hash = strtolower( trim( (string) $request->get_param( 'input_hash' ) ) );
+
+		return '' !== $cache_key && (bool) preg_match( '/^[a-f0-9]{64}$/', $input_hash );
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
@@ -132,13 +148,18 @@ final class WP_Codebox_Abilities {
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
 	public static function rest_browser_blueprint_ref( WP_REST_Request $request ): array|WP_Error {
-		return self::hydrate_browser_blueprint_ref(
+		$hydration = self::hydrate_browser_blueprint_ref(
 			array(
 				'ref'        => (string) $request->get_param( 'ref' ),
 				'cache_key'  => (string) $request->get_param( 'cache_key' ),
 				'input_hash' => (string) $request->get_param( 'input_hash' ),
 			)
 		);
+		if ( is_wp_error( $hydration ) ) {
+			return $hydration;
+		}
+
+		return is_array( $hydration['blueprint'] ?? null ) ? $hydration['blueprint'] : array();
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
@@ -355,7 +376,7 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::fuzz_suite_result_schema(),
 					'execute_callback'    => array( self::class, 'run_fuzz_suite' ),
 					'permission_callback' => array( self::class, 'can_run_agent_task' ),
-					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-fuzz-suite', 'runner_capabilities' => self::fuzz_suite_runner_capabilities_contract(), 'runner_capabilities_schema' => self::fuzz_runner_capabilities_schema() ),
 				)
 			);
 
@@ -501,6 +522,20 @@ final class WP_Codebox_Abilities {
 			$run_sandbox_task_fanout_ability['description'] = 'Run multiple sandbox workers with bounded host-side concurrency and parent/child artifact envelopes.';
 			$run_sandbox_task_fanout_ability['meta']        = array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/run-agent-task-fanout', 'alias_of' => 'wp-codebox/run-agent-task-fanout' );
 			wp_register_ability( 'wp-codebox/run-sandbox-task-fanout', $run_sandbox_task_fanout_ability );
+
+			wp_register_ability(
+				'wp-codebox/resolve-runtime-requirements',
+				array(
+					'label'               => 'Resolve Runtime Requirements',
+					'description'         => 'Resolve runtime/provider readiness without creating a session or invoking a runtime package.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array( 'type' => 'object' ),
+					'output_schema'       => array( 'type' => 'object' ),
+					'execute_callback'    => array( self::class, 'resolve_runtime_requirements' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => 'wp-codebox/resolve-runtime-requirements' ),
+				)
+			);
 
 			wp_register_ability(
 				'wp-codebox/run-runtime-package',

@@ -55,6 +55,8 @@ export interface AgentTaskRunInput {
   artifacts_path?: string
   wp?: string
   component_contracts?: Array<Record<string, unknown>>
+  runtime_requirements?: Record<string, unknown>
+  runtimeRequirements?: Record<string, unknown>
   verify_steps?: WorkspaceRecipe["workflow"]["after"]
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
@@ -111,6 +113,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
     `model=${stringValue(input.model)}`,
     `provider-plugin-slugs=${providerSlugs}`,
     `provider-plugin-contracts-json=${JSON.stringify(providerContracts)}`,
+    `runtime-component-contracts-json=${JSON.stringify(componentManifest.components)}`,
     `sandbox-tool-policy-json=${JSON.stringify(sandboxToolPolicy(input, taskInput))}`,
   ]
   if (stringValue(input.session_id)) {
@@ -408,19 +411,35 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
 }
 
 function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPlugin[] {
+  const runtimeRequirements = objectValue(input.runtime_requirements) || objectValue(input.runtimeRequirements)
   return [
     ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extra_plugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extraPlugins),
   ]
 }
 
 function dedupeExtraPlugins(plugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {
-  const seen = new Set<string>()
+  const seen = new Map<string, number>()
   const deduped: WorkspaceRecipeExtraPlugin[] = []
   for (const plugin of plugins) {
     const key = `${stringValue(plugin.slug) || slugFromPath(stringValue(plugin.source))}:${plugin.loadAs === "plugin" ? "plugin" : "mu-plugin"}`
-    if (seen.has(key)) continue
-    seen.add(key)
+    const existingIndex = seen.get(key)
+    if (existingIndex !== undefined) {
+      const existing = deduped[existingIndex]
+      deduped[existingIndex] = stripUndefined({
+        ...plugin,
+        ...existing,
+        activate: existing.activate === true || plugin.activate === true ? true : existing.activate ?? plugin.activate,
+        metadata: stripUndefined({
+          ...(isPlainObject(plugin.metadata) ? plugin.metadata : {}),
+          ...(isPlainObject(existing.metadata) ? existing.metadata : {}),
+        }),
+      }) as WorkspaceRecipeExtraPlugin
+      continue
+    }
+    seen.set(key, deduped.length)
     deduped.push(plugin)
   }
   return deduped
@@ -435,6 +454,9 @@ function normalizeAgentTaskExtraPlugins(value: unknown): WorkspaceRecipeExtraPlu
     if (!source) return []
     return [stripUndefined({
       source,
+      sourceRoot: stringValue(entry.sourceRoot) || undefined,
+      sourceSubpath: stringValue(entry.sourceSubpath) || undefined,
+      originalSource: stringValue(entry.originalSource) || undefined,
       slug: stringValue(entry.slug) || undefined,
       pluginFile: stringValue(entry.pluginFile) || undefined,
       activate: typeof entry.activate === "boolean" ? entry.activate : undefined,
@@ -450,9 +472,11 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   return contracts.flatMap((contract, index) => {
     const slug = slugFromPath(stringValue(contract.slug || contract.component || contract.name))
     const source = stringValue(contract.path || contract.source)
+    const sourceRoot = stringValue(contract.sourceRoot || contract.source_root)
     const originalSource = stringValue(contract.original_source || contract.originalSource || contract.original_path || contract.originalPath)
+    const sourceSubpath = stringValue(contract.sourceSubpath || contract.source_subpath)
     if (!slug || !source) return []
-    const preparedSource = prepareComponentPluginSource(source, originalSource, slug, artifactsRoot)
+    const preparedSource = prepareComponentPluginSource(sourceRoot || source, originalSource || sourceRoot, sourceSubpath, slug, artifactsRoot)
     const entrypoint = resolvePluginEntrypointContract({
       source: preparedSource,
       slug,
@@ -471,7 +495,9 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
           index,
           slug,
           requestedPath: source,
+          sourceRoot: sourceRoot || undefined,
           originalPath: originalSource || undefined,
+          sourceSubpath: sourceSubpath || undefined,
           preparedPath: preparedSource,
           pluginFile: entrypoint.pluginFile,
           pluginEntrypointFallback: entrypoint.fallback,
@@ -483,13 +509,15 @@ function componentPlugins(contracts: Array<Record<string, unknown>> | undefined,
   })
 }
 
-function prepareComponentPluginSource(source: string, originalSource: string, slug: string, artifactsRoot: string): string {
-  return prepareRecipeSourcePackageSync({ source, originalSource, slug, artifactsRoot, packageRootName: "prepared-plugins" })
+function prepareComponentPluginSource(source: string, originalSource: string, sourceSubpath: string, slug: string, artifactsRoot: string): string {
+  return prepareRecipeSourcePackageSync({ source, originalSource, sourceSubpath, slug, artifactsRoot, packageRootName: "prepared-plugins" })
 }
 
 function sandboxToolPolicy(input: AgentTaskRunInput, taskInput: TaskInput): SandboxToolPolicySnapshot {
-  const policy = objectValue(input.sandbox_tool_policy) || objectValue(taskInput.sandbox_tool_policy)
-  if (policy) {
+  const inputPolicy = objectValue(input.sandbox_tool_policy) ?? {}
+  const taskPolicy = objectValue(taskInput.sandbox_tool_policy) ?? {}
+  const policy = Object.keys(inputPolicy).length > 0 ? inputPolicy : taskPolicy
+  if (Object.keys(policy).length > 0) {
     return policy as unknown as SandboxToolPolicySnapshot
   }
   return {

@@ -115,8 +115,8 @@ final class WP_Codebox_Browser_Provider_Bridge {
 		 * Registers caller-owned policy for the generic browser provider bridge.
 		 *
 		 * Return an empty value to leave the request unhandled. Policy must include
-		 * allowed_base_urls and either authenticate_request callback or
-		 * authentication => php-ai-client.
+		 * allowed_base_urls and either authenticate_request callback or an explicit
+		 * registered authentication strategy.
 		 *
 		 * @param array<string,mixed>|null $policy   Provider bridge policy.
 		 * @param string                  $provider Provider ID.
@@ -171,7 +171,7 @@ final class WP_Codebox_Browser_Provider_Bridge {
 			array(
 				'provider'          => $provider,
 				'allowed_base_urls' => $allowed_base_urls,
-				'authentication'    => (string) ( $bridge['authentication'] ?? 'php-ai-client' ),
+				'authentication'    => (string) ( $bridge['authentication'] ?? '' ),
 				'timeout'           => $timeout > 0 ? $timeout : null,
 			),
 			static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value
@@ -336,8 +336,9 @@ final class WP_Codebox_Browser_Provider_Bridge {
 			return is_wp_error( $allowed ) ? $allowed : $authenticated;
 		}
 
-		if ( 'php-ai-client' === (string) ( $policy['authentication'] ?? '' ) ) {
-			$authenticated = self::authenticate_with_php_ai_client( $provider, $prepared );
+		$authentication = (string) ( $policy['authentication'] ?? '' );
+		if ( '' !== $authentication ) {
+			$authenticated = WP_Codebox_Browser_Provider_Auth_Strategies::authenticate( $authentication, $provider, $prepared, $request, $input );
 			if ( is_wp_error( $authenticated ) ) {
 				return $authenticated;
 			}
@@ -346,12 +347,7 @@ final class WP_Codebox_Browser_Provider_Bridge {
 			return is_wp_error( $allowed ) ? $allowed : $authenticated;
 		}
 
-		return new WP_Error( 'wp_codebox_browser_provider_bridge_authentication_missing', 'Browser provider bridge policy requires an authentication callback or php-ai-client authentication.', array( 'status' => 403, 'provider' => $provider ) );
-	}
-
-	/** @param array{url:string,method:string,headers:array<string,string>,body:string} $prepared Prepared request. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */
-	private static function authenticate_with_php_ai_client( string $provider, array $prepared ): array|WP_Error {
-		return ( new WP_Codebox_Agent_Runtime_Invoker() )->authenticate_provider_request( $provider, $prepared );
+		return new WP_Error( 'wp_codebox_browser_provider_bridge_authentication_missing', 'Browser provider bridge policy requires an authentication callback or registered authentication strategy.', array( 'status' => 403, 'provider' => $provider ) );
 	}
 
 	/** @param mixed $request Prepared request candidate. @return array{url:string,method:string,headers:array<string,string>,body:string}|WP_Error */

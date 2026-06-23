@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, dirname, join, relative, resolve } from "node:path"
-import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { compileSourcePackage, composerManagedHostCommandConfig, composerManagedHostEnv, normalizeReviewerSafePath, sourcePackagePathAllowed, type WorkspaceRecipeSourcePackage } from "@automattic/wp-codebox-core"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace, WorkspaceRecipeWorkspacePreload, WorkspaceRecipeWorkspacePreloadRepository } from "@automattic/wp-codebox-core"
 import { executeManagedHostCommand, resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { collectPreparedSourceCleanupPaths, DEFAULT_PREPARED_SOURCE_EXCLUDE_NAMES, localPreparedSourceProvenance, prepareLocalSourceStageSync, SANDBOX_WORKSPACE_ROOT, type PreparedSourceProvenance } from "@automattic/wp-codebox-core/internals"
@@ -270,10 +270,13 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
   const plugins: PreparedExtraPlugin[] = []
   for (const plugin of recipeExtraPlugins(recipe)) {
     const slug = recipeExtraPluginSlug(plugin)
-    const resolved = await prepareRecipeSource(plugin.source, recipeDirectory, slug, plugin.sha256)
+    const sourceRootRef = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    const resolved = await prepareRecipeSource(sourceRootRef, recipeDirectory, slug, plugin.sha256)
+    const pluginResolved = sourceSubpath ? { ...resolved, source: join(resolved.source, sourceSubpath) } : resolved
     const pluginFile = await resolveRecipeExtraPluginFile(plugin, recipeDirectory)
     const loadAs = plugin.loadAs ?? "plugin"
-    const prepared = await prepareComposerAutoloadForPlugin(resolved, slug, plugin.source)
+    const prepared = await prepareComposerAutoloadForPlugin(pluginResolved, slug, plugin.source, resolved.source)
     await assertPreparedPluginFileExists(prepared.source, pluginFile.slice(slug.length + 1), plugin.source)
     plugins.push({
       source: prepared.source,
@@ -284,14 +287,17 @@ export async function prepareRecipeExtraPlugins(recipe: WorkspaceRecipe, recipeD
       loadAs,
       cleanupPaths: prepared.cleanupPaths,
       provenance: prepared.provenance,
-      metadata: plugin.metadata ?? {},
+      metadata: {
+        ...(plugin.metadata ?? {}),
+        ...(sourceSubpath ? { sourceRoot: sourceRootRef, sourceSubpath } : {}),
+      },
     })
   }
 
   return plugins
 }
 
-async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string): Promise<PreparedExternalSource> {
+async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource, slug: string, sourceRef: string, copyRoot = prepared.source): Promise<PreparedExternalSource> {
   if (prepared.provenance.kind !== "local") {
     return prepared
   }
@@ -315,8 +321,10 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
   }
 
   const stagingRoot = await mkdtemp(join(tmpdir(), `wp-codebox-plugin-${slug}-`))
-  const stagedSource = join(stagingRoot, slug)
-  await cp(prepared.source, stagedSource, { recursive: true })
+  const stagedRoot = join(stagingRoot, slug)
+  await cp(copyRoot, stagedRoot, { recursive: true })
+  const sourceSubpath = relative(copyRoot, prepared.source).replace(/\\/g, "/")
+  const stagedSource = sourceSubpath ? join(stagedRoot, sourceSubpath) : stagedRoot
   try {
     await executeManagedHostCommand({
       ...composerManagedHostCommandConfig({
@@ -326,6 +334,7 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       }),
       cwd: stagedSource,
     })
+    await writeComposerInstalledPackageAutoloader(stagedSource)
   } catch (error) {
     await rm(stagingRoot, { recursive: true, force: true })
     const detail = error instanceof Error && "stderr" in error && typeof error.stderr === "string" && error.stderr.trim() ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
@@ -341,6 +350,75 @@ async function prepareComposerAutoloadForPlugin(prepared: PreparedExternalSource
       localPathCategory: "temporary-composer-autoload",
     },
   }
+}
+
+async function writeComposerInstalledPackageAutoloader(pluginSource: string): Promise<void> {
+  const packageAutoloader = join(pluginSource, "vendor", "autoload_packages.php")
+  const existingPackageAutoloader = await pathIsFile(packageAutoloader)
+  if (await pathIsFile(packageAutoloader)) {
+    await bridgePackageAutoloaderToComposerAutoload(packageAutoloader)
+  }
+
+  const installedPath = join(pluginSource, "vendor", "composer", "installed.json")
+  if (!await pathIsFile(installedPath)) {
+    return
+  }
+  const installed = JSON.parse(await readFile(installedPath, "utf8")) as unknown
+  const classmapPaths = composerInstalledPackages(installed).flatMap((pkg) => composerInstalledPackageClassmapPaths(pkg))
+  if (classmapPaths.length === 0 || !await pathIsFile(join(pluginSource, "vendor", "composer", "autoload_classmap.php"))) {
+    return
+  }
+
+  const classmapLoader = `
+$wp_codebox_composer_package_classmap = __DIR__ . '/composer/autoload_classmap.php';
+if (is_file($wp_codebox_composer_package_classmap)) {
+    spl_autoload_register(static function (string $class) use ($wp_codebox_composer_package_classmap): void {
+        static $classmap = null;
+        if (null === $classmap) {
+            $loaded_classmap = require $wp_codebox_composer_package_classmap;
+            $classmap = is_array($loaded_classmap) ? $loaded_classmap : array();
+        }
+        if (!is_array($classmap) || !isset($classmap[$class]) || !is_file($classmap[$class])) {
+            return;
+        }
+        require_once $classmap[$class];
+    }, true, true);
+}
+`
+  if (existingPackageAutoloader) {
+    const contents = await readFile(packageAutoloader, "utf8")
+    if (!contents.includes("$wp_codebox_composer_package_classmap")) {
+      await writeFile(packageAutoloader, `${contents.trimEnd()}\n${classmapLoader}`)
+    }
+    return
+  }
+
+  await writeFile(packageAutoloader, `<?php
+defined( 'ABSPATH' ) || exit;
+${classmapLoader}
+`)
+}
+
+async function bridgePackageAutoloaderToComposerAutoload(packageAutoloader: string): Promise<void> {
+  const bridge = "require_once __DIR__ . '/autoload.php';"
+  const contents = await readFile(packageAutoloader, "utf8")
+  if (contents.includes(bridge)) {
+    return
+  }
+  const initCall = "Autoloader::init();"
+  const bridged = contents.includes(initCall) ? contents.replace(initCall, `${bridge}\n${initCall}`) : `${contents.trimEnd()}\n${bridge}\n`
+  await writeFile(packageAutoloader, bridged)
+}
+
+function composerInstalledPackageClassmapPaths(pkg: ComposerInstalledPackage): string[] {
+  if (typeof pkg["install-path"] !== "string") {
+    return []
+  }
+  const classmap = pkg.autoload?.classmap
+  const entries = Array.isArray(classmap) ? classmap : typeof classmap === "string" ? [classmap] : []
+  return entries
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && !isAbsolute(entry) && !entry.includes(".."))
+    .map((entry) => `${pkg["install-path"]!.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}/${entry.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "")}`)
 }
 
 export async function prepareRecipeDependencyOverlays(recipe: WorkspaceRecipe, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[]): Promise<PreparedDependencyOverlay[]> {
@@ -905,7 +983,8 @@ function escapeRegExp(value: string): string {
 
 interface ComposerInstalledPackage {
   name: string
-  autoload?: { "psr-4"?: Record<string, string | string[]> }
+  "install-path"?: string
+  autoload?: { "psr-4"?: Record<string, string | string[]>; classmap?: string | string[] }
 }
 
 function composerInstalledPackages(installed: unknown): ComposerInstalledPackage[] {
@@ -1272,6 +1351,37 @@ export function recipeExtraPluginSlug(plugin: WorkspaceRecipeExtraPlugin): strin
   return basename(resolve(plugin.source))
 }
 
+export function recipeExtraPluginSourceRoot(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory = "."): string {
+  if (plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
+    return plugin.sourceRoot
+  }
+
+  return plugin.originalSource ?? plugin.source
+}
+
+export function recipeExtraPluginSourceSubpath(plugin: WorkspaceRecipeExtraPlugin, recipeDirectory: string): string {
+  if (plugin.sourceSubpath && plugin.sourceRoot && recipeExtraPluginSourceRootContainsSource(plugin, plugin.sourceRoot, recipeDirectory)) {
+    return normalizeReviewerSafePath(plugin.sourceSubpath)
+  }
+
+  const sourceRoot = recipeExtraPluginSourceRoot(plugin, recipeDirectory)
+  if (sourceRoot === plugin.source) {
+    return ""
+  }
+
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return ""
+  }
+
+  return normalizeReviewerSafePath(relativePath)
+}
+
+function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraPlugin, sourceRoot: string, recipeDirectory: string): boolean {
+  const relativePath = relative(resolve(recipeDirectory, sourceRoot), resolve(recipeDirectory, plugin.source))
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute(relativePath)
+}
+
 export function recipeExtraPluginFile(plugin: WorkspaceRecipeExtraPlugin): string {
   const slug = recipeExtraPluginSlug(plugin)
   return plugin.pluginFile ?? `${slug}/${slug}.php`
@@ -1305,7 +1415,9 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
 
   const source = recipeSource(plugin.source, plugin.sha256)
   if (source.type === "local") {
-    const pluginSource = resolve(recipeDirectory, plugin.source)
+    const sourceRoot = resolve(recipeDirectory, recipeExtraPluginSourceRoot(plugin, recipeDirectory))
+    const sourceSubpath = recipeExtraPluginSourceSubpath(plugin, recipeDirectory)
+    const pluginSource = sourceSubpath ? join(sourceRoot, sourceSubpath) : resolve(recipeDirectory, plugin.source)
     return resolvePluginEntrypointContract({ source: pluginSource, slug, loadAs: plugin.loadAs }).pluginFile
   }
 
@@ -1364,4 +1476,51 @@ if (false === file_put_contents($loader, implode("\\n", $lines) . "\\n")) {
     throw new RuntimeException('Could not write WP Codebox runtime mu-plugin loader.');
 }
 echo wp_json_encode(array('command' => 'install-mu-plugins', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtraPlugin[]): string | null {
+  const plugins = extraPlugins
+    .filter((plugin) => plugin.loadAs === "plugin")
+    .map((plugin) => plugin.pluginFile)
+
+  if (plugins.length === 0) {
+    return null
+  }
+
+  return `$plugins = ${JSON.stringify(plugins)};
+if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
+    throw new RuntimeException('Could not create mu-plugins directory.');
+}
+$loader = WPMU_PLUGIN_DIR . '/wp-codebox-composer-autoloaders.php';
+$lines = array(
+    '<?php',
+    '/**',
+    ' * Plugin Name: WP Codebox Composer Autoloaders',
+    ' * Description: Preloads Composer autoloaders for mounted WP Codebox plugins.',
+    ' */',
+    '',
+    "defined( 'ABSPATH' ) || exit;",
+    '',
+);
+foreach ($plugins as $plugin) {
+    if ('' === $plugin || str_starts_with($plugin, '/') || str_contains($plugin, '..') || !str_ends_with($plugin, '.php')) {
+        throw new RuntimeException('Unsafe WP Codebox Composer autoloader plugin entry.');
+    }
+    $plugin_dir = dirname($plugin);
+    if ('.' === $plugin_dir || '' === $plugin_dir) {
+        throw new RuntimeException('WP Codebox Composer autoloader plugin entry must include a directory.');
+    }
+    $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+    if (is_file($autoload)) {
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
+    }
+    $package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
+    if (is_file($package_autoload)) {
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload_packages.php';";
+    }
+}
+if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {
+    throw new RuntimeException('Could not write WP Codebox Composer autoloader loader.');
+}
+echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }

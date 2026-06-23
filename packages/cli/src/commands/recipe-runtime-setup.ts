@@ -1,8 +1,8 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { phpRuntimeComponentLifecycleReplayFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
-import { installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
@@ -169,14 +169,19 @@ export async function applyRecipeRuntimeSetup(args: {
 
   const muPluginInstallCode = installMuPluginsCode(extraPlugins)
   if (muPluginInstallCode) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2, "extra-plugin.install-mu-loader"))
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(muPluginInstallCode) }), "setup", -2, "extra-plugin.install-mu-loader"))
+  }
+
+  const composerAutoloaderInstallCode = installPluginComposerAutoloadersCode(extraPlugins)
+  if (composerAutoloaderInstallCode) {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(composerAutoloaderInstallCode) }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
   }
 
   const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
   if (activatedPlugins.length > 0) {
     const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
       for (const plugin of activatedPlugins) {
-        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${activateExtraPluginCode(plugin.pluginFile)}`] }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
+        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(activateExtraPluginCode(plugin)) }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
         interruption?.throwIfInterrupted()
       }
       return await activePlugins(runtime)
@@ -285,10 +290,14 @@ async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: Wo
 async function activePlugins(runtime: Runtime): Promise<string[]> {
   const execution = await runtime.execute({
     command: "wordpress.run-php",
-    args: ["code=echo wp_json_encode(array_values((array) get_option('active_plugins', array())));"],
+    args: setupPhpArgs("echo wp_json_encode(array_values((array) get_option('active_plugins', array())));"),
   })
   const parsed = JSON.parse(execution.stdout.trim() || "[]") as unknown
   return Array.isArray(parsed) ? parsed.filter((plugin): plugin is string => typeof plugin === "string") : []
+}
+
+function setupPhpArgs(code: string): string[] {
+  return ["recipe-active-plugins=none", `code=${code}`]
 }
 
 function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<string, unknown> {
@@ -385,10 +394,48 @@ function shouldCopyInputMountBaselineEntry(sourceRoot: string, entry: string): b
   return firstSegment !== ".git" && firstSegment !== "node_modules"
 }
 
-function activateExtraPluginCode(pluginFile: string): string {
-  return `${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")}
-$plugin_file = ${JSON.stringify(pluginFile)};
+function activateExtraPluginCode(plugin: PreparedExtraPlugin): string {
+  const pluginMetadata = {
+    slug: plugin.slug,
+    pluginFile: plugin.pluginFile,
+    target: plugin.target,
+  }
+  const encodedPluginMetadata = Buffer.from(JSON.stringify(pluginMetadata), "utf8").toString("base64")
+  return `${phpRuntimeRecipePluginPreloadFunction("wp_codebox_activate_plugin")}
+$plugin = json_decode(base64_decode('${encodedPluginMetadata}'), true);
+if (!is_array($plugin)) {
+    throw new RuntimeException('Could not decode recipe plugin activation metadata.');
+}
+$plugin_file = ${JSON.stringify(plugin.pluginFile)};
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+register_shutdown_function(static function () use ($plugin, $plugin_file): void {
+    $fatal = error_get_last();
+    if (!is_array($fatal) || !in_array($fatal['type'] ?? 0, array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR), true)) {
+        return;
+    }
+    $diagnostic = wp_codebox_activate_plugin_recipe_plugin_preload_diagnostic($plugin, 'activation-recipe-plugin', isset($fatal['message']) ? (string) $fatal['message'] : '');
+    $message = $diagnostic['error'];
+    if (preg_match('/Class "([^"]+)" not found/', $message, $matches)) {
+        $diagnostic['missing_class'] = $matches[1];
+        $classmap = $diagnostic['classmap']['path'];
+        if (is_string($classmap) && is_file($classmap)) {
+            $classmap_data = include $classmap;
+            if (is_array($classmap_data) && isset($classmap_data[$diagnostic['missing_class']])) {
+                $diagnostic['classmap']['entry'] = (string) $classmap_data[$diagnostic['missing_class']];
+                $diagnostic['classmap']['entry_exists'] = is_file($diagnostic['classmap']['entry']);
+            }
+        }
+        $diagnostic['class_exists'] = array(
+            'without_autoload' => class_exists($diagnostic['missing_class'], false),
+            'with_autoload' => class_exists($diagnostic['missing_class'], true),
+        );
+    }
+    echo "\nWP_CODEBOX_PLUGIN_PRELOAD_DIAGNOSTIC:" . wp_json_encode(array(
+        ...$diagnostic,
+        'fatal_message' => $message,
+    ), JSON_UNESCAPED_SLASHES) . "\n";
+});
+wp_codebox_activate_plugin_preload_recipe_plugin($plugin, false, 'activation-recipe-plugin', 'recipe-runtime-setup activate_plugin');
 if (is_plugin_active($plugin_file)) {
     deactivate_plugins($plugin_file, true, false);
 }

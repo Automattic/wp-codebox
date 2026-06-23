@@ -1,7 +1,8 @@
 import { stripUndefined } from "./object-utils.js"
-import { fuzzSuiteResultEnvelope, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
+import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
+import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 
 export interface FuzzSuiteCommandExecutor {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
@@ -10,9 +11,23 @@ export interface FuzzSuiteCommandExecutor {
 export interface FuzzSuiteRunOptions {
   executor?: FuzzSuiteCommandExecutor | ((spec: ExecutionSpec) => Promise<ExecutionResult>)
   runtimeActionExecutor?: FuzzSuiteRuntimeActionExecutor | ((input: FuzzSuiteRuntimeActionExecutionInput) => Promise<RuntimeActionObservation>)
+  resetExecutor?: FuzzSuiteResetExecutor | ((input: FuzzSuiteResetExecutionInput) => Promise<FuzzSuiteCaseResetResult>)
   targetAdapters?: FuzzSuiteTargetAdapterRegistry | readonly FuzzSuiteTargetAdapter[]
   supportedTargetKinds?: readonly string[]
+  runnerCapabilities?: FuzzSuiteRunnerCapabilities | readonly string[]
+  requireCoverage?: boolean
   metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteResetExecutionInput {
+  suite: FuzzSuiteContract
+  case: FuzzSuiteCase
+  caseIndex: number
+  policy: FuzzSuiteResetPolicy
+}
+
+export interface FuzzSuiteResetExecutor {
+  resetFuzzSuiteCase(input: FuzzSuiteResetExecutionInput): Promise<FuzzSuiteCaseResetResult>
 }
 
 export interface FuzzSuiteRuntimeActionExecutionInput {
@@ -83,23 +98,60 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
   const diagnostics: FuzzSuiteDiagnostic[] = []
   const execute = normalizeFuzzSuiteExecutor(options.executor)
   const executeRuntimeAction = normalizeFuzzSuiteRuntimeActionExecutor(options.runtimeActionExecutor)
+  const executeReset = normalizeFuzzSuiteResetExecutor(options.resetExecutor)
   const adapterRegistry = normalizeFuzzSuiteTargetAdapterRegistry(options.targetAdapters)
-  const supportedTargetKinds = new Set(options.supportedTargetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
+  const runnerCapabilities = normalizeFuzzSuiteRunnerCapabilities(options.runnerCapabilities)
+  const supportedTargetKinds = new Set(options.supportedTargetKinds ?? runnerCapabilities.targetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
+  const missingCapabilities = missingRequiredFuzzSuiteCapabilities(suite, runnerCapabilities)
+
+  if (options.requireCoverage && missingCapabilities.length > 0) {
+    const diagnostic: FuzzSuiteDiagnostic = {
+      severity: "error",
+      code: "fuzz_suite_required_runner_capabilities_unsupported",
+      message: `Fuzz suite ${suite.id} requires runner capabilities that are not available: ${missingCapabilities.join(", ")}.`,
+      metadata: { requiredCapabilities: fuzzSuiteRequiredRunnerCapabilities(suite), availableCapabilities: runnerCapabilities.capabilities, missingCapabilities, runnerMode: runnerCapabilities.mode },
+    }
+    return fuzzSuiteResultEnvelope({
+      suite,
+      cases: suite.cases.map((fuzzCase) => ({ id: fuzzCase.id, status: "skipped", success: false, target: fuzzCase.target ?? suite.target, skipReason: diagnostic.code, diagnostics: [diagnostic] })),
+      diagnostics: [diagnostic],
+      metadata: stripUndefined({ ...options.metadata, sourceSchema: suite.schema, runner: "wp-codebox/fuzz-suite-runner/v1", runnerCapabilities: fuzzRunnerCapabilitiesContract(runnerCapabilities, suite) }),
+    })
+  }
 
   for (const [index, fuzzCase] of suite.cases.entries()) {
+    const reset = await executeFuzzSuiteCaseReset({ suite, case: fuzzCase, caseIndex: index, executeReset })
+    if (reset.status === "failed" || reset.status === "unsupported") {
+      const resetDiagnostics = reset.diagnostics ?? []
+      diagnostics.push(...resetDiagnostics)
+      cases.push({
+        id: fuzzCase.id,
+        status: "error",
+        success: false,
+        target: fuzzCase.target ?? suite.target,
+        reset,
+        diagnostics: resetDiagnostics,
+        artifactRefs: reset.artifactRefs,
+        metadata: stripUndefined({ resetPolicy: reset.metadata }),
+      })
+      continue
+    }
+
     const plan = planFuzzSuiteCaseExecutionSpec({ suite, case: fuzzCase, caseIndex: index, targetAdapters: adapterRegistry, supportedTargetKinds: [...supportedTargetKinds] })
     const target = plan.target
     const replayMetadata = plan.replayMetadata
     if (plan.status === "unsupported" || !plan.spec) {
       const planDiagnostics = plan.diagnostics ?? []
-      diagnostics.push(...planDiagnostics)
+      const caseDiagnostics = requiredCoverageDiagnostics(options.requireCoverage, suite, fuzzCase, planDiagnostics)
+      diagnostics.push(...caseDiagnostics)
       cases.push({
         id: fuzzCase.id,
         status: "skipped",
         success: false,
         target,
+        reset,
         skipReason: fuzzSuiteSkipReason(planDiagnostics),
-        diagnostics: planDiagnostics,
+        diagnostics: caseDiagnostics,
         metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }),
       })
       continue
@@ -115,6 +167,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           status: "skipped",
           success: false,
           target,
+          reset,
           skipReason: diagnostic.code,
           diagnostics: [diagnostic],
           metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action" } }),
@@ -131,6 +184,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           status: "passed",
           success: true,
           target,
+          reset,
           diagnostics: [],
           artifactRefs: fuzzSuiteRuntimeActionArtifactRefs(observation),
           metadata: stripUndefined({
@@ -161,6 +215,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           status: "error",
           success: false,
           target,
+          reset,
           diagnostics: [diagnostic],
           metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" } }),
         })
@@ -176,14 +231,16 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         target,
         message: `No executor was provided for fuzz suite case ${fuzzCase.id}.`,
       }
-      diagnostics.push(diagnostic)
+      const caseDiagnostics = requiredCoverageDiagnostics(options.requireCoverage, suite, fuzzCase, [diagnostic])
+      diagnostics.push(...caseDiagnostics)
       cases.push({
         id: fuzzCase.id,
         status: "skipped",
         success: false,
         target,
+        reset,
         skipReason: diagnostic.code,
-        diagnostics: [diagnostic],
+        diagnostics: caseDiagnostics,
         metadata: stripUndefined({ replay: replayMetadata }),
       })
       continue
@@ -207,6 +264,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         status,
         success: status === "passed",
         target,
+        reset,
         diagnostics: caseDiagnostics,
         artifactRefs: fuzzSuiteExecutionArtifactRefs(execution),
         metadata: stripUndefined({
@@ -239,6 +297,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         status: "error",
         success: false,
         target,
+        reset,
         diagnostics: [diagnostic],
         metadata: stripUndefined({ replay: replayMetadata }),
       })
@@ -253,8 +312,68 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       ...options.metadata,
       sourceSchema: suite.schema,
       runner: "wp-codebox/fuzz-suite-runner/v1",
+      runnerCapabilities: fuzzRunnerCapabilitiesContract(runnerCapabilities, suite),
     }),
   })
+}
+
+function normalizeFuzzSuiteResetExecutor(executor: FuzzSuiteRunOptions["resetExecutor"]): ((input: FuzzSuiteResetExecutionInput) => Promise<FuzzSuiteCaseResetResult>) | undefined {
+  if (!executor) {
+    return undefined
+  }
+  if (typeof executor === "function") {
+    return executor
+  }
+  return (input) => executor.resetFuzzSuiteCase(input)
+}
+
+async function executeFuzzSuiteCaseReset(input: {
+  suite: FuzzSuiteContract
+  case: FuzzSuiteCase
+  caseIndex: number
+  executeReset?: (input: FuzzSuiteResetExecutionInput) => Promise<FuzzSuiteCaseResetResult>
+}): Promise<FuzzSuiteCaseResetResult> {
+  const rawPolicy = input.case.resetPolicy ?? input.case.reset_policy ?? input.suite.resetPolicy ?? input.suite.reset_policy
+  const policy = fuzzSuiteCaseResetPolicy(input.suite, input.case)
+  const validationDiagnostics = fuzzSuiteResetPolicyDiagnostics(rawPolicy, input.case.id)
+  if (validationDiagnostics.length > 0) {
+    return { mode: policy.mode, status: "failed", diagnostics: validationDiagnostics }
+  }
+  if (policy.mode === "none") {
+    return { mode: "none", status: "not-required" }
+  }
+  if (!input.executeReset) {
+    return {
+      mode: policy.mode,
+      status: "unsupported",
+      checkpointName: policy.checkpointName ?? policy.checkpoint_name,
+      snapshotRef: policy.snapshotRef ?? policy.snapshot_ref,
+      fixtureRefs: policy.fixtureRefs ?? policy.fixture_refs,
+      diagnostics: [{
+        severity: "error",
+        code: "fuzz_suite_reset_executor_unavailable",
+        caseId: input.case.id,
+        message: `Fuzz suite case ${input.case.id} requires reset policy ${policy.mode}, but no reset executor was provided.`,
+      }],
+    }
+  }
+  try {
+    return await input.executeReset({ suite: input.suite, case: input.case, caseIndex: input.caseIndex, policy })
+  } catch (error) {
+    return {
+      mode: policy.mode,
+      status: "failed",
+      checkpointName: policy.checkpointName ?? policy.checkpoint_name,
+      snapshotRef: policy.snapshotRef ?? policy.snapshot_ref,
+      fixtureRefs: policy.fixtureRefs ?? policy.fixture_refs,
+      diagnostics: [{
+        severity: "error",
+        code: "fuzz_suite_reset_execution_error",
+        caseId: input.case.id,
+        message: error instanceof Error ? error.message : String(error),
+      }],
+    }
+  }
 }
 
 export function planFuzzSuiteCaseExecutionSpec(input: FuzzSuiteCaseExecutionSpecPlanInput): FuzzSuiteCaseExecutionSpecPlan {
@@ -509,6 +628,27 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "crud_operation") {
+        try {
+          const operation = normalizeWordPressCrudOperation({ schema: WORDPRESS_CRUD_OPERATION_SCHEMA, ...input.payload })
+          return {
+            status: "supported",
+            spec: stripUndefined({
+              command: "wordpress.crud-operation",
+              args: [`operation-json=${JSON.stringify(operation)}`],
+              timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+            }) as ExecutionSpec,
+            metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.crud-operation" },
+          }
+        } catch (error) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, error instanceof Error ? error.message : String(error), { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+      }
+
+      if (input.payload.type === "wordpress_crud_operation") {
+        return unsupportedTargetAdapterResolution(fuzzCase, target, "Runtime-action type wordpress_crud_operation has been renamed to crud_operation.", { adapterKind: "runtime-action", actionType: input.payload.type })
+      }
+
       if (input.payload.type === "browser") {
         return {
           status: "supported",
@@ -608,6 +748,38 @@ function unsupportedInputAdapterResolution(fuzzCase: FuzzSuiteCase, target: Fuzz
 
 function fuzzSuiteSkipReason(diagnostics: readonly FuzzSuiteDiagnostic[]): string | undefined {
   return diagnostics[0]?.code ?? diagnostics[0]?.message
+}
+
+function normalizeFuzzSuiteRunnerCapabilities(input: FuzzSuiteRunOptions["runnerCapabilities"]): FuzzSuiteRunnerCapabilities {
+  if (!input) {
+    return RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES
+  }
+  if (Array.isArray(input)) {
+    return { schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA, mode: "runtime-backed", capabilities: [...input], targetKinds: DEFAULT_SUPPORTED_TARGET_KINDS, unsupportedRequiredCapabilities: [] }
+  }
+  return input as FuzzSuiteRunnerCapabilities
+}
+
+function missingRequiredFuzzSuiteCapabilities(suite: FuzzSuiteContract, runnerCapabilities: FuzzSuiteRunnerCapabilities): string[] {
+  return unsupportedRequiredFuzzRunnerCapabilities(suite, runnerCapabilities)
+}
+
+function requiredCoverageDiagnostics(requireCoverage: boolean | undefined, suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase, diagnostics: readonly FuzzSuiteDiagnostic[]): FuzzSuiteDiagnostic[] {
+  if (!requireCoverage) {
+    return [...diagnostics]
+  }
+  const unsupported = diagnostics.find((diagnostic) => diagnostic.code === "fuzz_suite_case_unsupported" || diagnostic.code === "fuzz_suite_target_adapter_unsupported" || diagnostic.code === "fuzz_suite_executor_unavailable")
+  if (!unsupported) {
+    return [...diagnostics]
+  }
+  return [...diagnostics, {
+    severity: "error",
+    code: "fuzz_suite_required_coverage_unsupported",
+    caseId: fuzzCase.id,
+    target: fuzzCase.target ?? suite.target,
+    message: `Fuzz suite ${suite.id} requires coverage for case ${fuzzCase.id}, but the selected runner skipped an unsupported target.`,
+    metadata: { skippedCode: unsupported.code },
+  }]
 }
 
 function normalizeFuzzSuiteCaseExecutionInput(input: unknown): { valid: true; value: FuzzSuiteCaseExecutionInput } | { valid: false } {

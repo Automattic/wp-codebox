@@ -147,7 +147,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
     return {
       command: "wordpress.run-php",
       args: [
-        `code=${agentSandboxRunCode(task, body, providerPluginContracts(args))}`,
+        `code=${agentSandboxRunCode(task, body, providerPluginContracts(args), runtimeComponentContracts(args))}`,
         "wp-cli-bridge=1",
         ...commandDiagnosticsCaptureArgs(step.diagnostics),
       ],
@@ -604,6 +604,18 @@ function providerPluginContracts(args: string[]): Array<{ slug: string; pluginFi
       .map((plugin) => plugin as { slug: string; pluginFile?: string; loadAs?: ComponentLoadMode })
   }
   return providerPluginSlugs(args).map((slug) => ({ slug }))
+}
+
+function runtimeComponentContracts(args: string[]): Array<{ slug: string; pluginFile?: string; loadAs?: ComponentLoadMode }> {
+  const explicit = commandArgValue(args, "runtime-component-contracts-json")
+  if (!explicit) {
+    return []
+  }
+
+  const parsed = parseCommandJsonArray(explicit, "runtime-component-contracts-json")
+  return parsed
+    .filter((plugin) => plugin && typeof plugin === "object" && !Array.isArray(plugin))
+    .map((plugin) => plugin as { slug: string; pluginFile?: string; loadAs?: ComponentLoadMode })
 }
 
 function pluginTarget(slug: string, loadAs: ComponentLoadMode): string {

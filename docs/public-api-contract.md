@@ -25,6 +25,8 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/run-results`: task, command, browser, artifact,
   recipe, and fuzz result DTO helpers for orchestrators that need result shapes
   without importing the broad root or full public facade.
+- `@automattic/wp-codebox-core/php-snippets`: PHP snippet helpers used by
+  runtime backend packages that need to compose Codebox lifecycle/preload PHP.
 - `@automattic/wp-codebox-core/recipe-builders`: typed recipe construction
   helpers.
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
@@ -79,6 +81,23 @@ ability runs safe in-process `rest`, same-site `http`, and WordPress `ability`
 targets directly. Targets that require the runtime command, browser, editor, or
 page-load executors return `status: "skipped"`, a case-level `skipReason`, and a
 warning diagnostic rather than silently passing without exercising the target.
+Public suite builders declare `metadata.requiredRunnerCapabilities` so callers
+can choose between PHP in-process mode and runtime-backed mode before execution.
+The public core exports `PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES` and
+`RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` for readiness checks. Runtime-backed
+mode supports `runtime`, browser/editor/page-load action targets, and the
+`crud_operation` runtime action mapped to `wordpress.crud-operation`. When a
+caller requests required coverage, pass `requireCoverage: true`; unsupported
+required capabilities fail closed with `status: "error"` instead of looking like a
+successful structured skip.
+
+TypeScript callers running against a contained WordPress runtime episode should use
+`executeWordPressFuzzSuite()` from `@automattic/wp-codebox-playground/public`.
+That helper wires the public fuzz suite contract to the episode command path,
+runtime-action executor, and `RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` so
+orchestrators can distinguish runtime-backed coverage from the WordPress plugin's
+safe PHP in-process mode. Use `createWordPressFuzzSuiteCommandExecutor()` only
+when composing a custom fuzz runner around an existing `RuntimeEpisode`.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`
@@ -99,7 +118,7 @@ ability names, schemas, and facades to callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/public`, `./core/contracts`, `./core/artifacts`, `./core/run-results`,
-`./recipe-builders`, `./run-results`, `./agent-task-recipe`,
+`./core/php-snippets`, `./recipe-builders`, `./run-results`, `./agent-task-recipe`,
 `./runtime-presets`, `./playground/public`, and `./cli/recipe-secret-env` for
 local consumers in this repo. It intentionally does not mirror the monorepo-only
 `./internals` helper entrypoint.
@@ -161,12 +180,14 @@ The stable public surface is grouped by lifecycle area rather than by product:
   timing placeholders, network counts, and browser/admin metric placeholders.
 - **WordPress page-load coverage:** `wordpress.admin-page-load` and
   `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
-  with status, target, resolved admin screen or frontend queried-object identity
-  where WordPress exposes it, redirects, notices/errors, optional query/performance
-  observations, and a JSON artifact ref. These commands intentionally use a light
-  in-process WordPress load path; browser-heavy probes remain available through
-  browser commands and `openWordPressAdminPage()` when a caller explicitly needs
-  DOM, screenshot, console, or network evidence.
+  with `mode: "simulated"`, status, target, resolved admin screen or frontend
+  queried-object identity where WordPress exposes it, redirects, notices/errors,
+  optional query/performance observations, and a JSON artifact ref. These commands
+  intentionally use a light in-process WordPress load path. `wordpress.server-page-load`
+  returns the same result schema with `mode: "server-http"` for preview-server HTTP
+  requests without browser execution. `wordpress.browser-page-load` returns it with
+  `mode: "browser"` when a caller explicitly needs DOM, screenshot, console, or
+  network evidence.
 - **WordPress admin discovery:** `wordpress.runtime-discovery` and
   `wordpress.admin-page-inventory` expose admin pages with canonical admin URLs,
   declared capabilities, current-user access checks, and current-user role context
@@ -178,7 +199,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
   `command`, `http`, `rest`, `runtime`, and `runtime-action`. Runtime actions use
   the same public action types as `@automattic/wp-codebox-playground/public` where
-  a runner can execute them directly; command-backed runners map safe
+  a runner can execute them directly. Runtime-backed TypeScript callers can
+  pass an existing `RuntimeEpisode` to `executeWordPressFuzzSuite()` from
+  `@automattic/wp-codebox-playground/public` for runtime-backed coverage;
+  PHP/plugin callers continue to advertise `php-in-process` capabilities for the
+  safe in-process path. Command-backed runners map safe
   `rest_request` actions to `wordpress.rest-request` and `wp_cli` actions to
   `wordpress.wp-cli`, while episode-only/browser actions remain structured
   skips. `wp-codebox/fuzz-suite-result/v1` reports case status, diagnostics,

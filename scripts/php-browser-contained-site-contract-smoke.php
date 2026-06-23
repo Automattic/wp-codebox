@@ -2,8 +2,10 @@
 declare(strict_types=1);
 
 define( 'ABSPATH', __DIR__ );
+defined( 'WEEK_IN_SECONDS' ) || define( 'WEEK_IN_SECONDS', 7 * 24 * 60 * 60 );
 
 $GLOBALS['wp_codebox_test_transient'] = false;
+$GLOBALS['wp_codebox_test_transients'] = array();
 
 final class WP_Error {
 	/** @param array<string,mixed> $data */
@@ -27,9 +29,60 @@ function sanitize_key( string $key ): string {
 	return strtolower( preg_replace( '/[^a-zA-Z0-9_-]/', '', $key ) ?? '' );
 }
 
+function is_user_logged_in(): bool {
+	return false;
+}
+
+function current_user_can( string $capability ): bool {
+	unset( $capability );
+	return false;
+}
+
+final class WP_Codebox_Test_Request {
+	/** @param array<string,mixed> $params */
+	public function __construct( private array $params ) {}
+
+	public function get_param( string $key ): mixed {
+		return $this->params[ $key ] ?? null;
+	}
+}
+
+final class WP_REST_Request {
+	/** @param array<string,mixed> $params */
+	public function __construct( private array $params ) {}
+
+	public function get_param( string $key ): mixed {
+		return $this->params[ $key ] ?? null;
+	}
+}
+
 function get_transient( string $transient ): mixed {
+	if ( array_key_exists( $transient, $GLOBALS['wp_codebox_test_transients'] ) ) {
+		return $GLOBALS['wp_codebox_test_transients'][ $transient ]['value'];
+	}
 	unset( $transient );
 	return $GLOBALS['wp_codebox_test_transient'];
+}
+
+function set_transient( string $transient, mixed $value, int $expiration = 0 ): bool {
+	$GLOBALS['wp_codebox_test_transients'][ $transient ] = array(
+		'value'      => $value,
+		'expiration' => $expiration,
+	);
+
+	return true;
+}
+
+function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false {
+	return json_encode( $value, $flags, $depth );
+}
+
+function wp_generate_uuid4(): string {
+	return '00000000-0000-4000-8000-000000000123';
+}
+
+function wp_parse_url( string $url, int $component = -1 ): mixed {
+	return -1 === $component ? parse_url( $url ) : parse_url( $url, $component );
 }
 
 function fail( string $message ): void {
@@ -43,13 +96,22 @@ function expect( bool $condition, string $message ): void {
 	}
 }
 
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-runtime-invoker.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-path-policy.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-task.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-runner-template.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 $source_digest = str_repeat( 'a', 64 );
 $artifact_digest = str_repeat( 'b', 64 );
 $materialization_digest = str_repeat( 'c', 64 );
+
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:' . $source_digest ) ) ), 'Expected public prepared blueprint refs to be hydratable.' );
+expect( WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'cache_key' => 'studio-native-preview', 'input_hash' => $source_digest ) ) ), 'Expected public prepared blueprint cache key and input hash to be hydratable.' );
+expect( ! WP_Codebox_Abilities::can_hydrate_browser_blueprint_ref( new WP_Codebox_Test_Request( array( 'ref' => 'prepared:studio-native-preview:not-a-hash' ) ) ), 'Expected malformed public prepared blueprint refs to remain forbidden.' );
 
 $miss = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(
@@ -94,6 +156,101 @@ $GLOBALS['wp_codebox_test_transient'] = array(
 	'created_at'             => '2026-01-02T03:04:05+00:00',
 	'blueprint'              => array( 'steps' => array() ),
 );
+
+$rest_blueprint = WP_Codebox_Abilities::rest_browser_blueprint_ref( new WP_REST_Request( array( 'ref' => 'prepared:studio-native-preview:' . $source_digest ) ) );
+expect( ! is_wp_error( $rest_blueprint ), 'Expected REST blueprint ref to return a raw Blueprint.' );
+expect( ! isset( $rest_blueprint['success'] ), 'Expected REST blueprint ref to omit the hydration envelope.' );
+expect( isset( $rest_blueprint['steps'] ) && is_array( $rest_blueprint['steps'] ), 'Expected REST blueprint ref to return the Blueprint root.' );
+
+$recipe_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_agent_recipe' );
+$recipe = $recipe_method->invoke(
+	null,
+	array(
+		'goal'               => 'Import a browser artifact.',
+		'target'             => array( 'kind' => 'recipe-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'recipe-smoke-session',
+	array(
+		'task_path'   => '/tmp/recipe-smoke-task.json',
+		'result_path' => '/tmp/recipe-smoke-result.json',
+		'invocation'  => array(
+			'type'  => 'ability',
+			'name'  => 'static-site-importer/import-website-artifact',
+			'input' => array(),
+		),
+	),
+	array(
+		'steps' => array(
+			array(
+				'step'     => 'login',
+				'username' => 'admin',
+				'password' => 'password',
+			),
+		),
+	),
+	array(),
+	array( 'schema' => 'wp-codebox/browser-agent-task-payload/v1' )
+);
+expect( ! is_wp_error( $recipe ), 'Expected browser agent recipe smoke to build.' );
+$recipe_steps = is_array( $recipe['runtime']['blueprint']['steps'] ?? null ) ? $recipe['runtime']['blueprint']['steps'] : array();
+$recipe_run_php_steps = array_values( array_filter( $recipe_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) ) );
+expect( count( $recipe_run_php_steps ) >= 1, 'Expected browser recipe Blueprint to include the runner runPHP step.' );
+expect( str_contains( (string) ( $recipe_run_php_steps[0]['code'] ?? '' ), 'static-site-importer/import-website-artifact' ), 'Expected browser recipe Blueprint runPHP step to execute the requested invocation.' );
+
+$blueprint_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_blueprint_with_runtime' );
+$local_package_blueprint = $blueprint_method->invoke(
+	null,
+	array( 'steps' => array() ),
+	array(
+		'plugins'    => array(
+			array(
+				'slug'                    => 'runtime-smoke',
+				'url'                     => 'data:application/zip;base64,' . base64_encode( 'PK' ),
+				'activate'                => true,
+				'local_package'           => true,
+				'local_package_fetch_url' => 'http://localhost/runtime-smoke.zip',
+				'sha256'                  => hash( 'sha256', 'PK' ),
+			),
+		),
+		'mu_plugins' => array(),
+		'themes'     => array(),
+		'bootstrap'  => array(),
+	),
+	array()
+);
+$local_package_steps = is_array( $local_package_blueprint['steps'] ?? null ) ? $local_package_blueprint['steps'] : array();
+$local_package_run_php_steps = array_values( array_filter( $local_package_steps, static fn( array $step ): bool => 'runPHP' === ( $step['step'] ?? '' ) ) );
+$local_package_install_plugin_steps = array_values( array_filter( $local_package_steps, static fn( array $step ): bool => 'installPlugin' === ( $step['step'] ?? '' ) ) );
+expect( 1 === count( $local_package_run_php_steps ), 'Expected local package data URL to use a runPHP installer step.' );
+expect( 0 === count( $local_package_install_plugin_steps ), 'Expected local package data URL to avoid installPlugin.' );
+expect( str_contains( (string) ( $local_package_run_php_steps[0]['code'] ?? '' ), 'activate_plugin' ), 'Expected local package runPHP installer to activate the plugin.' );
+
+$function_recipe = $recipe_method->invoke(
+	null,
+	array(
+		'goal'               => 'Import through a direct runtime function.',
+		'target'             => array( 'kind' => 'function-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'function-smoke-session',
+	array(
+		'task_path'   => '/tmp/function-smoke-task.json',
+		'result_path' => '/tmp/function-smoke-result.json',
+		'invocation'  => array(
+			'type'  => 'function',
+			'name'  => 'static_site_importer_ability_import_website_artifact',
+			'input' => array(),
+		),
+	),
+	array( 'steps' => array() ),
+	array(),
+	array( 'schema' => 'wp-codebox/browser-agent-task-payload/v1' )
+);
+expect( ! is_wp_error( $function_recipe ), 'Expected browser function recipe smoke to build.' );
+$function_code = (string) ( $function_recipe['runtime']['blueprint']['steps'][0]['code'] ?? '' );
+expect( str_contains( $function_code, "'type' => 'function'" ), 'Expected browser recipe to preserve function invocation type.' );
+expect( str_contains( $function_code, 'static_site_importer_ability_import_website_artifact' ), 'Expected browser recipe to preserve direct function invocation name.' );
 
 $status = WP_Codebox_Abilities::get_browser_contained_site_status(
 	array(
@@ -238,5 +395,105 @@ expect( ! is_wp_error( $destroy ), 'Expected destroy facade to return an envelop
 expect( true === $destroy['success'], 'Expected destroy success=true.' );
 expect( 'wp-codebox/browser-contained-site-destroy/v1' === $destroy['schema'], 'Expected destroy schema.' );
 expect( 'released' === $destroy['preview_lease']['lease']['status'], 'Expected released preview lease.' );
+
+$raw_product_session = array(
+	'success'          => true,
+	'schema'           => 'wp-codebox/browser-playground-session/v1',
+	'execution'        => 'browser-playground',
+	'execution_scope'  => 'disposable-playground',
+	'permission_model' => 'runtime-principal',
+	'session'          => array( 'id' => 'product-smoke-session' ),
+	'task_input'       => array(
+		'goal'               => 'Create a disposable preview for smoke testing.',
+		'target'             => array( 'kind' => 'php-smoke' ),
+		'expected_artifacts' => array( 'preview' ),
+	),
+	'playground'       => array(
+		'scope'              => 'product-smoke-session',
+		'preview_url'        => '/wp-content/uploads/wp-codebox/artifacts/uploaded-site/index.html',
+		'prepared_runtime'   => array(
+			'schema'     => 'wp-codebox/browser-prepared-runtime/v1',
+			'cache_key'  => 'product-smoke-cache',
+			'input_hash' => $source_digest,
+			'status'     => 'ready',
+		),
+	),
+	'contained_site'   => array(
+		'schema'     => 'wp-codebox/browser-contained-site/v1',
+		'site_id'    => 'product-smoke-cache',
+		'preview_id' => 'preview-product-smoke',
+		'session_id' => 'product-smoke-session',
+		'status'     => 'ready',
+	),
+	'artifacts'        => array(
+		'schema' => 'wp-codebox/browser-artifacts/v1',
+		'files'  => array(
+			array(
+				'path'    => 'uploaded-site/index.html',
+				'kind'    => 'html',
+				'size'    => 16,
+				'sha256'  => str_repeat( 'd', 64 ),
+				'content' => '<h1>Preview</h1>',
+			),
+		),
+	),
+	'signals'          => array(
+		'ready_to_code' => array( 'schema' => 'wp-codebox/signal/v1', 'emitted' => true ),
+	),
+);
+$response_method = new ReflectionMethod( WP_Codebox_Abilities::class, 'browser_session_response_for_input' );
+$product_session = $response_method->invoke( null, $raw_product_session, array() );
+
+expect( ! is_wp_error( $product_session ), 'Expected product browser session DTO.' );
+expect( 'wp-codebox/browser-session-product-dto/v1' === $product_session['schema'], 'Expected product session DTO schema.' );
+expect( true === $product_session['success'], 'Expected product session success=true.' );
+expect( isset( $product_session['preview_boot'] ), 'Expected product session preview boot.' );
+expect( isset( $product_session['preview_ref'] ), 'Expected product session preview ref.' );
+expect( isset( $product_session['preview_lease'] ), 'Expected product session preview lease.' );
+expect( isset( $product_session['preview_reference'] ), 'Expected product session preview reference.' );
+expect( 'wp-codebox/browser-preview-reference/v1' === $product_session['preview_reference']['schema'], 'Expected preview reference schema.' );
+expect( isset( $product_session['blueprint_ref'] ), 'Expected product session blueprint ref.' );
+expect( isset( $product_session['evidence_ref'] ), 'Expected product session evidence ref.' );
+expect( 'wp-codebox/browser-session-evidence-ref/v1' === $product_session['evidence_ref']['schema'], 'Expected evidence ref schema.' );
+expect( ! isset( $product_session['playground'] ), 'Product DTO must not expose raw playground.' );
+expect( ! isset( $product_session['task_payload'] ), 'Product DTO must not expose raw task payload.' );
+
+$evidence_key = 'wp_codebox_browser_session_evidence_' . $product_session['evidence_ref']['id'];
+expect( isset( $GLOBALS['wp_codebox_test_transients'][ $evidence_key ] ), 'Expected evidence transient to be stored.' );
+$evidence = $GLOBALS['wp_codebox_test_transients'][ $evidence_key ]['value'];
+expect( 'wp-codebox/browser-session-evidence/v1' === $evidence['schema'], 'Expected evidence schema.' );
+expect( $product_session['session_id'] === $evidence['session_id'], 'Expected evidence session id.' );
+expect( isset( $evidence['preview_reference'] ), 'Expected evidence preview reference.' );
+expect( false === str_contains( wp_json_encode( $evidence ), '<h1>Preview</h1>' ), 'Evidence must not store raw uploaded content.' );
+
+$executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $product_session );
+expect( $product_session['blueprint_ref'] === $executable_ref, 'Expected executable blueprint ref from product DTO.' );
+
+$compact_product_session = array(
+	'success'        => true,
+	'schema'         => 'wp-codebox/browser-session-product-dto/v1',
+	'session_id'     => 'compact-product-smoke-session',
+	'preview_boot'   => array(
+		'schema'        => 'wp-codebox/browser-preview-boot-config/v1',
+		'blueprint_ref' => 'inline-session-blueprint',
+	),
+	'contained_site' => array(
+		'schema'   => 'wp-codebox/browser-contained-site/v1',
+		'site_id'  => 'product-smoke-cache',
+		'status'   => 'ready',
+		'recovery' => array(
+			'input' => array(
+				'schema'     => 'wp-codebox/browser-prepared-runtime/v1',
+				'cache_key'  => 'product-smoke-cache',
+				'input_hash' => $source_digest,
+				'status'     => 'ready',
+			),
+		),
+	),
+);
+
+$compact_executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $compact_product_session );
+expect( 'prepared:product-smoke-cache:' . $source_digest === $compact_executable_ref['ref'], 'Expected executable blueprint ref from compact contained-site recovery input.' );
+expect( isset( $compact_executable_ref['hydration_endpoint'] ), 'Expected compact executable ref hydration endpoint.' );
 
 fwrite( STDOUT, "PHP browser contained site contract smoke passed\n" );

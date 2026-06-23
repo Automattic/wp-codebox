@@ -165,17 +165,19 @@ const runtimeActionFuzzResult = await runFuzzSuite(fuzzSuiteContract({
     { id: "editor", input: { type: "editor_open", target: "post-new", post_type: "page" } },
     { id: "admin", input: { type: "admin_page", path: "plugins.php" } },
     { id: "page", input: { type: "page", path: "/sample-page/" } },
+    { id: "crud", input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
   ],
 }), {
   runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(fakeEpisode),
 })
 assert.equal(runtimeActionFuzzResult.status, "passed")
-assert.deepEqual(runtimeActionFuzzResult.summary, { total: 4, passed: 4, failed: 0, error: 0, skipped: 0 })
+assert.deepEqual(runtimeActionFuzzResult.summary, { total: 5, passed: 5, failed: 0, error: 0, skipped: 0 })
 assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-actions",
   "wordpress.editor-open",
   "wordpress.browser-probe",
   "wordpress.browser-probe",
+  "wordpress.crud-operation",
 ])
 
 console.log("wordpress runtime actions ok")

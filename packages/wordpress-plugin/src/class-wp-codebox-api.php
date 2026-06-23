@@ -20,6 +20,7 @@ final class WP_Codebox_API {
 		'wp-codebox/run-runtime-task'                       => 'run_runtime_task',
 		'wp-codebox/run-wordpress-workload'                 => 'run_wordpress_workload',
 		'wp-codebox/run-runtime-package'                    => 'run_runtime_package',
+		'wp-codebox/resolve-runtime-requirements'           => 'resolve_runtime_requirements',
 		'wp-codebox/run-fuzz-suite'                         => 'run_fuzz_suite',
 		'wp-codebox/create-browser-playground-session'      => 'create_browser_session',
 		'wp-codebox/create-sandbox-session'                 => 'create_browser_session',
@@ -95,6 +96,11 @@ final class WP_Codebox_API {
 	/** @param array<string,mixed> $input Runtime package input. @return array<string,mixed>|WP_Error */
 	public static function run_runtime_package( array $input ): array|WP_Error {
 		return WP_Codebox_Abilities::run_runtime_package( $input );
+	}
+
+	/** @param array<string,mixed> $input Runtime readiness input. @return array<string,mixed> */
+	public static function resolve_runtime_requirements( array $input ): array {
+		return WP_Codebox_Abilities::resolve_runtime_requirements( $input );
 	}
 
 	/** @param array<string,mixed> $input Fuzz suite input. @return array<string,mixed>|WP_Error */

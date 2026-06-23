@@ -40,6 +40,13 @@ trait WP_Codebox_Abilities_Browser_Runner {
 
 	$runner_php      = self::browser_agent_runner_php( $task_input, $session_id, $task_path, $result_path, $invocation, $captures );
 	$runner_contract = self::browser_agent_runner_contract( $runner_php );
+	$runtime_blueprint = self::browser_playground_blueprint( $blueprint, $playground );
+	$runtime_steps = is_array( $runtime_blueprint['steps'] ?? null ) ? $runtime_blueprint['steps'] : array();
+	$runtime_steps[] = array(
+		'step' => 'runPHP',
+		'code' => $runner_php,
+	);
+	$runtime_blueprint['steps'] = $runtime_steps;
 
 	return array(
 		'schema'   => 'wp-codebox/workspace-recipe/v1',
@@ -47,7 +54,7 @@ trait WP_Codebox_Abilities_Browser_Runner {
 			'backend'   => 'wordpress-playground',
 			'name'      => 'browser-playground',
 			'wp'        => (string) ( $playground['wp'] ?? 'latest' ),
-			'blueprint' => self::browser_playground_blueprint( $blueprint, $playground ),
+			'blueprint' => $runtime_blueprint,
 		),
 		'inputs'   => array(
 			'stagedFiles' => array(
@@ -110,8 +117,8 @@ private static function browser_materialization_contract( array $recipe ): array
 private static function browser_runner_invocation( array $runner ): array|WP_Error {
 	$invocation = is_array( $runner['invocation'] ?? null ) ? $runner['invocation'] : array();
 	$type       = self::safe_key( (string) ( $invocation['type'] ?? 'ability' ) );
-	if ( ! in_array( $type, array( 'ability', 'task' ), true ) ) {
-		return new WP_Error( 'wp_codebox_browser_invocation_type_invalid', 'Browser runner invocation type must be ability or task.', array( 'status' => 400 ) );
+	if ( ! in_array( $type, array( 'ability', 'function', 'task' ), true ) ) {
+		return new WP_Error( 'wp_codebox_browser_invocation_type_invalid', 'Browser runner invocation type must be ability, function, or task.', array( 'status' => 400 ) );
 	}
 
 	$name = trim( (string) ( $invocation['name'] ?? '' ) );
@@ -120,6 +127,10 @@ private static function browser_runner_invocation( array $runner ): array|WP_Err
 		$name = '' !== $name ? $name : ( function_exists( 'apply_filters' ) ? trim( (string) apply_filters( 'wp_codebox_browser_runtime_default_ability', '' ) ) : '' );
 		if ( ! preg_match( '#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $name ) ) {
 			return new WP_Error( 'wp_codebox_browser_invocation_name_invalid', 'Browser runner ability names must use namespace/name form.', array( 'status' => 400 ) );
+		}
+	} elseif ( 'function' === $type ) {
+		if ( '' === $name || ! preg_match( '#^[A-Za-z_][A-Za-z0-9_]*$#', $name ) ) {
+			return new WP_Error( 'wp_codebox_browser_invocation_function_invalid', 'Browser runner function names must be safe PHP function names.', array( 'status' => 400 ) );
 		}
 	} elseif ( '' === $hook || ! preg_match( '#^[A-Za-z0-9_.:-]+$#', $hook ) ) {
 		return new WP_Error( 'wp_codebox_browser_invocation_hook_invalid', 'Browser runner task hooks must be safe WordPress hook names.', array( 'status' => 400 ) );

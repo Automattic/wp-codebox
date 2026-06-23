@@ -87,7 +87,8 @@ $wp_codebox_end_memory = memory_get_usage( true );
 $wp_codebox_queries = array();
 $wp_codebox_query_count = 0;
 $wp_codebox_query_total_ms = 0.0;
-if ( isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries ) ) {
+$wp_codebox_queries_available = isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries );
+if ( $wp_codebox_queries_available ) {
     foreach ( array_slice( $GLOBALS['wpdb']->queries, $wp_codebox_query_start ) as $wp_codebox_query ) {
         $wp_codebox_sql = is_array( $wp_codebox_query ) && isset( $wp_codebox_query[0] ) ? (string) $wp_codebox_query[0] : '';
         if ( '' === $wp_codebox_sql ) {
@@ -128,22 +129,30 @@ $wp_codebox_performance = array(
     'source' => 'in-process',
     'kind' => 'rest-request',
     'timing' => array(
+        'status' => 'captured',
         'startedAt' => $wp_codebox_observation_started_at,
         'finishedAt' => $wp_codebox_observation_finished_at,
         'durationMs' => round( ( $wp_codebox_finished_at - $wp_codebox_started_at ) * 1000, 3 ),
     ),
     'memory' => array(
+        'status' => 'captured',
         'startBytes' => $wp_codebox_start_memory,
         'endBytes' => $wp_codebox_end_memory,
         'deltaBytes' => $wp_codebox_end_memory - $wp_codebox_start_memory,
         'peakBytes' => memory_get_peak_usage( true ),
     ),
     'database' => array(
+        'status' => $wp_codebox_queries_available ? 'captured' : 'uncaptured',
+        'reason' => $wp_codebox_queries_available ? null : 'wpdb_queries_unavailable',
         'queryCount' => $wp_codebox_query_count,
         'totalTimeMs' => round( $wp_codebox_query_total_ms, 3 ),
         'fingerprints' => $wp_codebox_fingerprints,
         'repeatedQueries' => $wp_codebox_repeated_queries,
     ),
+    'hooks' => array( 'status' => 'unsupported', 'reason' => 'hook_timing_not_instrumented', 'timings' => array() ),
+    'network' => array( 'status' => 'unsupported', 'reason' => 'in_process_rest_request' ),
+    'browser' => array( 'status' => 'unsupported', 'reason' => 'not_a_browser_observation' ),
+    'metadata' => array( 'runner' => 'wp-codebox/runtime-playground', 'surface' => 'rest' ),
 );
 
 echo wp_json_encode( array(

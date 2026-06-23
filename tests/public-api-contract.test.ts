@@ -73,6 +73,7 @@ assert.deepEqual(exportKeys(rootPackage), [
   "./core/contracts",
   "./core/artifacts",
   "./core/run-results",
+  "./core/php-snippets",
   "./recipe-builders",
   "./run-results",
   "./agent-task-recipe",
@@ -89,6 +90,7 @@ assert.deepEqual(exportKeys(corePackage), [
   "./contracts",
   "./artifacts",
   "./run-results",
+  "./php-snippets",
   "./internals",
   "./recipe-builders",
   "./agent-task-recipe",
@@ -128,6 +130,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./browser-callback-contracts.js",
   "./browser-interaction.js",
   "./browser-probe-contract.js",
+  "./browser-playground-session-run.js",
   "./browser-result-shapes.js",
   "./browser-run-result.js",
   "./browser-review-bridge.js",
@@ -188,6 +191,8 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
 assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
   "./command-registry.js",
+  "./fuzz-coverage-plan-contracts.js",
+  "./fuzz-suite-contracts.js",
   "./runtime-contract-manifest.js",
   "./wordpress-page-load-contracts.js",
 ])
@@ -198,6 +203,7 @@ for (const publicEntry of [
   "@automattic/wp-codebox-core/contracts",
   "@automattic/wp-codebox-core/artifacts",
   "@automattic/wp-codebox-core/run-results",
+  "@automattic/wp-codebox-core/php-snippets",
   "@automattic/wp-codebox-core/recipe-builders",
   "@automattic/wp-codebox-core/agent-task-recipe",
   "@automattic/wp-codebox-core/runtime-presets",
@@ -354,6 +360,7 @@ assert.deepEqual(runtimeContractManifest().abilities, CODEBOX_PUBLIC_RUNTIME_ABI
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runWorkload, CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY)
 assert.equal(runtimeContractManifest().abilities.wordpressRuntime.runFuzzSuite, CODEBOX_RUN_FUZZ_SUITE_ABILITY)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.workloadRun, "wp-codebox/wordpress-workload-run/v1")
+assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzCoveragePlan, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuite, FUZZ_SUITE_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.wordpressRuntime.fuzzSuiteResult, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(runtimeContractManifest().schemas.agentTask.runRequest, "wp-codebox/agent-task-run-request/v1")

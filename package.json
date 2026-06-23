@@ -24,6 +24,10 @@
       "types": "./packages/runtime-core/dist/run-results.d.ts",
       "import": "./packages/runtime-core/dist/run-results.js"
     },
+    "./core/php-snippets": {
+      "types": "./packages/runtime-core/dist/runtime-php-snippets.d.ts",
+      "import": "./packages/runtime-core/dist/runtime-php-snippets.js"
+    },
     "./recipe-builders": {
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"
@@ -71,7 +75,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli",
+    "build": "node ./node_modules/typescript/bin/tsc -b packages/runtime-core packages/runtime-playground packages/cli && node scripts/ensure-cli-bin-executable.mjs",
     "prepare": "npm run build",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
@@ -84,6 +88,7 @@
     "test:browser-task-builder": "tsx tests/browser-task-builder.test.ts",
     "test:browser-runtime-generic-invoker": "tsx tests/browser-runtime-generic-invoker.test.ts",
     "test:browser-session-public-dto": "tsx tests/browser-session-public-dto.test.ts",
+    "test:browser-playground-session-run": "tsx tests/browser-playground-session-run.test.ts",
     "test:browser-contained-site-status": "tsx tests/browser-contained-site-status.test.ts",
     "test:host-recipe-builder": "tsx tests/host-recipe-builder.test.ts",
     "test:runtime-recipe-resolver": "tsx tests/runtime-recipe-resolver.test.ts",
@@ -121,6 +126,7 @@
     "test:php-host-run-result-normalizer": "php scripts/php-host-run-result-normalizer-smoke.php",
     "test:php-agent-runtime-execution": "php scripts/php-agent-runtime-execution-smoke.php",
     "test:php-runtime-provider-registry": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-runtime-provider-registry-smoke.php",
+    "test:php-browser-provider-auth-strategy": "php -d zend.assertions=1 -d assert.exception=1 scripts/php-browser-provider-auth-strategy-smoke.php",
     "test:php-json-codec": "tsx tests/php-json-codec.test.ts",
     "test:php-managed-host-command": "tsx tests/php-managed-host-command.test.ts",
     "test:php-worker-runner": "tsx tests/php-worker-runner.test.ts",
@@ -147,6 +153,7 @@
     "test:recipe-runtime-backend-normalization": "tsx tests/recipe-runtime-backend-normalization.test.ts",
     "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
     "test:fuzz-suite-runner": "tsx tests/fuzz-suite-runner.test.ts",
+    "test:playground-fuzz-suite-public": "tsx tests/playground-fuzz-suite-public.test.ts",
     "test:wordpress-fuzz-suite-builders": "tsx tests/wordpress-fuzz-suite-builders.test.ts",
     "test:recipe-secret-env": "tsx tests/recipe-secret-env.test.ts",
     "test:preview-options": "tsx tests/preview-options.test.ts",
@@ -155,6 +162,7 @@
     "test:runtime-preset-registry": "tsx tests/runtime-preset-registry.test.ts",
     "test:generic-ability-runtime-run": "tsx tests/generic-ability-runtime-run.test.ts",
     "test:provider-runtime-contracts": "tsx tests/provider-runtime-contracts.test.ts",
+    "test:runtime-requirements-readiness": "tsx tests/runtime-requirements-readiness.test.ts",
     "test:runtime-contract-manifest": "tsx tests/runtime-contract-manifest.test.ts",
     "test:runtime-contract-package-exports": "tsx tests/runtime-contract-package-exports.test.ts",
     "test:runtime-command-result-envelope": "tsx tests/runtime-command-result-envelope.test.ts",

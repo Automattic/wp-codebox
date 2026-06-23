@@ -429,7 +429,6 @@ final class WP_Codebox_Agents_API_Adapter {
 			$descriptor       = is_array( $metadata['runtime_package_descriptor'] ?? null ) ? $metadata['runtime_package_descriptor'] : array();
 			$input['package'] = ! empty( $descriptor ) ? $descriptor : array( 'slug' => (string) $input['runtime_package'] );
 		}
-
 		if ( is_array( $input['package'] ?? null ) ) {
 			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
 		}

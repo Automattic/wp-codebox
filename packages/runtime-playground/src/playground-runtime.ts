@@ -1316,7 +1316,8 @@ class PlaygroundRuntime implements Runtime {
     const url = spec.args?.find((arg) => arg.startsWith("url="))?.slice("url=".length)
     const path = spec.args?.find((arg) => arg.startsWith("path="))?.slice("path=".length) || (surface === "admin" ? "index.php" : "/")
     const resolved = url || (surface === "admin" ? `/wp-admin/${path.replace(/^\/+/, "")}` : `/${path.replace(/^\/+/, "")}`)
-    return this.runBrowserProbe({ ...spec, command: "wordpress.browser-page-load", args: [`url=${resolved}`, ...(spec.args ?? []).filter((arg) => !arg.startsWith("surface=") && !arg.startsWith("path=") && !arg.startsWith("url="))] })
+    const output = await this.runBrowserProbe({ ...spec, command: "wordpress.browser-page-load", args: [`url=${resolved}`, ...(spec.args ?? []).filter((arg) => !arg.startsWith("surface=") && !arg.startsWith("path=") && !arg.startsWith("url="))] })
+    return normalizeBrowserPageLoadOutput(output, surface === "admin" ? "admin" : "frontend", path)
   }
 
   async runBench(spec: ExecutionSpec): Promise<string> {
@@ -1645,6 +1646,47 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): P
       signal.addEventListener("abort", () => reject(new Error("Runtime execution was aborted during cleanup")), { once: true })
     }),
   ])
+}
+
+function normalizeBrowserPageLoadOutput(output: string, surface: "admin" | "frontend", path: string): string {
+  const parsed = JSON.parse(output) as Record<string, unknown>
+  const normalize = (entry: Record<string, unknown>): Record<string, unknown> => ({
+    ...entry,
+    browserProbeSchema: entry.schema,
+    schema: "wp-codebox/wordpress-page-load-result/v1",
+    mode: "browser",
+    command: "wordpress.browser-page-load",
+    status: browserPageLoadStatus(entry),
+    target: { kind: surface, path, method: "GET" },
+    identity: { url: typeof entry.finalUrl === "string" ? entry.finalUrl : entry.requestedUrl },
+    http: typeof entry.finalUrl === "string" ? { url: entry.finalUrl } : undefined,
+  })
+
+  if (Array.isArray(parsed.outputs)) {
+    const outputs = parsed.outputs as unknown[]
+    const normalizedOutputs = outputs.map((entry) => isRecord(entry) ? normalize(entry) : entry)
+    parsed.outputs = normalizedOutputs
+    parsed.schema = "wp-codebox/wordpress-page-load-result/v1"
+    parsed.mode = "browser"
+    parsed.command = "wordpress.browser-page-load"
+    parsed.status = normalizedOutputs.some((entry) => isRecord(entry) && entry.status === "error") ? "error" : "ok"
+    parsed.target = { kind: surface, path, method: "GET" }
+    return `${JSON.stringify(parsed, null, 2)}\n`
+  }
+
+  return `${JSON.stringify(normalize(parsed), null, 2)}\n`
+}
+
+function browserPageLoadStatus(result: Record<string, unknown>): "ok" | "redirect" | "error" {
+  const assertions = isRecord(result.assertions) ? result.assertions : undefined
+  if (typeof assertions?.fatalFailed === "number" && assertions.fatalFailed > 0) {
+    return "error"
+  }
+  return "ok"
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function timeoutPlaygroundCommand<T>(operation: Promise<T>, spec: ExecutionSpec, abortController: AbortController): Promise<T> {

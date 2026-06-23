@@ -37,8 +37,11 @@ export interface FuzzCoveragePlanSummary {
   discovered: number
   generated: number
   executable: number
+  executed: number
   skipped: number
   untested: number
+  caseIds: string[]
+  targetIds: string[]
 }
 
 export interface FuzzCoveragePlanContract {
@@ -48,6 +51,7 @@ export interface FuzzCoveragePlanContract {
   discovered: FuzzCoveragePlanItem[]
   generated: FuzzCoveragePlanItem[]
   executable: FuzzCoveragePlanItem[]
+  executed: FuzzCoveragePlanItem[]
   skipped: FuzzCoveragePlanItem[]
   untested: FuzzCoveragePlanItem[]
   parameterGenerationHooks?: FuzzCoveragePlanParameterGenerationHook[]
@@ -61,6 +65,7 @@ export function fuzzCoveragePlanContract(input: {
   discovered?: FuzzCoveragePlanItem[]
   generated?: FuzzCoveragePlanItem[]
   executable?: FuzzCoveragePlanItem[]
+  executed?: FuzzCoveragePlanItem[]
   skipped?: FuzzCoveragePlanItem[]
   untested?: FuzzCoveragePlanItem[]
   parameterGenerationHooks?: FuzzCoveragePlanParameterGenerationHook[]
@@ -69,8 +74,10 @@ export function fuzzCoveragePlanContract(input: {
   const discovered = input.discovered ?? []
   const generated = input.generated ?? []
   const executable = input.executable ?? []
+  const executed = input.executed ?? []
   const skipped = input.skipped ?? []
   const untested = input.untested ?? []
+  const allItems = [...discovered, ...generated, ...executable, ...executed, ...skipped, ...untested]
 
   return stripUndefined({
     schema: FUZZ_COVERAGE_PLAN_SCHEMA,
@@ -79,6 +86,7 @@ export function fuzzCoveragePlanContract(input: {
     discovered,
     generated,
     executable,
+    executed,
     skipped,
     untested,
     parameterGenerationHooks: input.parameterGenerationHooks?.length ? input.parameterGenerationHooks : undefined,
@@ -86,9 +94,16 @@ export function fuzzCoveragePlanContract(input: {
       discovered: discovered.length,
       generated: generated.length,
       executable: executable.length,
+      executed: executed.length,
       skipped: skipped.length,
       untested: untested.length,
+      caseIds: uniqueStrings(allItems.map((item) => item.id)),
+      targetIds: uniqueStrings(allItems.map((item) => item.target?.id ?? item.target?.entrypoint ?? item.target?.kind)),
     },
     metadata: input.metadata,
   })
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
 }
