@@ -25,7 +25,7 @@ try {
       { slug: "domain-component", path: domainPlugin, loadAs: "plugin", activate: true },
       { slug: "runtime-component", path: runtimePlugin, loadAs: "mu-plugin", activate: false },
       { slug: "dedupe-component", path: dedupePlugin, loadAs: "plugin" },
-      { slug: "monorepo-component", path: monorepo.pluginPath, sourceRoot: monorepo.rootPath, sourceSubpath: monorepo.sourceSubpath, loadAs: "plugin" },
+      { slug: "monorepo-component", path: monorepo.pluginPath, source_root: monorepo.rootPath, source_subpath: monorepo.sourceSubpath, loadAs: "plugin" },
     ],
     runtime_requirements: {
       extra_plugins: [
