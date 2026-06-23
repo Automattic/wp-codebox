@@ -154,7 +154,7 @@ final class WP_Codebox_Agents_API_Adapter {
 	}
 
 	public static function register_runtime_provider(): void {
-		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) || ! self::should_register_adapter() ) {
+		if ( ! class_exists( 'WP_Codebox_Runtime_Provider_Registry' ) ) {
 			return;
 		}
 
