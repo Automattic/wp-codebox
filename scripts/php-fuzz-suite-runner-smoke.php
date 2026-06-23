@@ -6,6 +6,7 @@ mkdir( $wp_codebox_smoke_root . 'wp-admin/includes', 0777, true );
 register_shutdown_function(
 	static function () use ( $wp_codebox_smoke_root ): void {
 		@unlink( $wp_codebox_smoke_root . 'rest-db-query-profile.workload.json' );
+		@unlink( $wp_codebox_smoke_root . 'closure-workload.php' );
 		@unlink( $wp_codebox_smoke_root . 'wp-admin/menu.php' );
 		@unlink( $wp_codebox_smoke_root . 'wp-admin/includes/admin.php' );
 		@rmdir( $wp_codebox_smoke_root . 'wp-admin/includes' );
@@ -18,9 +19,24 @@ file_put_contents(
 	$wp_codebox_smoke_root . 'wp-admin/menu.php',
 	"<?php\narray_keys( \$submenu );\n\$menu[2] = array( 'Loaded', 'read', 'loaded.php' );\n\$submenu['loaded.php'][0] = array( 'Loaded child', 'read', 'loaded-child.php' );\n"
 );
+file_put_contents(
+	$wp_codebox_smoke_root . 'closure-workload.php',
+	"<?php\nreturn function (): array {\n\twp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'install', 'allowlistDomains' => array( 'public-api.wordpress.com' ), 'blockNetwork' => true ) );\n\twp_remote_get( 'https://jetpack-homeboy-guardrail.invalid/guardrail-probe?token=secret-value' );\n\treturn wp_codebox_bench_run_external_http_guardrail_step( array( 'action' => 'collect' ) );\n};\n"
+);
 define( 'ABSPATH', $wp_codebox_smoke_root );
 define( 'WP_CONTENT_DIR', __DIR__ );
 define( 'ARRAY_A', 'ARRAY_A' );
+
+function add_filter( string $hook, callable $callback, int $priority = 10, int $accepted_args = 1 ): void {
+	$GLOBALS['wp_codebox_test_filters'][ $hook ][] = array( $callback, $accepted_args );
+}
+
+function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
+	foreach ( $GLOBALS['wp_codebox_test_filters'][ $hook ] ?? array() as $filter ) {
+		$value = $filter[0]( $value, ...array_slice( $args, 0, (int) $filter[1] - 1 ) );
+	}
+	return $value;
+}
 
 class WP_Error {
 	public function __construct( public string $code = '', public string $message = '', public array $data = array() ) {}
@@ -44,10 +60,22 @@ function wp_parse_url( string $url, int $component = -1 ): mixed {
 }
 
 function wp_remote_request( string $url, array $args = array() ): array|WP_Error {
+	$preempt = apply_filters( 'pre_http_request', false, $args, $url );
+	if ( false !== $preempt ) {
+		return $preempt;
+	}
 	if ( str_contains( $url, '/server-error/' ) ) {
 		return array( 'status' => 500, 'headers' => array( 'content-type' => 'text/html' ), 'body' => 'error' );
 	}
 	return array( 'status' => 200, 'headers' => array( 'content-type' => 'text/html' ), 'body' => '<html></html>' );
+}
+
+function wp_remote_get( string $url, array $args = array() ): array|WP_Error {
+	return wp_remote_request( $url, array_merge( $args, array( 'method' => 'GET' ) ) );
+}
+
+function wp_remote_post( string $url, array $args = array() ): array|WP_Error {
+	return wp_remote_request( $url, array_merge( $args, array( 'method' => 'POST' ) ) );
 }
 
 function wp_remote_retrieve_response_code( array $response ): int {
@@ -385,6 +413,16 @@ $result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 					array( 'name' => 'workload_result', 'path' => 'workloads/rest-db-query-profile.json', 'metadata' => array( 'semantic_key' => 'fuzz.report' ) ),
 				),
 			),
+			array(
+				'id'       => 'closure-external-http-guardrail',
+				'metadata' => array( 'skip_reasons' => array( array( 'code' => 'metadata_code_is_not_executable' ) ) ),
+				'phases'   => array(
+					'action' => array(
+						array( 'command' => 'wordpress.ensure-external-http-guardrail', 'args' => array( 'allowlist=public-api.wordpress.com', 'block_network=true' ) ),
+						array( 'command' => 'wordpress.run-workload', 'args' => array( 'path=' . $wp_codebox_smoke_root . 'closure-workload.php', 'type=php' ) ),
+					),
+				),
+			),
 		),
 	)
 );
@@ -397,8 +435,8 @@ assert( '/wc/store/v1/products' === $GLOBALS['wp']->query_vars['rest_route'] );
 assert( '/wc/store/v1/products' === $_GET['rest_route'] );
 assert( null === $GLOBALS['wp_codebox_rest_server_route_contexts'][0]['wp_rest_route'] );
 assert( null === $GLOBALS['wp_codebox_rest_server_route_contexts'][0]['get_rest_route'] );
-assert( 22 === $result['summary']['total'] );
-assert( 11 === $result['summary']['passed'] );
+assert( 23 === $result['summary']['total'] );
+assert( 12 === $result['summary']['passed'] );
 assert( 11 === $result['summary']['skipped'] );
 assert( 'browser-coverage' === $result['cases'][0]['id'] );
 assert( 'passed' === $result['cases'][0]['status'] );
@@ -464,6 +502,12 @@ assert( 'wp-codebox/json-workload-result/v1' === $workload_report['schema'] );
 assert( 2 === $workload_report['steps'][1]['observation']['queryCount'] );
 assert( 2 === $workload_report['steps'][1]['requests'][0]['queryCount'] );
 assert( 'SELECT * FROM wp_posts WHERE post_type = "post"' === $workload_report['steps'][1]['requests'][0]['sampledQueries'][0]['sql'] );
+assert( 'closure-external-http-guardrail' === $result['cases'][22]['id'] );
+assert( 'passed' === $result['cases'][22]['status'] );
+assert( 'array' === $result['cases'][22]['metadata']['observations'][1]['return_type'] );
+assert( 'wp-codebox/external-http-guardrail/v1' === $result['cases'][22]['metadata']['observations'][1]['payload']['schema'] );
+assert( 1 === $result['cases'][22]['metadata']['observations'][1]['payload']['summary']['blocked'] );
+assert( str_contains( $result['cases'][22]['metadata']['observations'][1]['payload']['requests'][0]['url'], 'token=[redacted]' ) );
 assert( 'php-in-process' === $result['metadata']['runnerCapabilities']['mode'] );
 assert( in_array( 'target:rest', $result['metadata']['runnerCapabilities']['capabilities'], true ) );
 
