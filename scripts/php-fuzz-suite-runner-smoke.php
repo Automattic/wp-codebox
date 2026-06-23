@@ -110,6 +110,10 @@ class WP_Codebox_Test_REST_Server {
 }
 
 function rest_get_server(): WP_Codebox_Test_REST_Server {
+	$GLOBALS['wp_codebox_rest_server_route_contexts'][] = array(
+		'wp_rest_route'  => $GLOBALS['wp']->query_vars['rest_route'] ?? null,
+		'get_rest_route' => $_GET['rest_route'] ?? null,
+	);
 	return new WP_Codebox_Test_REST_Server();
 }
 
@@ -174,6 +178,9 @@ class WP_Codebox_Test_WPDB {
 }
 
 $GLOBALS['wpdb'] = new WP_Codebox_Test_WPDB();
+$GLOBALS['wp'] = (object) array( 'query_vars' => array( 'rest_route' => '/wc/store/v1/products' ) );
+$_GET['rest_route'] = '/wc/store/v1/products';
+$GLOBALS['wp_codebox_rest_server_route_contexts'] = array();
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/trait-wp-codebox-abilities-execution.php';
 
@@ -368,6 +375,10 @@ assert( is_array( $result ) );
 assert( 'wp-codebox/fuzz-suite-result/v1' === $result['schema'] );
 assert( true === $result['success'] );
 assert( 'passed' === $result['status'] );
+assert( '/wc/store/v1/products' === $GLOBALS['wp']->query_vars['rest_route'] );
+assert( '/wc/store/v1/products' === $_GET['rest_route'] );
+assert( null === $GLOBALS['wp_codebox_rest_server_route_contexts'][0]['wp_rest_route'] );
+assert( null === $GLOBALS['wp_codebox_rest_server_route_contexts'][0]['get_rest_route'] );
 assert( 21 === $result['summary']['total'] );
 assert( 10 === $result['summary']['passed'] );
 assert( 11 === $result['summary']['skipped'] );

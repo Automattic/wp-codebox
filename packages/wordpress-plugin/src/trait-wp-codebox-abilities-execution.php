@@ -1063,8 +1063,29 @@ private static function ensure_fuzz_suite_rest_routes_registered(): void {
 private static function refresh_fuzz_suite_rest_server(): void {
 	if ( function_exists( 'rest_get_server' ) ) {
 		global $wp_rest_server;
+		$wp_rest_route_was_set  = isset( $GLOBALS['wp'] )
+			&& is_object( $GLOBALS['wp'] )
+			&& isset( $GLOBALS['wp']->query_vars )
+			&& is_array( $GLOBALS['wp']->query_vars )
+			&& array_key_exists( 'rest_route', $GLOBALS['wp']->query_vars );
+		$wp_rest_route          = $wp_rest_route_was_set ? $GLOBALS['wp']->query_vars['rest_route'] : null;
+		$get_rest_route_was_set = array_key_exists( 'rest_route', $_GET );
+		$get_rest_route         = $get_rest_route_was_set ? $_GET['rest_route'] : null;
+		if ( $wp_rest_route_was_set ) {
+			unset( $GLOBALS['wp']->query_vars['rest_route'] );
+		}
+		unset( $_GET['rest_route'] );
 		$wp_rest_server = null;
-		rest_get_server();
+		try {
+			rest_get_server();
+		} finally {
+			if ( $wp_rest_route_was_set ) {
+				$GLOBALS['wp']->query_vars['rest_route'] = $wp_rest_route;
+			}
+			if ( $get_rest_route_was_set ) {
+				$_GET['rest_route'] = $get_rest_route;
+			}
+		}
 	}
 }
 
