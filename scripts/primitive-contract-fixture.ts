@@ -4,6 +4,7 @@ import {
   componentManifestForRuntimePlugins,
   countRunPlanChildResults,
   normalizeRunPlanConcurrency,
+  normalizeRunPlanProgressSnapshot,
   normalizeRuntimeMountTarget,
   redactJsonValue,
   resolveEffectiveRuntimeToolPolicy,
@@ -11,6 +12,7 @@ import {
   runPlanSucceeded,
   runtimeDependencyPlanContract,
   RUN_PLAN_EVENT_SCHEMA,
+  RUN_PLAN_PROGRESS_SCHEMA,
   RUN_PLAN_RESULT_SCHEMA,
   RUN_PLAN_SCHEMA,
   safeArtifactRelativePath,
@@ -140,6 +142,27 @@ const runPlanDependencyWorkers = [
   { id: "dependent", goal: "Dependent", dependsOn: ["setup", "parallel"] },
 ]
 
+const runPlanProgressInput = {
+  plan: {
+    id: "run-fixture",
+    sessionId: "session-fixture",
+    concurrency: 2,
+    workers: [
+      { id: "setup", artifactNamespace: "workers/setup" },
+      { id: "execute" },
+    ],
+  },
+  events: [
+    { event: "worker.started", workerId: "setup", time: "2026-03-04T05:06:00.000Z" },
+    { event: "worker.completed", workerId: "setup", time: "2026-03-04T05:06:01.000Z" },
+    { event: "worker.started", workerId: "execute", time: "2026-03-04T05:06:02.000Z" },
+  ],
+  results: [{ workerId: "setup", status: "succeeded", success: true }],
+  eventsRef: "events.jsonl",
+  resultRef: "result.json",
+  time: "2026-03-04T05:06:03.000Z",
+}
+
 export function primitiveContractsFixture(): Record<string, unknown> {
   const effectiveToolPolicy = resolveEffectiveRuntimeToolPolicy(toolPolicySnapshot)
   const runPlanCounts = countRunPlanChildResults(runPlanChildren)
@@ -198,7 +221,9 @@ export function primitiveContractsFixture(): Record<string, unknown> {
         defaulted: normalizeRunPlanConcurrency("", { defaultConcurrency: 3, maxConcurrency: 5 }),
         clamped: normalizeRunPlanConcurrency(99, { maxConcurrency: 2 }),
       },
-      schemas: { plan: RUN_PLAN_SCHEMA, event: RUN_PLAN_EVENT_SCHEMA, result: RUN_PLAN_RESULT_SCHEMA },
+      progressInput: runPlanProgressInput,
+      progress: normalizeRunPlanProgressSnapshot(runPlanProgressInput),
+      schemas: { plan: RUN_PLAN_SCHEMA, event: RUN_PLAN_EVENT_SCHEMA, progress: RUN_PLAN_PROGRESS_SCHEMA, result: RUN_PLAN_RESULT_SCHEMA },
     },
   }
 }

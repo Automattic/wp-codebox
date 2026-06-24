@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { createRunPlanEvent, executeRunPlan, type RunPlanEventContract, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
+import { createRunPlanEvent, executeRunPlan, normalizeRunPlanProgressSnapshot, type RunPlanEventContract, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
 
 const events: string[] = []
 const runs: string[] = []
@@ -136,6 +136,43 @@ assert.deepEqual(createRunPlanEvent<RunPlanEventContract>("wp-codebox/run-plan-e
   schema: "wp-codebox/run-plan-event/v1",
   time: "2026-03-04T05:06:07.000Z",
   event: "worker.started",
+})
+
+assert.deepEqual(normalizeRunPlanProgressSnapshot({
+  plan: {
+    id: "run-123",
+    sessionId: "session-123",
+    concurrency: 2,
+    workers: [
+      { id: "one", goal: "Done", artifactNamespace: "workers/one" },
+      { id: "two", goal: "Active" },
+      { id: "three", goal: "Queued" },
+    ],
+  },
+  events: [
+    { event: "worker.started", workerId: "one", time: "2026-03-04T05:06:00.000Z" },
+    { event: "worker.completed", workerId: "one", time: "2026-03-04T05:06:01.000Z" },
+    { event: "worker.started", workerId: "two", time: "2026-03-04T05:06:02.000Z" },
+  ],
+  results: [{ workerId: "one", status: "succeeded", success: true }],
+  eventsRef: "events.jsonl",
+  resultRef: "result.json",
+  time: "2026-03-04T05:06:03.000Z",
+}), {
+  schema: "wp-codebox/run-plan-progress/v1",
+  time: "2026-03-04T05:06:03.000Z",
+  status: "running",
+  active: 1,
+  counts: { total: 3, completed: 1, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 },
+  workers: [
+    { id: "one", status: "succeeded", artifactNamespace: "workers/one", lastEvent: "worker.completed", startedAt: "2026-03-04T05:06:00.000Z", completedAt: "2026-03-04T05:06:01.000Z" },
+    { id: "two", status: "running", lastEvent: "worker.started", startedAt: "2026-03-04T05:06:02.000Z" },
+    { id: "three", status: "queued" },
+  ],
+  sessionId: "session-123",
+  runId: "run-123",
+  eventsRef: "events.jsonl",
+  resultRef: "result.json",
 })
 
 console.log("run plan executor ok")

@@ -507,9 +507,87 @@
       "defaulted": 3,
       "clamped": 2
     },
+    "progressInput": {
+      "plan": {
+        "id": "run-fixture",
+        "sessionId": "session-fixture",
+        "concurrency": 2,
+        "workers": [
+          {
+            "id": "setup",
+            "artifactNamespace": "workers/setup"
+          },
+          {
+            "id": "execute"
+          }
+        ]
+      },
+      "events": [
+        {
+          "event": "worker.started",
+          "workerId": "setup",
+          "time": "2026-03-04T05:06:00.000Z"
+        },
+        {
+          "event": "worker.completed",
+          "workerId": "setup",
+          "time": "2026-03-04T05:06:01.000Z"
+        },
+        {
+          "event": "worker.started",
+          "workerId": "execute",
+          "time": "2026-03-04T05:06:02.000Z"
+        }
+      ],
+      "results": [
+        {
+          "workerId": "setup",
+          "status": "succeeded",
+          "success": true
+        }
+      ],
+      "eventsRef": "events.jsonl",
+      "resultRef": "result.json",
+      "time": "2026-03-04T05:06:03.000Z"
+    },
+    "progress": {
+      "schema": "wp-codebox/run-plan-progress/v1",
+      "time": "2026-03-04T05:06:03.000Z",
+      "status": "running",
+      "active": 1,
+      "counts": {
+        "total": 2,
+        "completed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "timed_out": 0
+      },
+      "workers": [
+        {
+          "id": "setup",
+          "status": "succeeded",
+          "artifactNamespace": "workers/setup",
+          "lastEvent": "worker.completed",
+          "startedAt": "2026-03-04T05:06:00.000Z",
+          "completedAt": "2026-03-04T05:06:01.000Z"
+        },
+        {
+          "id": "execute",
+          "status": "running",
+          "lastEvent": "worker.started",
+          "startedAt": "2026-03-04T05:06:02.000Z"
+        }
+      ],
+      "sessionId": "session-fixture",
+      "runId": "run-fixture",
+      "eventsRef": "events.jsonl",
+      "resultRef": "result.json"
+    },
     "schemas": {
       "plan": "wp-codebox/run-plan/v1",
       "event": "wp-codebox/run-plan-event/v1",
+      "progress": "wp-codebox/run-plan-progress/v1",
       "result": "wp-codebox/run-plan-result/v1"
     }
   }

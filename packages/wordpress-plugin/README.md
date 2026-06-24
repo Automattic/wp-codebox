@@ -153,6 +153,14 @@ returns a `wp-codebox/sandbox-session/v1` envelope with that id, optional
 create host-site job tables or depend on a specific queue. See
 `docs/sandbox-session-contract.md`.
 
+Host progress consumers can normalize run-plan events and child results to
+`wp-codebox/run-plan-progress/v1`. The public snapshot contains a run status,
+active worker count, settled counts, per-worker status, optional session/run ids,
+and optional event/result refs. Hosts own streaming, persistence, UI polling, and
+cancellation-request transport; WP Codebox owns the generic progress shape and
+maps artifact/event evidence into that shape without requiring durable parent
+ownership.
+
 Both abilities accept optional `provider` and `model` fields. These seed the
 disposable sandbox agent configuration for the selected execution mode. Provider
 plugins are supplied with `provider_plugin_paths`; WP Codebox mounts and

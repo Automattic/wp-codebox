@@ -8,6 +8,7 @@ import {
   normalizeCommandEnvelopeStatus,
   normalizePhaseRecipeStatus,
   normalizeRunPlanConcurrency,
+  normalizeRunPlanProgressSnapshot,
   normalizeRunPlanWorkerDescriptors,
   normalizeRuntimeMountTarget,
   redactJsonValue,
@@ -16,6 +17,7 @@ import {
   runPlanSucceeded,
   runtimeDependencyPlanContract,
   RUN_PLAN_EVENT_SCHEMA,
+  RUN_PLAN_PROGRESS_SCHEMA,
   RUN_PLAN_RESULT_SCHEMA,
   RUN_PLAN_SCHEMA,
   safeArtifactRelativePath,
@@ -86,9 +88,11 @@ assert.deepEqual(
 )
 assert.equal(normalizeRunPlanConcurrency("", { defaultConcurrency: 3, maxConcurrency: 5 }), fixture.runPlan.concurrency.defaulted)
 assert.equal(normalizeRunPlanConcurrency(99, { maxConcurrency: 2 }), fixture.runPlan.concurrency.clamped)
+assert.deepEqual(normalizeRunPlanProgressSnapshot(fixture.runPlan.progressInput), fixture.runPlan.progress)
 assert.deepEqual(fixture.runPlan.schemas, {
   plan: RUN_PLAN_SCHEMA,
   event: RUN_PLAN_EVENT_SCHEMA,
+  progress: RUN_PLAN_PROGRESS_SCHEMA,
   result: RUN_PLAN_RESULT_SCHEMA,
 })
 

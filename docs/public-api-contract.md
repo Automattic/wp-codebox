@@ -251,8 +251,8 @@ The stable public surface is grouped by lifecycle area rather than by product:
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
 - **Run results:** normalized task, terminal, command, browser, recipe summary,
-  artifact handoff, and fuzz result DTOs that orchestrators can import from
-  `@automattic/wp-codebox-core/run-results`.
+  artifact handoff, progress snapshot, and fuzz result DTOs that orchestrators can
+  import from `@automattic/wp-codebox-core/run-results`.
 - **Inspect:** command registry metadata, JSON Schema factories, CLI `schema` and
   `commands` output, and recipe validation descriptors.
 
@@ -307,6 +307,15 @@ plugin path details stay internal/debug inputs rather than product DTO fields.
 Artifact handoff, import, and materialization results normalize to
 `wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
 `normalizeArtifactResultEnvelope()`.
+
+Run-plan progress normalizes to `wp-codebox/run-plan-progress/v1` through
+`normalizeRunPlanProgressSnapshot()`. The snapshot reports `status`, `active`,
+settled `counts`, per-worker status, optional `sessionId`/`runId`, and optional
+`eventsRef`/`resultRef` references. Hosts may stream or persist those snapshots in
+their own job system, but WP Codebox does not require host job ownership, create a
+durable parent queue, or expose artifact-file paths as the only progress contract.
+Cancellation appears as normalized worker/run status when requested or observed;
+host UIs own the button, policy, and durable cancellation request transport.
 
 Fuzzing callers can attach `performanceObservation()` output to case diagnostics
 or evidence artifacts when command behavior needs comparable performance context.
