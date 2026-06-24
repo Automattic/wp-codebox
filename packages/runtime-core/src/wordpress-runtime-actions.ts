@@ -4,6 +4,7 @@ import type { FuzzSuiteContract, FuzzSuiteResultEnvelope } from "./fuzz-suite-co
 import { runFuzzSuite, type FuzzSuiteRunOptions } from "./fuzz-suite-runner.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation, type WordPressDbOperation, type WordPressDbVerb } from "./wordpress-db-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation, type WordPressCrudOperation } from "./wordpress-crud-contracts.js"
+import type { PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runWordPressRestMatrix, type WordPressRestMatrixContract, type WordPressRestMatrixResultEnvelope } from "./rest-matrix-contracts.js"
 import type { ArtifactBundle, Runtime, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeStepResult } from "./runtime-contracts.js"
 import type { WordPressRuntimeDiscoverySurface } from "./wordpress-runtime-discovery-contracts.js"
@@ -46,6 +47,8 @@ export interface WordPressRestPerformanceObservationOptions {
   hookSampleLimit?: number
   hookLimit?: number
   timeoutMs?: number
+  capture?: PerformanceObservationCaptureRequest
+  enableQueryCapture?: boolean
 }
 
 export interface WordPressRuntimeCheckpointOptions {
@@ -89,6 +92,8 @@ export interface WordPressPageLoadOptions {
   user?: string
   session?: string
   captureDiagnostics?: readonly string[]
+  capture?: PerformanceObservationCaptureRequest
+  enableQueryCapture?: boolean
   timeoutMs?: number
 }
 
@@ -167,6 +172,7 @@ export function observeWordPressRestPerformance(episode: WordPressRuntimeActionE
     ...(options.queryLengthLimit !== undefined ? [`query-length-limit=${options.queryLengthLimit}`] : []),
     ...(options.hookSampleLimit !== undefined ? [`hook-sample-limit=${options.hookSampleLimit}`] : []),
     ...(options.hookLimit !== undefined ? [`hook-limit=${options.hookLimit}`] : []),
+    ...captureArgs(options),
   ], options.timeoutMs)
 }
 
@@ -246,5 +252,17 @@ function pageLoadArgs(options: WordPressPageLoadOptions): string[] {
     ...(options.user ? [`user=${options.user}`] : []),
     ...(options.session ? [`session=${options.session}`] : []),
     ...(options.captureDiagnostics?.length ? [`capture-diagnostics=${options.captureDiagnostics.join(",")}`] : []),
+    ...captureArgs(options),
   ]
+}
+
+function captureArgs(options: { capture?: PerformanceObservationCaptureRequest; enableQueryCapture?: boolean }): string[] {
+  const args: string[] = []
+  if (options.capture && Object.keys(options.capture).length > 0) {
+    args.push(`capture-json=${JSON.stringify(options.capture)}`)
+  }
+  if (typeof options.enableQueryCapture === "boolean") {
+    args.push(`enable-query-capture=${options.enableQueryCapture ? "true" : "false"}`)
+  }
+  return args
 }

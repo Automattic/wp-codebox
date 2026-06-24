@@ -215,10 +215,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   timing placeholders, network counts, and browser/admin metric placeholders.
   `wordpress.rest-performance-observation` is the runtime-backed public command for
   one in-process REST request. It returns the performance observation envelope as
-  the top-level result, including query fingerprints when `$wpdb->queries` is
-  populated and bounded hook hotspot samples from the WordPress `all` hook. It is
-  an upstream observation primitive, not a product-specific fuzz suite or benchmark
-  runner.
+  the top-level result, including query fingerprints when query capture is requested
+  and `$wpdb->queries` is populated, bounded hook hotspot samples from the WordPress
+  `all` hook, and `capture` metadata that reports whether query capture was
+  requested, captured, unavailable, partial, or uncaptured. It is an upstream
+  observation primitive, not a product-specific fuzz suite or benchmark runner.
 - **WordPress page-load coverage:** `wordpress.admin-page-load` and
   `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
   with `mode: "simulated"`, status, target, resolved admin screen or frontend
@@ -229,6 +230,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
   requests without browser execution. `wordpress.browser-page-load` returns it with
   `mode: "browser"` when a caller explicitly needs DOM, screenshot, console, or
   network evidence.
+- **WordPress workload boundary:** `wp-codebox/wordpress-workload-run/v1` accepts
+  Codebox-native recipe inputs plus `capture: { queries: true }` or
+  `enableQueryCapture: true`. The CLI and TypeScript helpers preserve the request
+  as recipe metadata and pass it to public WordPress commands; downstream adapters
+  translate that DTO into their own contracts outside WP Codebox.
 - **WordPress admin discovery:** `wordpress.runtime-discovery` and
   `wordpress.admin-page-inventory` expose admin pages with canonical admin URLs,
   declared capabilities, current-user access checks, and current-user role context

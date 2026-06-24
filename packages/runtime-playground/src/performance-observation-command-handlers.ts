@@ -1,4 +1,4 @@
-import { argValue, jsonObjectArg, nonNegativeIntegerArg, positiveIntegerArg } from "./command-args.js"
+import { argValue, booleanArg, jsonObjectArg, nonNegativeIntegerArg, positiveIntegerArg } from "./command-args.js"
 import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 
 export interface RestPerformanceObservationInput {
@@ -9,6 +9,7 @@ export interface RestPerformanceObservationInput {
   hookSampleLimit: number
   hookLimit: number
   queryLengthLimit: number
+  capture: { queries?: boolean }
   userSession?: WordPressUserSessionResolution
 }
 
@@ -26,6 +27,7 @@ export function restPerformanceObservationInputFromArgs(args: string[]): RestPer
     hookSampleLimit: nonNegativeIntegerArg(args, "hook-sample-limit", 50),
     hookLimit: positiveIntegerArg(args, "hook-limit", 500),
     queryLengthLimit: positiveIntegerArg(args, "query-length-limit", 500),
+    capture: captureFromArgs(args),
   }
 }
 
@@ -39,11 +41,13 @@ $wp_codebox_query_start = isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBA
 $wp_codebox_method = ${JSON.stringify(input.method)};
 $wp_codebox_path = ${JSON.stringify(input.path)};
 $wp_codebox_params = json_decode( ${JSON.stringify(JSON.stringify(input.params))}, true );
+$wp_codebox_capture = json_decode( ${JSON.stringify(JSON.stringify(input.capture))}, true );
 $wp_codebox_query_fingerprint_limit = ${input.queryFingerprintLimit};
 $wp_codebox_hook_sample_limit = ${input.hookSampleLimit};
 $wp_codebox_hook_limit = ${input.hookLimit};
 $wp_codebox_query_length_limit = ${input.queryLengthLimit};
 $wp_codebox_user_session = json_decode( ${JSON.stringify(JSON.stringify(userSessionMetadata ?? null))}, true );
+$wp_codebox_capture_queries_requested = is_array( $wp_codebox_capture ) && array_key_exists( 'queries', $wp_codebox_capture ) ? (bool) $wp_codebox_capture['queries'] : true;
 
 if ( ! class_exists( 'WP_REST_Request' ) || ! function_exists( 'rest_do_request' ) ) {
     throw new RuntimeException( 'The WordPress REST API is not available in this runtime.' );
@@ -104,7 +108,7 @@ try {
 $wp_codebox_finished_at = microtime( true );
 $wp_codebox_observation_finished_at = gmdate( 'Y-m-d\\TH:i:s.v\\Z' );
 $wp_codebox_end_memory = memory_get_usage( true );
-$wp_codebox_queries_available = isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries );
+$wp_codebox_queries_available = $wp_codebox_capture_queries_requested && isset( $GLOBALS['wpdb']->queries ) && is_array( $GLOBALS['wpdb']->queries );
 $wp_codebox_query_groups = array();
 $wp_codebox_query_count = 0;
 $wp_codebox_query_total_ms = 0.0;
@@ -134,6 +138,8 @@ if ( $wp_codebox_queries_available ) {
         }
     }
 }
+$wp_codebox_query_capture_status = $wp_codebox_capture_queries_requested ? ( $wp_codebox_queries_available ? 'captured' : 'unavailable' ) : 'uncaptured';
+$wp_codebox_query_capture_reason = $wp_codebox_capture_queries_requested ? ( $wp_codebox_queries_available ? null : 'wpdb_queries_unavailable' ) : 'query_capture_not_requested';
 $wp_codebox_fingerprints = array_values( $wp_codebox_query_groups );
 usort( $wp_codebox_fingerprints, static fn( $a, $b ) => ( (int) ( $b['count'] ?? 0 ) <=> (int) ( $a['count'] ?? 0 ) ) ?: strcmp( (string) ( $a['fingerprint'] ?? '' ), (string) ( $b['fingerprint'] ?? '' ) ) );
 $wp_codebox_fingerprints = array_slice( $wp_codebox_fingerprints, 0, $wp_codebox_query_fingerprint_limit );
@@ -151,10 +157,20 @@ echo wp_json_encode( array(
     'kind' => 'rest-request',
     'timing' => array( 'status' => 'captured', 'startedAt' => $wp_codebox_observation_started_at, 'finishedAt' => $wp_codebox_observation_finished_at, 'durationMs' => round( ( $wp_codebox_finished_at - $wp_codebox_observation_start_time ) * 1000, 3 ) ),
     'memory' => array( 'status' => 'captured', 'startBytes' => $wp_codebox_observation_start_memory, 'endBytes' => $wp_codebox_end_memory, 'deltaBytes' => $wp_codebox_end_memory - $wp_codebox_observation_start_memory, 'peakBytes' => memory_get_peak_usage( true ) ),
-    'database' => array( 'status' => $wp_codebox_queries_available ? 'captured' : 'uncaptured', 'reason' => $wp_codebox_queries_available ? null : 'wpdb_queries_unavailable', 'queryCount' => $wp_codebox_query_count, 'totalTimeMs' => round( $wp_codebox_query_total_ms, 3 ), 'fingerprints' => $wp_codebox_fingerprints, 'repeatedQueries' => $wp_codebox_repeated_queries ),
+    'database' => array( 'status' => $wp_codebox_query_capture_status, 'reason' => $wp_codebox_query_capture_reason, 'queryCount' => $wp_codebox_query_count, 'totalTimeMs' => round( $wp_codebox_query_total_ms, 3 ), 'fingerprints' => $wp_codebox_fingerprints, 'repeatedQueries' => $wp_codebox_repeated_queries ),
     'hooks' => array( 'status' => 'captured', 'reason' => $wp_codebox_hooks_truncated ? 'hook_sample_limit_reached' : null, 'timings' => $wp_codebox_hook_timings ),
     'network' => array( 'status' => 'unsupported', 'reason' => 'in_process_rest_request' ),
     'browser' => array( 'status' => 'unsupported', 'reason' => 'not_a_browser_observation' ),
+    'capture' => array( 'requested' => array( 'queries' => $wp_codebox_capture_queries_requested ), 'queries' => array( 'requested' => $wp_codebox_capture_queries_requested, 'status' => $wp_codebox_query_capture_status, 'reason' => $wp_codebox_query_capture_reason ) ),
     'metadata' => array( 'runner' => 'wp-codebox/runtime-playground', 'surface' => 'rest', 'method' => $wp_codebox_method, 'status' => (int) $wp_codebox_response->get_status(), 'hookCount' => $wp_codebox_hook_count ),
 ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );`
+}
+
+function captureFromArgs(args: string[]): RestPerformanceObservationInput["capture"] {
+  const capture = jsonObjectArg(args, "capture-json") as RestPerformanceObservationInput["capture"]
+  const name = argValue(args, "capture-queries") !== undefined ? "capture-queries" : argValue(args, "enable-query-capture") !== undefined ? "enable-query-capture" : undefined
+  if (name) {
+    capture.queries = booleanArg(args, name)
+  }
+  return capture
 }

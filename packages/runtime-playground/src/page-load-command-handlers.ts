@@ -1,4 +1,4 @@
-import { argValue, commaListArg, jsonObjectArg } from "./command-args.js"
+import { argValue, booleanArg, commaListArg, jsonObjectArg } from "./command-args.js"
 import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from "./wordpress-user-sessions.js"
 
 export type PageLoadSurface = "admin" | "frontend"
@@ -11,6 +11,7 @@ export interface PageLoadCommandInput {
   query: Record<string, unknown>
   body: Record<string, unknown>
   captureDiagnostics: string[]
+  capture: { queries?: boolean }
   userSession?: WordPressUserSessionResolution
 }
 
@@ -25,6 +26,7 @@ export function pageLoadInputFromArgs(args: string[], surface: PageLoadSurface, 
     query: jsonObjectArg(args, "query-json"),
     body: jsonObjectArg(args, "body-json"),
     captureDiagnostics: commaListArg(args, "capture-diagnostics"),
+    capture: captureFromArgs(args),
   }
 }
 
@@ -41,7 +43,9 @@ $wp_codebox_page_load_path = ${JSON.stringify(input.path)};
 $wp_codebox_page_load_query = json_decode(${JSON.stringify(JSON.stringify(input.query))}, true);
 $wp_codebox_page_load_body = json_decode(${JSON.stringify(JSON.stringify(input.body))}, true);
 $wp_codebox_page_load_capture = json_decode(${JSON.stringify(JSON.stringify(input.captureDiagnostics))}, true);
+$wp_codebox_page_load_capture_request = json_decode(${JSON.stringify(JSON.stringify(input.capture))}, true);
 $wp_codebox_page_load_user_session = json_decode(${JSON.stringify(JSON.stringify(userSessionMetadata ?? null))}, true);
+$wp_codebox_page_load_capture_queries_requested = is_array($wp_codebox_page_load_capture_request) && array_key_exists('queries', $wp_codebox_page_load_capture_request) ? (bool) $wp_codebox_page_load_capture_request['queries'] : in_array('wpdb-queries', $wp_codebox_page_load_capture, true);
 $wp_codebox_page_load_notices = array();
 $wp_codebox_page_load_errors = array();
 $wp_codebox_page_load_redirect = null;
@@ -157,7 +161,7 @@ $wp_codebox_page_load_identity = array_filter($wp_codebox_page_load_identity, st
 $wp_codebox_page_load_query_count = 0;
 $wp_codebox_page_load_query_time_ms = 0.0;
 $wp_codebox_page_load_query_fingerprints = array();
-$wp_codebox_page_load_queries_available = in_array('wpdb-queries', $wp_codebox_page_load_capture, true) && isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries);
+$wp_codebox_page_load_queries_available = $wp_codebox_page_load_capture_queries_requested && isset($GLOBALS['wpdb']->queries) && is_array($GLOBALS['wpdb']->queries);
 if ($wp_codebox_page_load_queries_available) {
     foreach (array_slice($GLOBALS['wpdb']->queries, $wp_codebox_page_load_query_start) as $wp_codebox_page_load_query_record) {
         $wp_codebox_page_load_sql = is_array($wp_codebox_page_load_query_record) && isset($wp_codebox_page_load_query_record[0]) ? (string) $wp_codebox_page_load_query_record[0] : '';
@@ -182,6 +186,8 @@ if ($wp_codebox_page_load_queries_available) {
         }
     }
 }
+$wp_codebox_page_load_query_capture_status = $wp_codebox_page_load_capture_queries_requested ? ($wp_codebox_page_load_queries_available ? 'captured' : 'unavailable') : 'uncaptured';
+$wp_codebox_page_load_query_capture_reason = $wp_codebox_page_load_capture_queries_requested ? ($wp_codebox_page_load_queries_available ? null : 'wpdb_queries_unavailable') : 'query_capture_not_requested';
 $wp_codebox_page_load_finished_at = gmdate('Y-m-d\\TH:i:s.v\\Z');
 $wp_codebox_page_load_status = !empty($wp_codebox_page_load_errors) ? 'error' : ($wp_codebox_page_load_redirect ? 'redirect' : 'ok');
 $wp_codebox_page_load_result = array(
@@ -195,9 +201,18 @@ $wp_codebox_page_load_result = array(
     'redirect' => $wp_codebox_page_load_redirect,
     'notices' => $wp_codebox_page_load_notices,
     'errors' => $wp_codebox_page_load_errors,
-    'performance' => array('schema' => 'wp-codebox/performance-observation/v1', 'command' => $wp_codebox_page_load_command, 'target' => $wp_codebox_page_load_path, 'source' => 'in-process', 'kind' => 'simulated-page-load', 'timing' => array('status' => 'captured', 'startedAt' => $wp_codebox_page_load_started_at, 'finishedAt' => $wp_codebox_page_load_finished_at, 'durationMs' => round((microtime(true) - $wp_codebox_page_load_start_time) * 1000, 3)), 'memory' => array('status' => 'captured', 'startBytes' => $wp_codebox_page_load_start_memory, 'endBytes' => memory_get_usage(true), 'deltaBytes' => memory_get_usage(true) - $wp_codebox_page_load_start_memory, 'peakBytes' => memory_get_peak_usage(true)), 'database' => array('status' => $wp_codebox_page_load_queries_available ? 'captured' : 'uncaptured', 'reason' => $wp_codebox_page_load_queries_available ? null : 'wpdb_queries_unavailable', 'queryCount' => $wp_codebox_page_load_query_count, 'totalTimeMs' => round($wp_codebox_page_load_query_time_ms, 3), 'fingerprints' => array_values($wp_codebox_page_load_query_fingerprints), 'repeatedQueries' => array_values(array_filter(array_values($wp_codebox_page_load_query_fingerprints), static fn($query) => isset($query['count']) && $query['count'] > 1))), 'hooks' => array('status' => 'unsupported', 'reason' => 'hook_timing_not_instrumented', 'timings' => array()), 'network' => array('status' => 'unsupported', 'reason' => 'in_process_page_load'), 'browser' => array('status' => 'unsupported', 'reason' => 'not_a_browser_observation'), 'metadata' => array('runner' => 'wp-codebox/runtime-playground', 'surface' => $wp_codebox_page_load_surface)),
+    'performance' => array('schema' => 'wp-codebox/performance-observation/v1', 'command' => $wp_codebox_page_load_command, 'target' => $wp_codebox_page_load_path, 'source' => 'in-process', 'kind' => 'simulated-page-load', 'timing' => array('status' => 'captured', 'startedAt' => $wp_codebox_page_load_started_at, 'finishedAt' => $wp_codebox_page_load_finished_at, 'durationMs' => round((microtime(true) - $wp_codebox_page_load_start_time) * 1000, 3)), 'memory' => array('status' => 'captured', 'startBytes' => $wp_codebox_page_load_start_memory, 'endBytes' => memory_get_usage(true), 'deltaBytes' => memory_get_usage(true) - $wp_codebox_page_load_start_memory, 'peakBytes' => memory_get_peak_usage(true)), 'database' => array('status' => $wp_codebox_page_load_query_capture_status, 'reason' => $wp_codebox_page_load_query_capture_reason, 'queryCount' => $wp_codebox_page_load_query_count, 'totalTimeMs' => round($wp_codebox_page_load_query_time_ms, 3), 'fingerprints' => array_values($wp_codebox_page_load_query_fingerprints), 'repeatedQueries' => array_values(array_filter(array_values($wp_codebox_page_load_query_fingerprints), static fn($query) => isset($query['count']) && $query['count'] > 1))), 'hooks' => array('status' => 'unsupported', 'reason' => 'hook_timing_not_instrumented', 'timings' => array()), 'network' => array('status' => 'unsupported', 'reason' => 'in_process_page_load'), 'browser' => array('status' => 'unsupported', 'reason' => 'not_a_browser_observation'), 'capture' => array('requested' => array('queries' => $wp_codebox_page_load_capture_queries_requested), 'queries' => array('requested' => $wp_codebox_page_load_capture_queries_requested, 'status' => $wp_codebox_page_load_query_capture_status, 'reason' => $wp_codebox_page_load_query_capture_reason)), 'metadata' => array('runner' => 'wp-codebox/runtime-playground', 'surface' => $wp_codebox_page_load_surface)),
     'artifactRefs' => array(),
     'diagnostics' => array('bufferBytes' => strlen((string) $wp_codebox_page_load_buffer), 'capture' => $wp_codebox_page_load_capture),
 );
 echo wp_json_encode($wp_codebox_page_load_result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
+
+function captureFromArgs(args: string[]): PageLoadCommandInput["capture"] {
+  const capture = jsonObjectArg(args, "capture-json") as PageLoadCommandInput["capture"]
+  const name = argValue(args, "capture-queries") !== undefined ? "capture-queries" : argValue(args, "enable-query-capture") !== undefined ? "enable-query-capture" : undefined
+  if (name) {
+    capture.queries = booleanArg(args, name)
+  }
+  return capture
 }

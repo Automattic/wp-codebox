@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { normalizeRootedPath, pathIsWithinRoot, relativePathIsWithinRoot } from "./file-tree-policy.js"
-import { performanceObservation, type PerformanceObservation } from "./performance-observation.js"
+import { performanceObservation, type PerformanceObservation, type PerformanceObservationCaptureRequest } from "./performance-observation.js"
 import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import type { MountSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
@@ -36,6 +36,8 @@ export interface RuntimeRestRequestAction {
   params?: Record<string, unknown>
   body?: string
   body_json?: unknown
+  capture?: PerformanceObservationCaptureRequest
+  enableQueryCapture?: boolean
   timeout_ms?: number
 }
 
@@ -343,6 +345,7 @@ async function runRuntimeRestRequestAction(episode: RuntimeEpisode, action: Runt
   } else if (action.body !== undefined) {
     args.push(`body=${action.body}`)
   }
+  args.push(...captureArgs(action))
 
   const step = await episode.step(
     {
@@ -371,6 +374,13 @@ async function runRuntimeRestRequestAction(episode: RuntimeEpisode, action: Runt
     data: normalized,
     artifactRefs: step.observation?.artifactRefs,
   })
+}
+
+function captureArgs(action: { capture?: PerformanceObservationCaptureRequest; enableQueryCapture?: boolean }): string[] {
+  return [
+    ...(action.capture && Object.keys(action.capture).length > 0 ? [`capture-json=${JSON.stringify(action.capture)}`] : []),
+    ...(typeof action.enableQueryCapture === "boolean" ? [`enable-query-capture=${action.enableQueryCapture ? "true" : "false"}`] : []),
+  ]
 }
 
 async function runRuntimeWordPressCrudOperationAction(episode: RuntimeEpisode, action: RuntimeWordPressCrudOperationAction): Promise<RuntimeActionObservation> {

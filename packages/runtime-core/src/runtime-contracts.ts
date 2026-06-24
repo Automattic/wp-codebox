@@ -582,6 +582,7 @@ export interface WorkspaceRecipe {
     typed?: WorkspaceRecipeTypedArtifact[]
   }
   probes?: WorkspaceRecipeProbe[]
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeArtifactVerifier {

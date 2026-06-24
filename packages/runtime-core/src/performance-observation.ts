@@ -2,6 +2,21 @@ import { stripUndefined } from "./object-utils.js"
 
 export const PERFORMANCE_OBSERVATION_SCHEMA = "wp-codebox/performance-observation/v1" as const
 
+export type PerformanceObservationCaptureStatus = "captured" | "unavailable" | "partial" | "uncaptured"
+
+export interface PerformanceObservationCaptureRequest {
+  queries?: boolean
+}
+
+export interface PerformanceObservationCaptureReport {
+  requested: PerformanceObservationCaptureRequest
+  queries: {
+    requested: boolean
+    status: PerformanceObservationCaptureStatus
+    reason?: string
+  }
+}
+
 export interface PerformanceObservationTiming {
   status?: "captured" | "uncaptured" | "unsupported" | (string & {})
   reason?: string
@@ -35,7 +50,7 @@ export interface PerformanceObservationRepeatedQuerySummary {
 }
 
 export interface PerformanceObservationDatabase {
-  status?: "captured" | "uncaptured" | "unsupported" | (string & {})
+  status?: "captured" | "uncaptured" | "unavailable" | "partial" | "unsupported" | (string & {})
   reason?: string
   queryCount?: number
   totalTimeMs?: number
@@ -92,6 +107,7 @@ export interface PerformanceObservation {
   network?: PerformanceObservationNetwork
   browser?: PerformanceObservationBrowser
   artifactRefs?: PerformanceObservationArtifactRef[]
+  capture?: PerformanceObservationCaptureReport
   metadata?: Record<string, unknown>
 }
 
@@ -109,6 +125,17 @@ export function performanceObservation(input: Omit<PerformanceObservation, "sche
     network: input.network,
     browser: input.browser,
     artifactRefs: input.artifactRefs,
+    capture: input.capture,
     metadata: input.metadata,
+  })
+}
+
+export function performanceObservationCaptureRequest(input: unknown): PerformanceObservationCaptureRequest {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {}
+  }
+  const record = input as Record<string, unknown>
+  return stripUndefined({
+    queries: typeof record.queries === "boolean" ? record.queries : undefined,
   })
 }

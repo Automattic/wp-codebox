@@ -256,6 +256,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
         description: "Recipe-defined post-startup probes executed after workflow steps and before artifact finalization.",
         items: { $ref: "#/$defs/recipeProbe" },
       },
+      metadata: { $ref: "#/$defs/metadata" },
     },
     $defs: {
       artifactVerifier: {

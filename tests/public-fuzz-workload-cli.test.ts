@@ -33,6 +33,7 @@ try {
   const workloadInput = join(directory, "workload.json")
   await writeFile(workloadInput, JSON.stringify({
     schema: "wp-codebox/wordpress-workload-run/v1",
+    capture: { queries: true },
     steps: [{ command: "wordpress.run-php", args: ["code=<?php echo 'ok';"] }],
   }), "utf8")
   const workloadOutput = await captureStdout(async () => {
@@ -41,7 +42,10 @@ try {
   const workloadJson = JSON.parse(workloadOutput)
   assert.equal(workloadJson.schema, "wp-codebox/recipe-run-dry-run/v1")
   assert.equal(workloadJson.dryRun, true)
+  assert.deepEqual(workloadJson.plan.metadata.capture, { queries: true })
   assert.equal(workloadJson.plan.workflow.steps[0].command, "wordpress.run-php")
+  const forbiddenBoundaryPattern = new RegExp(`${["home", "boy"].join("")}\\/|${["HOME", "BOY_"].join("")}|${["fuzz", "observation", "set"].join("-")}`, "i")
+  assert.doesNotMatch(JSON.stringify(workloadJson), forbiddenBoundaryPattern)
 } finally {
   await rm(directory, { recursive: true, force: true })
 }

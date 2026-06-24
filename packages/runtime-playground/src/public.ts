@@ -109,6 +109,8 @@ export interface WordPressPageLoadActionOptions {
   method?: string
   query?: Record<string, unknown>
   body?: Record<string, unknown>
+  capture?: { queries?: boolean }
+  enableQueryCapture?: boolean
   user?: string
   session?: string
   captureDiagnostics?: string[]
@@ -355,6 +357,8 @@ function pageLoadActionArgs(options: WordPressPageLoadActionOptions): string[] {
     ...(options.method ? [`method=${options.method}`] : []),
     ...(options.query ? [`query-json=${JSON.stringify(options.query)}`] : []),
     ...(options.body ? [`body-json=${JSON.stringify(options.body)}`] : []),
+    ...(options.capture && Object.keys(options.capture).length > 0 ? [`capture-json=${JSON.stringify(options.capture)}`] : []),
+    ...(typeof options.enableQueryCapture === "boolean" ? [`enable-query-capture=${options.enableQueryCapture ? "true" : "false"}`] : []),
     ...(options.user ? [`user=${options.user}`] : []),
     ...(options.session ? [`session=${options.session}`] : []),
     ...(options.captureDiagnostics?.length ? [`capture-diagnostics=${options.captureDiagnostics.join(",")}`] : []),

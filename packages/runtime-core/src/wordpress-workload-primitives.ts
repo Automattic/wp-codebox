@@ -2,6 +2,7 @@ import { commandArg, commandJsonArg } from "./command-codecs.js"
 import { DEFAULT_WORDPRESS_VERSION } from "./runtime-defaults.js"
 import type { RuntimePreviewSpec, WorkspaceRecipe, WorkspaceRecipeMount, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { isPlainObject, stripUndefined } from "./object-utils.js"
+import { performanceObservationCaptureRequest, type PerformanceObservationCaptureRequest } from "./performance-observation.js"
 
 export const WORDPRESS_WORKLOAD_RUN_SCHEMA = "wp-codebox/wordpress-workload-run/v1" as const
 export const WORDPRESS_ABILITY_STEP_SCHEMA = "wp-codebox/wordpress-ability-step/v1" as const
@@ -31,6 +32,8 @@ export interface WordPressWorkloadRunRecipeOptions {
   steps: WorkspaceRecipeStep[]
   after?: WorkspaceRecipeStep[]
   metadata?: Record<string, unknown>
+  capture?: PerformanceObservationCaptureRequest
+  enableQueryCapture?: boolean
 }
 
 export interface PlaygroundPreviewUrlOptions {
@@ -96,6 +99,7 @@ export function wordpressWorkloadRunRecipe(options: WordPressWorkloadRunRecipeOp
     metadata: stripUndefined({
       ...options.metadata,
       public_contract: WORDPRESS_WORKLOAD_RUN_SCHEMA,
+      capture: normalizedCapture(options),
     }),
   }) as WorkspaceRecipe
 }
@@ -181,4 +185,12 @@ function stringList(value: unknown): string[] | undefined {
 
 function stringValue(value: unknown): string {
   return value === undefined || value === null ? "" : String(value).trim()
+}
+
+function normalizedCapture(options: Pick<WordPressWorkloadRunRecipeOptions, "capture" | "enableQueryCapture">): PerformanceObservationCaptureRequest | undefined {
+  const capture = performanceObservationCaptureRequest(options.capture)
+  if (typeof options.enableQueryCapture === "boolean") {
+    capture.queries = options.enableQueryCapture
+  }
+  return Object.keys(capture).length > 0 ? capture : undefined
 }

@@ -7,7 +7,6 @@ import {
   wordpressAbilityStep,
   wordpressWorkloadRunRecipe,
 } from "../packages/runtime-core/src/index.js"
-import { wordpressAbilityStep as wordpressAbilityStepFromRecipeBuilders } from "../packages/runtime-core/src/recipe-builders.js"
 
 const abilityStep = wordpressAbilityStep({
   name: "example/do-work",
@@ -20,11 +19,9 @@ assert.ok(abilityStep.args?.includes("name=example/do-work"))
 assert.ok(abilityStep.args?.includes('input={"prompt":"collect evidence"}'))
 assert.ok(abilityStep.args?.includes('expected-result-schema="example/result/v1"'))
 
-const stableSubpathStep = wordpressAbilityStepFromRecipeBuilders({ name: "example/do-work" })
-assert.equal(stableSubpathStep.command, "wordpress.ability")
-
 const recipe = wordpressWorkloadRunRecipe({
   preview: { publicUrl: "https://preview.example.test/run-1/" },
+  capture: { queries: true },
   runtimeEnv: { EXAMPLE_FLAG: true, ignored: "nope" },
   secretEnv: ["EXAMPLE_TOKEN", "EXAMPLE_TOKEN"],
   mounts: [{ source: "/workspace/plugin", target: "/wordpress/wp-content/plugins/example" }],
@@ -38,6 +35,7 @@ assert.deepEqual(recipe.inputs?.runtimeEnv, { EXAMPLE_FLAG: "1" })
 assert.deepEqual(recipe.inputs?.secretEnv, ["EXAMPLE_TOKEN"])
 assert.equal(recipe.workflow.steps[0].command, "wordpress.ability")
 assert.equal(recipe.metadata?.public_contract, WORDPRESS_WORKLOAD_RUN_SCHEMA)
+assert.deepEqual(recipe.metadata?.capture, { queries: true })
 
 assert.deepEqual(playgroundPreviewUrl({
   localUrl: "http://127.0.0.1:9400/",

@@ -43,7 +43,6 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
 
   const options = await parsePublicRuntimeCommandOptions(args)
   const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(options.input)) as unknown as Record<string, unknown>
-  delete recipe.metadata
   const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-workload-cli-"))
   try {
     const recipePath = join(tempDir, "recipe.json")
@@ -117,6 +116,8 @@ function workloadRecipeOptions(input: Record<string, unknown>): WordPressWorkloa
     before: arrayOption(input.before) as WordPressWorkloadRunRecipeOptions["before"],
     steps: steps as WordPressWorkloadRunRecipeOptions["steps"],
     after: arrayOption(input.after) as WordPressWorkloadRunRecipeOptions["after"],
+    capture: objectOption(input.capture) as WordPressWorkloadRunRecipeOptions["capture"],
+    enableQueryCapture: typeof input.enableQueryCapture === "boolean" ? input.enableQueryCapture : typeof input.enable_query_capture === "boolean" ? input.enable_query_capture : undefined,
   }
 }
 

@@ -76,6 +76,7 @@ export interface RecipePlan {
     steps: RecipeDryRunStep[]
     after?: RecipeDryRunStep[]
   }
+  metadata?: Record<string, unknown>
 }
 
 export type RecipeDryRunPlan = RecipePlan
@@ -443,6 +444,7 @@ export async function planWorkspaceRecipe(recipe: WorkspaceRecipe, recipeDirecto
       steps: workflowSteps,
       ...(recipe.workflow.after ? { after: workflowSteps.filter((step) => step.phase === "after") } : {}),
     },
+    ...(recipe.metadata ? { metadata: recipe.metadata } : {}),
   }
 }
 
