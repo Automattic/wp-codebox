@@ -174,10 +174,10 @@ jobs:
   run-agent-task:
     runs-on: ubuntu-latest
     outputs:
-      job_status: ${{ steps.plan.outputs.job_status }}
-      transcript_json: ${{ steps.plan.outputs.transcript_json }}
-      transcript_summary: ${{ steps.plan.outputs.transcript_summary }}
-      engine_data_json: ${{ steps.plan.outputs.engine_data_json }}
+      job_status: ${{ steps.execute.outputs.job_status || steps.plan.outputs.job_status }}
+      transcript_json: ${{ steps.execute.outputs.transcript_json || steps.plan.outputs.transcript_json }}
+      transcript_summary: ${{ steps.execute.outputs.transcript_summary || steps.plan.outputs.transcript_summary }}
+      engine_data_json: ${{ steps.execute.outputs.engine_data_json || steps.plan.outputs.engine_data_json }}
       credential_mode: ${{ steps.plan.outputs.credential_mode }}
       declared_artifacts_json: ${{ steps.plan.outputs.declared_artifacts_json }}
     steps:
@@ -231,10 +231,65 @@ jobs:
           CALLBACK_DATA: ${{ inputs.callback_data }}
           RUN_AGENT: ${{ inputs.run_agent }}
           DRY_RUN: ${{ inputs.dry_run }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
+          MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
+          MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
+          MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
+          MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/build-codebox-task-request.mjs
 
       - name: Upload Codebox task request
         uses: actions/upload-artifact@v4
         with:
           name: codebox-agent-task-request-${{ github.run_id }}
-          path: .codebox/agent-task-request.json
+          path: |
+            .codebox/agent-task-request.json
+            .codebox/homeboy-agent-task-plan.json
+
+      - name: Install Homeboy runner
+        if: inputs.run_agent && !inputs.dry_run
+        uses: Extra-Chill/homeboy-action@v2
+        with:
+          extension: wordpress
+          commands: ','
+          auto-setup: 'false'
+          pr-comment: 'false'
+
+      - name: Run Codebox agent task
+        id: execute
+        if: inputs.run_agent && !inputs.dry_run
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
+          MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
+          MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
+          MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
+          MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
+        run: |
+          set -euo pipefail
+
+          result_path=".codebox/homeboy-agent-task-result.json"
+          homeboy --output "$result_path" agent-task run-plan \
+            --plan "${{ steps.plan.outputs.homeboy_plan_path }}" \
+            --record-run-id "${{ steps.plan.outputs.run_id }}"
+
+          engine_data_json="{}"
+          if [ -s "$result_path" ]; then
+            engine_data_json="$(jq -c '.' "$result_path")"
+          fi
+
+          {
+            printf 'job_status=succeeded\n'
+            printf 'transcript_json=%s\n' "${{ steps.plan.outputs.transcript_json }}"
+            printf 'transcript_summary=%s\n' "${{ inputs.workload_label }}: succeeded"
+            printf 'engine_data_json<<EOF\n%s\nEOF\n' "$engine_data_json"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload Codebox task result
+        if: always() && inputs.run_agent && !inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: codebox-agent-task-result-${{ github.run_id }}
+          path: .codebox/homeboy-agent-task-result.json
+          if-no-files-found: ignore
