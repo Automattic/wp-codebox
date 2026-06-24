@@ -608,6 +608,7 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
 
 export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
   const outputs = objectValue(agentTaskResult.outputs) || {}
+  const result = objectValue(agentTaskResult.result) || {}
   const raw = objectValue(agentTaskResult.raw) || {}
   const rawResult = objectValue(raw.result) || {}
   const rawRuntimeResult = objectValue(objectValue(raw.agent_runtime)?.result) || {}
@@ -615,6 +616,9 @@ export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, work
     agentTaskResult.typed_artifacts,
     outputs.typed_artifacts,
     workloadOutputs.typed_artifacts,
+    result.typed_artifacts,
+    objectValue(result.outputs)?.typed_artifacts,
+    objectValue(result.engine_data)?.outputs && objectValue(objectValue(result.engine_data)?.outputs)?.typed_artifacts,
     rawResult.typed_artifacts,
     objectValue(rawResult.outputs)?.typed_artifacts,
     objectValue(rawResult.engine_data)?.outputs && objectValue(objectValue(rawResult.engine_data)?.outputs)?.typed_artifacts,
