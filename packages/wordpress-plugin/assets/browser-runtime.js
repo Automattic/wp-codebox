@@ -11,6 +11,8 @@
 		'browser-runtime:normalize-error',
 		'browser-runtime:normalize-result',
 		'browser-runtime:normalize-browser-run-result',
+		'browser-runtime:boot-executable-session',
+		'browser-runtime:parent-tool-bridge',
 		'browser-runtime:aggregate-fanout-outputs',
 		'browser-runtime:invoke-result',
 		'playground:run-php',
@@ -345,12 +347,22 @@
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
+		executableBrowserSession: api.executableBrowserSession,
+		bootExecutableBrowserSession: async ( client, session, options = {} ) => normalizeBrowserRunResult( await api.bootExecutableBrowserSession( client, session, options ), 'browser-executable-session' ),
+		parentToolBridge: api.parentToolBridge,
+		createParentToolRequest: api.createParentToolRequest,
+		dispatchParentTool: api.dispatchParentTool,
 		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,
+			bootExecutableBrowserSession: api.bootExecutableBrowserSession,
+			createParentToolRequest: api.createParentToolRequest,
+			dispatchParentTool: api.dispatchParentTool,
 			ensureDirectory: api.ensureDirectory,
+			executableBrowserSession: api.executableBrowserSession,
 			installTheme: api.installTheme,
+			parentToolBridge: api.parentToolBridge,
 			validateBrowserRuntimeMaterialization: api.validateBrowserRuntimeMaterialization,
 			aggregateFanoutOutputs: api.aggregateFanoutOutputs,
 			preparedBrowserRuntimeContract: api.preparedBrowserRuntimeContract,
@@ -1489,6 +1501,161 @@ try {
 		};
 	};
 
+	const executableBrowserSession = ( input ) => {
+		const session = input?.schema === 'wp-codebox/browser-session-product-dto/v1'
+			? input.executable_session
+			: input;
+		if ( ! session || typeof session !== 'object' ) {
+			throw runtimeError( 'executable_session_validate', 'browser_executable_session_missing', 'WP Codebox executable browser session is required.' );
+		}
+		if ( session.schema !== 'wp-codebox/browser-executable-session/v1' ) {
+			throw runtimeError( 'executable_session_validate', 'browser_executable_session_schema_unsupported', `Unsupported WP Codebox executable session schema: ${ session.schema || 'missing' }` );
+		}
+		if ( session.success === false || session.status === 'blocked' ) {
+			throw runtimeError( 'executable_session_validate', 'browser_executable_session_not_ready', session?.error?.message || 'WP Codebox executable browser session is not ready.' );
+		}
+
+		return session;
+	};
+
+	const executableBrowserRuntimeHandoff = ( input ) => {
+		const session = executableBrowserSession( input );
+		const handoff = session.runtime_handoff && typeof session.runtime_handoff === 'object' ? session.runtime_handoff : {};
+		if ( handoff.schema && handoff.schema !== 'wp-codebox/browser-runtime-handoff/v1' ) {
+			throw runtimeError( 'runtime_handoff_validate', 'browser_runtime_handoff_schema_unsupported', `Unsupported WP Codebox browser runtime handoff schema: ${ handoff.schema }` );
+		}
+		const blueprintRef = handoff.blueprint_ref && typeof handoff.blueprint_ref === 'object'
+			? handoff.blueprint_ref
+			: ( session.blueprint_ref && typeof session.blueprint_ref === 'object' ? session.blueprint_ref : null );
+		const blueprintRefDto = handoff.blueprint_ref_dto && typeof handoff.blueprint_ref_dto === 'object'
+			? handoff.blueprint_ref_dto
+			: ( session.preview_boot?.blueprint_ref_dto && typeof session.preview_boot.blueprint_ref_dto === 'object' ? session.preview_boot.blueprint_ref_dto : blueprintRef );
+
+		return {
+			schema: 'wp-codebox/browser-runtime-handoff/v1',
+			owner: 'wp-codebox',
+			...handoff,
+			session_id: handoff.session_id || session.session_id || '',
+			blueprint_ref: blueprintRef,
+			blueprint_ref_dto: blueprintRefDto,
+			hydrator_ability: handoff.hydrator_ability || blueprintRef?.hydrator_ability || blueprintRefDto?.hydrator_ability || 'wp-codebox/hydrate-browser-blueprint-ref',
+			parent_tool_bridge: handoff.parent_tool_bridge && typeof handoff.parent_tool_bridge === 'object' ? handoff.parent_tool_bridge : parentToolBridge( session ),
+		};
+	};
+
+	const parentToolBridge = ( input ) => {
+		const source = input?.schema === 'wp-codebox/browser-session-product-dto/v1'
+			? input.executable_session
+			: input;
+		const handoff = source?.runtime_handoff && typeof source.runtime_handoff === 'object' ? source.runtime_handoff : {};
+		const bridge = source?.parent_tool_bridge && typeof source.parent_tool_bridge === 'object'
+			? source.parent_tool_bridge
+			: ( handoff.parent_tool_bridge && typeof handoff.parent_tool_bridge === 'object' ? handoff.parent_tool_bridge : null );
+		return bridge && bridge.schema === 'wp-codebox/parent-tool-bridge/v1' ? bridge : null;
+	};
+
+	const createParentToolRequest = ( sessionInput, tool, operation, input = {}, metadata = {} ) => {
+		const session = executableBrowserSession( sessionInput );
+		const bridge = parentToolBridge( session );
+		if ( ! bridge ) {
+			throw runtimeError( 'parent_tool_bridge', 'parent_tool_bridge_missing', 'WP Codebox parent tool bridge is not available for this executable browser session.' );
+		}
+		const toolName = String( tool || '' );
+		if ( ! toolName || ! Array.isArray( bridge.allowed_tools ) || ! bridge.allowed_tools.includes( toolName ) ) {
+			throw runtimeError( 'parent_tool_bridge', 'parent_tool_denied', `Parent tool is not allowed: ${ toolName || 'missing' }` );
+		}
+
+		return {
+			schema: bridge.dispatcher?.request_schema || 'wp-codebox/parent-tool-request/v1',
+			version: 1,
+			request_id: `ptr-${ Date.now().toString( 36 ) }-${ Math.random().toString( 36 ).slice( 2, 10 ) }`,
+			tool: toolName,
+			operation: String( operation || 'call' ),
+			input,
+			sandbox_session: {
+				sandbox_session_id: String( session.session_id || '' ),
+			},
+			authorization: {
+				allowed_tools: [ ...bridge.allowed_tools ],
+			},
+			metadata: metadata && typeof metadata === 'object' ? metadata : {},
+		};
+	};
+
+	const dispatchParentTool = async ( session, tool, operation, input = {}, options = {} ) => {
+		if ( typeof options.dispatchParentTool !== 'function' ) {
+			throw runtimeError( 'parent_tool_bridge', 'parent_tool_dispatcher_missing', 'A host parent-tool dispatcher callback is required.' );
+		}
+		const request = createParentToolRequest( session, tool, operation, input, options.metadata || {} );
+		const result = await options.dispatchParentTool( request, { bridge: parentToolBridge( session ) } );
+		if ( ! result || typeof result !== 'object' || result.schema !== 'wp-codebox/parent-tool-result/v1' ) {
+			throw runtimeError( 'parent_tool_bridge', 'parent_tool_result_invalid', 'Parent tool dispatcher returned an invalid WP Codebox result envelope.' );
+		}
+		return result;
+	};
+
+	const hydrateExecutableBrowserBlueprint = async ( session, options = {} ) => {
+		const handoff = executableBrowserRuntimeHandoff( session );
+		const blueprintRef = handoff.blueprint_ref_dto || handoff.blueprint_ref;
+		const ref = blueprintRef?.ref || blueprintRef?.id || handoff.blueprint_ref || '';
+		if ( ! ref ) {
+			throw runtimeError( 'blueprint_hydration', 'browser_blueprint_ref_missing', 'Executable browser session is missing a Codebox blueprint ref.' );
+		}
+		if ( typeof options.hydrateBlueprintRef !== 'function' ) {
+			throw runtimeError( 'blueprint_hydration', 'browser_blueprint_hydrator_missing', 'A Codebox blueprint-ref hydrator callback is required.' );
+		}
+
+		const hydrated = await options.hydrateBlueprintRef( {
+			schema: 'wp-codebox/browser-blueprint-ref-hydration-request/v1',
+			ability: handoff.hydrator_ability,
+			ref,
+			blueprint_ref: blueprintRef,
+			session_id: handoff.session_id || '',
+		}, handoff );
+		const blueprint = hydrated?.blueprint && typeof hydrated.blueprint === 'object'
+			? hydrated.blueprint
+			: ( hydrated?.data?.blueprint && typeof hydrated.data.blueprint === 'object' ? hydrated.data.blueprint : hydrated );
+		if ( ! blueprint || typeof blueprint !== 'object' || ! Array.isArray( blueprint.steps ) ) {
+			throw runtimeError( 'blueprint_hydration', 'browser_blueprint_hydration_invalid', 'Codebox blueprint hydrator did not return an executable blueprint.' );
+		}
+
+		return {
+			schema: 'wp-codebox/browser-blueprint-hydration-result/v1',
+			ref,
+			blueprint,
+			hydrated,
+		};
+	};
+
+	const runExecutableBrowserBlueprint = async ( client, blueprint, options = {} ) => {
+		return await invokePlaygroundMethod( 'blueprint_run', 'runBlueprint', [
+			{ label: 'client-run-blueprint-envelope', shape: 'client.run', run: () => client.run( { blueprint } ) },
+			{ label: 'client-run-blueprint', shape: 'client.run', run: () => client.run( blueprint ) },
+			{ label: 'client-runBlueprint', shape: 'client.runBlueprint', run: () => client.runBlueprint( blueprint ) },
+			{ label: 'client-applyBlueprint', shape: 'client.applyBlueprint', run: () => client.applyBlueprint( blueprint ) },
+		] );
+	};
+
+	const bootExecutableBrowserSession = async ( client, sessionInput, options = {} ) => {
+		const session = executableBrowserSession( sessionInput );
+		if ( options.validateReadiness !== false && session.runtime_readiness?.ready === false ) {
+			throw runtimeError( 'executable_session_validate', 'browser_executable_session_not_ready', session.runtime_readiness?.message || 'WP Codebox executable browser session runtime is not ready.', session.runtime_readiness );
+		}
+		const hydration = await hydrateExecutableBrowserBlueprint( session, options );
+		const bootResult = await runExecutableBrowserBlueprint( client, hydration.blueprint, options );
+		return {
+			schema: 'wp-codebox/browser-executable-session-boot-result/v1',
+			success: true,
+			status: 'completed',
+			session_id: session.session_id || '',
+			blueprint_ref: hydration.ref,
+			result: bootResult ?? null,
+			preview: session.preview || session.runtime_access?.lease || null,
+			runtime_access: session.runtime_access || null,
+			parent_tool_bridge: parentToolBridge( session ),
+		};
+	};
+
 	const runtimeDependencySpecs = ( session, field ) => {
 		const runtime = session?.runtime && typeof session.runtime === 'object' ? session.runtime : {};
 		return Array.isArray( runtime[ field ] ) ? runtime[ field ].filter( isPlainObject ) : [];
@@ -2081,9 +2248,14 @@ echo wp_json_encode( array(
 		activateTheme,
 		aggregateFanoutOutputs,
 		browserSessionRecipe,
+		bootExecutableBrowserSession,
+		createParentToolRequest,
+		dispatchParentTool,
 		ensureDirectory,
+		executableBrowserSession,
 		installTheme,
 		normalizeOperationResult,
+		parentToolBridge,
 		parseJsonResponse,
 		preparedBrowserRuntimeContract,
 		preparedBrowserRuntimeStatus,

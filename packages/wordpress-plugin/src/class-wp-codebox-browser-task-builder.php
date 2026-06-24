@@ -333,6 +333,8 @@ final class WP_Codebox_Browser_Task_Builder {
 	private static function browser_executable_session_dto( array $session, array $preview_boot, array $preview_lease, array $blueprint_ref, array $runtime_access, array $runtime_readiness, array $runtime_capabilities ): array {
 		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
 		$contained_site   = is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array();
+		$task_input       = is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array();
+		$parent_tool_bridge = is_array( $task_input['parent_tool_bridge'] ?? null ) ? self::compact_public_value( $task_input['parent_tool_bridge'] ) : array();
 
 		return array_filter(
 			array(
@@ -351,6 +353,26 @@ final class WP_Codebox_Browser_Task_Builder {
 				'runtime_capabilities' => $runtime_capabilities,
 				'runtime_readiness'    => $runtime_readiness,
 				'contained_site'       => $contained_site,
+				'runtime_handoff'      => self::browser_runtime_handoff_dto( $session, $preview_boot, $blueprint_ref, $parent_tool_bridge ),
+				'parent_tool_bridge'   => $parent_tool_bridge,
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $preview_boot Preview boot DTO. @param array<string,mixed> $blueprint_ref Blueprint ref DTO. @param array<string,mixed> $parent_tool_bridge Parent tool bridge DTO. @return array<string,mixed> */
+	private static function browser_runtime_handoff_dto( array $session, array $preview_boot, array $blueprint_ref, array $parent_tool_bridge ): array {
+		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+		return array_filter(
+			array(
+				'schema'            => 'wp-codebox/browser-runtime-handoff/v1',
+				'owner'             => 'wp-codebox',
+				'session_id'        => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'boot_schema'       => 'wp-codebox/browser-preview-boot-config/v1',
+				'blueprint_ref'     => $blueprint_ref,
+				'blueprint_ref_dto' => is_array( $preview_boot['blueprint_ref_dto'] ?? null ) ? $preview_boot['blueprint_ref_dto'] : $blueprint_ref,
+				'hydrator_ability'  => (string) ( $blueprint_ref['hydrator_ability'] ?? 'wp-codebox/hydrate-browser-blueprint-ref' ),
+				'parent_tool_bridge' => $parent_tool_bridge,
 			),
 			static fn( mixed $value ): bool => '' !== $value && array() !== $value
 		);

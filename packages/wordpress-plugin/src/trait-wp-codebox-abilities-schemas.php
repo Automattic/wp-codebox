@@ -473,6 +473,8 @@ private static function browser_executable_session_schema(): array {
 			'runtime_capabilities' => self::browser_runtime_capabilities_schema(),
 			'runtime_readiness'    => self::browser_runtime_readiness_schema(),
 			'contained_site'       => self::browser_contained_site_schema(),
+			'runtime_handoff'      => array( 'type' => 'object' ),
+			'parent_tool_bridge'   => array( 'type' => 'object' ),
 		),
 	);
 }

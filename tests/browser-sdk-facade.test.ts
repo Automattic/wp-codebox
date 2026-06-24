@@ -31,6 +31,8 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:normalize-error",
     "browser-runtime:normalize-result",
     "browser-runtime:normalize-browser-run-result",
+    "browser-runtime:boot-executable-session",
+    "browser-runtime:parent-tool-bridge",
     "browser-runtime:aggregate-fanout-outputs",
     "browser-runtime:invoke-result",
     "playground:run-php",
@@ -52,6 +54,8 @@ assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
+assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
+assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
@@ -170,5 +174,64 @@ assert.deepEqual(plain(api.v1.browserArtifactPersistenceRef({
 }).artifactRefs), [
   { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", path: "artifacts/run-1", digest: { algorithm: "sha256", value: "abc" } },
 ])
+
+const executableSession = {
+  schema: "wp-codebox/browser-executable-session/v1",
+  success: true,
+  session_id: "executable-session-1",
+  status: "ready",
+  preview: { schema: "wp-codebox/preview-lease/v1", public_url: "https://preview.example.test/" },
+  runtime_readiness: { schema: "wp-codebox/browser-runtime-readiness/v1", ready: true, status: "ready" },
+  runtime_handoff: {
+    schema: "wp-codebox/browser-runtime-handoff/v1",
+    owner: "wp-codebox",
+    session_id: "executable-session-1",
+    hydrator_ability: "wp-codebox/hydrate-browser-blueprint-ref",
+    blueprint_ref: {
+      schema: "wp-codebox/browser-blueprint-ref/v1",
+      ref: "prepared:site:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      hydrator_ability: "wp-codebox/hydrate-browser-blueprint-ref",
+    },
+    parent_tool_bridge: {
+      schema: "wp-codebox/parent-tool-bridge/v1",
+      version: 1,
+      allowed_tools: ["workspace.read"],
+      dispatcher: { owner: "wp-codebox", mode: "host_endpoint", request_schema: "wp-codebox/parent-tool-request/v1", result_schema: "wp-codebox/parent-tool-result/v1" },
+      sandbox_env: { mode: "metadata-only", secret_env: [] },
+      authorization: { mode: "allowlist" },
+      redaction: { transcript_artifact_refs: [] },
+      metadata: {},
+    },
+  },
+}
+const blueprintRuns: any[] = []
+const booted = await api.v1.bootExecutableBrowserSession({
+  run: async (request: any) => {
+    blueprintRuns.push(request)
+    return { success: true, data: { booted: true } }
+  },
+}, executableSession, {
+  hydrateBlueprintRef: async (request: any) => {
+    assert.equal(request.ability, "wp-codebox/hydrate-browser-blueprint-ref")
+    assert.equal(request.ref, executableSession.runtime_handoff.blueprint_ref.ref)
+    return { schema: "wp-codebox/browser-blueprint-hydration/v1", blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }
+  },
+})
+assert.equal(booted.schema, "wp-codebox/browser-run-result/v1")
+assert.equal(booted.status, "completed")
+assert.equal(booted.success, true)
+assert.deepEqual(plain(blueprintRuns), [{ blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }])
+
+const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
+assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")
+assert.equal(parentRequest.sandbox_session.sandbox_session_id, "executable-session-1")
+assert.deepEqual(plain(parentRequest.authorization.allowed_tools), ["workspace.read"])
+await assert.rejects(
+  () => api.v1.dispatchParentTool(executableSession, "workspace.write", "write", {}, { dispatchParentTool: async () => ({}) }),
+  (error: any) => {
+    assert.equal(error.code, "parent_tool_denied")
+    return true
+  },
+)
 
 console.log("browser sdk facade ok")

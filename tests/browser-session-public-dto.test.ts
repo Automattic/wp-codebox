@@ -28,6 +28,21 @@ $input = array(
 	'goal' => 'Build a product-safe browser artifact.',
 	'sandbox_session_id' => 'session-public-dto',
 	'orchestrator' => array( 'id' => 'studio-web' ),
+	'parent_tool_bridge' => array(
+		'schema' => 'wp-codebox/parent-tool-bridge/v1',
+		'version' => 1,
+		'allowed_tools' => array( 'workspace.read' ),
+		'dispatcher' => array(
+			'owner' => 'wp-codebox',
+			'mode' => 'host_endpoint',
+			'request_schema' => 'wp-codebox/parent-tool-request/v1',
+			'result_schema' => 'wp-codebox/parent-tool-result/v1',
+		),
+		'sandbox_env' => array( 'mode' => 'metadata-only', 'secret_env' => array() ),
+		'authorization' => array( 'mode' => 'allowlist' ),
+		'redaction' => array( 'transcript_artifact_refs' => array() ),
+		'metadata' => array( 'adapter' => 'test' ),
+	),
 	'runtime_requirements' => array( 'requires_provider' => false ),
 	'playground' => array(
 		'preview_url' => '/preview/index.html',
@@ -116,6 +131,12 @@ assert.equal(result.public.runtime_readiness.status, "ready")
 assert.equal(result.public.runtime_readiness.ready, true)
 assert.deepEqual(result.public.runtime_readiness.missing, undefined)
 assert.deepEqual(result.public.executable_session.runtime_readiness, result.public.runtime_readiness)
+assert.equal(result.public.executable_session.runtime_handoff.schema, "wp-codebox/browser-runtime-handoff/v1")
+assert.equal(result.public.executable_session.runtime_handoff.owner, "wp-codebox")
+assert.equal(result.public.executable_session.runtime_handoff.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
+assert.equal(result.public.executable_session.runtime_handoff.blueprint_ref.ref, result.public.blueprint_ref.ref)
+assert.equal(result.public.executable_session.parent_tool_bridge.schema, "wp-codebox/parent-tool-bridge/v1")
+assert.deepEqual(result.public.executable_session.parent_tool_bridge.allowed_tools, ["workspace.read"])
 assert.match(result.public.preview_boot.blueprint_ref, /^prepared:public-dto-site:[a-f0-9]{64}$/)
 assert.equal(result.public.preview_boot.blueprint_ref_dto.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
 assert.equal(result.public.preview_ref.boot_ref, result.public.preview_boot.blueprint_ref)
@@ -129,6 +150,7 @@ assert.deepEqual(result.public.artifact_refs, [{
 assert.equal(result.public.playground, undefined)
 assert.equal(result.public.recipe, undefined)
 assert.equal(result.public.task_payload, undefined)
+assert.equal(result.public.parent_tool_bridge, undefined)
 assert.equal(JSON.stringify(result.public).includes("must-not-leak"), false)
 assert.equal(result.public.preview_boot.artifacts.base_path, undefined)
 assert.equal(result.public.preview_boot.runtime_access.preview_url, "/preview/index.html")
