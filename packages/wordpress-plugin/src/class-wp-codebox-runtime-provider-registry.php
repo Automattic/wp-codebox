@@ -225,11 +225,13 @@ final class WP_Codebox_Runtime_Provider_Registry {
 
 	/** @param array<string,mixed> $metadata Provider metadata. @return array<string,mixed> */
 	private static function public_metadata( string $id, array $metadata ): array {
+		$public_id = is_string( $metadata['public_id'] ?? null ) ? self::normalize_provider_id( $metadata['public_id'] ) : $id;
+
 		return array_filter(
 			array(
-				'id' => $id,
-				'label' => is_string( $metadata['label'] ?? null ) ? $metadata['label'] : $id,
-				'kind' => is_string( $metadata['kind'] ?? null ) ? $metadata['kind'] : 'adapter',
+				'id' => '' !== $public_id ? $public_id : $id,
+				'label' => is_string( $metadata['public_label'] ?? null ) ? $metadata['public_label'] : ( is_string( $metadata['label'] ?? null ) ? $metadata['label'] : $id ),
+				'kind' => is_string( $metadata['public_kind'] ?? null ) ? $metadata['public_kind'] : ( is_string( $metadata['kind'] ?? null ) ? $metadata['kind'] : 'adapter' ),
 				'capabilities' => is_array( $metadata['capabilities'] ?? null ) ? array_values( $metadata['capabilities'] ) : array(),
 			),
 			static fn( mixed $value ): bool => array() !== $value && '' !== $value

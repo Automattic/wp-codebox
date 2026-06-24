@@ -75,7 +75,7 @@ export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "g
 export const TASK_INPUT_JSON_SCHEMA = {
   $id: TASK_INPUT_SCHEMA,
   type: "object",
-  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "agent_bundles", "tool_bridge", "parent_tool_bridge", "sandbox_tool_policy", "policy", "context"],
+  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "structured_artifacts", "tool_bridge", "parent_tool_bridge", "sandbox_tool_policy", "policy", "context"],
   properties: {
     schema: { type: "string", const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { type: "integer", const: TASK_INPUT_VERSION, description: "Task input contract version." },

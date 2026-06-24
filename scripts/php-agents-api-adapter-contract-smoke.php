@@ -66,6 +66,10 @@ assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default
 WP_Codebox_Agents_API_Adapter::register_runtime_provider();
 $early_providers = WP_Codebox_Runtime_Provider_Registry::providers();
 assert( isset( $early_providers['agents-api-adapter'] ) );
+assert( 'codebox-agent-runtime' === $early_providers['agents-api-adapter']['id'] );
+assert( 'Codebox agent runtime' === $early_providers['agents-api-adapter']['label'] );
+assert( 'runtime-profile' === $early_providers['agents-api-adapter']['kind'] );
+assert( array( 'codebox.runtime-package' ) === $early_providers['agents-api-adapter']['capabilities'] );
 assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 $early_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
 assert( is_wp_error( $early_runtime_package ) );
@@ -126,23 +130,25 @@ assert( 'wp_codebox_agents_api_ability_unavailable' === $missing->get_error_code
 WP_Codebox_Agents_API_Adapter::register_runtime_provider();
 $providers = WP_Codebox_Runtime_Provider_Registry::providers();
 assert( isset( $providers['agents-api-adapter'] ) );
+assert( 'codebox-agent-runtime' === $providers['agents-api-adapter']['id'] );
 assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 
 $default_registered_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
 assert( ! is_wp_error( $default_registered_runtime_package ) );
-assert( 'agents-api-adapter' === $default_registered_runtime_package['runtime_provider']['id'] );
+assert( 'codebox-agent-runtime' === $default_registered_runtime_package['runtime_provider']['id'] );
+assert( false === str_contains( json_encode( $default_registered_runtime_package['runtime_provider'] ), 'agents-api' ) );
 
 $runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'runtime_provider_id' => 'agents-api-adapter', 'package' => array( 'id' => 'example' ) ) );
 assert( ! is_wp_error( $runtime_package ) );
 assert( 'wp-codebox/runtime-package-result/v1' === $runtime_package['schema'] );
-assert( 'agents-api-adapter' === $runtime_package['runtime_provider']['id'] );
+assert( 'codebox-agent-runtime' === $runtime_package['runtime_provider']['id'] );
 assert_no_agents_api_schema_leaks( $runtime_package, 'runtime-package-registry' );
 
 $GLOBALS['wp_codebox_test_filters']['wp_codebox_default_runtime_provider'] = 'agents-api-adapter';
 assert( 'agents-api-adapter' === WP_Codebox_Runtime_Provider_Registry::default_provider() );
 $default_runtime_package = WP_Codebox_Runtime_Provider_Registry::invoke( array( 'package' => array( 'id' => 'example' ) ) );
 assert( ! is_wp_error( $default_runtime_package ) );
-assert( 'agents-api-adapter' === $default_runtime_package['runtime_provider']['id'] );
+assert( 'codebox-agent-runtime' === $default_runtime_package['runtime_provider']['id'] );
 
 WP_Codebox_Runtime_Provider_Registry::register(
 	'Example Runtime',

@@ -18,7 +18,7 @@ final class WP_Codebox_Task_Input_Contract {
 		return array(
 			'$id'        => self::SCHEMA,
 			'type'       => 'object',
-			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'agent_bundles', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'policy', 'context' ),
+			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
 					'type'        => 'string',

@@ -164,7 +164,10 @@ final class WP_Codebox_Agents_API_Adapter {
 			array(
 				'label'        => 'Agents API runtime adapter',
 				'kind'         => 'ability-adapter',
-				'capabilities' => array( 'runtime-package' ),
+				'public_id'    => 'codebox-agent-runtime',
+				'public_label' => 'Codebox agent runtime',
+				'public_kind'  => 'runtime-profile',
+				'capabilities' => array( 'codebox.runtime-package' ),
 				'default'      => true,
 			)
 		);

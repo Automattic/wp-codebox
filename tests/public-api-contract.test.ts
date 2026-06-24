@@ -38,6 +38,7 @@ import {
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
   fuzzCoveragePlanContract,
+  TASK_INPUT_JSON_SCHEMA,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
 import * as runResultsApi from "../packages/runtime-core/src/run-results.js"
@@ -112,7 +113,6 @@ const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin
 assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-runtime-workload.js",
   "./agent-workload.js",
-  "./agent-task-recipe.js",
   "./agent-task-run-result.js",
   "./agent-terminal-result.js",
   "./artifact-capture-policy.js",
@@ -261,6 +261,7 @@ for (const publicModule of [
 }
 
 for (const internalModule of [
+  "./agent-task-recipe.js",
   "./benchmark-substrate.js",
   "./fanout-aggregation.js",
   "./generic-ability-runtime-run.js",
@@ -273,6 +274,20 @@ for (const internalModule of [
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
   assert.ok(!contractsBarrel.includes(`export * from "${internalModule}"`), `contracts barrel must not export ${internalModule}`)
 }
+
+for (const internalRequestField of [
+  "provider_plugin_paths",
+  "runtime_stack_mounts",
+  "runtime_overlays",
+  "runtime_state_mounts",
+  "runtime_config_mounts",
+  "secret_env",
+  "wp_codebox_bin",
+]) {
+  assert.equal(JSON.stringify(TASK_INPUT_JSON_SCHEMA).includes(internalRequestField), false, `public task input schema must not expose ${internalRequestField}`)
+}
+
+assert.equal(TASK_INPUT_JSON_SCHEMA.required.includes("agent_bundles"), false, "agent_bundles must not be required by the public task input schema")
 
 assert.ok(!contractsBarrel.includes(`export * from "./index.js"`), "contracts barrel must not re-export the root package barrel")
 
