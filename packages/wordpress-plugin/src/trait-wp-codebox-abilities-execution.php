@@ -2002,6 +2002,17 @@ public static function create_browser_playground_session( array $input ): array|
 		'contained_site' => $contained_site,
 		'site_blueprint_artifact' => $site_blueprint_artifact,
 		'materialization' => $materialization,
+		'runtime_capabilities' => array_values(
+			array_unique(
+				array_filter(
+					array_merge(
+						array_map( 'strval', is_array( $input['runtime_capabilities'] ?? null ) ? $input['runtime_capabilities'] : array() ),
+						array_map( 'strval', is_array( $input['runtime']['capabilities'] ?? null ) ? $input['runtime']['capabilities'] : array() ),
+						array_map( 'strval', is_array( $runtime['capabilities'] ?? null ) ? $runtime['capabilities'] : array() )
+					)
+				)
+			)
+		),
 		'playground' => array(
 			'client_module_url'  => $playground['client_module_url'],
 			'remote_url'         => $playground['remote_url'],

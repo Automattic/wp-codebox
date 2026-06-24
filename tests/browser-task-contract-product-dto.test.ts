@@ -16,7 +16,11 @@ assert.doesNotMatch(descriptors, /'source_digest'\s*=>\s*array\(\s*'description'
 assert.match(descriptors, /'source_digest'\s*=>\s*array\(\s*'type'\s*=>\s*array\(\s*'string',\s*'object'\s*\)/)
 assert.match(schemas, /private static function browser_materializer_contract_schema\(\): array \{\s*return self::browser_product_dto_schema\(\);\s*\}/)
 assert.match(schemas, /private static function browser_task_contract_schema\(\): array \{\s*return self::browser_product_dto_schema\(\);\s*\}/)
+assert.match(schemas, /private static function browser_executable_session_schema\(\): array \{[\s\S]*'const'\s*=>\s*'wp-codebox\/browser-executable-session\/v1'/)
+assert.match(schemas, /'runtime_capabilities'\s*=>\s*self::browser_runtime_capabilities_schema\(\)/)
+assert.match(schemas, /'runtime_readiness'\s*=>\s*self::browser_runtime_readiness_schema\(\)/)
 assert.match(schemas, /private static function browser_internal_materializer_contract_schema\(\): array \{[\s\S]*'task_payload'\s*=>\s*array\( 'type' => 'object' \)/)
 assert.doesNotMatch(schemas.match(/private static function browser_product_dto_schema\(\): array \{[\s\S]*?\n\}/)?.[0] ?? "", /'task_payload'|'playground'|'runtime'|'recipe'|'materialization'/)
+assert.doesNotMatch(schemas.match(/private static function browser_executable_session_schema\(\): array \{[\s\S]*?\n\}/)?.[0] ?? "", /'task_payload'|'playground'|'runtime'|'recipe'|'materialization'/)
 
 console.log("browser task contract product dto ok")

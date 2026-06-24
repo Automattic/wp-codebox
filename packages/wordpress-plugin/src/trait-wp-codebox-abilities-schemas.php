@@ -427,6 +427,7 @@ private static function browser_product_dto_schema(): array {
 			'permission_model' => array( 'type' => 'string' ),
 			'status'           => array( 'type' => 'string' ),
 			'session_id'       => array( 'type' => 'string' ),
+			'executable_session' => self::browser_executable_session_schema(),
 			'session'          => array( 'type' => 'object' ),
 			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => array( 'type' => 'object' ),
@@ -438,6 +439,8 @@ private static function browser_product_dto_schema(): array {
 			'model'            => array( 'type' => 'string' ),
 			'preview_boot'     => array( 'type' => 'object' ),
 			'runtime_access'   => array( 'type' => 'object' ),
+			'runtime_capabilities' => self::browser_runtime_capabilities_schema(),
+			'runtime_readiness' => self::browser_runtime_readiness_schema(),
 			'preview_ref'      => array( 'type' => 'object' ),
 			'artifact_refs'    => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'signals'          => array( 'type' => 'object' ),
@@ -445,6 +448,59 @@ private static function browser_product_dto_schema(): array {
 			'diagnostics'      => array( 'type' => 'object' ),
 			'execution_metrics' => array( 'type' => 'object' ),
 			'provenance'       => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_executable_session_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Codebox-owned public executable browser session DTO. Hosts can store and hand this to browser clients without raw Playground blueprints, package internals, runtime recipes, sandbox paths, or downstream implementation names.',
+		'properties'  => array(
+			'success'              => array( 'type' => 'boolean' ),
+			'schema'               => array( 'type' => 'string', 'const' => 'wp-codebox/browser-executable-session/v1' ),
+			'session_id'           => array( 'type' => 'string' ),
+			'status'               => array( 'type' => 'string' ),
+			'execution'            => array( 'type' => 'string' ),
+			'execution_scope'      => array( 'type' => 'string' ),
+			'permission_model'     => array( 'type' => 'string' ),
+			'preview'              => array( 'type' => 'object' ),
+			'preview_ref'          => array( 'type' => 'object' ),
+			'preview_boot'         => array( 'type' => 'object' ),
+			'blueprint_ref'        => array( 'type' => 'object' ),
+			'runtime_access'       => array( 'type' => 'object' ),
+			'runtime_capabilities' => self::browser_runtime_capabilities_schema(),
+			'runtime_readiness'    => self::browser_runtime_readiness_schema(),
+			'contained_site'       => self::browser_contained_site_schema(),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_runtime_capabilities_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Product-safe browser runtime capability summary. Values name portable capabilities only and omit package, plugin, provider, and source implementation details.',
+		'properties'  => array(
+			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/browser-runtime-capabilities/v1' ),
+			'capabilities' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_runtime_readiness_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Product-safe browser runtime readiness summary. It exposes readiness booleans and missing portable requirements without raw dependency plans or implementation diagnostics.',
+		'properties'  => array(
+			'schema'       => array( 'type' => 'string', 'const' => 'wp-codebox/browser-runtime-readiness/v1' ),
+			'status'       => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'unknown' ) ),
+			'ready'        => array( 'type' => 'boolean' ),
+			'requirements' => array( 'type' => 'object' ),
+			'missing'      => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+			'message'      => array( 'type' => 'string' ),
 		),
 	);
 }

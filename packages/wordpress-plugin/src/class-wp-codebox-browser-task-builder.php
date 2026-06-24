@@ -280,10 +280,14 @@ final class WP_Codebox_Browser_Task_Builder {
 		$preview_boot     = self::browser_preview_boot_config( $session );
 		$blueprint_ref    = self::browser_blueprint_ref( self::browser_prepared_runtime_from_envelope( $session, $preview_boot ), $session );
 		$preview_lease    = self::preview_lease_from_session( $session );
+		$runtime_access   = self::runtime_access_from_session( $session );
+		$runtime_readiness = self::browser_runtime_readiness_dto( $session );
+		$runtime_capabilities = self::browser_runtime_capabilities_dto( $session );
 
 		$dto = array_filter(
 			array(
 				'schema'           => 'wp-codebox/browser-session-product-dto/v1',
+				'dto_schema'       => 'wp-codebox/browser-executable-session/v1',
 				'source_schema'    => (string) ( $session['schema'] ?? '' ),
 				'success'          => (bool) ( $session['success'] ?? false ),
 				'status'           => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
@@ -291,6 +295,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),
 				'permission_model' => (string) ( $session['permission_model'] ?? '' ),
 				'session_id'       => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'executable_session' => self::browser_executable_session_dto( $session, $preview_boot, $preview_lease, $blueprint_ref, $runtime_access, $runtime_readiness, $runtime_capabilities ),
 				'contained_site'   => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'task'             => (string) ( $session['task'] ?? $task_input['goal'] ?? '' ),
 				'target'           => is_array( $task_input['target'] ?? null ) ? self::compact_public_value( $task_input['target'] ) : array(),
@@ -301,7 +306,9 @@ final class WP_Codebox_Browser_Task_Builder {
 				'preview_lease'    => $preview_lease,
 				'blueprint_ref'    => $blueprint_ref,
 				'preview_reference' => self::browser_product_preview_reference( $session, $preview_boot, $preview_lease, $blueprint_ref ),
-				'runtime_access'   => self::runtime_access_from_session( $session ),
+				'runtime_access'   => $runtime_access,
+				'runtime_capabilities' => $runtime_capabilities,
+				'runtime_readiness' => $runtime_readiness,
 				'preview_ref'      => self::browser_preview_ref( $session ),
 				'signals'          => self::compact_public_value( $signals ),
 				'artifact_refs'    => self::browser_artifact_refs( $session ),
@@ -320,6 +327,91 @@ final class WP_Codebox_Browser_Task_Builder {
 		 * @param array<string,mixed> $session Source browser session contract.
 		 */
 		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_session_product_dto', $dto, $session ) : $dto;
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $preview_boot Preview boot DTO. @param array<string,mixed> $preview_lease Preview lease DTO. @param array<string,mixed> $blueprint_ref Blueprint ref DTO. @param array<string,mixed> $runtime_access Runtime access DTO. @param array<string,mixed> $runtime_readiness Runtime readiness DTO. @param array<string,mixed> $runtime_capabilities Runtime capabilities DTO. @return array<string,mixed> */
+	private static function browser_executable_session_dto( array $session, array $preview_boot, array $preview_lease, array $blueprint_ref, array $runtime_access, array $runtime_readiness, array $runtime_capabilities ): array {
+		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
+		$contained_site   = is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array();
+
+		return array_filter(
+			array(
+				'schema'               => 'wp-codebox/browser-executable-session/v1',
+				'success'              => (bool) ( $session['success'] ?? false ),
+				'session_id'           => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'status'               => (string) ( $session['status'] ?? ( true === ( $session['success'] ?? false ) ? 'ready' : '' ) ),
+				'execution'            => (string) ( $session['execution'] ?? '' ),
+				'execution_scope'      => (string) ( $session['execution_scope'] ?? '' ),
+				'permission_model'     => (string) ( $session['permission_model'] ?? '' ),
+				'preview'              => $preview_lease,
+				'preview_ref'          => self::browser_preview_ref( $session ),
+				'preview_boot'         => $preview_boot,
+				'blueprint_ref'        => $blueprint_ref,
+				'runtime_access'       => $runtime_access,
+				'runtime_capabilities' => $runtime_capabilities,
+				'runtime_readiness'    => $runtime_readiness,
+				'contained_site'       => $contained_site,
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	private static function browser_runtime_capabilities_dto( array $session ): array {
+		$playground = is_array( $session['playground'] ?? null ) ? $session['playground'] : array();
+		$runtime    = is_array( $session['runtime'] ?? null ) ? $session['runtime'] : array();
+		$task_input = is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array();
+		$profile    = is_array( $task_input['runtime_profile'] ?? null ) ? $task_input['runtime_profile'] : array();
+		$capabilities = array();
+
+		foreach ( is_array( $playground['capabilities'] ?? null ) ? $playground['capabilities'] : array() as $name => $enabled ) {
+			if ( true === (bool) $enabled && is_string( $name ) && '' !== $name ) {
+				$capabilities[] = 'browser:' . $name;
+			}
+		}
+		foreach ( array( $session['runtime_capabilities'] ?? array(), $runtime['capabilities'] ?? array(), $profile['capabilities'] ?? array(), $task_input['runtime_capabilities'] ?? array() ) as $items ) {
+			foreach ( is_array( $items ) ? $items : array() as $item ) {
+				if ( is_scalar( $item ) && '' !== trim( (string) $item ) ) {
+					$capabilities[] = trim( (string) $item );
+				}
+			}
+		}
+
+		$capabilities = array_values( array_unique( array_filter( $capabilities ) ) );
+		return array_filter(
+			array(
+				'schema'       => 'wp-codebox/browser-runtime-capabilities/v1',
+				'capabilities' => $capabilities,
+			),
+			static fn( mixed $value ): bool => array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
+	private static function browser_runtime_readiness_dto( array $session ): array {
+		$signals = is_array( $session['signals'] ?? null ) ? $session['signals'] : array();
+		$ready_to_code = is_array( $signals['ready_to_code'] ?? null ) ? $signals['ready_to_code'] : array();
+		$requirements = array();
+		foreach ( is_array( $ready_to_code['requirements'] ?? null ) ? $ready_to_code['requirements'] : array() as $name => $ready ) {
+			if ( is_string( $name ) && '' !== $name ) {
+				$requirements[ $name ] = (bool) $ready;
+			}
+		}
+
+		$missing = array_values( array_filter( array_map( 'strval', is_array( $ready_to_code['missing'] ?? null ) ? $ready_to_code['missing'] : array() ), static fn( string $value ): bool => '' !== $value ) );
+		$status  = true === ( $ready_to_code['emitted'] ?? false ) ? 'ready' : ( empty( $ready_to_code ) ? 'unknown' : 'blocked' );
+
+		return array_filter(
+			array(
+				'schema'       => 'wp-codebox/browser-runtime-readiness/v1',
+				'status'       => $status,
+				'ready'        => 'ready' === $status,
+				'requirements' => $requirements,
+				'missing'      => $missing,
+				'message'      => (string) ( $ready_to_code['message'] ?? '' ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
 	}
 
 	/** @param array<string,mixed> $session Browser session contract. @return array<string,mixed> */
