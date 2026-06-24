@@ -607,11 +607,21 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
 }
 
 export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
-  const direct = typedArtifactList(agentTaskResult.typed_artifacts)
   const outputs = objectValue(agentTaskResult.outputs) || {}
-  const fromOutputs = typedArtifactList(outputs.typed_artifacts)
-  const fromWorkloadOutputs = typedArtifactList(workloadOutputs.typed_artifacts)
-  return dedupeRecords([...direct, ...fromOutputs, ...fromWorkloadOutputs].filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))))
+  const raw = objectValue(agentTaskResult.raw) || {}
+  const rawResult = objectValue(raw.result) || {}
+  const rawRuntimeResult = objectValue(objectValue(raw.agent_runtime)?.result) || {}
+  return dedupeRecords([
+    agentTaskResult.typed_artifacts,
+    outputs.typed_artifacts,
+    workloadOutputs.typed_artifacts,
+    rawResult.typed_artifacts,
+    objectValue(rawResult.outputs)?.typed_artifacts,
+    objectValue(rawResult.engine_data)?.outputs && objectValue(objectValue(rawResult.engine_data)?.outputs)?.typed_artifacts,
+    rawRuntimeResult.typed_artifacts,
+    objectValue(rawRuntimeResult.outputs)?.typed_artifacts,
+    objectValue(rawRuntimeResult.engine_data)?.outputs && objectValue(objectValue(rawRuntimeResult.engine_data)?.outputs)?.typed_artifacts,
+  ].flatMap(typedArtifactList))
 }
 
 function typedArtifactList(value: unknown): Array<Record<string, unknown>> {

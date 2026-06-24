@@ -188,6 +188,28 @@ assert.equal(typedArtifactMapRefs[0]?.name, "concept_packet")
 assert.equal(typedArtifactMapRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
 assert.deepEqual(typedArtifactMapRefs[0]?.payload, { title: "Repair Bench Supply" })
 
+const rawRuntimeTypedArtifactRefs = typedArtifactRefs({
+  raw: {
+    agent_runtime: {
+      result: {
+        outputs: {
+          typed_artifacts: {
+            concept_packet: {
+              output_key: "concept_packet",
+              schema: "wp-site-generator/ConceptPacket/v1",
+              artifact: "ConceptPacket",
+              payload: { title: "Kiln Shelf" },
+            },
+          },
+        },
+      },
+    },
+  },
+})
+assert.equal(rawRuntimeTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(rawRuntimeTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(rawRuntimeTypedArtifactRefs[0]?.payload, { title: "Kiln Shelf" })
+
 const normalizedWithArtifactEnvelope = normalizeAgentTaskRunResult({
   success: true,
   run: { artifactRefs: [{ id: "bundle-1", kind: "artifact-bundle", directory: "artifacts/run-1" }] },
