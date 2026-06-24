@@ -133,7 +133,7 @@ export function cliFailureEnvelope(command: string | undefined, message: string,
 }
 
 export function wantsJsonOutput(args: readonly string[]): boolean {
-  return args.includes("--json")
+  return args.includes("--json") || args.includes("--format=json") || args.some((arg, index) => arg === "--format" && args[index + 1] === "json")
 }
 
 export function writeJsonFailure(command: string | undefined, message: string, details: Record<string, unknown> = {}): void {
@@ -317,6 +317,8 @@ export function printHelp(): void {
   wp-codebox preview-lease status (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox preview-lease release (--registry <dir> --lease-id <id>|--lease-file <path>) [--json]
   wp-codebox target provision [--id <id>] [--kind <kind>] [--workspace-root <dir>] [--json]
+  wp-codebox run-fuzz-suite --input-file <path> [--format=json]
+  wp-codebox run-wordpress-workload --input-file <path> [--format=json] [--dry-run]
   wp-codebox run-agent-task --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox agent-task-run --input-file <path> [--json] [--preview-hold-seconds <n>] [--preview-hold-blocking] [--preview-port <port>] [--preview-bind <host>] [--preview-public-url <url>] [--preview-lease-json <json>]
   wp-codebox validate-blueprint --blueprint <json|file> [options]
@@ -329,7 +331,8 @@ Options:
   --recipe <path>     Workspace recipe JSON file for recipe-run or recipe validate.
   --options <path>    Recipe builder options JSON file for recipe build.
   --output <path>     Recipe build output JSON path, or materialize-replay-package output directory.
-  --input-file <path> Agent task input JSON for run-agent-task/agent-task-run.
+  --input-file <path> Input JSON for public workload/fuzz commands or agent-task-run.
+  --format=json       Emit machine-readable JSON; accepted by public workload/fuzz commands.
   --preview-hold-seconds <n>
                     Keep preview runtimes alive after run-agent-task/agent-task-run/recipe-run.
                     Max 3600s by default; operators may raise the cap with WP_CODEBOX_PREVIEW_HOLD_MAX_SECONDS.

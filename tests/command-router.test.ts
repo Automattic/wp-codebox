@@ -14,6 +14,8 @@ const router = {
     calls.push(`agentTaskRun:${args.join(" ")}`)
     return 7
   },
+  runFuzzSuite: async () => 0,
+  runWordPressWorkload: async () => 0,
   recipeValidate: async () => 0,
   recipeBuild: async () => 0,
   workspacePolicyCheck: async () => 0,
