@@ -114,6 +114,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-runtime-workload.js",
   "./agent-workload.js",
   "./agent-task-run-result.js",
+  "./headless-agent-task-contracts.js",
   "./agent-terminal-result.js",
   "./artifact-capture-policy.js",
   "./artifact-diagnostics.js",

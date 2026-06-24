@@ -57,6 +57,8 @@ export interface AgentTaskRunInput {
   component_contracts?: Array<Record<string, unknown>>
   runtime_requirements?: Record<string, unknown>
   runtimeRequirements?: Record<string, unknown>
+  runtime_profile?: Record<string, unknown>
+  runtimeProfile?: Record<string, unknown>
   verify_steps?: WorkspaceRecipe["workflow"]["after"]
   parent_request?: Record<string, unknown>
   orchestrator?: Record<string, unknown>
@@ -86,16 +88,10 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const runtimeMounts = runtimeStateMounts(input)
   const agentBundleStagedFiles = stagedAgentBundleSources(input.agent_bundles)
   const stagedFiles = [...(Array.isArray(input.stagedFiles) ? input.stagedFiles : []), ...agentBundleStagedFiles]
-  const providerPlugins: WorkspaceRecipeExtraPlugin[] = stringList(input.provider_plugin_paths)
-    .map((plugin) => {
-      const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
-      const preparedSource = prepareRecipeSourcePackageSync({ source: plugin, slug, artifactsRoot: artifacts, packageRootName: "prepared-plugins" })
-      const entrypoint = resolvePluginEntrypointContract({ source: preparedSource, slug })
-      return { source: preparedSource, slug, pluginFile: entrypoint.pluginFile, activate: true, loadAs: "plugin" }
-    })
+  const providerPlugins = providerPluginEntries(input, artifacts)
   const providerSlugs = providerPlugins.map((plugin) => plugin.slug).join(",")
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
-  const componentPluginEntries = componentPlugins(input.component_contracts, artifacts)
+  const componentPluginEntries = componentPlugins([...runtimeProfileComponentContracts(input), ...(input.component_contracts ?? [])], artifacts)
   const callerExtraPlugins = agentTaskExtraPlugins(input)
   const defaultRuntimeComponents = defaultAgentRuntimeComponentPlugins(componentPluginEntries, callerExtraPlugins)
   const extraPlugins = dedupeExtraPlugins([
@@ -384,12 +380,18 @@ function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlay
 }
 
 function runtimeOverlays(input: AgentTaskRunInput, profile: RuntimeOverlayProfileDefaults): Array<Record<string, unknown>> | undefined {
-  const overlays = [...profile.runtimeOverlays, ...(Array.isArray(input.runtime_overlays) ? input.runtime_overlays : [])]
+  const overlays = [
+    ...profile.runtimeOverlays,
+    ...runtimeProfileObjectList(input, "overlays"),
+    ...runtimeProfileObjectList(input, "runtime_overlays"),
+    ...(Array.isArray(input.runtime_overlays) ? input.runtime_overlays : []),
+  ]
   return overlays.length > 0 ? overlays : undefined
 }
 
 function runtimeEnv(input: AgentTaskRunInput): Record<string, string> | undefined {
-  const raw = objectValue(input.runtime_env) || objectValue(input.runtimeEnv)
+  const profileEnv = runtimeEnvMap(runtimeProfileRecord(input).env)
+  const raw = { ...profileEnv, ...(objectValue(input.runtime_env) || objectValue(input.runtimeEnv) || {}) }
   if (!raw) return undefined
   const entries = Object.entries(raw)
     .map(([name, value]) => [name.trim(), stringValue(value)] as const)
@@ -400,8 +402,10 @@ function runtimeEnv(input: AgentTaskRunInput): Record<string, string> | undefine
 function runtimeStateMounts(input: AgentTaskRunInput): WorkspaceRecipeMount[] {
   return [
     ...(Array.isArray(input.runtime_stack_mounts) ? input.runtime_stack_mounts : []),
+    ...runtimeMountList(runtimeProfileRecord(input).runtime_config_mounts),
     ...runtimeMountList(input.runtime_config_mounts),
     ...runtimeMountList(input.runtimeConfigMounts),
+    ...runtimeMountList(runtimeProfileRecord(input).runtime_state_mounts),
     ...runtimeMountList(input.runtime_state_mounts),
     ...runtimeMountList(input.runtimeStateMounts),
   ]
@@ -415,11 +419,47 @@ function runtimeMountList(value: unknown): WorkspaceRecipeMount[] {
 function agentTaskExtraPlugins(input: AgentTaskRunInput): WorkspaceRecipeExtraPlugin[] {
   const runtimeRequirements = objectValue(input.runtime_requirements) || objectValue(input.runtimeRequirements)
   return [
+    ...normalizeAgentTaskExtraPlugins(runtimeProfileRecord(input).extra_plugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeProfileRecord(input).plugins),
+    ...normalizeAgentTaskExtraPlugins(runtimeProfileRecord(input).mu_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extra_plugins),
     ...normalizeAgentTaskExtraPlugins(input.extraPlugins),
     ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extra_plugins),
     ...normalizeAgentTaskExtraPlugins(runtimeRequirements?.extraPlugins),
   ]
+}
+
+function providerPluginEntries(input: AgentTaskRunInput, artifactsRoot: string): WorkspaceRecipeExtraPlugin[] {
+  const pathEntries: Array<Record<string, unknown>> = stringList(input.provider_plugin_paths).map((source) => ({ source }))
+  const profileEntries = runtimeProfileObjectList(input, "provider_plugins")
+  return [...profileEntries, ...pathEntries].flatMap((entry) => {
+    const source = stringValue(entry.source) || stringValue(entry.path)
+    if (!source) return []
+    const slug = stringValue(entry.slug) || slugFromComposerPackage(source) || slugFromPath(source)
+    const preparedSource = prepareRecipeSourcePackageSync({ source, slug, artifactsRoot, packageRootName: "prepared-plugins" })
+    const entrypoint = resolvePluginEntrypointContract({ source: preparedSource, slug, pluginFile: stringValue(entry.pluginFile) || stringValue(entry.plugin_file) })
+    return [{
+      source: preparedSource,
+      slug,
+      pluginFile: entrypoint.pluginFile,
+      activate: typeof entry.activate === "boolean" ? entry.activate : true,
+      loadAs: "plugin" as const,
+      metadata: stripUndefined({ runtimeProfileProvider: isPlainObject(entry) && !pathEntries.includes(entry) ? entry : undefined }),
+    }]
+  })
+}
+
+function runtimeProfileRecord(input: AgentTaskRunInput): Record<string, unknown> {
+  return objectValue(input.runtime_profile) || objectValue(input.runtimeProfile) || {}
+}
+
+function runtimeProfileObjectList(input: AgentTaskRunInput, field: string): Array<Record<string, unknown>> {
+  const value = runtimeProfileRecord(input)[field]
+  return Array.isArray(value) ? value.filter(isPlainObject) : []
+}
+
+function runtimeProfileComponentContracts(input: AgentTaskRunInput): Array<Record<string, unknown>> {
+  return runtimeProfileObjectList(input, "component_contracts")
 }
 
 function dedupeExtraPlugins(plugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {

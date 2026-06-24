@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chdir, cwd } from "node:process"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
@@ -80,6 +80,55 @@ const stableRunRequestInput = normalizeAgentTaskRunCliInput({
 assert.equal(stableRunRequestInput.goal, "Run the delegated task.")
 assert.equal(stableRunRequestInput.artifacts_path, "/tmp/stable-run-artifacts")
 assert.deepEqual(stableRunRequestInput.callback_data, { source: "external-orchestrator" })
+
+const headlessRequest = normalizeHeadlessAgentTaskRequest({
+  schema: HEADLESS_AGENT_TASK_REQUEST_SCHEMA,
+  task_input: {
+    goal: "Ship a clean public boundary.",
+    target: { kind: "repo", ref: "wp-codebox" },
+    expected_artifacts: ["patch", "preview", "evidence"],
+  },
+  runtime_profile: {
+    id: "agent-runtime",
+    capabilities: ["wordpress.playground", "agent.task"],
+    provider_plugins: [{ slug: "provider-openai" }],
+  },
+  workspace_artifact_policy: {
+    capture: ["patch", "transcript", "evidence"],
+    publish: "reviewed",
+    retention: "durable",
+    public_url_root: "https://artifacts.example.test/run-1/",
+  },
+  sandbox_session_id: "session-1",
+  provider_plugin_paths: ["/internal/provider"],
+})
+assert.equal(HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA.properties.schema.const, HEADLESS_AGENT_TASK_REQUEST_SCHEMA)
+assert.equal(HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA.properties.schema.const, HEADLESS_AGENT_TASK_RESULT_SCHEMA)
+assert.equal(headlessRequest.task_input.goal, "Ship a clean public boundary.")
+assert.equal(headlessRequest.runtime_profile.schema, "wp-codebox/runtime-profile/v1")
+assert.equal(headlessRequest.workspace_artifact_policy.publish, "reviewed")
+assert.equal("provider_plugin_paths" in headlessRequest, false)
+
+const headlessRunInput = headlessAgentTaskRequestToRunInput(headlessRequest)
+assert.equal(headlessRunInput.goal, "Ship a clean public boundary.")
+assert.equal((headlessRunInput.runtime_profile as any).id, "agent-runtime")
+assert.equal((headlessRunInput.workspace_artifact_policy as any).retention, "durable")
+assert.equal("provider_plugin_paths" in headlessRunInput, false)
+
+const headlessCliInput = normalizeAgentTaskRunCliInput({ ...headlessRequest, provider_plugin_paths: ["/internal/provider"] })
+assert.equal(headlessCliInput.goal, "Ship a clean public boundary.")
+assert.equal("provider_plugin_paths" in headlessCliInput, false)
+
+const headlessResult = normalizeHeadlessAgentTaskResult(normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  preview: { publicUrl: "https://preview.example.test/" },
+  evidence_refs: [{ id: "evidence-1", path: "evidence.json" }],
+}), { request_schema: headlessRequest.schema })
+assert.equal(headlessResult.schema, HEADLESS_AGENT_TASK_RESULT_SCHEMA)
+assert.equal(headlessResult.preview?.public_url, "https://preview.example.test/")
+assert.equal(headlessResult.evidence_refs[0].kind, "codebox-evidence-bundle")
+assert.equal(headlessResult.agent_task_run_result.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
 
 const noOp = normalizeAgentTaskRunResult({ success: true, no_op: true }, { exitStatus: 0 })
 assert.equal(noOp.status, "no_op")
@@ -228,6 +277,12 @@ try {
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
+  const profileProviderSource = join(agentRecipeTemp, "profile-provider")
+  mkdirSync(profileProviderSource)
+  writeFileSync(join(profileProviderSource, "profile-provider.php"), "<?php\n/* Plugin Name: Profile Provider */\n")
+  const profileComponentSource = join(agentRecipeTemp, "profile-component")
+  mkdirSync(profileComponentSource)
+  writeFileSync(join(profileComponentSource, "profile-component.php"), "<?php\n/* Plugin Name: Profile Component */\n")
   const bridgeSource = join(agentRecipeTemp, "agent-runtime-tool-bridge")
   mkdirSync(bridgeSource)
   writeFileSync(join(bridgeSource, "agent-runtime-tool-bridge.php"), "<?php\n/* Plugin Name: Agent Runtime Tool Bridge */\n")
@@ -241,6 +296,13 @@ try {
     goal: "Verify generic runtime propagation",
     artifacts_path: artifactsPath,
     provider_plugin_paths: [providerSource],
+    runtime_profile: {
+      schema: "wp-codebox/runtime-profile/v1",
+      provider_plugins: [{ slug: "profile-provider", source: profileProviderSource }],
+      component_contracts: [{ slug: "profile-component", source: profileComponentSource, loadAs: "mu-plugin" }],
+      env: { PROFILE_ENV: "1" },
+      runtime_overlays: [{ slug: "profile-overlay" }],
+    },
   }, normalizeTaskInput({ goal: "Verify generic runtime propagation" }), "latest")
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
@@ -250,6 +312,11 @@ try {
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine-code"), true)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "profile-provider"), true)
+  assert.equal(genericRecipe.inputs?.component_manifest?.providers.some((component) => component.slug === "profile-provider"), true)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "profile-component"), true)
+  assert.equal(genericRecipe.inputs?.runtimeEnv?.PROFILE_ENV, "1")
+  assert.equal(genericRecipe.runtime?.overlays?.some((overlay) => overlay.slug === "profile-overlay"), true)
   const genericSandboxStepArgs = genericRecipe.workflow.steps.find((step) => step.command === "wp-codebox.agent-sandbox-run")?.args ?? []
   const genericRuntimeComponentsArg = genericSandboxStepArgs.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
   const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>

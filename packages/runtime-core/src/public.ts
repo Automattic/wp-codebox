@@ -6,6 +6,7 @@
 export * from "./agent-runtime-workload.js"
 export * from "./agent-workload.js"
 export * from "./agent-task-run-result.js"
+export * from "./headless-agent-task-contracts.js"
 export * from "./agent-terminal-result.js"
 export * from "./artifact-capture-policy.js"
 export * from "./artifact-diagnostics.js"
