@@ -325,6 +325,204 @@ function wp_codebox_bench_command_step_payload(array $execution, string $prefix,
     return $payload;
 }
 
+function wp_codebox_bench_safe_relative_path($value, string $label): string {
+    if (!is_string($value) || trim($value) === '') {
+        throw new RuntimeException($label . ' is required.');
+    }
+    $path = str_replace(chr(92), '/', trim($value));
+    if (str_starts_with($path, '/') || preg_match('#^[A-Za-z]:/#', $path)) {
+        throw new RuntimeException($label . ' must be a relative path.');
+    }
+    $parts = array();
+    foreach (explode('/', $path) as $part) {
+        if ($part === '' || $part === '.') {
+            continue;
+        }
+        if ($part === '..') {
+            throw new RuntimeException($label . ' must not contain parent traversal.');
+        }
+        $parts[] = $part;
+    }
+    if (empty($parts)) {
+        throw new RuntimeException($label . ' must not resolve to the root directory.');
+    }
+    return implode('/', $parts);
+}
+
+function wp_codebox_bench_resolve_contained_path(string $root, string $relative_path, string $label): string {
+    $root = rtrim(str_replace(chr(92), '/', $root), '/');
+    $resolved = $root . '/' . wp_codebox_bench_safe_relative_path($relative_path, $label);
+    $parent = dirname($resolved);
+    $real_root = realpath($root);
+    $real_parent = realpath($parent);
+    if (!is_string($real_root) || !is_string($real_parent) || ($real_parent !== $real_root && !str_starts_with($real_parent, $real_root . DIRECTORY_SEPARATOR))) {
+        throw new RuntimeException($label . ' must resolve inside its approved root.');
+    }
+    return $resolved;
+}
+
+function wp_codebox_bench_artifact_postprocess_helper_path(array $step, string $plugin_path): string {
+    $helper = $step['helperPath'] ?? ($step['helper'] ?? ($step['scriptPath'] ?? ($step['script'] ?? null)));
+    $helper_path = wp_codebox_bench_resolve_contained_path($plugin_path, wp_codebox_bench_safe_relative_path($helper, 'artifact-postprocess helper path'), 'artifact-postprocess helper path');
+    if (!str_ends_with($helper_path, '.mjs')) {
+        throw new RuntimeException('artifact-postprocess helper path must reference a .mjs file.');
+    }
+    if (!is_file($helper_path)) {
+        throw new RuntimeException('artifact-postprocess helper file does not exist: ' . basename($helper_path));
+    }
+    return $helper_path;
+}
+
+function wp_codebox_bench_artifact_postprocess_scan_input(string $root, int $max_input_bytes, int $max_artifacts): array {
+    $real_root = realpath($root);
+    if (!is_string($real_root) || !is_dir($real_root)) {
+        throw new RuntimeException('artifact-postprocess input artifact root must exist.');
+    }
+    $bytes = 0;
+    $artifacts = 0;
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($real_root, FilesystemIterator::SKIP_DOTS));
+    foreach ($iterator as $file) {
+        if (!$file->isFile() || $file->isLink()) {
+            continue;
+        }
+        ++$artifacts;
+        $bytes += (int) $file->getSize();
+        if ($artifacts > $max_artifacts) {
+            throw new RuntimeException('artifact-postprocess input artifact count exceeds maxArtifacts.');
+        }
+        if ($bytes > $max_input_bytes) {
+            throw new RuntimeException('artifact-postprocess input bytes exceed maxInputBytes.');
+        }
+    }
+    return array('artifact_count' => $artifacts, 'bytes' => $bytes);
+}
+
+function wp_codebox_bench_artifact_postprocess_expand_value($value, array $placeholders) {
+    if (is_string($value)) {
+        return strtr($value, $placeholders);
+    }
+    if (is_array($value)) {
+        $expanded = array();
+        foreach ($value as $key => $item) {
+            $expanded[$key] = wp_codebox_bench_artifact_postprocess_expand_value($item, $placeholders);
+        }
+        return $expanded;
+    }
+    return $value;
+}
+
+function wp_codebox_bench_artifact_postprocess_content_type(string $path): string {
+    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    if ($extension === 'json') {
+        return 'application/json';
+    }
+    if ($extension === 'jsonl') {
+        return 'application/x-ndjson';
+    }
+    if ($extension === 'md') {
+        return 'text/markdown';
+    }
+    if ($extension === 'html') {
+        return 'text/html';
+    }
+    return 'application/octet-stream';
+}
+
+function wp_codebox_bench_run_artifact_postprocess_step(array $step, string $plugin_path): array {
+    $command = isset($step['command']) && is_string($step['command']) ? trim($step['command']) : 'node';
+    if ($command !== 'node') {
+        throw new RuntimeException('artifact-postprocess workload steps only support the node command.');
+    }
+    $helper_path = wp_codebox_bench_artifact_postprocess_helper_path($step, $plugin_path);
+    $input_root_value = $step['inputArtifactRoot'] ?? ($step['input-artifact-root'] ?? ($step['artifactRoot'] ?? ($step['artifact-root'] ?? '')));
+    if (!is_string($input_root_value) || trim($input_root_value) === '') {
+        throw new RuntimeException('artifact-postprocess inputArtifactRoot is required.');
+    }
+    $input_root = realpath($input_root_value);
+    if (!is_string($input_root) || !is_dir($input_root)) {
+        throw new RuntimeException('artifact-postprocess input artifact root must exist.');
+    }
+    $output_relative = wp_codebox_bench_safe_relative_path($step['outputArtifactPath'] ?? ($step['output-artifact-path'] ?? ''), 'artifact-postprocess outputArtifactPath');
+    $output_path = rtrim($input_root, '/') . '/' . $output_relative;
+    $max_input_bytes = isset($step['maxInputBytes']) && is_numeric($step['maxInputBytes']) ? max(0, (int) $step['maxInputBytes']) : (isset($step['max-input-bytes']) && is_numeric($step['max-input-bytes']) ? max(0, (int) $step['max-input-bytes']) : 10485760);
+    $max_artifacts = isset($step['maxArtifacts']) && is_numeric($step['maxArtifacts']) ? max(0, (int) $step['maxArtifacts']) : (isset($step['max-artifacts']) && is_numeric($step['max-artifacts']) ? max(0, (int) $step['max-artifacts']) : 1000);
+    $input_summary = wp_codebox_bench_artifact_postprocess_scan_input($input_root, $max_input_bytes, $max_artifacts);
+    if (!is_dir(dirname($output_path)) && !mkdir(dirname($output_path), 0777, true) && !is_dir(dirname($output_path))) {
+        throw new RuntimeException('artifact-postprocess could not create output artifact directory.');
+    }
+    $placeholders = array(
+        '\${helperPath}' => $helper_path,
+        '\${inputArtifactRoot}' => $input_root,
+        '\${outputArtifactPath}' => $output_path,
+        '\${outputArtifactRelativePath}' => $output_relative,
+        '\${expectedOutputSchema}' => isset($step['expectedOutputSchema']) && is_string($step['expectedOutputSchema']) ? $step['expectedOutputSchema'] : (isset($step['expected-output-schema']) && is_string($step['expected-output-schema']) ? $step['expected-output-schema'] : ''),
+    );
+    $args = isset($step['args']) && is_array($step['args']) ? array_values($step['args']) : array('\${helperPath}', '\${inputArtifactRoot}', '\${outputArtifactPath}');
+    $expanded_args = array_map(static fn($arg) => is_scalar($arg) ? (string) wp_codebox_bench_artifact_postprocess_expand_value((string) $arg, $placeholders) : '', $args);
+    if (!in_array($helper_path, $expanded_args, true)) {
+        array_unshift($expanded_args, $helper_path);
+    }
+    $env = getenv();
+    $env = is_array($env) ? $env : array();
+    $env['WP_CODEBOX_ARTIFACT_INPUT_ROOT'] = $input_root;
+    $env['WP_CODEBOX_ARTIFACT_OUTPUT_PATH'] = $output_path;
+    $env['WP_CODEBOX_ARTIFACT_OUTPUT_RELATIVE_PATH'] = $output_relative;
+    foreach (is_array($step['env'] ?? null) ? $step['env'] : array() as $name => $value) {
+        if (is_string($name) && preg_match('/^[A-Z_][A-Z0-9_]*$/', $name)) {
+            $env[$name] = is_scalar($value) ? (string) wp_codebox_bench_artifact_postprocess_expand_value((string) $value, $placeholders) : '';
+        }
+    }
+
+    $execution = wp_codebox_bench_run_command_step($step, 'artifact-postprocess', static function () use ($command, $expanded_args, $env): array {
+        $pipes = array();
+        $process = proc_open(array_merge(array($command), $expanded_args), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes, null, $env);
+        if (!is_resource($process)) {
+            throw new RuntimeException('artifact-postprocess helper process could not be started.');
+        }
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        $exit_code = proc_close($process);
+        if ($exit_code !== 0) {
+            throw new RuntimeException('artifact-postprocess helper failed with exit code ' . $exit_code . ': ' . trim((string) $stderr));
+        }
+        return array('stdout' => (string) $stdout, 'stderr' => (string) $stderr, 'exit_code' => $exit_code);
+    });
+    if (!is_file($output_path)) {
+        throw new RuntimeException('artifact-postprocess helper did not create the expected output artifact.');
+    }
+    $bytes = filesize($output_path);
+    $bytes = is_int($bytes) ? $bytes : 0;
+    $expected_schema = isset($step['expectedOutputSchema']) && is_string($step['expectedOutputSchema']) ? $step['expectedOutputSchema'] : (isset($step['expected-output-schema']) && is_string($step['expected-output-schema']) ? $step['expected-output-schema'] : '');
+    $artifact_name = isset($step['artifactName']) && is_string($step['artifactName']) && trim($step['artifactName']) !== '' ? trim($step['artifactName']) : (isset($step['name']) && is_string($step['name']) && trim($step['name']) !== '' ? trim($step['name']) : preg_replace('/\.[^.]+$/', '', basename($output_relative)));
+    $metadata = is_array($step['metadata'] ?? null) ? $step['metadata'] : array();
+    $metadata = array_merge($metadata, array(
+        'schema' => $expected_schema,
+        'semantic' => isset($step['semantic']) && is_string($step['semantic']) ? $step['semantic'] : 'artifact-postprocess',
+        'inputArtifactRoot' => $input_root,
+        'input' => $input_summary,
+    ));
+    $artifact = array(
+        'path' => $output_relative,
+        'kind' => isset($step['artifactKind']) && is_string($step['artifactKind']) && trim($step['artifactKind']) !== '' ? trim($step['artifactKind']) : 'artifact-postprocess',
+        'contentType' => wp_codebox_bench_artifact_postprocess_content_type($output_relative),
+        'sha256' => hash_file('sha256', $output_path),
+        'bytes' => $bytes,
+        'source' => 'artifact-postprocess',
+        'name' => $artifact_name,
+        'metadata' => $metadata,
+    );
+    $payload = wp_codebox_bench_command_step_payload($execution, wp_codebox_bench_metric_prefix($step, 'artifact_postprocess'), array(
+        'artifact_postprocess_input_bytes' => (float) $input_summary['bytes'],
+        'artifact_postprocess_input_artifacts_count' => (float) $input_summary['artifact_count'],
+        'artifact_postprocess_output_bytes' => (float) $bytes,
+    ), array('outputArtifactPath' => $output_relative, 'helper' => basename($helper_path)));
+    $payload['artifacts'][$artifact_name] = $artifact;
+    $payload['metadata']['artifact_postprocess_schema'] = $expected_schema;
+    return $payload;
+}
+
 function wp_codebox_bench_run_rest_request_step(array $step): array {
     if (!class_exists('WP_REST_Request') || !function_exists('rest_do_request')) {
         throw new RuntimeException('The WordPress REST API is not available in this runtime.');
@@ -1237,6 +1435,8 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
 			$result = wp_codebox_bench_run_rest_db_query_profiler_step($step);
 		} elseif ($type === 'external-http-guardrail') {
 			$result = wp_codebox_bench_run_external_http_guardrail_step($step);
+		} elseif ($type === 'artifact-postprocess') {
+			$result = wp_codebox_bench_run_artifact_postprocess_step($step, $plugin_path);
 		} else {
             throw new RuntimeException('Unsupported bench workload step type: ' . $type);
         }

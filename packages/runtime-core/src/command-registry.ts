@@ -618,7 +618,7 @@ export const commandRegistry = [
       { name: "dependency-slugs", description: "Comma-separated plugin dependency slugs to load.", format: "comma-separated slugs" },
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
       { name: "bootstrap-files-json", description: "Component-relative bootstrap file fallbacks; the first existing file is loaded before workloads execute.", format: "JSON array" },
-      { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, rest-request, rest-db-query-profiler, db-inventory, and external-http-guardrail mechanics.", format: "JSON array" },
+      { name: "workloads-json", description: "Explicit workload list. Configured workload steps support php, ability, wp-cli, rest-request, rest-db-query-profiler, db-inventory, external-http-guardrail, and artifact-postprocess mechanics.", format: "JSON array" },
       { name: "scenario-ids-json", description: "Optional selected benchmark scenario ids. Filters both discovered tests/bench workloads and explicit workloads by id.", format: "JSON array" },
       { name: "lifecycle-json", description: "Generic benchmark lifecycle hooks keyed by setup, prepare, warmup, measure, or teardown. Hook entries use the same php/ability/wp-cli step format as configured workloads.", format: "JSON object" },
       { name: "reset-policy-json", description: "Explicit benchmark reset policy. Supports betweenIterations and betweenScenarios modes: none or object-cache.", format: "JSON object" },

@@ -105,7 +105,7 @@ export interface BenchResults {
 }
 
 export interface BenchmarkDefinitionWorkloadStep {
-  type: "php" | "wp-cli" | "rest-request" | "rest-db-query-profiler" | "db-inventory" | "external-http-guardrail" | "ability" | (string & {})
+  type: "php" | "wp-cli" | "rest-request" | "rest-db-query-profiler" | "db-inventory" | "external-http-guardrail" | "artifact-postprocess" | "ability" | (string & {})
   action?: "install" | "collect" | "reset" | (string & {})
   code?: string
   file?: string
@@ -117,6 +117,27 @@ export interface BenchmarkDefinitionWorkloadStep {
   blockResponse?: { code?: number; message?: string; body?: string }
   sampleLimit?: number
   queryLengthLimit?: number
+  helper?: string
+  helperPath?: string
+  script?: string
+  scriptPath?: string
+  args?: string[]
+  env?: Record<string, unknown>
+  inputArtifactRoot?: string
+  "input-artifact-root"?: string
+  artifactRoot?: string
+  "artifact-root"?: string
+  outputArtifactPath?: string
+  "output-artifact-path"?: string
+  maxInputBytes?: number
+  "max-input-bytes"?: number
+  maxArtifacts?: number
+  "max-artifacts"?: number
+  expectedOutputSchema?: string
+  "expected-output-schema"?: string
+  artifactName?: string
+  artifactKind?: string
+  semantic?: string
   metadata?: Record<string, unknown>
   [key: string]: unknown
 }
@@ -439,6 +460,27 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         },
         sampleLimit: { type: "integer", minimum: 0 },
         queryLengthLimit: { type: "integer", minimum: 80 },
+        helper: { type: "string", minLength: 1 },
+        helperPath: { type: "string", minLength: 1 },
+        script: { type: "string", minLength: 1 },
+        scriptPath: { type: "string", minLength: 1 },
+        args: { type: "array", items: { type: "string" } },
+        env: { type: "object", additionalProperties: true },
+        inputArtifactRoot: { type: "string", minLength: 1 },
+        "input-artifact-root": { type: "string", minLength: 1 },
+        artifactRoot: { type: "string", minLength: 1 },
+        "artifact-root": { type: "string", minLength: 1 },
+        outputArtifactPath: { type: "string", minLength: 1 },
+        "output-artifact-path": { type: "string", minLength: 1 },
+        maxInputBytes: { type: "integer", minimum: 0 },
+        "max-input-bytes": { type: "integer", minimum: 0 },
+        maxArtifacts: { type: "integer", minimum: 0 },
+        "max-artifacts": { type: "integer", minimum: 0 },
+        expectedOutputSchema: { type: "string", minLength: 1 },
+        "expected-output-schema": { type: "string", minLength: 1 },
+        artifactName: { type: "string", minLength: 1 },
+        artifactKind: { type: "string", minLength: 1 },
+        semantic: { type: "string", minLength: 1 },
         metadata: { type: "object", additionalProperties: true },
       },
     },

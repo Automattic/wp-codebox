@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { phpFunctionBlock, runPhpFileJson, withTempDir } from "../scripts/test-kit.js"
 import { benchRunCode } from "../packages/runtime-playground/src/bench-command-handlers.js"
@@ -22,6 +22,7 @@ const runAbilityStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_abili
 const runDbInventoryStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_db_inventory_step")
 const runRestDbQueryProfilerStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_db_query_profiler_step")
 const runExternalHttpGuardrailStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_external_http_guardrail_step")
+const runArtifactPostprocessStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_artifact_postprocess_step")
 const commandStepRecord = phpFunctionBlock(benchRunner, "wp_codebox_bench_command_step_record")
 assert.match(runCommandStep, /function wp_codebox_bench_run_command_step\(array \$step, string \$type, callable \$runner\): array/)
 assert.match(runAbilityStep, /wp_codebox_bench_run_command_step\(\$step, 'ability'/)
@@ -35,6 +36,8 @@ assert.match(runRestDbQueryProfilerStep, /\$wpdb->save_queries = true/)
 assert.match(runRestDbQueryProfilerStep, /\$payload\['artifacts'\]\['rest-db-query-profile'\] = \$artifact/)
 assert.match(runExternalHttpGuardrailStep, /wp-codebox\/wordpress-external-http-guardrail\/v1/)
 assert.match(runExternalHttpGuardrailStep, /wp_codebox_bench_install_external_http_guardrail/)
+assert.match(runArtifactPostprocessStep, /artifact-postprocess workload steps only support the node command/)
+assert.match(runArtifactPostprocessStep, /WP_CODEBOX_ARTIFACT_INPUT_ROOT/)
 assert.match(commandStepRecord, /'schema' => 'wp-codebox\/bench-command-step\/v1'/)
 assert.doesNotMatch(runCommandStep, /\$type === 'ability'/)
 assert.ok(
@@ -62,6 +65,20 @@ const externalHttpGuardrailHelpers = [
   "wp_codebox_bench_external_http_guardrail_summary",
   "wp_codebox_bench_install_external_http_guardrail",
   "wp_codebox_bench_run_external_http_guardrail_step",
+].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
+
+const artifactPostprocessHelpers = [
+  "wp_codebox_bench_metric_prefix",
+  "wp_codebox_bench_command_step_record",
+  "wp_codebox_bench_run_command_step",
+  "wp_codebox_bench_command_step_payload",
+  "wp_codebox_bench_safe_relative_path",
+  "wp_codebox_bench_resolve_contained_path",
+  "wp_codebox_bench_artifact_postprocess_helper_path",
+  "wp_codebox_bench_artifact_postprocess_scan_input",
+  "wp_codebox_bench_artifact_postprocess_expand_value",
+  "wp_codebox_bench_artifact_postprocess_content_type",
+  "wp_codebox_bench_run_artifact_postprocess_step",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
 const restDbQueryProfilerHelpers = [
@@ -144,6 +161,95 @@ assert.equal(externalHttpGuardrailPayload.artifacts["external-http-guardrail"].e
 assert.equal(externalHttpGuardrailPayload.metrics.external_http_guardrail_event_count, 2)
 assert.equal(externalHttpGuardrailPayload.steps[0].type, "external-http-guardrail")
 assert.equal(externalHttpGuardrailPayload.steps[0].action, "collect")
+
+const artifactPostprocessPayload = await withTempDir("wp-codebox-artifact-postprocess-", async (directory) => {
+  const pluginDirectory = join(directory, "plugin")
+  const helperDirectory = join(pluginDirectory, "helpers")
+  const artifactDirectory = join(directory, "artifacts")
+  await mkdir(helperDirectory, { recursive: true })
+  await mkdir(join(artifactDirectory, "source"), { recursive: true })
+  await writeFile(join(artifactDirectory, "source", "coverage.json"), JSON.stringify({ uncovered: ["GET /wc/v3/orders"] }))
+  await writeFile(join(helperDirectory, "postprocess.mjs"), `import { readFile, writeFile } from "node:fs/promises";\nimport { join } from "node:path";\nconst inputRoot = process.argv[2];\nconst outputPath = process.argv[3];\nconst source = JSON.parse(await readFile(join(inputRoot, "source", "coverage.json"), "utf8"));\nawait writeFile(outputPath, JSON.stringify({ schema: process.env.EXPECTED_SCHEMA, inputRoot: process.env.WP_CODEBOX_ARTIFACT_INPUT_ROOT, gaps: source.uncovered }, null, 2));\n`)
+  const phpTestFile = join(directory, "artifact-postprocess.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${artifactPostprocessHelpers}
+$plugin_path = ${JSON.stringify(pluginDirectory)};
+$payload = wp_codebox_bench_run_artifact_postprocess_step(array(
+    'type' => 'artifact-postprocess',
+    'helperPath' => 'helpers/postprocess.mjs',
+    'inputArtifactRoot' => ${JSON.stringify(artifactDirectory)},
+    'outputArtifactPath' => 'derived/coverage-gaps.json',
+    'maxInputBytes' => 4096,
+    'maxArtifacts' => 4,
+    'expectedOutputSchema' => 'example/coverage-gaps/v1',
+    'artifactName' => 'coverage-gaps',
+    'artifactKind' => 'coverage-gap-report',
+    'semantic' => 'coverage-gap-report',
+    'args' => array('\${helperPath}', '\${inputArtifactRoot}', '\${outputArtifactPath}'),
+    'env' => array('EXPECTED_SCHEMA' => '\${expectedOutputSchema}', 'IGNORED_lower' => 'nope'),
+), $plugin_path);
+echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  const payload = await runPhpFileJson<{ metrics: Record<string, number>; metadata: Record<string, string>; artifacts: Record<string, { path: string; kind: string; contentType: string; sha256: string; bytes: number; source: string; name: string; metadata: { schema: string; semantic: string; input: { artifact_count: number; bytes: number } } }>; steps: Array<{ type: string; helper: string; outputArtifactPath: string }> }>(phpTestFile)
+  const output = JSON.parse(await readFile(join(artifactDirectory, "derived", "coverage-gaps.json"), "utf8")) as { schema: string; gaps: string[] }
+  assert.equal(output.schema, "example/coverage-gaps/v1")
+  assert.deepEqual(output.gaps, ["GET /wc/v3/orders"])
+  return payload
+})
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].path, "derived/coverage-gaps.json")
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].kind, "coverage-gap-report")
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].contentType, "application/json")
+assert.match(artifactPostprocessPayload.artifacts["coverage-gaps"].sha256, /^[a-f0-9]{64}$/)
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].source, "artifact-postprocess")
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].metadata.schema, "example/coverage-gaps/v1")
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].metadata.semantic, "coverage-gap-report")
+assert.equal(artifactPostprocessPayload.artifacts["coverage-gaps"].metadata.input.artifact_count, 1)
+assert.equal(artifactPostprocessPayload.metadata.artifact_postprocess_schema, "example/coverage-gaps/v1")
+assert.equal(artifactPostprocessPayload.metrics.artifact_postprocess_input_artifacts_count, 1)
+assert.equal(artifactPostprocessPayload.steps[0].type, "artifact-postprocess")
+assert.equal(artifactPostprocessPayload.steps[0].helper, "postprocess.mjs")
+
+const artifactPostprocessFailures = await withTempDir("wp-codebox-artifact-postprocess-failures-", async (directory) => {
+  const pluginDirectory = join(directory, "plugin")
+  const helperDirectory = join(pluginDirectory, "helpers")
+  const artifactDirectory = join(directory, "artifacts")
+  await mkdir(helperDirectory, { recursive: true })
+  await mkdir(artifactDirectory, { recursive: true })
+  await writeFile(join(artifactDirectory, "input.json"), "{}")
+  await writeFile(join(helperDirectory, "noop.mjs"), `process.exit(0);\n`)
+  const phpTestFile = join(directory, "artifact-postprocess-failures.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+${artifactPostprocessHelpers}
+$plugin_path = ${JSON.stringify(pluginDirectory)};
+$artifact_root = ${JSON.stringify(artifactDirectory)};
+$messages = array();
+foreach (array(
+    array('helperPath' => '../outside.mjs', 'outputArtifactPath' => 'out.json'),
+    array('helperPath' => '/tmp/outside.mjs', 'outputArtifactPath' => 'out.json'),
+    array('helperPath' => 'helpers/noop.mjs', 'outputArtifactPath' => 'missing/out.json'),
+    array('helperPath' => 'helpers/noop.mjs', 'command' => 'sh', 'outputArtifactPath' => 'out.json'),
+) as $step) {
+    try {
+        wp_codebox_bench_run_artifact_postprocess_step(array_merge(array('type' => 'artifact-postprocess', 'inputArtifactRoot' => $artifact_root), $step), $plugin_path);
+        $messages[] = 'ok';
+    } catch (Throwable $e) {
+        $messages[] = $e->getMessage();
+    }
+}
+echo json_encode($messages, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<string[]>(phpTestFile)
+})
+assert.match(artifactPostprocessFailures[0], /parent traversal/)
+assert.match(artifactPostprocessFailures[1], /relative path/)
+assert.match(artifactPostprocessFailures[2], /did not create the expected output artifact/)
+assert.match(artifactPostprocessFailures[3], /only support the node command/)
 
 const restDbQueryProfilerPayload = await withTempDir("wp-codebox-rest-db-query-profiler-", async (directory) => {
   const phpTestFile = join(directory, "rest-db-query-profiler.php")

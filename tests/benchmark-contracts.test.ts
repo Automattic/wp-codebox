@@ -46,6 +46,7 @@ const routeMatrixDefinition = {
 
 const schema = createBenchmarkDefinitionJsonSchema()
 const workloadDefinition = (schema.$defs as Record<string, { properties?: Record<string, unknown> }>).workload
+const workloadStepDefinition = (schema.$defs as Record<string, { properties?: Record<string, unknown> }>).workloadStep
 const routeDefinition = (schema.$defs as Record<string, { anyOf?: unknown; properties?: Record<string, unknown> }>).restRouteMatrixEntry
 const restCaseDefinition = (schema.$defs as Record<string, { anyOf?: unknown; properties?: Record<string, unknown> }>).restRequestCaseEntry
 
@@ -55,6 +56,10 @@ assert.ok(workloadDefinition.properties?.rest_request_cases, "benchmark definiti
 assert.ok(workloadDefinition.properties?.request_cases, "benchmark definition schema should expose workload request_cases")
 assert.ok(routeDefinition.properties?.["capture-response"], "route_matrix entries should expose REST response capture")
 assert.ok(restCaseDefinition.properties?.case_id, "REST request case entries should expose case_id")
+assert.ok(workloadStepDefinition.properties?.helperPath, "workload steps should expose artifact-postprocess helperPath")
+assert.ok(workloadStepDefinition.properties?.inputArtifactRoot, "workload steps should expose artifact-postprocess inputArtifactRoot")
+assert.ok(workloadStepDefinition.properties?.outputArtifactPath, "workload steps should expose artifact-postprocess outputArtifactPath")
+assert.ok(workloadStepDefinition.properties?.expectedOutputSchema, "workload steps should expose artifact-postprocess expectedOutputSchema")
 assert.deepEqual(routeDefinition.anyOf, [{ required: ["path"] }, { required: ["route"] }])
 assert.deepEqual(restCaseDefinition.anyOf, [{ required: ["path"] }, { required: ["route"] }])
 
