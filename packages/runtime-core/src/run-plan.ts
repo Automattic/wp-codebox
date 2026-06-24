@@ -1,5 +1,6 @@
 export const RUN_PLAN_SCHEMA = "wp-codebox/run-plan/v1" as const
 export const RUN_PLAN_EVENT_SCHEMA = "wp-codebox/run-plan-event/v1" as const
+export const RUN_PLAN_PROGRESS_SCHEMA = "wp-codebox/run-plan-progress/v1" as const
 export const RUN_PLAN_RESULT_SCHEMA = "wp-codebox/run-plan-result/v1" as const
 
 export interface RunPlanWorkerContract {
@@ -81,6 +82,32 @@ export interface RunPlanResultCounts {
   timed_out: number
 }
 
+export type RunPlanProgressStatus = "queued" | "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "timed_out"
+
+export interface RunPlanProgressWorkerSnapshot {
+  id: string
+  status: RunPlanProgressStatus
+  required?: boolean
+  artifactNamespace?: string
+  lastEvent?: string
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface RunPlanProgressSnapshot {
+  schema: typeof RUN_PLAN_PROGRESS_SCHEMA
+  time: string
+  status: RunPlanProgressStatus
+  active: number
+  counts: RunPlanResultCounts
+  workers: RunPlanProgressWorkerSnapshot[]
+  sessionId?: string
+  runId?: string
+  eventsRef?: string
+  resultRef?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface RunPlanWorkerExecution<TWorker extends RunPlanWorkerContract = RunPlanWorkerContract> {
   descriptor: RunPlanWorkerDescriptor<TWorker>
   index: number
@@ -138,6 +165,71 @@ export function countRunPlanChildResults(results: RunPlanChildResult[]): RunPlan
 
 export function runPlanSucceeded(counts: Pick<RunPlanResultCounts, "failed" | "skipped" | "cancelled" | "timed_out">): boolean {
   return counts.failed === 0 && counts.skipped === 0 && counts.cancelled === 0 && counts.timed_out === 0
+}
+
+export function normalizeRunPlanProgressSnapshot(input: {
+  plan?: Partial<RunPlanContract>
+  workers?: Array<Partial<RunPlanWorkerDescriptor> | RunPlanWorkerContract>
+  results?: RunPlanWorkerResultLike[]
+  events?: RunPlanEventContract[]
+  sessionId?: string
+  runId?: string
+  eventsRef?: string
+  resultRef?: string
+  time?: string
+  clock?: RunPlanClock
+  metadata?: Record<string, unknown>
+} = {}): RunPlanProgressSnapshot {
+  const workerSources = input.workers ?? input.plan?.workers ?? []
+  const resultByWorker = new Map((input.results ?? []).map((result) => [result.workerId, result]))
+  const workerById = new Map<string, RunPlanProgressWorkerSnapshot>()
+
+  for (const source of workerSources) {
+    const worker = source as Partial<RunPlanWorkerDescriptor> & RunPlanWorkerContract
+    const id = stringValue(worker.id)
+    if (!id || workerById.has(id)) continue
+    workerById.set(id, {
+      id,
+      status: "queued",
+      ...(typeof worker.required === "boolean" ? { required: worker.required } : {}),
+      ...(stringValue(worker.artifactNamespace ?? worker.artifact_namespace) ? { artifactNamespace: stringValue(worker.artifactNamespace ?? worker.artifact_namespace) } : {}),
+    })
+  }
+
+  for (const event of input.events ?? []) {
+    const workerId = stringValue(event.workerId)
+    if (!workerId) continue
+    const current = workerById.get(workerId) ?? { id: workerId, status: "queued" as const }
+    const eventStatus = runPlanProgressStatusFromEvent(event)
+    workerById.set(workerId, {
+      ...current,
+      status: eventStatus ?? current.status,
+      lastEvent: stringValue(event.event) || current.lastEvent,
+      ...(eventStatus === "running" && event.time ? { startedAt: event.time } : {}),
+      ...((eventStatus && eventStatus !== "running" && event.time) ? { completedAt: event.time } : {}),
+    })
+  }
+
+  for (const [workerId, result] of resultByWorker) {
+    const current = workerById.get(workerId) ?? { id: workerId, status: "queued" as const }
+    workerById.set(workerId, { ...current, status: runPlanProgressStatusFromResult(result) })
+  }
+
+  const workers = Array.from(workerById.values())
+  const counts = countRunPlanProgressWorkers(workers)
+  return {
+    schema: RUN_PLAN_PROGRESS_SCHEMA,
+    time: input.time ?? runPlanClockIso(input.clock),
+    status: runPlanProgressStatusFromCounts(counts),
+    active: workers.filter((worker) => worker.status === "running").length,
+    counts,
+    workers,
+    ...(stringValue(input.sessionId ?? input.plan?.sessionId) ? { sessionId: stringValue(input.sessionId ?? input.plan?.sessionId) } : {}),
+    ...(stringValue(input.runId ?? input.plan?.id) ? { runId: stringValue(input.runId ?? input.plan?.id) } : {}),
+    ...(stringValue(input.eventsRef) ? { eventsRef: stringValue(input.eventsRef) } : {}),
+    ...(stringValue(input.resultRef) ? { resultRef: stringValue(input.resultRef) } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  }
 }
 
 export async function executeRunPlan<TWorker extends RunPlanWorkerContract, TResult extends RunPlanWorkerResultLike>(plan: Pick<RunPlanContract, "workers" | "concurrency">, options: RunPlanExecutorOptions<TWorker, TResult>): Promise<RunPlanExecutorResult<TResult>> {
@@ -434,6 +526,45 @@ function defaultTimedOutRunPlanResult<TWorker extends RunPlanWorkerContract, TRe
     status: "timed_out",
     error: { code: "worker-timed-out", message: `Run plan worker ${descriptor.id} exceeded its ${reason}.` },
   } as unknown as TResult
+}
+
+function countRunPlanProgressWorkers(workers: RunPlanProgressWorkerSnapshot[]): RunPlanResultCounts {
+  return {
+    total: workers.length,
+    completed: workers.filter((worker) => worker.status === "succeeded").length,
+    failed: workers.filter((worker) => worker.status === "failed").length,
+    skipped: workers.filter((worker) => worker.status === "skipped").length,
+    cancelled: workers.filter((worker) => worker.status === "cancelled").length,
+    timed_out: workers.filter((worker) => worker.status === "timed_out").length,
+  }
+}
+
+function runPlanProgressStatusFromResult(result: RunPlanWorkerResultLike): RunPlanProgressStatus {
+  if (result.success === true) return "succeeded"
+  const status = stringValue(result.status)
+  if (status === "cancelled" || status === "skipped" || status === "timed_out" || status === "timeout") return status === "timeout" ? "timed_out" : status
+  return "failed"
+}
+
+function runPlanProgressStatusFromEvent(event: RunPlanEventContract): RunPlanProgressStatus | undefined {
+  const label = `${stringValue(event.event)} ${stringValue(event.status)}`
+  if (/started|running/.test(label)) return "running"
+  if (/completed|succeeded|success/.test(label)) return "succeeded"
+  if (/cancelled|canceled/.test(label)) return "cancelled"
+  if (/timed[_ -]?out|timeout/.test(label)) return "timed_out"
+  if (/skipped/.test(label)) return "skipped"
+  if (/failed|error/.test(label)) return "failed"
+  return undefined
+}
+
+function runPlanProgressStatusFromCounts(counts: RunPlanResultCounts): RunPlanProgressStatus {
+  const settled = counts.completed + counts.failed + counts.skipped + counts.cancelled + counts.timed_out
+  if (settled < counts.total) return "running"
+  if (counts.timed_out > 0) return "timed_out"
+  if (counts.cancelled > 0) return "cancelled"
+  if (counts.failed > 0) return "failed"
+  if (counts.skipped > 0) return "skipped"
+  return "succeeded"
 }
 
 function stringValue(value: unknown): string {

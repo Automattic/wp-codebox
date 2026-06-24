@@ -87,6 +87,8 @@ assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
 assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
 assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
 assert.match(publicBoundaryText, /not mirror the monorepo-only\s+`\.\/internals` helper entrypoint/)
+assert.match(publicBoundaryText, /`wp-codebox\/run-plan-progress\/v1`/)
+assert.match(publicBoundaryText, /Hosts own streaming, persistence, UI polling, and\s+cancellation-request transport/)
 for (const term of forbiddenPublicImplementationTerms) {
   assert.doesNotMatch(publicBoundaryText, term)
 }

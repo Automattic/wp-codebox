@@ -9,9 +9,10 @@ defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Run_Plan {
 
-	public const SCHEMA        = 'wp-codebox/run-plan/v1';
-	public const EVENT_SCHEMA  = 'wp-codebox/run-plan-event/v1';
-	public const RESULT_SCHEMA = 'wp-codebox/run-plan-result/v1';
+	public const SCHEMA          = 'wp-codebox/run-plan/v1';
+	public const EVENT_SCHEMA    = 'wp-codebox/run-plan-event/v1';
+	public const PROGRESS_SCHEMA = 'wp-codebox/run-plan-progress/v1';
+	public const RESULT_SCHEMA   = 'wp-codebox/run-plan-result/v1';
 
 	/** @param array<string,mixed> $options Normalization options. */
 	public function normalize_concurrency( mixed $value, array $options = array() ): int|WP_Error {
@@ -250,6 +251,103 @@ final class WP_Codebox_Run_Plan {
 		return 0 === $counts['failed'] && 0 === $counts['skipped'] && 0 === $counts['cancelled'] && 0 === $counts['timed_out'];
 	}
 
+	/**
+	 * @param array<string,mixed> $input Progress inputs.
+	 * @return array<string,mixed>
+	 */
+	public function progress_snapshot( array $input = array() ): array {
+		$plan    = is_array( $input['plan'] ?? null ) ? $input['plan'] : array();
+		$workers = is_array( $input['workers'] ?? null ) ? $input['workers'] : ( is_array( $plan['workers'] ?? null ) ? $plan['workers'] : array() );
+		$events  = is_array( $input['events'] ?? null ) ? $input['events'] : array();
+		$results = is_array( $input['results'] ?? null ) ? $input['results'] : array();
+
+		$worker_map = array();
+		foreach ( $workers as $worker ) {
+			if ( ! is_array( $worker ) ) {
+				continue;
+			}
+			$id = $this->string_value( $worker['id'] ?? '' );
+			if ( '' === $id || isset( $worker_map[ $id ] ) ) {
+				continue;
+			}
+			$snapshot = array(
+				'id'     => $id,
+				'status' => 'queued',
+			);
+			if ( isset( $worker['required'] ) && is_bool( $worker['required'] ) ) {
+				$snapshot['required'] = $worker['required'];
+			}
+			$artifact_namespace = $this->string_value( $worker['artifactNamespace'] ?? $worker['artifact_namespace'] ?? '' );
+			if ( '' !== $artifact_namespace ) {
+				$snapshot['artifactNamespace'] = $artifact_namespace;
+			}
+			$worker_map[ $id ] = $snapshot;
+		}
+
+		foreach ( $events as $event ) {
+			if ( ! is_array( $event ) ) {
+				continue;
+			}
+			$worker_id = $this->string_value( $event['workerId'] ?? $event['worker_id'] ?? '' );
+			if ( '' === $worker_id ) {
+				continue;
+			}
+			$current = $worker_map[ $worker_id ] ?? array( 'id' => $worker_id, 'status' => 'queued' );
+			$status  = $this->progress_status_from_event( $event );
+			if ( null !== $status ) {
+				$current['status'] = $status;
+			}
+			$event_name = $this->string_value( $event['event'] ?? '' );
+			if ( '' !== $event_name ) {
+				$current['lastEvent'] = $event_name;
+			}
+			$time = $this->string_value( $event['time'] ?? '' );
+			if ( '' !== $time && 'running' === $status ) {
+				$current['startedAt'] = $time;
+			} elseif ( '' !== $time && null !== $status ) {
+				$current['completedAt'] = $time;
+			}
+			$worker_map[ $worker_id ] = $current;
+		}
+
+		foreach ( $results as $result ) {
+			if ( ! is_array( $result ) ) {
+				continue;
+			}
+			$worker_id = $this->string_value( $result['workerId'] ?? $result['worker_id'] ?? '' );
+			if ( '' === $worker_id ) {
+				continue;
+			}
+			$current                 = $worker_map[ $worker_id ] ?? array( 'id' => $worker_id, 'status' => 'queued' );
+			$current['status']       = $this->progress_status_from_result( $result );
+			$worker_map[ $worker_id ] = $current;
+		}
+
+		$workers_snapshot = array_values( $worker_map );
+		$counts           = $this->progress_counts( $workers_snapshot );
+		$snapshot         = array(
+			'schema'  => self::PROGRESS_SCHEMA,
+			'time'    => $this->string_value( $input['time'] ?? '' ) ?: gmdate( 'c' ),
+			'status'  => $this->progress_status_from_counts( $counts ),
+			'active'  => count( array_filter( $workers_snapshot, static fn( array $worker ): bool => 'running' === ( $worker['status'] ?? '' ) ) ),
+			'counts'  => $counts,
+			'workers' => $workers_snapshot,
+		);
+
+		foreach ( array( 'sessionId', 'runId', 'eventsRef', 'resultRef' ) as $key ) {
+			$plan_key = 'runId' === $key ? 'id' : $key;
+			$value    = $this->string_value( $input[ $key ] ?? $plan[ $key ] ?? $plan[ $plan_key ] ?? '' );
+			if ( '' !== $value ) {
+				$snapshot[ $key ] = $value;
+			}
+		}
+		if ( isset( $input['metadata'] ) && is_array( $input['metadata'] ) ) {
+			$snapshot['metadata'] = $input['metadata'];
+		}
+
+		return $snapshot;
+	}
+
 	/** @param array<string,string> $paths Run-plan artifact paths. @return array<string,mixed> */
 	public function artifacts( string $schema, array $paths ): array {
 		return array(
@@ -353,5 +451,68 @@ final class WP_Codebox_Run_Plan {
 
 	private function string_value( mixed $value ): string {
 		return trim( (string) ( $value ?? '' ) );
+	}
+
+	/** @param array<int,array<string,mixed>> $workers Workers. @return array{total:int,completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} */
+	private function progress_counts( array $workers ): array {
+		$status_count = static fn( string $status ): int => count( array_filter( $workers, static fn( array $worker ): bool => $status === ( $worker['status'] ?? '' ) ) );
+		return array(
+			'total'     => count( $workers ),
+			'completed' => $status_count( 'succeeded' ),
+			'failed'    => $status_count( 'failed' ),
+			'skipped'   => $status_count( 'skipped' ),
+			'cancelled' => $status_count( 'cancelled' ),
+			'timed_out' => $status_count( 'timed_out' ),
+		);
+	}
+
+	/** @param array<string,mixed> $result Result. */
+	private function progress_status_from_result( array $result ): string {
+		if ( true === ( $result['success'] ?? false ) ) {
+			return 'succeeded';
+		}
+		$status = $this->string_value( $result['status'] ?? '' );
+		if ( 'timeout' === $status ) {
+			return 'timed_out';
+		}
+		return in_array( $status, array( 'cancelled', 'skipped', 'timed_out' ), true ) ? $status : 'failed';
+	}
+
+	/** @param array<string,mixed> $event Event. */
+	private function progress_status_from_event( array $event ): ?string {
+		$label = $this->string_value( $event['event'] ?? '' ) . ' ' . $this->string_value( $event['status'] ?? '' );
+		if ( preg_match( '/started|running/', $label ) ) {
+			return 'running';
+		}
+		if ( preg_match( '/completed|succeeded|success/', $label ) ) {
+			return 'succeeded';
+		}
+		if ( preg_match( '/cancelled|canceled/', $label ) ) {
+			return 'cancelled';
+		}
+		if ( preg_match( '/timed[_ -]?out|timeout/', $label ) ) {
+			return 'timed_out';
+		}
+		if ( preg_match( '/skipped/', $label ) ) {
+			return 'skipped';
+		}
+		if ( preg_match( '/failed|error/', $label ) ) {
+			return 'failed';
+		}
+		return null;
+	}
+
+	/** @param array{total:int,completed:int,failed:int,skipped:int,cancelled:int,timed_out:int} $counts Counts. */
+	private function progress_status_from_counts( array $counts ): string {
+		$settled = $counts['completed'] + $counts['failed'] + $counts['skipped'] + $counts['cancelled'] + $counts['timed_out'];
+		if ( $settled < $counts['total'] ) {
+			return 'running';
+		}
+		foreach ( array( 'timed_out', 'cancelled', 'failed', 'skipped' ) as $status ) {
+			if ( $counts[ $status ] > 0 ) {
+				return $status;
+			}
+		}
+		return 'succeeded';
 	}
 }

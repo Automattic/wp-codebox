@@ -141,5 +141,6 @@ if ( is_wp_error( $dependency_descriptors ) ) {
 assert_same_contract( $fixture['runPlan']['dependencyBatches'], $run_plan->dependency_batches( $dependency_descriptors ), 'run-plan dependency batches' );
 assert_same_contract( $fixture['runPlan']['concurrency']['defaulted'], $run_plan->normalize_concurrency( '', array( 'default_concurrency' => 3, 'max_concurrency' => 5 ) ), 'run-plan default concurrency' );
 assert_same_contract( $fixture['runPlan']['concurrency']['clamped'], $run_plan->normalize_concurrency( 99, array( 'max_concurrency' => 2 ) ), 'run-plan clamped concurrency' );
+assert_same_contract( $fixture['runPlan']['progress'], $run_plan->progress_snapshot( $fixture['runPlan']['progressInput'] ), 'run-plan progress snapshot' );
 
 fwrite( STDOUT, "PHP primitive contract parity smoke passed\n" );
