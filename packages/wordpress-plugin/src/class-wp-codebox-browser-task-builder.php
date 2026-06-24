@@ -465,6 +465,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'runtime_overlays'     => self::object_list( $profile['runtime_overlays'] ?? array() ),
 				'runtime_state_mounts' => self::object_list( $profile['runtime_state_mounts'] ?? array() ),
 				'runtime_config_mounts' => self::object_list( $profile['runtime_config_mounts'] ?? array() ),
+				'prepared'     => is_array( $profile['prepared'] ?? null ) ? self::compact_public_value( $profile['prepared'] ) : array(),
 				'bootstrap'    => is_array( $profile['bootstrap'] ?? null ) ? $profile['bootstrap'] : array(),
 				'env'          => is_array( $profile['env'] ?? null ) ? self::string_map( $profile['env'] ) : array(),
 				'readiness'    => is_array( $profile['readiness'] ?? null ) ? self::compact_public_value( $profile['readiness'] ) : array(),
@@ -505,6 +506,12 @@ final class WP_Codebox_Browser_Task_Builder {
 				$runtime_items = is_array( $runtime[ $field ] ?? null ) ? $runtime[ $field ] : array();
 				$runtime[ $field ] = empty( $runtime['resolved_profile'] ) ? self::merge_lists( $profile_items, $runtime_items ) : self::merge_lists( $runtime_items, $profile_items );
 			}
+		}
+		if ( is_array( $profile['prepared'] ?? null ) && ! empty( $profile['prepared'] ) ) {
+			$runtime['prepared'] = array_merge(
+				$profile['prepared'],
+				is_array( $runtime['prepared'] ?? null ) ? $runtime['prepared'] : array()
+			);
 		}
 
 		$input['runtime']             = $runtime;
