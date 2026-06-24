@@ -95,7 +95,7 @@ const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
 
 const browserActionCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"] as const
 const browserScenarioCaptureValues = ["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"] as const
-const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state"] as const
+const editorCaptureValues = ["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"] as const
 
 const browserProbeValidation: CommandValidationDescriptor = {
   requiredArgs: [
@@ -921,9 +921,9 @@ export const commandRegistry = [
       { name: "url", description: "Explicit editor path or absolute URL to open instead of resolving a target.", format: "path or URL" },
       { name: "wait-selector", description: "Selector that marks the editor as ready; defaults to the block editor shell.", format: "CSS selector" },
       { name: "wait-timeout", description: "Timeout for navigation and editor-ready waits.", format: "duration, e.g. 15s or 500ms" },
-      { name: "capture", description: "Comma-separated artifacts to capture after opening the editor.", format: "steps,console,errors,html,screenshot,editor-state" },
+      { name: "capture", description: "Comma-separated artifacts to capture after opening the editor.", format: "steps,console,errors,html,screenshot,editor-state,editor-validity" },
     ],
-    outputShape: "JSON summary plus files/browser/editor-steps.jsonl, editor-summary.json, editor-state.json, and optional console/errors/html/screenshot artifacts.",
+    outputShape: "JSON summary plus files/browser/editor-steps.jsonl, editor-summary.json, editor-state.json, optional editor-validity.json, and optional console/errors/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.editor-open.",
     recipe: true,
     handler: { kind: "playground", method: "runEditorOpen" },
@@ -941,9 +941,9 @@ export const commandRegistry = [
       { name: "wait-timeout", description: "Timeout for navigation and editor-ready waits.", format: "duration, e.g. 15s or 500ms" },
       { name: "step-timeout", description: "Per-action timeout applied to each editor action step.", format: "duration, e.g. 15s or 500ms" },
       { name: "timeout", description: "Total-script timeout bounding the whole editor action run.", format: "duration, e.g. 30s or 1500ms" },
-      { name: "capture", description: "Comma-separated artifacts to capture after actions.", format: "steps,console,errors,html,screenshot,editor-state" },
+      { name: "capture", description: "Comma-separated artifacts to capture after actions.", format: "steps,console,errors,html,screenshot,editor-state,editor-validity" },
     ],
-    outputShape: "JSON summary plus files/browser/editor-action-steps.jsonl, editor-action-summary.json, editor-action-state.json, and optional console/errors/html/screenshot artifacts.",
+    outputShape: "JSON summary plus files/browser/editor-action-steps.jsonl, editor-action-summary.json, editor-action-state.json, optional editor-action-validity.json, and optional console/errors/html/screenshot artifacts.",
     policyRequirement: "Runtime policy commands must include wordpress.editor-actions.",
     validation: editorActionsValidation,
     recipe: true,

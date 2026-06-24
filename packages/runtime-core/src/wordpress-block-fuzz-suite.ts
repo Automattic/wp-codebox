@@ -13,7 +13,7 @@ export interface WordPressBlockFuzzSuiteOptions {
 }
 
 const DEFAULT_BLOCK_FUZZ_SUITE_ID = "wordpress-block-discovery"
-const DEFAULT_EDITOR_CAPTURE = ["editor-state", "errors"] as const
+const DEFAULT_EDITOR_CAPTURE = ["editor-state", "editor-validity", "errors"] as const
 const BLOCK_SERVER_RENDER_CAPABILITIES = ["target:runtime", "runtime"] as const
 const BLOCK_EDITOR_INSERT_CAPABILITIES = ["target:runtime", "runtime", "runtime-action:editor_open"] as const
 const BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {

@@ -58,6 +58,7 @@ export interface BrowserVisualCompareArtifact extends BrowserArtifactBase {
 export interface BrowserArtifactFiles {
   actions?: string
   editorState?: string
+  editorValidity?: string
   steps?: string
   checkpoints?: string
   console?: string
@@ -119,6 +120,7 @@ export interface BrowserArtifactSummary {
     blockCount?: number
     storesAvailable: boolean
   }
+  editorValidity?: BrowserEditorValiditySummary
   editorReadiness?: BrowserEditorReadinessSummary
   editorSave?: BrowserEditorSaveSummary
   editorCanvas?: BrowserEditorCanvasProbeSummary
@@ -170,6 +172,14 @@ export interface BrowserArtifactSummary {
   }
   scriptResult?: unknown
   viewport: BrowserProbeViewport | null
+}
+
+export interface BrowserEditorValiditySummary {
+  schema: "wp-codebox/editor-validity/v1"
+  status: "clean" | "warnings" | "unavailable"
+  warningCount: number
+  selectors: string[]
+  messages: string[]
 }
 
 export interface BrowserEditorReadinessSummary {
@@ -914,6 +924,7 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       checkpoints: probe.files.checkpoints,
       errorsFile: probe.files.errors,
       editorState: probe.files.editorState,
+      editorValidity: probe.files.editorValidity,
       memory: probe.files.memory,
       review: probe.files.review,
       actions: probe.files.steps ?? probe.files.actions,
@@ -966,6 +977,7 @@ export interface BrowserArtifactFileManifestMetadata {
 const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, BrowserArtifactFileManifestEntry> = {
   actions: { kind: "browser-actions", contentType: "application/x-ndjson", redact: true },
   editorState: { kind: "browser-editor-state", contentType: "application/json", redact: true },
+  editorValidity: { kind: "browser-editor-validity", contentType: "application/json", redact: true },
   steps: { kind: "browser-steps", contentType: "application/x-ndjson", redact: true },
   checkpoints: { kind: "browser-checkpoints", contentType: "application/x-ndjson", redact: true },
   console: { kind: "browser-console", contentType: "application/x-ndjson", redact: true },

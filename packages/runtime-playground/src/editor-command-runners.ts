@@ -3,7 +3,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
@@ -21,6 +21,12 @@ const EDITOR_CANVAS_DEFAULT_IFRAME_SELECTOR = 'iframe[name="editor-canvas"]'
 const EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR = ".block-editor-block-list__layout"
 const EDITOR_CANVAS_DEFAULT_BLOCK_SELECTOR = ".block-editor-block-list__block, [data-block]"
 const EDITOR_CANVAS_DEFAULT_TIMEOUT_MS = 30_000
+const EDITOR_VALIDITY_WARNING_SELECTORS = [
+  ".block-editor-warning",
+  ".block-editor-block-list__block.is-invalid",
+  "[data-type].is-invalid",
+  ".components-notice",
+]
 
 export async function runEditorCanvasProbeCommand({
   artifactRoot,
@@ -502,8 +508,8 @@ export async function runEditorOpenCommand({
     capture.add("editor-state")
   }
   for (const item of capture) {
-    if (!["steps", "console", "errors", "html", "screenshot", "editor-state"].includes(item)) {
-      throw new Error(`wordpress.editor-open capture supports steps, console, errors, html, screenshot, editor-state: ${item}`)
+    if (!["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"].includes(item)) {
+      throw new Error(`wordpress.editor-open capture supports steps, console, errors, html, screenshot, editor-state, editor-validity: ${item}`)
     }
   }
 
@@ -524,6 +530,7 @@ export async function runEditorOpenCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let editorValidity: EditorValidityArtifact | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -578,6 +585,10 @@ export async function runEditorOpenCommand({
       editorState = await captureEditorState(page, target)
       await artifactSession.writeJson("editorState", "editor-state.json", editorState)
     }
+    if (capture.has("editor-validity")) {
+      editorValidity = await captureEditorValidity(page, target)
+      await artifactSession.writeJson("editorValidity", "editor-validity.json", editorValidity)
+    }
     if (capture.has("html")) {
       const html = await page.content()
       await artifactSession.writeText("html", "editor-snapshot.html", html)
@@ -612,6 +623,7 @@ export async function runEditorOpenCommand({
         ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
         ...(capture.has("editor-state") ? { editorState: "files/browser/editor-state.json" } : {}),
+        ...(capture.has("editor-validity") ? { editorValidity: "files/browser/editor-validity.json" } : {}),
         ...(capture.has("errors") ? { errors: "files/browser/editor-errors.jsonl" } : {}),
         ...(capture.has("html") ? { html: "files/browser/editor-snapshot.html" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/editor-screenshot.png" } : {}),
@@ -630,6 +642,7 @@ export async function runEditorOpenCommand({
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(editorSummary ? { editor: editorSummary } : {}),
+        ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
         viewport,
       },
     }
@@ -703,8 +716,8 @@ export async function runEditorActionsCommand({
     capture.add("editor-state")
   }
   for (const item of capture) {
-    if (!["steps", "console", "errors", "html", "screenshot", "editor-state"].includes(item)) {
-      throw new Error(`wordpress.editor-actions capture supports steps, console, errors, html, screenshot, editor-state: ${item}`)
+    if (!["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"].includes(item)) {
+      throw new Error(`wordpress.editor-actions capture supports steps, console, errors, html, screenshot, editor-state, editor-validity: ${item}`)
     }
   }
 
@@ -728,6 +741,7 @@ export async function runEditorActionsCommand({
   let screenshotSha256: string | undefined
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
+  let editorValidity: EditorValidityArtifact | undefined
   let editorReadiness: BrowserEditorReadinessSummary | undefined
   let editorSave: BrowserEditorSaveSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
@@ -816,6 +830,10 @@ export async function runEditorActionsCommand({
       editorState = await captureEditorState(page, target)
       await artifactSession.writeJson("editorState", "editor-action-state.json", editorState)
     }
+    if (capture.has("editor-validity")) {
+      editorValidity = await captureEditorValidity(page, target)
+      await artifactSession.writeJson("editorValidity", "editor-action-validity.json", editorValidity)
+    }
     if (capture.has("html")) {
       const html = await page.content()
       await artifactSession.writeText("html", "editor-action-snapshot.html", html)
@@ -850,6 +868,7 @@ export async function runEditorActionsCommand({
         ...(capture.has("steps") ? { steps: "files/browser/editor-action-steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/editor-action-console.jsonl" } : {}),
         ...(capture.has("editor-state") ? { editorState: "files/browser/editor-action-state.json" } : {}),
+        ...(capture.has("editor-validity") ? { editorValidity: "files/browser/editor-action-validity.json" } : {}),
         ...(capture.has("errors") ? { errors: "files/browser/editor-action-errors.jsonl" } : {}),
         ...(capture.has("html") ? { html: "files/browser/editor-action-snapshot.html" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/editor-action-screenshot.png" } : {}),
@@ -869,6 +888,7 @@ export async function runEditorActionsCommand({
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(editorSummary ? { editor: editorSummary } : {}),
+        ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
         ...(editorReadiness ? { editorReadiness } : {}),
         ...(editorSave ? { editorSave } : {}),
         viewport,
@@ -1165,6 +1185,24 @@ interface EditorStateSnapshot {
   }>
 }
 
+interface EditorValidityWarning {
+  source: "dom" | "block-editor-store"
+  selector?: string
+  path?: string
+  message: string
+  blockName?: string
+  clientId?: string
+}
+
+interface EditorValidityArtifact {
+  schema: "wp-codebox/editor-validity/v1"
+  capturedAt: string
+  target: ReturnType<typeof editorOpenTargetFromArgs>
+  selectors: string[]
+  warnings: EditorValidityWarning[]
+  summary: BrowserEditorValiditySummary
+}
+
 async function captureEditorState(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorStateSnapshot> {
   const state = await page.evaluate(() => {
     const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data
@@ -1197,6 +1235,107 @@ async function captureEditorState(page: import("playwright").Page, target: Retur
     capturedAt: now(),
     target,
     ...state,
+  }
+}
+
+export async function captureEditorValidity(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorValidityArtifact> {
+  const selectors = EDITOR_VALIDITY_WARNING_SELECTORS
+  const warnings = await page.evaluate((warningSelectors) => {
+    const compactText = (value: unknown, maxLength = 240): string => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength)
+    const cssEscape = (value: string): string => {
+      const css = (globalThis as typeof globalThis & { CSS?: { escape?: (input: string) => string } }).CSS
+      return typeof css?.escape === "function" ? css.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&")
+    }
+    const elementPath = (element: Element): string => {
+      const parts: string[] = []
+      let current: Element | null = element
+      while (current && current !== document.body && parts.length < 6) {
+        let part = current.tagName.toLowerCase()
+        const id = current.getAttribute("id")
+        if (id) {
+          part += `#${cssEscape(id)}`
+          parts.unshift(part)
+          break
+        }
+        const classes = Array.from(current.classList || []).slice(0, 2).map(cssEscape)
+        if (classes.length > 0) {
+          part += `.${classes.join(".")}`
+        }
+        const parent: Element | null = current.parentElement
+        if (parent) {
+          const sameTagSiblings = Array.from(parent.children).filter((child: Element) => child.tagName === current?.tagName)
+          if (sameTagSiblings.length > 1) {
+            part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`
+          }
+        }
+        parts.unshift(part)
+        current = parent
+      }
+      return parts.length > 0 ? parts.join(" > ") : element.tagName.toLowerCase()
+    }
+    const seen = new Set<string>()
+    const warnings: EditorValidityWarning[] = []
+    for (const selector of warningSelectors) {
+      for (const element of Array.from(document.querySelectorAll(selector))) {
+        const text = compactText(element.textContent)
+        if (!/invalid|unexpected|block contains|attempt block recovery/i.test(text) && !element.classList.contains("is-invalid")) {
+          continue
+        }
+        const path = elementPath(element)
+        const key = `dom:${selector}:${path}:${text}`
+        if (seen.has(key)) {
+          continue
+        }
+        seen.add(key)
+        const block = element.closest("[data-block], [data-type]")
+        warnings.push({
+          source: "dom",
+          selector,
+          path,
+          message: text || "Editor invalid-block warning matched selector.",
+          blockName: block?.getAttribute("data-type") ?? undefined,
+          clientId: block?.getAttribute("data-block") ?? undefined,
+        })
+      }
+    }
+
+    const select = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data?.select
+    const blockEditor = typeof select === "function" ? select("core/block-editor") : undefined
+    const blocks = typeof blockEditor?.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
+    for (const block of blocks) {
+      if (block.isValid !== false) {
+        continue
+      }
+      const clientId = typeof block.clientId === "string" ? block.clientId : undefined
+      const name = typeof block.name === "string" ? block.name : undefined
+      const key = `store:${clientId ?? ""}:${name ?? ""}`
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      warnings.push({
+        source: "block-editor-store",
+        message: "Block editor store reported an invalid block.",
+        blockName: name,
+        clientId,
+      })
+    }
+    return warnings
+  }, selectors)
+  const messages = [...new Set(warnings.map((warning) => warning.message).filter((message) => message.length > 0))]
+  return {
+    schema: "wp-codebox/editor-validity/v1",
+    capturedAt: now(),
+    target,
+    selectors,
+    warnings,
+    summary: {
+      schema: "wp-codebox/editor-validity/v1",
+      status: warnings.length > 0 ? "warnings" : "clean",
+      warningCount: warnings.length,
+      selectors,
+      messages,
+    },
   }
 }
 

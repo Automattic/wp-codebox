@@ -57,7 +57,7 @@ assert.deepEqual((editorCase?.input as { args: string[] }).args, [
   "target=post-new",
   "post-type=page",
   'steps-json=[{"kind":"insertBlock","name":"core/paragraph","attributes":{"content":"Hello","dropCap":true,"align":"wide"}},{"kind":"inspectState"}]',
-  "capture=editor-state,errors",
+  "capture=editor-state,editor-validity,errors",
 ])
 assert.deepEqual(editorCase?.metadata?.samples, { attributes: { content: "Hello", dropCap: true, align: "wide" }, editorPostType: "page" })
 
