@@ -89,6 +89,7 @@ The parent writes JSONL lifecycle events with schema
 - `worker.started`
 - `worker.completed`
 - `worker.failed`
+- `worker.skipped`
 - `aggregation.started`
 - `aggregation.completed`
 - `fanout.completed`
@@ -97,6 +98,11 @@ The parent writes JSONL lifecycle events with schema
 Product UIs should render these events as progress only. Durable decisions must
 use the final `wp-codebox/agent-fanout-result/v1` envelope and referenced worker
 artifacts.
+
+Browser hosts do not need a product-specific progress API. The generic polling
+contract is the parent artifact envelope: read `fanout/events.jsonl` for live
+progress snapshots, then read `fanout/result.json` and referenced worker or
+aggregate artifacts for durable status and review decisions.
 
 ## Artifact Layout
 

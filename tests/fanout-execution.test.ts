@@ -85,4 +85,44 @@ assert.deepEqual(failure.aggregate.rawWorkerArtifactRefs.map((ref) => ref.path),
 assert.deepEqual(failure.aggregate.finalArtifactRefs, [])
 assert.deepEqual(failure.aggregate.conflicts.map((conflict) => conflict.type), ["failed-worker", "failed-worker", "failed-worker-dependency"])
 
+const released: Array<() => void> = []
+const orderedEvents: string[] = []
+const ordered = await executeFanoutRequest({
+  schema: FANOUT_REQUEST_SCHEMA,
+  concurrency: 3,
+  orchestrator: { session_id: "generic-ordered" },
+  workers: [
+    { id: "slow-root", goal: "Run slow root" },
+    { id: "independent", goal: "Run independent worker" },
+    { id: "after-root", goal: "Run after root", dependsOn: ["slow-root"] },
+  ],
+}, {
+  adapter: {
+    async run({ descriptor }) {
+      orderedEvents.push(`run:${descriptor.id}`)
+      if (descriptor.id === "slow-root") {
+        await new Promise<void>((resolve) => released.push(resolve))
+      }
+      if (descriptor.id === "independent") {
+        released.splice(0).forEach((release) => release())
+      }
+      orderedEvents.push(`done:${descriptor.id}`)
+      return {
+        workerId: descriptor.id,
+        success: true,
+        status: "succeeded",
+        resultRef: `workers/${descriptor.id}/result.json`,
+      }
+    },
+  },
+  requireGoal: true,
+  onWorkerStarted: (descriptor) => orderedEvents.push(`start:${descriptor.id}`),
+  onWorkerCompleted: (descriptor) => orderedEvents.push(`complete:${descriptor.id}`),
+})
+
+assert.deepEqual(ordered.workers.map((worker) => worker.workerId), ["slow-root", "independent", "after-root"])
+assert.deepEqual(ordered.counts, { total: 3, completed: 3, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
+assert.ok(orderedEvents.indexOf("start:after-root") > orderedEvents.indexOf("complete:slow-root"), "dependent worker must not start until its dependency completes")
+assert.ok(orderedEvents.indexOf("start:independent") < orderedEvents.indexOf("complete:slow-root"), "independent worker should run while the dependency root is still active")
+
 console.log("fanout execution ok")
