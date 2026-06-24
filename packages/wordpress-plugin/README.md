@@ -67,7 +67,7 @@ through configured adapters.
 
 The host task abilities build a private Codebox recipe, boot a disposable
 sandbox runtime, mount the requested runtime components, invoke the configured
-sandbox-local task, and return artifact metadata. `wp-codebox agent-sandbox-run`,
+sandbox-local task, and return artifact metadata. `wp-codebox agent-task-run`,
 upstream runtime stacks, workspace adapters, provider plugins, sandbox backends,
 and task runtimes are runner components mapped to Codebox task, runtime,
 artifact, and apply contracts before returning results to consumers.

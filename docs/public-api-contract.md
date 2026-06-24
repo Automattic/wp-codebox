@@ -35,17 +35,13 @@ Use these package entrypoints from external integrations:
 - `@automattic/wp-codebox-core/agent-task-recipe`: agent-task recipe assembly
   helpers.
 - `@automattic/wp-codebox-core/runtime-presets`: runtime preset registry helpers.
-- `@automattic/wp-codebox-playground`: advanced runtime backend entrypoint for
-  implementors that need the current contained WordPress runtime factory and
-  backend-owned helper types. New consumers should prefer
-  `@automattic/wp-codebox-playground/public` unless they are implementing a
-  runtime backend.
-- `@automattic/wp-codebox-playground/public`: stable WordPress runtime wrappers
-  for creating contained WordPress runtimes and episodes, running episode
-  actions with lifecycle hooks, running typed WordPress actions such as WP-CLI,
-  PHP, REST requests, browser probes/actions, and editor opens, collecting
-  runtime/episode artifacts, and reading browser artifact metrics through the
-  published runtime facade.
+- The runtime backend implementation package is used by the CLI and plugin
+  distribution. External integrations should compose the Codebox core facades,
+  WordPress abilities, CLI, or browser SDK instead of importing backend
+  implementation packages directly.
+- The runtime backend compatibility facade is for advanced runtime-backend
+  implementors. Product consumers should use the Codebox-owned public surfaces
+  above and the WordPress/browser surfaces below.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
@@ -96,13 +92,11 @@ caller requests required coverage, pass `requireCoverage: true`; unsupported
 required capabilities fail closed with `status: "error"` instead of looking like a
 successful structured skip.
 
-TypeScript callers running against a contained WordPress runtime episode should use
-`executeWordPressFuzzSuite()` from `@automattic/wp-codebox-playground/public`.
-That helper wires the public fuzz suite contract to the episode command path,
-runtime-action executor, and `RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES` so
-orchestrators can distinguish runtime-backed coverage from the WordPress plugin's
-safe PHP in-process mode. Use `createWordPressFuzzSuiteCommandExecutor()` only
-when composing a custom fuzz runner around an existing `RuntimeEpisode`.
+TypeScript callers running through the public Codebox contract should build fuzz
+suites with `@automattic/wp-codebox-core/contracts` and run them through
+`wp-codebox/run-fuzz-suite`, `WP_Codebox_API`, or the matching CLI wrapper. Runtime
+backend implementors can wire the same contract to a contained runtime episode
+behind those public surfaces.
 Documented skip reason codes are:
 
 - `wp_codebox_fuzz_target_command_unsupported`
@@ -141,20 +135,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
   recipe source package, runtime workload, runtime package execution, runtime
-  policy, and command result contracts. Contained WordPress runtime consumers can use
-  `createWordPressRuntime()`, `createWordPressEpisode()`, and
-  `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
-  instead of composing core runtime internals directly. The same entrypoint also
-  exposes consumer-safe action helpers: `runWordPressWpCli()`,
-  `runWordPressPhp()`, `requestWordPressRest()`, `runWordPressBrowserAction()`,
-  `probeWordPressBrowser()`, `openWordPressEditor()`,
-  `openWordPressAdminPage()`, `visitWordPressPage()`, discovery/inventory
-  helpers, CRUD/DB read helpers, in-process `loadWordPressAdminPage()` and
-  `loadWordPressFrontendPage()` helpers, `executeWordPressRestMatrix()`,
-  `executeFuzzSuite()`, `wordpressAdminPageLoadAction()`, and
-  `wordpressFrontendPageLoadAction()`. `openWordPressAdminPage()` keeps browser
-  probe semantics; use the `load*Page()` helpers for the in-process page-load
-  command contracts.
+  policy, and command result contracts. Contained WordPress runtime consumers use
+  `wp-codebox/run-runtime-task`, `wp-codebox/run-wordpress-workload`,
+  `wp-codebox/run-runtime-package`, the matching CLI wrappers, or
+  `WP_Codebox_API` instead of composing runtime backend internals directly.
 - **Runner workspace:** workspace policy, preload artifact, source-root
   preparation, mount primitive, runner workspace publication contracts, and the
   backend adapter config schema `wp-codebox/runner-workspace-backend/v1`.
@@ -183,9 +167,9 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `@automattic/wp-codebox-core/public`: `normalizeBrowserRunResult()`,
   `browserRunResultEnvelope()`, `browserArtifactPersistenceProjection()`,
   `persistedBrowserArtifactRefs()`, and `artifactBundleFileManifest()`.
-- **Browser metrics:** Node consumers can call `collectBrowserArtifactMetrics()`
-  from `@automattic/wp-codebox-playground/public` to summarize browser metrics
-  from an existing artifact bundle directory.
+- **Browser metrics:** consumers read browser metric summaries from Codebox
+  artifact refs and browser-run DTOs returned by the public WordPress ability,
+  CLI, or browser SDK surfaces.
 - **Performance observation:** `wp-codebox/performance-observation/v1` describes
   normalized command diagnostics and performance evidence: elapsed timing, memory
   delta, database query counts/time/fingerprints, repeated-query summaries, hook
@@ -215,13 +199,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Fuzz suite:** `wp-codebox/fuzz-suite/v1` describes a generic suite of
   boundary cases against a Codebox-owned target such as an ability, command, HTTP
   endpoint, REST route, or runtime action. Canonical target kinds are `ability`,
-  `command`, `http`, `rest`, `runtime`, and `runtime-action`. Runtime actions use
-  the same public action types as `@automattic/wp-codebox-playground/public` where
-  a runner can execute them directly. Runtime-backed TypeScript callers can
-  pass an existing `RuntimeEpisode` to `executeWordPressFuzzSuite()` from
-  `@automattic/wp-codebox-playground/public` for runtime-backed coverage;
-  PHP/plugin callers continue to advertise `php-in-process` capabilities for the
-  safe in-process path. Command-backed runners map safe
+  `command`, `http`, `rest`, `runtime`, and `runtime-action`. Runtime-backed
+  callers use the public Codebox fuzz-suite ability, CLI, or `WP_Codebox_API`
+  surfaces for runtime-backed coverage; PHP/plugin callers continue to advertise
+  `php-in-process` capabilities for the safe in-process path. Command-backed runners map safe
   `rest_request` actions to `wordpress.rest-request` and `wp_cli` actions to
   `wordpress.wp-cli`, while episode-only/browser actions remain structured
   skips. `wp-codebox/fuzz-suite-result/v1` reports case status, diagnostics,

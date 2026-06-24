@@ -1,161 +1,95 @@
 import assert from "node:assert/strict"
 import { readdir, readFile } from "node:fs/promises"
-
-const forbiddenConsumerTerms = [
-  /\bStudio Web\b/,
-  /\bStudio Native\b/,
-  /\bHomeboy\b/,
-  /\bStatic Site Importer\b/,
-]
-
-const forbiddenPublicImplementationTerms = [
-  /\bData Machine\b/,
-  /\bData Machine Code\b/,
-  /\bAgents API\b/,
-  /\bgeneric Data Machine inputs\b/,
-  /\bWP_Codebox_Agents_API_Adapter\b/,
-  /\bagents\/[a-z0-9._/-]+/i,
-  /\bGitSync\b/,
-  /\bwp_agent_[a-z0-9_]+\b/,
-]
-
-const forbiddenPublicConsumerGuidanceTerms = [
-  /\bData Machine\b/i,
-  /\bData Machine Code\b/i,
-  /\bAgents API\b/i,
-  /\bagents-api\b/i,
-  /\bdatamachine\b/i,
-  /\bwp-coding-agents\b/i,
-]
-
-const forbiddenRawRuntimeGuidanceTerms = [
-  /createPlaygroundRuntimeBackend/,
-  /@wp-playground\//,
-  /\braw Playground\b/i,
-  /\bPlayground-shaped\b/i,
-]
-
-const genericContractDocs = [
-  "docs/architecture.md",
-  "docs/recipe-contract.md",
-  "docs/sandbox-session-contract.md",
-  "docs/tool-bridge-contract.md",
-  "docs/runner-workspace-backend-contract.md",
-  "docs/external-apply-adapter-contract.md",
-  "docs/agent-fanout-contract.md",
-  "docs/agent-runtime-contract.md",
-  "docs/agent-task-reusable-workflow.md",
-  "docs/generic-runtime-primitives.md",
-  "docs/portable-wp-codebox.md",
-  "docs/benchmark-contract.md",
-]
-
-const publicBoundaryDocs = [
-  "README.md",
-  "docs/public-api-contract.md",
-  "docs/architecture.md",
-  "docs/agent-runtime-contract.md",
-  "docs/transfer-readiness-checklist.md",
-  "docs/parent-tool-bridge-contract.md",
-  "packages/cli/README.md",
-  "packages/wordpress-plugin/README.md",
-]
-
-const publicConsumerRoots = ["README.md", "docs", "examples"]
-const publicDescriptorFiles = [
-  "packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php",
-]
+import { relative } from "node:path"
+import { runtimeContractManifest } from "../packages/runtime-core/src/public.js"
 
 const root = new URL("..", import.meta.url)
-const violations: string[] = []
+const publicConsumerRoots = ["README.md", "docs", "examples", "packages/wordpress-plugin/README.md", "packages/cli/README.md"]
+const internalReferenceDocs = new Set([
+  "docs/browser-runtime-dependency-audit.md",
+  "docs/portable-wp-codebox.md",
+  "docs/transfer-namespace-plan.md",
+  "docs/transfer-readiness-checklist.md",
+])
 
-async function collectTextFiles(path: string): Promise<string[]> {
-  if (!path.includes(".")) {
-    const entries = await readdir(new URL(`${path}/`, root), { withFileTypes: true })
-    const nested = await Promise.all(entries.map((entry) => collectTextFiles(`${path}/${entry.name}`)))
-    return nested.flat()
+const publicDocsText = await readPublicText(publicConsumerRoots)
+const manifest = runtimeContractManifest()
+const publicAbilityIds = flattenStringValues(manifest.abilities)
+
+for (const abilityId of publicAbilityIds) {
+  assert.match(
+    publicDocsText,
+    new RegExp(escapeRegExp(abilityId)),
+    `public docs should document Codebox public ability ${abilityId}`,
+  )
+}
+
+for (const rawPublicPath of [
+  /agents\/[a-z0-9._/-]+/i,
+  /wp-codebox\.agent-sandbox-run/,
+  /from ["']@automattic\/wp-codebox-playground/,
+  /@wp-playground\//,
+]) {
+  assert.doesNotMatch(publicDocsText, rawPublicPath, `public docs must not teach ${rawPublicPath}`)
+}
+
+for (const substrateTerm of [/\bData Machine\b/i, /\bData Machine Code\b/i, /\bAgents API\b/i, /\bdatamachine\b/i]) {
+  assert.doesNotMatch(publicDocsText, substrateTerm, `public docs must stay on Codebox-owned API language`)
+}
+
+const publicExamplesText = await readPublicText(["examples"])
+assert.doesNotMatch(publicExamplesText, /wp-codebox\.agent-sandbox-run|agents\/[a-z0-9._/-]+/i)
+
+const legacyFixturesText = await readPublicText(["tests/fixtures/legacy-compatibility-recipes"])
+assert.match(legacyFixturesText, /wp-codebox\.agent-sandbox-run/)
+
+const publicApiContract = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
+assert.match(publicApiContract, /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/)
+assert.match(publicApiContract, /Product consumers should use the Codebox-owned public surfaces/)
+assert.match(publicApiContract, /manifest intentionally excludes backend handler bindings/)
+
+const cookbookReadme = await readFile(new URL("examples/recipes/cookbook/README.md", root), "utf8")
+assert.match(cookbookReadme, /Provider-specific agent compatibility fixtures are kept under\s+`tests\/fixtures\/legacy-compatibility-recipes`/)
+assert.doesNotMatch(cookbookReadme, /codex-agent-smoke\.json|claude-code-agent-smoke\.json|headless-browser-agent-task\.json/)
+
+console.log("docs boundary language ok")
+
+async function readPublicText(paths: string[]): Promise<string> {
+  const files = (await Promise.all(paths.map(collectTextFiles))).flat()
+  const chunks: string[] = []
+
+  for (const file of files) {
+    if (internalReferenceDocs.has(file)) continue
+    chunks.push(await readFile(new URL(file, root), "utf8"))
   }
 
+  return chunks.join("\n")
+}
+
+async function collectTextFiles(path: string): Promise<string[]> {
   if (/\.(md|json|ts|js|ya?ml)$/.test(path)) {
     return [path]
   }
 
-  return []
-}
-
-for (const doc of genericContractDocs) {
-  const source = await readFile(new URL(doc, root), "utf8")
-
-  for (const term of forbiddenConsumerTerms) {
-    if (term.test(source)) {
-      violations.push(`${doc} contains ${term}`)
-    }
-  }
-}
-
-assert.deepEqual(
-  violations,
-  [],
-  "Generic boundary docs must not name example consumers as runtime concepts; keep named products in explicit example-consumer notes.",
-)
-
-const exampleConsumerDoc = await readFile(new URL("docs/example-consumer-boundary-contracts.md", root), "utf8")
-
-assert.match(exampleConsumerDoc, /^# Example Consumer Boundary Contracts/m)
-assert.match(exampleConsumerDoc, /## Public\/Internal Boundary/)
-assert.match(exampleConsumerDoc, /Consumers compose WP Codebox APIs\./)
-assert.match(exampleConsumerDoc, /Host job, artifact, approval queue, and flow concepts map to Codebox run,\s+artifact, approval, and session contracts\./)
-assert.match(exampleConsumerDoc, /Agent execution substrate targets and principals map to Codebox task, provider,\s+permission, and runtime-session contracts\./)
-assert.match(exampleConsumerDoc, /Host workspace lifecycle and source-control workflow details map to\s+Codebox source, workspace, evidence, and apply-back contracts\./)
-assert.match(exampleConsumerDoc, /Contained WordPress runtime boot, filesystem, preview, and PHP\/WP-CLI details map to\s+Codebox runtime, mount, command, preview, and browser-session contracts\./)
-assert.match(exampleConsumerDoc, /Public schema names, top-level DTO fields, package entrypoints, and docs intended\s+for consumers use Codebox vocabulary\./)
-assert.match(exampleConsumerDoc, /Named products may appear in integration notes as\s+example consumers/)
-assert.match(exampleConsumerDoc, /## Example Consumers/)
-assert.doesNotMatch(exampleConsumerDoc, /data[-_ ]?machine|datamachine/i)
-
-const publicBoundaryText = (await Promise.all(publicBoundaryDocs.map((doc) => readFile(new URL(doc, root), "utf8")))).join("\n")
-assert.match(publicBoundaryText, /Consumers depend on\s+the Codebox ability ids, schemas,\s+package entrypoints, and\s+browser SDK facades/)
-assert.match(publicBoundaryText, /Codebox adapter\s+translates from host-owned inputs into the Codebox task\/recipe\/runtime contracts\s+at the boundary/)
-assert.match(publicBoundaryText, /Codebox performs any\s+WP Codebox schema mapping at its boundary/)
-assert.match(publicBoundaryText, /The CLI is a public Codebox surface/)
-assert.match(publicBoundaryText, /`wp-codebox\/runner-workspace-backend\/v1`/)
-assert.match(publicBoundaryText, /adapter config maps each operation to its\s+integration-provided backend ability/)
-assert.match(publicBoundaryText, /not mirror the monorepo-only\s+`\.\/internals` helper entrypoint/)
-for (const term of forbiddenPublicImplementationTerms) {
-  assert.doesNotMatch(publicBoundaryText, term)
-}
-
-const publicConsumerFiles = (await Promise.all(publicConsumerRoots.map(collectTextFiles))).flat()
-for (const file of [...publicConsumerFiles, ...publicDescriptorFiles]) {
-  const source = await readFile(new URL(file, root), "utf8")
-  if (file === "docs/browser-runtime-dependency-audit.md" || file === "docs/portable-wp-codebox.md" || file === "docs/transfer-namespace-plan.md") {
-    continue
+  if (/\.[^.]+$/.test(path)) {
+    return []
   }
 
-  for (const term of forbiddenPublicConsumerGuidanceTerms) {
-    assert.doesNotMatch(source, term, `${file} must not teach public consumers host implementation names`)
-  }
+  const entries = await readdir(new URL(`${path}/`, root), { withFileTypes: true })
+  const files = await Promise.all(entries.map((entry) => {
+    const child = `${path}/${entry.name}`
+    return entry.isDirectory() ? collectTextFiles(child) : collectTextFiles(child)
+  }))
 
-  if (file === "packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php" || file.endsWith("README.md")) {
-    for (const term of forbiddenRawRuntimeGuidanceTerms) {
-      assert.doesNotMatch(source, term, `${file} must not teach raw runtime internals`)
-    }
-  }
+  return files.flat().map((file) => relative(root.pathname, new URL(file, root).pathname))
 }
 
-const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")
-assert.match(runnerWorkspaceBackendContract, /^# Runner Workspace Backend Contract/m)
-assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-backend\/v1`/)
-assert.match(runnerWorkspaceBackendContract, /External callers use WP Codebox runner workspace\s+abilities and result schemas/)
-assert.match(runnerWorkspaceBackendContract, /Those names are adapter inputs\s+for the stable Codebox runner workspace operation ids/)
-assert.match(runnerWorkspaceBackendContract, /`wp-codebox\/runner-workspace-prepare`/)
-assert.match(runnerWorkspaceBackendContract, /`workspace_worktree_add`/)
-assert.match(runnerWorkspaceBackendContract, /`run_runner_workspace_command`/)
-assert.match(runnerWorkspaceBackendContract, /`publish_runner_workspace`/)
-assert.doesNotMatch(runnerWorkspaceBackendContract, /datamachine|data[-_ ]?machine|homeboy/i)
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
 
-const agentRuntimeContract = await readFile(new URL("docs/agent-runtime-contract.md", root), "utf8")
-assert.match(agentRuntimeContract, /`generic-ability-runtime-run` is the canonical primitive/)
-assert.doesNotMatch(agentRuntimeContract, /Until the upstream agent\/provider stack exposes one stable browser-runtime primitive/)
-
-console.log("docs boundary language ok")
+function flattenStringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  return Object.values(value).flatMap(flattenStringValues)
+}

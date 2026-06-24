@@ -101,8 +101,7 @@ explicitly allow each registered canonical tool name before a sandbox can invoke
 it.
 
 ```ts
-import { createHostToolRegistry } from "@automattic/wp-codebox-core"
-import { createWordPressRuntime } from "@automattic/wp-codebox-playground/public"
+import { createHostToolRegistry } from "@automattic/wp-codebox-core/public"
 
 const hostTools = createHostToolRegistry([
   {
@@ -132,22 +131,8 @@ const hostTools = createHostToolRegistry([
   },
 ])
 
-const runtime = await createWordPressRuntime({
-  environment: { kind: "wordpress", version: "latest" },
-  policy: {
-    network: "deny",
-    filesystem: "sandbox",
-    commands: ["client/echo"],
-    secrets: "none",
-    approvals: "never",
-  },
-  hostTools,
-})
-
-const result = await runtime.execute({
-  command: "client/echo",
-  args: ['input-json={"message":"hello"}'],
-})
+// Pass `hostTools` through the Codebox runtime task/session options for the run
+// that is allowed to execute `client/echo`.
 ```
 
 Host tool output is a Codebox transport diagnostic envelope with schema
@@ -166,8 +151,8 @@ extensions that provide canonical tool declarations and handlers through this
 transport surface. Codebox should not encode product policy semantics,
 product tool names, or cross-product tool mediation rules in this layer.
 
-Trusted worker hosts that need repo-local commands can use the playground
-package's `createHostCommandTool()` adapter instead of exposing arbitrary shell.
+Trusted worker hosts that need repo-local commands can register a Codebox host
+tool adapter instead of exposing arbitrary shell.
 Each adapter is still a named host tool such as `host.pnpm-test`,
 `host.cargo-test`, or `host.project-check`; the runtime denies it unless that
 exact name appears in `policy.commands`. The adapter runs one configured
@@ -176,24 +161,9 @@ structured string-array arguments from the input, enforces allowed cwd roots,
 uses an explicit timeout, captures bounded stdout/stderr, and passes only
 configured environment variables plus explicitly allowlisted input env keys.
 
-```ts
-import { createHostToolRegistry } from "@automattic/wp-codebox-core"
-import { createHostCommandTool } from "@automattic/wp-codebox-playground"
-
-const hostTools = createHostToolRegistry([
-  createHostCommandTool({
-    name: "host.pnpm-test",
-    description: "Run repo-local tests from a trusted worker host.",
-    command: "pnpm",
-    args: ["test"],
-    cwd: repoRoot,
-    allowedCwdRoots: [repoRoot],
-    timeoutMs: 120_000,
-    maxOutputBytes: 256 * 1024,
-    inheritedEnv: ["CI"],
-  }),
-])
-```
+The adapter configuration names one executable, fixed base arguments, allowed
+working-directory roots, timeout and output limits, and explicitly inherited
+environment variables.
 
 ## In-Sandbox Workspace Contract
 
@@ -284,7 +254,7 @@ pointing at a local feature worktree:
 ```bash
 npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
 wp-codebox commands --json
-wp-codebox recipe validate --recipe ./examples/recipes/cookbook/codex-agent-smoke.json --json
+wp-codebox recipe validate --recipe ./examples/recipes/simple-plugin.json --json
 ```
 
 `v0.4.0` includes the fresh sandbox session fix and Codex recipe example, but its
@@ -518,28 +488,9 @@ of a one-shot command or recipe. The episode wrapper is generic: it records rese
 observations, step executions, optional per-step observations, snapshots, and
 artifact bundles without knowing benchmark, reward, or scenario semantics.
 
-```ts
-import { createWordPressEpisode } from "@automattic/wp-codebox-playground/public"
-
-const episode = await createWordPressEpisode({
-  runtime: {
-    environment: { kind: "wordpress", version: "7.0", blueprint: { steps: [] } },
-    policy: {
-      network: "deny",
-      filesystem: "readwrite-mounts",
-      commands: ["wordpress.wp-cli", "wordpress.run-php"],
-      secrets: "none",
-      approvals: "never",
-    },
-  },
-  stepObservation: { type: "runtime-info" },
-})
-
-await episode.step({ command: "wordpress.wp-cli", args: ["command=post list"] })
-const artifacts = await episode.collectArtifacts({ includeLogs: true })
-const trace = await episode.trace()
-await episode.close()
-```
+Use the Codebox runtime task/session APIs to execute bounded runtime steps such
+as `wordpress.wp-cli` or `wordpress.run-php`, then collect the returned artifact
+refs from the Codebox result envelope.
 
 When `collectArtifacts()` runs for an episode, WP Codebox persists the trace into
 the artifact bundle at `files/runtime-episode-trace.json` and writes a compact
@@ -947,39 +898,11 @@ Example recipes:
 - `examples/recipes/simple-plugin.json`: mount and probe the fixture plugin.
 - `examples/recipes/wp-cli.json`: prove WP-CLI commands mutate the same runtime observed by later steps.
 - `examples/recipes/seeded-plugin-workspace.json`: create a disposable plugin scaffold, mutate it, and capture diffs.
-- `examples/recipes/cookbook/headless-browser-agent-task.json`: generic headless browser-agent pattern with browser probes before/after a sandbox agent task, browser action assertions, screenshots, transcript, and artifact evidence.
 - `examples/recipes/cookbook/multisite-network.json`: convert Playground to multisite, mount a plugin under test, seed two child sites, and emit network/site/admin URLs.
 - `examples/recipes/cookbook/woocommerce-store.json`: realistic WooCommerce dependency shape with seeded store pages, products, customer, and order fixtures.
 - `examples/recipes/cookbook/theme-block-editor.json`: realistic theme/block-editor smoke surface with a mounted theme, seeded block page, and frontend/editor/admin URLs.
 - `examples/recipes/cookbook/seeded-content.json`: realistic fixture content shape with pages, posts, categories, tags, editor/author users, and preview/admin URLs.
 - `examples/recipes/cookbook/bbpress-reply-editor.json`: realistic bbPress dependency shape with a seeded forum/topic and reply form.
-
-#### Generic Headless Browser-Agent Recipe
-
-`examples/recipes/cookbook/headless-browser-agent-task.json` is the reusable
-shape for product runners that need a headless browser plus an in-sandbox agent
-task without importing product semantics into WP Codebox:
-
-1. Mount or install the generic runtime dependencies and any code under test.
-2. Capture a browser baseline with `wordpress.browser-probe`.
-3. Run `wp-codebox.agent-sandbox-run` with caller-supplied `task=...` and either a real sandbox agent (`agent=...`, `provider=...`, `model=...`) or a recipe-owned `code-file=...` for deterministic fixtures.
-4. Use `wordpress.browser-actions` to replay browser interactions, assert visible behavior, and capture named screenshots.
-5. Capture a final `wordpress.browser-probe` so the artifact bundle contains before/after browser evidence, action steps, screenshots, transcript, and `agent-result.json`.
-
-Run the example headlessly:
-
-```bash
-npm run wp-codebox -- recipe-run \
-  --recipe ./examples/recipes/cookbook/headless-browser-agent-task.json \
-  --artifacts ./artifacts \
-  --json
-```
-
-Product eval runners should treat the returned `wp-codebox/recipe-run/v1` output
-and artifact bundle as generic evidence. WP Codebox records runtime commands,
-browser observations, screenshots, transcript, changed files, patch summary, and
-review metadata; callers own scenario ids, scoring, grading, model comparison,
-retry policy, and product reports outside the WP Codebox contract.
 
 Supported workspace seeds:
 
@@ -1298,7 +1221,7 @@ already use them and expose `meta.canonical_ability` in ability metadata.
 Canonical agent-task execution paths are intentionally split by caller runtime:
 
 - Server/host execution uses `wp-codebox/run-agent-task` or `wp-codebox/run-agent-task-batch`. These abilities shell out to local `wp-codebox recipe-run`, boot disposable Codebox sandboxes, mount the configured agent stack, invoke the configured sandbox-local task, and return artifact metadata. Runtime backend and agent execution substrate details stay behind the Codebox contract.
-- Portable CLI execution uses `wp-codebox recipe-run --recipe <path>`. Recipes use the `wp-codebox.agent-sandbox-run` helper step when they need the agent-task bridge; direct `agent-sandbox-run` remains an operator/debug command, not the product API for frontend callers.
+- Portable CLI execution uses `wp-codebox recipe-run --recipe <path>` or `wp-codebox agent-task-run --input-file <path>` for task-oriented runs. Recipe internals may use private helper steps, but product callers should depend on the CLI command contract rather than private step names.
 - No-Node/browser execution uses `wp-codebox/create-browser-playground-session`. The host prepares a browser-executable recipe and runner payload; the browser executes `wordpress.run-php` inside the contained runtime instead of requiring host shell or Node access.
 
 All three paths use the same `wp-codebox/task-input/v1` task input contract. Host and browser paths also emit the same `wp-codebox/sandbox-session/v1` session envelope so product callers can correlate prepared browser sessions and completed host runs without transport-specific metadata drift.
@@ -1402,7 +1325,7 @@ Failed `agent-task-run` responses also include `failure_evidence` with `schema: 
 
 Provider stacks are assembled from generic primitives: `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`. A provider plugin path may point at any prepared checkout; when the checkout has a Composer package name, WP Codebox uses the package basename as the mounted plugin slug so branch/worktree directory names do not become WordPress plugin identities.
 
-Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. The cookbook recipe at `examples/recipes/cookbook/codex-agent-smoke.json` shows one concrete provider setup using these primitives without adding provider-specific behavior to WP Codebox itself.
+Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. Provider-specific compatibility fixtures live under `tests/fixtures/legacy-compatibility-recipes` so public examples keep the consumer-facing Codebox API boundary clear.
 
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()`, `AGENT_TASK_RUN_RESULT_SCHEMA`, and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` from `@automattic/wp-codebox-core`. The helper accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 

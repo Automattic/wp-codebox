@@ -239,7 +239,7 @@ The ability response includes a `wp-codebox/sandbox-session/v1` envelope:
         "executionCount": 1
       },
       "commands": [
-        { "command": "wp-codebox.agent-sandbox-run", "exitCode": 0 }
+        { "command": "wp-codebox/run-agent-task", "exitCode": 0 }
       ]
     },
     "blockers": [],
@@ -290,8 +290,7 @@ Agent sandbox recipe runs also write these additive artifact files:
   actionability, changed-file count, patch bytes, transcript location, failures,
   no-op reason, and workspace-tool diagnostics.
 - `files/transcript.json` uses `wp-codebox/agent-transcript/v1` and captures the
-  bounded stdout/stderr plus parsed JSON for each `wp-codebox.agent-sandbox-run`
-  workflow step.
+  bounded stdout/stderr plus parsed JSON for each sandbox task invocation.
 
 The recipe-run JSON exposes the same compact `agentResult` object, and the host
 WordPress ability mirrors it as `agent_result`. Empty patches and empty

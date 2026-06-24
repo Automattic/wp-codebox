@@ -23,82 +23,17 @@ files plus dry-run evidence limited to shareable metadata.
 
 ## Available recipes
 
-### `codex-agent-smoke.json`
+Provider-specific agent compatibility fixtures are kept under
+`tests/fixtures/legacy-compatibility-recipes` rather than public cookbook
+examples. Public examples should demonstrate Codebox-owned abilities, CLI
+commands, browser SDK calls, and recipe commands without exposing private agent
+substrate or recipe-step names as consumer APIs.
 
-Runs a headless agent runtime inside a disposable contained WordPress
-sandbox using the Codex provider. This is the smallest end-to-end recipe for
-proving that WP Codebox can mount the agent runtime stack, overlay a
-`php-ai-client` branch with provider-supplied request auth, activate a Codex
-provider plugin branch, and execute `agents/chat` through `wp-codebox.agent-sandbox-run`.
-
-**Prepare** the component and provider stack before running. The sample recipe
-uses explicit placeholder input paths so callers can see the full contract shape
-and replace each path with their prepared local checkout or artifact:
-
-- `/sample/prepared-component-stack/runtime-substrate`
-- `/sample/prepared-component-stack/runtime-engine`
-- `/sample/prepared-component-stack/runtime-tools`
-- `/sample/prepared-provider-stack/php-ai-client`
-- `/sample/prepared-provider-stack/ai-provider-for-openai`
-
-#### Codex runtime contract
-
-The Codex smoke accepts a prepared provider/component stack. WP Codebox mounts
-the local paths supplied by the caller, validates the recipe contract, and emits
-a dry-run plan with the sandbox backend, overlays, extra plugins, secret
-environment names, and resolved agent command arguments.
-
-- The component stack provides the WordPress plugins needed by the sandbox agent
-  runtime: `runtime-substrate`, `runtime-engine`, and `runtime-tools`.
-- The provider stack provides the `php-ai-client` overlay and provider plugin
-  selected by `provider=codex` and
-  `provider-plugin-slugs=ai-provider-for-openai`.
-- The provider plugin is mounted with `activate: false` so the sandbox agent task
-  owns provider activation during runtime bootstrap.
-- `provider-plugin-contracts-json` declares the mounted provider plugin entrypoint,
-  and `sandbox-tool-policy-json` supplies a concrete default-deny tool policy for
-  the agent runtime.
-- The recipe references secret environment variable names only. Token values stay
-  in the caller environment and out of recipe files and artifacts.
-- Run `npm run wp-codebox -- recipe validate --recipe <recipe> --json` or
-  `npm run wp-codebox -- recipe-run --recipe <recipe> --dry-run --json` to inspect
-  the contract before starting WordPress.
-
-Export Codex OAuth credentials in the shell that runs WP Codebox. Keep token
-values out of recipe files and artifacts:
-
-```bash
-export AI_PROVIDER_OPENAI_CODEX_ACCESS_TOKEN="..."
-export AI_PROVIDER_OPENAI_CODEX_REFRESH_TOKEN="..."
-export AI_PROVIDER_OPENAI_CODEX_EXPIRES_AT="..."
-export AI_PROVIDER_OPENAI_CODEX_ACCOUNT_ID="..."
-export AI_PROVIDER_OPENAI_CODEX_FEDRAMP="false"
-
-npm run wp-codebox -- recipe-run \
-  --recipe ./examples/recipes/cookbook/codex-agent-smoke.json \
-  --json
-```
-
-When running from an installed release binary, replace `npm run wp-codebox --`
-with `wp-codebox`:
-
-```bash
-wp-codebox recipe-run \
-  --recipe ./examples/recipes/cookbook/codex-agent-smoke.json \
-  --json
-```
-
-Install release builds from the GitHub Release workspace tarball:
-
-```bash
-npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
-```
-
-The expected successful response is a JSON recipe run whose agent runtime
+The expected successful response from public recipe examples is a JSON recipe run whose runtime
 reports the Playground site title and active theme. Fleet runners should
 generate one recipe/run per task and own queueing, concurrency, retry policy,
 durable run records, and PR/comment workflows above WP Codebox. WP Codebox owns
-the sandbox, mounts, overlays, agent invocation, and artifact bundle.
+the sandbox, mounts, overlays, runtime command execution, and artifact bundle.
 
 ### `multisite-network.json`
 

@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.js"
 
-const recipe = JSON.parse(readFileSync("examples/recipes/cookbook/codex-agent-smoke.json", "utf8"))
+const recipe = JSON.parse(readFileSync("tests/fixtures/legacy-compatibility-recipes/codex-agent-smoke.json", "utf8"))
 
 const overlay = recipe.runtime?.overlays?.find((entry: Record<string, unknown>) => entry.library === "php-ai-client")
 assert.ok(overlay, "Codex example should include a php-ai-client overlay")

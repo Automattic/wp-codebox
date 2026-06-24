@@ -480,15 +480,11 @@ and the redaction flag.
 ## Fixture Browser Auth Storage State
 
 Hosts that need an authenticated browser session for a disposable WordPress
-sandbox can use the playground package's fixture auth storage-state helpers
-instead of baking product-specific site identifiers into recipes. The helper
-contract is generic: resolve or create a named WordPress fixture user inside the
-sandbox, mint short-lived WordPress admin cookies for declared browser origins,
-and return a Playwright-compatible `storageState` envelope:
-
-```ts
-import { wordpressFixtureUserStorageStatePhpCode } from "@automattic/wp-codebox-playground"
-```
+sandbox can use Codebox fixture auth storage-state helpers instead of baking
+product-specific site identifiers into recipes. The helper contract is generic:
+resolve or create a named WordPress fixture user inside the sandbox, mint
+short-lived WordPress admin cookies for declared browser origins, and return a
+Playwright-compatible `storageState` envelope.
 
 The emitted PHP returns `wp-codebox/browser-auth-storage-state/v1`:
 

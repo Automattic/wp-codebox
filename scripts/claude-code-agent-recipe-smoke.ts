@@ -7,8 +7,8 @@ import { join } from "node:path"
 import { recipeExecutionSpec } from "../packages/cli/src/agent-sandbox.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 
-const claudeRecipe = JSON.parse(readFileSync("examples/recipes/cookbook/claude-code-agent-smoke.json", "utf8"))
-const codexRecipe = JSON.parse(readFileSync("examples/recipes/cookbook/codex-agent-smoke.json", "utf8"))
+const claudeRecipe = JSON.parse(readFileSync("tests/fixtures/legacy-compatibility-recipes/claude-code-agent-smoke.json", "utf8"))
+const codexRecipe = JSON.parse(readFileSync("tests/fixtures/legacy-compatibility-recipes/codex-agent-smoke.json", "utf8"))
 
 assert.equal(claudeRecipe.schema, "wp-codebox/workspace-recipe/v1")
 assert.equal(claudeRecipe.runtime?.backend, "wordpress-playground", "Claude Code example should keep Codebox as the WordPress Playground sandbox substrate")
