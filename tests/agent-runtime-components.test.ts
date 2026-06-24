@@ -40,9 +40,15 @@ try {
   mkdirSync(workspace, { recursive: true })
   chdir(workspace)
   const defaultMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
-  assert.equal(defaultMounts.find((mount) => mount.metadata?.slug === "agents-api"), undefined)
+  assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "agents-api")?.source, bundledAgentsApi)
   assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine")?.source, dataMachine)
   assertSamePath(defaultMounts.find((mount) => mount.metadata?.slug === "data-machine-code")?.source, dataMachineCode)
+
+  process.env.CONTAINED_RUNTIME_COMPONENT_PATHS = [dataMachine, dataMachineCode].join(",")
+  const configuredMounts = agentRuntimeMounts(parseAgentRuntimeProbeOptions([], parseMount))
+  assertSamePath(configuredMounts.find((mount) => mount.metadata?.slug === "data-machine")?.source, dataMachine)
+  assertSamePath(configuredMounts.find((mount) => mount.metadata?.slug === "data-machine-code")?.source, dataMachineCode)
+  delete process.env.CONTAINED_RUNTIME_COMPONENT_PATHS
 
   rmSync(dataMachine, { recursive: true, force: true })
   const defaultAgentsApi = join(root, "agents-api")
@@ -54,7 +60,6 @@ try {
   const explicitAgentsApi = join(root, "explicit-agents-api")
   mkdirSync(explicitAgentsApi, { recursive: true })
   writeFileSync(join(explicitAgentsApi, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
-  process.env.WP_CODEBOX_AGENTS_API_PATH = defaultAgentsApi
   const explicitMount = agentRuntimeMounts(parseAgentRuntimeProbeOptions(["--agents-api", explicitAgentsApi], parseMount))
     .find((mount) => mount.metadata?.slug === "agents-api")
   assertSamePath(explicitMount?.source, explicitAgentsApi)

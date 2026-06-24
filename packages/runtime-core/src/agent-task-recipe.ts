@@ -221,8 +221,10 @@ function defaultAgentsApiPath(dataMachinePath = ""): string {
   if (explicit) {
     return explicit
   }
-  if (dataMachinePath) {
-    return ""
+
+  const bundled = dataMachinePath ? resolve(dataMachinePath, "vendor", "wordpress", "agents-api") : ""
+  if (bundled && existsSync(resolve(bundled, "agents-api.php"))) {
+    return bundled
   }
 
   return defaultSiblingComponentPath("agents-api", "agents-api.php")

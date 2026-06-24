@@ -111,7 +111,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   if (step.command === "wp-codebox.agent-runtime-probe") {
     return {
       command: "wordpress.run-php",
-      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []))}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)],
+      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []), runtimeComponentContracts(step.args ?? []))}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)],
       diagnostics: step.diagnostics,
     }
   }
@@ -519,8 +519,10 @@ function defaultAgentsApiPath(dataMachinePath = ""): string {
   if (explicit) {
     return explicit
   }
-  if (dataMachinePath) {
-    return ""
+
+  const bundled = dataMachinePath ? resolve(dataMachinePath, "vendor", "wordpress", "agents-api") : ""
+  if (bundled && existsSync(resolve(bundled, "agents-api.php"))) {
+    return bundled
   }
 
   return defaultSiblingComponentPath("agents-api", "agents-api.php")

@@ -7,6 +7,7 @@ import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 
@@ -191,6 +192,16 @@ assert.equal(agentRecipePolicy.commands.includes("wordpress.run-php"), true)
 assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
 
+const generatedAgentSandboxPhp = agentSandboxRunCode("Verify registry adapter", "echo 'ok';", [], [])
+assert.doesNotMatch(generatedAgentSandboxPhp, /DataMachine\\Core\\Database\\Agents\\Agents|data_machine_agent_create_failed|agents-api\/agents-api\.php/)
+const generatedDefaultAgentPhp = await resolveSandboxTaskCode({
+  task: "Verify registry adapter",
+  agent: "wp-codebox-sandbox",
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+assert.doesNotMatch(generatedDefaultAgentPhp, /DataMachine\\Core\\Database\\Agents\\Agents|data_machine_agent_create_failed/)
+assert.match(generatedDefaultAgentPhp, /wp_codebox_runtime_agent_registry_ensure_agent/)
+
 const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
 const originalCwd = cwd()
 const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
@@ -233,8 +244,8 @@ try {
   }, normalizeTaskInput({ goal: "Verify generic runtime propagation" }), "latest")
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.pluginFile === "wordpress-plugin/wp-codebox.php"), true)
-  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), false)
-  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), false)
+  assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "agents-api"), true)
+  assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api"), true)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine"), true)
   assert.equal(genericRecipe.inputs?.extra_plugins?.some((plugin) => plugin.slug === "data-machine-code"), true)
   assert.equal(genericRecipe.inputs?.component_manifest?.components.some((component) => component.slug === "data-machine"), true)
@@ -243,6 +254,7 @@ try {
   const genericRuntimeComponentsArg = genericSandboxStepArgs.find((arg) => arg.startsWith("runtime-component-contracts-json=")) ?? "runtime-component-contracts-json=[]"
   const genericRuntimeComponents = JSON.parse(genericRuntimeComponentsArg.slice("runtime-component-contracts-json=".length)) as Array<{ slug?: string }>
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "wordpress-plugin"), true)
+  assert.equal(genericRuntimeComponents.some((component) => component.slug === "agents-api"), true)
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine"), true)
   assert.equal(genericRuntimeComponents.some((component) => component.slug === "data-machine-code"), true)
 
@@ -250,7 +262,11 @@ try {
     goal: "Verify extra plugin propagation",
     artifacts_path: artifactsPath,
     provider_plugin_paths: [providerSource],
-    component_contracts: [{ slug: "agents-api", source: agentsApiSource, pluginFile: "agents-api/agents-api.php", loadAs: "mu-plugin" }],
+    component_contracts: [
+      { slug: "agents-api", source: agentsApiSource, pluginFile: "agents-api/agents-api.php", loadAs: "mu-plugin" },
+      { slug: "data-machine", source: dataMachineSource, pluginFile: "data-machine/data-machine.php", loadAs: "mu-plugin" },
+      { slug: "data-machine-code", source: dataMachineCodeSource, pluginFile: "data-machine-code/data-machine-code.php", loadAs: "mu-plugin" },
+    ],
     extra_plugins: [{
       source: bridgeSource,
       slug: "agent-runtime-tool-bridge",
