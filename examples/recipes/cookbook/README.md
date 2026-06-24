@@ -6,7 +6,7 @@ against bbPress" or "drive my theme against seeded content."
 
 These are not internal correctness fixtures (the recipes in
 `examples/recipes/*.json` cover that). They are product fixtures: each one
-mounts a target plugin or theme, seeds a realistic host context via Playground
+mounts a target plugin or theme, seeds a realistic host context via contained-runtime
 blueprint steps, and is intended to be paired with `--preview-hold-seconds` for visual
 smoke testing.
 
@@ -25,7 +25,7 @@ files plus dry-run evidence limited to shareable metadata.
 
 ### `codex-agent-smoke.json`
 
-Runs a headless agent runtime inside a disposable WordPress Playground
+Runs a headless agent runtime inside a disposable contained WordPress
 sandbox using the Codex provider. This is the smallest end-to-end recipe for
 proving that WP Codebox can mount the agent runtime stack, overlay a
 `php-ai-client` branch with provider-supplied request auth, activate a Codex
@@ -35,7 +35,7 @@ provider plugin branch, and execute `agents/chat` through `wp-codebox.agent-sand
 uses explicit placeholder input paths so callers can see the full contract shape
 and replace each path with their prepared local checkout or artifact:
 
-- `/sample/prepared-component-stack/agents-api`
+- `/sample/prepared-component-stack/runtime-substrate`
 - `/sample/prepared-component-stack/runtime-engine`
 - `/sample/prepared-component-stack/runtime-tools`
 - `/sample/prepared-provider-stack/php-ai-client`
@@ -49,7 +49,7 @@ a dry-run plan with the sandbox backend, overlays, extra plugins, secret
 environment names, and resolved agent command arguments.
 
 - The component stack provides the WordPress plugins needed by the sandbox agent
-  runtime: `agents-api`, `runtime-engine`, and `runtime-tools`.
+  runtime: `runtime-substrate`, `runtime-engine`, and `runtime-tools`.
 - The provider stack provides the `php-ai-client` overlay and provider plugin
   selected by `provider=codex` and
   `provider-plugin-slugs=ai-provider-for-openai`.

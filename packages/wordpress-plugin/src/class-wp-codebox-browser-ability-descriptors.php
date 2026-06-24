@@ -27,7 +27,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 		$descriptors = array(
 			'wp-codebox/hydrate-browser-blueprint-ref'      => array(
 				'label'               => 'Hydrate Browser Blueprint Ref',
-				'description'         => 'Resolve a product-safe prepared browser blueprint ref into an executable WordPress Playground blueprint without requiring consumers to store blueprint files.',
+				'description'         => 'Resolve a product-safe prepared browser blueprint ref into an executable contained WordPress runtime blueprint without requiring consumers to store blueprint files.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -52,8 +52,8 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 				'meta'                => array( 'show_in_rest' => true ),
 			),
 			'wp-codebox/create-browser-playground-session'    => array(
-				'label'               => 'Create Browser Playground Session',
-				'description'         => 'Prepare a WP Codebox browser sandbox session without requiring the host to run the WP Codebox CLI or Node. WordPress Playground is the current implementation runtime, not a caller-owned API namespace.',
+				'label'               => 'Create Browser Sandbox Session',
+				'description'         => 'Prepare a WP Codebox browser sandbox session without requiring the host to run the WP Codebox CLI or Node.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -67,7 +67,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/create-browser-materializer-contract' => array(
 				'label'               => 'Create Browser Materializer Contract',
-				'description'         => 'Prepare the WP Codebox browser materialization contract for an already-created parent browser session. The executable Playground recipe is an implementation detail of the current runtime backend.',
+				'description'         => 'Prepare the WP Codebox browser materialization contract for an already-created parent browser session. The executable runtime recipe is an implementation detail of the current backend.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -122,7 +122,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/get-browser-contained-site-status'    => array(
 				'label'               => 'Get Browser Contained Site Status',
-				'description'         => 'Resolve a durable browser-contained site handle into explicit prepared-runtime recoverability or live/current/materialized availability without creating a new Playground session.',
+				'description'         => 'Resolve a durable browser-contained site handle into explicit prepared-runtime recoverability or live/current/materialized availability without creating a new browser sandbox session.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -164,7 +164,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/preview-reuse-decision'              => array(
 				'label'               => 'Preview Reuse Decision',
-				'description'         => 'Return an explicit reuse/create/reload decision for a browser-contained preview site without creating a new Playground session.',
+				'description'         => 'Return an explicit reuse/create/reload decision for a browser-contained preview site without creating a new browser sandbox session.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -215,7 +215,6 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 						'input_hash'    => array( 'type' => 'string' ),
 						'runtime_profile' => array( 'type' => 'object' ),
 						'recovery'      => array( 'type' => 'object' ),
-						'playground'    => array( 'type' => 'object' ),
 						'preview_lease' => array( 'type' => 'object' ),
 						'session_id'    => array( 'type' => 'string' ),
 					),
@@ -255,7 +254,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/open-or-create-browser-contained-site' => array(
 				'label'               => 'Open or Create Browser Contained Site',
-				'description'         => 'Open a reusable browser-contained preview site when possible, otherwise create a fresh browser Playground session from the same task input.',
+				'description'         => 'Open a reusable browser-contained preview site when possible, otherwise create a fresh browser sandbox session from the same task input.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -297,7 +296,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/create-browser-contained-site-session' => array(
 				'label'               => 'Create Browser Contained Site Session',
-				'description'         => 'Create a browser-contained preview session and return a product-safe boot descriptor, preview lease, and startup diagnostics. Raw Playground boot internals remain available through legacy session envelopes and explicit hydration refs only.',
+				'description'         => 'Create a browser-contained preview session and return a product-safe boot descriptor, preview lease, and startup diagnostics. Runtime boot internals remain available through legacy session envelopes and explicit hydration refs only.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -333,7 +332,6 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 						'cache_key'     => array( 'type' => 'string' ),
 						'source_digest' => array( 'type' => array( 'string', 'object' ), 'description' => '64-character source digest string, or an object with a value field.' ),
 						'input_hash'    => array( 'type' => 'string' ),
-						'playground'    => array( 'type' => 'object' ),
 						'preview_lease' => array( 'type' => 'object' ),
 						'session_id'    => array( 'type' => 'string' ),
 					),
@@ -356,7 +354,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/preview-boot-ref' => array(
 				'label'               => 'Get Preview Boot Ref',
-				'description'         => 'Return the stable consumer preview boot ref DTO. The DTO exposes a blueprint hydration ref instead of inline Playground blueprint data.',
+				'description'         => 'Return the stable consumer preview boot ref DTO. The DTO exposes a blueprint hydration ref instead of inline runtime blueprint data.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -366,7 +364,6 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 						'cache_key'     => array( 'type' => 'string' ),
 						'source_digest' => array( 'type' => array( 'string', 'object' ), 'description' => '64-character source digest string, or an object with a value field.' ),
 						'input_hash'    => array( 'type' => 'string' ),
-						'playground'    => array( 'type' => 'object' ),
 						'preview_lease' => array( 'type' => 'object' ),
 					),
 				),
@@ -573,7 +570,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/persist-browser-artifact'            => array(
 				'label'               => 'Persist Browser Artifact',
-				'description'         => 'Persist browser-produced files from a disposable Playground session as a canonical WP Codebox artifact bundle.',
+				'description'         => 'Persist browser-produced files from a disposable browser sandbox session as a canonical WP Codebox artifact bundle.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
@@ -583,7 +580,7 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 						'authorization'    => $context['trusted_artifact_authorization_schema'],
 						'session_id'       => array(
 							'type'        => 'string',
-							'description' => 'Optional browser Playground session id that produced the artifact files.',
+							'description' => 'Optional browser sandbox session id that produced the artifact files.',
 						),
 						'session'          => array(
 							'type'        => 'object',
