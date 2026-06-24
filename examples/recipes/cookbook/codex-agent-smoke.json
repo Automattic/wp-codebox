@@ -24,8 +24,8 @@
   "inputs": {
     "extra_plugins": [
       {
-        "source": "/sample/prepared-component-stack/agents-api",
-        "slug": "agents-api",
+        "source": "/sample/prepared-component-stack/runtime-substrate",
+        "slug": "runtime-substrate",
         "activate": true
       },
       {

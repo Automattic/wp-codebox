@@ -119,9 +119,9 @@ run. Each entry requires `source` and may include `slug`, `pluginFile`,
         "activate": false
       },
       {
-        "source": "../agents-api",
-        "slug": "agents-api",
-        "pluginFile": "agents-api/agents-api.php",
+        "source": "../caller-runtime-substrate",
+        "slug": "caller-runtime-substrate",
+        "pluginFile": "caller-runtime-substrate/caller-runtime-substrate.php",
         "activate": false,
         "loadAs": "mu-plugin"
       }

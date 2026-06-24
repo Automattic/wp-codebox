@@ -2,7 +2,7 @@
 
 Tiny WordPress plugin fixture for `wp-codebox run`.
 
-The demo mounts this directory into a disposable WordPress Playground-shaped runtime at:
+The demo mounts this directory into a disposable contained WordPress runtime at:
 
 ```text
 /wordpress/wp-content/plugins/simple-plugin

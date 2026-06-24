@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 
 const forbiddenConsumerTerms = [
   /\bStudio Web\b/,
@@ -12,12 +12,27 @@ const forbiddenPublicImplementationTerms = [
   /\bData Machine\b/,
   /\bData Machine Code\b/,
   /\bAgents API\b/,
-  /\bWordPress Playground\b/,
   /\bgeneric Data Machine inputs\b/,
   /\bWP_Codebox_Agents_API_Adapter\b/,
   /\bagents\/[a-z0-9._/-]+/i,
   /\bGitSync\b/,
   /\bwp_agent_[a-z0-9_]+\b/,
+]
+
+const forbiddenPublicConsumerGuidanceTerms = [
+  /\bData Machine\b/i,
+  /\bData Machine Code\b/i,
+  /\bAgents API\b/i,
+  /\bagents-api\b/i,
+  /\bdatamachine\b/i,
+  /\bwp-coding-agents\b/i,
+]
+
+const forbiddenRawRuntimeGuidanceTerms = [
+  /createPlaygroundRuntimeBackend/,
+  /@wp-playground\//,
+  /\braw Playground\b/i,
+  /\bPlayground-shaped\b/i,
 ]
 
 const genericContractDocs = [
@@ -46,8 +61,27 @@ const publicBoundaryDocs = [
   "packages/wordpress-plugin/README.md",
 ]
 
+const publicConsumerRoots = ["README.md", "docs", "examples"]
+const publicDescriptorFiles = [
+  "packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php",
+]
+
 const root = new URL("..", import.meta.url)
 const violations: string[] = []
+
+async function collectTextFiles(path: string): Promise<string[]> {
+  if (!path.includes(".")) {
+    const entries = await readdir(new URL(`${path}/`, root), { withFileTypes: true })
+    const nested = await Promise.all(entries.map((entry) => collectTextFiles(`${path}/${entry.name}`)))
+    return nested.flat()
+  }
+
+  if (/\.(md|json|ts|js|ya?ml)$/.test(path)) {
+    return [path]
+  }
+
+  return []
+}
 
 for (const doc of genericContractDocs) {
   const source = await readFile(new URL(doc, root), "utf8")
@@ -89,6 +123,24 @@ assert.match(publicBoundaryText, /adapter config maps each operation to its\s+in
 assert.match(publicBoundaryText, /not mirror the monorepo-only\s+`\.\/internals` helper entrypoint/)
 for (const term of forbiddenPublicImplementationTerms) {
   assert.doesNotMatch(publicBoundaryText, term)
+}
+
+const publicConsumerFiles = (await Promise.all(publicConsumerRoots.map(collectTextFiles))).flat()
+for (const file of [...publicConsumerFiles, ...publicDescriptorFiles]) {
+  const source = await readFile(new URL(file, root), "utf8")
+  if (file === "docs/browser-runtime-dependency-audit.md" || file === "docs/portable-wp-codebox.md" || file === "docs/transfer-namespace-plan.md") {
+    continue
+  }
+
+  for (const term of forbiddenPublicConsumerGuidanceTerms) {
+    assert.doesNotMatch(source, term, `${file} must not teach public consumers host implementation names`)
+  }
+
+  if (file === "packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php" || file.endsWith("README.md")) {
+    for (const term of forbiddenRawRuntimeGuidanceTerms) {
+      assert.doesNotMatch(source, term, `${file} must not teach raw runtime internals`)
+    }
+  }
 }
 
 const runnerWorkspaceBackendContract = await readFile(new URL("docs/runner-workspace-backend-contract.md", root), "utf8")

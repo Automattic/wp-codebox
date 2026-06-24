@@ -14,7 +14,7 @@ Parent control plane
       -> WP Codebox shells out to the CLI and captures artifacts
     <- returns wp-codebox/sandbox-session/v1 for correlation
 
-Disposable Playground sandbox
+Disposable browser sandbox
   may mount agent runtimes, coding tools, and provider plugins
   owns in-sandbox agent behavior only
 ```
@@ -22,7 +22,7 @@ Disposable Playground sandbox
 The host WP Codebox plugin receives parent job context through this session contract.
 External orchestrators consume the same abilities and artifact contracts.
 
-## Browser Playground Permission Model
+## Browser Runtime Permission Model
 
 `wp-codebox/create-browser-playground-session` returns an explicit browser
 session boundary:
@@ -40,14 +40,14 @@ session boundary:
 ```
 
 The `runtime-principal` permission model means the generated browser runner
-authorizes Agents API calls with a scoped runtime principal inside the disposable
-Playground site. The principal binds the call to the WP Codebox client,
+authorizes sandbox runtime calls with a scoped runtime principal inside the
+disposable WordPress site. The principal binds the call to the WP Codebox client,
 workspace, runtime type, and browser session instead of inheriting host-site user
 state. This is safe only because the browser runner executes in PHP-WASM inside
-the caller-owned Playground filesystem and cannot grant permissions on the host
+the caller-owned sandbox filesystem and cannot grant permissions on the host
 WordPress site.
 
-The generated PHP runner validates the expected Playground environment before it
+The generated PHP runner validates the expected disposable runtime before it
 registers runtime-principal authorization. If the runner is copied into a normal
 host WordPress install, it fails with `wp_codebox_browser_runner_not_playground`
 instead of executing the requested sandbox invocation.

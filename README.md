@@ -101,8 +101,8 @@ explicitly allow each registered canonical tool name before a sandbox can invoke
 it.
 
 ```ts
-import { createHostToolRegistry, createRuntime } from "@automattic/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
+import { createHostToolRegistry } from "@automattic/wp-codebox-core"
+import { createWordPressRuntime } from "@automattic/wp-codebox-playground/public"
 
 const hostTools = createHostToolRegistry([
   {
@@ -132,8 +132,7 @@ const hostTools = createHostToolRegistry([
   },
 ])
 
-const runtime = await createRuntime({
-  backend: "wordpress-playground",
+const runtime = await createWordPressRuntime({
   environment: { kind: "wordpress", version: "latest" },
   policy: {
     network: "deny",
@@ -143,7 +142,7 @@ const runtime = await createRuntime({
     approvals: "never",
   },
   hostTools,
-}, createPlaygroundRuntimeBackend())
+})
 
 const result = await runtime.execute({
   command: "client/echo",
@@ -395,7 +394,7 @@ Expected shape:
 {
   "success": true,
   "runtime": {
-    "backend": "wordpress-playground",
+    "backend": "wordpress",
     "status": "destroyed"
   },
   "execution": {
@@ -510,7 +509,7 @@ kimaki tunnel -- sh -c 'npm run wp-codebox -- run \
 
 When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url` and defines `WP_HOME` / `WP_SITEURL` in the sandbox config, so WordPress-generated links and canonical redirects align with the public preview URL. The local proxy URL remains recorded as `preview.localUrl`. If the fixed port is already occupied, WP Codebox fails clearly with `EADDRINUSE` and the requested `--preview-port` value.
 
-Remote-host previews can opt into `--preview-bind <host>` with `--preview-port`. The flag changes the WP Codebox preview proxy bind address only; the upstream Playground server remains loopback-bound because `@wp-playground/cli` does not expose host/bind control yet. The default stays `127.0.0.1`. Use `--preview-bind 0.0.0.0` only behind trusted firewall, tunnel, or reverse-proxy controls because the sandbox preview is reachable for the hold duration. Track the upstream Playground bind-host API gap in https://github.com/WordPress/wordpress-playground/issues/3681.
+Remote-host previews can opt into `--preview-bind <host>` with `--preview-port`. The flag changes the WP Codebox preview proxy bind address only; the upstream runtime server remains loopback-bound until backend bind-host control is available. The default stays `127.0.0.1`. Use `--preview-bind 0.0.0.0` only behind trusted firewall, tunnel, or reverse-proxy controls because the sandbox preview is reachable for the hold duration.
 
 ## Runtime Episodes
 
@@ -520,26 +519,21 @@ observations, step executions, optional per-step observations, snapshots, and
 artifact bundles without knowing benchmark, reward, or scenario semantics.
 
 ```ts
-import { createRuntimeEpisode } from "@automattic/wp-codebox-core"
-import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
+import { createWordPressEpisode } from "@automattic/wp-codebox-playground/public"
 
-const episode = await createRuntimeEpisode(
-  {
-    runtime: {
-      backend: "wordpress-playground",
-      environment: { kind: "wordpress", version: "7.0", blueprint: { steps: [] } },
-      policy: {
-        network: "deny",
-        filesystem: "readwrite-mounts",
-        commands: ["wordpress.wp-cli", "wordpress.run-php"],
-        secrets: "none",
-        approvals: "never",
-      },
+const episode = await createWordPressEpisode({
+  runtime: {
+    environment: { kind: "wordpress", version: "7.0", blueprint: { steps: [] } },
+    policy: {
+      network: "deny",
+      filesystem: "readwrite-mounts",
+      commands: ["wordpress.wp-cli", "wordpress.run-php"],
+      secrets: "none",
+      approvals: "never",
     },
-    stepObservation: { type: "runtime-info" },
   },
-  createPlaygroundRuntimeBackend(),
-)
+  stepObservation: { type: "runtime-info" },
+})
 
 await episode.step({ command: "wordpress.wp-cli", args: ["command=post list"] })
 const artifacts = await episode.collectArtifacts({ includeLogs: true })
@@ -911,9 +905,9 @@ External sources are explicit and CI-safe. WP Codebox validates URL-shaped sourc
         "pluginFile": "acme-helper/acme-helper.php"
       },
       {
-        "source": "../agents-api",
-        "slug": "agents-api",
-        "pluginFile": "agents-api/agents-api.php",
+        "source": "../caller-runtime-substrate",
+        "slug": "caller-runtime-substrate",
+        "pluginFile": "caller-runtime-substrate/caller-runtime-substrate.php",
         "activate": false,
         "loadAs": "mu-plugin"
       }
@@ -1222,7 +1216,7 @@ runtime-reference payload are best-effort diagnostics for failure enrichment.
   "provenance": {
     "task": { "kind": "agent-sandbox-run", "input": "Add a Dry Rub filter..." },
     "runtime": {
-      "backend": "wordpress-playground",
+      "backend": "wordpress",
       "version": "0.0.0",
       "wordpressVersion": "7.0"
     },
@@ -1367,7 +1361,7 @@ Generic caller-owned `request.json` payloads may use this shape:
   "model": "example-model",
   "provider_plugin_paths": ["/srv/runtime/ai-provider-example"],
   "component_contracts": [
-    { "slug": "agents-api", "path": "/srv/runtime/agents-api", "pluginFile": "agents-api/agents-api.php", "loadAs": "mu-plugin" },
+    { "slug": "caller-runtime-substrate", "path": "/srv/runtime/caller-runtime-substrate", "pluginFile": "caller-runtime-substrate/caller-runtime-substrate.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime", "path": "/srv/runtime/caller-runtime", "pluginFile": "caller-runtime/caller-runtime.php", "loadAs": "mu-plugin" },
     { "slug": "caller-runtime-tools", "path": "/srv/runtime/caller-runtime-tools", "pluginFile": "caller-runtime-tools/caller-runtime-tools.php", "loadAs": "mu-plugin" }
   ],
@@ -1381,7 +1375,7 @@ Generic caller-owned `request.json` payloads may use this shape:
     }
   ],
   "runtime_stack_mounts": [
-    { "source": "/srv/runtime/agents-api", "target": "/runtime/agents-api", "mode": "readonly" }
+    { "source": "/srv/runtime/caller-runtime-substrate", "target": "/runtime/caller-runtime-substrate", "mode": "readonly" }
   ],
   "runtime_overlays": [
     { "id": "caller-runtime-overlay", "source": "/srv/runtime/caller-runtime-overlay" }
