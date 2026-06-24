@@ -296,7 +296,7 @@ final class WP_Codebox_Abilities {
 
 			$run_agent_task_ability = array(
 					'label'               => 'Run Agent Sandbox Task',
-					'description'         => 'Run a bounded task inside an isolated WP Codebox WordPress agent sandbox and return artifacts.',
+					'description'         => 'Run a bounded headless agent task inside an isolated WP Codebox WordPress sandbox. Public callers provide goal/task input, runtime profile, and workspace artifact policy; WP Codebox returns preview, evidence, and artifact refs.',
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',

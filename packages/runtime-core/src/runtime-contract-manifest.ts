@@ -1,4 +1,5 @@
 import { AGENT_TASK_RUN_RESULT_SCHEMA, normalizeAgentTaskRunResult, type AgentTaskRunResultSummary } from "./agent-task-run-result.js"
+import { HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA } from "./headless-agent-task-contracts.js"
 import { AGENT_RUNTIME_WORKLOAD_SCHEMA } from "./agent-runtime-workload.js"
 import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, normalizeArtifactResultEnvelope, type ArtifactResultEnvelope } from "./artifact-result-envelope.js"
 import { FANOUT_AGGREGATION_INPUT_SCHEMA, FANOUT_AGGREGATION_OUTPUT_SCHEMA, aggregateFanoutOutputs, normalizeFanoutAggregationInput, type FanoutAggregationInput, type FanoutAggregationInputRequest, type FanoutAggregationOutput } from "./fanout-aggregation.js"
@@ -55,6 +56,8 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   agentTask: {
     runRequest: AGENT_TASK_RUN_REQUEST_SCHEMA,
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
+    headlessRequest: HEADLESS_AGENT_TASK_REQUEST_SCHEMA,
+    headlessResult: HEADLESS_AGENT_TASK_RESULT_SCHEMA,
     legacyRunResponse: AGENT_TASK_RUN_RESULT_SCHEMA,
   },
   runtimeBoundary: {

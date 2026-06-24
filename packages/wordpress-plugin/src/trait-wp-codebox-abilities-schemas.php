@@ -862,7 +862,8 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'mode'                   => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
 		'provider'               => self::string_property_schema( $detailed ? 'AI provider id to seed into the sandbox agent config.' : '' ),
 		'model'                  => self::string_property_schema( $detailed ? 'AI model id to seed into the sandbox agent config.' : '' ),
-		'provider_plugin_paths'  => self::string_array_property_schema( $detailed ? 'AI provider plugin directories to mount and activate inside the sandbox.' : '' ),
+		'runtime_profile'        => self::object_property_schema( $detailed ? 'Portable wp-codebox/runtime-profile/v1 descriptor for runtime dependencies, capabilities, provider selection, and prepared runtime metadata.' : '' ),
+		'workspace_artifact_policy' => self::object_property_schema( $detailed ? 'Caller policy for artifact capture, retention, publication handoff, and optional public artifact URL roots. WP Codebox returns refs; callers own publication decisions.' : '' ),
 		'agent_bundles'          => self::agent_bundle_schema(),
 		'runtime_task'           => self::object_property_schema( $detailed ? 'Internal runtime adapter task request. Prefer agent_workload.agent_runtime.runtime_task for public callers.' : '' ),
 		'parent_request'         => self::object_property_schema( $detailed ? 'Canonical wp-codebox/task-input/v1 parent request normalized into the WP Codebox runner contract.' : '' ),
@@ -888,8 +889,18 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'preview_public_url'     => $preview_schema['preview_public_url'],
 		'wp'                     => self::string_property_schema( $detailed ? 'WordPress version passed to Playground. Defaults to trunk.' : '' ),
 		'artifacts_path'         => self::string_property_schema( $detailed ? 'Directory where WP Codebox should write artifact bundles.' : '' ),
-		'wp_codebox_bin'         => self::string_property_schema( $detailed ? 'WP Codebox CLI binary or path. JS dist files are run through node.' : '' ),
 	);
+
+	if ( $detailed ) {
+		$properties['debug'] = array(
+			'type'        => 'object',
+			'description' => 'Internal/debug execution overrides. Product callers should use runtime_profile and workspace_artifact_policy instead of shell, binary, path, or provider plugin path fields.',
+			'properties'  => array(
+				'provider_plugin_paths' => self::string_array_property_schema( 'Internal provider plugin directories to mount and activate inside the sandbox.' ),
+				'wp_codebox_bin'        => self::string_property_schema( 'Internal WP Codebox CLI binary override.' ),
+			),
+		);
+	}
 
 	if ( ! empty( $options['task_fields'] ) ) {
 		$properties = self::task_input_alias_properties( $task_input_schema ) + $properties;

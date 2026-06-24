@@ -287,6 +287,12 @@ Consumers can read the same ids from `runtimeContractManifest().schemas` and
 Agent task callers use the `wp-codebox/run-agent-task` ability or
 `wp-codebox agent-task-run --json`. Caller-facing results normalize to
 `wp-codebox/agent-task-run-result/v1` through `normalizeAgentTaskRunResult()`.
+Headless product integrations can use `wp-codebox/headless-agent-task-request/v1`
+for the caller-owned task DTO: provide `task_input`, a portable
+`runtime_profile`, and `workspace_artifact_policy`; receive
+`wp-codebox/headless-agent-task-result/v1` with preview/runtime access plus
+artifact, evidence, transcript, log, and patch refs. Shell/bin/path and provider
+plugin path details stay internal/debug inputs rather than product DTO fields.
 Artifact handoff, import, and materialization results normalize to
 `wp-codebox/artifact-result-envelope/v1` through `artifactResultEnvelope()` and
 `normalizeArtifactResultEnvelope()`.

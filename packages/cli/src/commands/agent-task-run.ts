@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AGENT_TASK_RUN_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
+import { AGENT_TASK_RUN_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -90,6 +90,10 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
 
 export function normalizeAgentTaskRunCliInput(input: unknown): AgentTaskRunInput {
   const record = objectRecord(input)
+  if (record?.schema === HEADLESS_AGENT_TASK_REQUEST_SCHEMA) {
+    return headlessAgentTaskRequestToRunInput(normalizeHeadlessAgentTaskRequest(record)) as AgentTaskRunInput
+  }
+
   if (record?.schema !== AGENT_TASK_RUN_REQUEST_SCHEMA) {
     return input as AgentTaskRunInput
   }
