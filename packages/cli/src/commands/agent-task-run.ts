@@ -606,12 +606,40 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
   return fromOutputs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
 }
 
-function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
-  const direct = Array.isArray(agentTaskResult.typed_artifacts) ? agentTaskResult.typed_artifacts : []
+export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
+  const direct = typedArtifactList(agentTaskResult.typed_artifacts)
   const outputs = objectValue(agentTaskResult.outputs) || {}
-  const fromOutputs = Array.isArray(outputs.typed_artifacts) ? outputs.typed_artifacts : []
-  const fromWorkloadOutputs = Array.isArray(workloadOutputs.typed_artifacts) ? workloadOutputs.typed_artifacts : []
+  const fromOutputs = typedArtifactList(outputs.typed_artifacts)
+  const fromWorkloadOutputs = typedArtifactList(workloadOutputs.typed_artifacts)
   return dedupeRecords([...direct, ...fromOutputs, ...fromWorkloadOutputs].filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))))
+}
+
+function typedArtifactList(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
+  }
+
+  const record = objectValue(value)
+  if (!record) {
+    return []
+  }
+
+  return Object.entries(record)
+    .map(([name, artifact]) => typedArtifactFromMapEntry(name, artifact))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+}
+
+function typedArtifactFromMapEntry(name: string, artifact: unknown): Record<string, unknown> | undefined {
+  const record = objectValue(artifact)
+  if (!record) {
+    return undefined
+  }
+
+  return stripUndefined({
+    ...record,
+    name: stringValue(record.name) || stringValue(record.output_key) || name,
+    artifact_schema: stringValue(record.artifact_schema) || stringValue(record.schema) || undefined,
+  })
 }
 
 function agentReply(agentResult: Record<string, unknown>, terminalResult: AgentTerminalResult | undefined, runResult: AgentTaskRunResultSummary): Record<string, unknown> | undefined {
