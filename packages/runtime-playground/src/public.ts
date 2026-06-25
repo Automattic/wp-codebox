@@ -234,13 +234,15 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       }
       const failed = executions.find((execution) => execution.exitCode !== 0)
       const last = executions[executions.length - 1]
+      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0 }
       return {
         id: `wordpress-run-workload-${fuzzCase.id}`,
         command: "wordpress.run-workload",
         args: [`steps=${steps.length}`],
         exitCode: failed ? failed.exitCode : 0,
-        stdout: JSON.stringify({ schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, exitCode: failed ? failed.exitCode : 0 }),
+        stdout: JSON.stringify(workloadResult),
         stderr: failed?.stderr ?? "",
+        result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: workloadResult },
         startedAt,
         finishedAt: last?.finishedAt ?? new Date().toISOString(),
         artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),

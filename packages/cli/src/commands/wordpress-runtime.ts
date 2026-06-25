@@ -87,6 +87,7 @@ async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecu
       exitCode,
       stdout,
       stderr: recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : "",
+      result: { schema: "wp-codebox/runtime-command-result/v1", status: exitCode === 0 ? "ok" : "error", stdout, stderr: recipeResult?.error && typeof recipeResult.error === "object" && "message" in recipeResult.error ? String(recipeResult.error.message) : "", json: recipeResult },
       startedAt,
       finishedAt: new Date().toISOString(),
       artifactRefs: recipeArtifactRefs(recipeResult),
