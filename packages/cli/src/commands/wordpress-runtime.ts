@@ -122,10 +122,31 @@ function fuzzSuiteRuntimeRequirements(suiteInput: Record<string, unknown>): Reco
 function runtimeRequirementExtraPlugins(requirements: Record<string, unknown>, fallback: WorkspaceRecipeExtraPlugin[] | undefined): WorkspaceRecipeExtraPlugin[] | undefined {
   const extraPlugins = arrayOption(requirements.extra_plugins)
   if (extraPlugins.length > 0) {
-    return extraPlugins as WorkspaceRecipeExtraPlugin[]
+    return normalizeRuntimeRequirementExtraPlugins(extraPlugins, fallback)
   }
   const componentContracts = arrayOption(requirements.component_contracts)
-  return componentContracts.length > 0 ? componentContracts as WorkspaceRecipeExtraPlugin[] : fallback
+  return componentContracts.length > 0 ? normalizeRuntimeRequirementExtraPlugins(componentContracts, fallback) : fallback
+}
+
+function normalizeRuntimeRequirementExtraPlugins(value: unknown[], fallback: WorkspaceRecipeExtraPlugin[] | undefined): WorkspaceRecipeExtraPlugin[] | undefined {
+  const plugins = value.flatMap((entry) => {
+    const plugin = objectOption(entry)
+    const source = stringValue(plugin?.source) ?? stringValue(plugin?.path)
+    if (!plugin || !source) return []
+    return [{
+      source,
+      sourceRoot: stringValue(plugin.sourceRoot ?? plugin.source_root),
+      sourceSubpath: stringValue(plugin.sourceSubpath ?? plugin.source_subpath),
+      originalSource: stringValue(plugin.originalSource ?? plugin.original_source),
+      slug: stringValue(plugin.slug),
+      pluginFile: stringValue(plugin.pluginFile ?? plugin.plugin_file),
+      activate: typeof plugin.activate === "boolean" ? plugin.activate : undefined,
+      loadAs: plugin.loadAs === "plugin" || plugin.loadAs === "mu-plugin" ? plugin.loadAs : plugin.load_as === "plugin" || plugin.load_as === "mu-plugin" ? plugin.load_as : undefined,
+      sha256: stringValue(plugin.sha256),
+      metadata: objectOption(plugin.metadata),
+    } satisfies WorkspaceRecipeExtraPlugin]
+  })
+  return plugins.length > 0 ? plugins : fallback
 }
 
 function runtimeRequirementEnv(base: Record<string, string> | undefined, extra: unknown): Record<string, string> | undefined {
