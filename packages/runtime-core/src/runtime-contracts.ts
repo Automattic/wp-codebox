@@ -56,6 +56,7 @@ export interface BrowserStartupProgressEvent {
   label?: string
   elapsed_ms?: number
   detail?: Record<string, unknown>
+  normalized_progress?: unknown
 }
 
 export type BrowserStartupProgressListener = (event: BrowserStartupProgressEvent) => void | Promise<void>

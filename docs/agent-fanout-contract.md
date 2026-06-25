@@ -115,6 +115,48 @@ skipped because a dependency did not complete successfully emit structured
 worker results with `status: "skipped"`, `error.code: "dependency-skipped"`, and
 dependency status details.
 
+Each lifecycle event also carries a forwarding-friendly normalized progress
+shape. The top-level event keeps its original `event` and `time` fields, and adds
+stable aliases where available: `timestamp`, `phase`, `session_id`, `run_id`,
+`label`, `progress`, `artifacts`, and `diagnostics`. The same object is embedded
+as `normalized_progress` with schema `wp-codebox/live-progress-event/v1`:
+
+```json
+{
+  "schema": "wp-codebox/live-progress-event/v1",
+  "source_schema": "wp-codebox/agent-fanout-event/v1",
+  "source_event": "worker.completed",
+  "phase": "worker.completed",
+  "status": "succeeded",
+  "label": "Worker completed",
+  "detail": {},
+  "progress": {
+    "total": 2,
+    "active": 0,
+    "completed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "timed_out": 0
+  },
+  "artifacts": [
+    { "path": "fanout/workers/one/artifacts/result.json", "kind": "worker-result" }
+  ],
+  "diagnostics": {},
+  "timestamp": "2026-01-02T03:04:05.000Z",
+  "run_id": "fanout-test",
+  "session_id": "fanout-test",
+  "fanout_id": "fanout-test",
+  "worker_id": "one"
+}
+```
+
+The parent result includes the final normalized progress event as `progress`,
+with artifact refs for `fanout/events.jsonl`, `fanout/result.json`, aggregate
+output, and final aggregate output. Browser startup progress events use the same
+`normalized_progress` envelope while preserving
+`wp-codebox/browser-startup-progress/v1` for existing consumers.
+
 ## Artifact Layout
 
 ```text

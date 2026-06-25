@@ -86,9 +86,19 @@ export interface FanoutLifecycleEvent {
   schema: typeof FANOUT_EVENT_SCHEMA
   event: FanoutEventType
   time: string
+  timestamp?: string
+  phase?: string
   fanout_id?: string
+  session_id?: string
+  run_id?: string
   worker_id?: string
   status?: string
+  label?: string
+  detail?: Record<string, unknown>
+  progress?: Record<string, unknown>
+  artifacts?: Record<string, unknown> | unknown[]
+  diagnostics?: Record<string, unknown>
+  normalized_progress?: unknown
   active?: number
   total?: number
   completed?: number

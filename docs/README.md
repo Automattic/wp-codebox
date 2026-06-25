@@ -25,6 +25,9 @@ unless this index says otherwise.
   documents reviewed artifact apply-back.
 - [Agent fanout contract](./agent-fanout-contract.md) documents generic
   multi-sandbox fanout inputs and outputs.
+- [Shared artifact handoff contract proposal](./shared-artifact-handoff-contract.md)
+  names the minimum cross-track workflow, ownership, artifact, progress,
+  delegation, rehydrate, and durable orchestration boundaries.
 - [Agent runtime contract](./agent-runtime-contract.md)
   documents the stable orchestrator-facing agent-task CLI, schema boundary,
   artifacts, runner workspace publication, lifecycle metadata, provider
