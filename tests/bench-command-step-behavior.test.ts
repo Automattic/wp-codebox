@@ -21,6 +21,7 @@ const runCommandStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_comma
 const runAbilityStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_ability_step")
 const runDbInventoryStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_db_inventory_step")
 const runRestDbQueryProfilerStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_rest_db_query_profiler_step")
+const restRequestCasesFromSource = phpFunctionBlock(benchRunner, "wp_codebox_bench_rest_request_cases_from_source")
 const runExternalHttpGuardrailStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_external_http_guardrail_step")
 const runArtifactPostprocessStep = phpFunctionBlock(benchRunner, "wp_codebox_bench_run_artifact_postprocess_step")
 const commandStepRecord = phpFunctionBlock(benchRunner, "wp_codebox_bench_command_step_record")
@@ -32,7 +33,9 @@ assert.match(runDbInventoryStep, /SHOW INDEX FROM/)
 assert.match(runDbInventoryStep, /wp-codebox\/wordpress-db-inventory\/v1/)
 assert.match(runDbInventoryStep, /\$payload\['artifacts'\]\['db-inventory'\] = \$inventory/)
 assert.match(runRestDbQueryProfilerStep, /wp-codebox\/wordpress-rest-db-query-profile\/v1/)
+assert.match(restRequestCasesFromSource, /WP_CODEBOX_BENCH_SHARED_STATE/)
 assert.match(runRestDbQueryProfilerStep, /\$wpdb->save_queries = true/)
+assert.match(runRestDbQueryProfilerStep, /wp_codebox_bench_rest_request_cases_from_source/)
 assert.match(runRestDbQueryProfilerStep, /\$payload\['artifacts'\]\['rest-db-query-profile'\] = \$artifact/)
 assert.match(runExternalHttpGuardrailStep, /wp-codebox\/wordpress-external-http-guardrail\/v1/)
 assert.match(runExternalHttpGuardrailStep, /wp_codebox_bench_install_external_http_guardrail/)
@@ -94,6 +97,7 @@ const restDbQueryProfilerHelpers = [
   "wp_codebox_bench_rest_db_query_profile_summary",
   "wp_codebox_bench_rest_db_query_profile_case_step",
   "wp_codebox_bench_rest_db_query_profile_filter_query",
+  "wp_codebox_bench_rest_request_cases_from_source",
   "wp_codebox_bench_run_rest_db_query_profiler_step",
 ].map((functionName) => phpFunctionBlock(benchRunner, functionName)).join("\n\n")
 
@@ -302,6 +306,60 @@ assert.equal(restDbQueryProfilerPayload.metrics.rest_db_query_profile_cases_coun
 assert.equal(restDbQueryProfilerPayload.metrics.rest_db_query_profile_queries_count, 2)
 assert.equal(restDbQueryProfilerPayload.steps[0].type, "rest-db-query-profiler")
 assert.equal(restDbQueryProfilerPayload.steps[0].queries, 2)
+
+const restDbQueryProfilerArtifactSourcePayload = await withTempDir("wp-codebox-rest-db-query-profiler-source-", async (directory) => {
+  const artifactDirectory = join(directory, "generated-rest-request-cases")
+  await mkdir(artifactDirectory, { recursive: true })
+  await writeFile(join(artifactDirectory, "cases.json"), JSON.stringify({
+    schema: "example/rest-request-cases/v1",
+    cases: [{ id: "artifact-products", method: "GET", path: "/wc/store/v1/products", params: { per_page: 1 } }],
+  }))
+  const phpTestFile = join(directory, "rest-db-query-profiler-source.php")
+  await writeFile(
+    phpTestFile,
+    `<?php
+class WP_REST_Request {
+    public string $method;
+    public string $route;
+    public function __construct($method, $route) { $this->method = $method; $this->route = $route; }
+    public function set_header($name, $value) {}
+    public function set_param($name, $value) {}
+    public function set_body($body) {}
+}
+class WP_Codebox_Test_REST_Response { public function get_status() { return 200; } }
+define('SAVEQUERIES', false);
+$wp_codebox_test_filters = array();
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1) { global $wp_codebox_test_filters; $wp_codebox_test_filters[$hook][$priority][] = $callback; }
+function remove_filter($hook, $callback, $priority = 10) { global $wp_codebox_test_filters; foreach ($wp_codebox_test_filters[$hook][$priority] ?? array() as $index => $registered_callback) { if ($registered_callback === $callback) { unset($wp_codebox_test_filters[$hook][$priority][$index]); } } }
+function apply_filters($hook, $value) { global $wp_codebox_test_filters; foreach ($wp_codebox_test_filters[$hook] ?? array() as $callbacks) { foreach ($callbacks as $callback) { $value = $callback($value); } } return $value; }
+function is_wp_error($value) { return false; }
+function rest_do_request($request) {
+    apply_filters('query', "SELECT * FROM wp_posts WHERE post_type = 'product'");
+    return new WP_Codebox_Test_REST_Response();
+}
+function rest_get_server() { return new class { public function response_to_data($response, $embed) { return array('ok' => true); } }; }
+$wpdb = (object) array('save_queries' => false);
+putenv('WP_CODEBOX_BENCH_SHARED_STATE=' . ${JSON.stringify(directory)});
+${restDbQueryProfilerHelpers}
+$payload = wp_codebox_bench_run_rest_db_query_profiler_step(array(
+    'type' => 'rest-db-query-profiler',
+    'rest_request_cases_source' => array(
+        'type' => 'artifact',
+        'schema' => 'example/rest-request-cases/v1',
+        'artifact_globs' => array('generated-rest-request-cases/*.json'),
+        'maxRouteCases' => 80,
+        'maxArtifactBytes' => 1048576,
+    ),
+));
+echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+`,
+  )
+  return runPhpFileJson<{ artifacts: Record<string, { summary: { case_count: number }; cases: Array<{ case_id: string; path: string }> }>; metrics: Record<string, number> }>(phpTestFile)
+})
+assert.equal(restDbQueryProfilerArtifactSourcePayload.artifacts["rest-db-query-profile"].summary.case_count, 1)
+assert.equal(restDbQueryProfilerArtifactSourcePayload.artifacts["rest-db-query-profile"].cases[0].case_id, "artifact-products")
+assert.equal(restDbQueryProfilerArtifactSourcePayload.artifacts["rest-db-query-profile"].cases[0].path, "/wc/store/v1/products")
+assert.equal(restDbQueryProfilerArtifactSourcePayload.metrics.rest_db_query_profile_cases_count, 1)
 
 const routeMatrixSteps = await withTempDir("wp-codebox-bench-route-matrix-", async (directory) => {
   const phpTestFile = join(directory, "route-matrix.php")
