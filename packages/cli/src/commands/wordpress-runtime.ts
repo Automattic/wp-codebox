@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { parseCommandJson, parseCommandOptions, runFuzzSuite, wordpressWorkloadRunRecipe, type ExecutionResult, type FuzzSuiteContract, type FuzzSuiteRuntimeWorkloadExecutionInput, type WordPressWorkloadRunRecipeOptions, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
 import { captureStdout } from "../output.js"
 import { runRecipeRunCommand } from "./recipe-run.js"
@@ -66,7 +68,8 @@ export async function runWordPressWorkloadCommand(args: string[]): Promise<numbe
 async function runWordPressWorkloadFuzzCase(input: FuzzSuiteRuntimeWorkloadExecutionInput, options: PublicRuntimeCommandOptions): Promise<ExecutionResult> {
   const startedAt = new Date().toISOString()
   const requirements = fuzzSuiteRuntimeRequirements(options.input)
-  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(input.workload, requirements)) as WorkspaceRecipe
+  const workload = normalizeWordPressWorkloadRequest(input.workload, options.input)
+  const recipe = wordpressWorkloadRunRecipe(workloadRecipeOptions(workload, requirements)) as WorkspaceRecipe
   applyFuzzSuiteRuntimeRequirements(recipe, requirements)
   const tempDir = await mkdtemp(join(tmpdir(), "wp-codebox-fuzz-workload-"))
   try {
@@ -231,6 +234,106 @@ function workloadRecipeOptions(input: Record<string, unknown>, runtimeRequiremen
     capture: objectOption(input.capture) as WordPressWorkloadRunRecipeOptions["capture"],
     enableQueryCapture: typeof input.enableQueryCapture === "boolean" ? input.enableQueryCapture : typeof input.enable_query_capture === "boolean" ? input.enable_query_capture : undefined,
   }
+}
+
+function normalizeWordPressWorkloadRequest(input: Record<string, unknown>, suiteInput?: Record<string, unknown>): Record<string, unknown> {
+  const stagedFiles = arrayOption(input.stagedFiles ?? input.staged_files)
+  let changed = false
+  const normalized: Record<string, unknown> = { ...input }
+  const packageRoot = workloadPackageRoot(input, suiteInput)
+
+  for (const phase of ["before", "steps", "after"] as const) {
+    const steps = arrayOption(input[phase])
+    const nextSteps = steps.map((step) => {
+      const normalizedStep = normalizeWordPressWorkloadStep(step, input, packageRoot, stagedFiles)
+      if (normalizedStep !== step) changed = true
+      return normalizedStep
+    })
+    if (steps.length > 0) normalized[phase] = nextSteps
+  }
+
+  if (stagedFiles.length > 0) {
+    normalized.stagedFiles = stagedFiles
+    delete normalized.staged_files
+    changed = true
+  }
+
+  return changed ? normalized : input
+}
+
+function normalizeWordPressWorkloadStep(step: unknown, workload: Record<string, unknown>, packageRoot: string | undefined, stagedFiles: unknown[]): unknown {
+  const record = objectOption(step)
+  if (!record || record.command !== "wordpress.run-workload") return step
+  const args = parseStepArgs(arrayOption(record.args))
+  if ((args.type ?? "").toLowerCase() !== "php") return step
+
+  const resolved = resolveWorkloadPhpPath(args.path ?? args.file ?? "", packageRoot)
+  const runtimePath = resolved ? stageWordPressWorkloadFile(resolved, stagedFiles) : args.path ?? args.file ?? ""
+  const wrapperArgs: Record<string, string> = { ...args, path: runtimePath }
+  delete wrapperArgs.file
+
+  return {
+    ...record,
+    command: "wordpress.run-php",
+    args: [`code=${wordpressWorkloadPhpWrapper(runtimePath, workload, wrapperArgs)}`],
+  }
+}
+
+function stageWordPressWorkloadFile(source: string, stagedFiles: unknown[]): string {
+  const target = `/tmp/wp-codebox-workloads/${createHash("sha256").update(source).digest("hex").slice(0, 16)}-${basename(source)}`
+  const exists = stagedFiles.some((entry) => objectOption(entry)?.source === source && objectOption(entry)?.target === target)
+  if (!exists) {
+    stagedFiles.push({ source, target })
+  }
+  return target
+}
+
+function resolveWorkloadPhpPath(path: string, packageRoot: string | undefined): string | undefined {
+  const raw = path.trim()
+  if (!raw) return undefined
+  const expanded = packageRoot ? raw.replaceAll("${package.root}", packageRoot).replaceAll("{{package.root}}", packageRoot) : raw
+  const candidates = [expanded]
+  if (packageRoot && !isAbsolute(expanded)) candidates.push(join(packageRoot, expanded))
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate) && statSync(candidate).isFile()) return realpathSync(candidate)
+    } catch (_error) {
+      continue
+    }
+  }
+  return undefined
+}
+
+function workloadPackageRoot(input: Record<string, unknown>, suiteInput?: Record<string, unknown>): string | undefined {
+  for (const value of [
+    objectOption(input.package),
+    objectOption(input.runtime_package),
+    objectOption(objectOption(input.metadata)?.runtime_package_descriptor),
+    objectOption(objectOption(suiteInput?.metadata)?.runtime_package_descriptor),
+    objectOption(objectOption(suiteInput?.metadata)?.runtimePackageDescriptor),
+  ]) {
+    const source = stringValue(value?.source)
+    if (!source) continue
+    const resolved = resolve(source)
+    if (!existsSync(resolved)) continue
+    return statSync(resolved).isFile() ? dirname(realpathSync(resolved)) : realpathSync(resolved)
+  }
+  return undefined
+}
+
+function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
+  const encodedInput = Buffer.from(JSON.stringify(workload), "utf8").toString("base64")
+  const encodedArgs = Buffer.from(JSON.stringify(args), "utf8").toString("base64")
+  return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function parseStepArgs(args: unknown[]): Record<string, string> {
+  const parsed: Record<string, string> = {}
+  for (const arg of args) {
+    const [key, value = ""] = String(arg).split(/=(.*)/s, 2)
+    if (key) parsed[key] = value
+  }
+  return parsed
 }
 
 function workloadRecipeSteps(input: Record<string, unknown>, runtimeRequirements?: Record<string, unknown>): unknown[] {

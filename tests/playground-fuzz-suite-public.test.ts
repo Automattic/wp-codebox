@@ -20,6 +20,7 @@ const episode = {
       "wordpress.rest-request": { path: "/wp/v2/types", route: "/wp/v2/types", status: 200, timing: { durationMs: 45 } },
       "wordpress.browser-actions": { url: "/", browser: { metrics: { layoutShift: 3 } }, timing: { durationMs: 90 } },
       "wordpress.db-operation": { metrics: { query_count: 11, query_time_ms: 22 } },
+      "wordpress.run-php": { status: "passed", artifactRefs: [{ name: "php-report", path: "workloads/php-report.json" }] },
       "wordpress.rest-performance-observation": {
         observations: [{ schema: "wp-codebox/performance-observation/v1", command: "wordpress.rest-performance-observation", target: "/wp/v2/types", kind: "rest-request", timing: { durationMs: 120 }, database: { queryCount: 7, totalTimeMs: 34 } }],
       },
@@ -68,6 +69,7 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     { id: "browser", target: { kind: "runtime-action" }, input: { type: "browser", operation: "navigate", url: "/" } },
     { id: "db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
     { id: "workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }] } },
+    { id: "php-workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.run-workload", args: ["type=php", "path=/tmp/wp-codebox-workloads/rest-product-batch-import.php"] }] } },
   ],
 }), { requireCoverage: true })
 
@@ -76,16 +78,20 @@ assert.equal(result.success, true)
 assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
-assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation"])
+assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation", "wp-codebox.checkpoint-restore", "wordpress.run-php"])
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
 assert.equal(result.cases[1]?.reset?.status, "passed")
 assert.equal(result.cases[2]?.status, "passed")
 assert.equal(result.cases[3]?.status, "passed")
+assert.equal(result.cases[4]?.status, "passed")
 assert.equal(steps[7]?.args?.[0]?.startsWith("operation-json="), true)
 assert.equal(JSON.parse(steps[7]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
 assert.deepEqual(steps[9]?.args, ["path=/wp/v2/types", "capture-queries=1"])
+assert.equal(steps[11]?.command, "wordpress.run-php")
+assert.match(steps[11]?.args?.[0] ?? "", /^code=/)
+assert.equal(result.cases[4]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
 const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-hotspots")
 assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
 assert.equal(hotspotsRef?.contentType, "application/json")

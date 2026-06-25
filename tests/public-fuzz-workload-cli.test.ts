@@ -20,6 +20,21 @@ try {
   const samplePluginSource = join(directory, "sample-plugin")
   await mkdir(samplePluginSource)
   await writeFile(join(samplePluginSource, "sample-plugin.php"), "<?php\n/* Plugin Name: Sample Plugin */\n", "utf8")
+  await mkdir(join(samplePluginSource, "bench"))
+  await writeFile(join(samplePluginSource, "bench", "rest-product-batch-import.php"), `<?php
+return static function ( array $input, array $args ): array {
+    return array(
+        'status' => 'passed',
+        'observation' => array(
+            'input_schema' => $input['schema'] ?? '',
+            'arg_type' => $args['type'] ?? '',
+        ),
+        'artifactRefs' => array(
+            array( 'name' => 'php-report', 'path' => 'workloads/php-report.json' ),
+        ),
+    );
+};
+`, "utf8")
 
   const fuzzInput = join(directory, "fuzz.json")
   await writeFile(fuzzInput, JSON.stringify({
@@ -65,6 +80,38 @@ try {
   assert.notEqual(runtimeFuzzJson.cases[0].skipReason, "fuzz_suite_executor_unavailable")
   assert.equal(runtimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
   assert.equal(runtimeFuzzJson.metadata.runnerCapabilities.mode, "runtime-backed")
+
+  const phpRuntimeFuzzInput = join(directory, "runtime-php-workload-fuzz.json")
+  await writeFile(phpRuntimeFuzzInput, JSON.stringify({
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: "public-cli-runtime-php-workload-suite",
+    metadata: {
+      runtime_package_descriptor: { source: samplePluginSource },
+      requiredRunnerCapabilities: { targetKinds: ["runtime"], commands: ["wordpress.run-workload"] },
+    },
+    cases: [{
+      id: "php-workload",
+      target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+      input: {
+        schema: "wp-codebox/wordpress-workload-run/v1",
+        steps: [{ command: "wordpress.run-workload", args: ["path=${package.root}/bench/rest-product-batch-import.php", "type=php"] }],
+        staged_files: [],
+      },
+    }],
+  }), "utf8")
+  const phpRuntimeFuzzOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["run-fuzz-suite", "--input-file", phpRuntimeFuzzInput, "--format=json", "--dry-run"]), 0)
+  })
+  const phpRuntimeFuzzJson = JSON.parse(phpRuntimeFuzzOutput)
+  assert.equal(phpRuntimeFuzzJson.schema, "wp-codebox/fuzz-suite-result/v1")
+  assert.equal(phpRuntimeFuzzJson.status, "passed")
+  assert.equal(phpRuntimeFuzzJson.cases[0].status, "passed")
+  assert.equal(phpRuntimeFuzzJson.cases[0].metadata.adapter.adapterKind, "runtime-workload")
+  assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.schema, "wp-codebox/recipe-run-dry-run/v1")
+  assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].command, "wordpress.run-php")
+  assert.match(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.workflow.steps[0].args[0], /^code=/)
+  assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].target.includes("/tmp/wp-codebox-workloads/"), true)
+  assert.equal(phpRuntimeFuzzJson.cases[0].metadata.execution.result.json.plan.stagedFiles[0].source.endsWith("bench/rest-product-batch-import.php"), true)
 
   const workloadInput = join(directory, "workload.json")
   await writeFile(workloadInput, JSON.stringify({

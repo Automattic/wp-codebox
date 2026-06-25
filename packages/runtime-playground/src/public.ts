@@ -235,7 +235,7 @@ export function createWordPressFuzzSuiteCommandExecutor(episode: Pick<RuntimeEpi
 export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteRuntimeWorkloadExecutor {
   return {
     async executeRuntimeWorkload({ workload, case: fuzzCase }) {
-      const steps = [...workloadSteps(workload.before), ...workloadSteps(workload.steps), ...workloadSteps(workload.after)]
+      const steps = [...workloadSteps(workload.before, workload), ...workloadSteps(workload.steps, workload), ...workloadSteps(workload.after, workload)]
       const startedAt = new Date().toISOString()
       const executions: ExecutionResult[] = []
       for (const step of steps) {
@@ -266,7 +266,7 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
         result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: workloadResult },
         startedAt,
         finishedAt: last?.finishedAt ?? new Date().toISOString(),
-        artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+        artifactRefs: executions.flatMap((execution) => [...(execution.artifactRefs ?? []), ...workloadResultArtifactRefs(execution)]),
       }
     },
   }
@@ -549,7 +549,7 @@ function numericRecord(value: Record<string, unknown>): Record<string, number> |
   return entries.length > 0 ? Object.fromEntries(entries) : undefined
 }
 
-function workloadSteps(value: unknown): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
+function workloadSteps(value: unknown, workload: Record<string, unknown>): Array<{ command: string; args?: string[]; timeoutMs?: number; allowFailure?: boolean; advisory?: boolean }> {
   if (!Array.isArray(value)) {
     return []
   }
@@ -561,14 +561,39 @@ function workloadSteps(value: unknown): Array<{ command: string; args?: string[]
     if (typeof record.command !== "string" || record.command.trim() === "") {
       return []
     }
+    const args = Array.isArray(record.args) ? record.args.map(String) : undefined
+    const parsedArgs = stepArgMap(args)
+    const phpWorkloadStep = record.command === "wordpress.run-workload" && parsedArgs.type?.toLowerCase() === "php"
     return [{
-      command: record.command,
-      args: Array.isArray(record.args) ? record.args.map(String) : undefined,
+      command: phpWorkloadStep ? "wordpress.run-php" : record.command,
+      args: phpWorkloadStep ? [`code=${wordpressWorkloadPhpWrapper(parsedArgs.path ?? parsedArgs.file ?? "", workload, parsedArgs)}`] : args,
       timeoutMs: typeof record.timeoutMs === "number" ? record.timeoutMs : typeof record.timeout_ms === "number" ? record.timeout_ms : undefined,
       allowFailure: record.allowFailure === true || record.allow_failure === true,
       advisory: record.advisory === true,
     }]
   })
+}
+
+function stepArgMap(args: string[] | undefined): Record<string, string> {
+  const parsed: Record<string, string> = {}
+  for (const arg of args ?? []) {
+    const index = arg.indexOf("=")
+    parsed[index === -1 ? arg : arg.slice(0, index)] = index === -1 ? "" : arg.slice(index + 1)
+  }
+  return parsed
+}
+
+function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
+  const normalizedArgs: Record<string, string> = { ...args, path }
+  delete normalizedArgs.file
+  const encodedInput = Buffer.from(JSON.stringify(workload), "utf8").toString("base64")
+  const encodedArgs = Buffer.from(JSON.stringify(normalizedArgs), "utf8").toString("base64")
+  return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function workloadResultArtifactRefs(execution: ExecutionResult): NonNullable<ExecutionResult["artifactRefs"]> {
+  const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
+  return arrayValue(json?.artifactRefs ?? json?.artifact_refs ?? json?.artifacts).flatMap((ref) => recordValue(ref) ? [ref as NonNullable<ExecutionResult["artifactRefs"]>[number]] : [])
 }
 
 function fuzzSuiteStepArtifactRefs(step: RuntimeEpisodeStepResult): FuzzSuiteArtifactRef[] {
