@@ -204,8 +204,28 @@ const wordpressBench = catalog.commands.find((command) => command.id === "wordpr
 assert.ok(wordpressBench, "catalog includes wordpress.bench")
 const workloadsJsonArg = wordpressBench.acceptedArgs.find((arg) => arg.name === "workloads-json")
 assert.match(workloadsJsonArg?.description ?? "", /rest-db-query-profiler/)
+assert.deepEqual(wordpressBench.requiresPolicyCommands, [
+  "wordpress.run-php",
+  "wordpress.wp-cli",
+  "wordpress.ability",
+  "wordpress.rest-request",
+  "wordpress.db-operation",
+  "wordpress.runtime-discovery",
+  "wordpress.inventory-database",
+  "wordpress.browser-probe",
+])
 
 assert.deepEqual(effectivePolicyCommands("wp-codebox.agent-sandbox-run"), ["wordpress.run-php", "wordpress.wp-cli"])
+assert.deepEqual(effectivePolicyCommands("wordpress.bench"), [
+  "wordpress.run-php",
+  "wordpress.wp-cli",
+  "wordpress.ability",
+  "wordpress.rest-request",
+  "wordpress.db-operation",
+  "wordpress.runtime-discovery",
+  "wordpress.inventory-database",
+  "wordpress.browser-probe",
+])
 assert.deepEqual(effectivePolicyCommands("custom.wrapper", [
   {
     id: "custom.wrapper",
